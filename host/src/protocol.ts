@@ -3483,6 +3483,15 @@ export type ExecutionRequestReading = Readonly<{
   args: Readonly<Record<string, unknown>>;
   snapshot: Snapshot;
   nowMs: number;
+  /**
+   * The per-action deadline windows the `deadlineMs` row is judged against.
+   *
+   * A field rather than a closure over the module constant for the same reason `nowMs` is one: the row's own test has to
+   * be able to state a DIFFERENT declaration (a 300 s window, an action the declaration does not carry) or it can only
+   * ever confirm today's table against itself. Every reading `executionRequestReading` builds carries
+   * `EXECUTION_REQUEST_DEADLINE_WINDOWS`.
+   */
+  deadlineWindows: Readonly<Record<string, number>>;
 }>;
 
 function requirement(
@@ -3526,8 +3535,9 @@ export function executionRequestReading(
   request: Readonly<Record<string, unknown>>,
   snapshot: Snapshot,
   nowMs: number,
+  deadlineWindows: Readonly<Record<string, number>> = EXECUTION_REQUEST_DEADLINE_WINDOWS,
 ): ExecutionRequestReading {
-  return { request, args: isRecord(request.args) ? request.args : {}, snapshot, nowMs };
+  return { request, args: isRecord(request.args) ? request.args : {}, snapshot, nowMs, deadlineWindows };
 }
 
 /** The exact argument set the action's own Mod-side wire parser pins (`BridgeProtocol.ExecutionArgumentProperties`). */
@@ -3771,6 +3781,160 @@ function toolTileItemAndTarget(
 export const EXECUTION_REQUEST_ARGUMENT_CEILING = 8;
 
 /**
+ * The deadline window this validator admits for each action: the Mod's own declaration, one entry per action.
+ *
+ * The ceiling this replaces was chosen by NAME, inside the `deadlineMs` row:
+ *
+ *   `action === "navigate_to_destination" || action === "sleep" ? 600_000 : 60_000`
+ *
+ * Every other action was therefore capped at 60 s, while `game-tools.ts` sizes the same request's deadline from the
+ * watchdog the Mod PUBLISHES for that action (`descriptor.watchdogMs`, clamped to the bridge's 600 s maximum). Two
+ * Host files disagreeing about one number, at the point of refusal, with neither side named: an action whose Mod window
+ * is longer than a minute but whose id is not one of those two literals was refused `invalid_deadline` before the game
+ * ever saw the request, and the only place that could have said why was a `||` between two strings.
+ *
+ * The owner is the Mod. `FarmhandActionDeadlineAdmission.WindowMs`
+ * (`integrations/stardew/src/Core/Policy/FarmhandActionDeadlineWindow.cs`) bounds a request with that action's own
+ * `WatchdogMs`, and `action-deadline-windows.v1.json` publishes the result of that rule for every registered action.
+ * This table is that declaration on the Host side, in the artifact's own order so the two can be read side by side, and
+ * `execution-request-deadline-window.test.ts` holds it equal to the artifact in BOTH directions: a window the Mod
+ * lengthens without this table following is red there and named, which is what the name list it replaced could never
+ * be - it would have kept answering 60 s, silently, forever.
+ *
+ * WHY AN ACTION THIS TABLE DOES NOT CARRY IS REFUSED RATHER THAN GIVEN A DEFAULT. The Mod has such a number
+ * (`FarmhandActionDeadlineAdmission.UnpublishedActionWindowMs`, the ordinary 60 s) and it is the window of an action
+ * that publishes NO watchdog. An action the artifact does not name is not the same thing: the two entries below that are
+ * not 60 s are exactly the actions whose declared window is longer than the ordinary one, so inheriting 60 s here is the
+ * silent cap this table exists to remove. An id the declaration does not carry gets no window
+ * (`declaredDeadlineWindow` answers `null`) and the `deadlineMs` row refuses it `invalid_deadline`. That can only be a
+ * Host-side shortfall: `satisfies Record<ExecutionRequest["action"], number>` makes a missing ACTION a compile error,
+ * and the test above makes a missing WINDOW red.
+ *
+ * The three actions the artifact carries and this union does not (`inspect_world_map`, `find_destination`,
+ * `observe_scene`) are read-only: they publish no `execution_request`, so they have no dispatch deadline to bound.
+ */
+export const EXECUTION_REQUEST_DEADLINE_WINDOWS: Readonly<Record<ExecutionRequest["action"], number>> = Object.freeze({
+  move_to_tile: 60_000,
+  equip_tool: 60_000,
+  travel: 60_000,
+  ride_minecart: 60_000,
+  ride_bus: 60_000,
+  select_mine_elevator_floor: 60_000,
+  use_raft: 60_000,
+  mount_transport: 60_000,
+  enter_mine: 60_000,
+  use_mine_ladder: 60_000,
+  enter_exit: 60_000,
+  till_soil: 60_000,
+  pickup_forage: 60_000,
+  pickup_item: 60_000,
+  water_crop: 60_000,
+  plant_seed: 60_000,
+  fertilize_tile: 60_000,
+  machine_inspect: 60_000,
+  machine_load: 60_000,
+  machine_collect_output: 60_000,
+  collect_animal_product: 60_000,
+  feed_animal: 60_000,
+  use_item: 60_000,
+  harvest_crop: 60_000,
+  place_wood_fence: 60_000,
+  place_crab_pot: 60_000,
+  bait_crab_pot: 60_000,
+  place_owned_object: 60_000,
+  remove_placed_item: 60_000,
+  move_placed_furniture: 60_000,
+  break_container: 60_000,
+  rotate_furniture: 60_000,
+  remove_fence: 60_000,
+  put_item_in_fish_tank: 60_000,
+  place_item_on_pedestal: 60_000,
+  chop_tree: 60_000,
+  break_rock: 60_000,
+  clear_hoedirt: 60_000,
+  dig_artifact_spot: 60_000,
+  refill_watering_can: 60_000,
+  navigate_to_destination: 600_000,
+  clear_debris: 60_000,
+  break_resource_clump: 60_000,
+  fish_here: 60_000,
+  npc_relationship: 60_000,
+  pet_animal: 60_000,
+  pet_farm_animal: 60_000,
+  water_pet_bowl: 60_000,
+  water_slime_hutch_trough: 60_000,
+  interact_npc_with_item: 60_000,
+  talk_to_npc: 60_000,
+  express_emote: 60_000,
+  face_direction: 60_000,
+  chest_store: 60_000,
+  chest_retrieve: 60_000,
+  chop_stump: 60_000,
+  plant_sapling: 60_000,
+  cut_weeds: 60_000,
+  cut_grass: 60_000,
+  clear_cask: 60_000,
+  dress_mannequin: 60_000,
+  set_sign_display: 60_000,
+  deposit_silo_hay: 60_000,
+  toggle_tool_light: 60_000,
+  withdraw_silo_hay: 60_000,
+  use_obelisk: 60_000,
+  toggle_animal_door: 60_000,
+  use_warp_item: 60_000,
+  pan_ore: 60_000,
+  claim_mail_attachment: 60_000,
+  load_building_chest: 60_000,
+  collect_building_chest_output: 60_000,
+  scythe_crop: 60_000,
+  sweep_scythe: 60_000,
+  harvest_bush: 60_000,
+  harvest_fruit_tree: 60_000,
+  shake_tree: 60_000,
+  take_pedestal_item: 60_000,
+  toggle_fence_gate: 60_000,
+  craft_item: 60_000,
+  cook_recipe: 60_000,
+  collect_crab_pot_output: 60_000,
+  shop_purchase: 60_000,
+  ship_item: 60_000,
+  equip_wearable: 60_000,
+  unequip_wearable: 60_000,
+  dismount_transport: 60_000,
+  dismiss_modal: 60_000,
+  answer_dialogue: 60_000,
+  respond_level_up: 60_000,
+  sleep: 600_000,
+  send_multiplayer_chat: 60_000,
+  color_placed_object: 60_000,
+  clear_fish_pond: 60_000,
+  build_farm_building: 60_000,
+  accept_daily_quest: 60_000,
+  accept_special_order: 60_000,
+  claim_museum_reward: 60_000,
+  name_entity: 60_000,
+  redeem_prize_ticket: 60_000,
+  tailor_clothing: 60_000,
+  dye_clothing_with_item: 60_000,
+  open_geode: 60_000,
+});
+
+/**
+ * The window this declaration carries for one action, or `null` when it carries none.
+ *
+ * `null` is not a number and must never be read as one: the `deadlineMs` row refuses a request it cannot bound, so a
+ * declaration that lost an entry fails closed on the first dispatch instead of admitting it under yesterday's 60 s.
+ * `windows` is a parameter rather than the module constant because the reading carries the declaration it is judged
+ * against - `executionRequestReading` builds every reading with this table, and the falsifier beside this row's test
+ * states a 300 s window and an absent one to prove the value is READ rather than known.
+ */
+export function declaredDeadlineWindow(windows: Readonly<Record<string, number>>, action: unknown): number | null {
+  if (typeof action !== "string" || !Object.hasOwn(windows, action)) return null;
+  const window = windows[action];
+  return typeof window === "number" && Number.isFinite(window) && window > 0 ? window : null;
+}
+
+/**
  * The fields of the execution-request payload the Host validates, in the order it decides them.
  *
  * Shape plus code per row, and the order IS the contract: a caller is told the FIRST fact that stopped it, so moving a
@@ -3836,15 +4000,17 @@ export const EXECUTION_REQUEST_REQUIREMENTS: readonly ExecutionRequestRequiremen
   ),
   requirement(
     "deadlineMs",
-    "a finite number at or after now and no more than the action's own ceiling beyond it",
+    "a finite number at or after now, no later than the deadline window the Mod declares for this action",
     "invalid_deadline",
     (reading) => {
       const { deadlineMs, action } = reading.request;
       if (typeof deadlineMs !== "number" || !Number.isFinite(deadlineMs) || deadlineMs < reading.nowMs) return false;
-      // A co-op night waits on other players' native ready state, a host save and a new-day transition, so it shares
-      // the navigation ceiling rather than the ordinary one-minute action ceiling.
-      const ceiling = action === "navigate_to_destination" || action === "sleep" ? 600_000 : 60_000;
-      return deadlineMs <= reading.nowMs + ceiling;
+      // The ceiling is the window the Mod DECLARES for this action (`EXECUTION_REQUEST_DEADLINE_WINDOWS`), not a name
+      // list of the two ids someone remembered: a night and a walk wait on native state and declare ten minutes, and an
+      // action that declares three has to be admitted to three. An id the declaration does not carry has no window and
+      // is refused rather than capped - see the declaration for why 60 s is not a safe default here.
+      const window = declaredDeadlineWindow(reading.deadlineWindows, action);
+      return window !== null && deadlineMs <= reading.nowMs + window;
     },
     (reading) => ({ ...reading, request: { ...reading.request, deadlineMs: reading.nowMs - 1 } }),
   ),
@@ -4464,9 +4630,14 @@ export function firstExecutionRequestRefusal(
  * long; the ladder is now `EXECUTION_REQUEST_REQUIREMENTS` and `EXECUTION_REQUEST_ARGUMENT_RULES` above, and the answer
  * to "which field did it refuse" is a row's `field` rather than a branch a reader has to count.
  */
-export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
+export function validateExecutionRequest(
+  value: unknown,
+  snapshot: Snapshot,
+  nowMs = Date.now(),
+  deadlineWindows: Readonly<Record<string, number>> = EXECUTION_REQUEST_DEADLINE_WINDOWS,
+): string | null {
   if (!isRecord(value)) return "invalid_request";
-  const reading = executionRequestReading(value, snapshot, nowMs);
+  const reading = executionRequestReading(value, snapshot, nowMs, deadlineWindows);
   const envelopeVerdict = firstExecutionRequestRefusal(EXECUTION_REQUEST_REQUIREMENTS, reading);
   if (envelopeVerdict !== null) return envelopeVerdict;
   return firstExecutionRequestRefusal(argumentRulesFor(reading.request.action), reading);
