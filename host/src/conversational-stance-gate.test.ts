@@ -3,8 +3,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 import { GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
+import { FACT_PRODUCERS } from "./event-pump.js";
 import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
@@ -60,6 +62,15 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  * string literals, not rule objects, so they are scanned as text with the detectors the old gate used
  * (`conversational_stance_outside_the_preset:<file>:<line>`). The measured defect there was the plan tool's
  * "so end your turn and speak to the player".
+ * </p>
+ *
+ * <p>
+ * THE FACT BLOCKS ARE THE THIRD, and the one that outlived the other two fixes. A fact block is neither a rule nor a
+ * tool description, so a sentence in one was read by nothing: `companion-arrival-fact.ts` said the two things only the
+ * Host knows and then told her to speak (see the population's own docblock below). The population is derived from the
+ * pump's declared producers and the modules that spell a fact's text, and the detector is this file's own
+ * `speech_mandated` - widened here to read a speech act at the head of a clause in either language, because the
+ * sentence that shipped was Chinese and imperative.
  * </p>
  */
 
@@ -317,15 +328,68 @@ function sentenceUnits(segments: readonly Readonly<{ text: string; line: number 
   return units;
 }
 
-/** The three mandate phrasings the tool descriptions were measured with, plus the two counts. */
+/**
+ * WHERE A COMMAND STARTS. A speech act is being ASKED of her when it heads a clause - after a sentence end, a comma,
+ * a colon, or the start of the string - and reported when it sits inside one. That position, not the word, is what
+ * separates "，说你想说的第一句话" (a command) from "玩家后来开口说话" (a report).
+ */
+const CLAUSE_START = String.raw`(?:^|[。！？：；，、:\n])`;
+
+/**
+ * The adverbs a Mandarin command may put before its verb, and nothing else: 「不要只说」 is a ban on a shape, not a
+ * command to speak, and a lead set this small is what keeps the two apart without a phrase list of bans.
+ */
+const MANDARIN_LEAD = String.raw`(?:请|就|先|再|也|还是|快|立刻|马上|然后|接着|干脆)?\s*`;
+
+const ENGLISH_LEAD = String.raw`(?:please\s+|just\s+|then\s+|and\s+|so\s+)?`;
+
+/**
+ * The verbs that are HER speaking, in the imperative.
+ *
+ * `talk` is deliberately absent: "Talk to a villager" is the game's own verb for an action (`game-tools.ts`), not an
+ * instruction to her about speaking, and a detector that read it as one would red the tool-description population on
+ * a phrase that is doing its job.
+ */
+const IMPERATIVE_SPEECH_EN = String.raw`say|speak|tell|reply|announce|narrate`;
+const IMPERATIVE_SPEECH_ZH = String.raw`说|说出|说说|讲|讲讲|告诉|开口|聊|聊聊|回应|回答|喊`;
+
+/**
+ * THE ONE SPEECH-MANDATE DETECTOR, read over both text populations: the tool descriptions the model is handed, and
+ * every string a fact producer contributes.
+ *
+ * <p>
+ * The last two clauses are what this unit added, and why: the first four read phrasings in ENGLISH and in the third
+ * person ("you must say", "the player hears"). The defect that survived three fixes of this class was Chinese and
+ * imperative - 「用你自己一贯开口的语气，说你想说的第一句话」 - so the shape it belongs to had to become "a speech act at the
+ * HEAD of a clause", in either language, whether it arrives as a command or as a description of the surface that
+ * leaves silence no room ("your partner sees your bubble"). Each clause is read over both populations below, and the
+ * falsifier in this file proves them on the verbatim sentence that shipped and on sentences nobody has written.
+ * </p>
+ */
+const SPEECH_MANDATED = Object.freeze({
+  id: "speech_mandated",
+  protects:
+    "an instruction that she must speak ('end your turn and speak to the player', 'say the first thing you want to say'), " +
+    "in any language, is the persona's sentence",
+  pattern: new RegExp(
+    [
+      String.raw`\bend (?:your|the) turn\b\s*(?:[,;]\s*)?(?:and|then)\s+(?:you\s+)?(?:must\s+|should\s+|always\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+      String.raw`\b(?:make sure|be sure|remember|do not forget)\s+(?:to\s+|you\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+      String.raw`\bspeak to (?:the|your) player\b(?!\s+(?:when|whenever|if|unless|once|only|as|while|before|after|until)\b)`,
+      String.raw`\b(?:you|she)\s+(?:must|should|have to|has to|need to|needs to)\s+(?:always\s+|also\s+)?(?:speak|say|talk|tell|reply|answer)\b`,
+      // A description of the surface counts, because it lands as an obligation: "your partner sees your bubble" has no
+      // other reading than "therefore say something for them to see".
+      String.raw`\b(?:your|the) (?:player|partner)\s+(?:hears|gets|receives|is told|sees|reads)\b[^.!?]{0,40}\b(?:bubble|words?|line|voice|reply)\b`,
+      `${CLAUSE_START}\\s*(?:(?:in|with)\\s[^,:：\\n]{0,40}(?:voice|tone)[^,:：\\n]{0,10}[:：,]\\s*)?${ENGLISH_LEAD}(?:${IMPERATIVE_SPEECH_EN})\\b`,
+      `${CLAUSE_START}\\s*(?:用[^，。：\\n]{0,30}(?:语气|口吻)[，：]\\s*)?${MANDARIN_LEAD}(?:${IMPERATIVE_SPEECH_ZH})`,
+    ].join("|"),
+    "iu",
+  ),
+});
+
+/** The shape a tool description was measured with besides the mandate, plus the two counts. */
 const TOOL_DESCRIPTION_SHAPES = Object.freeze([
-  Object.freeze({
-    id: "speech_mandated",
-    protects:
-      "an instruction in a tool description that she must speak ('end your turn and speak to the player') is the persona's",
-    pattern:
-      /\bend (?:your|the) turn\b\s*(?:[,;]\s*)?(?:and|then)\s+(?:you\s+)?(?:must\s+|should\s+|always\s+)?(?:speak|say|talk|tell|reply|answer)\b|\b(?:make sure|be sure|remember|do not forget)\s+(?:to\s+|you\s+)?(?:speak|say|talk|tell|reply|answer)\b|\bspeak to (?:the|your) player\b(?!\s+(?:when|whenever|if|unless|once|only|as|while|before|after|until)\b)|\b(?:you|she)\s+(?:must|should|have to|has to|need to|needs to)\s+(?:always\s+|also\s+)?(?:speak|say|talk|tell|reply|answer)\b/iu,
-  }),
+  SPEECH_MANDATED,
   Object.freeze({
     id: "speech_per_reply",
     protects: "a quota per reply in a tool description is how much she says",
@@ -357,6 +421,261 @@ function readToolDescriptions(
     }
   }
   return Object.freeze(findings);
+  return Object.freeze(findings);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The third population: every string a fact producer contributes.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * A STRING A FACT PRODUCER CONTRIBUTES IS THE PERSONA'S TOO, AND THIS IS THE POPULATION THAT SAID SO.
+ *
+ * <p>
+ * THE DEFECT. `companion-arrival-fact.ts` minted the once-per-session "you have arrived, and the clock has ticked"
+ * fact and then went on to instruct her: 「用你自己一贯开口的语气，说你想说的第一句话」 / "Open this morning in the voice you
+ * always open with: say the first thing you want to say". The block's own account says why it looked reasonable - "it
+ * states the two things only the Host knows, and then hands the turn to her" - and that is exactly the seam: stating
+ * the fact is the fact's job, and handing her the turn became telling her to speak. Two earlier units cleared this rule
+ * out of the conduct floor and out of the tool descriptions, and neither looked here, because a fact block is not a
+ * rule and not a tool description. `design/input-authority.md` § three names the class: a behavioural command in the
+ * context-assembly writer is a defect, "including when it arrives as a description of a fact".
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS DERIVED FROM THE PUMP, NOT LISTED HERE. `FACT_PRODUCER` (`event-pump.ts`) is the declared set of
+ * everything that can put a fact on the pump, and `event-pump.fact-producer.test.ts` is the gate that keeps it equal to
+ * the call sites. This reader starts from those call sites and widens by one idea: the text a fact carries is authored
+ * where the fact is BUILT, not necessarily where it is enqueued. So the population is
+ * </p>
+ *
+ * <ul>
+ *  <li>every production module that calls a fact door (`enqueueFact`, `acceptHostMintedFact`, `announceHostFact`);</li>
+ *  <li>every production module that spells a `contextProjection` property - the one field `fact-brief.ts` reads a
+ *    fact's own prose out of (`fact.contextProjection?.text`);</li>
+ *  <li>and, to a fixed point, every production module that a `contextProjection` value resolves to, because a
+ *    projection may be composed elsewhere (`contextProjection: projection` in
+ *    `stardew-integration-launcher-body-program.internal.ts` names `projectGameSnapshotContext` in
+ *    `snapshot-projection.ts`).</li>
+ * </ul>
+ *
+ * <p>
+ * What the population is NOT, and why: `identity-profile.ts`, `companion-prompt-assembly.ts` and the preset JSON are the
+ * persona layer, which OWNS every sentence about when she speaks - this file's own `the persona still states when and
+ * how much she speaks` reads them in the other direction. A mandate there is the rule working; a mandate here is the
+ * rule leaking into a block of facts.
+ * </p>
+ *
+ * <p>
+ * THE UNIT IS ONE LITERAL, not one joined sentence: a fact module's literals are keys, identifiers and prose side by
+ * side, and joining them into sentences (as the tool-description reader does) reports the line the joined blob started
+ * on rather than the line the sentence is on. Each literal is one string the module hands the model, and it carries
+ * its own line.
+ * </p>
+ *
+ * <p>
+ * THE CENSUS IT PRINTS, and what each number measures, because "0 violations" without a population says nothing. Read
+ * 2026-11-22 BEFORE the fix: 11 declared producers · 3 modules spell a fact's own text (`companion-arrival-fact.ts`,
+ * `native-notice-fact.ts`, and `host-service.ts`'s voice-interruption note) plus one that composes the snapshot's
+ * (`snapshot-projection.ts`, reached through `stardew-integration-launcher-body-program.internal.ts`'s
+ * `contextProjection: projection`) · 6 modules read · 549 literals, 64 of them prose · of the prose, 60 facts, 2 form
+ * sentences and 2 speech mandates - all four of those in `companion-arrival-fact.ts`. Read the same way AFTER: 60 prose,
+ * 60 facts, 0 form, 0 mandates.
+ * </p>
+ *
+ * <p>
+ * THE OTHER SEVEN PRODUCERS CONTRIBUTE NO PROSE AT ALL, which is why the counts above are as small as they are, and the
+ * reading is theirs to state: `takeStallFact`, `takeWorldStateStaleFact` and `takeNarrationWithoutWorkFact` carry a
+ * payload of keys (the stall fact's own docblock: "No prose: the pump holds no presentation locale"),
+ * `#worldStateRefreshRefusedFact` carries a reason code, `program-settlement-digest.ts` carries counts and node rows,
+ * `transportLifecycle` carries the event, and the snapshot's text is the projection module's. A producer that starts
+ * writing prose joins this population by speaking a `contextProjection`, and the falsifier below shows that a planted
+ * module does.
+ * </p>
+ */
+
+/** A call to one of the three doors a fact enters the pump by. The set is `event-pump.fact-producer.test.ts`'s. */
+const FACT_DOOR_CALL = /\.(?:enqueueFact|acceptHostMintedFact|announceHostFact)\(/u;
+
+/** A production module's exported names, so a projection value can be followed to the module that composes it. */
+const EXPORTED_SYMBOL = /^export (?:async )?(?:function|const|class) ([A-Za-z_$][\w$]*)/gmu;
+
+/**
+ * What a module does with a fact's `contextProjection`, read from the syntax rather than from the spelling.
+ *
+ * <p>
+ * The distinction cannot be made by regex: `contextProjection: projection` in an object literal and
+ * `{ contextProjection: _contextProjection, ...rest }` in a destructuring are the same eleven characters. Read through
+ * the compiler, only the PROPERTY ASSIGNMENT is a module handing the model text - and only an object literal is a
+ * module spelling it. A destructuring is how `event-pump.ts` strips the projection off a fact, and a reader that counted
+ * it as authorship would report a producer writing prose it never wrote.
+ * </p>
+ */
+function projectionReading(text: string): Readonly<{ spells: boolean; composes: readonly string[] }> {
+  const source = ts.createSourceFile("fact-text.ts", text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
+  const locals = new Map<string, string>();
+  const projections: ts.PropertyAssignment[] = [];
+  const walk = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined)
+      locals.set(node.name.text, node.initializer.getText(source));
+    if (ts.isPropertyAssignment(node) && node.name.getText(source) === "contextProjection") projections.push(node);
+    ts.forEachChild(node, walk);
+  };
+  walk(source);
+  let spells = false;
+  const composes = new Set<string>();
+  for (const projection of projections) {
+    if (ts.isObjectLiteralExpression(projection.initializer)) {
+      spells = true;
+      continue;
+    }
+    // `Object.freeze({...})` and any other in-line composition are this module's own text too.
+    if (projection.initializer.getText(source).includes("{")) {
+      spells = true;
+      continue;
+    }
+    const value = projection.initializer.getText(source);
+    for (const match of value.matchAll(/\b([A-Za-z_$][\w$]*)\b/gu)) {
+      const name = match[1] ?? "";
+      composes.add(name);
+      // One hop through a local `const projection = compose(...)`: the composer may live in another module.
+      for (const local of (locals.get(name) ?? "").matchAll(/\b([A-Za-z_$][\w$]*)\b/gu)) composes.add(local[1] ?? "");
+    }
+  }
+  return Object.freeze({ spells, composes: Object.freeze([...composes]) });
+}
+
+/**
+ * A READING AID, NOT A GATE: a sentence about how the delivery is SHAPED rather than about what happened. It is counted
+ * so the census shows which sentences belong to the floor's CHANNEL or to the preset instead of to a fact block
+ * (`design/input-authority.md` § three), and nothing asserts on the number - a phrase list is exactly what this gate
+ * refuses to be.
+ */
+const FORM_SHAPES = /\bstatus report\b|\bmarkdown\b|\bbubble\b|播报|报进度|报备|念成|字数|长度|气泡/iu;
+
+/** A string with a word in it, rather than a key or an identifier: what a reader would call prose. */
+const PROSE = /[\u4e00-\u9fff]|\s/u;
+
+/** The production tree every population above is read from. */
+const HOST_SOURCE_DIRECTORY = "host/src";
+
+/** Every production source under `host/src`, keyed by its repository-relative path. */
+function productionSourceTexts(): ReadonlyMap<string, string> {
+  const texts = new Map<string, string>();
+  const root = join(REPOSITORY_ROOT, "host", "src");
+  for (const entry of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+    const relative = entry.replaceAll("\\", "/");
+    if (!relative.endsWith(".ts")) continue;
+    if (relative.endsWith(".test.ts") || relative.endsWith(".test-support.ts")) continue;
+    if (relative.includes("test-fixtures")) continue;
+    texts.set(`${HOST_SOURCE_DIRECTORY}/${relative}`, readFileSync(join(root, entry), "utf8"));
+  }
+  return texts;
+}
+
+type FactTextReading = Readonly<{
+  /** The modules read, and why each one is in the population. */
+  population: readonly Readonly<{ file: string; roles: readonly string[] }>[];
+  /** The modules that spell a fact's own text: the number the census reports as `contribute text`. */
+  composed: readonly string[];
+  strings: number;
+  prose: number;
+  fact: number;
+  form: number;
+  mandates: readonly ToolDescriptionFinding[];
+  blocked: string | null;
+}>;
+
+/**
+ * Everything a fact producer contributes, read over the derived population. `sources` is injectable so the falsifier
+ * below can hand it a tree that carries the defect.
+ */
+function readFactText(sources: ReadonlyMap<string, string> = productionSourceTexts()): FactTextReading {
+  const exportsByName = new Map<string, string[]>();
+  for (const [file, text] of sources)
+    for (const match of text.matchAll(EXPORTED_SYMBOL)) {
+      const owners = exportsByName.get(match[1] ?? "") ?? [];
+      owners.push(file);
+      exportsByName.set(match[1] ?? "", owners);
+    }
+
+  const roles = new Map<string, Set<string>>();
+  const composedBy = new Map<string, readonly string[]>();
+  const add = (file: string, role: string): void => {
+    const held = roles.get(file) ?? new Set<string>();
+    held.add(role);
+    roles.set(file, held);
+  };
+  for (const [file, text] of sources) {
+    if (FACT_DOOR_CALL.test(text)) add(file, "hands a fact to the pump");
+    const projection = projectionReading(text);
+    if (projection.spells) add(file, "spells a fact's own text");
+    if (projection.composes.length > 0) add(file, "carries a projection composed elsewhere");
+    composedBy.set(file, projection.composes);
+  }
+  // A projection composed elsewhere names the module that spells it; follow those to a fixed point.
+  for (let round = 0; round < 4; round += 1) {
+    const known = [...roles.keys()];
+    for (const file of known)
+      for (const symbol of composedBy.get(file) ?? [])
+        for (const owner of exportsByName.get(symbol) ?? [])
+          if (!roles.has(owner)) add(owner, `composes ${file}'s projection`);
+    if (roles.size === known.length) break;
+  }
+
+  const population = [...roles.keys()]
+    .sort()
+    .map((file) => Object.freeze({ file, roles: Object.freeze([...(roles.get(file) ?? [])].sort()) }));
+  const composed = population
+    .filter((entry) => entry.roles.includes("spells a fact's own text"))
+    .map((entry) => entry.file);
+  if (population.length === 0)
+    return { population, composed, strings: 0, prose: 0, fact: 0, form: 0, mandates: [], blocked: "zero_population" };
+  if (composed.length === 0)
+    return {
+      population,
+      composed,
+      strings: 0,
+      prose: 0,
+      fact: 0,
+      form: 0,
+      mandates: [],
+      blocked: "no_module_spells_a_facts_text",
+    };
+
+  const mandates: ToolDescriptionFinding[] = [];
+  let strings = 0;
+  let proseCount = 0;
+  let formCount = 0;
+  for (const entry of population) {
+    for (const literal of literalSegments(sources.get(entry.file) ?? "")) {
+      strings += 1;
+      // The assertion runs over every literal; the census counts prose, so a key is not reported as a fact.
+      const isProse = PROSE.test(literal.text);
+      if (isProse) proseCount += 1;
+      if (!SPEECH_MANDATED.pattern.test(literal.text)) {
+        if (isProse && FORM_SHAPES.test(literal.text)) formCount += 1;
+        continue;
+      }
+      mandates.push(
+        Object.freeze({
+          code: `fact_block_states_when_she_speaks:${entry.file}:${String(literal.line)}:${SPEECH_MANDATED.id}`,
+          sentence: literal.text,
+          protects: SPEECH_MANDATED.protects,
+        }),
+      );
+    }
+  }
+  return {
+    population,
+    composed,
+    strings,
+    prose: proseCount,
+    fact: proseCount - formCount - mandates.length,
+    form: formCount,
+    mandates: Object.freeze(mandates),
+    blocked: null,
+  };
 }
 
 test("no rule in the Game floor states when, whether or how much she speaks", () => {
@@ -495,6 +814,141 @@ test("a tool description that mandates or counts speech is a finding", () => {
     findings.map((finding) => finding.code),
     [],
     "a tool description may say what the call does; when or how much she speaks is the persona's",
+  );
+});
+
+/**
+ * The third population: every string a fact producer contributes.
+ *
+ * The arrival fact is what made this reader exist, and the property is the one the first two populations hold: a block
+ * of facts states facts, and a sentence that makes speaking the consequence of the event is the persona's sentence.
+ */
+test("no string a fact producer contributes tells her to speak", () => {
+  const reading = readFactText();
+  process.stdout.write(
+    `\nfact_block_stance_gate: producers examined ${String(FACT_PRODUCERS.length)} (FACT_PRODUCERS) · contribute text ${String(
+      reading.composed.length,
+    )} · modules read ${String(reading.population.length)} · strings ${String(reading.strings)} · prose ${String(
+      reading.prose,
+    )} · fact ${String(reading.fact)} · form ${String(reading.form)} · speech mandate ${String(
+      reading.mandates.length,
+    )}\n${reading.population.map((entry) => `  ${entry.file} [${entry.roles.join("+")}]`).join("\n")}\n`,
+  );
+  assert.equal(
+    reading.blocked,
+    null,
+    `blocked: the fact-text population could not be read (${String(reading.blocked)}), so "no mandate in a fact block" is a ` +
+      "statement about nothing",
+  );
+  assert.deepEqual(
+    reading.mandates.map((finding) => finding.code),
+    [],
+    "a fact block states the fact. A sentence that makes speaking the consequence of the event - as a command, in either " +
+      "language, or as a description of the surface that leaves silence no room - belongs to the preset or to the floor's " +
+      "CHANNEL, not here: delete it there and state it there",
+  );
+});
+
+/**
+ * THE FALSIFIER, both directions, on one tree.
+ *
+ * A reader that only agrees with itself is decoration, so the same reader is handed the paragraph that shipped, a
+ * sentence nobody has written yet, and the sentences a fact block is supposed to carry. The shipped paragraph is
+ * injected into the real tree rather than described, because a population derived from the tree could otherwise shrink
+ * quietly and stay green.
+ */
+test("the fact-text reader names the paragraph that shipped, and passes the sentences a fact may state", () => {
+  const sources = new Map(productionSourceTexts());
+  sources.set(
+    "host/src/planted-fact.ts",
+    [
+      "export const PLANTED = Object.freeze({",
+      "  contextProjection: Object.freeze({",
+      '    text: "用你自己一贯开口的语气，说你想说的第一句话：可以是你看到的、你在意的，或者你想去做的。",',
+      "  }),",
+      "});",
+      "pump.enqueueFact(PLANTED, FACT_PRODUCER.companionArrival);",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    readFactText(sources).mandates.map((finding) => finding.code),
+    ["fact_block_states_when_she_speaks:host/src/planted-fact.ts:3:speech_mandated"],
+    "the shipped sentence, verbatim, in the language and the position it shipped in, must be named with its line",
+  );
+
+  const clean = new Map([
+    [
+      "host/src/planted-clean.ts",
+      [
+        "export const FACTS = Object.freeze({",
+        "  contextProjection: Object.freeze({",
+        '    text: "你刚到这座农场，第一次真的站在这里；世界已经走起来了：现在是春季 1 日 06:00，晴。",',
+        "  }),",
+        "});",
+        "pump.enqueueFact(FACTS, FACT_PRODUCER.companionArrival);",
+      ].join("\n"),
+    ],
+    [
+      "host/src/planted-others.ts",
+      [
+        "export const NOTICE = 'The game\'s own notice: It\'s getting late...';",
+        "export const VOICE = '上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。';",
+        "export const DISPATCHED = '上面这些只是派出去了：还没结算，就等于一步都还没做成。';",
+        "export const STALE = '（world_state_stale:5;352;900000（这块世界观察停在 5 轮之前，世界已经不是这样了；先看一眼再动手））';",
+        "pump.enqueueFact(NOTICE, FACT_PRODUCER.nativeNotice);",
+      ].join("\n"),
+    ],
+  ]);
+  const passing = readFactText(clean);
+  assert.equal(passing.blocked, null);
+  assert.deepEqual(
+    passing.mandates.map((finding) => finding.sentence),
+    [],
+    "the fact itself, the game's own notice, the cut-off voice note, dispatched-is-not-done and the stale parenthetical " +
+      "are statements: a reader that reds on them would delete the facts it exists to protect",
+  );
+  assert.ok(passing.prose > 0, "the clean tree must actually carry prose, or its silence proves nothing");
+});
+
+/** A sentence nobody has written yet: the class, not the instance the gate was built from. */
+test("the mandated shapes are read in either language, and the surface description counts", () => {
+  const mandated = [
+    "your partner sees your bubble, so keep it short",
+    "Speak to the player before you move.",
+    "Speak again once the tools are done.",
+    "你就站在这里，说一句话吧。",
+    "用你一贯的口吻，讲两句。",
+    "End your turn and speak to the player.",
+  ];
+  for (const sentence of mandated)
+    assert.ok(
+      SPEECH_MANDATED.pattern.test(sentence),
+      `a mandate this gate cannot read is a mandate it will let through: ${sentence}`,
+    );
+  const facts = [
+    "现在是春季 1 日 06:00，晴。",
+    "The clock has ticked: it is 06:00 and clear.",
+    "她说完了，然后走开了。",
+    "看了一会儿，又把锄头放下了。",
+  ];
+  for (const sentence of facts)
+    assert.equal(
+      SPEECH_MANDATED.pattern.test(sentence),
+      false,
+      `a fact stated in the past tense is not a command to speak: ${sentence}`,
+    );
+});
+
+/** Zero population and a doorless tree block the gate: neither may pass on nothing. */
+test("the fact-text reader refuses to pass on a population that says nothing", () => {
+  assert.equal(readFactText(new Map()).blocked, "zero_population");
+  const doorsOnly = readFactText(
+    new Map([["host/src/planted-door.ts", "pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);\n"]]),
+  );
+  assert.equal(
+    doorsOnly.blocked,
+    "no_module_spells_a_facts_text",
+    "a tree whose facts carry no text of their own is a derivation that broke, not a population with nothing to say",
   );
 });
 
