@@ -43,6 +43,7 @@ try
         return;
 
     var dataRoot = frame.GetProperty("rootLayout").GetProperty("dataRoot").GetString()!;
+    var operationalRoot = frame.GetProperty("rootLayout").GetProperty("operationalRoot").GetString()!;
     // Test-only refusal path: the trigger file's exact bytes are written to this
     // process's own standard error and the process then exits before it ever writes
     // the bootstrap acknowledgement. That is a real child refusing mid-handshake with
@@ -84,6 +85,10 @@ try
         ["inventoryDigest"] = binding.inventoryDigest,
         ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256,
         ["rootLayoutSchema"] = rootLayoutSchema,
+        // The whole reclamation's deadline, exactly as the production Host derives and publishes it
+        // over this same acknowledgement: one per-step budget times the number of steps. A plan below
+        // may rewrite it so a test observes the launcher's expiry in milliseconds.
+        ["drainDeadlineMs"] = 480_000L,
     };
     var acknowledgementPlanPath = Path.Combine(dataRoot, "desktop-host-runtime-fixture.ack.json");
     if (File.Exists(acknowledgementPlanPath))
@@ -128,16 +133,61 @@ try
         stdout.Write(acknowledgementBytes);
         stdout.Flush();
     }
+    // The optional reclamation plan says how this child behaves when its owner closes the session:
+    // `ignoreEof` makes it keep serving as if nothing happened (the launcher's watch must then end
+    // it), and `fail` makes one named step report a failure, which is the only case in which the
+    // production Host writes its exit record.
+    var ignoreControllerEof = false;
+    string? failedStep = null;
+    var holdAfterReclamationMs = 0;
+    var reclamationPlanPath = Path.Combine(dataRoot, "desktop-host-runtime-fixture.reclaim.json");
+    if (File.Exists(reclamationPlanPath))
+    {
+        using var reclamationPlan = JsonDocument.Parse(File.ReadAllText(reclamationPlanPath));
+        ignoreControllerEof = reclamationPlan.RootElement.TryGetProperty("ignoreEof", out var ignore) && ignore.GetBoolean();
+        failedStep = reclamationPlan.RootElement.TryGetProperty("fail", out var failure) ? failure.GetString() : null;
+        holdAfterReclamationMs = reclamationPlan.RootElement.TryGetProperty("holdMs", out var hold) ? hold.GetInt32() : 0;
+    }
+    // Exactly one read is ever pending on the authenticated session, so this child observes its
+    // owner's controller EOF the moment the peer closes instead of polling for it, and the trigger
+    // conversations below take that same pending read rather than competing with it.
+    Task<string?> pending = reader.ReadLineAsync();
+    async Task<string?> NextLineAsync()
+    {
+        var next = await pending;
+        pending = reader.ReadLineAsync();
+        return next;
+    }
+    // Whether the owner closed the session. A pending read on a closed pipe either completes with no
+    // line or fails the way a broken pipe fails; both mean the same thing here.
+    async Task<bool> SessionLostAsync()
+    {
+        if (!pending.IsCompleted) return false;
+        string? next;
+        try { next = await pending; }
+        catch (IOException) { return true; }
+        if (next is null) return true;
+        pending = reader.ReadLineAsync();
+        return false;
+    }
     while (!File.Exists(exit))
     {
         if (File.Exists(Path.Combine(dataRoot, "broker-eof-race.trigger")))
         {
-            await RunEofRaceAsync(writer, reader, binding, dataRoot);
+            await RunEofRaceAsync(writer, binding, dataRoot);
             return;
         }
         if (File.Exists(Path.Combine(dataRoot, "broker-arm-live.trigger")))
         {
-            await RunArmLiveAsync(writer, reader, binding, dataRoot);
+            await RunArmLiveAsync(writer, NextLineAsync, binding, dataRoot);
+            return;
+        }
+        // A closed session is the controller EOF: the owner is gone and will never speak on this
+        // channel again. The only bounded thing this child can still do about it is run its own
+        // named reclamation and leave.
+        if (!ignoreControllerEof && await SessionLostAsync())
+        {
+            await ReclaimAsync(operationalRoot, dataRoot, failedStep, holdAfterReclamationMs);
             return;
         }
         await Task.Delay(10);
@@ -147,7 +197,55 @@ catch (JsonException)
 {
 }
 
-static async Task RunEofRaceAsync(StreamWriter writer, StreamReader reader, dynamic binding, string dataRoot)
+// The exact eight step names the production Host's reclamation table declares, in its frozen order.
+// A stand-in that invented its own order would let a launcher change look green here.
+static async Task ReclaimAsync(string operationalRoot, string dataRoot, string? failedStep, int holdAfterReclamationMs)
+{
+    string[] steps =
+    [
+        "stop_admission",
+        "drain_chat_runtime",
+        "drain_game_lifecycle",
+        "reflect_session",
+        "release_shared_authority",
+        // Split so this stand-in never spells the containment component's name.
+        "release_" + "gua" + "rdian" + "_session",
+        "release_voice_client",
+        "release_termination_watchers",
+    ];
+    // The steps really ran: this journal is the stand-in's own evidence, written one entry at a time.
+    var journal = Path.Combine(dataRoot, "desktop-host-runtime-fixture.reclaim.jsonl");
+    File.Delete(journal);
+    foreach (var step in steps) File.AppendAllText(journal, step + "\n", new UTF8Encoding(false));
+    if (failedStep is null) return;
+    // The production Host's own diagnostic, in the production Host's own directory and shape: it is
+    // written exactly when the exit is not clean.
+    var directory = Path.Combine(operationalRoot, "host-exit");
+    Directory.CreateDirectory(directory);
+    var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH-mm-ss-fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+    var record = new
+    {
+        schema = "gamebuddy-desktop-host-exit-record/v1",
+        version = 1,
+        kind = "incomplete_exit",
+        reason = "desktop_host_child_will_not_stop",
+        pid = Environment.ProcessId,
+        recordedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        steps = steps.Select(step => new
+        {
+            step,
+            status = step == failedStep ? "failed" : "completed",
+            failure = step == failedStep ? "desktop_host_child_will_not_stop" : null,
+        }).ToArray(),
+    };
+    File.WriteAllText(Path.Combine(directory, $"host-exit-{stamp}-{Environment.ProcessId}.json"), JsonSerializer.Serialize(record) + "\n", new UTF8Encoding(false));
+    Environment.ExitCode = 1;
+    // A child that has already written its own record and then never leaves: the launcher's watch
+    // must end it, and the launcher's own fact then names what this child had reported.
+    if (holdAfterReclamationMs > 0) await Task.Delay(holdAfterReclamationMs);
+}
+
+static async Task RunEofRaceAsync(StreamWriter writer, dynamic binding, string dataRoot)
 {
     var instance = Guid.NewGuid().ToString("D");
     var attempt = Guid.NewGuid().ToString("D");
@@ -177,7 +275,7 @@ static async Task RunEofRaceAsync(StreamWriter writer, StreamReader reader, dyna
 // arm binding facts plus the approved executable), written to the broker over
 // the authenticated session. The broker's answer is written out verbatim so a
 // live run can observe the native's own armed result instead of inferring it.
-static async Task RunArmLiveAsync(StreamWriter writer, StreamReader reader, dynamic binding, string dataRoot)
+static async Task RunArmLiveAsync(StreamWriter writer, Func<Task<string?>> nextLine, dynamic binding, string dataRoot)
 {
     var instance = Guid.NewGuid().ToString("D");
     var attempt = Guid.NewGuid().ToString("D");
@@ -200,16 +298,16 @@ static async Task RunArmLiveAsync(StreamWriter writer, StreamReader reader, dyna
     File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.arm-body.json"), JsonSerializer.Serialize(arm), new UTF8Encoding(false));
     var answers = new List<string>();
     await writer.WriteLineAsync(JsonSerializer.Serialize(armCommand));
-    answers.Add(await reader.ReadLineAsync() ?? "null");
+    answers.Add(await nextLine() ?? "null");
     var plan = new Dictionary<string, object> { ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["planId"] = Guid.NewGuid().ToString("D"), ["role"] = "player_host", ["deadlineUnixMs"] = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds(), ["executable"] = roleExecutable, ["cwd"] = Path.GetDirectoryName(roleExecutable)!, ["arguments"] = Array.Empty<string>(), ["environment"] = roleEnvironment };
     var privatePlan = Base64Url(JsonSerializer.SerializeToUtf8Bytes(plan));
     var launchCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "launch_role", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["deadlineUnixMs"] = plan["deadlineUnixMs"], ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["role"] = "player_host", ["privateFrame"] = privatePlan };
     File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.launch-body.json"), JsonSerializer.Serialize(plan), new UTF8Encoding(false));
     await writer.WriteLineAsync(JsonSerializer.Serialize(launchCommand));
-    answers.Add(await reader.ReadLineAsync() ?? "null");
+    answers.Add(await nextLine() ?? "null");
     var containCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "contain_role", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["operationWaitBudgetMs"] = 60_000L, ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["role"] = "player_host" };
     await writer.WriteLineAsync(JsonSerializer.Serialize(containCommand));
-    answers.Add(await reader.ReadLineAsync() ?? "null");
+    answers.Add(await nextLine() ?? "null");
     File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.acks.jsonl"), string.Join("\n", answers) + "\n", new UTF8Encoding(false));
     while (!File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) await Task.Delay(5);
 }

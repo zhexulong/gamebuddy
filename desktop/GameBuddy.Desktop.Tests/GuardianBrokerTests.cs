@@ -168,5 +168,18 @@ public sealed class GuardianBrokerTests
         Assert.DoesNotContain("Console.", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Broker_close_releases_the_host_facing_pipe_before_the_guardian_control_it_relays_to()
+    {
+        var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+        var close = source.IndexOf("internal async Task CloseAsync(CancellationToken cancellationToken)", StringComparison.Ordinal);
+        // The Host-facing pipe is the child's controller EOF. Closing it first is what lets a child
+        // that is already reclaiming finish; closing it last made every clean quit a kill.
+        var pipe = source.IndexOf("server.Dispose();", close, StringComparison.Ordinal);
+        var guardianControl = source.IndexOf("if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken)", close, StringComparison.Ordinal);
+
+        Assert.True(pipe > close && guardianControl > pipe);
+    }
+
     private static string Source(string file) => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", file));
 }

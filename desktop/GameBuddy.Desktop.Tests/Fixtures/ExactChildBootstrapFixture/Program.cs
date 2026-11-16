@@ -40,7 +40,7 @@ try
         frame.GetProperty("rootLayout").GetProperty("schema").GetString() != rootLayoutSchema)
         return;
 
-    AuthenticateBroker(frame);
+    using var session = AuthenticateBroker(frame);
 
     var reportPath = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath!)!, reportName);
     var report = new MemoryStream();
@@ -77,6 +77,11 @@ try
         acknowledgementWriter.WriteString("inventoryDigest", frame.GetProperty("inventoryDigest").GetString());
         acknowledgementWriter.WriteString("runtimeAdmissionSha256", frame.GetProperty("runtimeAdmissionSha256").GetString());
         acknowledgementWriter.WriteString("rootLayoutSchema", rootLayoutSchema);
+        // The exit deadline the launcher waits before it treats this child as hung. A test bound rather
+        // than the production Host's derived value: this stand-in exists for the frame, the command line
+        // and the environment it received, and the exit handshake has its own stand-in. Publishing it is
+        // still required - a child that omitted it would be refused as unreadable.
+        acknowledgementWriter.WriteNumber("drainDeadlineMs", 5_000);
         acknowledgementWriter.WriteEndObject();
     }
     acknowledgementBytes.WriteByte((byte)'\n');
@@ -85,16 +90,22 @@ try
         stdout.Write(acknowledgementBytes.ToArray());
         stdout.Flush();
     }
-    Thread.Sleep(Timeout.Infinite);
+    // Leaving is the launcher's decision, and this child takes the one signal it is given: the close
+    // of its authenticated session. That is what the production Host's exit reclamation waits for, so
+    // a launcher that arms the child before it terminates it is never left waiting here.
+    using (var sessionReader = new StreamReader(session, new UTF8Encoding(false, true), leaveOpen: true))
+    {
+        try { _ = sessionReader.ReadLine(); } catch (IOException) { }
+    }
 }
 catch (JsonException)
 {
 }
 
-static void AuthenticateBroker(JsonElement frame)
+static NamedPipeClientStream AuthenticateBroker(JsonElement frame)
 {
     var bootstrapId = frame.GetProperty("bootstrapId").GetString()!;
-    using var broker = new NamedPipeClientStream(".", $"GameBuddy.HostGuardian.{bootstrapId}", PipeDirection.InOut);
+    var broker = new NamedPipeClientStream(".", $"GameBuddy.HostGuardian.{bootstrapId}", PipeDirection.InOut);
     broker.Connect(10_000);
     var hello = Encoding.UTF8.GetBytes($"{{\"schema\":\"gamebuddy-desktop-guardian-session/v1\",\"protocolVersion\":1,\"operation\":\"hello\",\"bootstrapId\":\"{bootstrapId}\",\"generation\":\"{frame.GetProperty("generation").GetString()}\",\"inventoryDigest\":\"{frame.GetProperty("inventoryDigest").GetString()}\",\"runtimeAdmissionSha256\":\"{frame.GetProperty("runtimeAdmissionSha256").GetString()}\"}}\n");
     broker.Write(hello);
@@ -109,6 +120,7 @@ static void AuthenticateBroker(JsonElement frame)
         acknowledgement.GetProperty("bootstrapId").GetString() != bootstrapId || acknowledgement.GetProperty("generation").GetString() != frame.GetProperty("generation").GetString() ||
         acknowledgement.GetProperty("inventoryDigest").GetString() != frame.GetProperty("inventoryDigest").GetString() || acknowledgement.GetProperty("runtimeAdmissionSha256").GetString() != frame.GetProperty("runtimeAdmissionSha256").GetString())
         throw new InvalidOperationException();
+    return broker;
 }
 
 static string ReadStandardInputToEnd()

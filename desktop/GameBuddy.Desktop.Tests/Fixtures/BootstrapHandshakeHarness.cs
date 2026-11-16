@@ -37,9 +37,11 @@ internal sealed class BootstrapHandshakeHarness : IAsyncDisposable
     /// acknowledgement. An acknowledgement plan reshapes the acknowledgement itself - removing a
     /// field, retyping one or adding one beside them - so a test can observe which acknowledgement
     /// shapes the launcher accepts. A silence timeout overrides the launcher's interval so a test
-    /// observes the watch expire in milliseconds.
+    /// observes the watch expire in milliseconds. A reclamation plan says how the child behaves once
+    /// the launcher closes the session: it may ignore that closing, or name one step whose failure
+    /// the child then reports in its own exit record.
     /// </summary>
-    internal static async Task<BootstrapHandshakeHarness> CreateAsync(string? refusal = null, string? statusPlan = null, TimeSpan? silenceTimeout = null, string? acknowledgementPlan = null)
+    internal static async Task<BootstrapHandshakeHarness> CreateAsync(string? refusal = null, string? statusPlan = null, TimeSpan? silenceTimeout = null, string? acknowledgementPlan = null, string? reclamationPlan = null)
     {
         var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         try
@@ -57,6 +59,7 @@ internal sealed class BootstrapHandshakeHarness : IAsyncDisposable
                 if (refusal is not null) File.WriteAllBytes(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.refuse"), Encoding.UTF8.GetBytes(refusal));
                 if (statusPlan is not null) File.WriteAllText(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.status.json"), statusPlan, new UTF8Encoding(false));
                 if (acknowledgementPlan is not null) File.WriteAllText(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.ack.json"), acknowledgementPlan, new UTF8Encoding(false));
+                if (reclamationPlan is not null) File.WriteAllText(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.reclaim.json"), reclamationPlan, new UTF8Encoding(false));
                 var supervisor = new RuntimeSupervisor { BootstrapSilenceTimeoutForTesting = silenceTimeout };
                 return new BootstrapHandshakeHarness(generation, layout, selection, runtime, supervisor);
             }
@@ -82,6 +85,13 @@ internal sealed class BootstrapHandshakeHarness : IAsyncDisposable
         JsonSerializer.Serialize(new { frames = frames.ToArray(), delayMs, holdMs, ack = acknowledgement });
 
     internal void RequestHostExit() => File.WriteAllText(Path.Combine(Layout.DataRoot, "desktop-host-runtime-fixture.ready.exit"), "exit");
+
+    /// <summary>
+    /// The testimonies of the child's own reclamation: the steps it wrote as it ran them, and the
+    /// diagnostic directory it writes beside the deployment manifest.
+    /// </summary>
+    internal string ReclamationJournalPath => Path.Combine(Layout.DataRoot, "desktop-host-runtime-fixture.reclaim.jsonl");
+    internal string HostExitRecordDirectory => Path.Combine(Layout.OperationalRoot, "host-exit");
 
     public async ValueTask DisposeAsync()
     {

@@ -125,6 +125,27 @@ public sealed class HostBootstrapSupervisorTests
     }
 
     [Fact]
+    public void Runtime_lease_arms_the_host_with_its_controller_eof_before_it_waits_or_terminates()
+    {
+        var source = File.ReadAllText(SupervisorSource());
+        var lease = source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal);
+        var close = source.IndexOf("internal async Task CloseAsync", lease, StringComparison.Ordinal);
+        // Closing the authenticated broker is what gives the child its controller EOF. Running the
+        // broker close first - before the wait and before any termination - is the whole point of the
+        // order: with the termination first, the child was already dead when that EOF would arrive and
+        // its own reclamation never ran.
+        var arm = source.IndexOf("await (Interlocked.Exchange(ref broker, null)?.DisposeAsync()", close, StringComparison.Ordinal);
+        var wait = source.IndexOf("await WaitForExitWithinAsync(child, Result.DrainDeadlineMs)", close, StringComparison.Ordinal);
+        var terminate = source.IndexOf("WindowsNative.TerminateProcess(child, 1)", close, StringComparison.Ordinal);
+        // And the kill is never anonymous: it is followed by the launcher's own named fact.
+        var fact = source.IndexOf("DesktopHostTeardownRecord.Write(operationalRoot", close, StringComparison.Ordinal);
+
+        Assert.True(arm > close && wait > arm && terminate > wait && fact > terminate);
+        // The wait is bounded by the deadline the CHILD published, never by a number of the launcher's own.
+        Assert.Contains("Result.DrainDeadlineMs", source[lease..], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Supervisor_source_launches_the_image_with_the_script_as_its_second_argument()
     {
         var source = File.ReadAllText(SupervisorSource());
@@ -145,7 +166,7 @@ public sealed class HostBootstrapSupervisorTests
 
         Assert.Contains("DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout)", source, StringComparison.Ordinal);
         Assert.Contains("await broker.AuthenticateHostAsync(process, timeout.Token)", source, StringComparison.Ordinal);
-        Assert.Contains("new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker)", source, StringComparison.Ordinal);
+        Assert.Contains("new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot)", source, StringComparison.Ordinal);
         Assert.Contains("internal async Task AttachResidentGuardianAsync(GuardianSupervisorLease lease", source, StringComparison.Ordinal);
         Assert.Contains("await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout", source, StringComparison.Ordinal);
@@ -289,7 +310,7 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("internal const string BootstrapStageLabel = \"host_bootstrap_last_stage\"", source, StringComparison.Ordinal);
         Assert.Contains("internal const string BootstrapTimeoutCategory = \"host_bootstrap_timeout\"", source, StringComparison.Ordinal);
         Assert.Contains("writer.WriteString(\"schema\", \"gamebuddy-desktop-host-bootstrap/v1\")", source, StringComparison.Ordinal);
-        Assert.Contains("ack.GetProperty(\"rootLayoutSchema\").GetString() == \"gamebuddy-windows-root-layout/v1\"", source, StringComparison.Ordinal);
+        Assert.Contains("ack.GetProperty(\"rootLayoutSchema\").GetString() != \"gamebuddy-windows-root-layout/v1\"", source, StringComparison.Ordinal);
         Assert.Contains("private const int MaxWireBytes = 32_768", source, StringComparison.Ordinal);
 
         // The whole-startup timer is gone. The wait is now the child's own silence, re-armed by
