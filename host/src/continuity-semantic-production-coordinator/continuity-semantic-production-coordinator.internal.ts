@@ -28,7 +28,6 @@ import {
 import type {
   ProductionChatCatalog,
   ProductionChatCommandReadback,
-  ProductionChatLifecycleInput,
   ProductionChatRuntimeOwner,
   ProductionChatRuntimeReadback,
   ProductionChatRuntimeReceipt,
@@ -241,6 +240,23 @@ export type SemanticChatSelectionOutcome =
 /** The slice of the Chat runtime authority a management surface may hold. */
 export type SemanticChatSelectionCapability = Readonly<{
   requestChatSelection(input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome>;
+}>;
+/**
+ * One Chat as the durable transcript authority (`tavern.sqlite` `lifecycle_status`)
+ * answers it. The semantic catalog owns the *selection*; it does not own "is this
+ * Chat live", so every lifecycle row it holds is a mirror of one of these.
+ */
+export type DurableChatLiveness = Readonly<{
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  lifecycle: "active" | "archived" | "trashed";
+  updatedAtMs: number;
+}>;
+/** What the reconciliation did, so a caller does not write a second successor bridge. */
+export type ChatSuccessorResettlement = Readonly<{
+  catalog: ProductionChatCatalog;
+  /** The selection moved onto the successor: the move's own `select_chat` is the bridge. */
+  movedSelection: boolean;
 }>;
 type MountedChatRuntimeLeaseRecord = {
   active: boolean;
@@ -2019,9 +2035,19 @@ export type SemanticProductionAuthority = Readonly<{
    * shape, so the bridge cannot fork the runtime chain.
    */
   reselectTerminalChatRuntimeSuccessor(): Promise<ProductionChatCommandReadback>;
-  transitionNonSelectedChatLifecycle(
-    operation: ProductionChatLifecycleInput["operation"],
-  ): Promise<ProductionChatCommandReadback>;
+  /**
+   * Reconciles this catalog with the durable transcript authority. When that
+   * authority has orphaned the current selection (the player archived or trashed
+   * the Chat the catalog still names), the selection moves onto the successor the
+   * authority names, and every lifecycle row that disagrees is mirrored through
+   * the ordinary Chat commands. It replaces the old
+   * `transitionNonSelectedChatLifecycle`, which inferred a lifecycle from this
+   * catalog alone: the catalog never answers "is this Chat live" by itself, and it
+   * never transitions the Chat it currently selects.
+   */
+  resettleChatSuccessorFromDurableAuthority(
+    durable: readonly DurableChatLiveness[],
+  ): Promise<ChatSuccessorResettlement>;
   startInitialChat(): Promise<ProductionSagaReadback>;
   registerInitialChat(): Promise<ProductionSagaReadback>;
   verifyInitialChat(receipt: TavernExactContentReceipt): Promise<ProductionSagaReadback>;
@@ -2293,7 +2319,12 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // Binding construction is non-durable; complete it before minting the
     // durable successor bridge so a failed owner-proof check cannot orphan one.
     binding = await createChatRuntimeBinding(manifest);
-    await semantic.reselectTerminalChatRuntimeSuccessor();
+    // The durable transcript authority owns "is this Chat live": reconcile the catalog
+    // with it before the successor bridge is derived from the selection it mirrors.
+    const resettled = await semantic.resettleChatSuccessorFromDurableAuthority(await readDurableChatLiveness(manifest));
+    // A moved selection's own `select_chat` is the successor bridge; writing a second
+    // one for the same Chat would fork the runtime chain the admission counts on.
+    if (!resettled.movedSelection) await semantic.reselectTerminalChatRuntimeSuccessor();
     return createFreshChatRuntimeAuthority(
       provision,
       semantic,
@@ -2435,7 +2466,13 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
       // Known Chat is mounted as the terminal successor exactly like the
       // standalone known Chat runtime constructor; it never adopts a live Chat.
       binding = await createChatRuntimeBinding(manifest);
-      await semantic.reselectTerminalChatRuntimeSuccessor();
+      // Same order as the standalone known construction: the durable transcript
+      // authority answers "is this Chat live" first, and the successor bridge is
+      // derived from the selection that answer leaves behind.
+      const resettled = await semantic.resettleChatSuccessorFromDurableAuthority(
+        await readDurableChatLiveness(manifest),
+      );
+      if (!resettled.movedSelection) await semantic.reselectTerminalChatRuntimeSuccessor();
     }
     // The real mounted runtime projection shares the provision/mutex/broker;
     // its own close tears down the runtime and closes its Chat binding and
@@ -3752,6 +3789,32 @@ async function openProvisionWithAdmission(
   return provision;
 }
 
+/**
+ * The durable transcript authority's answer for every Chat it holds. Read through a
+ * Chat thread store this construction opens and closes: no mounted Chat runtime
+ * exists yet at this point, so it cannot shadow a live turn's own cancel path.
+ */
+async function readDurableChatLiveness(manifest: HostDeploymentManifest): Promise<readonly DurableChatLiveness[]> {
+  const threads = createChatThreadStore(manifest.runtimeRoot, identityKey(Object.freeze({ ...manifest.principal })));
+  try {
+    const rows = (await threads.listThreads?.()) ?? [];
+    return Object.freeze(
+      rows.map((thread) => {
+        if (thread.chatThreadId === undefined || thread.chatSurfaceSessionId === undefined)
+          throw new SemanticProductionCoordinatorError("semantic_chat_liveness_unreadable");
+        return Object.freeze({
+          chatThreadId: thread.chatThreadId,
+          chatSurfaceSessionId: thread.chatSurfaceSessionId,
+          lifecycle: thread.lifecycleStatus ?? "active",
+          updatedAtMs: thread.updatedAtMs,
+        });
+      }),
+    );
+  } finally {
+    threads.close?.();
+  }
+}
+
 function create(
   provision: FreshContinuityProvision,
   mutex: WindowsAuthorityRootMutex,
@@ -3863,9 +3926,8 @@ function create(
     return `chat-${kind}-${suffix.slice(0, 32)}`;
   };
   const chatOperation = (
-    kind: "register" | "verify" | "select" | "lifecycle",
+    kind: "register" | "verify" | "select",
     receipt?: TavernExactContentReceipt,
-    lifecycle?: ProductionChatLifecycleInput["operation"],
   ): Promise<ProductionChatCommandReadback> =>
     begin(() =>
       locked(() => {
@@ -3885,35 +3947,14 @@ function create(
         const target =
           kind === "verify"
             ? catalog.threads.find((thread) => thread.lifecycle === "active" && thread.contentState === "registered")
-            : kind === "select"
-              ? catalog.threads.find(
-                  (thread) =>
-                    thread.lifecycle === "active" &&
-                    thread.contentState === "verified" &&
-                    thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
-                )
-              : lifecycle === "archive"
-                ? catalog.threads.find(
-                    (thread) =>
-                      thread.lifecycle === "active" &&
-                      thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
-                  )
-                : lifecycle === "trash"
-                  ? catalog.threads.find(
-                      (thread) =>
-                        (thread.lifecycle === "active" || thread.lifecycle === "archived") &&
-                        thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
-                    )
-                  : catalog.threads.find(
-                      (thread) =>
-                        thread.lifecycle === "trashed" &&
-                        thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
-                    );
-        if (!target)
-          throw new SemanticProductionCoordinatorError(
-            kind === "lifecycle" ? "semantic_chat_lifecycle_target_unavailable" : "semantic_chat_target_unavailable",
-          );
-        const operationId = nextChatOperation(kind, catalog, target, lifecycle);
+            : catalog.threads.find(
+                (thread) =>
+                  thread.lifecycle === "active" &&
+                  thread.contentState === "verified" &&
+                  thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
+              );
+        if (!target) throw new SemanticProductionCoordinatorError("semantic_chat_target_unavailable");
+        const operationId = nextChatOperation(kind, catalog, target);
         if (kind === "verify") {
           if (
             !isTrustedTavernExactContentReceipt(receipt) ||
@@ -3933,23 +3974,12 @@ function create(
             receipt,
           );
         }
-        if (kind === "select")
-          return provision.store.selectChat(
-            Object.freeze({
-              operationId,
-              chatThreadId: target.chatThreadId,
-              chatSurfaceSessionId: target.chatSurfaceSessionId,
-              expected: { ...catalog.vector },
-            }),
-          );
-        return provision.store.transitionChatLifecycle(
+        return provision.store.selectChat(
           Object.freeze({
             operationId,
             chatThreadId: target.chatThreadId,
             chatSurfaceSessionId: target.chatSurfaceSessionId,
-            expectedManagementRevision: target.managementRevision,
             expected: { ...catalog.vector },
-            operation: lifecycle!,
           }),
         );
       }),
@@ -3987,7 +4017,64 @@ function create(
           );
         }),
       ),
-    transitionNonSelectedChatLifecycle: (operation) => chatOperation("lifecycle", undefined, operation),
+    resettleChatSuccessorFromDurableAuthority: (durable) =>
+      begin(() =>
+        locked((): ChatSuccessorResettlement => {
+          const catalog = provision.store.readChatCatalog();
+          // ADR 0009: a recorded expectation is the player's own request and is honoured
+          // by the next mount's settlement. Reconciling across it would race the choice
+          // the player already made, so the durable authority's answer waits one mount.
+          if (catalog.expectedSelection !== null) return { catalog, movedSelection: false };
+          const selected = catalog.activeSelection;
+          const selectedDurable =
+            selected === null
+              ? undefined
+              : durable.find((entry) => entry.chatSurfaceSessionId === selected.chatSurfaceSessionId);
+          // A construction whose selection is still live writes nothing at all. The store admits
+          // exactly one Chat command per start: a reselect of the unchanged selection must begin at
+          // its predecessor's exact end vector, and the mount's settling `select_chat` must be the
+          // tip of the recorded command chain. The selection is therefore the only thing a start
+          // may move, and this method's whole job is that move.
+          if (selected === null || (selectedDurable !== undefined && selectedDurable.lifecycle === "active"))
+            return { catalog, movedSelection: false };
+          // The durable authority owns "is this Chat live" and it has orphaned the
+          // selection: the successor is the Chat that authority still holds, most recently
+          // updated first - never a Chat invented here, and never an empty selection (a
+          // consumer with no mounted lease has no selection generation to name a Chat with,
+          // so an emptied selection is a dead end, not a step).
+          const successor = durable
+            .filter((entry) => entry.lifecycle === "active" && entry.chatThreadId !== selected.chatThreadId)
+            .sort((left, right) =>
+              right.updatedAtMs - left.updatedAtMs === 0
+                ? left.chatThreadId.localeCompare(right.chatThreadId)
+                : right.updatedAtMs - left.updatedAtMs,
+            )[0];
+          const successorThread =
+            successor === undefined
+              ? undefined
+              : catalog.threads.find(
+                  (thread) =>
+                    thread.chatThreadId === successor.chatThreadId &&
+                    thread.chatSurfaceSessionId === successor.chatSurfaceSessionId &&
+                    thread.lifecycle === "active" &&
+                    thread.contentState === "verified",
+                );
+          if (successor === undefined || successorThread === undefined)
+            throw new SemanticProductionCoordinatorError("semantic_chat_liveness_unrecoverable");
+          // One ordinary `select_chat` for a Chat the durable authority still holds: it both
+          // moves the selection and is the successor bridge the mount consumes, and because it
+          // is written last it is the chain tip the mount is proved against.
+          provision.store.selectChat(
+            Object.freeze({
+              operationId: nextChatOperation("reselect", catalog, successorThread),
+              chatThreadId: successorThread.chatThreadId,
+              chatSurfaceSessionId: successorThread.chatSurfaceSessionId,
+              expected: { ...catalog.vector },
+            }),
+          );
+          return { catalog: provision.store.readChatCatalog(), movedSelection: true };
+        }),
+      ),
     startInitialChat: () => step(0),
     registerInitialChat: () => step(1),
     verifyInitialChat: (receipt) =>

@@ -22,6 +22,10 @@
  *   (admission revoked or deadline expired before the single Host invocation) is
  *   terminalized by the same ordinary turn-level cancel directly, without
  *   fabricating an `armed` observation, and the switch still happens.
+ * - a Chat the player archived while it was selected, before the shell could move
+ *   the selection, is not re-selected by the next start: the durable transcript
+ *   authority owns "is this Chat live", so the mount lands on the Chat it still
+ *   holds (ADR-0011's 2026-11-16 mediation).
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -82,7 +86,7 @@ const switchScript = `
   // provisioned: it opens the known authority (and reconciles the terminal
   // teardown the first process left) instead of provisioning a fresh one.
   const authority =
-    scenario === "select-created-after-restart"
+    scenario === "select-created-after-restart" || scenario === "archive-selected-after-restart"
       ? await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest)
       : await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const first = await authority.startMountedChatRuntime();
@@ -291,6 +295,39 @@ const switchScript = `
     out.afterActive = after.active;
     const createdState = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
     out.createdMessageCount = createdState.messages.length;
+  } else if (scenario === "archive-selected-create-only") {
+    // The player lands in a new Chat and then archives it through the durable management
+    // call, and this process ends before the shell's own selection migration runs: the
+    // crash/refusal shape where the semantic catalog still names the archived Chat.
+    const target = await createSecondChat();
+    const mounted = await selectAndMount(target);
+    out.createdThread = target.chatThreadId;
+    out.createdSurface = target.chatSurfaceSessionId;
+    out.mountedThread = mounted.successorThread;
+    out.mountedSurface = mounted.successorSurface;
+    const archived = await store.transitionLifecycle({
+      chatThreadId: target.chatThreadId,
+      chatSurfaceSessionId: target.chatSurfaceSessionId,
+      companionId: manifest.principal.companionId,
+      continuityId: manifest.principal.continuityId,
+      expectedManagementRevision: 1,
+      operation: "archive",
+    });
+    out.archivedStatus = archived.lifecycleStatus;
+    const durable = readDurable();
+    out.archivedSemanticLifecycle = durable.threads.find(
+      (thread) => thread.chat_thread_id === target.chatThreadId,
+    )?.lifecycle;
+    out.selectionAfterArchive = durable.active.chat_thread_id;
+  } else if (scenario === "archive-selected-after-restart") {
+    // Same root, next process, no shell to migrate the selection. The mount at the top of
+    // this script already had to land on a Chat the durable authority still holds - before
+    // the reconciliation it landed on the archived one and the materializer refused it.
+    out.mountedThread = firstThread;
+    out.mountedSurface = firstSurface;
+    const after = readDurable();
+    out.afterThreads = after.threads;
+    out.afterActive = after.active;
   } else if (scenario === "in-flight" || scenario === "in-flight-created") {
     // In the created variant the target is a Chat the product's New Chat wrote and
     // the authority never registered. It is created before the turn starts, so
@@ -632,7 +669,9 @@ async function runSwitchScenario(
     | "durable-not-started"
     | "select-created"
     | "select-created-create-only"
-    | "select-created-after-restart",
+    | "select-created-after-restart"
+    | "archive-selected-create-only"
+    | "archive-selected-after-restart",
 ): Promise<Record<string, unknown>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -1127,6 +1166,47 @@ test(
       assert.equal(observed.interruptedProducedTextKept, true);
       assert.equal(observed.interruptedLedgerPresentation, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 2);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The other half of ADR-0011: migrating the selection is the shell's job, and the shell
+ * can die or refuse between the durable archive and that move. The next start must
+ * therefore answer "which Chat is mounted" from the durable transcript authority, not
+ * from a catalog that still calls the archived Chat active.
+ *
+ * Red before the reconciliation: the restart re-selected the archived Chat and the
+ * materializer refused it, so the process exited non-zero instead of mounting. Green
+ * now: the mount lands on the Chat the durable store still holds, and the archived one
+ * is mirrored instead of re-selected.
+ */
+test(
+  "a selected Chat archived before the shell could migrate the selection is not re-selected on the next start",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-archive-selected-");
+    try {
+      const archived = await runSwitchScenario(root, "archive-selected-create-only");
+      const archivedThread = String(archived.createdThread);
+      // The crash window this reconciliation exists for: the durable archive committed,
+      // and the catalog still called that Chat active and still named it the selection.
+      assert.equal(archived.archivedStatus, "archived");
+      assert.equal(archived.archivedSemanticLifecycle, "active");
+      assert.equal(archived.selectionAfterArchive, archivedThread);
+
+      const restarted = await runSwitchScenario(root, "archive-selected-after-restart");
+      // The mount landed on the Chat the durable authority still holds ...
+      assert.equal(restarted.mountedThread, String(archived.firstThread));
+      assert.notEqual(restarted.mountedThread, archivedThread);
+      // ... and the selection no longer names the archived Chat: no dangling cursor is left
+      // behind. The archived row itself keeps its registration-time lifecycle, because a
+      // start may write exactly one Chat command - the settling select the mount is proved
+      // against - and the store refuses to transition the Chat it selects (ADR-0011's
+      // 2026-11-16 mediation records that bound and why it is harmless here).
+      assert.equal((restarted.afterActive as DurableActiveRow).chat_thread_id, String(archived.firstThread));
     } finally {
       cleanup(root);
     }

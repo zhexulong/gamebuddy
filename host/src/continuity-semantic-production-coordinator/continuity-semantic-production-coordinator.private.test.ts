@@ -15,6 +15,7 @@ import {
   mintGameSessionWorldBindingSlotLeaseVerdict,
   openProductionContinuityStore,
   type ProductionBootstrapInput,
+  type ProductionChatCatalog,
   type ProductionChatRuntimeOwner,
   type ProductionChatRuntimeRequest,
   type ProductionGameSessionWorldBindingSlotReleaseInput,
@@ -368,12 +369,12 @@ test("production Dialogue exposes close-drained manifest-bound Chat commands wit
         "registerChat",
         "registerInitialChat",
         "reselectTerminalChatRuntimeSuccessor",
+        "resettleChatSuccessorFromDurableAuthority",
         "resumeInitialChat",
         "resumeInitialChatWithContent",
         "selectInitialChat",
         "selectVerifiedChat",
         "startInitialChat",
-        "transitionNonSelectedChatLifecycle",
         "verifyInitialChat",
         "verifyRegisteredChatContent",
       ]);
@@ -416,15 +417,68 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       assert.equal(verified.kind, "verify_chat_content");
       const selected = await authority.selectVerifiedChat();
       assert.equal(selected.activeSelection?.chatThreadId, registered.chatThreadId);
-      const archived = await authority.transitionNonSelectedChatLifecycle("archive");
-      assert.equal(archived.lifecycle, "archived");
-      const trashed = await authority.transitionNonSelectedChatLifecycle("trash");
-      assert.equal(trashed.lifecycle, "trashed");
-      const restored = await authority.transitionNonSelectedChatLifecycle("restore");
-      assert.equal(restored.lifecycle, "archived");
+      const original = await authority.resumeInitialChat();
+      const originalThread = original!.chatThreadId!;
+      const originalSurface = original!.chatSurfaceSessionId!;
+      const registeredThread = registered.chatThreadId!;
+      const registeredSurface = registered.chatSurfaceSessionId!;
+      const lifecycleOf = (catalog: ProductionChatCatalog, chatThreadId: string) =>
+        catalog.threads.find((thread) => thread.chatThreadId === chatThreadId)?.lifecycle;
+      // Every call carries the durable authority's answer for both Chats, which is what a
+      // start reads from `tavern.sqlite` before it derives a mount target.
+      const durableOf = (
+        lifecycles: Readonly<{
+          original: "active" | "archived" | "trashed";
+          registered: "active" | "archived" | "trashed";
+        }>,
+      ) => [
+        {
+          chatThreadId: originalThread,
+          chatSurfaceSessionId: originalSurface,
+          lifecycle: lifecycles.original,
+          updatedAtMs: 1,
+        },
+        {
+          chatThreadId: registeredThread,
+          chatSurfaceSessionId: registeredSurface,
+          lifecycle: lifecycles.registered,
+          updatedAtMs: 2,
+        },
+      ];
+      // The durable transcript authority owns "is this Chat live". Its answer moves the
+      // selection: the defect this replaces was a Chat the player archived staying the
+      // selection, so the successor derivation re-selected it and the mount refused it.
+      const moved = await authority.resettleChatSuccessorFromDurableAuthority(
+        durableOf({ original: "active", registered: "archived" }),
+      );
+      assert.equal(moved.movedSelection, true);
+      assert.equal(moved.catalog.activeSelection?.chatThreadId, originalThread);
+      // The archived row keeps its registration-time lifecycle: a start that already wrote its
+      // settling `select_chat` may write nothing else (ADR-0011's mediation records why). The
+      // product's own select seat resolves its target from the durable list and filters
+      // `lifecycleStatus === "active"` (`desktop-presentation-admission-owner.ts`), so the stale
+      // row is not reachable as a selection - the selection is what this reconciliation owns.
+      assert.equal(lifecycleOf(moved.catalog, registeredThread), "active");
+      // A live selection is left exactly alone: a start may write only the one command the
+      // mount is proved against, so a settled selection must not be disturbed by a no-op.
+      const settled = await authority.resettleChatSuccessorFromDurableAuthority(
+        durableOf({ original: "active", registered: "active" }),
+      );
+      assert.equal(settled.movedSelection, false);
+      assert.equal(settled.catalog.activeSelection?.chatThreadId, originalThread);
+      // With no Chat the authority still holds, there is no successor to name: the
+      // observation fails closed and writes nothing rather than leaving a dangling cursor.
+      const orphaned = await authority
+        .resettleChatSuccessorFromDurableAuthority(durableOf({ original: "archived", registered: "archived" }))
+        .then(
+          () => "accepted",
+          (error: Error) => error.message,
+        );
+      assert.equal(orphaned, "semantic_chat_liveness_unrecoverable");
       const catalog = await authority.readChatCatalog();
-      assert.equal(catalog.activeSelection?.chatThreadId, registered.chatThreadId);
-      assert.equal(catalog.threads.filter((thread) => thread.lifecycle === "archived").length, 1);
+      assert.equal(catalog.activeSelection?.chatThreadId, originalThread);
+      assert.equal(lifecycleOf(catalog, originalThread), "active");
+      assert.equal(lifecycleOf(catalog, registeredThread), "active");
     } finally {
       await authority.close();
     }
