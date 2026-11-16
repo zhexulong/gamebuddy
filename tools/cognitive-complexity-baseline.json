@@ -561,14 +561,6 @@
       "value": 34
     },
     {
-      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#chatOperation#lambda7",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#chatOperation#lambda7",
-      "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 3871,
-      "value": 49
-    },
-    {
       "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
