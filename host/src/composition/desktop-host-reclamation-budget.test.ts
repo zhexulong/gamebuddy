@@ -62,16 +62,22 @@ const STEP_OWNED_OPERATIONS: Readonly<
 
 /**
  * Every step whose owned operation outlives the per-step detector, named with the owner
- * constant that publishes it. Refuses an empty population instead of reporting no offenders:
- * a gate that examined nothing has not passed.
+ * constant that publishes it. The population is cross-checked against the table that declares
+ * it, because the table is total over the step union: a reading over a different number of
+ * steps examined a population this file did not measure, and a gate that examined nothing has
+ * not passed.
  */
 function stepsOutlivingTheDrainBudget(
   steps: readonly DesktopHostReclamationStep[],
   drainTimeoutMs: number,
   owned: Readonly<Record<DesktopHostReclamationStep, readonly Readonly<{ owner: string; ms: number }>[]>>,
 ): readonly Readonly<{ step: DesktopHostReclamationStep; owner: string; ms: number }>[] {
-  if (steps.length === 0)
-    throw new Error("examined 0: there are no reclamation steps to check the drain budget against");
+  const declared = Object.keys(owned).length;
+  if (steps.length !== declared)
+    throw new Error(
+      `examined ${steps.length} of the ${declared} reclamation steps the owned-operations table declares: ` +
+        "every step is checked against its own operations, or this reading measured nothing",
+    );
   const outliving: { step: DesktopHostReclamationStep; owner: string; ms: number }[] = [];
   for (const step of steps) {
     for (const operation of owned[step]) {
