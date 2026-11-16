@@ -1,3 +1,18 @@
+/**
+ * The falsifiers for `tools/check-hand-written-schema-constants.mjs`.
+ *
+ * Every case here turns the gate RED on purpose, and the first one turns it red on the tree as it actually shipped:
+ * six assertions, no hand-written id list, and the population read from `git show` rather than from a copied excerpt.
+ *
+ * red-proof: history replay of `9adf97b5:host/src/game-tools.ts` -> `members examined 327 · from a constant 0 ·
+ *            action-local 13 · restated 314` with `hand_written_schema_restates_a_constant:move_to_tile:x`,
+ *            `...:chest_store:chestId` and `shared_constant_missing:TILE_COORDINATE_SCHEMA`; on the committed tree the
+ *            same reading is `from a constant 314 · restated 0`. Injecting one pasted `x` into the committed source ->
+ *            `hand_written_schema_restates_a_constant:move_to_tile:x`; pasting a constant's own expression under a new
+ *            member name -> `...:targetRef`; deleting a declared action-local member ->
+ *            `action_local_override_no_longer_written:respond_level_up:choice`; feeding a source with no schema ->
+ *            `blocked` with zero population.
+ */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
