@@ -73,14 +73,30 @@ const DEVELOPER_FRAME_WORDS = Object.freeze([
   "A reply that is only tool calls gets no tag",
 ]);
 
-/** The mechanics the block must carry, named by the calls that are mounted for her. */
-const DESK_MECHANICS_WORDS = Object.freeze([
-  "ctx_search",
-  "ctx_expand",
-  "ctx_reduce",
-  "<session-history>",
-  "[dropped §N§]",
-]);
+/**
+ * The capability brief's three subjects, as the words that state them: what the archive is (`ctx_search` reads it), what a
+ * tag means (`§N§`, and the `[dropped §N§]` placeholder an archived item leaves), and the call that returns one item whole.
+ *
+ * `ctx_reduce` and `<session-history>` are NOT here any more. The trim of 2026-11-16 left them to the descriptions that
+ * own them: `ctx_reduce`'s says stamping queues rather than deletes, and `ctx_expand`'s names `<session-history>` as where
+ * a message ordinal comes from. A brief that restated them was the coding-agent desk protocol in her language.
+ */
+const DESK_MECHANICS_WORDS = Object.freeze(["ctx_search", "ctx_expand", "§N§", "[dropped §N§]"]);
+
+/**
+ * Every `ctx_*` name a piece of prose hands her.
+ *
+ * The direction matters: the brief names the tools whose reading it is about, and each other tool describes itself. What
+ * would be a lie is a brief naming a tool the surface does not mount, so that is what the two cases below read.
+ */
+function archiveToolsNamedIn(prose: string): readonly string[] {
+  return [...new Set(prose.match(/ctx_[a-z_]+/gu) ?? [])].sort();
+}
+
+/** The names a surface does not mount: the reading both cases below assert is empty, and the falsifier's subject. */
+function unmountedNamesIn(prose: string, mounted: readonly string[]): readonly string[] {
+  return archiveToolsNamedIn(prose).filter((name) => !mounted.includes(name));
+}
 
 function presentationFor(surface: "chat" | "game"): PresentationRuntime {
   return Object.freeze({
@@ -222,7 +238,7 @@ test("a player who pastes the Chat sentence into their own Game instructions is 
   });
 });
 
-test("the prose names the tool set the Game surface mounts, and that set is the surface's own", async () => {
+test("the prose names only tools the Game surface mounts, and that set is the surface's own", async () => {
   await withRoot(async (root) => {
     const runtime = await createCompanionRuntime(
       identity,
@@ -250,8 +266,22 @@ test("the prose names the tool set the Game surface mounts, and that set is the 
         "the Game surface's ctx_* tool set changed, so the desk guidance prose describes tools she does or does not have",
       );
       const prose = buildCompanionDeskGuidance(LOCALE);
-      for (const name of mountedArchiveTools)
-        assert.ok(prose.includes(name), `the desk guidance never names ${name}, which the Game surface mounts`);
+      const named = archiveToolsNamedIn(prose);
+      assert.ok(
+        named.length > 0,
+        "a brief that names no archive tool tells her the archive exists and not how to read it",
+      );
+      assert.deepEqual(
+        unmountedNamesIn(prose, mountedArchiveTools),
+        [],
+        "the brief names an archive tool this surface does not mount, so she is told to call something she does not have",
+      );
+      // The falsifier of that reading: the same extractor over a prose that names a tool nothing mounts.
+      assert.deepEqual(
+        unmountedNamesIn("`ctx_search` reads it back; `ctx_ghost` empties it.", mountedArchiveTools),
+        ["ctx_ghost"],
+        "the reader names the tool the surface does not mount",
+      );
     } finally {
       runtime.session.dispose();
     }
@@ -345,7 +375,11 @@ test(
         );
       const frame = DEVELOPER_FRAME_WORDS.filter((word) => magicContext.includes(word));
       assert.deepEqual(frame, [], `the Game prompt carries Magic Context's coding-agent frame: ${frame.join(" | ")}`);
-      assert.ok(tools.includes("ctx_reduce"), "the prose describes stamping, so the tool it names must be mounted");
+      assert.deepEqual(
+        unmountedNamesIn(magicContext, tools),
+        [],
+        "the assembled section names an archive tool this session did not mount",
+      );
       process.stderr.write(
         `[desk-guidance] game turn: magicContextSection=${magicContext.length} chars, hostFloor=${systemPrompt.length} chars, ctx_tools=${tools
           .filter((name) => name.startsWith("ctx_"))
