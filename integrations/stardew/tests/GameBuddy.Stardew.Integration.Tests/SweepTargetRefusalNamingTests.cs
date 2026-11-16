@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core;
@@ -44,9 +45,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// (<see cref="ClearingEvidence.DescribeBlocker"/>). The measurement that makes the SHAPE matter is `round63`'s own
 /// `fish_here` receipt: it carried exactly those two fields and the model never saw either, because the Host prints one
 /// receipt detail to the model under a 160-character share on whole FIELDS
-/// (`host/src/fact-brief.ts#MODEL_FIELD_CEILINGS`, `boundedField`), and the Mod had put eight narration fields in front
-/// of them. So the census below reads the detail through that same share, read from the Host's own declaration rather
-/// than restated here.
+/// (`host/src/model-field-budget.ts#MODEL_FIELD_CEILINGS`, `boundedField`), and the Mod had put eight narration fields in front
+/// of them. So the census below reads the detail through that same share, taken from the table the Host publishes for
+/// readers outside its process (`host/src/model-field-budget.published.json`) rather than restated here.
 /// </para>
 /// </summary>
 public sealed class SweepTargetRefusalNamingTests
@@ -133,13 +134,16 @@ public sealed class SweepTargetRefusalNamingTests
     }
 
     /// <summary>
-    /// THE CENSUS IS NOT DECORATION: two details from `round63` itself, quoted verbatim out of
-    /// `tools/_multiday_routine-round63-live-runner.log` (`BRIDGE_FACT` `execution_receipt` rows), must come back OPAQUE -
-    /// the sweep's because it named no clearer at all, and `fish_here`'s because the two fields it DID name sat past the
-    /// model's share.
+    /// THE CENSUS IS NOT DECORATION, and it reads the run's own two details: two details from `round63` itself, quoted
+    /// verbatim out of `tools/_multiday_routine-round63-live-runner.log` (`BRIDGE_FACT` `execution_receipt` rows). The
+    /// sweep's comes back OPAQUE because it named no clearer at all - a producer-side defect, fixed where it belonged.
+    /// `fish_here`'s comes back ACTIONABLE: it always carried the two fields a reader acts on, and what it met was a flat
+    /// 160-character share that kept the first eight fields and dropped the 12th. The Host's share is now derived from the
+    /// line it protects (`host/src/model-field-budget.ts`), so 355 characters arrive whole - and the field boundary and
+    /// the rank are there for the strings that still do not fit.
     /// </summary>
     [Fact]
-    public void TheCensusGoesRedOnTheRunsOwnReceipts()
+    public void TheCensusReadsTheRunsOwnReceipts()
     {
         const string SweepPartial =
             "location=Farm;target=69,31;before_occupant=twig;after_occupant=twig;named_moved=false;arc_tiles=16;"
@@ -147,15 +151,18 @@ public sealed class SweepTargetRefusalNamingTests
             + "tool_before=fishing_rod;slot_before=5;stamina_before=270;stamina_after=270;stamina_delta=0;"
             + "expected_stamina_cost=0;tool_restored=fishing_rod";
         const string FishNoApproach =
-            "target=71,30;actor=69,30;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=1;"
+            "target=71,30;actor=69,28;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=1;"
             + "footprint=1;clear_step=twig@69,31;stand_at=69,30;remaining_clears=1;blocker_occupant=twig@69,31;"
             + "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1);"
             + "blocker_target=blocker_not_published;candidates=750;described=8;blocked_by=range:reach:2";
 
         RefusalActionability.Judge(SweepPartial).Actionable.Should().BeFalse(
             "`scythe_sweep_partial` named what stood on the named tile and nothing that would move it");
-        RefusalActionability.Judge(FishNoApproach).Actionable.Should().BeFalse(
-            "its clearer was the 12th field, past the 160-character share the model reads");
+        (bool fishActionable, string fishWhy) = RefusalActionability.Judge(FishNoApproach);
+        fishActionable.Should().BeTrue(
+            "its blocker and its clearer are inside the share the model receives - and they are what the whole change is "
+                + "for: {0}",
+            fishWhy);
     }
 
     /// <summary>
@@ -204,22 +211,102 @@ public sealed class SweepTargetRefusalNamingTests
             "`no_published_action_clears` is only lawful for a kind `TileOccupantKind.Unclearable` declares - got {0}", unknown);
     }
 
+    /// <summary>
+    /// THE DETAIL ITSELF, NOT JUST THE FIELDS INSIDE IT, FITS THE SHARE THE HOST PUBLISHES.
+    ///
+    /// <para>
+    /// The census above asks whether the two fields a reader acts on survive the prefix the Host prints; it cannot
+    /// notice a refusal whose two fields fit and whose NARRATION does not, because a detail cut at the share loses its
+    /// tail whatever the tail was. So this measures the whole string the Mod composes for every occupant, and the
+    /// numbers it prints are the two that would have to meet: the ceiling the Host publishes and the longest detail the
+    /// Mod actually writes. Change the ceiling on the Host side - or let a refusal grow - and this reds naming both.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheModsLongestEvidenceFitsTheShareTheHostPublishes()
+    {
+        string[] examine = TileOccupantKind.Published
+            .Where(kind => !MeleeSweepOccupancy.Sweepable.Contains(kind))
+            .ToArray();
+        var measured = examine
+            .Select(kind => (Kind: kind, Detail: MeleeSweepOccupancy.DescribeTargetNotScytheWork(kind, new Vector2(69f, 31f))))
+            .ToArray();
+        examine.Should().NotBeEmpty("a measurement with no population agrees with nothing");
+
+        (string Kind, string Detail) longest = measured.OrderByDescending(row => row.Detail.Length).First();
+        int ceiling = RefusalActionability.ModelShare;
+        string line = $"evidence ceiling {ceiling} · longest {longest.Detail.Length} ({longest.Kind}) · occupants {measured.Length}";
+        this.output.WriteLine(line);
+        longest.Detail.Length.Should().BeLessThanOrEqualTo(
+            ceiling,
+            "the Host prints a receipt detail whole only up to the share it publishes, so a longer refusal loses its tail "
+                + $"without saying which fields went - {line} · detail: {longest.Detail}");
+    }
+
+    /// <summary>
+    /// THE SHARE IS THE HOST'S OWN NUMBER, AND IT IS WHAT DECIDES - both ways, on details built to sit either side of it.
+    ///
+    /// <para>
+    /// Two directions, because a share that is read wrong can be wrong in two ways. A detail that ends exactly ON the
+    /// share must be judged whole (a Host that cut at one character less would hide the field at the end), and a detail
+    /// ONE character past it must lose the field the prefix cut, with a reason that names the ceiling it was cut at and
+    /// the length it met. The numbers are read from the published table, so a hard-coded copy in this file could not
+    /// satisfy either case.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheShareTheHostPublishesDecidesOnBothSidesOfItself()
+    {
+        const string Blocker = "blocker_occupant=twig@69,31";
+        const string Clearer = "clears_with=remove_placed_item(stamina:2)";
+        const string Filler = "filler=";
+        int ceiling = RefusalActionability.ModelShare;
+        int fixedChars = Blocker.Length + Clearer.Length + Filler.Length + 2;
+        string Fitted(int padding) => $"{Blocker};{Filler}{new string('x', padding)};{Clearer}";
+
+        string fits = Fitted(ceiling - fixedChars);
+        string overflows = Fitted(ceiling - fixedChars + 1);
+        fits.Length.Should().Be(ceiling, "the fitting case is built to end exactly ON the share the Host publishes");
+        overflows.Length.Should().Be(ceiling + 1, "and the other is built one character past it");
+
+        (bool fitsActionable, string fitsWhy) = RefusalActionability.Judge(fits);
+        fitsActionable.Should().BeTrue(
+            $"a detail of {fits.Length} against a ceiling of {ceiling} arrives whole, so its clearer is read: {fitsWhy}");
+
+        (bool overActionable, string overWhy) = RefusalActionability.Judge(overflows);
+        overActionable.Should().BeFalse(
+            $"a detail of {overflows.Length} against a ceiling of {ceiling} is cut one character inside its last field, "
+                + $"which is dropped rather than half-read: {overWhy}");
+        overWhy.Should().Contain(
+            ceiling.ToString(CultureInfo.InvariantCulture),
+            "the reason names the ceiling it was cut at, so a reader can tell a short share from a long detail: {0}",
+            overWhy);
+        overWhy.Should().Contain(
+            overflows.Length.ToString(CultureInfo.InvariantCulture),
+            "and it names the length it met, which is the number that has to change: {0}",
+            overWhy);
+    }
+
     // ---- the census ----------------------------------------------------------
 
     /// <summary>
     /// The property a refusal of a swing owes, judged on the part of its detail the MODEL receives.
     ///
     /// <para>
-    /// The share is read from the Host's own `MODEL_FIELD_CEILINGS.evidence` rather than restated: the Host prints a
-    /// receipt detail up to that many characters on whole fields (`host/src/fact-brief.ts#boundedField`), so the census
-    /// takes the plain PREFIX of that length and drops a field the prefix cut in half. That reading is deliberately
-    /// STRICTER than the Host's: a field wholly inside the prefix is one `boundedField` prints too, so this can fail a
-    /// detail the Host would have carried and can never pass one it would not.
+    /// The share is READ, not restated, and it is read from the table the Host publishes as DATA
+    /// (`host/src/model-field-budget.published.json`) rather than out of `model-field-budget.ts`: a Host test holds that
+    /// table equal to `MODEL_FIELD_CEILINGS`, and a reader outside the process cannot follow a TypeScript derivation
+    /// with a regular expression - the day `evidence` stopped being a literal that reading stopped matching anything and
+    /// these tests threw instead of measuring. The Host prints a receipt detail up to that many characters on whole
+    /// fields (`host/src/model-field-budget.ts#boundedField`), so the census takes the plain PREFIX of that length and
+    /// drops a field the prefix cut in half. That reading is deliberately STRICTER than the Host's: a field wholly
+    /// inside the prefix is one `boundedField` prints too, so this can fail a detail the Host would have carried and can
+    /// never pass one it would not.
     /// </para>
     /// </summary>
     internal static class RefusalActionability
     {
-        /// <summary>The Host's own model share for one receipt detail, read out of the file that declares it.</summary>
+        /// <summary>The Host's own model share for one receipt detail, from the table it publishes for foreign readers.</summary>
         internal static int ModelShare => ModelShareChars.Value;
 
         private static readonly Lazy<int> ModelShareChars = new(ReadModelShare);
@@ -230,13 +317,13 @@ public sealed class SweepTargetRefusalNamingTests
             string shown = detail.Length <= ModelShare ? detail : detail[..ModelShare];
             Dictionary<string, string> fields = Fields(shown, truncated: detail.Length > ModelShare);
             if (!fields.TryGetValue("blocker_occupant", out string? blocker))
-                return (false, $"no blocker_occupant= inside the first {ModelShare.ToString(CultureInfo.InvariantCulture)} characters");
+                return (false, $"no blocker_occupant= inside the first {Share()} of a detail that is {Length(detail)} long");
             int at = blocker.IndexOf('@');
             if (at <= 0 || at == blocker.Length - 1)
                 return (false, $"blocker_occupant={blocker} names no kind@x,y");
             string kind = blocker[..at];
             if (!fields.TryGetValue("clears_with", out string? clears))
-                return (false, $"no clears_with= inside the first {ModelShare.ToString(CultureInfo.InvariantCulture)} characters");
+                return (false, $"no clears_with= inside the first {Share()} of a detail that is {Length(detail)} long");
             const string NoClearer = ClearingEvidence.NoPublishedActionClears + ":";
             if (clears.StartsWith(NoClearer, StringComparison.Ordinal))
             {
@@ -246,17 +333,28 @@ public sealed class SweepTargetRefusalNamingTests
                     : (true, $"declared unclearable: {unclearable}");
             }
 
-            return clears.Split(',').All(entry => ActionIdPattern.IsMatch(entry))
+            return ClearerListPattern.IsMatch(clears)
                 ? (true, $"names {clears}")
                 : (false, $"clears_with={clears} names no published action id");
         }
 
         /// <summary>
-        /// One clearer as the catalogue spells it: the action id, with the declaration's own price in brackets when the
-        /// producer publishes one (`remove_placed_item(stamina:2,tool:target_requirement,turns:1)`).
+        /// The clearers as the catalogue spells them: one or more action ids joined by the producer's own `,`, each with
+        /// the declaration's own price in brackets when it publishes one
+        /// (`remove_placed_item(stamina:2,tool:target_requirement,turns:1)`, and
+        /// `clear_debris(…),break_resource_clump(…)` when several published actions clear one occupant).
+        ///
+        /// <para>
+        /// It matches the WHOLE list rather than splitting on `,` first. The price is comma-separated INSIDE the brackets
+        /// this pattern already allows, so a split judged `stamina:2` and `turns:1)` as though each were an action id, and
+        /// called the one clearer `round63` really carried - `remove_placed_item(stamina:2,tool:target_requirement,
+        /// turns:1)` - a violation of its own shape. That is what this predicate answered about the run's own `fish_here`
+        /// receipt once the share it reads became the Host's published number, and it is why the census below could not
+        /// see the two fields that receipt carried.
+        /// </para>
         /// </summary>
-        private static readonly Regex ActionIdPattern = new(
-            @"^[a-z][a-z0-9_]*(?:\([^()]*\))?$",
+        private static readonly Regex ClearerListPattern = new(
+            @"^[a-z][a-z0-9_]*(?:\([^()]*\))?(?:,[a-z][a-z0-9_]*(?:\([^()]*\))?)*$",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         private static Dictionary<string, string> Fields(string text, bool truncated)
@@ -278,16 +376,25 @@ public sealed class SweepTargetRefusalNamingTests
 
         private static int ReadModelShare()
         {
-            string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "host", "src", "fact-brief.ts"));
-            Match declaration = Regex.Match(
-                source,
-                @"export const MODEL_FIELD_CEILINGS = Object\.freeze\(\{(?<body>.*?)\}\);",
-                RegexOptions.Singleline);
-            declaration.Success.Should().BeTrue("the Host declares the ceilings its model-visible fields are printed under");
-            Match share = Regex.Match(declaration.Groups["body"].Value, @"evidence:\s*(?<chars>[0-9]+)");
-            share.Success.Should().BeTrue("`evidence` is one of the ceilings, and a receipt detail is judged by it");
-            return int.Parse(share.Groups["chars"].Value, CultureInfo.InvariantCulture);
+            string path = Path.Combine(RepositoryRoot(), "host", "src", "model-field-budget.published.json");
+            File.Exists(path).Should().BeTrue(
+                "the Host publishes the ceilings it prints model-visible fields under, and a reader outside its process "
+                    + $"has no other way to know them - missing: {path}");
+            using JsonDocument published = JsonDocument.Parse(File.ReadAllText(path));
+            published.RootElement.ValueKind.Should().Be(JsonValueKind.Object, $"{path} is the ceilings table itself");
+            bool named = published.RootElement.TryGetProperty("evidence", out JsonElement evidence);
+            named.Should().BeTrue($"the published table states `evidence`, the share a receipt detail is judged by: {path}");
+            evidence.ValueKind.Should().Be(
+                JsonValueKind.Number,
+                $"`evidence` is a number in {path}, so no caller has to parse a spelling of it");
+            return evidence.GetInt32();
         }
+
+        /// <summary>The share as a diagnostic spells it, from the one number the table published.</summary>
+        private static string Share() => ModelShare.ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>A detail's own length as a diagnostic spells it, so a refusal names the number that failed.</summary>
+        private static string Length(string detail) => detail.Length.ToString(CultureInfo.InvariantCulture);
 
         private static string RepositoryRoot()
         {
