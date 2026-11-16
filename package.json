@@ -47,6 +47,7 @@
     "check:draft-declaration-coverage": "node tools/check-draft-declaration-coverage.mjs",
     "check:dialogue-web-boundaries": "depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src",
     "check:diff": "node gates/meta/check-diff.mjs",
+    "check:dotnet-target-and-language": "node tools/check-dotnet-target-and-language.mjs",
     "check:error-identity-classification": "node tools/check-error-identity-classification.mjs",
     "check:evidence-bundle": "node tools/check-evidence-bundle.mjs",
     "census:engine-affordances": "node tools/check-engine-affordance-census.mjs",
@@ -458,7 +459,9 @@
     "check:gate-population-agreement": "node gates/meta/check-gate-population-agreement.mjs",
     "test:gate-population-agreement": "node --test gates/meta/check-gate-population-agreement.test.mjs",
     "check:gate-premises": "node gates/meta/check-gate-premises.mjs",
-    "test:gate-premises": "node --test gates/meta/check-gate-premises.test.mjs"
+    "test:gate-premises": "node --test gates/meta/check-gate-premises.test.mjs",
+    "check:policy-change-is-learned-by-polling": "node tools/check-policy-change-is-learned-by-polling.mjs",
+    "test:policy-change-is-learned-by-polling": "node --test tools/check-policy-change-is-learned-by-polling.test.mjs"
   },
   "gateRedProofs": {
     "check:dialogue-web-boundaries": "external depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src — a residual module importing a surface is `error no-module-to-surface` naming that module and the surface it reaches, exit 1",
@@ -484,7 +487,8 @@
     "test:stardew:core": "inject one failing fact compiled beside the project's own sources, in a project derived from its real csproj — `Failed GameBuddy.Stardew.SuiteRedProofProbe.InjectedFacts.AnInjectedFailingFact`, the summary `Failed!  - Failed:     1, Passed:     1` beside the passing control fact, exit 1; asserted on every run by the falsifier at integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SuiteRedProofTests.cs",
     "test:stardew:integration": "inject one failing fact compiled beside the project's own sources, in a project derived from its real csproj — `Failed GameBuddy.Stardew.SuiteRedProofProbe.InjectedFacts.AnInjectedFailingFact`, the summary `Failed!  - Failed:     1, Passed:     1` beside the passing control fact, exit 1; asserted on every run by the falsifier at integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SuiteRedProofTests.cs",
     "typecheck": "external pnpm --dir vendor/pi-koe run typecheck:all && pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/dialogue-web typecheck — a mis-typed binding is `src/g2b-red-proof-probe.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.` from the project that holds it, exit 2",
-    "typecheck:voice-protocol": "external pnpm --dir vendor/pi-koe run typecheck:protocol — a mis-typed binding in the protocol package is `packages/voice-protocol/src/g2b-red-proof-probe.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`, exit 2"
+    "typecheck:voice-protocol": "external pnpm --dir vendor/pi-koe run typecheck:protocol — a mis-typed binding in the protocol package is `packages/voice-protocol/src/g2b-red-proof-probe.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`, exit 2",
+    "check:policy-change-is-learned-by-polling": "inject  a second config.json read outside the startup load (measured 2026-11-16 by running the gate over HEAD's own ModEntry.cs, which still held the 120-tick poll) -> exit 1, policy_change_is_learned_by_polling:integrations/stardew/ModEntry.cs:1896:39; remove the startup load -> exit 2 blocked \"the startup load is missing\"; point the scan at a tree with no .cs -> exit 2 blocked \"examined 0\""
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

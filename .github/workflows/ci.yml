@@ -553,6 +553,13 @@ jobs:
       - name: Stardew discovery reads the collections its entities live in
         if: ${{ !cancelled() }}
         run: pnpm check:stardew-discovery-collection-coverage
+      # A running world learns an action-policy change from the `farmhand_action_policy_request` frame, not from
+      # a reread of `config.json`. The gate that keeps it that way reads every `.cs` of the Mod and requires the
+      # only document read to be the startup load in `Entry`, so a poll added anywhere - a new class, a retry in
+      # the frame handler, a "fall back to the file" branch - fails here by name. Static text, no game folder.
+      - name: A policy change reaches a running world as a message, not a poll
+        if: ${{ !cancelled() }}
+        run: pnpm check:policy-change-is-learned-by-polling
       # The two suites above are immune to a failing step ahead of them; this keeps the THIRD reading
       # readable from the run itself, because "the job said failure" is exactly what let a never-run
       # compile gate pass for a whole commit. `steps.<id>.outcome` is empty for a step that never
