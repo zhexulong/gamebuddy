@@ -25,7 +25,8 @@ public sealed class CompanionSwitchVerdictRecordTests
             "companion_switch_unavailable",
             "companion-first",
             "companion-target",
-            CompanionSwitchRefusalLifetime.Permanent);
+            CompanionSwitchRefusalLifetime.Permanent,
+            null);
 
         CompanionSwitchVerdictRecord.Write(fixture.OperationalRoot, refused);
 
@@ -42,9 +43,12 @@ public sealed class CompanionSwitchVerdictRecordTests
         Assert.Equal("companion-first", record.GetProperty("activeCompanionId").GetString());
         // A refusal the state itself gives spends the request, and the record says so.
         Assert.False(record.GetProperty("requestKept").GetBoolean());
+        // Nothing for a human to move: this refusal names no directory, and the remedy is absent
+        // rather than an empty instruction.
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("remedy").ValueKind);
         // The record is the whole shape, not a bag a later change can grow.
         Assert.Equal(
-            ["activeCompanionId", "code", "outcome", "recordedAtUnixMs", "requestKept", "schema", "targetCompanionId", "version"],
+            ["activeCompanionId", "code", "outcome", "recordedAtUnixMs", "remedy", "requestKept", "schema", "targetCompanionId", "version"],
             record.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray());
 
         // The instant is both a field and the name an operator sorts the directory by, and it is
@@ -63,10 +67,10 @@ public sealed class CompanionSwitchVerdictRecordTests
 
         CompanionSwitchVerdictRecord.Write(
             fixture.OperationalRoot,
-            new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, "companion-target", "companion-target", null));
+            new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, "companion-target", "companion-target", null, null));
         CompanionSwitchVerdictRecord.Write(
             fixture.OperationalRoot,
-            new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null, null));
+            new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null, null, null));
 
         // A switch that happened is in the identity record, and a launch with nothing to do
         // produced no fact about a player's choice: neither belongs in a diagnostic directory.
@@ -88,7 +92,8 @@ public sealed class CompanionSwitchVerdictRecordTests
                 "companion_switch_host_still_running",
                 "companion-first",
                 "companion-target",
-                CompanionSwitchRefusalLifetime.Transient));
+                CompanionSwitchRefusalLifetime.Transient,
+                null));
 
         var written = Assert.Single(Directory.GetFiles(fixture.OperationalRoot, "companion-switch-*.json"));
         using var document = JsonDocument.Parse(File.ReadAllBytes(written));

@@ -74,6 +74,15 @@ internal enum CompanionSwitchRefusalLifetime
 }
 
 /// <summary>
+/// A parked authority root a refusal is about, when the refusal leaves a human with something to
+/// do: where that root is, and what is in it right now. Both are measured at refusal time and
+/// reported as they are - a name list and a path, never a description of what they should contain -
+/// because this is the one refusal no later launch can answer and a human has to act on the
+/// directory itself.
+/// </summary>
+internal sealed record CompanionSwitchParkedRoot(string Directory, IReadOnlyList<string> Contents);
+
+/// <summary>
 /// One switch's bounded outcome. <see cref="Code"/> is the named refusal a refusal reports
 /// and is null on every other status, so a caller can never read a code off a success.
 /// <see cref="TargetCompanionId"/> is the companion the switch was about and
@@ -82,13 +91,16 @@ internal enum CompanionSwitchRefusalLifetime
 /// carries.
 /// <see cref="Lifetime"/> says whether that request was spent, and is null on every other status
 /// for the same reason <see cref="Code"/> is: a caller may not read a refusal off a success.
+/// <see cref="ParkedRoot"/> is set only where the refusal names a parked root a human has to move,
+/// and is null everywhere else - most refusals leave nothing for a human to do with a directory.
 /// </summary>
 internal readonly record struct CompanionSwitchOutcome(
     CompanionSwitchStatus Status,
     string? Code,
     string? ActiveCompanionId,
     string? TargetCompanionId,
-    CompanionSwitchRefusalLifetime? Lifetime);
+    CompanionSwitchRefusalLifetime? Lifetime,
+    CompanionSwitchParkedRoot? ParkedRoot);
 
 /// <summary>
 /// Which companion this installation plays, as the launcher changes it at the next launch.
@@ -244,7 +256,7 @@ internal static class CompanionSwitch
         // a request exists.
         Reconcile(layout);
 
-        if (!HasPendingRequest(layout)) return new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null, null);
+        if (!HasPendingRequest(layout)) return new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null, null, null);
 
         var request = ReadRequest(layout);
         if (request is null)
@@ -254,7 +266,7 @@ internal static class CompanionSwitch
             // later launch until it can be - a refusal that repeats is still the honest answer, and
             // it is the only one this launcher has.
             TryDiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_record_unreadable", null, null, CompanionSwitchRefusalLifetime.Permanent);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_record_unreadable", null, null, CompanionSwitchRefusalLifetime.Permanent, null);
         }
 
         var active = DeploymentIdentity.ReadActive(layout);
@@ -266,7 +278,7 @@ internal static class CompanionSwitch
         if (StringComparer.Ordinal.Equals(active.CompanionId, wanted.TargetCompanionId))
         {
             TryDiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, active.CompanionId, active.CompanionId, null);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, active.CompanionId, active.CompanionId, null, null);
         }
 
         // The compare-and-set the surface read. Somebody else changed the installation
@@ -275,7 +287,7 @@ internal static class CompanionSwitch
         if (!StringComparer.Ordinal.Equals(active.CompanionId, wanted.ExpectedActiveCompanionId))
         {
             TryDiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId, wanted.TargetCompanionId, CompanionSwitchRefusalLifetime.Permanent);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId, wanted.TargetCompanionId, CompanionSwitchRefusalLifetime.Permanent, null);
         }
 
         return Switch(layout, active, wanted, now, fault, hostReclaimCeiling);
@@ -296,7 +308,7 @@ internal static class CompanionSwitch
         var activeRootExists = Directory.Exists(activeRoot);
         var targetRoot = target is null ? null : ParkedRootPath(layout, target.DirectoryName);
         if (targetRoot is not null && !Directory.Exists(targetRoot))
-            return Refuse(layout, request, "companion_switch_unavailable", CompanionSwitchRefusalLifetime.Permanent);
+            return Refuse(layout, request, "companion_switch_unavailable", CompanionSwitchRefusalLifetime.Permanent, null);
 
         // A parked root is only a companion who can come back when it is an authority the Host
         // will open. The Host publishes a root by writing the completion marker LAST, so a root
@@ -307,11 +319,16 @@ internal static class CompanionSwitch
         // for that on a root it parked itself. So the switch refuses by name, before it renames
         // anything, and both roots stay exactly where they are.
         if (targetRoot is not null && !ProductionAuthority.IsCompleteIn(targetRoot))
-            return Refuse(layout, request, "companion_switch_target_authority_incomplete", CompanionSwitchRefusalLifetime.Permanent);
+            return Refuse(
+                layout,
+                request,
+                "companion_switch_target_authority_incomplete",
+                CompanionSwitchRefusalLifetime.Permanent,
+                new CompanionSwitchParkedRoot(targetRoot, ParkedRootContents(targetRoot)));
 
         var parkedName = ParkedDirectoryNameFor(now, active.CompanionId);
         if (Directory.Exists(ParkedRootPath(layout, parkedName)))
-            return Refuse(layout, request, "companion_switch_unavailable", CompanionSwitchRefusalLifetime.Transient);
+            return Refuse(layout, request, "companion_switch_unavailable", CompanionSwitchRefusalLifetime.Transient, null);
 
         // The one predecessor this operation has is a Host that has left, and this is where it is
         // proved rather than assumed. A clean quit is already proof - closing the authenticated
@@ -325,7 +342,7 @@ internal static class CompanionSwitch
         // that says nothing about why - so the switch asks first, waits out a Host that is already
         // on its way, and refuses by name if one never leaves.
         if (activeRootExists && !AuthorityIsReleased(activeRoot, hostReclaimCeiling))
-            return Refuse(layout, request, "companion_switch_host_still_running", CompanionSwitchRefusalLifetime.Transient);
+            return Refuse(layout, request, "companion_switch_host_still_running", CompanionSwitchRefusalLifetime.Transient, null);
 
         // The identity the target will carry. A companion coming back from a parked root gets
         // the values her authority was created with - anything else makes the Host refuse the
@@ -398,7 +415,7 @@ internal static class CompanionSwitch
             //    facts and lands on the same outcome, which is what makes a crash survivable -
             //    including a launch that answered this request and could not remove it.
             TryDiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, next.CompanionId, next.CompanionId, null);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, next.CompanionId, next.CompanionId, null, null);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException or NotSupportedException)
         {
@@ -548,19 +565,43 @@ internal static class CompanionSwitch
         CurrentUserRootLayout layout,
         SwitchRequest request,
         string code,
-        CompanionSwitchRefusalLifetime lifetime)
+        CompanionSwitchRefusalLifetime lifetime,
+        CompanionSwitchParkedRoot? parkedRoot)
     {
         // Nothing was moved and nothing was renamed, so the refusal is the whole effect, and the
         // companion in play still is. Whether the request survives it is the one thing `lifetime`
         // decides, and it is the only difference between a refusal the player has to answer and one
-        // the next launch answers for her.
+        // the next launch answers for her. `parkedRoot` is the other half of the same honesty: a
+        // refusal no later launch can answer has to say which directory a human would move.
         if (lifetime == CompanionSwitchRefusalLifetime.Permanent) TryDiscardRequest(layout);
         return new CompanionSwitchOutcome(
             CompanionSwitchStatus.Refused,
             code,
             request.ExpectedActiveCompanionId,
             request.TargetCompanionId,
-            lifetime);
+            lifetime,
+            parkedRoot);
+    }
+
+    /// <summary>
+    /// What is actually in a parked root, as file names in ordinal order: the entries a human would
+    /// move together. Reading them is a diagnostic, so a directory the launcher cannot enumerate
+    /// reports nothing rather than turning the refusal into a launch failure.
+    /// </summary>
+    private static IReadOnlyList<string> ParkedRootContents(string parkedRoot)
+    {
+        var names = new List<string>();
+        try
+        {
+            foreach (var path in Directory.GetFiles(parkedRoot)) names.Add(Path.GetFileName(path));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+
+        names.Sort(StringComparer.Ordinal);
+        return names;
     }
 
     private static void EnsureParkedDirectory(CurrentUserRootLayout layout)

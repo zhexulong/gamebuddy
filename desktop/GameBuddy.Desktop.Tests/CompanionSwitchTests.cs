@@ -180,6 +180,25 @@ public sealed class CompanionSwitchTests
         // switch refused to mount it, and it did not drop the fact that she has a root there.
         Assert.Equal(parkedBytes, File.ReadAllBytes(parkedDatabase));
         Assert.Equal("companion-target", Assert.Single(CompanionSwitch.ReadParked(layout)).CompanionId);
+
+        // This refusal is the answer to a state no later launch can leave, so the request is spent.
+        Assert.Equal(CompanionSwitchRefusalLifetime.Permanent, outcome.Lifetime);
+        Assert.False(CompanionSwitch.HasPendingRequest(layout));
+
+        // And it is the one refusal that leaves a human something to do, so it names exactly that:
+        // the directory her unfinished root is in, what is in it, and the steps that get her back.
+        // A code alone is a dead end - nothing will ever finish this root, because only a Host
+        // writes the completion marker and it writes it into the mount position.
+        CompanionSwitchVerdictRecord.Write(fixture.OperationalRoot, outcome);
+        using var verdict = JsonDocument.Parse(File.ReadAllBytes(
+            Assert.Single(Directory.GetFiles(fixture.OperationalRoot, "companion-switch-*.json"))));
+        var remedy = verdict.RootElement.GetProperty("remedy");
+        Assert.Equal(parkedRoot, remedy.GetProperty("directory").GetString());
+        Assert.Equal(
+            [TestProductionAuthority.DatabaseFileName],
+            remedy.GetProperty("contents").EnumerateArray().Select(name => name.GetString() ?? string.Empty).ToArray());
+        Assert.Contains("parked-companions", remedy.GetProperty("action").GetString(), StringComparison.Ordinal);
+        Assert.False(verdict.RootElement.GetProperty("requestKept").GetBoolean());
     }
 
     [Fact]
