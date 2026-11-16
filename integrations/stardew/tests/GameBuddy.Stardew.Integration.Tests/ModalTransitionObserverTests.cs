@@ -185,4 +185,34 @@ public sealed class ModalTransitionObserverTests
         ModalFactProbe.PayloadOf(sink.FactAt(0)).GetProperty("blocksTimePass").GetBoolean().Should().BeTrue(
             "the seam answers 'the clock advances', so a frozen world inverts to blocking");
     }
+
+    /// <summary>
+    /// The member order these two payloads are written in is NOT part of what the fact states.
+    ///
+    /// <para>
+    /// Both are embedded as opaque text, so `WireJson.Canonical` - which orders every frame's members - cannot reach
+    /// inside them, and this producer writes the order its records declare. <see cref="EmbeddedWorldFactPayload"/>
+    /// carries the reason that is allowed and the reading behind it; this is the observer's half of the proof. A
+    /// reordered record must therefore be INVISIBLE to every gate here, which is the claim itself: nothing in the
+    /// pipeline is allowed to learn anything from those bytes.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheModalPayloadsMemberOrderIsNotPartOfWhatTheFactStates()
+    {
+        using var game = new ModalFactProbe.GameStateScope();
+        BridgeSession session = ModalFactProbe.CreateAuthenticatedSession(out ModalFactProbe.RecordingSink sink);
+        var observer = new ModalTransitionObserver(new DummyMonitor(), static () => true);
+        game.SetActiveMenu(ModalFactProbe.Menu<ShippingMenu>());
+        observer.Observe(session);
+        game.SetActiveMenu(ModalFactProbe.Menu<GameMenu>());
+        observer.Observe(session);
+
+        sink.Emissions.Should().Be(3, "a mount, its dismissal and the mount that replaced it");
+        EmbeddedWorldFactPayload.AssertLayoutIsNotTheStatement<ModalPresentedPayload>(sink.FactAt(0));
+        EmbeddedWorldFactPayload.AssertLayoutIsNotTheStatement<ModalPresentedPayload>(sink.FactAt(2));
+        // `modal_dismissed` is one member, so it has no second layout to be read in: the text IS the whole statement,
+        // and this is what crossed the egress.
+        sink.FactAt(1).PayloadJson.Should().Be("{\"modalType\":\"ShippingMenu\"}");
+    }
 }

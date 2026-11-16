@@ -156,6 +156,9 @@ internal sealed class ModalTransitionObserver
     private void PublishPresented(BridgeSession? session, IClickableMenu menu)
     {
         ModalPresentedPayload payload = Describe(menu, !this.timePasses());
+        // Declared order, not the ordinal order `WireJson.Canonical` gives a frame's members - the same latitude as the
+        // dismissed payload on the next method, and for the same stated reason: the frame carries this text as an opaque
+        // string and every reader parses it (`WireJson` states the boundary).
         this.Publish(session, ModalPresentedPayload.Kind, "shown", JsonSerializer.Serialize(payload), payload.ModalType);
     }
 

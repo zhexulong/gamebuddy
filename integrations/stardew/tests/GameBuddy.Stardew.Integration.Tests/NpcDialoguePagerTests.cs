@@ -470,6 +470,38 @@ public sealed class NpcDialoguePagerTests
         monitor.Logs.Should().BeEmpty();
     }
 
+    // ---- the payload's layout -------------------------------------------------
+
+    /// <summary>
+    /// The member order this payload is written in is NOT part of what the fact states.
+    ///
+    /// <para>
+    /// The pages, the speaker and the choices are the statement; the order the record declares them in is not, and
+    /// <see cref="EmbeddedWorldFactPayload"/> carries why that is allowed here and what was read to decide it. This is
+    /// also the payload with a nested record list (<c>choices</c>), so the reversal it applies reaches a depth the
+    /// frame's own members never show.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheReportedPayloadsMemberOrderIsNotPartOfWhatTheFactStates()
+    {
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Do you like it here?");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes, it's lovely") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        var sink = new OutboundSink();
+        session.SetOutboundSink(sink.Capture);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor());
+
+        pager.Observe(session);
+
+        sink.Emissions.Should().Be(1, "one dialogue is one fact");
+        EmbeddedWorldFactPayload.AssertLayoutIsNotTheStatement<NpcDialoguePresentedPayload>(FactOf(sink));
+    }
+
     // ---- drift anchors ---------------------------------------------------------
 
     [Fact]

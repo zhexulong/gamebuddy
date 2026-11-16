@@ -421,6 +421,10 @@ internal sealed class NpcDialoguePager
                     + $"chosen={pages.Length};speaker={SpeakerOf(box)};question={box.isQuestion.ToString().ToLowerInvariant()}",
                 LogLevel.Trace);
 
+        // Written in the order this record DECLARES rather than the ordinal order `WireJson.Canonical` gives a frame's
+        // members, which this producer may do because the frame carries the text as an opaque string and every reader
+        // parses it. `WireJson` states the boundary and why it holds; this pager's half of the proof is
+        // `TheReportedPayloadsMemberOrderIsNotPartOfWhatTheFactStates`.
         string payloadJson = JsonSerializer.Serialize(
             new NpcDialoguePresentedPayload(SpeakerOf(box), pages, isQuestion, choices.ToArray()));
 
