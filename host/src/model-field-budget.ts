@@ -5,9 +5,10 @@
  * <p>
  * This module is the budget table and the cut, and nothing else. It was extracted from `fact-brief.ts` because the two
  * are one responsibility - a ceiling nothing enforces is a comment, and a cut with no declared ceiling is an opinion -
- * and because both are read from OUTSIDE the Host: `SweepTargetRefusalNamingTests` (the Mod's census) parses
- * `MODEL_FIELD_CEILINGS` out of this file's source, so the number the model actually receives has one spelling rather
- * than a second copy in a C# test.
+ * and because both are read from OUTSIDE the Host: `SweepTargetRefusalNamingTests` (the Mod's census) judges a receipt
+ * detail by `evidence`, and it reads that number from the table this module PUBLISHES as data
+ * (`model-field-budget.published.json`, held equal to the declaration below by `model-field-budget.published.test.ts`),
+ * so the number the model actually receives has one spelling rather than a second copy in a C# test.
  * </p>
  *
  * <p>
@@ -93,10 +94,12 @@ export function derivedEvidenceCeiling(): number {
 }
 
 /**
- * The resolved share, published as a literal because a READER OUTSIDE THIS PROCESS parses it: the Mod's census reads
- * `evidence: <number>` out of this file's source (`SweepTargetRefusalNamingTests`), so a call expression there would be a
- * number it cannot read. `fact-brief.private.test.ts` asserts this literal equals `derivedEvidenceCeiling()`, which is
- * what keeps one fact from having two spellings: the derivation is authoritative, and this is its published value.
+ * The resolved share, published as a literal BESIDE THIS MODULE rather than computed here: a reader OUTSIDE this process
+ * needs it, and that reader cannot follow a call expression - `model-field-budget.published.json` states it as data, so
+ * nothing outside this process has to parse TypeScript. `fact-brief.private.test.ts` asserts this literal equals
+ * `derivedEvidenceCeiling()`, and `model-field-budget.published.test.ts` asserts the published table equals this
+ * declaration, which is what keeps one fact from having two spellings: the derivation is authoritative, this is its
+ * published value, and the artifact is that value in the form a foreign reader reads.
  */
 const EVIDENCE_CEILING_CHARS = 376;
 
