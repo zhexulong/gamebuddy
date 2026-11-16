@@ -140,14 +140,14 @@
       "target": "dialogue-web/src/composed-surface-route.ts",
       "value": "group_1",
       "pattern": "from \"(\\.[^\"]+)\"",
-      "owed": "the same import walk over the route module; the same published surface table closes both"
+      "owed": "the gate walks the route module's relatives by parsing its import statements; a published route/surface table is the artifact this needs"
     },
     {
       "file": "tools/check-surface-journeys.mjs",
       "target": "dialogue-web/src/components/ComposedReferenceGameApp.tsx",
       "value": "group_1",
       "pattern": "from \"(\\.[^\"]+)\"",
-      "owed": "the gate walks a frontend component's relatives by parsing its import statements; a published route/surface table is the artifact this needs"
+      "owed": "the same import walk over the shell component; the same published surface table closes both"
     },
     {
       "file": "tools/lib/stardew-admission-hold-codes.test.mjs",

@@ -15,6 +15,9 @@
  *   - THE RATCHET, in both directions. An unrecorded value site is a finding; the same site recorded is green; the
  *     recorded site with a pattern nothing matches is `value_read_baseline_stale`, so an entry cannot outlive its
  *     subject.
+ *   - THE TWO WAYS A COUNT CAN LIE. Code QUOTED in a fixture is not a reader (the gate flagged its own falsifier until the
+ *     scanner masked strings, comments and regex bodies), and a tree that reads only artifacts has an empty population -
+ *     both are cases where a number looked like a reading and was not one.
  *
  * Every case runs the gate as a child on its own `--root`, so the population is what the gate itself derives.
  */
@@ -250,4 +253,52 @@ test("a tree with no reader is blocked, not green", () => {
     assert.equal(report.population, 0);
     assert.match(lines[0], /value_reads_blocked/u, "a blocked run says so in words as well as in its report");
   });
+});
+
+test("a reader that reads only artifacts is blocked too, because it judges nothing", () => {
+  const artifactTree = {
+    "src/limits.published.json": '{ "evidence": 376 }\n',
+    "src/ArtifactTests.cs":
+      'using System.IO;\nclass ArtifactTests {\n  void A() { var text = File.ReadAllText("limits.published.json"); }\n}\n',
+  };
+  withTree(artifactTree, (root) => {
+    const { status, report } = read(root);
+    assert.equal(report.counts.readers, 1, "the reader was examined");
+    assert.equal(report.counts.foreignSource, 0, "and it read nothing of another language's source");
+    assert.equal(status, 2, "so the population the verdict rests on is empty: blocked, never green");
+  });
+});
+
+test("a read QUOTED in a fixture is not a read", () => {
+  const quoted = [
+    'const FIXTURE = `import { readFileSync } from "node:fs";',
+    'const s = readFileSync("../../src/other.cs", "utf8");`;',
+    "",
+  ].join("\n");
+  withTree(
+    {
+      "src/limits.ts": "export const LIMITS = Object.freeze({ evidence: 376 });\n",
+      "src/other.cs": "class Other { }\n",
+      "src/quoted.test.mjs": quoted,
+      "src/real.test.mjs": DETECTOR,
+    },
+    (root) => {
+      const { report } = read(root);
+      assert.deepEqual(
+        findingsAbout(report, "src/quoted.test.mjs"),
+        [],
+        "code quoted inside a string is a fixture, not a reader of the file it names",
+      );
+      assert.equal(
+        report.counts.readCalls,
+        1,
+        "exactly one read call was counted: the quoted one is text, and the real one beside it is a call",
+      );
+      assert.equal(
+        findingsAbout(report, "src/real.test.mjs").length,
+        1,
+        "and the real reader beside it is still a finding - the mask must not swallow code",
+      );
+    },
+  );
 });

@@ -32,24 +32,43 @@
  *      hop through a value derived from such a match. A pattern asserted to EXIST (`assert.match`, `Regex.IsMatch`,
  *      `.includes`) is a different, legitimate job and is counted `shape`; text used whole is counted `content`.
  *
+ * A call spelled inside a STRING, a COMMENT or a REGEX literal is not a read: `scanText` masks all three before anything
+ * is counted. Both halves are load-bearing, and both were found by running this gate over its own falsifier - a fixture
+ * carrying `readFileSync("...")` inside a template literal was counted as a reader of a file that does not exist, and a
+ * regex literal's first quote opened a bogus string that swallowed the rest of `tools/check-surface-journeys.mjs` and
+ * lost its two real sites. So the scanner knows line comments, block comments, `#` comments for Python/PowerShell, and a
+ * `/` that can only open a regex where an operand may start.
+ *
  * Documented boundaries, so the absent count is a statement and not an assumption:
  *
  *   - a value sliced out of a bare `.split('=')[1]` / `.IndexOf` / `.Substring` is NOT this class. It has no declared
  *     anchor, so the gate cannot tell which token was meant, and enumerating it is a separate unit rather than a
  *     silent widening of this rule.
  *   - a read whose path is an UNRESOLVED expression (a parameter, a directory scan, a `Directory.GetFiles` loop) is
- *     counted `unresolved` and not judged: this gate reads the path a call names, not the paths a loop visits.
- *   - a second hop through a file-level constant (`HandlerFile = "StardewBodyController.cs"`) is resolved; a third is
- *     not, and `unresolved` says how many sites were left unjudged.
+ *     counted `unresolved` and not judged: this gate reads the path a call names, not the paths a loop visits. It is by
+ *     far the largest bucket, and it is printed every run rather than assumed away.
+ *   - ONE hop through a path variable is resolved (`HandlerFile = "..."`, `path = Path.Combine(Root(), "host", "x.ts")`)
+ *     and no more, and only when that name is assigned EXACTLY ONCE in the file: `path` assigned in five methods is five
+ *     values, and resolving every read of it to the first would name a file the reader never opened.
+ *   - the value is looked for in a 2,500-character window either side of the read, clipped to the read's own block. A
+ *     body scan per site is what made this gate take 79 seconds on a tree with a 428 KB module in it; a value taken out
+ *     further from the read than the window reaches is a documented false negative.
  *
  * THE PROPERTY: no reader obtains a value by parsing another language's source. Every VALUE site is a finding -
  * `value_read_from_another_languages_source:<file>:<value>` - unless it is recorded in
  * `tools/baselines/value-read-from-source.json` with what the fix would be. The baseline is recorded debt, not a mute
  * button: an entry whose site is gone (fixed, or its pattern changed) is
- * `value_read_baseline_stale:<file>:<value>` and must be deleted, so the list only shrinks. Measured on this tree:
- * `value 6 · recorded 6 · finding 0`, and the six are named in the baseline with the artifact or constant each owes.
+ * `value_read_baseline_stale:<file>:<value>` and must be deleted, so the list only shrinks, and a NEW site is red until
+ * someone fixes it or writes the reason it is still owed. Measured on this tree:
  *
- * WHAT THIS IS NOT: a claim that reading another language's source is wrong. Three quarters of this tree's
+ *   `readers 3213 · read calls 13065 · cross-language source sites 411 in 171 files`
+ *   `clauses: foreign source 411 · value 25 · shape 60 · content 326 · recorded 25 · finding 0`
+ *   `excluded: same-language 799 · non-source target 1016 · unresolved 10839`
+ *
+ * ZERO IS BLOCKED, three ways: no reader, no read call, and no cross-language source site at all. The third is the
+ * population the verdict rests on, so a tree that reads only artifacts is a blocked reading and never a clean one.
+ *
+ * WHAT THIS IS NOT: a claim that reading another language's source is wrong. Four fifths of this tree's
  * cross-language readers are shape assertions or whole-content uses, and they are counted rather than judged.
  *
  * Usage:
@@ -151,39 +170,133 @@ export function treeFiles({ root }) {
 }
 
 /** Every string literal of a text with its offsets: one pass, `\` escapes, a template keeps its `${...}`. */
-export function stringLiterals(text) {
-  const found = [];
-  for (let index = 0; index < text.length; index += 1) {
-    const quote = text[index];
-    if (quote !== '"' && quote !== "'" && quote !== "`") continue;
-    let end = index + 1;
-    while (end < text.length) {
-      if (text[end] === "\\") {
-        end += 2;
-        continue;
-      }
-      if (text[end] === quote) break;
-      if (quote !== "`" && text[end] === "\n") break;
-      end += 1;
-    }
-    if (end < text.length && text[end] === quote) {
-      found.push({ start: index, end, body: text.slice(index + 1, end) });
-      index = end;
-    }
-  }
-  return found;
+/**
+ * One pass over a source text: the string literals it holds, and a mask of every offset that is NOT code.
+ *
+ * The mask covers literal BODIES and COMMENTS, and both halves are load-bearing. A literal body is where a fixture, a
+ * docblock or a falsifier QUOTES a read - `tools/check-cross-language-value-reads.test.mjs` carries
+ * `readFileSync("...")` inside template strings, and reading that as a reader made this gate flag its own test file.
+ * Comments matter for the same reason and one worse one: an apostrophe in `// the run's own` used to open a bogus
+ * single-quote literal that swallowed the next real string, so the template literals after it went unmasked. So the
+ * scanner knows line comments, block comments and, for Python and PowerShell, `#`.
+ *
+ * It is also the reason this gate runs in seconds: asking "is this offset inside one of N literals" per character is
+ * O(text x literals), which took 74 seconds before the mask existed.
+ */
+const REGEX_PRECEDERS = new Set([
+  "=",
+  "(",
+  ",",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  "}",
+  ";",
+  "+",
+  "-",
+  "*",
+  "%",
+  "~",
+  "^",
+  "<",
+  ">",
+]);
+
+/** The last character before `offset` that is not a space or a tab: what decides whether a `/` opens a regex. */
+function previousMeaningful(text, offset) {
+  let back = offset - 1;
+  while (back >= 0 && (text[back] === " " || text[back] === "\t")) back -= 1;
+  return back < 0 ? "\n" : text[back];
 }
 
-/**
- * A mask of the offsets a string literal occupies.
- *
- * It exists because the alternative - asking "is this offset inside one of N literals" per character - is why this
- * gate first took 74 seconds on this tree: every body scan was O(text x literals).
- */
-function literalMask(text, ranges) {
-  const mask = new Uint8Array(text.length);
-  for (const range of ranges) for (let index = range.start; index <= range.end; index += 1) mask[index] = 1;
-  return mask;
+/** The end of a comment starting at `offset`, or null when there is none there. Line comments stop at the newline. */
+function commentEndAt(text, offset, hashComments) {
+  const char = text[offset];
+  const next = text[offset + 1];
+  const lineEnd = () => {
+    const at = text.indexOf("\n", offset);
+    return at === -1 ? text.length : at;
+  };
+  if (char === "/" && next === "/") return lineEnd();
+  if (char === "/" && next === "*") {
+    const at = text.indexOf("*/", offset + 2);
+    return at === -1 ? text.length : at + 2;
+  }
+  if (hashComments && char === "#") return lineEnd();
+  return null;
+}
+
+/** The end of a regex literal starting at `offset`, or null when the `/` there cannot open one. */
+function regexEndAt(text, offset) {
+  if (text[offset] !== "/") return null;
+  if (!REGEX_PRECEDERS.has(previousMeaningful(text, offset))) return null;
+  let end = offset + 1;
+  let inClass = false;
+  while (end < text.length) {
+    const at = text[end];
+    if (at === "\\") {
+      end += 2;
+      continue;
+    }
+    if (at === "\n") break;
+    if (at === "[") inClass = true;
+    else if (at === "]") inClass = false;
+    else if (at === "/" && !inClass) break;
+    end += 1;
+  }
+  const closed = end < text.length && text[end] === "/";
+  return closed ? end + 1 : end;
+}
+
+/** The end of the string literal starting at `offset`, and whether it closed. A template literal may span lines. */
+function literalEndAt(text, offset) {
+  const quote = text[offset];
+  let end = offset + 1;
+  while (end < text.length) {
+    if (text[end] === "\\") {
+      end += 2;
+      continue;
+    }
+    if (text[end] === quote) return { end, closed: true };
+    if (quote !== "`" && text[end] === "\n") break;
+    end += 1;
+  }
+  return { end, closed: false };
+}
+
+export function scanText(text, language) {
+  const literals = [];
+  const skip = new Uint8Array(text.length);
+  const hashComments = language === "python" || language === "powershell";
+  let index = 0;
+  while (index < text.length) {
+    const commentEnd = commentEndAt(text, index, hashComments);
+    if (commentEnd !== null) {
+      skip.fill(1, index, commentEnd);
+      index = commentEnd;
+      continue;
+    }
+    const regexEnd = regexEndAt(text, index);
+    if (regexEnd !== null) {
+      skip.fill(1, index, regexEnd);
+      index = regexEnd;
+      continue;
+    }
+    if (text[index] === '"' || text[index] === "'" || text[index] === "`") {
+      const { end, closed } = literalEndAt(text, index);
+      const stop = closed ? end + 1 : end;
+      skip.fill(1, index, stop);
+      if (closed) literals.push({ start: index, end, body: text.slice(index + 1, end) });
+      index = stop;
+      continue;
+    }
+    index += 1;
+  }
+  return { literals, skip };
 }
 
 /** The argument text of the call whose `(` is at `open`. */
@@ -202,7 +315,7 @@ function argsOf(text, open) {
 /** The literals of one expression, joined up to and including the first that names a file. */
 function pathFrom(expression) {
   const parts = [];
-  for (const literal of stringLiterals(String(expression))) {
+  for (const literal of scanText(String(expression), "javascript").literals) {
     const part = literal.body.replace(/\$\{[^}]*\}/gu, "");
     parts.push(part);
     if (FILE_LITERAL.test(part.trim())) break;
@@ -223,9 +336,10 @@ function pathFrom(expression) {
  * `file` assigned in five methods is five different values, and resolving every read of that name to whichever
  * assignment came first would name a target the reader never opened.
  */
-function pathVariables(text) {
+function pathVariables(text, skip) {
   const seen = new Map();
   for (const match of text.matchAll(PATH_ASSIGNMENT)) {
+    if (skip[match.index] === 1) continue;
     const [name] = [match[1]];
     const path = pathFrom(match[2]);
     const record = seen.get(name) ?? { count: 0, path: null };
@@ -264,11 +378,11 @@ function bindingBefore(text, callStart) {
  * is what made this gate take 79 seconds on a tree with a 428 KB module in it. The limit is stated rather than silent -
  * a read whose block opened further back is analysed in the same window as a module-scope one.
  */
-function enclosingBraceStart(text, offset, mask) {
+function enclosingBraceStart(text, offset, skip) {
   let depth = 0;
   const floor = Math.max(0, offset - ENCLOSING_LIMIT);
   for (let index = offset; index >= floor; index -= 1) {
-    if (mask[index] === 1) continue;
+    if (skip[index] === 1) continue;
     if (text[index] === "}") depth += 1;
     else if (text[index] === "{") {
       if (depth === 0) return index;
@@ -418,9 +532,8 @@ export function readSites({ root }) {
     if (readerLanguage === null) continue;
     const text = readFileSync(join(root, file), "utf8");
     counts.readers += 1;
-    const literalRanges = stringLiterals(text);
-    const mask = literalMask(text, literalRanges);
-    const constants = pathVariables(text);
+    const { skip } = scanText(text, readerLanguage);
+    const constants = pathVariables(text, skip);
     const analysisCache = new Map();
     const newlines = [...text.matchAll(/\n/gu)].map((newline) => newline.index);
     const lineOf = (offset) => {
@@ -435,6 +548,9 @@ export function readSites({ root }) {
     };
     for (const match of text.matchAll(CALL)) {
       if (!READ_CALLEE.test(match[1].trim())) continue;
+      // A call spelled inside a string or a comment is not a call: a fixture, a docblock or this gate's own falsifier
+      // quotes code, and reading that as a reader made the gate flag its own test file for the fixtures it carries.
+      if (skip[match.index] === 1) continue;
       counts.readCalls += 1;
       const args = argsOf(text, match.index + match[0].length - 1);
       const target = resolveTarget(args, constants);
@@ -452,7 +568,7 @@ export function readSites({ root }) {
         continue;
       }
       counts.foreignSource += 1;
-      const { lifted, shaped } = classifySite(text, match.index, mask, analysisCache);
+      const { lifted, shaped } = classifySite(text, match.index, skip, analysisCache);
       sites.push({
         file,
         line: lineOf(match.index),
@@ -479,8 +595,8 @@ function classOf(lifted, shaped) {
 }
 
 /** What one foreign-source read does with the text: a value lifted out of it, a pattern asserted over it, or neither. */
-function classifySite(text, callStart, mask, analysisCache) {
-  const scope = windowOf(text, callStart, enclosingBraceStart(text, callStart, mask));
+function classifySite(text, callStart, skip, analysisCache) {
+  const scope = windowOf(text, callStart, enclosingBraceStart(text, callStart, skip));
   let analysis = analysisCache.get(scope.from);
   if (analysis === undefined) {
     analysis = { applications: regexApplications(scope.text), edges: derivedEdges(scope.text) };
@@ -578,7 +694,9 @@ function main() {
   const rootFlag = argv.indexOf("--root");
   const root = rootFlag === -1 ? REPOSITORY_ROOT : resolve(argv[rootFlag + 1]);
   const report = checkValueReads({ root });
-  const blocked = report.counts.readers === 0 || report.counts.readCalls === 0;
+  // Three zeros, told apart: no reader, no read call, and no cross-language source site at all. The last one is the
+  // population the whole verdict rests on, so a tree that reads only artifacts is a blocked reading, never a clean one.
+  const blocked = report.counts.readers === 0 || report.counts.readCalls === 0 || report.counts.foreignSource === 0;
   const exitCode = exitCodeOf(report, blocked);
   if (argv.includes("--json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -586,10 +704,10 @@ function main() {
   }
   if (blocked) {
     process.stdout.write(
-      `value_reads_blocked: ${root} holds ${report.counts.readers} reader(s), so nothing was examined\n`,
+      `value_reads_blocked: ${root} holds readers ${report.counts.readers} · read calls ${report.counts.readCalls} · cross-language source sites ${report.counts.foreignSource}, so nothing was judged\n`,
     );
     process.stdout.write(
-      `${JSON.stringify({ gate: "cross_language_value_reads/v1", status: "blocked", population: 0, detail: "no reader found" })}\n`,
+      `${JSON.stringify({ gate: "cross_language_value_reads/v1", status: "blocked", population: 0, detail: "no cross-language source read site to judge" })}\n`,
     );
     return exitCode;
   }
