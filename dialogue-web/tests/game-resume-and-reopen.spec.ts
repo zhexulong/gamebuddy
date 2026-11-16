@@ -16,11 +16,11 @@ import {
   root,
   progressStatus,
   openGameDrawer,
+  stubGameRead,
 } from "./composed-reference-game-fixtures";
 
 test("Game Resume is generation-bound and single-flight, rereads authoritative state, and renders no synthetic completion", async ({ page }) => {
   let resumeRequests = 0;
-  let stateRequests = 0;
   let tavernMutationRequests = 0;
   const attachedGame = {
     ...game,
@@ -47,16 +47,20 @@ test("Game Resume is generation-bound and single-flight, rereads authoritative s
     expect(route.request().postDataJSON()).toEqual({
       apiVersion: 1,
       idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
-      expectedAttachmentGeneration: 1,
+      // The reconnect ESTABLISHES the next attachment generation, so the command names the one it will
+      // establish rather than the one on screen (`GameSurface.handleGameResume`; the Host's own resume
+      // journey names the same one, `stardew-production-lifecycle-coordinator-resume.internal.test.ts`).
+      expectedAttachmentGeneration: 2,
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "attached" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = resumeRequests === 0 ? attachedGame : resumedGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  // The mount's arrival read. A Game command re-reads the Game slice on `/game`, below, so this route
+  // answers the arrival and nothing the resume did.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => (resumeRequests === 0 ? attachedGame : resumedGame));
   await page.route("**/api/tavern/v1/bootstrap", async (route) => {
     tavernMutationRequests += 1;
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
@@ -84,7 +88,9 @@ test("Game Resume is generation-bound and single-flight, rereads authoritative s
   await expect(resume).toBeVisible();
   await resume.dblclick();
   await expect.poll(() => resumeRequests).toBe(1);
-  await expect.poll(() => stateRequests).toBe(2);
+  // One confirmation read of the Game slice, and the fact that ends the wait: the projection is the
+  // resumed attachment at the same generation. Nothing about the transport's `attached` word is drawn.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionConnected");
   await expect(resume).toHaveCount(0);
   await expect(panel).not.toContainText("The game could not be resumed");
@@ -102,7 +108,6 @@ test("Game Resume is generation-bound and single-flight, rereads authoritative s
 
 test("Game Resume stays in flight on an accepted admission while authoritative state stays disconnected", async ({ page }) => {
   let resumeRequests = 0;
-  let stateRequests = 0;
   let tavernMutationRequests = 0;
   const attachedGame = {
     ...game,
@@ -125,7 +130,7 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
     expect(route.request().postDataJSON()).toEqual({
       apiVersion: 1,
       idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
-      expectedAttachmentGeneration: 1,
+      expectedAttachmentGeneration: 2,
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "accepted" }) });
@@ -133,10 +138,10 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   // The authoritative projection keeps returning the same-generation
   // attached/disconnected state: the accepted admission is never runtime
   // completion, so the bounded convergence rereads keep going.
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => attachedGame);
   await page.route("**/api/tavern/v1/bootstrap", async (route) => {
     tavernMutationRequests += 1;
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
@@ -169,7 +174,7 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   await expect(resume).toBeDisabled();
   // At least one authoritative reread confirms the projection is still the
   // same-generation attached/disconnected state rather than converged.
-  await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => gameRead.reads()).toBeGreaterThanOrEqual(1);
   await expect(panel).toContainText("ConnectionDisconnected");
   // The Resume stays visibly in progress and disabled across the rereads, with
   // no synthetic success/accepted/completion text projected.
@@ -201,7 +206,6 @@ test("unavailable Game Resume preserves its generation key for an idempotent exa
     },
   };
   const keys: string[] = [];
-  let stateRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
   );
@@ -211,13 +215,13 @@ test("unavailable Game Resume preserves its generation key for an idempotent exa
   await page.route("**/api/composed-reference-game/v1/game/resume", async (route) => {
     const command = route.request().postDataJSON() as { idempotencyKey: string; expectedAttachmentGeneration: number };
     keys.push(command.idempotencyKey);
-    expect(command.expectedAttachmentGeneration).toBe(2);
+    expect(command.expectedAttachmentGeneration, "the reconnect names the generation it will establish").toBe(3);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "unavailable" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => attachedGame);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -228,7 +232,9 @@ test("unavailable Game Resume preserves its generation key for an idempotent exa
   const resume = panel.getByRole("button", { name: "Resume game" });
   await resume.click();
   await expect.poll(() => keys.length).toBe(1);
-  await expect.poll(() => stateRequests).toBe(1);
+  // The unavailable answer's own confirmation read, which is what keeps the failure to the one generation
+  // the command named.
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).toContainText("ConnectionConnection failed");
   await expect(panel).toContainText("could not be resumed right now");
   // One command, one control: the failed attempt hands the same generation-bound
@@ -240,7 +246,7 @@ test("unavailable Game Resume preserves its generation key for an idempotent exa
   await retry.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).toBe(keys[0]);
-  await expect.poll(() => stateRequests).toBe(2);
+  await expect.poll(() => gameRead.reads()).toBe(2);
   await expect(panel).toContainText("could not be resumed right now");
   await page.waitForTimeout(50);
   expect(keys).toHaveLength(2);
@@ -271,17 +277,19 @@ test("stale-generation Game Resume rereads a newer attachment without mutating o
     const command = route.request().postDataJSON() as { idempotencyKey: string; expectedAttachmentGeneration: number };
     keys.push(command.idempotencyKey);
     if (keys.length === 1) {
-      expect(command.expectedAttachmentGeneration).toBe(1);
+      expect(command.expectedAttachmentGeneration, "the reconnect names the generation it will establish").toBe(2);
       await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "game_attachment_conflict" }) });
       return;
     }
-    expect(command.expectedAttachmentGeneration).toBe(2);
+    expect(command.expectedAttachmentGeneration).toBe(3);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "attached" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    const projection = keys.length === 0 ? attachedGame : newerGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  // The stale generation is reconciled by reading the Game slice, so the read after the refusal is what has
+  // to report the newer attachment - and what re-arms Resume against generation 2.
+  const gameRead = await stubGameRead(page, () => (keys.length === 0 ? attachedGame : newerGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -292,6 +300,7 @@ test("stale-generation Game Resume rereads a newer attachment without mutating o
   const resume = panel.getByRole("button", { name: "Resume game" });
   await resume.click();
   await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).not.toContainText("The game could not be resumed");
   const newerResume = panel.getByRole("button", { name: "Resume game" });
   await newerResume.click();
@@ -344,7 +353,6 @@ test("resume-phase syncing projection passes the browser gate, visualizes sync, 
 
 test("ready-actions-paused renders the Resume actions control and converges on the authoritative reopened projection", async ({ page }) => {
   let reopenRequests = 0;
-  let stateRequests = 0;
   let tavernMutationRequests = 0;
   const pausedGame = {
     ...game,
@@ -377,11 +385,10 @@ test("ready-actions-paused renders the Resume actions control and converges on t
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "reopened" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    const projection = reopenRequests === 0 ? pausedGame : reopenedGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => (reopenRequests === 0 ? pausedGame : reopenedGame));
   await page.route("**/api/tavern/v1/bootstrap", async (route) => {
     tavernMutationRequests += 1;
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
@@ -414,8 +421,9 @@ test("ready-actions-paused renders the Resume actions control and converges on t
   await expect.poll(() => reopenRequests).toBe(1);
   // The strict `reopened` result is never projected as synthetic success; the
   // composed authoritative Game projection must converge to actionAuthority
-  // active at the same attachment generation before the drawer updates.
-  await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(1);
+  // active at the same attachment generation before the drawer updates, and that
+  // convergence is the panel's own read of the Game slice.
+  await expect.poll(() => gameRead.reads()).toBeGreaterThanOrEqual(1);
   await expect(reopen).toHaveCount(0);
   await expect(panel.getByText("Game actions are paused.")).toHaveCount(0);
   await expect(panel).not.toContainText("could not be resumed");
@@ -476,7 +484,6 @@ test("failed Game reopen renders no synthetic success and preserves its generati
     },
   };
   const keys: string[] = [];
-  let stateRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
   );
@@ -489,10 +496,10 @@ test("failed Game reopen renders no synthetic success and preserves its generati
     expect(command.expectedAttachmentGeneration).toBe(2);
     await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  const gameRead = await stubGameRead(page, () => pausedGame);
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -503,7 +510,7 @@ test("failed Game reopen renders no synthetic success and preserves its generati
   const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
   await reopen.click();
   await expect.poll(() => keys.length).toBe(1);
-  await expect.poll(() => stateRequests).toBe(1);
+  await expect.poll(() => gameRead.reads()).toBe(1);
   // Fail closed: the failure is presented, the authoritative paused projection
   // is retained, and no synthetic reopened success is ever projected.
   await expect(panel).toContainText("The game actions could not be resumed");
@@ -515,7 +522,7 @@ test("failed Game reopen renders no synthetic success and preserves its generati
   await reopen.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).toBe(keys[0]);
-  await expect.poll(() => stateRequests).toBe(2);
+  await expect.poll(() => gameRead.reads()).toBe(2);
   await expect(panel).toContainText("The game actions could not be resumed");
   await page.waitForTimeout(50);
   expect(keys).toHaveLength(2);
@@ -554,10 +561,12 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
     expect(command.expectedAttachmentGeneration).toBe(2);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "reopened" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    const projection = keys.length === 0 ? pausedGame : newerGame;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: projection }) });
-  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: pausedGame }) }),
+  );
+  // The stale generation is reconciled by reading the Game slice, so the read after the refusal is what has
+  // to report the newer attachment - and what re-arms Resume actions against generation 2.
+  const gameRead = await stubGameRead(page, () => (keys.length === 0 ? pausedGame : newerGame));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -568,6 +577,7 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
   await reopen.click();
   await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => gameRead.reads()).toBe(1);
   await expect(panel).not.toContainText("The game actions could not be resumed");
   // The newer attached generation stays paused and connected, so the drawer
   // keeps offering the exact generation-bound Reopen with a fresh key.
@@ -594,7 +604,6 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   };
   const keys: string[] = [];
   let cancelRequests = 0;
-  let stateRequests = 0;
   let tavernMutationRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
@@ -619,12 +628,14 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
     await new Promise((resolve) => setTimeout(resolve, 50));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "cancelled" }) });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateRequests += 1;
-    // After the cancellation the authoritative projection shows the same
-    // armed generation as disconnected; the session stays resumable.
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: cancelledGame }) });
-  });
+  // The mount's arrival read. The resume's and the cancellation's own confirmation reads arrive on `/game`,
+  // counted below.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: failedGame }) }),
+  );
+  // After the cancellation the authoritative projection shows the same
+  // armed generation as disconnected; the session stays resumable.
+  const gameRead = await stubGameRead(page, () => cancelledGame);
   await page.route("**/api/tavern/v1/bootstrap", async (route) => {
     tavernMutationRequests += 1;
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
@@ -655,7 +666,10 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   await expect(startNew).toBeVisible();
   await cancel.dblclick();
   await expect.poll(() => cancelRequests).toBe(1);
-  await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(2);
+  // The resume's unavailable answer read the Game slice once, and the cancellation's own read is the
+  // second: two commands, two confirmation reads, and the second one is what draws the disconnected
+  // generation the session is armed on.
+  await expect.poll(() => gameRead.reads()).toBeGreaterThanOrEqual(2);
   await expect(panel).toContainText("ConnectionDisconnected");
   // The cancelled epoch clears the failure surface: no stale Reopen, no
   // Retry/Cancel/Start rollup, no synthetic success text, and the session
