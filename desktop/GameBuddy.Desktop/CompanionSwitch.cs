@@ -54,8 +54,16 @@ internal enum CompanionSwitchStatus
 /// <summary>
 /// One switch's bounded outcome. <see cref="Code"/> is the named refusal a refusal reports
 /// and is null on every other status, so a caller can never read a code off a success.
+/// <see cref="TargetCompanionId"/> is the companion the switch was about and
+/// <see cref="ActiveCompanionId"/> the one who is still in play, so a caller that records a
+/// refusal can name both: the target is the only part of the request a spent request no longer
+/// carries.
 /// </summary>
-internal readonly record struct CompanionSwitchOutcome(CompanionSwitchStatus Status, string? Code, string? ActiveCompanionId);
+internal readonly record struct CompanionSwitchOutcome(
+    CompanionSwitchStatus Status,
+    string? Code,
+    string? ActiveCompanionId,
+    string? TargetCompanionId);
 
 /// <summary>
 /// Which companion this installation plays, as the launcher changes it at the next launch.
@@ -196,7 +204,7 @@ internal static class CompanionSwitch
         // a request exists.
         Reconcile(layout);
 
-        if (!HasPendingRequest(layout)) return new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null);
+        if (!HasPendingRequest(layout)) return new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null);
 
         var request = ReadRequest(layout);
         if (request is null)
@@ -204,7 +212,7 @@ internal static class CompanionSwitch
             // A request this launcher cannot read is not a switch: it is a malformed record,
             // and leaving it in place would refuse every later launch with the same fact.
             DiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_record_unreadable", null);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_record_unreadable", null, null);
         }
 
         var active = DeploymentIdentity.ReadActive(layout);
@@ -216,7 +224,7 @@ internal static class CompanionSwitch
         if (StringComparer.Ordinal.Equals(active.CompanionId, wanted.TargetCompanionId))
         {
             DiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, active.CompanionId);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, active.CompanionId, active.CompanionId);
         }
 
         // The compare-and-set the surface read. Somebody else changed the installation
@@ -225,7 +233,7 @@ internal static class CompanionSwitch
         if (!StringComparer.Ordinal.Equals(active.CompanionId, wanted.ExpectedActiveCompanionId))
         {
             DiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId, wanted.TargetCompanionId);
         }
 
         return Switch(layout, active, wanted, now, fault);
@@ -321,7 +329,7 @@ internal static class CompanionSwitch
             // 8. Last: the request is spent. Every launch before this point re-reads the same
             //    facts and lands on the same outcome, which is what makes a crash survivable.
             DiscardRequest(layout);
-            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, next.CompanionId);
+            return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, next.CompanionId, next.CompanionId);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException or NotSupportedException)
         {
@@ -413,7 +421,7 @@ internal static class CompanionSwitch
         // Nothing was moved and nothing was renamed, so the refuse is the whole effect: the
         // request is spent and the companion in play still is.
         DiscardRequest(layout);
-        return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, code, request.ExpectedActiveCompanionId);
+        return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, code, request.ExpectedActiveCompanionId, request.TargetCompanionId);
     }
 
     private static void EnsureParkedDirectory(CurrentUserRootLayout layout)

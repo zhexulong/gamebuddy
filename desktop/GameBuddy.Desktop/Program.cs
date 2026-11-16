@@ -410,7 +410,13 @@ internal static class Program
             //
             // It runs even when no request exists, because finishing or undoing a switch that died
             // between two of its steps is the same operation over the same facts.
-            CompanionSwitch.ApplyPending(layout);
+            //
+            // A refusal is recorded before it can be forgotten: applying the request spends it, so
+            // the operational root is the only place the player's choice and the launcher's answer
+            // can still be read (`<operationalRoot>\companion-switch-<instant>.json`, which names
+            // the code, the companion the switch was about, and the companion who is still in play).
+            var switchOutcome = CompanionSwitch.ApplyPending(layout);
+            CompanionSwitchVerdictRecord.Write(layout.OperationalRoot, switchOutcome);
 
             // The operational deployment manifest is the admitted Host child's
             // deployment identity. The manifest must exist before the child does,
