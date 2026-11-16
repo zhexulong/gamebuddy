@@ -5,11 +5,12 @@
 // re-run without redoing the survivors.
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { mkdir, access, writeFile, readFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runPaths, loadRunConfig, REPO_ROOT, KIT_ROOT } from "../lib/config.mjs";
-import { registerRunProcess } from "../lib/run-owner.mjs";
 import { readBlockedByProduct, readNotMeasured } from "../capture/game-launch-verdict.mjs";
+import { KIT_ROOT, loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
+import { recordRunGame } from "../lib/run-game.mjs";
+import { registerRunProcess } from "../lib/run-owner.mjs";
 import { DRIVERS } from "./drivers.mjs";
 
 /* The roster lives in one module because the report reconciles the same list (drivers.mjs). */
@@ -105,6 +106,15 @@ async function main() {
   await mkdir(doneDir, { recursive: true });
   for (const driver of selected) {
     const doneMarker = join(doneDir, `${driver.out}.driver-done`);
+    // The game appears inside a driver (driver w asks the Host to launch one), so the boundary between two
+    // drivers is where this run can see it while it is alive: one query for the game's images per driver, and
+    // the pid is recorded in the run's registry for its teardown and for its own post-run assertion.
+    const game = recordRunGame({ paths, stageRoot: paths.stageRoot });
+    if (game.added.length > 0)
+      log(
+        `  GAME RECORDED ${game.added.map((row) => `${row.pid}(${row.role})`).join(" ")} - this run started it, so its cleanup ends it`,
+      );
+    else if (game.kind === "unverifiable") log("  GAME NOT RECORDED: the process table did not answer this boundary");
     if (!force && (await exists(doneMarker))) {
       skippedByMarker += 1;
       log(`SKIP ${driver.key} (done marker ${doneMarker} exists)`);

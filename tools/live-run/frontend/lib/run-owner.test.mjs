@@ -9,17 +9,18 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { cdpPortLockDir } from "./cdp-port-lock.mjs";
 import { runPaths } from "./config.mjs";
+import { describeGameCleanup, recordedGameProcesses, survivingGameIdentities } from "./run-game.mjs";
 import {
   describeLeftovers,
   describeTeardown,
   inspectRunLeftovers,
-  registerRunProcess,
   registeredRunProcesses,
+  registerRunProcess,
   teardownRun,
   writeLeftoversReading,
 } from "./run-owner.mjs";
@@ -129,6 +130,62 @@ test("a run's owner terminates every process it started, and asserts none remain
   } finally {
     for (const child of [launchDriver, browser, captureDriver]) child.kill("SIGKILL");
     rmSync(cdpPortLockDir(CDP_PORT), { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The game the run started is its own population in the assertion: the sweep cannot see the game client (its
+// command line names nothing of this run), so "nothing remained" from the sweep says nothing about it. The
+// teardown ends it by the pid the run recorded, and the post-run reading says which of the two happened.
+test("a run takes back the game it started, and says so when it cannot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-game-owner-"));
+  const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+  mkdirSync(paths.stateDir, { recursive: true });
+  const run = { cdpPort: 9496, tag: "game-owner-test" };
+  const loader = spawnIdle(["--mods-path", join(paths.stageRoot, "root", "player-host", "Mods")]);
+  const client = spawnIdle(["--stardew-client"]);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    registerRunProcess(paths, { pid: loader.pid, role: "game-smapi" });
+    registerRunProcess(paths, { pid: client.pid, role: "game-client" });
+
+    // Before the teardown the assertion is RED: both halves are alive, and the run is told so by identity.
+    const before = {
+      recorded: recordedGameProcesses(paths),
+      surviving: survivingGameIdentities(recordedGameProcesses(paths)),
+    };
+    assert.equal(before.surviving.kind, "alive");
+    assert.match(describeGameCleanup(before)[0], /^RUN-GAME-CLEANUP: game_still_alive: /u);
+    assert.match(describeGameCleanup(before)[0], new RegExp(`${loader.pid}\\(game-smapi\\)`, "u"));
+    assert.match(describeGameCleanup(before)[0], new RegExp(`${client.pid}\\(game-client\\)`, "u"));
+    assert.match(
+      describeGameCleanup(before)[0],
+      /\(could not terminate\) - this run started a game and did not take it back$/u,
+    );
+    const duringLeftovers = inspectRunLeftovers({ paths, run, game: before });
+    assert.equal(duringLeftovers.status, "game_alive", describeLeftovers(duringLeftovers, run));
+    assert.match(describeLeftovers(duringLeftovers, run), /this run's game is still alive after cleanup/u);
+
+    teardownRun({ paths, run, reason: "run_complete" });
+    assert.ok(await waitForGone(loader.pid), `the game loader (pid ${loader.pid}) must be gone after the teardown`);
+    assert.ok(await waitForGone(client.pid), `the game client (pid ${client.pid}) must be gone after the teardown`);
+
+    const after = {
+      recorded: recordedGameProcesses(paths),
+      surviving: survivingGameIdentities(recordedGameProcesses(paths)),
+    };
+    assert.equal(after.surviving.kind, "gone");
+    assert.match(describeGameCleanup(after)[0], /^RUN-GAME-CLEANUP: game_terminated_by_run: /u);
+    const leftovers = inspectRunLeftovers({ paths, run, game: after });
+    assert.equal(leftovers.status, "none", describeLeftovers(leftovers, run));
+    writeLeftoversReading(paths, leftovers);
+    assert.equal(
+      JSON.parse(readFileSync(paths.leftoversFile, "utf8")).game.surviving.kind,
+      "gone",
+      "the game's own answer is written beside the run, so the fact outlives the terminal",
+    );
+  } finally {
+    for (const child of [loader, client]) child.kill("SIGKILL");
     rmSync(root, { recursive: true, force: true });
   }
 });

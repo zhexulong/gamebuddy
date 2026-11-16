@@ -28,27 +28,18 @@
 // exception is a STEPWISE run that succeeded: a mounted session is the next phase's input, so it is
 // kept and named; `cleanup` is the operator's stop.
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import {
-  runPaths,
-  loadRunConfig,
-  saveRunConfig,
-  defaultStageFor,
-  sanitizeTag,
-  REPO_ROOT,
-  KIT_ROOT,
-} from "./lib/config.mjs";
 import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
 import {
-  describeLeftovers,
-  describeTeardown,
-  inspectRunLeftovers,
-  registerRunProcess,
-  registeredRunProcesses,
-  teardownRun,
-  writeLeftoversReading,
-} from "./lib/run-owner.mjs";
+  defaultStageFor,
+  KIT_ROOT,
+  loadRunConfig,
+  REPO_ROOT,
+  runPaths,
+  sanitizeTag,
+  saveRunConfig,
+} from "./lib/config.mjs";
 import { describePhaseFailure } from "./lib/phase-failure.mjs";
 import {
   closeProcessLedger,
@@ -58,6 +49,16 @@ import {
   openProcessLedger,
   writeProcessLedger,
 } from "./lib/process-ledger.mjs";
+import { describeGameCleanup, recordedGameProcesses, recordRunGame, survivingGameIdentities } from "./lib/run-game.mjs";
+import {
+  describeLeftovers,
+  describeTeardown,
+  inspectRunLeftovers,
+  registeredRunProcesses,
+  registerRunProcess,
+  teardownRun,
+  writeLeftoversReading,
+} from "./lib/run-owner.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -441,6 +442,11 @@ async function main() {
   const close = ({ code, reason, teardown }) => {
     if (closed) return code;
     closed = true;
+    // The game this run started is recorded BEFORE anything is torn down, from the only authority for it: the
+    // process table, filtered for the game's own images and matched to this run's mods root. The sweep below
+    // cannot see it (`Stardew Valley.exe` is launched with no arguments), and the product deliberately keeps a
+    // player's world alive when the Host dies - so a harness that opened a game must name it and take it back.
+    const gameRecord = recordRunGame({ paths, stageRoot: paths.stageRoot });
     const collected = collectProcessLedger(ledger, {
       registry: registeredRunProcesses(paths),
       hostPid: readHostPid(paths),
@@ -462,20 +468,37 @@ async function main() {
     }
     const teardownReport = teardownRun({ paths, run, reason });
     console.log(describeTeardown(teardownReport));
+    // What happened to the game, in one line: it is a population of its own, so nothing about it has to be
+    // inferred from a sweep that cannot see it.
+    const game = {
+      recorded: recordedGameProcesses(paths),
+      surviving: survivingGameIdentities(recordedGameProcesses(paths)),
+      examined: gameRecord.examined,
+    };
+    for (const line of describeGameCleanup(game)) console.log(line);
     const reading = closeProcessLedger(ledger, collected, {
       endedByRun: teardownReport.killed.map((entry) => entry.pid),
-      keptAlive: deliberatelyKept(collected.entries),
+      keptAlive: deliberatelyKept(collected.entries, { gamePids: new Set(game.recorded.map((entry) => entry.pid)) }),
     });
     writeProcessLedger(paths, reading);
     for (const line of describeProcessLedger(reading)) console.log(line);
-    const leftovers = inspectRunLeftovers({ paths, run });
+    const leftovers = inspectRunLeftovers({ paths, run, game });
     writeLeftoversReading(paths, leftovers);
     console.log(describeLeftovers(leftovers, run));
     // A run that leaves its own processes alive did not finish, whatever its phase said - and so did a run that
-    // ended a process it did not own, or whose ledger could not account for the pids it registered.
+    // ended a process it did not own, one that left the game it started on screen, or one whose ledger could not
+    // account for the pids it registered.
     const ledgerFailed =
       reading.leftovers.length > 0 || reading.population === "unmeasured" || reading.collateral?.endedByRunUnowned > 0;
-    return code !== 0 || leftovers.status === "ours_remain" || ledgerFailed ? Math.max(code, 1) : code;
+    const gameFailed =
+      game.surviving.kind === "alive" || (game.surviving.kind === "unverifiable" && game.recorded.length > 0);
+    return code !== 0 ||
+      leftovers.status === "ours_remain" ||
+      leftovers.status === "game_alive" ||
+      gameFailed ||
+      ledgerFailed
+      ? Math.max(code, 1)
+      : code;
   };
   process.once("exit", () => close({ code: 1, reason: "abnormal_exit", teardown: "kill" }));
   // The stepwise path that kills: `cleanup` is the operator's stop, so it reports what it stopped.

@@ -13,16 +13,16 @@
 // the browser (`--user-data-dir=<stage>/browser-profile`) and anything the driver spawned. A teardown
 // kills the union, by exact pid only - never by image name (#3715) - and prints what it examined.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { portListener, processesWithCommandLine, killProcessTree } from "./process-table.mjs";
 import { releaseCdpPortLockHeldBy } from "./cdp-port-lock.mjs";
+import { killProcessTree, portListener, processesWithCommandLine } from "./process-table.mjs";
 
 /** Records one pid this run started. Append-only: the launch and capture phases are separate processes. */
-export function registerRunProcess(paths, { pid, role }) {
+export function registerRunProcess(paths, { pid, role, startTime = null }) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return;
   mkdirSync(paths.stateDir, { recursive: true });
   appendFileSync(
     paths.runProcessesFile,
-    `${JSON.stringify({ pid, role: String(role ?? "unrecorded"), at: new Date().toISOString() })}\n`,
+    `${JSON.stringify({ pid, role: String(role ?? "unrecorded"), startTime: typeof startTime === "string" ? startTime : null, at: new Date().toISOString() })}\n`,
     "utf8",
   );
 }
@@ -41,13 +41,18 @@ export function registeredRunProcesses(paths) {
     try {
       const record = JSON.parse(line);
       if (Number.isSafeInteger(record.pid) && !records.has(record.pid)) {
-        records.set(record.pid, String(record.role ?? "unrecorded"));
+        records.set(record.pid, {
+          role: String(record.role ?? "unrecorded"),
+          // The OS's own creation time, when the recorder could see the process: pid AND start time is the
+          // identity, since a pid the machine recycles is a different process wearing the same number.
+          startTime: typeof record.startTime === "string" ? record.startTime : null,
+        });
       }
     } catch {
       // A torn last line is a write that did not finish, not a process: the pids above it are intact.
     }
   }
-  return [...records].map(([pid, role]) => ({ pid, role }));
+  return [...records].map(([pid, record]) => ({ pid, role: record.role, startTime: record.startTime }));
 }
 
 const isBrowser = (commandLine) => String(commandLine).includes("--user-data-dir=");
@@ -90,14 +95,22 @@ export function teardownRun({ paths, run, reason }) {
 }
 
 /**
- * What is still alive and belongs to this run: the processes naming its stage root, and who holds its
- * CDP port. `status` is `none`, `ours_remain`, `port_held_by_another` or `unverifiable` - four different
- * answers, because "this run leaked" and "a sibling is using the port" are not the same finding.
+ * What is still alive and belongs to this run: the processes naming its stage root, who holds its CDP port,
+ * and the game this run started (recorded by identity, never by image name alone). `status` is `none`,
+ * `ours_remain`, `game_alive`, `port_held_by_another` or `unverifiable` - five different answers, because
+ * "this run leaked", "this run left its game running" and "a sibling is using the port" are not the same
+ * finding, and a game the sweep cannot see is exactly the leftover this reading kept missing.
  */
-export function inspectRunLeftovers({ paths, run }) {
+export function inspectRunLeftovers({ paths, run, game = null }) {
   const survivors = processesWithCommandLine(paths.stageRoot);
   if (survivors === null)
-    return Object.freeze({ status: "unverifiable", reason: "process_table_unavailable", survivors: [], cdpPort: null });
+    return Object.freeze({
+      status: "unverifiable",
+      reason: "process_table_unavailable",
+      survivors: [],
+      cdpPort: null,
+      game: game ?? null,
+    });
   const listener = portListener(run.cdpPort);
   const cdpPort =
     listener.status === "listening"
@@ -107,9 +120,21 @@ export function inspectRunLeftovers({ paths, run }) {
           ours: survivors.rows.some((row) => row.pid === listener.pid),
         }
       : { state: listener.status };
-  const status =
-    survivors.rows.length > 0 ? "ours_remain" : cdpPort.state === "listening" ? "port_held_by_another" : "none";
-  return Object.freeze({ status, examined: survivors.examined, survivors: survivors.rows, cdpPort });
+  const gameSurvived = game !== null && game.surviving.kind === "alive";
+  const status = gameSurvived
+    ? "game_alive"
+    : survivors.rows.length > 0
+      ? "ours_remain"
+      : cdpPort.state === "listening"
+        ? "port_held_by_another"
+        : "none";
+  return Object.freeze({
+    status,
+    examined: survivors.examined,
+    survivors: survivors.rows,
+    cdpPort,
+    game: game ?? null,
+  });
 }
 
 const listing = (entries) => entries.map((entry) => `${entry.pid}(${entry.role})`).join(" ");
@@ -135,6 +160,10 @@ export function describeLeftovers(leftovers, run) {
     return `LEFTOVERS: unverifiable:${leftovers.reason} - this machine cannot be asked which processes remain, so the post-run assertion did not run`;
   const measured = `examined ${leftovers.examined} processes; cdp port ${run.cdpPort} ${leftovers.cdpPort.state}`;
   if (leftovers.status === "none") return `LEFTOVERS: none (${measured})`;
+  if (leftovers.status === "game_alive") {
+    const game = leftovers.game.surviving.surviving.map((entry) => `${entry.pid}(${entry.role})`).join(" ");
+    return `LEFTOVERS: this run's game is still alive after cleanup: ${game} (${measured}) - this run started a game and did not take it back`;
+  }
   if (leftovers.status === "port_held_by_another")
     return `LEFTOVERS: none of this run's; cdp port ${run.cdpPort} is held by pid ${leftovers.cdpPort.pid} (another run, which the next run refuses by name)`;
   const survivors = leftovers.survivors

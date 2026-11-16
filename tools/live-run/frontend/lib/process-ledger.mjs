@@ -16,7 +16,10 @@
  *   host           the pid of the Host child this run launched (`<stage>/state/launch.json` -> `childPid`).
  *   guardian-tree  everything BELOW the parent of that Host pid - the native Desktop supervisor's own tree.
  *                  Only the supervisor it launched the Host through is the server of this run's guardian
- *                  session, and the game this run asked for is one of its children, not one of ours.
+ *                  session. The game this run asked that supervisor to start is one of its children and is
+ *                  claimed here - but it is recorded by identity too (`lib/run-game.mjs`, roles `game-smapi`
+ *                  and `game-client`), because a harness must take back the game it caused, and the
+ *                  `policy` exemption below must never cover it.
  *
  * The two readings the caller asserts:
  *
@@ -383,21 +386,26 @@ export function describeProcessLedger(reading) {
  *   stepwise   the run was invoked as one phase of a resumable run (`launch`, `capture`, ...). The mounted
  *              session is the next phase's input, so nothing the run started is stopped - and the ledger must
  *              say so per pid rather than reporting the whole session as a leak.
- *   policy     the process is the native supervisor's, claimed through the guardian's own tree: what the
- *              supervisor started for the player (the game this run asked for) is the player's world. An
- *              ordinary close stops AI authority and never the game world (product policy), so a game still
+ *   policy     the process is the native supervisor's, claimed through the guardian's own tree, and this run
+ *              does NOT own that supervisor: what it started for the player (the game) is the player's world.
+ *              An ordinary close stops AI authority and never the game world (product policy), so a game still
  *              running at the end of a run is the product behaving, not the run leaking.
+ *
+ * `gamePids` is the exception that makes `policy` honest: the game THIS run caused - recorded by identity from
+ * its own mods root (`lib/run-game.mjs`) - is not a player's world, it is the run's own launch, and the run
+ * must take it back. Without this set, a run that opened a game reported it as "deliberately left" for as long
+ * as it survived, which is how a live run ended with a Stardew Valley on screen and `LEFTOVERS: none`.
  *
  * A surviving `host` entry is NOT in this list on purpose: the Host is the AI authority, and stopping it on the
  * way out is what this run's teardown is for. A Host that survives it is a leftover, whatever spawned it.
  *
  * Everything else that survives teardown is a leftover and is reported as one.
  */
-export function deliberatelyKept(entries, { stepwise = false } = {}) {
+export function deliberatelyKept(entries, { stepwise = false, gamePids = new Set() } = {}) {
   if (stepwise)
     return entries.map((entry) => ({ pid: entry.pid, reason: "stepwise run leaves this process for the next phase" }));
   return entries
-    .filter((entry) => entry.commandLineMarker === "guardian-tree")
+    .filter((entry) => entry.commandLineMarker === "guardian-tree" && !gamePids.has(entry.pid))
     .map((entry) => ({
       pid: entry.pid,
       reason: "not this run's to end: an ordinary close stops AI authority, never the player's game",
