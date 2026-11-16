@@ -1517,15 +1517,16 @@ test(
 );
 
 /**
- * The mount is the Host's own decision, so this drives the real constructor over the two shapes
- * a launcher used to classify by hand: a first run that died before publishing, and a published
- * authority.
+ * The mount is the Host's own decision, so this drives the real constructor over the two shapes a
+ * launcher used to classify by hand: a first run that died before publishing, and a published
+ * authority. Nothing about these asserts a caller's opinion - the constructor is given the manifest
+ * and nothing else, and what it does comes from the records in the runtime root.
  *
- * RED against the cross-process flag: with `GAMEBUDDY_HOST_GAME_SESSION_MODE=known` this first
- * `createSharedSemanticProductionAuthorityFromDeploymentManifest` call rejected with
+ * The shape it replaced is worth naming because it is the failure this test exists to prevent: a
+ * cross-process "known" over a first run that never published made this first call reject with
  * `production_authority_artifact_present`, and the installation could never finish that first run
- * because nothing could discard the leftover any more. The flag had no way to be right without
- * the launcher duplicating the records the Host already holds.
+ * because nothing could discard the leftover any more. A launcher can only be right about the mount
+ * by duplicating records the Host already holds, so it no longer says anything about it.
  */
 test(
   "the shared mount finishes a staged leftover and then opens the authority it published",

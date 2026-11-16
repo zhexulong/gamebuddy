@@ -287,9 +287,22 @@ test("composition launch validates the child IPC ready fact and composes the chi
   });
   assert.equal(env.LOCALAPPDATA, "C:/fresh");
   assert.equal(env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST, "C:/fresh/dialogue.json");
-  // No mount mode travels with the child: the Host derives provision-vs-open from the records in
-  // the runtime root, so a value declared here could only contradict them.
+  // The mount the Host performs - provision a new semantic authority or open the existing one - is
+  // the Host's decision from the records in the runtime root, so the launcher neither decides it nor
+  // publishes it. Both halves are asserted, because either one alone would let the flag come back:
+  // absent from the declared block, AND ignored when a caller still passes the removed option
+  // instead of silently acquiring this meaning.
   assert.equal("GAMEBUDDY_HOST_GAME_SESSION_MODE" in env, false);
+  assert.equal(
+    "GAMEBUDDY_HOST_GAME_SESSION_MODE" in
+      composeDesktopChildEnvironment({
+        base,
+        localAppDataRoot: "C:/fresh",
+        manifestPath: "C:/fresh/dialogue.json",
+        gameSessionMode: "known",
+      }),
+    false,
+  );
   assert.equal(env.GAMEBUDDY_HOST_SURFACE, "chat-only");
   assert.equal(env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256, hex);
   assert.equal(env.SystemRoot, "C:/Windows");
