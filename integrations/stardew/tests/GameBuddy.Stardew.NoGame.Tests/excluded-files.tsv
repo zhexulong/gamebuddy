@@ -259,3 +259,6 @@ CharacterBlockedWalkTests.cs	mod-assembly	FarmhandExecutionJournal, RefusalLayer
 BuildFarmBuildingAccountTests.cs	mod-assembly	ExecutionManager
 FarmhandInitializationReachabilityGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); that helper's own file is excluded, so this one cannot compile in the game-free subset
 HostFarmhandProvisioningInitializationTests.cs	game	StardewValley, Game1, Farmer, Cabin, Netcode, SDKHelper, DummyMonitor@NativeFarmingContractTests.cs, HostFarmhandProvisioner
+ExecutionEvidenceWireTests.cs	mod-assembly	ExecutionManager, EvidenceDetail, PairVocabulary (all three declared in integrations/stardew/ExecutionEvidence.cs, outside src/Core)
+SweepTargetRefusalNamingTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, ExecutionManager (and Xna, StardewValley, StardewValley.Tools from the game)
+WaterTargetApproachTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, TargetFamilyWorld@TargetFamilyCompletenessTests.cs, ExecutionManager (and Xna, StardewValley, StardewValley.Tools, HeadlessGameWorld@HeadlessGameWorld.cs from the game)
