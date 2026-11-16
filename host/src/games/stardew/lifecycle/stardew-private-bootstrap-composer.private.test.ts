@@ -3515,6 +3515,61 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
+test("the chosen companion language also reaches the Player Host config the world entry waits on", async () => {
+  // The AI-client document above is where the companion's text is presented from. This one is the
+  // world's: the Mod holds its formal native world entry until the live game locale is this language,
+  // because Stardew applies startup_preferences.languageCode asynchronously from the title-menu
+  // update. Measured 2026-11-16: without the key the Player Host entered its world one second after
+  // the main menu and stayed English for the whole session, around a zh-CN product (`locale set to .`
+  // in the launched game's own SMAPI log).
+  const root = await createRoot();
+  const packageRoot = join(root, "verified-package-locale");
+  await mkdir(packageRoot);
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
+  for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
+  const harness = createHarness({
+    staging: {
+      readPackage: async () => ({ root: packageRoot, entries }),
+      createSecret: () => "session-secret-012345",
+      nowMs: () => 1_000,
+    },
+  });
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const stageB = createStageBTestHarness({
+    recheck: async () => undefined,
+    verifyPackage: async () => undefined,
+  });
+  // The player's own choice, at the one path the Host reads it from, before the world's profile is staged.
+  await new PlayerPreferenceStore(playerPreferencePath(root)).update(0, { action: "setLocale", locale: "en-US" });
+
+  await stageB.bindOwnedPlayerHostBootstrap(owner);
+
+  const transaction = ownerTestView(owner).transactionDirectory;
+  const host = JSON.parse(
+    await readFile(join(transaction, "player-host", "Mods", "GameBuddy", "config.json"), "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(host.PresentationLocale, "en-US");
+  // The rest of the staged form is unchanged: the projection adds a key, it does not move one.
+  assert.deepEqual(host.WorldCreation, {
+    Enable: true,
+    FarmName: "GameBuddy Farm",
+    PlayerName: "GameBuddy",
+    FavoriteThing: "Companion",
+    CreateOnce: true,
+  });
+});
+
 test("partial Player Host package write rolls back without AI artifacts or launch consumption", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-rollback");

@@ -3481,7 +3481,20 @@ async function stagePlayerHostModProfile(
           await mkdir(directory);
           createdDirectories.push(directory);
         }
+        // The player's own companion language, in the SECOND document the Mod reads.
+        //
+        // The AI-client profile above presents the companion's text from this value. This profile is
+        // the world's, and here the same value decides something else: Stardew applies
+        // startup_preferences.languageCode ASYNCHRONOUSLY, from the title-menu update, so the formal
+        // world entry must not drive the native new-game entry until the live game locale is this
+        // language (WorldCreationBootstrap.HoldsForLiveLocale). Measured 2026-11-16: without it the
+        // Player Host entered its world one second after the main menu and stayed English for the
+        // whole session, around a zh-CN product. Absent - exactly as in the AI-client document -
+        // when the player never chose a language, because its absence is what tells the Mod that the
+        // live game locale is the authority.
+        const presentationLocale = await readStardewModPresentationLocale(dirname(dirname(transactionDirectory)));
         const hostConfig = JSON.stringify({
+          ...(presentationLocale === undefined ? {} : { PresentationLocale: presentationLocale }),
           HostFarmhandProvisioning: {
             Enable: true,
             SessionDirectory: sessionDirectory,
