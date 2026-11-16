@@ -70,7 +70,10 @@ const stripFacts = () => {
     stripChildren: strip === null ? [] : [...strip.children].map((child) => ({ rect: window.__shots.rect(child) })),
     pager: boxOf(pager),
     pagerIndicator: pager === null ? null : pager.querySelector(".swipe-indicator")?.textContent ?? null,
-    pagerVisibleLabels: buttons.map((button) => button.querySelector(".swipe-btn-label")?.textContent ?? ""),
+    // The pager's visible content is the glyph; the words are in `aria-label` beside this reading
+    // (`MessageBubble`'s own note: "The glyph is the visible control and the number between the two is
+    // the state; the words live in the accessible name"). `pagerAriaLabels` is the words.
+    pagerVisibleLabels: buttons.map((button) => (button.textContent ?? "").trim()),
     pagerAriaLabels: buttons.map((button) => button.getAttribute("aria-label")),
     pagerDisabled: buttons.map((button) => button.disabled),
     regenerate: regenerate === null ? null : { rect: boxOf(regenerate), text: (regenerate.innerText ?? "").trim(), ariaLabel: regenerate.getAttribute("aria-label") },

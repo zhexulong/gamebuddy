@@ -147,7 +147,11 @@ const stageJsonCard = (card) => {
 
   say("=== ITEM: the monogram fallback — a card that carries no picture ===");
   let importOutcome = "could_not_drive";
-  const reviewBefore = await page.locator("[data-card-import-cancel], [data-card-import-review-cancel]").count();
+  // The review's own cancel is the only one the product renders (`data-card-import-review-cancel`,
+  // `CharacterCardImport.tsx`); a bare `data-card-import-cancel` was the pre-rename spelling and no
+  // source writes it, so counting it here made the guard read as "a review is open" for a name that
+  // cannot match.
+  const reviewBefore = await page.locator("[data-card-import-review-cancel]").count();
   if (reviewBefore > 0) {
     await page.locator("[data-card-import-review-cancel]").first().click().catch(() => undefined);
     await page.waitForTimeout(500);

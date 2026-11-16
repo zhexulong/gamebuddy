@@ -100,7 +100,7 @@ async function readRenderedTranscript(page) {
 		const rows = [...document.querySelectorAll("ol.message-list li.message")];
 		return rows.map((row) => ({
 			role: row.getAttribute("data-role") || (row.className.includes("player") ? "player" : "companion"),
-			text: (row.querySelector(".message-text")?.textContent || row.textContent || "").trim().slice(0, 400),
+			text: (row.querySelector(".message-body")?.textContent || "").trim().slice(0, 400),
 		}));
 	});
 }

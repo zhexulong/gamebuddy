@@ -213,7 +213,27 @@ export function productNames(sources = productSources(), stylesheets = productSt
 
 /** The test files whose literals make up the population. */
 export function journeySources(directory = TESTS) {
-  return filesUnder(directory, (name) => /\.(ts|tsx|mjs|js)$/u.test(name)).filter((file) => file !== THIS_FILE);
+  return filesUnder(directory, (name) => /\.(ts|tsx|mjs|cjs|js)$/u.test(name)).filter((file) => file !== THIS_FILE);
+}
+
+/**
+ * The capture kit's drivers: the other half of the population, and the half this gate was missing.
+ *
+ * `tools/live-run/frontend/capture/*.cjs` is 33 drivers and ~550 selector literals that drive the
+ * shipped product over CDP, and nothing read them. The cost of that gap was measured on
+ * `frontend-final-r1`: `common.cjs` gated its drawer dismissal on `.backdrop-overlay`, a class the
+ * product had deleted when the drawer became a native `<dialog>` with a `::backdrop` scrim. The class
+ * survived only inside a CSS comment, the gate was never true, Escape was never pressed, and 21 of 21
+ * drivers failed clicking an app-bar entry behind an open modal drawer. Three more of the same shape
+ * were in the kit when this population was added (`data-card-import-cancel`, `.message-text`,
+ * `.swipe-btn-label`: a rename, a body class and a label class the product has never written), each a
+ * reading that silently returns nothing. A driver is a selector consumer exactly as a journey is.
+ */
+export const CAPTURE_KIT = join(DIALOGUE_WEB, "..", "tools", "live-run", "frontend", "capture");
+
+/** Every source that consumes a selector: the journeys, then the drivers. */
+export function selectorConsumers() {
+  return [...journeySources(TESTS), ...journeySources(CAPTURE_KIT)];
 }
 
 /**
@@ -325,7 +345,7 @@ export function testedNames(files = journeySources()) {
       text,
       ts.ScriptTarget.Latest,
       true,
-      file.endsWith(".mjs") || file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TSX,
+      file.endsWith(".mjs") || file.endsWith(".js") || file.endsWith(".cjs") ? ts.ScriptKind.JS : ts.ScriptKind.TSX,
     );
     const recorded = new Set();
     const record = (kind, name, node, api, declaration) => {
@@ -495,14 +515,14 @@ export function classify(population, product, harness = new Set(), ledger = ABSE
 }
 
 const PRODUCT = productNames();
-const HARNESS = harnessWrittenNames();
-const POPULATION = testedNames();
+const HARNESS = harnessWrittenNames(selectorConsumers());
+const POPULATION = testedNames(selectorConsumers());
 const CLASSIFIED = classify(POPULATION.found, PRODUCT, HARNESS);
 
 test("selector-producer.1: every name a journey reads is one the product writes, or a guard that says where it would come back", (t) => {
   const failures = [...CLASSIFIED.dead, ...CLASSIFIED.present];
   t.diagnostic(
-    `selector-producer.1: ${POPULATION.literals} selector literal(s) in ${journeySources().length} journey source(s), ` +
+    `selector-producer.1: ${POPULATION.literals} selector literal(s) in ${selectorConsumers().length} selector-consuming source(s), ` +
       `${POPULATION.outsideSelectorPosition} selector-shaped literal(s) outside a selector position; ` +
       `${CLASSIFIED.examined} distinct name(s) examined: ${CLASSIFIED.alive} written by dialogue-web/src or the harness, ` +
       `${CLASSIFIED.guarded.length} guarded by the ledger, ${CLASSIFIED.declared.length} owned by a declared absence, ` +
