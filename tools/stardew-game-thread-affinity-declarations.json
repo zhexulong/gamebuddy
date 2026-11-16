@@ -1,0 +1,21 @@
+{
+  "$comment": "Sites tools/check-stardew-game-thread-affinity.mjs could not resolve to one Mod declaration where a candidate touches a game entity. Read by (file, callee): a live site with no entry is game_thread_unresolved_call, and an entry with no live site is game_thread_declaration_stale. `dispatched` is the other list - a member reachable from a thread hop that marshals to the game thread before touching anything. It is empty because neither the pipe worker nor either timer touches engine state at all.",
+  "unresolved": [
+    {
+      "file": "integrations/stardew/EngineLoopProbe.cs",
+      "callee": "Read",
+      "reason": "Interlocked.Read(ref frames) - a BCL static on the probe's own long field. Six Mod members are also named Read and two of them are game-thread controller reads, which is why the resolver cannot decide by name alone."
+    },
+    {
+      "file": "integrations/stardew/LocalPipeBridge.cs",
+      "callee": "Read",
+      "reason": "Interlocked.Read(ref this.connectedGeneration) - a BCL static on the bridge's own connection generation counter, read by the writer to decide whether a queued frame still belongs to the live pipe."
+    },
+    {
+      "file": "integrations/stardew/ModEntry.Instrumentation.cs",
+      "callee": "Read",
+      "reason": "Interlocked.Read of the watchdog's own tick counters and Volatile.Read of its phase string - BCL statics on fields the timer publishes to the game thread. The watchdog deliberately touches no engine state: its report goes to a volatile field and a file, and the game thread logs it on its next tick."
+    }
+  ],
+  "dispatched": []
+}
