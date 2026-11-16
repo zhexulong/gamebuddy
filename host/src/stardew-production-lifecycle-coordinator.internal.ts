@@ -371,6 +371,29 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
 }>;
 
 /**
+ * How many actions the attached game actually advertises for this session.
+ *
+ * The count is not a table kept here: it is the length of the one live projection the Host
+ * already derives for every consumer that may act - `actionCatalog.visibleActions` over the
+ * attached connection's registrations and capabilities (reduced by
+ * `IntegrationLifecycleSnapshot` in the materializer, whose `availableCapabilities` this view
+ * renames and nothing more).
+ *
+ * Three states, because zero because there is no game is not the same fact as the game
+ * having published nothing: `none` means this lifecycle holds no attached runtime at all, so
+ * nothing could have been published; `unavailable` means an attachment exists but its
+ * capability read produced no current fact; `published` is the game's own answer, and its
+ * `count` may legitimately be 0.
+ */
+export type StardewGameSurfaceCapabilityView = Readonly<
+  { status: "none" } | { status: "unavailable" } | { status: "published"; count: number }
+>;
+
+export type StardewGameSurfaceCapabilityReader = Readonly<{
+  readCapabilityView(): StardewGameSurfaceCapabilityView;
+}>;
+
+/**
  * Integration-private redacted projection of the world this lifecycle currently
  * holds bound.
  *
@@ -604,6 +627,8 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly installationReader: StardewGameSurfaceInstallationReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
+  /** How many actions the attached game advertises, read from the entered runtime's own lease. */
+  readonly capabilityReader: StardewGameSurfaceCapabilityReader;
   /** The world this lifecycle holds bound, resolved through the integration-private resolver. */
   readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
@@ -1456,6 +1481,23 @@ function createCoordinator(
   const actionAuthorityReader: StardewGameSurfaceActionAuthorityReader = Object.freeze({
     readActionAuthorityView(): StardewGameSurfaceActionAuthorityView {
       return Object.freeze({ status: actionAuthorityStatus });
+    },
+  });
+  // The attached runtime's own capability count, read through the lease this lifecycle holds -
+  // the same connection the action tools execute against, so the board can never advertise a
+  // surface the Host would refuse to act on. The lease is the gate: with no lease there is no
+  // attachment, and no attachment published nothing.
+  const capabilityReader: StardewGameSurfaceCapabilityReader = Object.freeze({
+    readCapabilityView(): StardewGameSurfaceCapabilityView {
+      const lease = farmhandGameRuntimeLease;
+      if (lease === undefined) return Object.freeze({ status: "none" as const });
+      const snapshot = lease.lifecycleSnapshot();
+      if (snapshot.availability !== "available" || snapshot.freshness !== "current")
+        return Object.freeze({ status: "unavailable" as const });
+      return Object.freeze({
+        status: "published" as const,
+        count: snapshot.availableCapabilities.category === "available" ? snapshot.availableCapabilities.count : 0,
+      });
     },
   });
   // The lifecycle's own launch facts compose the Player Host slot for every
@@ -3653,6 +3695,7 @@ function createCoordinator(
     launchReadinessReader,
     installationReader,
     actionAuthorityReader,
+    capabilityReader,
     worldBindingReader: createStardewGameSurfaceWorldBindingReader(worldBindingResolver, () => resumedGameSessionId),
     activationOwner,
     headlessOperationalGame,

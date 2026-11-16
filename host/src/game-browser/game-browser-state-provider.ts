@@ -10,6 +10,8 @@ import type {
   StardewGameSurfaceActionAuthorityView,
   StardewGameSurfaceAttachmentReader,
   StardewGameSurfaceAttachmentView,
+  StardewGameSurfaceCapabilityReader,
+  StardewGameSurfaceCapabilityView,
   StardewGameSurfaceInstallationReader,
   StardewGameSurfaceLaunchReadinessReader,
   StardewGameSurfaceLaunchReadinessView,
@@ -33,8 +35,10 @@ type GameBrowserReadStateContext = Readonly<{
  * evidence governs installation compatibility; the independent Host-owned
  * attachment reader governs the exact surface generation and connection state;
  * the Host-owned action authority reader governs ready-actions-paused; the
- * integration-private world-binding reader governs the selected world. Neither
- * source attests catalog, companion, actions outcomes, or any launch fact.
+ * Host-owned capability reader governs how many actions the attached game
+ * actually advertises; the integration-private world-binding reader governs the
+ * selected world. Neither source attests companion name, action outcomes, or any
+ * launch fact.
  */
 export type GameBrowserStateProvider = Readonly<{
   readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1>;
@@ -48,6 +52,7 @@ export function createGameBrowserStateProvider(
   actionAuthority?: StardewGameSurfaceActionAuthorityReader,
   installation?: StardewGameSurfaceInstallationReader,
   worldBinding?: StardewGameSurfaceWorldBindingReader,
+  capability?: StardewGameSurfaceCapabilityReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read")) throw new TypeError("game_browser_state_read_not_mounted");
@@ -69,6 +74,7 @@ export function createGameBrowserStateProvider(
       // browser and the resume seam can never name different worlds; no launch fact
       // (dataRoot, pid, pipe, token, native frame) travels with it.
       const worldBindingView = worldBinding === undefined ? undefined : await worldBinding.readWorldBindingView();
+      const capabilityView = capability?.readCapabilityView();
       return projectGameBrowserState(
         profile,
         context,
@@ -78,6 +84,7 @@ export function createGameBrowserStateProvider(
         actionAuthorityView,
         installationView,
         worldBindingView,
+        capabilityView,
       );
     },
   });
@@ -92,6 +99,7 @@ function projectGameBrowserState(
   actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
   installation: "registered" | "absent" | undefined,
   worldBinding: StardewGameSurfaceWorldBindingView | undefined,
+  capability: StardewGameSurfaceCapabilityView | undefined,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
@@ -139,7 +147,7 @@ function projectGameBrowserState(
       companionName: null,
       selectedWorld: worldBinding?.status === "bound" ? worldBinding.worldRef : null,
       selectedSave: null,
-      capabilitySummary: Object.freeze({ available: false, count: 0 }),
+      capabilitySummary: projectCapabilitySummary(attachment, capability),
       // The coordinator's launch terminality is the only honest source of a
       // failed Game outcome this provider can attest: it is set once the owned
       // Player Host launch or attestation correlation failed and the owner was
@@ -201,6 +209,35 @@ function compatibilityProjection(
   if (status === "below_minimum_warning")
     return { status: "warning", message: "This Stardew installation is below the advisory minimum." };
   return { status: "warning", message: "This Stardew installation is compatible but unverified." };
+}
+
+/**
+ * How many actions the attached game advertises right now, as the game itself answered.
+ *
+ * This field was frozen to `available: false, count: 0` while the Mod published dozens of typed
+ * actions, so the board read "waiting for the game to publish capabilities" for the whole life of
+ * a session. The count is now the attached runtime's own `actionCatalog.visibleActions` length,
+ * read through the lease that runtime is entered under - the same projection the action tools
+ * execute against, so the surface can never advertise a capability the Host would refuse.
+ *
+ * `available` is the fact "this Host holds a current capability answer for an attached game", not
+ * "the answer is non-zero": a game that publishes no action right now is still a game that
+ * answered, and `count: 0` beside `available: true` is that answer. An absent or unreadable
+ * capability answer is `available: false, count: 0`, which is the one shape this projection has
+ * for "nothing was published" - the panel tells "no game" apart from "a game that published
+ * nothing" by `attachment.status`, which is projected beside it.
+ *
+ * An attachment this Host does not hold publishes no count even if a reader still returns one:
+ * `attachment.status === "none"` is the projection saying there is no surface, and a count
+ * beside it would be the projection contradicting itself.
+ */
+function projectCapabilitySummary(
+  attachment: StardewGameSurfaceAttachmentView,
+  capability: StardewGameSurfaceCapabilityView | undefined,
+): Readonly<{ available: boolean; count: number }> {
+  if (attachment.status !== "attached" || capability?.status !== "published")
+    return Object.freeze({ available: false, count: 0 });
+  return Object.freeze({ available: true, count: capability.count });
 }
 
 function validateContext(context: GameBrowserReadStateContext): void {

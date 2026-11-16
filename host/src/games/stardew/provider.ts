@@ -167,6 +167,7 @@ export function createStardewGamePresentationProjection(
     coordinator.actionAuthorityReader,
     coordinator.installationReader,
     coordinator.worldBindingReader,
+    coordinator.capabilityReader,
   ).readState;
   const lifecycleActivationBindingSink = Object.freeze({
     ...coordinator.activationOwner,
