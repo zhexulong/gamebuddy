@@ -21,18 +21,25 @@ namespace GameBuddy.Desktop;
 /// of this decision rather than a step an operator has to perform. That ghost is exactly
 /// what an interrupted launch leaves when it dies between the Host's acknowledgement and the
 /// launcher's own clear;</item>
-/// <item>the identity exists and the authority is incomplete or absent - then this launch
-/// establishes it (`fresh`), which is the continuation of a first run that never finished.
-/// The Host discards a provably incomplete authority root on that mount and refuses every
-/// leftover it cannot prove incomplete; the launcher deletes nothing of it here.</item>
+/// <item>the identity exists and there is no authority position at all - then this launch
+/// establishes it (`fresh`), which is the continuation of a first run that never finished or
+/// the baseline of a companion who has never played here. Nothing can be discarded from a
+/// root that is not there, so this direction needs no other evidence;</item>
+/// <item>the identity exists and an authority root is there but unfinished - then the one
+/// question that matters is whose leftover it is, because `fresh` is the mount that
+/// DISCARDS such a root. The staging marker answers it: a staged, unspent mint makes this
+/// the continuation of that first run (`fresh`, no other evidence can say it); without one
+/// the launcher has no fact attributing the root to a run of its own, and it opens it as
+/// `known` so the Host validates it and refuses a broken one while deleting nothing. This is
+/// the state a switch can create by putting a parked root in the mount position, and refusing
+/// to ask for `fresh` over it is what keeps that park reversible.</item>
 /// </list>
 ///
 /// The staging marker deliberately cannot force `fresh` over a complete authority, and it is
 /// deliberately not what distinguishes "never finished" from "was removed": the authority
-/// itself is asked, because in this product `fresh` is a physical command to establish a new
-/// baseline and `known` is strictly fail-closed on the Host's side. Degrading one into the
-/// other would mask a configuration error such as pointing a new run at old data, which this
-/// product refuses rather than repairs.
+/// itself answers that, and an absent one is established either way. It answers only the one
+/// question the authority cannot - whether an unfinished root is this installation's own - and
+/// that is the question the Host's own discard proof leaves to the launcher.
 /// </summary>
 internal static class SessionModeDecision
 {
@@ -54,12 +61,24 @@ internal static class SessionModeDecision
             return true;
         }
 
-        // The identity exists but the authority was never finished (or is not there at all):
-        // the Host is asked to establish it, which is the continuation of an interrupted
-        // first run.
-        if (!ProductionAuthority.IsComplete(layout))
+        // The identity exists but there is no authority position: nothing can be discarded, so
+        // this is either the continuation of a first run that never finished or the baseline of
+        // a companion who has never played here (which is what a switch to her leaves behind).
+        if (!ProductionAuthority.IsPresent(layout))
         {
             return true;
+        }
+
+        // An authority position that is there and unfinished. `fresh` is the one mount that may
+        // discard a leftover root, and the Host's own proof for that discard is the launcher's
+        // context rather than anything on disk: a root's absent marker is what both an unfinished
+        // first run and a lost marker leave. So the launcher may ask for it only when it has the
+        // fact that says the leftover is its own - the staged, unspent mint this installation
+        // wrote before it created the identity. Without that fact the root is opened as `known`:
+        // the Host validates it strictly, refuses a broken one, and deletes nothing on that path.
+        if (!ProductionAuthority.IsComplete(layout))
+        {
+            return FirstRunStaging.IsStaged(layout);
         }
 
         // The authority is physically complete, so this launch opens it. Any marker left

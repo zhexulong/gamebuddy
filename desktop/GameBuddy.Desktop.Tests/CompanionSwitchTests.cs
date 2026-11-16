@@ -136,6 +136,88 @@ public sealed class CompanionSwitchTests
     }
 
     [Fact]
+    public async Task A_parked_root_that_is_not_complete_is_refused_by_name_instead_of_being_restored()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+        var activeBytes = File.ReadAllBytes(database);
+        var recordBefore = File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName));
+
+        // She was set aside while her own first launch was still unfinished. The Host publishes an
+        // authority by writing the completion marker LAST, so a root that never reached it is not
+        // an authority any Host will open - it is the leftover of a run that died. Restoring it
+        // would put it in front of the session-mode decision, which reads an absent marker as
+        // `fresh`, and `fresh` is the one mount that DISCARDS a leftover root. This is the whole
+        // reason a restored root must be checked before it is moved, not after.
+        const string directoryName = "20260101T000000Z-companion-target";
+        CompanionSwitch.WriteParkedForTesting(
+            layout,
+            [new ParkedCompanion("companion-target", "continuity-target", first.PlayerId, "bootstrap-target", 1, directoryName)]);
+        var parkedRoot = CompanionSwitch.ParkedRootPath(layout, directoryName);
+        Directory.CreateDirectory(parkedRoot);
+        var parkedDatabase = Path.Combine(parkedRoot, TestProductionAuthority.DatabaseFileName);
+        File.WriteAllText(parkedDatabase, "unfinished-first-bootstrap");
+        var parkedBytes = File.ReadAllBytes(parkedDatabase);
+
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+        var outcome = CompanionSwitch.ApplyPending(layout);
+
+        // Refused by name, before anything moved: she is not mounted, and her authority is still
+        // the one in play, byte-identical and complete.
+        Assert.Equal(CompanionSwitchStatus.Refused, outcome.Status);
+        Assert.Equal("companion_switch_target_authority_incomplete", outcome.Code);
+        Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
+        Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
+        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.Equal(activeBytes, File.ReadAllBytes(database));
+
+        // Her unfinished root is still parked, byte for byte, and still named by the index: the
+        // switch refused to mount it, and it did not drop the fact that she has a root there.
+        Assert.Equal(parkedBytes, File.ReadAllBytes(parkedDatabase));
+        Assert.Equal("companion-target", Assert.Single(CompanionSwitch.ReadParked(layout)).CompanionId);
+    }
+
+    [Fact]
+    public async Task A_crash_that_left_an_incomplete_root_in_the_park_is_not_restored_into_the_mount_position()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+
+        // The state step 6 of a switch leaves when it dies before step 7: the identity record
+        // already names the target and the active position is empty, so `Reconcile` is what puts
+        // her root there. If that root is unfinished, restoring it is the same discard the switch
+        // refuses - the two seams answer one rule, not two.
+        DeploymentIdentity.ReplaceActive(
+            layout,
+            new DeploymentIdentityValues("continuity-target", "companion-target", first.PlayerId, "bootstrap-target", 1));
+        const string directoryName = "20260101T000000Z-companion-target";
+        CompanionSwitch.WriteParkedForTesting(
+            layout,
+            [new ParkedCompanion("companion-target", "continuity-target", first.PlayerId, "bootstrap-target", 1, directoryName)]);
+        var parkedRoot = CompanionSwitch.ParkedRootPath(layout, directoryName);
+        Directory.CreateDirectory(parkedRoot);
+        var parkedDatabase = Path.Combine(parkedRoot, TestProductionAuthority.DatabaseFileName);
+        File.WriteAllText(parkedDatabase, "unfinished-first-bootstrap");
+        var parkedBytes = File.ReadAllBytes(parkedDatabase);
+
+        CompanionSwitch.Reconcile(layout);
+
+        // Nothing was mounted: the mount position is still empty and her root is still parked,
+        // still named. `fresh` is not asked for on her behalf either - the launcher deletes no
+        // authority and moves none it cannot vouch for.
+        Assert.False(Directory.Exists(ProductionAuthority.DirectoryPath(layout)));
+        Assert.Equal(parkedBytes, File.ReadAllBytes(parkedDatabase));
+        Assert.Equal("companion-target", Assert.Single(CompanionSwitch.ReadParked(layout)).CompanionId);
+    }
+
+    [Fact]
     public async Task A_park_that_never_happened_does_not_block_her_from_ever_coming_back()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
@@ -282,7 +364,9 @@ public sealed class CompanionSwitchTests
         CompanionSwitch.WriteParkedForTesting(
             layout,
             [new ParkedCompanion("companion-second", "continuity-second", first.PlayerId, "bootstrap-second", 1, "20260101T000000Z-companion-second")]);
-        Directory.CreateDirectory(CompanionSwitch.ParkedRootPath(layout, "20260101T000000Z-companion-second"));
+        // A finished root, because that is what a companion who played carries into the park and
+        // the only kind a switch may move back.
+        TestProductionAuthority.WriteCompleteRoot(CompanionSwitch.ParkedRootPath(layout, "20260101T000000Z-companion-second"));
         WriteRequest(layout, first.CompanionId, "companion-second", "continuity-second");
 
         Assert.Throws<CompanionSwitchUnavailableException>(() =>

@@ -255,6 +255,17 @@ internal static class CompanionSwitch
         if (targetRoot is not null && !Directory.Exists(targetRoot))
             return Refuse(layout, request, "companion_switch_unavailable");
 
+        // A parked root is only a companion who can come back when it is an authority the Host
+        // will open. The Host publishes a root by writing the completion marker LAST, so a root
+        // that never reached it is not an authority - it is the leftover of a first launch that
+        // died - and moving it into the mount position would hand it to the session-mode
+        // decision, which reads an absent marker as "establish this one". `fresh` is the one
+        // mount that DISCARDS a leftover root, and the launcher must never be the one who asks
+        // for that on a root it parked itself. So the switch refuses by name, before it renames
+        // anything, and both roots stay exactly where they are.
+        if (targetRoot is not null && !ProductionAuthority.IsCompleteIn(targetRoot))
+            return Refuse(layout, request, "companion_switch_target_authority_incomplete");
+
         var parkedName = ParkedDirectoryNameFor(now, active.CompanionId);
         if (Directory.Exists(ParkedRootPath(layout, parkedName)))
             return Refuse(layout, request, "companion_switch_unavailable");
@@ -405,6 +416,13 @@ internal static class CompanionSwitch
         // prevent. The index entry stays and the state stays refused until it is resolved.
         var mineRoot = ParkedRootPath(layout, mine.DirectoryName);
         if (!Directory.Exists(mineRoot)) return;
+
+        // The same rule as `Switch`, at the seam a crash leaves: what `Reconcile` puts in the
+        // mount position is what the session-mode decision reads next, so an unfinished root is
+        // not restored either. Her entry stays, her root stays parked and the mount position
+        // stays empty - the launch that follows establishes a new authority for the identity the
+        // record names, and not one byte of hers is deleted or discarded to get there.
+        if (!ProductionAuthority.IsCompleteIn(mineRoot)) return;
 
         Directory.Move(mineRoot, ProductionAuthority.DirectoryPath(layout));
         WriteParkedIndex(layout, parked.Where(entry => !ReferenceEquals(entry, mine)).ToArray());

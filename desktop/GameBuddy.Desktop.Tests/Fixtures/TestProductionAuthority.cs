@@ -31,6 +31,22 @@ internal static class TestProductionAuthority
     }
 
     /// <summary>
+    /// A finished authority root at an arbitrary path - what a companion who really played
+    /// carries into the park, and therefore what a switch is allowed to move into the mount
+    /// position. Kept apart from the layout's own root because the interesting states are the
+    /// ones with an authority in one position and nothing in the other.
+    /// </summary>
+    internal static string WriteCompleteRoot(string root)
+    {
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Path.Combine(root, DatabaseFileName), "parked-authority-database"u8.ToArray());
+        File.WriteAllBytes(
+            Path.Combine(root, ProductionAuthority.CompletionMarkerFileName),
+            "{\"version\":21}\n"u8.ToArray());
+        return root;
+    }
+
+    /// <summary>
     /// The completion marker the fresh path writes last: the authority is finished. Its
     /// content is deliberately not the Host's closed document - the launcher reads presence
     /// only and the Host is the validator - so a launcher that started reading the content

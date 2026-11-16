@@ -53,6 +53,9 @@ public sealed class SessionModeDecisionTests
         await using var fixture = await DisposableRootFixture.CreateAsync();
         var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
 
+        // A first run that staged its mint and died before the Host published the authority: the
+        // staging marker is what the launcher has to attribute the leftovers below to a run of
+        // its own, and it is the reason the continuation is allowed to be `fresh`.
         Assert.True(DeploymentIdentity.EstablishForCurrentUser(layout));
         var markerPath = FirstRunStaging.MarkerPath(layout);
         var authorityRoot = ProductionAuthority.DirectoryPath(layout);
@@ -73,12 +76,63 @@ public sealed class SessionModeDecisionTests
         void AssertFreshAndUntouched()
         {
             Assert.False(ProductionAuthority.IsComplete(layout));
+            Assert.True(File.Exists(markerPath));
             var decision = SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity: false);
             Assert.True(decision);
             AssertChildMode(layout, decision, "fresh");
             Assert.True(Directory.Exists(authorityRoot));
             Assert.True(File.Exists(markerPath));
         }
+    }
+
+    [Fact]
+    public async Task An_incomplete_authority_this_installation_never_staged_is_opened_as_known_so_nothing_is_discarded()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+
+        // A first run that FINISHED: it saw its acknowledgement and cleared its own staging
+        // marker. What is left in the authority directory afterwards is a root the Host never
+        // published - the same shape a crash before the marker leaves, and the one shape on disk
+        // both states share. Nothing here attributes it to a first run of this installation, and
+        // the mount that discards such a root is `fresh`, so asking for it would be the launcher
+        // reaching for a delete on evidence it does not have.
+        Assert.True(DeploymentIdentity.EstablishForCurrentUser(layout));
+        FirstRunStaging.Clear(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        var databaseBytes = File.ReadAllBytes(database);
+
+        var decision = SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity: false);
+
+        // `known` is the fail-closed direction: the Host validates the root strictly and refuses
+        // a broken one, and it deletes nothing on that path. The launcher deletes nothing either,
+        // and it does not invent a staging marker to justify itself.
+        Assert.False(decision);
+        AssertChildMode(layout, decision, "known");
+        Assert.Equal(databaseBytes, File.ReadAllBytes(database));
+        Assert.False(ProductionAuthority.IsComplete(layout));
+        Assert.False(File.Exists(FirstRunStaging.MarkerPath(layout)));
+    }
+
+    [Fact]
+    public async Task An_absent_authority_is_fresh_even_with_no_staging_marker_because_there_is_nothing_to_discard()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+
+        // Where a switch to a companion who never played here lands: the identity record names
+        // her, the position is empty because she had no root to bring, and no mint staged a
+        // marker. `fresh` establishes her baseline, and there is no root for it to discard.
+        Assert.True(DeploymentIdentity.EstablishForCurrentUser(layout));
+        FirstRunStaging.Clear(layout);
+        Assert.False(Directory.Exists(ProductionAuthority.DirectoryPath(layout)));
+
+        var decision = SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity: false);
+
+        Assert.True(decision);
+        AssertChildMode(layout, decision, "fresh");
     }
 
     [Fact]

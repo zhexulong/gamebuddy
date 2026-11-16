@@ -7,13 +7,13 @@ namespace GameBuddy.Desktop;
 /// The launcher-owned first-run staging marker: the record, written beside the durable
 /// deployment identity, that the run which minted that identity staged a mint.
 ///
-/// It is a record of intent, not an authority, and it no longer decides anything. The
-/// launcher's session-mode decision asks the durable authority itself whether it is
-/// physically complete (<see cref="SessionModeDecision"/>, <see cref="ProductionAuthority"/>),
-/// because presence of a marker cannot distinguish a first run that never finished from one
-/// that finished and died before clearing its own record, and because a marker that can force
-/// `fresh` over an authority that exists strands the installation: every later launch asks
-/// the Host to establish an authority it already has, and the Host refuses.
+/// It is a record of intent, not an authority. It decides one thing and it cannot decide more
+/// than that: whether an unfinished authority root is the continuation of a mint this
+/// installation staged (see <see cref="IsStaged"/>) rather than a root whose publishing fact
+/// went missing. It never forces `fresh` over an authority that is physically complete - that
+/// direction is decided by <see cref="ProductionAuthority"/> alone, because a marker proposing
+/// `fresh` over an authority that exists strands the installation: every later launch asks the
+/// Host to establish an authority it already has, and the Host refuses.
 ///
 /// What the marker still is: the write-time fact that a mint happened. It is written beside
 /// the identity before the identity record is created, and it is cleared once that intent is
@@ -61,6 +61,17 @@ internal static class FirstRunStaging
     }
 
     /// <summary>
+    /// Whether a mint was staged and that intent is still unspent: the one fact that attributes an
+    /// unfinished authority to a first run of this installation.
+    ///
+    /// It answers a question the authority itself cannot, because on disk an unfinished first run
+    /// and a root whose marker was lost are the same shape. <see cref="SessionModeDecision"/> asks
+    /// it before it asks the Host to establish an authority: `fresh` is the one mount that may
+    /// discard a leftover root, so it needs the one fact that says the leftover is ours.
+    /// </summary>
+    internal static bool IsStaged(CurrentUserRootLayout layout) => Present(MarkerPath(layout));
+
+    /// <summary>
     /// Records that a mint was staged, before the durable identity record is created and
     /// before anything else can be considered complete. The create is atomic and a marker that
     /// is already there - an earlier first run that is still incomplete - is left exactly as
@@ -99,8 +110,8 @@ internal static class FirstRunStaging
     /// established the authority, and as part of the session-mode decision, where a marker
     /// beside a physically complete authority is a ghost left by a launch that died between
     /// those two facts. A marker the launcher cannot clear is left present rather than treated
-    /// as cleared, which is no longer a correctness matter: nothing reads the marker, so the
-    /// next launch decides on the authority itself and repairs the ghost then. It does not end
+    /// as cleared, and that is the fail-closed direction: it can still only attribute an
+    /// unfinished root to a first run, which is the mount that continues one. It does not end
     /// the session that just started, because a marker is not a reason to stop a healthy Host.
     /// </summary>
     internal static void Clear(CurrentUserRootLayout layout)

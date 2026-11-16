@@ -42,6 +42,14 @@ internal static class ProductionAuthority
         Path.Combine(DirectoryPath(layout), CompletionMarkerFileName);
 
     /// <summary>
+    /// Whether there is an authority position at all - complete or not. This is what separates
+    /// "the root was never created" from "a root is there and unfinished": the first has nothing
+    /// to discard and is what every launch after a switch to a companion who never played here
+    /// sees, so a decision that could not tell them apart would refuse a first run.
+    /// </summary>
+    internal static bool IsPresent(CurrentUserRootLayout layout) => Present(DirectoryPath(layout));
+
+    /// <summary>
     /// Whether the durable authority is physically complete. The criterion is deliberately
     /// one-sided, and a marker the launcher cannot show to be absent reads as complete,
     /// because the two directions are not symmetric here either: `known` validates the
@@ -50,6 +58,18 @@ internal static class ProductionAuthority
     /// reach for that on evidence it does not have.
     /// </summary>
     internal static bool IsComplete(CurrentUserRootLayout layout) => Present(CompletionMarkerPath(layout));
+
+    /// <summary>
+    /// Whether the authority root at <paramref name="authorityRoot"/> is complete, asked about a
+    /// root that is not in the mount position.
+    ///
+    /// A parked root is the same authority under another name - the switch moves it byte for
+    /// byte - so the same criterion answers for it, and it has to be answerable BEFORE the move:
+    /// what is being decided then is whether this root may be put in front of
+    /// <see cref="SessionModeDecision"/> at all, not what to do with it once it is there.
+    /// </summary>
+    internal static bool IsCompleteIn(string authorityRoot) =>
+        Present(Path.Combine(authorityRoot, CompletionMarkerFileName));
 
     /// <summary>
     /// Whether the entry is there, biasing toward "present" for anything the launcher cannot
