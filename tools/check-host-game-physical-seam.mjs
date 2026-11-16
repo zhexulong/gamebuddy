@@ -74,7 +74,18 @@ const RAW_BUILTIN_MODULES = new Set([
   "node:winreg",
 ]);
 const APPROVED_STARDew_RAW_BUILTIN_MODULES = new Set(["node:child_process"]);
-
+// `containment/runtime/README.md`:6-7 -- "Does not know: Game names, game rules,
+// installation or recipe facts" -- so a source of that layer must not NAME a game
+// either, not merely be unable to import one. The port used to declare
+// `FarmhandBridgeConnectionNotAvailableError`, a refusal about one game's bridge
+// connection authority, inside the layer every game shares.
+//
+// The vocabulary is derived rather than listed, because a written list only ever
+// covers the games that already existed: every directory under `games/` is a game
+// identity, and the game's own proper nouns are the residue a directory walk cannot
+// see -- words only one game's world uses.
+const GENERIC_RUNTIME_PREFIX = "containment/runtime/";
+const GAME_PROPER_NOUNS = Object.freeze(["cabin", "farmhand", "junimo", "pelican"]);
 function shown(path, root = repositoryRoot) {
   return relative(root, path).replaceAll("\\", "/");
 }
@@ -186,6 +197,52 @@ function isAllowedStardewGenericImport(importer, target, root) {
   if (targetPath === GAME_IMPORTABLE_GENERIC_PATH) return true;
   return ALLOWED_STARDew_GENERIC_IMPORTERS.get(targetPath)?.has(sourcePath(importer, root)) === true;
 }
+/**
+ * The game identities this tree ships, read from `games/` itself so a second game is
+ * covered the day its directory exists. An unreadable directory derives nothing,
+ * which the report shows as an empty identity set rather than as a clean seam.
+ */
+function gameIdentities(sourceRoot) {
+  try {
+    return readdirSync(join(sourceRoot, "games"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name.toLowerCase())
+      .sort();
+  } catch {
+    return [];
+  }
+}
+/** Camel, Pascal, snake and kebab spellings all split to the same words. */
+function vocabularyTokens(text) {
+  return text
+    .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
+    .split(/[^A-Za-z0-9]+/u)
+    .filter(Boolean)
+    .map((token) => token.toLowerCase());
+}
+/**
+ * Every name the source declares or writes, split into words and answered against the
+ * forbidden vocabulary. Identifiers and string literals are the semantic surface a
+ * consumer reads; comments are excluded on purpose, so a comment that explains what
+ * the layer does NOT know stays writable.
+ */
+function namedGameVocabulary(file, forbidden) {
+  const found = [];
+  file.forEachChild(function visit(node) {
+    if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      const token = vocabularyTokens(node.text).find((candidate) => forbidden.has(candidate));
+      if (token !== undefined)
+        found.push({
+          identifier: node.text,
+          token,
+          line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+        });
+    }
+    ts.forEachChild(node, visit);
+  });
+  return found;
+}
 function violation(kind, importer, specifier, target, line, detail, root) {
   return {
     kind,
@@ -295,6 +352,43 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
         ),
       );
     }
+  }
+  // The generic runtime's own vocabulary, answered against words read from the game
+  // side. Both halves derive from the tree: the population by walking the layer, the
+  // game identities from `games/` and the residue nouns declared above.
+  const genericRuntimeFiles = productionFiles.filter((path) =>
+    sourcePath(path, root).startsWith(GENERIC_RUNTIME_PREFIX),
+  );
+  const identities = gameIdentities(resolve(root, "host/src"));
+  // `examined 0` is never a pass. The rule is not applicable to a partial fixture that
+  // models no containment layer at all -- those fixtures build narrow game/import
+  // graphs -- but a tree carrying containment sources and none under `runtime` is the
+  // layer having moved or emptied, and that must block instead of reading as clean.
+  const blocked = [];
+  if (
+    genericRuntimeFiles.length === 0 &&
+    productionFiles.some((path) => sourcePath(path, root).startsWith("containment/"))
+  )
+    blocked.push(
+      `generic_runtime_vocabulary_read_nothing: examined 0 production source(s) under host/src/${GENERIC_RUNTIME_PREFIX}`,
+    );
+  const forbiddenVocabulary = new Set([...identities, ...GAME_PROPER_NOUNS]);
+  for (const path of genericRuntimeFiles) {
+    const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, scriptKind(path));
+    for (const hit of namedGameVocabulary(file, forbiddenVocabulary))
+      violations.push({
+        ...violation(
+          "generic_runtime_names_game",
+          path,
+          null,
+          null,
+          hit.line,
+          "containment_runtime_must_not_name_a_game",
+          root,
+        ),
+        token: hit.token,
+        identifier: hit.identifier,
+      });
   }
   for (const importer of productionFiles) {
     const source = readFileSync(importer, "utf8");
@@ -507,15 +601,20 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
       String(a.specifier).localeCompare(String(b.specifier)),
   );
   return {
-    verdict: violations.length === 0 ? "passed" : "blocked",
+    verdict: violations.length === 0 && blocked.length === 0 ? "passed" : "blocked",
     inspectedFiles: productionFiles.map((path) => shown(path, root)).sort(),
     violations,
+    blocked,
+    vocabulary: { examined: genericRuntimeFiles.length, gameIdentities: identities },
   };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const report = checkHostGamePhysicalSeam();
   if (report.verdict !== "passed") console.error(JSON.stringify(report, null, 2));
-  else console.log(`host game physical seam: passed (${report.inspectedFiles.length} production files)`);
+  else
+    console.log(
+      `host game physical seam: passed (${report.inspectedFiles.length} production files; generic runtime vocabulary read ${report.vocabulary.examined} source(s) against ${report.vocabulary.gameIdentities.length} game identit${report.vocabulary.gameIdentities.length === 1 ? "y" : "ies"} plus ${GAME_PROPER_NOUNS.length} game noun(s))`,
+    );
   process.exitCode = report.verdict === "passed" ? 0 : (report.blocked?.length ?? 0) > 0 ? 2 : 1;
 }

@@ -1,5 +1,9 @@
-// red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
+// red-proof: inject  removing containment from the game-free generic layer set -> `× reports exact generic-to-game and
 //   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
+// red-proof: history the tree before this rule's own unit, where
+//   `host/src/containment/runtime/contract/game-runtime.ts` declared
+//   `FarmhandBridgeConnectionNotAvailableError` -> `generic_runtime_names_game` naming that
+//   file, its line and the identifier, token `farmhand` (re-run of the checker on that tree)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -451,6 +455,110 @@ test("inspects flat host/src producers and rejects a non-owner registration impo
         kinds.includes("stardew_registration_import_not_owner"),
         `expected a registration-owner violation, got ${JSON.stringify(kinds)}`,
       );
+    },
+  );
+});
+
+// The generic runtime's README says the layer "Does not know: Game names, game rules,
+// installation or recipe facts". A source that cannot import a game can still NAME one,
+// which is exactly how `FarmhandBridgeConnectionNotAvailableError` - a refusal about one
+// game's bridge connection authority - ended up in the contract every game shares.
+test("names the generic runtime source that uses the game's own vocabulary", async () => {
+  await withFixture(
+    {
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+      "host/src/containment/runtime/contract/game-runtime.ts": [
+        "export class FarmhandBridgeConnectionNotAvailableError extends Error {}",
+        'export const code = "stardew_farmhand_bridge_connection_not_available";',
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "blocked");
+      assert.equal(report.vocabulary.examined, 1);
+      assert.deepEqual(report.vocabulary.gameIdentities, ["stardew"]);
+      assert.deepEqual(
+        report.violations
+          .filter(({ kind }) => kind === "generic_runtime_names_game")
+          .map(({ importer, line, detail, token, identifier }) => ({ importer, line, detail, token, identifier })),
+        [
+          {
+            importer: "host/src/containment/runtime/contract/game-runtime.ts",
+            line: 1,
+            detail: "containment_runtime_must_not_name_a_game",
+            token: "farmhand",
+            identifier: "FarmhandBridgeConnectionNotAvailableError",
+          },
+          {
+            importer: "host/src/containment/runtime/contract/game-runtime.ts",
+            line: 2,
+            detail: "containment_runtime_must_not_name_a_game",
+            token: "stardew",
+            identifier: "stardew_farmhand_bridge_connection_not_available",
+          },
+        ],
+      );
+    },
+  );
+});
+
+// The vocabulary is read from `games/`, not listed, so a second game is covered the day
+// its directory exists rather than the day someone remembers to add it.
+test("derives the game identity from games/, so a second game needs no new word in this gate", async () => {
+  await withFixture(
+    {
+      "host/src/games/game2/value.ts": "export const value = 2;\n",
+      "host/src/containment/runtime/core/run-state.ts": 'export const phase = "game2_transition";\n',
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "blocked");
+      assert.deepEqual(report.vocabulary.gameIdentities, ["game2"]);
+      assert.deepEqual(
+        report.violations.map(({ kind, token, identifier }) => ({ kind, token, identifier })),
+        [{ kind: "generic_runtime_names_game", token: "game2", identifier: "game2_transition" }],
+      );
+    },
+  );
+});
+
+test("a generic runtime holding no production source is blocked, never passed over zero files", async () => {
+  await withFixture(
+    {
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+      // Containment exists, its runtime layer does not: that is the rule having no
+      // population under a tree that carries the layer, not a fixture modelling none.
+      "host/src/containment/auth/guardian.ts": "export const guardian = 1;\n",
+      "host/src/containment/runtime/idle.test.ts": "export const value = 1;\n",
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "blocked");
+      assert.equal(report.vocabulary.examined, 0);
+      assert.match(
+        report.blocked[0],
+        /generic_runtime_vocabulary_read_nothing: examined 0 production source\(s\) under host\/src\/containment\/runtime\//u,
+      );
+    },
+  );
+});
+
+// The stated limit, held: comments are outside the semantic surface, so the layer may
+// still explain which fact is NOT its own - `contained-game-runtime.ts` does exactly that
+// about an unlaunched role's empty Job.
+test("a comment that names the game to say the layer does not own the fact is not the defect", async () => {
+  await withFixture(
+    {
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+      "host/src/containment/runtime/core/run-state.ts": [
+        "/** A stardew fact: the cabin owner owns the empty Job, and this layer does not. */",
+        "export const phase = 1;",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "passed");
+      assert.equal(report.vocabulary.examined, 1);
     },
   );
 });
