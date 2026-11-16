@@ -61,6 +61,18 @@ export const RESUME_REREAD_INTERVAL_MS = 500;
 export const RESUME_REREAD_MAX_ATTEMPTS = 60;
 
 /**
+ * How many resyncs one connection may be replaced for before the panel stops re-subscribing.
+ *
+ * A resync is not an error: the channel keeps a bounded replay window, so a Host that restarted, a cursor that fell
+ * out of the window, and a race against the very first frame all answer the same way - read `/game`, then continue
+ * from the cursor it carried. The bound exists for the one case that is NOT an error: a Host that answers resync
+ * forever would otherwise spin the panel between the route and the snapshot with nothing to show the player. Three
+ * covers a restart plus a lost window plus the first-frame race; after it the snapshot stands and the next Game
+ * command's own confirmation read is the way forward.
+ */
+export const GAME_STREAM_RESYNC_LIMIT = 3;
+
+/**
  * The cabin handoff's own bounded wait, which an admitted launch starts.
  *
  * A launch's only forward path is the cabin handoff: confirming a cabin is what launches the AI

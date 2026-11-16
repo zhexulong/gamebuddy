@@ -8,6 +8,7 @@ import {
   type GameBrowserStateV1,
   type GameCreateRequestV1,
   type GameCreateResultV1,
+  type GameFactPatchV1,
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
 } from "../composed-reference-game-browser-api";
@@ -36,6 +37,7 @@ import {
   CABIN_REREAD_INTERVAL_MS,
   CABIN_REREAD_MAX_ATTEMPTS,
   delay,
+  GAME_STREAM_RESYNC_LIMIT,
   newIdempotencyKey,
   RESUMABLE_CONNECTION_STATUSES,
   RESUME_REREAD_INTERVAL_MS,
@@ -201,6 +203,17 @@ export function GameSurface({
    */
   const [endgameConfirmArmed, setEndgameConfirmArmed] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
+  /**
+   * The latest render's own seams, for the push channel.
+   *
+   * A ref rather than an effect dependency: re-subscribing because a closure identity changed would drop a live
+   * connection for a fact that did not change, and the effect's own lifetime has to be the epoch's and the cursor's.
+   */
+  const readViewRef = useRef(readView);
+  const commitRef = useRef(commit);
+  const rereadGameRef = useRef<() => Promise<void>>(async () => undefined);
+  /** The waits below, woken by every fact the channel applies. Bounded by the operations that can be in flight. */
+  const gameFactWaitersRef = useRef(new Set<() => void>());
 
   /**
    * Which cabin state an error stands for.
@@ -380,6 +393,140 @@ export function GameSurface({
     const current = readView();
     if (current.kind !== "ready") return;
     commit({ ...current, root: { ...current.root, game } });
+  };
+
+  useEffect(() => {
+    readViewRef.current = readView;
+    commitRef.current = commit;
+    rereadGameRef.current = rereadGame;
+  });
+
+  /**
+   * Applies one fact group to the projection this surface renders.
+   *
+   * A frame carries only the fields its own fact owns, so it is merged rather than assigned: `/game` stays the
+   * authority for everything else it published, and a frame can never become a second, partial projection.
+   */
+  const applyGameFact = (patch: GameFactPatchV1): void => {
+    const current = readViewRef.current();
+    if (current.kind !== "ready" || current.root.game === null) return;
+    const projection = current.root.game;
+    commitRef.current({
+      ...current,
+      root: { ...current.root, game: { ...projection, game: { ...projection.game, ...patch.game } } },
+    });
+  };
+
+  /**
+   * The Game surface's own push channel, and the one place a fact ends a wait.
+   *
+   * The panel used to learn that a resume had landed by re-reading `/game` twice a second for up to thirty seconds,
+   * and measured on the real Host 19 of those 20 reads were byte-identical: a fact arrives at a coordinator
+   * transition, never on a cadence. This subscribes to the Game's own stream - its own epoch and cursor, carrying no
+   * Chat selection generation, so a Chat switch cannot move it and a Chat failure cannot close it.
+   *
+   * A resync is not an error, and the snapshot is not a fallback: the channel keeps a bounded replay window, so a
+   * position it can no longer serve HAS to be replaced by the authoritative read. That is why `/game` stays - it is
+   * the recovery path, and its reply carries the cursor to continue from. `GAME_STREAM_RESYNC_LIMIT` is the promise
+   * that this loop ends even against a Host that can only ever answer resync.
+   */
+  useEffect(() => {
+    const checkpoint = game?.eventStream;
+    if (!ready || checkpoint === undefined) return;
+    let closed = false;
+    let lastSequence = 0;
+    let resyncs = 0;
+    let connection: Readonly<{ close(): void }> | undefined;
+    const stop = (): void => {
+      closed = true;
+      connection?.close();
+    };
+    const recover = (): void => {
+      if (closed) return;
+      if (resyncs >= GAME_STREAM_RESYNC_LIMIT) {
+        // Nothing is being hidden: the projection on screen IS the last authoritative answer, and the next Game
+        // command's own confirmation read is the way forward.
+        stop();
+        return;
+      }
+      resyncs += 1;
+      stop();
+      void rereadGameRef.current().catch(() => undefined);
+    };
+    connection = composedApi.openGameEvents({
+      cursor: checkpoint.cursor,
+      onEvent(event) {
+        if (closed) return;
+        // A replayed or late frame never moves the projection backwards.
+        if (event.sequence <= lastSequence) return;
+        lastSequence = event.sequence;
+        if (event.eventType === "game.stream_resync_required") {
+          recover();
+          return;
+        }
+        resyncs = 0;
+        applyGameFact(event.payload);
+        for (const wake of [...gameFactWaitersRef.current]) wake();
+      },
+      onError() {
+        recover();
+      },
+    });
+    return stop;
+  }, [ready, composedApi, game?.eventStream?.epoch, game?.eventStream?.cursor]);
+
+  /**
+   * Waits for the Game projection to answer `decide`, ended by a frame rather than by a clock.
+   *
+   * `decide` is asked once before the wait begins, so a fact that arrived while the command was still settling costs
+   * no wait at all. When the Host holds no stream (a mount that only answers the snapshot) the wait falls back to the
+   * reads it always made: the panel's behaviour is a property of what the Host publishes, never of a client switch.
+   *
+   * The budget is the ceiling for the case where nothing ever arrives - a transition that never happened - and it is
+   * the same ceiling these waits always had, no longer their cadence.
+   */
+  const awaitGameProjection = async <T,>(decide: () => T | undefined, budgetMs: number): Promise<T | undefined> => {
+    const answered = decide();
+    if (answered !== undefined) return answered;
+    if (game?.eventStream === undefined) return await pollGameProjection(decide, budgetMs);
+    return await new Promise<T | undefined>((resolve) => {
+      let settled = false;
+      const finish = (value: T | undefined): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        gameFactWaitersRef.current.delete(wake);
+        resolve(value);
+      };
+      const wake = (): void => {
+        finish(decide());
+      };
+      const timer = window.setTimeout(() => finish(undefined), budgetMs);
+      gameFactWaitersRef.current.add(wake);
+    });
+  };
+
+  /**
+   * The same wait for a Host that publishes no stream: authoritative reads, bounded by the same budget.
+   *
+   * It is what every wait in this file used to be. It stays because the composed shell is served by the Host, and a
+   * Game surface whose Host answers no stream is still a surface whose commands have to converge - the alternative
+   * would be spending the whole budget waiting for an event nobody promised.
+   */
+  const pollGameProjection = async <T,>(decide: () => T | undefined, budgetMs: number): Promise<T | undefined> => {
+    const attempts = Math.ceil(budgetMs / RESUME_REREAD_INTERVAL_MS);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (isCancelled()) return undefined;
+      try {
+        await rereadGame();
+      } catch {
+        // An inconclusive authoritative read never completes a wait; the budget is what ends it.
+      }
+      const answered = decide();
+      if (answered !== undefined) return answered;
+      await delay(RESUME_REREAD_INTERVAL_MS);
+    }
+    return undefined;
   };
 
   /**
@@ -729,38 +876,28 @@ export function GameSurface({
   };
 
   /**
-   * Bounded authoritative rereads for one admitted `game.resume`. A transport
-   * `accepted`/`attached` result is never treated as runtime success; the
-   * attempt stays visibly in flight until the composed authoritative Game
-   * state converges at the same attachment generation (connected), a
-   * newer/conflicting generation supersedes the attempt, or the bounded budget
-   * expires (unavailable; the exact generation key is preserved for replay).
+   * One admitted `game.resume`, waiting for the fact that ends it rather than re-reading on a cadence.
+   *
+   * A transport `accepted`/`attached` result is never treated as runtime success; the attempt stays visibly in
+   * flight until the composed Game projection converges at the same attachment generation (connected), a
+   * newer/conflicting generation supersedes the attempt, or the budget expires (unavailable; the exact generation key
+   * is preserved for replay). What changed is only how the panel learns it: the coordinator's attachment transition
+   * arrives on the stream, so the wait is woken by the fact instead of spending thirty seconds on identical reads.
    */
-  const resumeAwaitAuthoritative = async (
-    generation: number,
-    attempts: number,
-  ): Promise<"connected" | "superseded" | "unavailable"> => {
-    if (isCancelled() || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
-    try {
-      await rereadGame();
-    } catch {
-      if (isCancelled()) return "unavailable";
-      // An inconclusive authoritative read never completes the resume; keep
-      // rereading inside the bounded budget.
-      await delay(RESUME_REREAD_INTERVAL_MS);
-      return resumeAwaitAuthoritative(generation, attempts + 1);
-    }
-    const fresh = readView();
-    if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded";
-    const projection = fresh.root.game.game;
-    if (projection.attachment.generation !== generation) return "superseded";
-    if (
-      projection.attachment.status === "attached" &&
-      (projection.connectionStatus === "connected_idle" || projection.connectionStatus === "active")
-    )
-      return "connected";
-    await delay(RESUME_REREAD_INTERVAL_MS);
-    return resumeAwaitAuthoritative(generation, attempts + 1);
+  const resumeAwaitAuthoritative = async (generation: number): Promise<"connected" | "superseded" | "unavailable"> => {
+    const answer = await awaitGameProjection(() => {
+      const fresh = readView();
+      if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded" as const;
+      const projection = fresh.root.game.game;
+      if (projection.attachment.generation !== generation) return "superseded" as const;
+      if (
+        projection.attachment.status === "attached" &&
+        (projection.connectionStatus === "connected_idle" || projection.connectionStatus === "active")
+      )
+        return "connected" as const;
+      return undefined;
+    }, RESUME_REREAD_MAX_ATTEMPTS * RESUME_REREAD_INTERVAL_MS);
+    return answer ?? "unavailable";
   };
 
   const handleGameResume = async (): Promise<void> => {
@@ -849,7 +986,7 @@ export function GameSurface({
     // generation key preserved).
     let convergence: "connected" | "superseded" | "unavailable";
     try {
-      convergence = await resumeAwaitAuthoritative(generation, 1);
+      convergence = await resumeAwaitAuthoritative(generation);
     } catch {
       convergence = "unavailable";
     }
@@ -859,36 +996,25 @@ export function GameSurface({
   };
 
   /**
-   * Bounded authoritative rereads for one admitted `game.reopen`. The strict
-   * `reopened` result only exists on the exact same attachment generation; keep
-   * the attempt visibly in flight until the composed authoritative Game
-   * projection shows the paused action authority reopened to `active` at that
-   * generation, a newer/conflicting generation supersedes the attempt, or the
-   * bounded budget expires (unavailable; the exact generation key is preserved
-   * for replay). Reopen never touches old task/facade/lease or attachment
-   * machinery, so only the action-authority flip is awaited.
+   * One admitted `game.reopen`, waiting for the fact that ends it.
+   *
+   * The strict `reopened` result only exists on the exact same attachment generation; the attempt stays visibly in
+   * flight until the composed projection shows the paused action authority reopened to `active` at that generation, a
+   * newer/conflicting generation supersedes it, or the budget expires. Reopen never touches old task/facade/lease or
+   * attachment machinery, so only the action-authority flip is awaited - and that flip is a command-driven fact, so
+   * this wait is ended by the generation's own attachment frame or not at all: the budget is the ceiling.
    */
-  const reopenAwaitAuthoritative = async (
-    generation: number,
-    attempts: number,
-  ): Promise<"active" | "superseded" | "unavailable"> => {
-    if (isCancelled() || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
-    try {
-      await rereadGame();
-    } catch {
-      if (isCancelled()) return "unavailable";
-      // An inconclusive authoritative read never completes the reopen; keep
-      // rereading inside the bounded budget.
-      await delay(RESUME_REREAD_INTERVAL_MS);
-      return reopenAwaitAuthoritative(generation, attempts + 1);
-    }
-    const fresh = readView();
-    if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded";
-    const projection = fresh.root.game.game;
-    if (projection.attachment.generation !== generation) return "superseded";
-    if (projection.attachment.status === "attached" && projection.actionAuthority === "active") return "active";
-    await delay(RESUME_REREAD_INTERVAL_MS);
-    return reopenAwaitAuthoritative(generation, attempts + 1);
+  const reopenAwaitAuthoritative = async (generation: number): Promise<"active" | "superseded" | "unavailable"> => {
+    const answer = await awaitGameProjection(() => {
+      const fresh = readView();
+      if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded" as const;
+      const projection = fresh.root.game.game;
+      if (projection.attachment.generation !== generation) return "superseded" as const;
+      if (projection.attachment.status === "attached" && projection.actionAuthority === "active")
+        return "active" as const;
+      return undefined;
+    }, RESUME_REREAD_MAX_ATTEMPTS * RESUME_REREAD_INTERVAL_MS);
+    return answer ?? "unavailable";
   };
 
   const handleGameReopen = async (): Promise<void> => {
@@ -950,7 +1076,7 @@ export function GameSurface({
     // (unavailable; the exact generation key stays for an idempotent replay).
     let convergence: "active" | "superseded" | "unavailable";
     try {
-      convergence = await reopenAwaitAuthoritative(generation, 1);
+      convergence = await reopenAwaitAuthoritative(generation);
     } catch {
       convergence = "unavailable";
     }
@@ -1039,28 +1165,20 @@ export function GameSurface({
    * surface can never produce), or the bounded budget expires (fail-closed
    * unavailable; the next form submit mints a fresh attempt identity).
    */
-  const createAwaitAuthoritative = async (attempts: number): Promise<"converged" | "unavailable"> => {
-    if (isCancelled() || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
-    try {
-      await rereadGame();
-    } catch {
-      if (isCancelled()) return "unavailable";
-      // An inconclusive authoritative read never completes the create; keep
-      // rereading inside the bounded budget.
-      await delay(RESUME_REREAD_INTERVAL_MS);
-      return createAwaitAuthoritative(attempts + 1);
-    }
-    const fresh = readView();
-    if (fresh.kind !== "ready" || fresh.root.game === null) return "unavailable";
-    const projection = fresh.root.game.game;
-    if (
-      projection.attachment.status === "attached" &&
-      projection.connectionStatus === "connected_idle" &&
-      projection.actionAuthority === "paused"
-    )
-      return "converged";
-    await delay(RESUME_REREAD_INTERVAL_MS);
-    return createAwaitAuthoritative(attempts + 1);
+  const createAwaitAuthoritative = async (): Promise<"converged" | "unavailable"> => {
+    const answer = await awaitGameProjection(() => {
+      const fresh = readView();
+      if (fresh.kind !== "ready" || fresh.root.game === null) return undefined;
+      const projection = fresh.root.game.game;
+      if (
+        projection.attachment.status === "attached" &&
+        projection.connectionStatus === "connected_idle" &&
+        projection.actionAuthority === "paused"
+      )
+        return "converged" as const;
+      return undefined;
+    }, RESUME_REREAD_MAX_ATTEMPTS * RESUME_REREAD_INTERVAL_MS);
+    return answer ?? "unavailable";
   };
 
   /**
@@ -1130,7 +1248,7 @@ export function GameSurface({
     // rereads converge on ready-actions-paused, or the budget expires.
     let convergence: "converged" | "unavailable";
     try {
-      convergence = await createAwaitAuthoritative(1);
+      convergence = await createAwaitAuthoritative();
     } catch {
       convergence = "unavailable";
     }

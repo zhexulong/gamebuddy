@@ -164,6 +164,30 @@ const GAME_KEYS = [
   "latestOutcome",
 ] as const;
 const GAME_STATE_KEYS = ["apiVersion", "build", "csrfToken", "browserSession", "game"] as const;
+/**
+ * The Game surface's push checkpoint, the one optional top-level member of a game read.
+ *
+ * Absent means this Host holds no Game event stream - it is a Host (or a mount) that only ever answers the snapshot,
+ * which is why the panel subscribes exactly when the field is there.
+ */
+const GAME_STATE_OPTIONAL_KEYS = ["eventStream"] as const;
+const GAME_STATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([...GAME_STATE_KEYS, ...GAME_STATE_OPTIONAL_KEYS]);
+const GAME_STREAM_CHECKPOINT_KEYS = ["epoch", "cursor"] as const;
+/**
+ * The three facts that can change without a player acting, and the frame members each one owns.
+ *
+ * A closed list, mirrored from `GameFactPatchV1Schema`: a fact the Host cannot publish has no shape here to arrive
+ * in, and a frame carrying one is a protocol error rather than a field to merge. `prerequisites` and
+ * `actionAuthority` are deliberately absent - they move only when a command moved them.
+ */
+const GAME_FACT_KEYS = Object.freeze({
+  instance: ["instance", "compatibility", "latestOutcome"] as const,
+  attachment: ["attachment", "connectionStatus", "capabilitySummary"] as const,
+  selectedWorld: ["selectedWorld"] as const,
+});
+const GAME_FACTS = ["instance", "attachment", "selectedWorld"] as const;
+const GAME_EVENT_TYPES = ["game.fact_changed", "game.stream_resync_required"] as const;
+const GAME_RESYNC_REASONS = ["gap", "epoch_changed", "ambiguous_cursor"] as const;
 const GAME_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_PREREQUISITES_KEYS = ["status", "detectedGame", "missingItems"] as const;
 const GAME_INSTANCE_REQUIRED_KEYS = ["status", "gameTitle", "generation"] as const;
@@ -189,6 +213,11 @@ export type GameBrowserStateV1 = Readonly<{
   }>;
   csrfToken: string;
   browserSession: Readonly<{ expiresAtMs: number }>;
+  /**
+   * The Game surface's own push checkpoint: the process epoch its stream is in, and the cursor to resume from.
+   * Absent on a Host that holds no Game stream.
+   */
+  eventStream?: Readonly<{ epoch: string; cursor: string }>;
   game: Readonly<{
     prerequisites: Readonly<{
       status: (typeof PREREQUISITE_STATUSES)[number];
@@ -224,6 +253,60 @@ export type GameBrowserStateV1 = Readonly<{
     latestOutcome: (typeof OUTCOMES)[number];
   }>;
 }>;
+
+/** One member of the wire's closed fact union, named by its own `fact` tag. */
+export type GameFactKindV1 = (typeof GAME_FACTS)[number];
+export type GameResyncReasonV1 = (typeof GAME_RESYNC_REASONS)[number];
+
+/**
+ * One fact group, as the push channel publishes it.
+ *
+ * Each member names exactly the projection fields its fact owns, so a frame is merged rather than mistrusted: what
+ * it carries is authoritative for those fields at that sequence, and the snapshot keeps everything else.
+ */
+export type GameFactPatchV1 =
+  | Readonly<{
+      fact: "instance";
+      game: Readonly<{
+        instance: GameBrowserStateV1["game"]["instance"];
+        compatibility: GameBrowserStateV1["game"]["compatibility"];
+        latestOutcome: GameBrowserStateV1["game"]["latestOutcome"];
+      }>;
+    }>
+  | Readonly<{
+      fact: "attachment";
+      game: Readonly<{
+        attachment: GameBrowserStateV1["game"]["attachment"];
+        connectionStatus: GameBrowserStateV1["game"]["connectionStatus"];
+        capabilitySummary: GameBrowserStateV1["game"]["capabilitySummary"];
+      }>;
+    }>
+  | Readonly<{
+      fact: "selectedWorld";
+      game: Readonly<{ selectedWorld: GameBrowserStateV1["game"]["selectedWorld"] }>;
+    }>;
+
+/**
+ * One frame of the Game surface's stream.
+ *
+ * `game.stream_resync_required` carries no fact on purpose: this channel keeps a bounded replay window, so a position
+ * it cannot serve has to be replaced from `/game` instead of guessed at from whatever arrived.
+ */
+export type GameEventV1 =
+  | Readonly<{
+      apiVersion: 1;
+      epoch: string;
+      sequence: number;
+      eventType: "game.fact_changed";
+      payload: GameFactPatchV1;
+    }>
+  | Readonly<{
+      apiVersion: 1;
+      epoch: string;
+      sequence: number;
+      eventType: "game.stream_resync_required";
+      payload: Readonly<{ reason: GameResyncReasonV1 }>;
+    }>;
 
 export type ComposedReferenceGameBrowserRootV1 = Readonly<{
   apiVersion: 1;
@@ -502,6 +585,21 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
    * this client method cannot point it anywhere else.
    */
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
+  /**
+   * `GET /api/composed-reference-game/v1/events`: the Game surface's own push channel.
+   *
+   * It is the Game channel, not the Chat one: no frame here carries a Chat selection generation, so switching Chats
+   * cannot move this cursor, and the route is admitted on the same session cookie `/game` is. A cursor the Host
+   * cannot serve comes back as one `game.stream_resync_required` frame, and the caller's answer to that is the
+   * snapshot - which is why `/game` stays the authority and the recovery path.
+   */
+  openGameEvents(
+    options: Readonly<{
+      cursor?: string;
+      onEvent(event: GameEventV1, lastEventId: string): void;
+      onError(error: Event): void;
+    }>,
+  ): Readonly<{ close(): void }>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -874,8 +972,113 @@ function validateGameEndgameResult(value: unknown): GameEndgameResultV1 {
   return Object.freeze({ apiVersion: 1, status: value.status });
 }
 
+function isGameStreamCheckpoint(value: unknown): value is Readonly<{ epoch: string; cursor: string }> {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, GAME_STREAM_CHECKPOINT_KEYS) &&
+    isOpaqueHandle(value.epoch) &&
+    isOpaqueHandle(value.cursor)
+  );
+}
+
+/**
+ * One fact group, closed at every object boundary.
+ *
+ * The members are validated individually rather than as a key set per fact, for the reason the installation candidate
+ * above records: a whole-set check is one hand-written combination per combination. The set that IS closed here is
+ * the fact's own member list, which comes from the contract's union - a frame may not carry a field its fact does not
+ * own, because a client merging it would be writing a word the Host never said.
+ */
+function validateGameFactPatch(value: unknown): GameFactPatchV1 {
+  if (!isRecord(value) || !isOneOf(value.fact, GAME_FACTS) || !isRecord(value.game)) {
+    throw new ComposedReferenceGameProtocolError("invalid_game_fact_patch");
+  }
+  const members = GAME_FACT_KEYS[value.fact];
+  if (!hasExactKeys(value.game, members)) throw new ComposedReferenceGameProtocolError("invalid_game_fact_patch");
+  const game = value.game;
+  const invalid = new ComposedReferenceGameProtocolError("invalid_game_fact_patch");
+  switch (value.fact) {
+    case "instance": {
+      const instance = game.instance;
+      if (
+        !isRecord(instance) ||
+        !isOneOf(instance.status, INSTANCE_STATUSES) ||
+        !isNullableLabel(instance.gameTitle, MAX_GAME_LABEL_LENGTH) ||
+        !isSafeInteger(instance.generation, 0) ||
+        (instance.playerHostExitCode !== undefined &&
+          !(isSafeInteger(instance.playerHostExitCode, 0) && instance.playerHostExitCode <= 4_294_967_295)) ||
+        !isRecord(game.compatibility) ||
+        !hasExactKeys(game.compatibility, GAME_COMPATIBILITY_KEYS) ||
+        !isOneOf(game.compatibility.status, COMPATIBILITY_STATUSES) ||
+        !isNullableLabel(game.compatibility.message, MAX_GAME_MESSAGE_LENGTH) ||
+        !isOneOf(game.latestOutcome, OUTCOMES)
+      )
+        throw invalid;
+      return value as unknown as GameFactPatchV1;
+    }
+    case "attachment": {
+      if (
+        !isRecord(game.attachment) ||
+        !hasExactKeys(game.attachment, GAME_ATTACHMENT_KEYS) ||
+        !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
+        !isSafeInteger(game.attachment.generation, 0) ||
+        !isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
+        !isRecord(game.capabilitySummary) ||
+        !hasExactKeys(game.capabilitySummary, GAME_CAPABILITY_SUMMARY_KEYS) ||
+        typeof game.capabilitySummary.available !== "boolean" ||
+        !isSafeInteger(game.capabilitySummary.count, 0) ||
+        game.capabilitySummary.count > 512
+      )
+        throw invalid;
+      return value as unknown as GameFactPatchV1;
+    }
+    case "selectedWorld": {
+      if (!isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH)) throw invalid;
+      return value as unknown as GameFactPatchV1;
+    }
+  }
+}
+
+/**
+ * Validates one frame of the Game stream.
+ *
+ * Nothing is merged from a frame this refuses: a frame that cannot be read is a protocol error, and the surface's
+ * answer to it is the same as a resync - one snapshot read, which is the authority.
+ */
+function validateGameEvent(value: unknown): GameEventV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "epoch", "sequence", "eventType", "payload"]) ||
+    value.apiVersion !== 1 ||
+    !isOpaqueHandle(value.epoch) ||
+    !isSafeInteger(value.sequence, 1) ||
+    !isOneOf(value.eventType, GAME_EVENT_TYPES)
+  ) {
+    throw new ComposedReferenceGameProtocolError("invalid_game_event");
+  }
+  if (value.eventType === "game.stream_resync_required") {
+    if (
+      !isRecord(value.payload) ||
+      !hasExactKeys(value.payload, ["reason"]) ||
+      !isOneOf(value.payload.reason, GAME_RESYNC_REASONS)
+    ) {
+      throw new ComposedReferenceGameProtocolError("invalid_game_event");
+    }
+    return value as unknown as GameEventV1;
+  }
+  return Object.freeze({
+    apiVersion: 1 as const,
+    epoch: value.epoch,
+    sequence: value.sequence,
+    eventType: "game.fact_changed" as const,
+    payload: validateGameFactPatch(value.payload),
+  });
+}
+
 function isGameProjection(value: unknown): value is GameBrowserStateV1 {
-  if (!isRecord(value) || !hasExactKeys(value, GAME_STATE_KEYS) || value.apiVersion !== 1) return false;
+  if (!isRecord(value) || !GAME_STATE_KEYS.every((key) => key in value) || value.apiVersion !== 1) return false;
+  if (!Object.keys(value).every((key) => GAME_STATE_ALLOWED_KEYS.has(key))) return false;
+  if (value.eventStream !== undefined && !isGameStreamCheckpoint(value.eventStream)) return false;
   if (
     !isRecord(value.build) ||
     !hasExactKeys(value.build, GAME_BUILD_KEYS) ||
@@ -1465,6 +1668,38 @@ export function createComposedReferenceGameBrowserApi(
         },
         validateStardewCabinConfirmation,
       );
+    },
+    openGameEvents(options) {
+      if (
+        typeof EventSource !== "function" ||
+        options === null ||
+        typeof options !== "object" ||
+        typeof options.onEvent !== "function" ||
+        typeof options.onError !== "function"
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_events_request");
+      if (options.cursor !== undefined && !isOpaqueHandle(options.cursor))
+        throw new ComposedReferenceGameProtocolError("invalid_game_events_cursor");
+      const query = options.cursor === undefined ? "" : `?cursor=${encodeURIComponent(options.cursor)}`;
+      const source = new EventSource(`/api/composed-reference-game/v1/events${query}`, { withCredentials: true });
+      const handle = (raw: Event): void => {
+        const message = raw as MessageEvent<string>;
+        try {
+          const event = validateGameEvent(JSON.parse(message.data) as unknown);
+          if (!isOpaqueHandle(message.lastEventId)) throw new ComposedReferenceGameProtocolError("invalid_game_event");
+          options.onEvent(event, message.lastEventId);
+        } catch {
+          options.onError(new Event("protocol_error"));
+        }
+      };
+      for (const eventType of GAME_EVENT_TYPES) source.addEventListener(eventType, handle);
+      source.onerror = options.onError;
+      return Object.freeze({
+        close() {
+          for (const eventType of GAME_EVENT_TYPES) source.removeEventListener(eventType, handle);
+          source.close();
+        },
+      });
     },
   });
 }

@@ -1535,3 +1535,140 @@ test("a real composed refusal reaches the player as its own category, over real 
     await surface.close();
   }
 });
+
+/**
+ * The Game surface's push channel, at the boundary that reads it.
+ *
+ * `EventSource` is a browser transport, so it is the one thing faked here; everything else is the client's own
+ * decision - which URL and cursor it subscribes with, which frames it accepts, and what it does with a frame it
+ * cannot read. What a mounted panel does with those frames is the journeys' subject.
+ */
+function fakeEventSource() {
+  const sources = [];
+  class FakeEventSource {
+    constructor(url) {
+      this.url = String(url);
+      this.handlers = new Map();
+      this.closed = false;
+      this.onerror = null;
+      sources.push(this);
+    }
+    addEventListener(type, handler) {
+      this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]);
+    }
+    removeEventListener(type, handler) {
+      this.handlers.set(type, (this.handlers.get(type) ?? []).filter((candidate) => candidate !== handler));
+    }
+    close() {
+      this.closed = true;
+    }
+    emit(type, data, id) {
+      for (const handler of this.handlers.get(type) ?? []) handler({ data, lastEventId: id, type });
+    }
+  }
+  const previous = globalThis.EventSource;
+  globalThis.EventSource = FakeEventSource;
+  return {
+    sources,
+    restore() {
+      globalThis.EventSource = previous;
+    },
+  };
+}
+
+const STREAM_EPOCH = "S".repeat(42) + "A";
+/** The Host's own encoding: base64url of `[epoch, sequence]`. */
+function streamCursor(epoch, sequence) {
+  return Buffer.from(JSON.stringify([epoch, sequence]), "utf8").toString("base64url");
+}
+
+test("a Game read may carry the stream checkpoint, and a malformed one is not Game state", () => {
+  const checkpoint = { epoch: STREAM_EPOCH, cursor: streamCursor(STREAM_EPOCH, 4) };
+  assert.deepEqual(
+    validateComposedReferenceGameRoot(root({ ...gameSnapshot(), eventStream: checkpoint })).game.eventStream,
+    checkpoint,
+  );
+  // Absent is the honest "this Host holds no stream"; a present-but-wrong one is a projection this surface cannot
+  // render, exactly like any other additive or malformed field.
+  assert.equal(Object.hasOwn(validateComposedReferenceGameRoot(root()).game, "eventStream"), false);
+  for (const forged of [
+    { epoch: "short", cursor: streamCursor(STREAM_EPOCH, 0) },
+    { epoch: STREAM_EPOCH, cursor: "not a handle" },
+    { epoch: STREAM_EPOCH, cursor: streamCursor(STREAM_EPOCH, 0), extra: true },
+    { epoch: STREAM_EPOCH },
+  ]) {
+    assert.throws(
+      () => validateComposedReferenceGameRoot(root({ ...gameSnapshot(), eventStream: forged })),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+});
+
+test("the Game channel subscribes with the snapshot's cursor and delivers only frames it can read", () => {
+  const source = fakeEventSource();
+  try {
+    const api = createComposedReferenceGameBrowserApi(transport().fetch);
+    // A cursor that is not this boundary's shape never opens a connection at all.
+    assert.throws(() => api.openGameEvents({ cursor: "nope", onEvent() {}, onError() {} }));
+    assert.equal(source.sources.length, 0);
+
+    const events = [];
+    const errors = [];
+    const connection = api.openGameEvents({
+      cursor: streamCursor(STREAM_EPOCH, 4),
+      onEvent: (event) => events.push(event),
+      onError: (error) => errors.push(error),
+    });
+    assert.equal(source.sources.length, 1);
+    assert.equal(
+      source.sources[0].url,
+      `/api/composed-reference-game/v1/events?cursor=${encodeURIComponent(streamCursor(STREAM_EPOCH, 4))}`,
+    );
+
+    const attachment = {
+      apiVersion: 1,
+      epoch: STREAM_EPOCH,
+      sequence: 5,
+      eventType: "game.fact_changed",
+      payload: {
+        fact: "attachment",
+        game: {
+          attachment: { status: "attached", generation: 2 },
+          connectionStatus: "connected_idle",
+          capabilitySummary: { available: true, count: 7 },
+        },
+      },
+    };
+    source.sources[0].emit("game.fact_changed", JSON.stringify(attachment), streamCursor(STREAM_EPOCH, 5));
+    assert.deepEqual(events, [attachment]);
+
+    // A fact the Host cannot publish has no shape here: the frame is a protocol error, never a field to merge.
+    for (const forged of [
+      { ...attachment, payload: { fact: "actionAuthority", game: { actionAuthority: "active" } } },
+      { ...attachment, payload: { fact: "attachment", game: { connectionStatus: "connected_idle" } } },
+      { ...attachment, payload: { ...attachment.payload, game: { ...attachment.payload.game, prerequisites: {} } } },
+      { ...attachment, sequence: 0 },
+      { ...attachment, selectionGeneration: 1 },
+    ]) {
+      source.sources[0].emit("game.fact_changed", JSON.stringify(forged), streamCursor(STREAM_EPOCH, 6));
+    }
+    assert.equal(errors.length, 5, "every unreadable frame is reported, and none of them is merged");
+    assert.equal(events.length, 1);
+
+    // A resync frame carries no fact and names its reason: it is the one frame that tells the caller to read `/game`.
+    const resync = {
+      apiVersion: 1,
+      epoch: STREAM_EPOCH,
+      sequence: 6,
+      eventType: "game.stream_resync_required",
+      payload: { reason: "epoch_changed" },
+    };
+    source.sources[0].emit("game.stream_resync_required", JSON.stringify(resync), streamCursor(STREAM_EPOCH, 6));
+    assert.deepEqual(events[1], resync);
+
+    connection.close();
+    assert.equal(source.sources[0].closed, true);
+  } finally {
+    source.restore();
+  }
+});
