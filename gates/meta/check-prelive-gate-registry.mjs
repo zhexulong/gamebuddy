@@ -229,6 +229,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:chat-live-run",
   },
   {
+    path: "tools/audit-gate-inputs.mjs",
+    reason:
+      "elsewhere: derives each gate's own input population from the paths its code reads, following its relative " +
+      "imports - a static reading of the gate files, so it needs no install, no build and no run; it runs on every " +
+      "push in the CI gates job through `pnpm audit:gate-inputs`",
+    runsIn: "pnpm audit:gate-inputs",
+  },
+  {
     path: "gates/meta/audit-gate-red-proofs.mjs",
     reason: "elsewhere: static gate-red-proof audit, runs on every push in the CI gates job",
     runsIn: "pnpm audit:gate-red-proofs",
@@ -486,17 +494,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
-    path: "tools/check-derived-population.mjs",
-    reason:
-      "debt: measured red at HEAD 2026-11-13 — `examined 980, violations 1222, unread 0`, and the measurement is why " +
-      "this gate is off rather than wired: 1073 of the 1222 are a literal 0, 1 or 2 over a fixture the test itself " +
-      "builds, and the 148 that are 3-and-up (62 of them in `tools/`) include the genuine freezes whose derived side " +
-      "does not exist yet. The dated paragraph beside the gate's usage says which members those are and what would " +
-      "make it schedulable; wiring it now would red the tree for assertions whose authority is the fixture above them · " +
-      "measured examined 981, violations 1226, unread 1 at 449f0fb0",
-    runsIn: "on-demand",
-  },
-  {
     path: "gates/meta/check-gate-population-agreement.mjs",
     reason:
       "elsewhere: reads the four gate populations (check-ci-coverage, check-prelive-gate-registry, the red-proof census " +
@@ -665,6 +662,22 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:live-run-silence",
   },
   {
+    path: "tools/check-local-ci-parity.mjs",
+    reason:
+      "elsewhere: subtracts `tools/prelive.mjs`'s own `PRELUDE_RUNGS` and `LADDER_RUNGS` from the workflows' steps, so " +
+      "it reads the ladder's declaration and the CI files and needs neither install nor run; ci.yml runs it as its own " +
+      "step (`pnpm check:local-ci-parity`), and a rung inside the ladder it judges would be the ladder grading itself",
+    runsIn: "pnpm check:local-ci-parity",
+  },
+  {
+    path: "tools/check-loose-assertions.mjs",
+    reason:
+      "elsewhere: reads the journey specs for the `expect` calls no test reaches - the slices before a file's first " +
+      "`test(`, the module-level ones and the helpers nothing calls - which is a static reading of " +
+      "`dialogue-web/tests`, so it runs on every push in the CI gates job through `pnpm check:loose-assertions`",
+    runsIn: "pnpm check:loose-assertions",
+  },
+  {
     path: "tools/check-native-local-runner-scaffold.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-native-local-runner-scaffold.test.mjs`, inside `test:stardew-native-local-runner-scaffold`, a member of the tool-test corpus that ci.yml runs on every push",
@@ -770,6 +783,14 @@ export const EXEMPTIONS = Object.freeze([
     path: "gates/meta/check-spec-reachability.mjs",
     reason: "elsewhere: derives which tools/ suites a checkout runs, and runs on every push in the CI gates job",
     runsIn: "pnpm check:spec-reachability",
+  },
+  {
+    path: "tools/check-spec-waiver-comments.mjs",
+    reason:
+      "elsewhere: classifies the journey comments that encode a capability the product denies as waivers, and reads " +
+      "each declared waiver's expiry out of the product's own source - no install, no build and no run - so it runs " +
+      "on every push in the CI gates job through `pnpm check:spec-waiver-comments`",
+    runsIn: "pnpm check:spec-waiver-comments",
   },
   {
     path: "tools/check-stardew-companion-production-admission.mjs",
