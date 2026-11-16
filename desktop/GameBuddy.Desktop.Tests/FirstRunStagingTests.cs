@@ -6,10 +6,12 @@ namespace GameBuddy.Desktop.Tests;
 
 /// <summary>
 /// The launcher-owned first-run staging marker. The deployment identity says who the
-/// installation is; the physical completeness of the durable authority
-/// (<see cref="SessionModeDecisionTests"/>) says whether the run that minted it ever
-/// finished. The marker records that a mint was staged: it is written before the durable
-/// identity record and cleared once that intent is spent, and nothing decides on it.
+/// installation is; the Host's own mount decision
+/// (`decideProductionAuthorityMountMode`) says whether the run that minted it ever
+/// finished, from this marker, the durable identity record and the authority's publication
+/// marker. The marker records that a mint was staged: it is written before the durable
+/// identity record and cleared once that intent is spent, and the launcher decides nothing
+/// on it.
 /// </summary>
 public sealed class FirstRunStagingTests
 {

@@ -16,7 +16,6 @@ public sealed class RuntimeSupervisorEnvironmentTests
     private static readonly string[] FrozenWireKeys =
     [
         "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST",
-        "GAMEBUDDY_HOST_GAME_SESSION_MODE",
         "GAMEBUDDY_HOST_SURFACE",
         "GAMEBUDDY_EMBEDDED_RUNTIME",
         "LOCALAPPDATA",
@@ -58,7 +57,6 @@ public sealed class RuntimeSupervisorEnvironmentTests
         AssertDeclaredBlock(environment);
         Assert.Equal("Windows_NT", environment["OS"]);
         Assert.Equal(Path.Combine(layout.Layout.OperationalRoot, "deployment-manifest.json"), environment["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"]);
-        Assert.Equal("fresh", environment["GAMEBUDDY_HOST_GAME_SESSION_MODE"]);
         Assert.Equal("composed-reference-game", environment["GAMEBUDDY_HOST_SURFACE"]);
         Assert.False(environment.ContainsKey("GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"));
         Assert.Equal(Environment.GetEnvironmentVariable("SystemRoot"), environment["SystemRoot"]);
@@ -92,12 +90,10 @@ public sealed class RuntimeSupervisorEnvironmentTests
 
         var environment = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions
         {
-            GameSessionMode = HostBootstrapEnvironmentOptions.KnownGameSessionMode,
             Surface = HostBootstrapEnvironmentOptions.ChatOnlySurface,
             TavernNarrativeGateNonceSha256 = Nonce,
         }));
 
-        Assert.Equal("known", environment["GAMEBUDDY_HOST_GAME_SESSION_MODE"]);
         Assert.Equal("chat-only", environment["GAMEBUDDY_HOST_SURFACE"]);
         Assert.Equal(Nonce, environment[NonceKey]);
         AssertDeclaredBlock(environment, NonceKey);
@@ -110,19 +106,6 @@ public sealed class RuntimeSupervisorEnvironmentTests
         using var layout = CreateLayout();
 
         Assert.Throws<GuardianLaunchUnavailableException>(() => RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout));
-    }
-
-    [Theory]
-    [InlineData("bogus")]
-    [InlineData("")]
-    [InlineData("Fresh")]
-    public void BuildBootstrapEnvironment_fails_closed_on_invalid_game_session_mode(string mode)
-    {
-        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
-        using var layout = CreateLayout();
-        TestDeploymentManifest.WriteDeploymentManifest(layout.Layout.OperationalRoot);
-
-        Assert.Throws<GuardianLaunchUnavailableException>(() => RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { GameSessionMode = mode }));
     }
 
     [Theory]
@@ -268,7 +251,10 @@ public sealed class RuntimeSupervisorEnvironmentTests
         Assert.Contains("var environmentBlock = BuildBootstrapEnvironment(layout, options)", source, StringComparison.Ordinal);
         Assert.Contains("DeploymentManifestFileName", source, StringComparison.Ordinal);
         Assert.Contains("\"GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"GAMEBUDDY_HOST_GAME_SESSION_MODE\"", source, StringComparison.Ordinal);
+        // The mount the Host performs is its own decision from the records in the runtime root, so
+        // the launcher carries no mount choice into the child: a name here that said `fresh` or
+        // `known` would be a second authority over a continuity fact the Host already holds.
+        Assert.DoesNotContain("GAMEBUDDY_HOST_GAME_SESSION_MODE", source, StringComparison.Ordinal);
         Assert.Contains("\"GAMEBUDDY_HOST_SURFACE\"", source, StringComparison.Ordinal);
         Assert.Contains("\"GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256\"", source, StringComparison.Ordinal);
         Assert.Contains("string.Concat(values.OrderBy(item => item.Key, StringComparer.Ordinal)", source, StringComparison.Ordinal);

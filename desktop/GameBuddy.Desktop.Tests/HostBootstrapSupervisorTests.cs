@@ -70,7 +70,6 @@ public sealed class HostBootstrapSupervisorTests
         foreach (var carried in new[] { "PATH", "WINDIR", "USERPROFILE" })
             Assert.Equal(Environment.GetEnvironmentVariable(carried), environment.GetProperty(carried).GetString());
         Assert.Equal(Path.Combine(layout.OperationalRoot, "deployment-manifest.json"), environment.GetProperty("GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST").GetString());
-        Assert.Equal("fresh", environment.GetProperty("GAMEBUDDY_HOST_GAME_SESSION_MODE").GetString());
         Assert.Equal("composed-reference-game", environment.GetProperty("GAMEBUDDY_HOST_SURFACE").GetString());
         Assert.DoesNotContain(environment.EnumerateObject(), property => property.Name == "GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256");
         Assert.Equal(Environment.GetEnvironmentVariable("SystemRoot"), environment.GetProperty("SystemRoot").GetString());

@@ -154,7 +154,7 @@ public sealed class DeploymentIdentityTests
     }
 
     [Fact]
-    public async Task A_completed_first_run_clears_the_marker_and_the_next_launch_is_known()
+    public async Task A_completed_first_run_leaves_the_records_the_Hosts_mount_decision_reads()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await DisposableRootFixture.CreateAsync();
@@ -169,25 +169,26 @@ public sealed class DeploymentIdentityTests
         Assert.True(minted);
 
         // The first run dies before its Host acknowledges: the identity exists, the staging
-        // marker still records the mint, and no authority was ever finished - so a launch now
-        // establishes the authority rather than opening one that is not there.
+        // marker still records the mint, and no authority was ever finished.
         var whileIncomplete = DeploymentIdentity.EstablishForCurrentUser(layout);
         Assert.False(whileIncomplete);
-        Assert.False(ProductionAuthority.IsComplete(layout));
-        Assert.True(SessionModeDecision.EstablishesAuthority(layout, whileIncomplete));
+        Assert.False(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
+        Assert.True(File.Exists(FirstRunStaging.MarkerPath(layout)));
 
         // The accepted acknowledgement clears the marker, and the Host's fresh path writes its
-        // completion marker last: that physical fact is what makes the next launch `known`.
+        // completion marker last: together with the durable identity record these are the records
+        // the Host's own mount decision reads (`decideProductionAuthorityMountMode`), and this
+        // launcher asserts no mount of its own over them.
         FirstRunStaging.Clear(layout);
         TestProductionAuthority.WriteCompletionMarker(layout);
 
         var later = DeploymentIdentity.EstablishForCurrentUser(layout);
 
         // The later launch does not mint, and it presents the very same identity rather
-        // than a second one - and with a complete authority behind it, it is `known`.
+        // than a second one - and the identity record it found is the one the authority was
+        // created with.
         Assert.False(later);
-        Assert.True(ProductionAuthority.IsComplete(layout));
-        Assert.False(SessionModeDecision.EstablishesAuthority(layout, later));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.Equal(manifestFirst, File.ReadAllBytes(manifestPath));
         Assert.Equal(recordFirst, File.ReadAllBytes(recordPath));
         Assert.Equal(identityFirst, ReadManifestIdentity(manifestPath));
@@ -195,15 +196,10 @@ public sealed class DeploymentIdentityTests
         Assert.Equal(recordFirst, File.ReadAllBytes(recordPath));
         Assert.Equal(identityFirst, ReadManifestIdentity(manifestPath));
 
-        // The step's answer is what the production entry turns into the Host session
-        // mode, and only a first run may select `fresh`; every later launch delivers
-        // `known` to the child so it opens the authority that exists.
-        var known = RuntimeSupervisor.BuildBootstrapEnvironment(layout, new HostBootstrapEnvironmentOptions
-        {
-            GameSessionMode = HostBootstrapEnvironmentOptions.KnownGameSessionMode,
-        });
-        Assert.Contains("GAMEBUDDY_HOST_GAME_SESSION_MODE=known\0", known, StringComparison.Ordinal);
-        Assert.DoesNotContain("GAMEBUDDY_HOST_GAME_SESSION_MODE=fresh", known, StringComparison.Ordinal);
+        // And what the launcher hands the child carries no mount choice at all: which mount the
+        // Host performs is not this process's to say.
+        var childEnvironment = RuntimeSupervisor.BuildBootstrapEnvironment(layout, new HostBootstrapEnvironmentOptions());
+        Assert.DoesNotContain("GAMEBUDDY_HOST_GAME_SESSION_MODE", childEnvironment, StringComparison.Ordinal);
     }
 
     [Fact]

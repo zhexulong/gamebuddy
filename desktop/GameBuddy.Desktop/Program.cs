@@ -425,17 +425,17 @@ internal static class Program
             // establishes the identity exactly once - minting it only when neither
             // the manifest nor the durable record exists, otherwise projecting the
             // durable record - and never overwrites an existing manifest.
-            var mintedDeploymentIdentity = DeploymentIdentity.EstablishForCurrentUser(layout);
-
-            // Whether this launch has to establish the semantic authority, which is the
-            // only launch that may ask the Host for a fresh one. The identity says who
-            // the deployment is; the durable authority itself says whether it was ever
-            // finished. The physical completeness of that authority is the criterion, not
-            // the launcher's own staging marker: a marker still present beside a complete
-            // authority is a ghost from a launch that died between the Host's
-            // acknowledgement and the launcher's clear, and the decision clears it instead
-            // of letting this installation declare itself a first run again.
-            var establishesAuthority = SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity);
+            //
+            // Which semantic authority mount this launch performs is not decided here. It is the
+            // Host's own decision from the records in the runtime root - the authority's
+            // publication marker, the durable identity record and the first-run staging marker
+            // (host/src/continuity-semantic-provisioning: `decideProductionAuthorityMountMode`).
+            // A mount asked for from this side could contradict them: a launcher saying `known`
+            // over a first run it never finished would open a root that has to be provisioned,
+            // and one saying `fresh` over a complete authority would be asking for the one mount
+            // that may discard. The step's answer - whether this launch minted the identity - is
+            // its own fact and does not travel past this point.
+            DeploymentIdentity.EstablishForCurrentUser(layout);
 
             // From here the admitted children are launched: Voice first (the Host
             // child is handed its port/token pair), then the Host runtime and the
@@ -477,30 +477,18 @@ internal static class Program
 
             var hostOptions = new HostBootstrapEnvironmentOptions
             {
-                // `fresh` creates the semantic authority and `known` opens the one that
-                // already exists (host/src/composition/desktop-host-composition.ts:152).
-                // Only a launch that has to establish the authority may ask for a fresh
-                // one: the run that minted the identity, and the run that continues one
-                // which never finished. Every launch whose authority is physically
-                // complete presents the identity the authority was created with, so it
-                // opens it as known. The launcher previously never set this and relied on
-                // the `fresh` default, which would have opened an existing authority as
-                // fresh on the second launch.
-                GameSessionMode = establishesAuthority
-                    ? HostBootstrapEnvironmentOptions.FreshGameSessionMode
-                    : HostBootstrapEnvironmentOptions.KnownGameSessionMode,
                 VoicePort = voiceLease is null ? null : voiceLaunch!.Port,
                 VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
             };
             await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
             // The accepted acknowledgement is this run's completion fact - the Host has
-            // opened its databases, provisioned the semantic authority and is ready for
-            // service - so this is where, and the only place where, the run that
-            // established the authority clears its own staging marker. A launch that dies
-            // before this point leaves it present, and the next launch reads the authority
-            // itself: complete means it opens it as known and clears the ghost, incomplete
-            // means the authority is established again.
-            if (establishesAuthority) FirstRunStaging.Clear(layout);
+            // opened its databases, provisioned or opened the semantic authority and is ready
+            // for service - so the staging marker's intent is spent here, and the only launch
+            // that can be holding an unspent one is one that died before this point. Clearing
+            // it unconditionally is the same statement the Host's own mount decision makes: a
+            // marker beside a published authority is spent, and a marker over a root that was
+            // never published can still only attribute that root to a first run.
+            FirstRunStaging.Clear(layout);
             stage = LaunchStage.HostSession;
             // The authenticated Host broker session is the only thing that may
             // ask for a recovery, and the image admitted for this generation is

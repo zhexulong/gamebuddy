@@ -71,10 +71,10 @@ internal sealed class DeploymentIdentityConflictException : Exception
 ///
 /// The identity answers who this deployment is, not whether the run that minted it ever
 /// finished; the physical completeness of the durable authority answers the second question
-/// (<see cref="ProductionAuthority"/>, <see cref="SessionModeDecision"/>) and the caller needs
-/// both. A launch establishes the authority - and only a launch that establishes it may ask
-/// the Host for a fresh one - when this step minted the identity or the identity it found has
-/// no complete authority behind it.
+/// (<see cref="ProductionAuthority"/>), and the Host is the one that reads it to decide whether
+/// it provisions or opens the authority. The launcher establishes the identity and passes no
+/// mount choice: the records it leaves here are the input to that decision, so a launch cannot
+/// contradict them.
 ///
 /// The manifest must exist before the Host child does, because the supervisor
 /// requires that file and the child reads it as input; the writer can therefore
@@ -113,11 +113,10 @@ internal static class DeploymentIdentity
     /// <summary>
     /// The launcher's pre-launch identity step: returns whether this launch mints the
     /// deployment identity, and guarantees that on return an admitted Host child can
-    /// read `<operationalRoot>\deployment-manifest.json`. The caller presents
-    /// <c>fresh</c> to a minting launch and to a launch whose identity has no physically
-    /// complete authority behind it, and <c>known</c> to every launch that opens the
-    /// authority a completed run left, because the identity this returns is the one the
-    /// authority was created with.
+    /// read `<operationalRoot>\deployment-manifest.json`. The answer stays this step's own - it
+    /// is not a mount input, because the Host derives its mount from these records and the
+    /// authority's publication marker rather than from a value the launcher asserts; the durable
+    /// identity record this step leaves is one of the facts that derivation reads.
     /// </summary>
     internal static bool EstablishForCurrentUser(CurrentUserRootLayout layout)
     {

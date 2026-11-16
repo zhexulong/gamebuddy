@@ -1,21 +1,21 @@
 namespace GameBuddy.Desktop;
 
 /// <summary>
-/// Where the Host's production authority lives under the launcher's data root, and the one
-/// fact the launcher reads from it: whether it is physically complete.
+/// Where the Host's production authority lives, and the one fact anything outside the Host may
+/// read from it: whether it is physically complete.
 ///
-/// The launcher does not own the authority, never writes it, never repairs it and never
-/// deletes it. It owns the data root the Host canonicalizes as its runtime root, so it can
-/// name the two paths below - the authority directory and the completion marker the Host's
-/// fresh path writes LAST, after the database has been bootstrapped and read back
+/// The launcher does not own the authority, never writes it, never repairs it and never deletes
+/// it. It owns the data root the Host canonicalizes as its runtime root, so it can name the two
+/// paths below - the authority directory and the completion marker the Host's fresh path writes
+/// LAST, after the database has been bootstrapped and read back
 /// (host/src/continuity-semantic-provisioning/continuity-semantic-provisioning.internal.ts:
-/// the directory, then the database, then the marker) - and it may therefore ask whether a
-/// finished authority is present before it starts any child.
+/// the directory, then the database, then the marker).
 ///
-/// That physical fact is the highest criterion for <see cref="SessionModeDecision"/>, because
-/// it is the durability itself rather than a claim about it: a marker file the launcher wrote
-/// can be left behind by a launch that died, while this one is written by the run that
-/// created the authority and only after that run had the database in hand.
+/// It is deliberately NOT the criterion for which mount the Host performs: that decision is the
+/// Host's own, from this marker and the launcher's two records in the same runtime root
+/// (`decideProductionAuthorityMountMode`). The launcher's one remaining reader is the companion
+/// switch, which asks BEFORE it moves a parked root into the mount position: a root that is not
+/// complete is never put in front of that decision at all.
 /// </summary>
 internal static class ProductionAuthority
 {
@@ -42,31 +42,13 @@ internal static class ProductionAuthority
         Path.Combine(DirectoryPath(layout), CompletionMarkerFileName);
 
     /// <summary>
-    /// Whether there is an authority position at all - complete or not. This is what separates
-    /// "the root was never created" from "a root is there and unfinished": the first has nothing
-    /// to discard and is what every launch after a switch to a companion who never played here
-    /// sees, so a decision that could not tell them apart would refuse a first run.
-    /// </summary>
-    internal static bool IsPresent(CurrentUserRootLayout layout) => Present(DirectoryPath(layout));
-
-    /// <summary>
-    /// Whether the durable authority is physically complete. The criterion is deliberately
-    /// one-sided, and a marker the launcher cannot show to be absent reads as complete,
-    /// because the two directions are not symmetric here either: `known` validates the
-    /// authority strictly and refuses a broken one without deleting anything, while `fresh`
-    /// is the one command that may discard a leftover root - and the launcher must never
-    /// reach for that on evidence it does not have.
-    /// </summary>
-    internal static bool IsComplete(CurrentUserRootLayout layout) => Present(CompletionMarkerPath(layout));
-
-    /// <summary>
-    /// Whether the authority root at <paramref name="authorityRoot"/> is complete, asked about a
-    /// root that is not in the mount position.
+    /// Whether the authority root at <paramref name="authorityRoot"/> is complete.
     ///
     /// A parked root is the same authority under another name - the switch moves it byte for
     /// byte - so the same criterion answers for it, and it has to be answerable BEFORE the move:
-    /// what is being decided then is whether this root may be put in front of
-    /// <see cref="SessionModeDecision"/> at all, not what to do with it once it is there.
+    /// what is being decided then is whether this root may be put in the mount position at all,
+    /// not what to do with it once it is there. This is also how a test reads the mount position
+    /// itself: <c>IsCompleteIn(ProductionAuthority.DirectoryPath(layout))</c>.
     /// </summary>
     internal static bool IsCompleteIn(string authorityRoot) =>
         Present(Path.Combine(authorityRoot, CompletionMarkerFileName));

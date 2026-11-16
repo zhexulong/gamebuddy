@@ -40,25 +40,24 @@ public sealed class LauncherProvisioningWiringTests
     }
 
     [Fact]
-    public void Production_entry_asks_for_fresh_only_when_the_authority_has_to_be_established()
+    public void Production_entry_leaves_the_mount_to_the_Host_and_names_no_mode()
     {
         var productionPath = ProductionEntry();
 
-        // The identity step reports whether this run minted the identity; the durable authority
-        // itself reports whether it was ever finished. Only their combination may ask the Host
-        // to establish a semantic authority: a launch whose authority is physically complete
-        // opens the existing one as known, whatever the launcher's own staging marker says.
-        var established = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
-        var decision = productionPath.IndexOf("SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity)", StringComparison.Ordinal);
-        var mode = productionPath.IndexOf("GameSessionMode = establishesAuthority", StringComparison.Ordinal);
-        Assert.True(established >= 0 && decision > established, $"expected establish < decision, got establish={established} decision={decision}");
-        Assert.True(mode > decision, $"expected decision < mode, got decision={decision} mode={mode}");
-        Assert.Contains("HostBootstrapEnvironmentOptions.FreshGameSessionMode", productionPath, StringComparison.Ordinal);
-        Assert.Contains("HostBootstrapEnvironmentOptions.KnownGameSessionMode", productionPath, StringComparison.Ordinal);
+        // The authority mount is the Host's decision from the records it holds
+        // (`decideProductionAuthorityMountMode`), so the entry carries no mode: no decision class,
+        // no mode constant, and no name in the child environment that could contradict the records
+        // the entry itself just left there.
+        Assert.DoesNotContain("SessionModeDecision", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("GameSessionMode", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("GAMEBUDDY_HOST_GAME_SESSION_MODE", productionPath, StringComparison.Ordinal);
 
-        // The entry consults that decision and never the staging marker: its one mention of the
-        // marker owner is the clear after the acknowledgement it observes, so the marker cannot
-        // force `fresh` here, and no reader of it remains anywhere in the entry.
+        // The identity is still established before any child is launched, and the only projection
+        // of that step which survives in the entry is the staging marker's clear after the
+        // handshake: the marker cannot force a mount here, and nothing reads it here.
+        var established = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
+        var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
+        Assert.True(established >= 0 && host > established, $"expected establish < host, got establish={established} host={host}");
         Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging."));
         Assert.DoesNotContain("IsFirstRun", productionPath, StringComparison.Ordinal);
     }

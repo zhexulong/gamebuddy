@@ -344,8 +344,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // so a launch that can never enter composition fails before the handshake starts.
         var manifestPath = Path.Combine(layout.OperationalRoot, DeploymentManifestFileName);
         if (!File.Exists(manifestPath)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-        if (options.GameSessionMode is not (HostBootstrapEnvironmentOptions.FreshGameSessionMode or HostBootstrapEnvironmentOptions.KnownGameSessionMode))
-            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
         if (options.Surface is not (HostBootstrapEnvironmentOptions.ComposedReferenceGameSurface or HostBootstrapEnvironmentOptions.ChatOnlySurface or HostBootstrapEnvironmentOptions.ManagementSurface))
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
         var nonce = options.TavernNarrativeGateNonceSha256;
@@ -407,7 +405,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             // not carried.
             ["CPA_OAI_API_KEY"] = OptionalEnvironment("CPA_OAI_API_KEY"),
             ["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"] = manifestPath,
-            ["GAMEBUDDY_HOST_GAME_SESSION_MODE"] = options.GameSessionMode,
             ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
             // The launched Host is the embedded long-lived process by architecture: it never spawns the
             // `pi` CLI, and the Magic Context fork gates its background historian on exactly this flag

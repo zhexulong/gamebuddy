@@ -37,7 +37,7 @@ public sealed class CompanionSwitchTests
         var firstDatabase = TestProductionAuthority.WriteDatabase(layout);
         TestProductionAuthority.WriteCompletionMarker(layout);
         var firstBytes = File.ReadAllBytes(firstDatabase);
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
 
         // --- switch away -------------------------------------------------------
         var targetContinuity = "continuity-target";
@@ -82,7 +82,7 @@ public sealed class CompanionSwitchTests
         Assert.Equal(CompanionSwitchStatus.Switched, back.Status);
         Assert.Equal(first.CompanionId, back.ActiveCompanionId);
         Assert.True(Directory.Exists(firstRoot));
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.Equal(firstBytes, File.ReadAllBytes(firstDatabase));
 
         // Her recorded identity is restored verbatim - the same operation identifier and
@@ -131,7 +131,7 @@ public sealed class CompanionSwitchTests
         // is still at the active path, and her identity record was never touched.
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
         Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.False(Directory.EnumerateDirectories(CompanionSwitch.ParkedDirectoryPath(layout)).Any());
     }
 
@@ -173,7 +173,7 @@ public sealed class CompanionSwitchTests
         Assert.Equal("companion_switch_target_authority_incomplete", outcome.Code);
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
         Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.Equal(activeBytes, File.ReadAllBytes(database));
 
         // Her unfinished root is still parked, byte for byte, and still named by the index: the
@@ -314,7 +314,7 @@ public sealed class CompanionSwitchTests
             Assert.Equal("companion_switch_host_still_running", outcome.Code);
             Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
             Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
-            Assert.True(ProductionAuthority.IsComplete(layout));
+            Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
             Assert.Empty(CompanionSwitch.ReadParked(layout));
             Assert.False(Directory.Exists(CompanionSwitch.ParkedDirectoryPath(layout)));
         }
@@ -429,7 +429,7 @@ public sealed class CompanionSwitchTests
         // `companion_switch_unavailable` for her forever never got to.
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
         Assert.Equal(bytesBefore, File.ReadAllBytes(database));
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.Empty(CompanionSwitch.ReadParked(layout));
     }
 
@@ -452,7 +452,7 @@ public sealed class CompanionSwitchTests
         Assert.Equal(CompanionSwitchStatus.Refused, outcome.Status);
         Assert.Equal("companion_switch_request_stale", outcome.Code);
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
 
         // A stale request is refused by the state itself: every later launch would compare the same
         // record against the same identity and answer identically, so it is spent and the request
@@ -558,7 +558,7 @@ public sealed class CompanionSwitchTests
         Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
         Assert.True(Directory.Exists(ProductionAuthority.DirectoryPath(layout)));
-        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.True(ProductionAuthority.IsCompleteIn(ProductionAuthority.DirectoryPath(layout)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database));
         Assert.Equal(manifestBefore, File.ReadAllBytes(Path.Combine(layout.OperationalRoot, OperationalDeploymentManifest.FileName)));
 
