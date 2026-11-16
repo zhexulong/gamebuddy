@@ -280,6 +280,18 @@ export type StardewBootstrapOwnerRecoveryDrive = Readonly<{
 }>;
 
 /**
+ * The role exit a containment transport reported for one launched role, with the
+ * native exit code the OS reported for the process that ended.
+ *
+ * It is declared here rather than imported from `containment/auth`: ADR-0007
+ * gives `games/stardew/**` no edge to the authenticated Guardian transport, and
+ * that seam has no compatibility re-export. The shape is structural, so the
+ * composition-owned adapter that actually holds the session satisfies it without
+ * this layer naming the transport's type.
+ */
+export type StardewContainedRoleExit = Readonly<{ role: "player_host" | "ai_client"; exitCode: number }>;
+
+/**
  * Private, bounded, per-owner runtime collaborator injected by the Host
  * composition. It constructs one composition-owned `ContainedGameRuntime` per
  * owner (binding from the owner's Guardian correlation) and forwards the
@@ -315,9 +327,7 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
    * running" - a session that carried no such event says nothing about the
    * process either way.
    */
-  readPlayerHostRoleExit?():
-    | import("../../../containment/auth/desktop-guardian-session.internal.js").GuardianRoleExit
-    | null;
+  readPlayerHostRoleExit?(): StardewContainedRoleExit | null;
   /**
    * The exact owner's durable recovery drive. A recovery is a chain of durable
    * transitions over this owner's `owner.json`, so it belongs to the one
