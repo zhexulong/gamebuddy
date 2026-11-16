@@ -1,18 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { FACT_PRODUCER, CompanionEventPump, type WorldFact } from "./event-pump.js";
-import {
-  composeFactBrief,
-  composeWorldState,
-  FACT_BRIEF_BLOCKS,
-  MODEL_FIELD_CEILINGS,
-  type ModelVisibleField,
-  unchangedWorldAnswer,
-} from "./fact-brief.js";
+import { FACT_PRODUCER, CompanionEventPump, MAX_BATCH_BYTES, type WorldFact } from "./event-pump.js";
+import { composeFactBrief, composeWorldState, FACT_BRIEF_BLOCKS, unchangedWorldAnswer } from "./fact-brief.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import {
   MAX_TARGET_FAMILIES_SHOWN,
@@ -20,6 +13,13 @@ import {
   nearbyTargetFamilies,
   TARGET_FAMILY_LABELS,
 } from "./game-world-vocabulary.js";
+import {
+  DECISION_FIELD_RANK,
+  MAX_WORLD_FACT_LINES,
+  MODEL_FIELD_CEILINGS,
+  derivedEvidenceCeiling,
+  type ModelVisibleField,
+} from "./model-field-budget.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import { createProgramProgressObserver } from "./program-status-wait.js";
@@ -1207,10 +1207,11 @@ function composedField(field: ModelVisibleField, value: string): string {
  * </p>
  *
  * <p>
- * POPULATION, from the writer rather than from a list: every field name `fact-brief.ts` hands to `boundedField`, read out
- * of its own source and printed below. It must equal the declared ceilings both ways - a field printed under no ceiling,
- * and a ceiling for a field nothing prints, are both drift. The node fields' ceilings are then checked against the WIRE's
- * own numbers (`protocol.ts`), because a Host ceiling below the producer's bound is the ceiling that cut these.
+ * POPULATION, from the writer rather than from a list: every field name the Host hands to `boundedField`, read out of
+ * the source of every module that calls it and printed below. It must equal the declared ceilings both ways - a field
+ * printed under no ceiling, and a ceiling for a field nothing prints, are both drift. The node fields' ceilings are then
+ * checked against the WIRE's own numbers (`protocol.ts`), because a Host ceiling below the producer's bound is the
+ * ceiling that cut these.
  * </p>
  *
  * <p>
@@ -1219,9 +1220,13 @@ function composedField(field: ModelVisibleField, value: string): string {
  * </p>
  */
 test("truncated_enumeration_is_silent: each field prints whole to its producer's bound, and a cut is named", () => {
-  const source = hostSource("fact-brief.ts");
+  // The table lives in `model-field-budget.ts` and its CALLERS are wherever a Mod-authored field is printed, so the
+  // population is read from both: a call in a module this list forgot is the drift this gate exists to name.
   const bounded = new Set(
-    [...source.matchAll(/boundedField\("(\w+)"/gu)].map((match) => match[1] ?? "").filter((name) => name !== ""),
+    ["model-field-budget.ts", "fact-brief.ts"]
+      .flatMap((name) => [...hostSource(name).matchAll(/boundedField\("(\w+)"/gu)])
+      .map((match) => match[1] ?? "")
+      .filter((name) => name !== ""),
   );
   const declared = Object.keys(MODEL_FIELD_CEILINGS);
   assert.ok(bounded.size > 0, "the writer calls boundedField at all, or this gate examines nothing");
@@ -1292,7 +1297,49 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
 });
 
 /**
- * A CUT KEEPS WHOLE FIELDS, AND COUNTS WHAT IT DROPPED.
+ * THE SHARE IS DERIVED FROM THE LINE IT PROTECTS, not written beside a comment that claims a measurement.
+ *
+ * <p>
+ * `evidence: 160` was a hand-written number whose docblock called it "the Host's own measured share of one
+ * `<world-facts>` line" - a measurement of OTHER lines, not a share of the bound any of them is held to. Nothing tied it
+ * to the delivery it was a share OF, so it could not be re-derived when that bound moved, and it did not move while
+ * receipt evidence grew to 200-600 characters. This gate is the tie: the published number must be the derivation's own
+ * value, computed here from the same two constants the delivery already uses.
+ * </p>
+ *
+ * <p>
+ * THE ARITHMETIC IS ASSERTED, not restated: `MAX_BATCH_BYTES` from `event-pump.ts` (the delivery's own bound) over
+ * `MAX_WORLD_FACT_LINES` (how many lines the block names) is one line's share, and a line carries two of these fields
+ * (`failureWords` joins a node's `hint` and `reasonDetail`), so one field's share is half. A drift in either constant
+ * reddens this by name - which is the point: the number is not free to disagree with the bound it exists to stay inside.
+ * </p>
+ */
+test("evidence_ceiling_is_derived: the published share is the derivation's own value", () => {
+  const lineShare = Math.floor(MAX_BATCH_BYTES / MAX_WORLD_FACT_LINES);
+  const derived = derivedEvidenceCeiling();
+  process.stdout.write(
+    `evidence ceiling published ${String(MODEL_FIELD_CEILINGS.evidence)} · derived ${String(derived)} · ` +
+      `line share ${String(lineShare)} of MAX_BATCH_BYTES ${String(MAX_BATCH_BYTES)} over ${String(MAX_WORLD_FACT_LINES)} ` +
+      `lines\n`,
+  );
+  assert.ok(Number.isInteger(derived) && derived > 0, `the derivation has to produce a length: ${String(derived)}`);
+  assert.equal(
+    MODEL_FIELD_CEILINGS.evidence,
+    derived,
+    "`MODEL_FIELD_CEILINGS.evidence` is published as a literal so the Mod's census can parse it, and it must equal what " +
+      "`derivedEvidenceCeiling()` computes from `MAX_BATCH_BYTES` and `MAX_WORLD_FACT_LINES` - otherwise the published " +
+      `number has stopped being the derivation (published ${String(MODEL_FIELD_CEILINGS.evidence)}, derived ` +
+      `${String(derived)})`,
+  );
+  assert.ok(
+    derived < lineShare,
+    `one field may not spend a whole line's share (${String(derived)} against ${String(lineShare)}): a line carries two of ` +
+      "them beside the action, its state and its reason code",
+  );
+});
+
+/**
+ * A CUT KEEPS WHOLE FIELDS, AND NAMES WHAT IT DROPPED.
  *
  * <p>
  * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`) - proof facts, each of which is either true as written
@@ -1302,13 +1349,15 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
  * </p>
  *
  * <p>
- * PROPERTY, and it is the one that cannot be reintroduced by a later change to the cut: what a truncated line prints is
- * the FIRST WHOLE FIELDS of the Mod's detail, byte for byte, and the marker's number is exactly how many whole fields it
- * did not show. A field that alone exceeds the ceiling is withheld by name, never sliced - asserted over every declared
- * field above.
+ * PROPERTY, and it is the one that cannot be reintroduced by a later change to the cut: what a truncated line prints is a
+ * set of WHOLE fields of the Mod's detail, byte for byte, in the order `DECISION_FIELD_RANK` declares and then the
+ * producer's own; and the tail NAMES the fields it did not print (counting only the ones it had no room to name). A
+ * field that alone exceeds the ceiling is withheld by name, never sliced - asserted over every declared field above.
  * </p>
  */
-test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and counts the rest", () => {
+test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and names the ones it dropped", () => {
+  // The two fields a reader acts on sit at the END, which is the shape `round63` had: a cut that keeps the producer's
+  // first fields would drop both, and one that keeps a prefix of the TEXT would print half of one.
   const fields = [
     "location=Farm",
     "target=58,9",
@@ -1328,6 +1377,12 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
     "tool_restored=true",
     "revision=1205",
     "observer=mod",
+    "water_before=40",
+    "water_after=39",
+    "fertilizer_before=none",
+    "fertilizer_after=none",
+    "blocker_occupant=twig@58,9",
+    "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)",
   ];
   const detail = fields.join(";");
   assert.ok(
@@ -1336,21 +1391,32 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
       `${String(MODEL_FIELD_CEILINGS.evidence)}), or this gate examines no cut at all`,
   );
 
-  const text = composedField("evidence", detail);
-  const rendered = text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
-  const marker = "…[fields_not_shown:";
-  const markerAt = rendered.indexOf(marker);
+  const rendered = renderedEvidence(detail);
+  const notice = dropNotice(rendered);
   assert.notEqual(
-    markerAt,
-    -1,
-    `a cut must say how many whole fields it did not show; the line says ${JSON.stringify(rendered)}`,
+    notice.named.length,
+    0,
+    `a cut must NAME the whole fields it did not show; the line says ${JSON.stringify(rendered)}`,
   );
 
-  const shown = rendered.slice(0, markerAt).split(";");
+  const shown = keptFields(rendered);
+  // THE ORDER, derived from the rank rather than restated: every ranked field first in the rank's own order, then the
+  // remaining fields in the order their producer wrote them.
+  const rankedFirst = DECISION_FIELD_RANK.flatMap((name) => fields.filter((field) => field.startsWith(`${name}=`)));
+  const expectedOrder = [
+    ...rankedFirst,
+    ...fields.filter((field) => !DECISION_FIELD_RANK.some((name) => field.startsWith(`${name}=`))),
+  ];
   assert.deepEqual(
     shown,
-    fields.slice(0, shown.length),
-    "what a cut prints is the FIRST WHOLE FIELDS of the Mod's detail, byte for byte - not a prefix of the text",
+    expectedOrder.slice(0, shown.length),
+    "what a cut prints is whole fields in the rank's order and then the producer's - byte for byte, not a prefix of the " +
+      "text, and never the producer's order alone",
+  );
+  assert.deepEqual(
+    shown.slice(0, 2),
+    ["blocker_occupant=twig@58,9", "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)"],
+    "the two fields a decision needs come before everything else: what stands there, then what removes it",
   );
   assert.ok(
     shown.length > 0 && shown.length < fields.length,
@@ -1363,20 +1429,25 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
       `every printed field is a whole k=v, never half of one: ${JSON.stringify(field)}`,
     );
   assert.equal(
-    rendered.slice(markerAt),
-    `${marker}${String(fields.length - shown.length)}]`,
-    "and the number is exactly the whole fields it did not show",
+    notice.named.length + notice.unnamed,
+    fields.length - shown.length,
+    "and the tail accounts for exactly the whole fields it did not show",
   );
+  for (const name of notice.named)
+    assert.ok(
+      fields.some((field) => field.startsWith(`${name}=`)),
+      `every name the tail states is one of the fields it withheld, whole: ${JSON.stringify(name)}`,
+    );
   assert.ok(
     rendered.length <= MODEL_FIELD_CEILINGS.evidence,
-    `the line stays inside its own ceiling, marker included (${String(rendered.length)} characters)`,
+    `the line stays inside its own ceiling, tail included (${String(rendered.length)} characters)`,
   );
 
   // NO FIELD IS EVER SLICED, ANYWHERE IN THE WRITER: the cut this test replaced was one `text.slice(0, ceiling)` inside the
   // one function every Mod-authored field goes through, so a byte slice reappearing there would reintroduce the defect for
   // all three fields at once. Read from the source, because the assertion is about the writer and not about one value.
   assert.equal(
-    /text\.slice\(0, ceiling\)/u.test(hostSource("fact-brief.ts")),
+    /text\.slice\(0, ceiling\)/u.test(hostSource("model-field-budget.ts")),
     false,
     "no Mod-authored field is cut at a byte offset: a field is printed whole or withheld by name",
   );
@@ -1471,3 +1542,232 @@ test("destructive_refusal_sentence_reaches_the_model: a refused destructive row 
   );
   assert.ok(withSentence.includes(round45Hint), "and it must not cost the ledger the hint carries");
 });
+
+/**
+ * A CUT KEEPS THE FIELDS A DECISION NEEDS, AND NAMES EVERY FIELD IT DROPPED.
+ *
+ * <p>
+ * THE DEFECT, measured 2026-11-13 (`round63`). A `fish_here` refusal at Farm carried sixteen fields; the two a reader
+ * acts on - `blocker_occupant=twig@69,31` (what stands there) and
+ * `clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)` (the published action that removes it) -
+ * were fields 11 and 13, and the writer kept the FIRST whole fields up to the ceiling. So the line showed her
+ * `footprint=1` and `clear_step=twig@69,31` and neither fact, and its only trace was `…[fields_not_shown:8]`: a count
+ * that says something is missing and nothing about what. She had the scythe, aimed at a twig, cut an unnamed weed at
+ * `67:29` instead, and `remove_placed_item` - the one action whose `Clears` declaration names a twig - was never tried.
+ * </p>
+ *
+ * <p>
+ * TWO PROPERTIES, because the defect has two halves. First, IMPORTANCE IS NOT THE PRODUCER'S WRITING ORDER: the fields a
+ * decision needs are declared once (`DECISION_FIELD_RANK`, `model-field-budget.ts`) and come first, so no ranked field
+ * may be dropped while an unranked one is kept. That is what `footprint` present beside an absent `clears_with` broke.
+ * Second, A CUT NAMES WHAT IT DROPPED: a reader who is told a field is missing can ask for it, and the whole failure was
+ * that she was told a COUNT.
+ * </p>
+ *
+ * <p>
+ * POPULATION, from the authority rather than from a list of cases. (1) The run's own two `round63` detail strings, quoted
+ * from `tools/_multiday_routine-round63-live-runner.log` (`BRIDGE_FACT` rows). (2) EVERY evidence literal the Host
+ * declares it validates, read out of `stardew-completion-contracts.ts`'s own `declaredCompletionEvidence` field lists -
+ * 76 lists, 847 field entries - so a field vocabulary added tomorrow is examined without an edit here, at three values
+ * widths (1, 9 and 40 characters) because the interesting boundary is wherever a cut lands inside a list. (3) The
+ * `fish_here` string again with fourteen narration fields appended, which is over every ceiling: the case where a cut is
+ * unavoidable and the order has to decide.
+ * </p>
+ *
+ * <p>
+ * THE COUNTS ARE PRINTED and an empty population is a failure: `evidence strings examined N · over budget M · cut
+ * mid-value K · decision fields dropped D · unnamed drops U`. `K` is the same rule the writer has held since a
+ * 254-character proof was sliced at 160 and ended `stamina_bef` - a printed field is a whole field of the input, never a
+ * prefix of one.
+ * </p>
+ */
+test("evidence_cut_keeps_the_decision_fields: the fields a reader acts on survive, and a cut names the rest", () => {
+  const round63FishNoApproach =
+    "target=71,30;actor=69,28;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=1;footprint=1;" +
+    "clear_step=twig@69,31;stand_at=69,30;remaining_clears=1;blocker_occupant=twig@69,31;" +
+    "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1);blocker_target=blocker_not_published;" +
+    "candidates=750;described=8;blocked_by=range:reach:2";
+  const round63SweepPartial =
+    "location=Farm;target=69,31;before_occupant=twig;after_occupant=twig;named_moved=false;arc_tiles=16;" +
+    "arc_sweepable=1;arc_clear=13;changed=67:29:weed;tiles_changed=1;tool_selected=scythe;slot=4;" +
+    "tool_before=fishing_rod;slot_before=5;stamina_before=270;stamina_after=270;stamina_delta=0;" +
+    "expected_stamina_cost=0;tool_restored=fishing_rod";
+  // The narration a refusal of this shape carries AFTER the answer, which is the case a cut has to decide about.
+  const fishWithNarration =
+    `${round63FishNoApproach};weather=clear;season=spring;day=12;hour=0610;player_name=Amy;` +
+    "farm_name=Meadow;save_id=xyzzy;difficulty=normal;money=1200;total_money_earned=4000;deepest_mine_level=5;" +
+    "days_played=13;friendship_best=4";
+
+  const declared = [
+    ...hostSource("stardew-completion-contracts.ts").matchAll(
+      /declaredCompletionEvidence\(\s*[A-Za-z_.]+,\s*\[(?<list>[^\]]*)\]/gu,
+    ),
+  ].map((match) => [...(match.groups?.list ?? "").matchAll(/"([a-zA-Z0-9_.]+)"/gu)].map((name) => name[1] ?? ""));
+  assert.ok(
+    declared.length > 0,
+    "the Host's own evidence declarations are the population, or this gate examines nothing",
+  );
+
+  const population: string[] = [round63FishNoApproach, round63SweepPartial, fishWithNarration];
+  for (const fields of declared)
+    for (const width of [1, 9, 40]) population.push(fields.map((name) => `${name}=${"v".repeat(width)}`).join(";"));
+
+  const ranked = new Map(DECISION_FIELD_RANK.map((name, index) => [name, index]));
+  const midValue: string[] = [];
+  const droppedDecision: string[] = [];
+  const unnamedDrops: string[] = [];
+  const silentCuts: string[] = [];
+  let overBudget = 0;
+  let cut = 0;
+
+  for (const detail of population) {
+    const input = detail.split(";");
+    if (input.length === 0) continue;
+    if (new Set(input.map(nameOf)).size !== input.length)
+      throw new Error(`this population entry repeats a field name, so "which field" would be ambiguous: ${detail}`);
+    const rendered = renderedEvidence(detail);
+    const kept = keptFields(rendered);
+    const notice = dropNotice(rendered);
+    const shown = kept.map(nameOf);
+    if (detail.length > MODEL_FIELD_CEILINGS.evidence) overBudget += 1;
+    if (shown.length < input.length) cut += 1;
+
+    for (const entry of kept)
+      if (!input.includes(entry))
+        midValue.push(
+          `model_field_truncated_mid_value:${nameOf(entry)}:${String(MODEL_FIELD_CEILINGS.evidence)}:${entry}`,
+        );
+
+    const dropped = input.filter((entry) => !kept.includes(entry));
+    if (dropped.length !== notice.named.length + notice.unnamed)
+      unnamedDrops.push(
+        `model_field_dropped_unnamed:${dropped.map(nameOf).join(",")}:${String(MODEL_FIELD_CEILINGS.evidence)}:` +
+          `named ${notice.named.join(",") || "none"} + ${String(notice.unnamed)}`,
+      );
+    // A cut that drops NAMEABLE fields and names NONE of them tells a reader that something is missing and nothing
+    // about what. A cut whose every dropped entry is a refused row's sentence has no field name to state, and the count
+    // is the most it can honestly say.
+    if (dropped.some((entry) => entry.includes("=")) && notice.named.length === 0)
+      silentCuts.push(
+        `model_field_dropped_silently:${dropped.map(nameOf).join(",")}:${String(MODEL_FIELD_CEILINGS.evidence)}`,
+      );
+    const keptUnranked = shown.filter((name) => !ranked.has(name));
+    for (const entry of dropped)
+      if (ranked.has(nameOf(entry)) && keptUnranked.length > 0)
+        droppedDecision.push(
+          `model_field_dropped_decision_field:${nameOf(entry)}:${String(MODEL_FIELD_CEILINGS.evidence)}:` +
+            `kept ${keptUnranked.join(",")}`,
+        );
+  }
+
+  process.stdout.write(
+    `evidence strings examined ${String(population.length)} · over budget ${String(overBudget)} · cut mid-value ` +
+      `${String(midValue.length)} · decision fields dropped ${String(droppedDecision.length)} · unnamed drops ` +
+      `${String(unnamedDrops.length)} · silent cuts ${String(silentCuts.length)}\n`,
+  );
+  assert.ok(population.length > 0, "a census that examines nothing agrees with itself");
+  assert.deepEqual(midValue, [], "no printed field may be a prefix of one the Mod wrote");
+  assert.deepEqual(unnamedDrops, [], "a cut must account for every field it dropped");
+  assert.deepEqual(silentCuts, [], "a cut must NAME the fields it dropped, not count them");
+  assert.deepEqual(droppedDecision, [], "a field a decision needs may not be dropped while narration is kept");
+
+  // THE DEFECT ITSELF, in the run's own words: the answer is in the line, and so is the reason it is there.
+  const answer = renderedEvidence(round63FishNoApproach);
+  assert.ok(
+    answer.includes("blocker_occupant=twig@69,31"),
+    `the blocker has to reach her - it is what stands on the tile she aimed at; the line says ${JSON.stringify(answer)}`,
+  );
+  assert.ok(
+    answer.includes("clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)"),
+    `and the published action that removes it, or the refusal is undecodable; the line says ${JSON.stringify(answer)}`,
+  );
+  // AND THE OTHER DIRECTION: a value inside the ceiling loses nothing, and says nothing was dropped.
+  const short = "target=71,30;actor=69,28;reach=1";
+  assert.equal(
+    renderedEvidence(short),
+    short,
+    "a detail inside the ceiling is printed whole: no field dropped, no notice to read",
+  );
+});
+
+/**
+ * EVERY NAME THE RANK HOISTS IS STILL A FIELD A PRODUCER EMITS.
+ *
+ * <p>
+ * A rank name that no producer writes is worse than absent: it silently hoists nothing, and the next reader believes the
+ * answering field is protected when it is not. So the population is the Mod's own production sources - the `*.cs` files
+ * under `integrations/stardew`, tests excluded - and the property is that each declared name is still spelled as a
+ * `name=` key somewhere in them. A producer that renames its blocker field reddens this BY NAME, which is the moment to
+ * change the rank rather than the moment to notice a wrong cut in a run.
+ * </p>
+ */
+test("decision_field_rank_names_a_producer: every ranked field is still one the Mod writes", () => {
+  const keys = producerEvidenceKeys();
+  assert.ok(
+    keys.size > 100,
+    `the Mod's production sources carry the evidence vocabulary; examined ${String(keys.size)}`,
+  );
+  const orphans = DECISION_FIELD_RANK.filter((name) => !keys.has(name));
+  process.stdout.write(
+    `ranked fields examined ${String(DECISION_FIELD_RANK.length)} of ${String(keys.size)} producer keys · ` +
+      `without a producer ${String(orphans.length)}\n`,
+  );
+  assert.deepEqual(orphans, [], "a ranked name no producer writes hoists nothing, and hides that behind a declaration");
+});
+
+/** Every `name=` key the Mod's production sources spell, read from the C# that composes the details. */
+function producerEvidenceKeys(): ReadonlySet<string> {
+  const keys = new Set<string>();
+  const skip = new Set(["tests", "bin", "obj", "action-development"]);
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) walk(path);
+      } else if (entry.name.endsWith(".cs")) {
+        for (const match of readFileSync(path, "utf8").matchAll(/(?:^|[;"+\s])([a-z][a-z0-9_]{2,})=(?=[{"$])/gmu))
+          keys.add(match[1] ?? "");
+      }
+    }
+  };
+  walk(join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "integrations", "stardew"));
+  return keys;
+}
+
+/** One evidence detail's field name. */
+function nameOf(entry: string): string {
+  const at = entry.indexOf("=");
+  return at <= 0 ? entry : entry.slice(0, at);
+}
+
+/** What the receipt line shows of one evidence detail, as the model reads it. */
+function renderedEvidence(detail: string): string {
+  const text = composedField("evidence", detail);
+  return text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
+}
+
+/** The whole fields a rendered detail keeps, with any notice already removed. */
+function keptFields(rendered: string): readonly string[] {
+  const body = rendered.replace(/…\[[^\]]*\]$/u, "");
+  return body === "" ? [] : body.split(";");
+}
+
+/**
+ * The `…[dropped:…]` tail: the fields it names, and how many it could only count.
+ *
+ * One spelling for the reader and one for this reader: `<name>,<name>+<n>` names the ones it had room for and counts the
+ * rest, `<n>` alone is a cut with no room for any name. A tail of any OTHER shape - `…[fields_not_shown:8]`, which is
+ * what this line said until the count was replaced by the names - names nothing and counts nothing, so the gate reads it
+ * as a silent cut rather than as a pass.
+ */
+function dropNotice(rendered: string): { named: readonly string[]; unnamed: number } {
+  const match = /…\[dropped:(?<body>[^\]]*)\]$/u.exec(rendered);
+  if (match === null) return { named: [], unnamed: 0 };
+  const body = match.groups?.body ?? "";
+  if (/^\d+$/u.test(body)) return { named: [], unnamed: Number(body) };
+  const parts = body.split(",");
+  const tail = /^(?<name>[^+]*)\+(?<count>\d+)$/u.exec(parts[parts.length - 1] ?? "");
+  if (tail === null) return { named: parts, unnamed: 0 };
+  const named = tail.groups?.name === "" ? parts.slice(0, -1) : [...parts.slice(0, -1), tail.groups?.name ?? ""];
+  return { named, unnamed: Number(tail.groups?.count) };
+}

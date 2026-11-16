@@ -59,7 +59,8 @@ import {
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
 import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
-import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
+import { MAX_WORLD_FACT_LINES, boundedField } from "./model-field-budget.js";
+import type { Snapshot } from "./protocol.js";
 
 /**
  * The closed set of block names a delivery may use.
@@ -82,17 +83,6 @@ export const FACT_BRIEF_BLOCKS = Object.freeze([
 ] as const);
 
 export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
-
-/**
- * The most fact lines `<world-facts>` names before it counts the rest.
- *
- * The pump already bounds how many facts a batch may hold (`MAX_PENDING_*`) and how large the whole delivery may be
- * (`MAX_BATCH_BYTES`), and the byte bound is what protects the context. This cap is the SECOND bound, and it exists
- * because dropping the oldest fact is right for a run and wrong for a REPORT: a batch of ninety receipts answered "what
- * just happened" with the thirty newest ones and said nothing about the sixty it left out. So the line count is
- * bounded where the sentences are composed, and the remainder is named.
- */
-const MAX_WORLD_FACT_LINES = 24;
 
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
@@ -738,49 +728,6 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
   return boundedField("evidence", (evidence as { detail?: unknown }).detail) ?? "";
 }
 
-/**
- * A node hint's ceiling, which is the wire's own number: `protocol.ts:isBodyProgramNodeStatus` refuses a frame carrying a
- * longer one, so a hint that arrived through the bridge can never meet this ceiling, let alone a smaller one.
- *
- * `fact-brief.private.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
- * bound the Mod's journal enforces.
- */
-const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
-
-/**
- * The ceiling every Mod-authored field this file prints is held to, and where each number comes from.
- *
- * <p>
- * TWO KINDS OF FIELD, TWO KINDS OF NUMBER. A node's `hint` and `reasonDetail` are bounded by their PRODUCER: the Mod's
- * journal refuses a hint over 256 characters and a refusal detail over 512
- * (`BodyProgramValidation.MaximumNodeHintLength` / `MaximumNodeRefusalDetailLength`), and `protocol.ts` refuses a frame
- * over the same two numbers. Printing them up to those bounds is printing them WHOLE, and a smaller number is a Host
- * opinion about a field the Mod already sized.
- * </p>
- *
- * <p>
- * WHAT A SMALLER ONE COST, measured 2026-11-11 (`round45`). All 15 failed `for_each` hints reached this file between 169
- * and 255 characters (median 248) and all 15 of their details between 480 and 507, against a flat 160 ceiling: 30 cuts in
- * one run's model-visible text. The ledger survived every cut and the per-code tail - `no_safe_clear:crop:scythe_crop=3;
- * no_rule_matched:ground_58_9=1;…`, the part that says WHICH rows failed - was exactly what fell off, mid-token. The
- * ceiling was wrong, not the text.
- * </p>
- *
- * <p>
- * A receipt's `evidence.detail` is the other kind: the wire declares no bound on an `evidence` object, so 160 here is the
- * Host's own measured share of one `<world-facts>` line. Measured in the same run, a receipt's evidence is 200-600
- * characters of proof facts - a tool result's job to carry, not one line's.
- * </p>
- */
-export const MODEL_FIELD_CEILINGS = Object.freeze({
-  hint: MAX_BODY_PROGRAM_NODE_HINT_CHARS,
-  reasonDetail: MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH,
-  evidence: 160,
-});
-
-/** Every Mod-authored field this file prints under a ceiling. */
-export type ModelVisibleField = keyof typeof MODEL_FIELD_CEILINGS;
-
 function worldFactLine(fact: WorldFact, at: string): string {
   const kind = fact.semanticKind ?? "";
   switch (kind) {
@@ -807,14 +754,6 @@ function worldFactLine(fact: WorldFact, at: string): string {
             .filter((text): text is string => text !== undefined)
         : [];
       return `- ${at}${speaker}说：「${pages.join(" ")}」${choices.length === 0 ? "" : `（可以答：${choices.join(" / ")}）`}`;
-    }
-    case "companion_arrival": {
-      // The fact carries its own model-facing sentence (the Host's words: she has just arrived, and this is the day's
-      // first clock reading). Printing only 她到了 would drop the instruction that makes her open the morning, and with
-      // it the opening `companionArrivalAlreadySaid` looks for.
-      const own = fact.contextProjection?.text;
-      if (typeof own === "string" && own.trim() !== "") return `- ${at}${own.trim()}`;
-      return `- ${at}${WORLD_FACT_KIND_ZH.companion_arrival ?? "她到了"}`;
     }
     case "native_notice": {
       // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the
@@ -969,54 +908,6 @@ function proofTail(node: SettledNode): string | undefined {
     .filter((part): part is string => typeof part === "string" && part.trim() !== "")
     .join("｜");
   return words === "" ? undefined : words;
-}
-
-/**
- * How a cut names what it withheld: how many whole fields a line did not show, and - when one field alone is over the
- * ceiling - that field's own length against the ceiling it met. One spelling each, so a run audit greps one name.
- */
-const FIELDS_NOT_SHOWN = "fields_not_shown";
-const FIELD_OVER_CEILING = "field_over_ceiling";
-
-/**
- * One Mod-authored field's share of a line, cut at its own ceiling - on a FIELD boundary, never inside one.
- *
- * <p>
- * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`), and slicing it at the character ceiling produced a
- * token that looks like a fact and is not one: a 254-character proof cut at 160 ended mid-value (`stamina_bef`), and the
- * only thing the line then added was `[evidence_detail_over_ceiling:254:160]` - the byte arithmetic of a budget, which
- * tells a reader the budget was exceeded and nothing about what it lost. So every field is either printed WHOLE or not
- * printed at all, and the line says how many whole fields it did not show.
- * </p>
- *
- * <p>
- * A single field that alone exceeds the ceiling cannot be shown at any prefix, so it is replaced by
- * `[field_over_ceiling:<length>:<ceiling>]`: the field is named as withheld, and the two numbers are the ones that decide
- * whether the frame should have arrived at all. At the ceiling the value prints exactly as the Mod wrote it, because the
- * point of `MODEL_FIELD_CEILINGS` is that a field inside its producer's bound is printed whole.
- * </p>
- */
-function boundedField(field: ModelVisibleField, value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const text = value.trim();
-  if (text === "") return undefined;
-  const ceiling = MODEL_FIELD_CEILINGS[field];
-  if (text.length <= ceiling) return text;
-  const fields = text.split(";");
-  const oversized = fields.find((entry) => entry.length > ceiling);
-  if (oversized !== undefined) return `[${FIELD_OVER_CEILING}:${String(oversized.length)}:${String(ceiling)}]`;
-  // The notice's own room is reserved before each field is tried, so the count never pushes the text past the ceiling.
-  const notice = (dropped: number): string => `…[${FIELDS_NOT_SHOWN}:${String(dropped)}]`;
-  const kept: string[] = [];
-  let length = 0;
-  for (const entry of fields) {
-    const grown = kept.length === 0 ? entry.length : length + 1 + entry.length;
-    if (grown + notice(fields.length - kept.length).length > ceiling) break;
-    kept.push(entry);
-    length = grown;
-  }
-  const dropped = fields.length - kept.length;
-  return kept.length === 0 ? notice(dropped) : `${kept.join(";")}${notice(dropped)}`;
 }
 
 /**
