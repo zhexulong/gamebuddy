@@ -181,7 +181,14 @@ async function emitDelta(page: Page, delta: string): Promise<void> {
 type Host = Readonly<{
   stateReads: () => number;
   held: { reading: boolean };
-  holdNextState: () => void;
+  /**
+   * Holds the next read of one route open, so the journey can act inside its round trip.
+   *
+   * Two different reads matter here, and they are two different routes: the panel's own Game read
+   * (`/game`) is what a Game command rereads, and the Chat channel's read (`/state`, through
+   * `rereadChat`) is what spends a preview. Which one is held is the whole point of each journey.
+   */
+  holdNextState: (target: "game" | "chat") => void;
   releaseHeld: () => void;
   submits: () => readonly string[];
 }>;
@@ -189,26 +196,36 @@ type Host = Readonly<{
 async function stubHost(page: Page, state: HostState): Promise<Host> {
   let stateReads = 0;
   const held = { reading: false };
-  let holdNextState = false;
+  let holdTarget: "game" | "chat" | null = null;
   let releaseHeld: (() => void) | null = null;
   const submits: string[] = [];
+  /** Holds this read open if the journey asked for this route, and returns whether it did. */
+  const holdIfAsked = async (target: "game" | "chat"): Promise<void> => {
+    if (holdTarget !== target) return;
+    holdTarget = null;
+    held.reading = true;
+    await new Promise<void>((resolve) => {
+      releaseHeld = resolve;
+    });
+  };
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk(composedRoot(state))),
   );
   await page.route("**/api/composed-reference-game/v1/state", async (route) => {
-    // The Host's answer is fixed when the read is taken; only its delivery is slow. That is what a
-    // round trip is, and it is the whole interleaving: the reading describes the screen before the
-    // press, and the press lands while it is still in flight.
-    const body = composedRoot(state);
+    // The Chat channel's own read: `rereadChat` takes it on arrival, and it is the one that spends a
+    // preview whose turn is over.
+    await holdIfAsked("chat");
+    await route.fulfill(jsonOk(composedRoot(state)));
+  });
+  // The panel's own read is the Game slice's route (`readGameState`), and it is the read every Game
+  // command rereads. Its answer is fixed when the read is taken and only its delivery is slow - that is
+  // what a round trip is, and it is the whole interleaving: the reading describes the screen before the
+  // press, and the press lands while it is still in flight.
+  await page.route("**/api/composed-reference-game/v1/game", async (route) => {
+    const body = game;
     stateReads += 1;
-    if (holdNextState) {
-      holdNextState = false;
-      held.reading = true;
-      await new Promise<void>((resolve) => {
-        releaseHeld = resolve;
-      });
-    }
+    await holdIfAsked("game");
     await route.fulfill(jsonOk(body));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
@@ -240,8 +257,8 @@ async function stubHost(page: Page, state: HostState): Promise<Host> {
   return {
     stateReads: () => stateReads,
     held,
-    holdNextState: () => {
-      holdNextState = true;
+    holdNextState: (target) => {
+      holdTarget = target;
     },
     releaseHeld: () => {
       if (releaseHeld !== null) (releaseHeld as () => void)();
@@ -267,7 +284,7 @@ test("a send that lands inside a Game read is not erased by it", async ({ page }
   await page.getByRole("button", { name: "Game", exact: true }).click();
   const panel = page.getByTestId("game-state-panel");
   await expect(panel.getByTestId("game-stop")).toBeVisible();
-  host.holdNextState();
+  host.holdNextState("game");
   await panel.getByTestId("game-stop").click();
   await expect.poll(() => host.held.reading).toBe(true);
 
@@ -343,7 +360,7 @@ test("a Game read publishes no running turn without spending the preview the Cha
 
   // Back to the conversation. The arrival read is held open so the reading is taken before Chat's own
   // read lands: between the two, the only writer to the conversation was the Game read.
-  host.holdNextState();
+  host.holdNextState("chat");
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await expect(surface).toBeVisible();
   await expect.poll(() => host.held.reading).toBe(true);
