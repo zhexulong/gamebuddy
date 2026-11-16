@@ -33,7 +33,16 @@
  * finding (`floor_governs_form:<id>:host/src/games/stardew/prompt/stardew-game-conduct.ts`) rather than a
  * classification, because the card owns form on this surface as on every other.
  * </p>
+ *
+ * <p>
+ * The table also carries each rule's EXIT - the surface change that would delete it - in the same row as its class, for
+ * the reason the floor module's own entries carry one: a rule that names no exit cannot be told apart from a rule nobody
+ * will ever delete. `GameRuleExit` is imported as a type only; at runtime this module still imports nothing from the
+ * floor, which is what keeps `game-surface-prompt-floor.ts` the one place the reading order is written.
+ * </p>
  */
+
+import type { GameRuleExit } from "../../../game-surface-prompt-floor.js";
 
 export const SLEEPING_IS_AN_ACTION =
   "The day ends by going to bed and sleeping: in stardew_plan_work, call builder.sleep() (with no arguments) after entering the farmhouse. A spoken goodnight alone leaves the day exactly where it was.";
@@ -57,16 +66,20 @@ export const STARDEW_GAME_CONDUCT_CLASSES: readonly Readonly<{
   class: "FLOOR" | "CHANNEL" | "FORM";
   /** The one line of argument for that class. */
   reason: string;
+  /** The surface change that would delete the rule, or the reason no mechanism can enforce it. */
+  exit: GameRuleExit;
 }>[] = Object.freeze([
   {
     id: "sleeping_is_an_action",
     class: "CHANNEL",
     reason: "the day's end is an action on this surface; the run that announced goodnight left the body standing.",
+    exit: "surface: the snapshot projection's own Sleep line states the executor's precondition - snapshot-projection.ts says the day ends from wherever you are, while SleepAndAdvanceDayLifecycle.cs answers not_home outside the farmhouse - so once the surface says where the day ends, and at what hour it is offered, the floor has nothing to add.",
   },
   {
     id: "content_ids_in_words",
     class: "CHANNEL",
     reason:
       "content ids are handles for action arguments; the channel says which side of the sentence each belongs to.",
+    exit: "surface: every line she reads pairs an id with its word the way the world-state line does (手持: 锄头（+2）) - including the held-tool fallback that still renders 手持: (T)Hoe when the Mod publishes no display name, and the action arguments' own labels - so no id is the only name she is handed.",
   },
 ]);

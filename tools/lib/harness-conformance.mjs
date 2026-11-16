@@ -454,17 +454,21 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-fail-closed-forward-path.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
-  // Prints `conduct rules examined N · FLOOR … · CHANNEL … · FORM …` plus a `checks[]` verdict carrying one entry per
-  // rule it can go red on (the population, a composed rule no module owns, a rule its owner's table does not reach, a
-  // class that outlived its rule, a class outside the three kinds, a class with no reason, a FORM rule in the floor), so
-  // its default run is the report this suite reads. Its falsifier is tools/check-game-surface-conduct-classes.test.mjs:
+  // Prints `conduct rules examined N · FLOOR … · CHANNEL … · FORM … · with an exit E · surface … · authority … ·
+  // permanent … · unowned U` plus a `checks[]` verdict carrying one entry per rule it can go red on (the population, a
+  // composed rule no module owns, a rule its owner's table does not reach, a class that outlived its rule, a class
+  // outside the three kinds, a class with no reason, a FORM rule in the floor, and a rule that names no exit), so its
+  // default run is the report this suite reads. Its falsifier is tools/check-game-surface-conduct-classes.test.mjs:
   // the deleted "Speak before you act" rule put back and classified FORM is
   // `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts` with that `checks[]` entry failed, a
   // rule appended with no class names its position and first words, a Stardew rule taken out of the floor while its
   // class stays is `stale_conduct_class:content_ids_in_words`, a class outside the three kinds is a finding rather than
   // a fourth kind, a class with no reason is named, a composed name no module declares is `conduct_rule_unowned`,
-  // a renamed declaration is blocked (exit 2, never green) and a list no longer written one rule per line is blocked
-  // because a reader that mis-parsed the floor and passed would be worse than no gate.
+  // an entry whose `exit` is removed and a table row whose `exit` is removed are
+  // `floor_rule_has_no_exit:<id>`, an exit kind outside the three and an exit with nothing after the kind are that same
+  // finding rather than a parse failure, an empty composed list blocks (exit 2) with the message that says to delete the
+  // module, a renamed declaration is blocked (exit 2, never green) and a list no longer written one rule per line is
+  // blocked because a reader that mis-parsed the floor and passed would be worse than no gate.
   "check-game-surface-conduct-classes.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",

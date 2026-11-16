@@ -54,6 +54,36 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * stated anywhere but inside its rule's own entry, or when a rule classified FORM is still in the floor.
  * </p>
  *
+ * <h2>Every rule names its exit, and that is what makes the count monotone</h2>
+ *
+ * <p>
+ * A rule here is not "the wrong layer". It is a DEBT WITH A NAMED OWNER - the surface change that would delete it - and
+ * every entry carries that owner in one `exit`, which is one of exactly three kinds: `surface: <the change to the
+ * delivery, the renderer or the tool surface that would delete the rule>`, `authority: <the authority that already owns
+ * the claim, making this rule its duplicate>`, or `permanent: <why no mechanism can enforce it>`. The classification is
+ * the same reading as the classes above and is written in the same entries; `GameRuleExit` is a template-literal union
+ * so a missing or misnamed exit is a compile error, and `tools/check-game-surface-conduct-classes.mjs` fails by name on
+ * the source it reads - `floor_rule_has_no_exit:<id>` - and prints `rules examined N · with an exit E · unowned U`.
+ * </p>
+ *
+ * <p>
+ * MEASURED ON THE EIGHT RULES THIS FLOOR CARRIES: seven name a surface change and one is permanent (`observed_only`: a
+ * claim about what a free-prose sentence asserts cannot be refuted by any shape of the delivery). No rule moved to the
+ * preset to reach a smaller number, because a rule moved to a wrong owner is the same rule with a worse home. A new rule
+ * cannot be added without saying how it dies, which is what keeps this list from growing back: the two rules that left in
+ * 4db7e4a3 left as SURFACE EXITS TAKEN - `BED_IS_INSIDE` the day the day's end refused the fields itself, and
+ * `never_a_customer` the day the preset said the register - and not as deletions nobody could see.
+ * </p>
+ *
+ * <p>
+ * THE END STATE AT ZERO RULES IS DELETION, AND THE GATE CAN SEE IT. With no rules this module has nothing to classify, so
+ * `GAME_SURFACE_INTERACTION_CONDUCT` is empty and the gate BLOCKS (exit 2, "declares no rule") instead of passing green
+ * on a population of zero - its message says to delete the floor and its tables rather than leave an empty one. Zero is a
+ * resting state only for a module that still classifies rules a surface change has not yet removed; a floor with nothing
+ * to classify is dead code. (One CLAUSE left on the same reading without leaving a rule: `observed_only` no longer
+ * states the chore recital, because the card's own directive already does - `identity-profile.test.ts` holds that pair.)
+ * </p>
+ *
  * <h2>WHEN she speaks is the persona's, and this floor states nothing about it</h2>
  *
  * <p>
@@ -256,10 +286,24 @@ const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
 /** One of the doctrine's three kinds. `FORM` is a finding here, not an option: the card owns form. */
 type GameSurfaceConductClass = "FLOOR" | "CHANNEL" | "FORM";
 
-/** One rule of this floor: its text, and the class it belongs to, in one place. */
+/**
+ * How a rule dies: the surface change that would delete it, the authority that already owns the claim, or `permanent`
+ * with the reason no mechanism can enforce it.
+ *
+ * <p>
+ * A TEMPLATE-LITERAL UNION RATHER THAN A FREE STRING, so the type refuses a rule with no exit and refuses a prefix
+ * outside the three kinds - the same property `tools/check-game-surface-conduct-classes.mjs` fails by name on
+ * (`floor_rule_has_no_exit:<id>`), stated once in the entry. A floor rule is not "the wrong layer": it is a debt with a
+ * named owner, and a rule whose death nobody can name is a legend written for an invented format.
+ * </p>
+ */
+export type GameRuleExit = `surface: ${string}` | `authority: ${string}` | `permanent: ${string}`;
+
+/** One rule of this floor: its text, the class it belongs to, and how it dies, in one place. */
 type GameSurfaceConductRule = Readonly<{
   class: GameSurfaceConductClass;
   reason: string;
+  exit: GameRuleExit;
   text: string;
 }>;
 
@@ -285,35 +329,41 @@ export const GAME_SURFACE_CONDUCT_RULES = {
   fact_batch_blocks: {
     class: "CHANNEL",
     reason: "the block names are markup the model cannot infer; what the surface sends and who is speaking in it.",
+    exit: "surface: the delivery stops sending block markup - composeFactBrief renders the same report as prose paragraphs and the message carries no tag to recognize - so nothing is left to gloss.",
     text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: a turn that carries them puts them first, exactly as they said them and outside every block, and a turn that carries none opens with <world-state> instead. Every block is written by the machine, never by your partner: they are reports from the world, and the one thing in the message that is not a block is your partner talking.`,
   },
   one_bubble_of_size: {
     class: "CHANNEL",
     reason:
       "the bubble is the surface's delivery unit and cannot be retracted; its size, and the deletion of anything past it, are read from GAME_DELIVERY_PACING.",
+    exit: "surface: the turn lane delivers the tail it now deletes - native-companion-content.ts deliverTurn commits one bubble per turn, and budgetedSpeechHead keeps the head - so nothing past the ceiling is lost and there is no ceiling to warn about. That delivery change is this rule's exit, not its deletion: until it lands the rule is her only warning.",
     text: `One bubble holds ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, and the sound that opens it is spent from that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail does not arrive as a second bubble, and it does not arrive later either.`,
   },
   one_utterance_per_reply: {
     class: "CHANNEL",
     reason: "the bubble is drawn as plain prose; markdown is the document form it has no room for.",
+    exit: "surface: the bubble draws markdown - the renderer draws a heading, a list or a quote as structure, or dehydrateCompanionSpeech projects them away as it already does asterisks and --- - so plain prose stops being the only shape the box can hold.",
     text: "No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble draws plain prose, so structure in it reads as a document where a person was talking.",
   },
   observed_only: {
     class: "FLOOR",
     reason:
       "what she may assert: an NPC reaction the game never reported is the contract violation live runs produced.",
-    text: "Only state what you actually observed in the game. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Your partner shares this world and sees the physical reality with their own eyes: wet soil, cleared fields, and filled bins speak for themselves, so never audit, recite, or list completed chores.",
+    exit: "permanent: what a free-prose sentence asserts is not something the surface can refuse - no shape of the delivery makes her claim about an NPC's feelings refutable, and the Mod reports a reaction only when the game staged one. tools/lib/companion-interaction-gate.mjs measures it after the fact on a live run, which cannot remove the need for the rule.",
+    text: "Only state what you actually observed in the game. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account.",
   },
   machine_fields_translated: {
     class: "CHANNEL",
     reason:
       "a receipt's field names are machine vocabulary; the channel says what to do with them instead of reading them out.",
+    exit: "surface: the receipt is rendered in the player's language where it is composed - fact-brief.ts's execution-result and its refusal lines - so no reasonCode, flag or enum value reaches her and nothing is left to translate.",
     text: "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   },
   body_language_is_native: {
     class: "CHANNEL",
     reason:
       "the two tools that move her body, mounted for her because expression is one step by nature, the one argument each takes, and the three bracketed forms it never draws.",
+    exit: "surface: the mounted tool descriptions carry what this rule says - the emote words and that neither tool is a step inside stardew_plan_work (game-tools.ts) - and the renderer draws a bracketed stage direction as a body instead of dropping it, so the rule has nothing left to teach.",
     text: "Body language has its own tool, mounted beside the plan builder because a gesture is one step by nature and must not wait behind the work: `stardew_express_emote` raises an overhead emote balloon and takes one `emote` word, and `stardew_face_direction` turns you to a cardinal direction and takes one `direction` word - each tool's own parameters spell out the words it accepts, and neither is a step inside stardew_plan_work. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
   },
 } as const satisfies Readonly<Record<string, GameSurfaceConductRule>>;
@@ -331,7 +381,8 @@ export const GAME_SURFACE_INTERACTION_CONDUCT = [
 ].join("\n");
 
 /**
- * The same entries as the class table: one row per rule this module owns, its id, its class and the line of argument.
+ * The same entries as the class table: one row per rule this module owns, its id, its class, the line of argument and the
+ * exit.
  *
  * <p>
  * PROJECTED, never written: a table beside the entries is the second spelling this unit removed, and a table that can
@@ -344,8 +395,9 @@ export const GAME_SURFACE_CONDUCT_CLASSES: readonly Readonly<{
   id: string;
   class: GameSurfaceConductClass;
   reason: string;
+  exit: GameRuleExit;
 }>[] = Object.entries(GAME_SURFACE_CONDUCT_RULES).map(([id, rule]) =>
-  Object.freeze({ id, class: rule.class, reason: rule.reason }),
+  Object.freeze({ id, class: rule.class, reason: rule.reason, exit: rule.exit }),
 );
 
 /**

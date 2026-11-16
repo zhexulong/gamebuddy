@@ -188,7 +188,7 @@ test("the Game floor states the bubble and asks for no line on any turn", () => 
   assert.doesNotMatch(game, /not an inventory of your own procedure/);
 });
 
-test("the step-list ban is the card's now, and the floor does not restate it", () => {
+test("the step-list and chore-recital bans are the card's now, and the floor does not restate them", () => {
   // Measured 2026-10-28 (live run game-1793179432152): nine thinking blocks carried say/speak intent and at least three
   // drafted a publishable line; the longest judged one a "step list" and called a tool instead. The floor's answer was a
   // boundary inside its own ban - one intent is company, the sequence is the inventory. That boundary, and the ban,
@@ -198,6 +198,21 @@ test("the step-list ban is the card's now, and the floor does not restate it", (
   assert.doesNotMatch(game, /is the inventory this forbids/);
   assert.doesNotMatch(game, /never list your steps/);
   assert.doesNotMatch(game, /work quietly until you are done/);
+  // The RECITAL half of `observed_only` is the same claim one layer down: the card's 浇了是湿的、敲了是碎的、箱子里有几颗
+  // 抬眼就看得见 says why a report of finished chores is noise, and the floor said it a second time. The detector is the
+  // CLASS rather than the sentence, and the two samples below are what prove it fires on the rule that was there and on
+  // a rewording nobody wrote.
+  const RECITAL = /never (?:audit|recite|list|report)[^.]*completed|inventory of completed|never list the chores/iu;
+  for (const sample of [
+    "never audit, recite, or list completed chores.",
+    "Never report completed work back; your partner saw the field.",
+  ])
+    assert.match(sample, RECITAL, `the recital detector does not fire on "${sample}", so its silence proves nothing`);
+  assert.doesNotMatch(
+    game,
+    RECITAL,
+    "the card's 不报进度 already forbids a report of finished chores, so the floor must not restate it",
+  );
   assert.match(DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "", /不报进度/u);
 });
 

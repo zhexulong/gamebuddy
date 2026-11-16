@@ -78,7 +78,7 @@ const RULES_OPEN = "const GAME_SURFACE_CONDUCT_RULES = {\n";
 const RULES_CLOSE = '].join("\\n");';
 const TABLE_PROJECTION =
   "}>[] = Object.entries(GAME_SURFACE_CONDUCT_RULES).map(([id, rule]) =>\n" +
-  "  Object.freeze({ id, class: rule.class, reason: rule.reason }),\n" +
+  "  Object.freeze({ id, class: rule.class, reason: rule.reason, exit: rule.exit }),\n" +
   ");";
 const REMOVED_RULE_TEXT =
   "Speak before you act: when responding to your partner or deciding to take an action, always deliver a spoken " +
@@ -107,8 +107,14 @@ async function withFixtureRoot({ floor = REAL_FLOOR, stardew = REAL_STARDEW }, r
 const codes = (reading) => reading.violations.map((violation) => violation.code);
 
 /** One entry of the classed declaration, rendered as the source would carry it. */
-const entry = ({ id, class: klass, reason, text }) =>
-  `  ${id}: {\n    class: "${klass}",\n    reason: ${JSON.stringify(reason)},\n    text: ${JSON.stringify(text)},\n  },`;
+const entry = ({
+  id,
+  class: klass,
+  reason,
+  text,
+  exit = "permanent: a fixture rule, and its exit is not what these cases measure.",
+}) =>
+  `  ${id}: {\n    class: "${klass}",\n    reason: ${JSON.stringify(reason)},\n    exit: ${JSON.stringify(exit)},\n    text: ${JSON.stringify(text)},\n  },`;
 
 /** The floor with one entry appended to the classed declaration. */
 const withEntry = (source, rendered) => source.replace(RULES_OPEN, `${RULES_OPEN}${rendered}\n`);
@@ -157,6 +163,25 @@ function withEntryField(source, id, field, value) {
   const start = at + match.index;
   const [before, after] = [source.slice(0, start), source.slice(start + match[0].length)];
   return `${before}${field}: ${JSON.stringify(value)}${after}`;
+}
+
+/** The braces of one rule's entry or table row, found by its id, as the slice a fixture may edit. */
+function ruleBlock(source, id) {
+  const starts = [`  ${id}: {\n`, `    id: "${id}",\n`];
+  const start = starts.map((needle) => source.indexOf(needle)).find((index) => index !== -1);
+  assert.notEqual(start, undefined, `${id} is not an entry of either table: this fixture would prove nothing`);
+  const end = source.indexOf("\n  },", start);
+  assert.notEqual(end, -1, `the entry ${id} is not closed on a line of its own`);
+  return { start: source.lastIndexOf("{", start), end: end + 4 };
+}
+
+/** One rule's entry or table row with one field's string removed - the field found inside the rule's own braces. */
+function withoutField(source, id, field) {
+  const { start, end } = ruleBlock(source, id);
+  const block = source.slice(start, end);
+  const match = new RegExp(`\\n\\s*${field}:\\s*"(?:[^"\\\\]|\\\\.)*",`, "su").exec(block);
+  assert.notEqual(match, null, `${id} carries no ${field} string: ${block.slice(0, 80)}`);
+  return source.slice(0, start) + block.replace(match[0], "") + source.slice(end);
 }
 
 /** The first rule the floor module itself declares with this class, read from the tree's own table. */
@@ -292,7 +317,12 @@ test("a class restated in a table beside the rules is named with both classes", 
 const cliReport = (root) => {
   const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
   const lines = result.stdout.trim().split("\n");
-  return { status: result.status, report: JSON.parse(lines[lines.length - 1]), stderr: result.stderr };
+  return {
+    status: result.status,
+    report: JSON.parse(lines[lines.length - 1]),
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 };
 
 test("the default run names every rule it can go red on, one report entry per rule", () => {
@@ -413,6 +443,78 @@ test("a class with no reason is a label nobody argued for", async () => {
   assert.deepEqual(codes(reading), [`conduct_class_without_reason:${target.id}`]);
 });
 
+test("a rule that names no exit is named with the rule, and the census counts it as unowned", async () => {
+  // The property this unit added: a floor rule is a debt with a named owner, so an entry without an exit is the finding -
+  // the shape an entry with no exit has is a rule nobody has said when they will delete.
+  const target = floorRuleOfClass("CHANNEL");
+  const floor = withoutField(REAL_FLOOR, target.id, "exit");
+  assert.notEqual(floor, REAL_FLOOR, "the fixture must really remove an entry's exit");
+  const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
+  assert.deepEqual(codes(reading), [`floor_rule_has_no_exit:${target.id}`]);
+  assert.equal(reading.unowned, 1, "the census counts the rule as unowned rather than dropping it");
+  assert.equal(
+    reading.exits.surface + reading.exits.authority + reading.exits.permanent,
+    reading.examined - 1,
+    "the rules that do name an exit are still counted, so the two halves describe one population",
+  );
+  assert.match(reading.violations[0].detail, /names no exit, so nothing says how the rule dies/u);
+  await withFixtureRoot({ floor }, (root) => {
+    const { status, report, stderr } = cliReport(root);
+    assert.equal(status, 1, `a rule with no exit fails the gate, printed: ${stderr}`);
+    const unexited = report.checks.find((check) => check.id === "floor_rule_has_no_exit");
+    assert.equal(unexited?.status, "failed", "the rule's own report entry is red, which is what the suite reads");
+    assert.match(unexited.detail, /^1 violation\(s\) of every rule names its exit/u);
+    assert.equal(report.unowned, 1);
+    return null;
+  });
+});
+
+test("a Stardew row with no exit is named too: the table that owns the rule carries the debt", async () => {
+  const removed = REAL_READING.rules.find((rule) => rule.module === STARDEW_MODULE);
+  assert.ok(removed, `${STARDEW_MODULE} contributes no rule to the floor, so this case has nothing to edit`);
+  const stardew = withoutField(REAL_STARDEW, removed.id, "exit");
+  assert.notEqual(stardew, REAL_STARDEW, "the fixture must really remove an exit from a table row");
+  const reading = await withFixtureRoot({ stardew }, (root) => auditConductClasses({ root }));
+  assert.deepEqual(codes(reading), [`floor_rule_has_no_exit:${removed.id}`]);
+});
+
+test("an exit outside the three kinds is named with what the entry spelled", async () => {
+  const target = floorRuleOfClass("FLOOR");
+  const floor = withEntryField(REAL_FLOOR, target.id, "exit", "later: someone will delete this");
+  assert.notEqual(floor, REAL_FLOOR, "the fixture must really change an entry's exit");
+  const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
+  assert.deepEqual(codes(reading), [`floor_rule_has_no_exit:${target.id}`]);
+  assert.match(
+    reading.violations[0].detail,
+    /names the exit kind "later", which is not one of surface \/ authority \/ permanent/u,
+  );
+});
+
+test("an exit that names a kind and says nothing after it is a label, not an exit", async () => {
+  const target = floorRuleOfClass("FLOOR");
+  const floor = withEntryField(REAL_FLOOR, target.id, "exit", "permanent: ");
+  const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
+  assert.deepEqual(codes(reading), [`floor_rule_has_no_exit:${target.id}`]);
+  assert.match(reading.violations[0].detail, /an exit with no change, no owner and no reason is a label/u);
+});
+
+test("the census adds up over the real tree, and it is what the default run prints", () => {
+  const { status, report, stdout } = cliReport(REPOSITORY_ROOT);
+  assert.equal(status, 0, "the tree's own floor names an exit for every rule");
+  assert.equal(report.unowned, 0);
+  assert.equal(report.withAnExit, report.examined, "every rule that was read named an exit");
+  assert.equal(
+    report.surface + report.authority + report.permanent,
+    report.withAnExit,
+    "each exit is exactly one kind, so the four numbers describe one population",
+  );
+  assert.match(
+    stdout,
+    /with an exit \d+ · surface \d+ · authority \d+ · permanent \d+ · unowned \d+/u,
+    "the census is printed, not only carried in the report",
+  );
+});
+
 test("an unreadable conduct is blocked, and the CLI never calls it green", async () => {
   const floor = REAL_FLOOR.replace(
     "const GAME_SURFACE_INTERACTION_CONDUCT = [",
@@ -426,6 +528,28 @@ test("an unreadable conduct is blocked, and the CLI never calls it green", async
     const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
     assert.equal(result.status, 2, `the CLI exits 2 when blocked, printed: ${result.stdout}${result.stderr}`);
     assert.match(result.stderr, /nothing was judged/u);
+    return null;
+  });
+});
+
+test("an empty floor is blocked and says to delete the module, not to pass on nobody", async () => {
+  // The stated end state at zero rules. A gate that passed on an empty population would agree with itself, so the empty
+  // floor is the one read that is never green: it BLOCKS and its message says what zero means for this module.
+  const floor = rebuild({ ...composedList(REAL_FLOOR), elements: [] });
+  assert.notEqual(floor, REAL_FLOOR, "the fixture must really empty the composed list");
+  const reading = await withFixtureRoot({ floor }, (root) => auditConductClasses({ root }));
+  assert.equal(reading.status, "blocked", "zero rules is blocked, never green");
+  assert.equal(reading.examined, 0);
+  assert.match(reading.unreadable.join("\n"), /declares no rule: the Game floor is empty/u);
+  assert.match(reading.unreadable.join("\n"), /delete the floor and its tables/u);
+  await withFixtureRoot({ floor }, (root) => {
+    const { status, report } = cliReport(root);
+    assert.equal(status, 2, "a blocked reading exits 2");
+    assert.deepEqual(
+      report.checks.map((check) => check.status),
+      report.checks.map(() => "blocked"),
+      "nothing was judged, so no rule may claim to have passed over it",
+    );
     return null;
   });
 });

@@ -50,6 +50,24 @@
  * `conduct_class_without_reason:<id>`, and a value outside the three kinds is `conduct_class_unknown:<id>` rather than
  * silently not-FORM.
  *
+ * THE SECOND PROPERTY IS THAT EVERY RULE NAMES ITS EXIT - `floor_rule_has_no_exit:<id>`. A rule in this floor is not
+ * "the wrong layer": it is a debt with a named owner, the surface change that would delete it. So each entry (and each
+ * row of a game module's table) carries an `exit` string that opens with one of exactly three kinds:
+ *   - `surface: <change>`   - the change to the delivery, the renderer or the tool surface that would delete the rule;
+ *   - `authority: <owner>`  - another authority already owns the claim, so the rule is its duplicate;
+ *   - `permanent: <reason>` - no mechanism can enforce it, and the reason says why.
+ * A missing exit, a kind outside those three, and a kind with nothing after it are all the same finding, because all
+ * three name no exit, and the detail says which shape the entry spelled. The default run prints
+ * `rules examined N · with an exit E · surface S · authority A · permanent P · unowned U`; U is the rules whose exit
+ * names nothing. THIS IS WHAT MAKES THE COUNT MONOTONE: a rule cannot be added without saying how it dies, so the list
+ * cannot grow back one undated legend at a time.
+ *
+ * THE END STATE AT ZERO RULES IS DELETION, AND THIS GATE SEES IT. An empty composed list makes `conductRules` throw, so
+ * the reading is `blocked` (exit 2) with the message "declares no rule: the Game floor is empty ... delete the floor and
+ * its tables": zero is a resting state only for a module that still classifies rules a surface change has not yet
+ * removed, and a floor with nothing to classify is dead code. A `passed` on a population of zero is the one reading this
+ * gate never gives.
+ *
  * READING IS BY DECLARATION NAME, NOT BY PARSING TYPESCRIPT. The composed list's elements are one per line - the file's
  * own doc says so - and an entry or table row is read as the lines between its own braces, so the formatter may break a
  * reason across lines without moving what this sees. A shape this cannot read makes the reader throw, and that is
@@ -71,7 +89,14 @@
  *            rule's text spelled into the composed list instead of a reference to its entry, an entry classified FORM,
  *            a Stardew rule removed from the floor while its class stays behind, a class outside the three kinds, a
  *            class with no reason, a composed name no module declares, a renamed declaration (blocked, exit 2 - never
- *            green), and a list whose elements are no longer one per line (blocked).
+ *            green), a list whose elements are no longer one per line (blocked), and an empty composed list (blocked,
+ *            with the message that says to delete the module).
+ *
+ *            The EXIT rule's own red was the whole tree first: before any entry carried one, this gate printed
+ *            `rules examined 8 · with an exit 0 · unowned 8 · status failed` and named all eight rules. Its injected
+ *            cases are a classed entry with its `exit` removed, a game module's table row with its `exit` removed, an
+ *            exit whose kind is outside the three (`later: ...`), and an exit that names a kind and says nothing after
+ *            it (`permanent: `).
  */
 
 export const gateDeclaration = {
@@ -119,6 +144,16 @@ const RULE_DECLARATION = /^export const ([A-Z][A-Z0-9_]*) =\s*$/u;
 export const CONDUCT_CLASSES = Object.freeze(["FLOOR", "CHANNEL", "FORM"]);
 
 /**
+ * The three ways a floor rule dies. A rule's `exit` is a string that opens with one of these and a colon; a fourth word is
+ * a finding, because a rule whose death nobody can name is the debt this gate exists to make visible.
+ *
+ *   - `surface: <change>`   - the change to the delivery, the renderer or the tool surface that would delete the rule;
+ *   - `authority: <owner>`  - a different authority already owns the claim, so the rule is its duplicate;
+ *   - `permanent: <reason>` - no mechanism can enforce it, and the reason says why.
+ */
+export const EXIT_KINDS = Object.freeze(["surface", "authority", "permanent"]);
+
+/**
  * Every rule this gate can go red on: `code` is the finding code (and the `checks[]` id), `protects` the property it
  * protects. Violations splice their code from here, so the report and the findings cannot disagree about which rules
  * exist - the list is written once.
@@ -140,6 +175,12 @@ const CONDUCT_RULES = Object.freeze({
   unknown: { code: "conduct_class_unknown", protects: "every class is one of FLOOR / CHANNEL / FORM" },
   unreasoned: { code: "conduct_class_without_reason", protects: "every class carries the line of argument for it" },
   form: { code: "floor_governs_form", protects: "no rule in the floor governs the turn's form - the card owns that" },
+  unexited: {
+    code: "floor_rule_has_no_exit",
+    protects:
+      "every rule names its exit - the surface change that deletes it, the authority that owns the claim, or `permanent` " +
+      "with the reason no mechanism can enforce it",
+  },
 });
 
 /** One code per rule, in the order the report lists them. */
@@ -236,7 +277,10 @@ function classedRules(source, declaration, module) {
     if (klass === undefined || reason === undefined)
       throw new Error(`${declaration} entry ${id} in ${module} is not { class, reason, text }: ${block.slice(0, 60)}`);
     if (entries.has(id)) throw new Error(`${declaration} in ${module} declares ${id} twice, so its class is ambiguous`);
-    entries.set(id, { id, class: klass, reason: unquote(reason), module });
+    // An entry with no `exit` is READ, not refused: the rule has no exit, which is the finding below rather than a shape
+    // this reader cannot place. A shape it cannot place is blocked, and a blocked rule is not a named one.
+    const exit = /\bexit:\s*("(?:[^"\\]|\\.)*")/su.exec(block)?.[1] ?? null;
+    entries.set(id, { id, class: klass, reason: unquote(reason), exit: exit === null ? null : unquote(exit), module });
     index += 1;
   }
   throw new Error(`${declaration} in ${module} is never closed by a line starting with "}"`);
@@ -257,7 +301,9 @@ function tableEntries(source, table, module) {
     const reason = /\breason:\s*"([^"]*)"/u.exec(block)?.[1] ?? "";
     if (id === undefined || klass === undefined)
       throw new Error(`${table} entry ${String(index)} is not { id, class, reason }: ${block.slice(0, 60)}...`);
-    return { id, class: klass, reason };
+    // Read, never refused: an entry with no exit is a rule with no exit, which is named below.
+    const exit = /\bexit:\s*"((?:[^"\\]|\\.)*)"/u.exec(block)?.[1] ?? null;
+    return { id, class: klass, reason, exit };
   });
 }
 
@@ -352,11 +398,48 @@ export function conductRules(sources) {
         name: element.name ?? entry.id,
         class: entry.class,
         reason: entry.reason,
+        exit: entry.exit ?? null,
       };
     });
   if (rules.length === 0)
-    throw new Error(`${COMPOSED_DECLARATION} declares no rule: the Game floor is empty, which is not a classification`);
+    throw new Error(
+      `${COMPOSED_DECLARATION} declares no rule: the Game floor is empty, which is not a classification. Zero rules is ` +
+        "not a resting state for this module - a floor with nothing to classify is dead code - so delete the floor and its " +
+        "tables rather than making this gate green with an empty list",
+    );
   return { rules, declared, orphans, restated };
+}
+
+/**
+ * A rule's `exit` read as its kind and what follows it.
+ *
+ * `null` when the rule names no exit at all - the debt with no owner. A string that names no kind comes back with its own
+ * text as the kind, so the finding says what the entry spelled instead of failing to parse it.
+ */
+function readExit(raw) {
+  if (typeof raw !== "string") return null;
+  const match = /^([a-z]+):\s*([\s\S]*)$/u.exec(raw.trim());
+  if (match === null) return { kind: raw.trim(), reason: "" };
+  return { kind: match[1], reason: match[2].trim() };
+}
+
+/** The finding for a rule that names no exit, naming the shape the entry spelled rather than only the rule. */
+function exitDetail(id, exit) {
+  if (exit === null)
+    return (
+      `${id} names no exit, so nothing says how the rule dies: give its own entry an \`exit\` - \`surface: <the change to ` +
+      "the delivery, renderer or tool surface that would delete it>\`, `authority: <the authority that already owns the " +
+      "claim>`, or `permanent: <why no mechanism can enforce it>`"
+    );
+  if (!EXIT_KINDS.includes(exit.kind))
+    return (
+      `${id} names the exit kind "${exit.kind}", which is not one of ${EXIT_KINDS.join(" / ")}: a kind outside the ` +
+      "three ways a floor rule dies names no exit at all"
+    );
+  return (
+    `${id} names "${exit.kind}" and says nothing after it: an exit with no change, no owner and no reason is a label, ` +
+    "not an exit"
+  );
 }
 
 /** The first few words of a rule, for a finding that names the rule rather than an index. */
@@ -412,6 +495,8 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
   const violations = [];
   const rows = [];
   const counts = { FLOOR: 0, CHANNEL: 0, FORM: 0 };
+  const exits = { surface: 0, authority: 0, permanent: 0 };
+  let unowned = 0;
   for (const rule of reading.rules) {
     if (rule.unowned) {
       violations.push({
@@ -432,7 +517,7 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       });
       continue;
     }
-    rows.push({ index: rule.index, module: rule.module, class: rule.class, id: rule.id });
+    rows.push({ index: rule.index, module: rule.module, class: rule.class, id: rule.id, exit: rule.exit ?? null });
     if (!CONDUCT_CLASSES.includes(rule.class)) {
       violations.push({
         code: `${CONDUCT_RULES.unknown.code}:${rule.id}`,
@@ -441,6 +526,11 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       continue;
     }
     counts[rule.class] += 1;
+    const exit = readExit(rule.exit);
+    if (exit === null || !EXIT_KINDS.includes(exit.kind) || exit.reason === "") {
+      unowned += 1;
+      violations.push({ code: `${CONDUCT_RULES.unexited.code}:${rule.id}`, detail: exitDetail(rule.id, exit) });
+    } else exits[exit.kind] += 1;
     if (rule.reason.trim() === "")
       violations.push({
         code: `${CONDUCT_RULES.unreasoned.code}:${rule.id}`,
@@ -491,6 +581,8 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
     status: violations.length === 0 ? "passed" : "failed",
     examined: reading.rules.length,
     classes: counts,
+    exits,
+    unowned,
     rules: rows,
     violations,
     unreadable: [],
@@ -532,6 +624,7 @@ export function conductReport(reading) {
     }),
   ];
   const blocks = reading.classes;
+  const exits = reading.exits ?? { surface: 0, authority: 0, permanent: 0 };
   return {
     gate: "game-surface-conduct-classes",
     status: reading.status,
@@ -539,6 +632,11 @@ export function conductReport(reading) {
     FLOOR: blocks.FLOOR ?? 0,
     CHANNEL: blocks.CHANNEL ?? 0,
     FORM: blocks.FORM ?? 0,
+    withAnExit: reading.examined - (reading.unowned ?? 0),
+    surface: exits.surface,
+    authority: exits.authority,
+    permanent: exits.permanent,
+    unowned: reading.unowned ?? 0,
     checks,
   };
 }
@@ -553,7 +651,9 @@ function main(argv) {
   } else {
     process.stdout.write(
       `conduct rules examined ${String(report.examined)} · FLOOR ${String(report.FLOOR)} · ` +
-        `CHANNEL ${String(report.CHANNEL)} · FORM ${String(report.FORM)} · status ${report.status}\n`,
+        `CHANNEL ${String(report.CHANNEL)} · FORM ${String(report.FORM)} · with an exit ${String(report.withAnExit)} · ` +
+        `surface ${String(report.surface)} · authority ${String(report.authority)} · ` +
+        `permanent ${String(report.permanent)} · unowned ${String(report.unowned)} · status ${report.status}\n`,
     );
     for (const owner of CONDUCT_OWNERS) {
       const owned = reading.rules.filter((rule) => rule.module === owner.module).length;
