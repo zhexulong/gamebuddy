@@ -15,10 +15,11 @@ namespace GameBuddy.Stardew;
 /// did".
 ///
 /// WHY A BUILDER AND NOT AN INTERPOLATION. Across the action family the detail string was spelled inline at every
-/// terminal - 1,282 lines of `$"…"` - so the same field was named in a dozen places and nothing could answer "what does
-/// this action's evidence carry?". A field could be dropped from one site by deleting a word, and the only reader who
-/// would notice is the Host's parser, at run time, on a string that still looks well formed. Here the field names are
-/// the call, and <see cref="EvidenceDetail"/> is the one place the `key=value;…` form exists.
+/// terminal - 1,291 of the family's 18,478 code lines carried an interpolated detail when this lane was measured - so
+/// the same field was named in a dozen places and nothing could answer "what does this action's evidence carry?". A
+/// field could be dropped from one site by deleting a word, and the only reader who would notice is the Host's parser,
+/// at run time, on a string that still looks well formed. Here the field names are the call, and
+/// <see cref="EvidenceDetail"/> is the one place the `key=value;…` form exists.
 ///
 /// Numbers render through <see cref="CultureInfo.InvariantCulture"/> and booleans as `true`/`false`. The strings this
 /// replaced interpolated ints and strings, whose rendering is culture-independent, and the one float carried
@@ -106,9 +107,10 @@ internal sealed partial class ExecutionManager
 {
     /// <summary>
     /// One request's terminal seam. `RememberTerminal` takes the request identity, the execution identity, the state,
-    /// the reason code and the evidence at every one of its 840 call sites in the family, and every site respelled the
-    /// `$"{identity};…"` prefix and the `ExecutionState.` it had already decided. This type holds the first four facts
-    /// once and offers the SHAPES the family actually uses, so a site says what it observed and nothing else.
+    /// the reason code and the evidence at every one of its 841 call sites in the family (measured across the 50 files
+    /// when this lane was measured), and every site respelled the `$"{identity};…"` prefix and the `ExecutionState.` it
+    /// had already decided. This type holds the first four facts once and offers the SHAPES the family actually uses, so
+    /// a site says what it observed and nothing else.
     ///
     /// THE SHAPES THAT REMAINED DISTINCT, and why each is its own method rather than one `Write(state, code, evidence)`:
     /// <list type="bullet">
