@@ -103,19 +103,19 @@ export function recordedGameProcesses(paths) {
  */
 export function survivingGameIdentities(identities, { readTable = processTable, attempts = 8 } = {}) {
   if (identities.length === 0) return Object.freeze({ kind: "nothing_recorded", surviving: [] });
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  let surviving = [];
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
     const table = readTable();
     if (table === null) return Object.freeze({ kind: "unverifiable", surviving: [] });
-    const surviving = identities.filter((identity) =>
+    surviving = identities.filter((identity) =>
       table.rows.some(
         (row) => row.pid === identity.pid && (identity.startTime === null || row.startTime === identity.startTime),
       ),
     );
     if (surviving.length === 0) return Object.freeze({ kind: "gone", surviving: [] });
-    if (attempt === attempts) return Object.freeze({ kind: "alive", surviving });
   }
-  /* istanbul ignore next - the loop returns on its last attempt; this keeps the type total. */
-  return Object.freeze({ kind: "unverifiable", surviving: [] });
+  // The bound is spent and the identities were still there on the last read: that is the answer, not a gap.
+  return Object.freeze({ kind: "alive", surviving });
 }
 
 const listed = (entries) => entries.map((entry) => `${entry.pid}(${entry.role ?? entry.name})`).join(" ");
