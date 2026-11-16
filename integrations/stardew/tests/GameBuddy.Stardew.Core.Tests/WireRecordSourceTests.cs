@@ -98,6 +98,25 @@ public sealed class WireRecordSourceTests
     }
 
     [Fact]
+    public void ARecordWithTypeParametersIsReadAndOneThatCannotBeIsRefused()
+    {
+        const string Generic =
+            "public sealed record BridgeEnvelope<TPayload>(\n" +
+            "    long Revision,\n" +
+            "    TPayload Payload);";
+        WireRecordSource.DeclaredRecords(Generic).Select(record => record.Name).Should().Equal(new[] { "BridgeEnvelope" });
+        WireRecordSource.DeclaredMembers(Generic, "BridgeEnvelope").Select(member => member.Name)
+            .Should().Equal(new[] { "Revision", "Payload" });
+
+        const string Skipped =
+            "public sealed record Broken : object;\n" +
+            "public sealed record Fine(int X);";
+        Action reading = () => WireRecordSource.DeclaredRecords(Skipped);
+        reading.Should().Throw<InvalidOperationException>()
+            .WithMessage("*unread: Broken*", "a declaration the reader does not read is a declaration no gate above judges");
+    }
+
+    [Fact]
     public void TheRealSnapshotRecordDeclaresTheAttributedFieldAndNoAttributeArgument()
     {
         IReadOnlyList<string> fields = WireRecordSource.DeclaredMembers(WireRecordSource.ModelSource(), "BridgeSnapshot")

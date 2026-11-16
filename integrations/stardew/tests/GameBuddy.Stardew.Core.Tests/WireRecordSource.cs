@@ -69,7 +69,12 @@ internal static class WireRecordSource
     private const string MemberName = "([A-Za-z_][A-Za-z0-9_]*)\\s*$";
 
     private static readonly Regex RecordDeclaration = new(
-        "^[ \t]*public (?:sealed )?record (?:struct |class )?(\\w+)\\s*\\(",
+        "^[ \t]*public (?:sealed )?record (?:struct |class )?(\\w+)\\s*(?:<[^>]*>)?\\s*\\(",
+        RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    /// <summary>Every record declaration the file carries, whether or not this reader could read its parameter list.</summary>
+    private static readonly Regex RecordMarkers = new(
+        "^[ \t]*public (?:sealed )?record (?:struct |class )?(\\w+)",
         RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
     /// <summary>The wire model file's own text, found from the test assembly's own location.</summary>
@@ -98,6 +103,18 @@ internal static class WireRecordSource
                 declaration.Groups[1].Value,
                 ParseParameterList(text.Substring(open + 1, close - open - 1))));
         }
+
+        // A declaration this reader cannot see is a declaration no gate above judges, so it is refused by name rather
+        // than dropped: the population is only as wide as the file's own declarations.
+        int declared = RecordMarkers.Matches(text).Count;
+        List<string> unread = RecordMarkers.Matches(text)
+            .Select(marker => marker.Groups[1].Value)
+            .Where(name => records.All(record => record.Name != name))
+            .ToList();
+        if (unread.Count > 0 || records.Count != declared)
+            throw new InvalidOperationException(
+                $"{declared} record declaration(s) here but {records.Count} parameter list(s) were read; "
+                    + $"unread: {string.Join(", ", unread)}");
 
         return records;
     }
