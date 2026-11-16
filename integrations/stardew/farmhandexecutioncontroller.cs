@@ -3485,10 +3485,33 @@ internal readonly record struct MeleeSweepTile(string Occupant, int WeedHealth, 
 /// (`FarmhandForEachHealing.cs:181-196`) - and a sweep is the same pass over tiles nobody named. So: an arc tile the
 /// caller did NOT name may hold nothing the catalogue calls destructive, and the refusal names the tiles.
 /// </para>
+/// <para>
+/// WHY THE NAMED TILE IS CHECKED BEFORE THE SWING. The receipt mints `scythe_sweep_cut` only when the NAMED tile moved,
+/// so a request aimed at an occupant the scythe family never declared can never be the success it asked for - and the
+/// swing that tries is not free: the engine's arc reaches behind the actor, so `round63`'s admitted swing at a twig cut an
+/// UNNAMED weed at `67:29` and reported it as `partially_succeeded/scythe_sweep_partial`. The pre-swing read below is the
+/// same read that answers the completion condition, which is why this is the action's own predicate and not a guess.
+/// </para>
 /// </summary>
 internal static class MeleeSweepOccupancy
 {
     private const string ScytheTool = "scythe";
+
+    /// <summary>
+    /// The refusal a swing mints when the tile the caller NAMED holds something the scythe family never declared it
+    /// clears: `sweep_target_not_scythe_work:twig`.
+    ///
+    /// <para>
+    /// THE NAMED TILE IS THE COMPLETION CONDITION, so a request whose named tile cannot move cannot succeed: the receipt
+    /// mints `scythe_sweep_cut` only when that tile moved, and every other outcome is a partial or an uncertain. Measured
+    /// `round63`: a `sweep_scythe` at Farm `69,31` holding twig litter was admitted, swung, cut an UNNAMED weed at
+    /// `67:29`, and reported `partially_succeeded/scythe_sweep_partial` with `named_moved=false` - a destructive effect
+    /// the caller never named, delivered as "partly worked", whose evidence named no action that would move the tile she
+    /// aimed at. `remove_placed_item` (whose own `Clears` declaration names `twig`, admission `Object.cs:1182`) is the
+    /// answer, and it never appeared in the run's `attemptedActionIds`.
+    /// </para>
+    /// </summary>
+    internal const string TargetNotScytheWork = "sweep_target_not_scythe_work";
 
     /// <summary>`ClearableKind`'s own word for a weed.</summary>
     internal static readonly string Weed = ClearableKind.Map("object", "weed")!;
@@ -3532,6 +3555,34 @@ internal static class MeleeSweepOccupancy
                     && predicate(clearing))
                 .SelectMany(registration => registration.Descriptor!.Clears!.Occupants),
             StringComparer.Ordinal);
+
+    /// <summary>
+    /// The detail a <see cref="TargetNotScytheWork"/> refusal carries: what stands on the named tile, and the published
+    /// action that removes it - the two facts the route refusals already publish.
+    ///
+    /// <para>
+    /// IT IS THE BRIEF SHAPE, and two measurements decide that. `round63`'s own `fish_here` receipt carried
+    /// `blocker_occupant=twig@69,31` and `clears_with=remove_placed_item(...)` as fields 11 and 12 of 16, and the Host
+    /// prints one receipt detail to the model under a 160-character share on whole fields (`host/src/fact-brief.ts`,
+    /// `MODEL_FIELD_CEILINGS.evidence`), so the eight narration fields in front of them cost it both. Then this file's
+    /// own census, over every occupant the scythe does not clear, found the priced shape does not fit for the NINE clump
+    /// kinds: `clears_with=clear_debris(...),break_resource_clump(...)` with a price each is 153 characters, which pushes
+    /// the field past the share on its own and leaves the model the occupant and no action. The brief shape carries the
+    /// occupants and the action ids and drops the price - the one of the three a caller cannot act on here.
+    /// </para>
+    /// <para>
+    /// THE CLEARERS ARE THE CATALOGUE'S ANSWER, never a kind-to-action table kept here: `DeclaredClearersOf` is the same
+    /// join the route refusals use, so a declaration that stops naming an occupant takes its action out of this sentence
+    /// in the same commit. A kind nothing declares answers `no_published_action_clears:&lt;kind&gt;`, which
+    /// `SweepTargetRefusalNamingTests` holds to <see cref="TileOccupantKind.Unclearable"/>: "nothing removes this" is
+    /// only lawful for a kind that says so.
+    /// </para>
+    /// </summary>
+    internal static string DescribeTargetNotScytheWork(string occupant, Vector2 named) =>
+        ClearingEvidence.DescribeBlockerBrief(
+            occupant,
+            ((int)named.X, (int)named.Y),
+            FarmhandForEachHealing.DeclaredClearersOf(occupant));
 
     /// <summary>What stands on one tile, read through the classifier `for_each` rows already use.</summary>
     internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)

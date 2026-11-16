@@ -1184,6 +1184,14 @@ internal sealed partial class ExecutionManager
     /// `scythe_crop` already let her, on one tile she can foresee.
     /// </para>
     /// <para>
+    /// THE NAMED TILE MUST BE ONE THIS SWING CAN MOVE. Completion is the NAMED tile moving, so a tile holding an occupant
+    /// the scythe family never declared (`twig`, `stone`, a tree, a placed machine, or nothing at all) is refused before
+    /// the swing as `sweep_target_not_scythe_work:&lt;occupant&gt;`, with the occupant, its tile and the published action
+    /// that clears it (`clears_with`). Measured `round63`: the admitted alternative was a swing that cut an unnamed weed
+    /// and answered `scythe_sweep_partial`, which is a side effect the caller never asked for instead of the fact it
+    /// needed.
+    /// </para>
+    /// <para>
     /// THE RECEIPT IS TWO READS ON EITHER SIDE OF THE ONE CALL, and it claims no combat: `DoDamage` also damages
     /// monsters and destroys projectiles, and six evaluations are not vanilla's seven, so nothing about hits or kills is
     /// reported. `PartiallySucceeded` is the honest state when the arc held more work than the swing did - the named
@@ -1249,6 +1257,21 @@ internal sealed partial class ExecutionManager
             Dictionary<Vector2, MeleeSweepTile> before = new();
             foreach (Vector2 tile in arc)
                 before[tile] = MeleeSweepOccupancy.Read(location, world, tile);
+            // THE TILE SHE NAMED IS THE COMPLETION CONDITION, so a tile this swing does not clear is a request that can
+            // only come back partial - after a swing the engine's arc aims behind her as well as in front. The occupant
+            // and the published action that DOES remove it are named, in that order, inside the Host's model share.
+            MeleeSweepTile namedTile = before[named];
+            if (!MeleeSweepOccupancy.Sweepable.Contains(namedTile.Occupant))
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"{MeleeSweepOccupancy.TargetNotScytheWork}:{namedTile.Occupant}",
+                    MeleeSweepOccupancy.DescribeTargetNotScytheWork(namedTile.Occupant, named)
+                        + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Terrain, namedTile.Occupant).Format()}");
+            }
+
             List<(Vector2 Tile, string Kind)> wouldDestroy = MeleeSweepOccupancy.Undeclared(arc, tile => before[tile], named);
             if (wouldDestroy.Count > 0)
             {
@@ -1261,15 +1284,6 @@ internal sealed partial class ExecutionManager
             }
 
             int sweepable = arc.Count(tile => MeleeSweepOccupancy.Sweepable.Contains(before[tile].Occupant));
-            if (sweepable == 0)
-            {
-                return this.RememberTerminal(
-                    requestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "sweep_nothing_to_cut",
-                    $"target={targetX},{targetY};arc_tiles={arc.Count.ToString(CultureInfo.InvariantCulture)};sweepable=0");
-            }
 
             float staminaBefore = Game1.player.Stamina;
             UseNativeMeleeSweep(weapon, location, targetX, targetY, Game1.player, staminaBefore, facing);

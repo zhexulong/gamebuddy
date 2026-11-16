@@ -11,6 +11,7 @@ using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Tools;
 using Xunit;
+using Xunit.Abstractions;
 using static GameBuddy.Stardew.Integration.Tests.TargetFamilyCompletenessTests;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -50,6 +51,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class SweepTargetRefusalNamingTests
 {
+    private readonly ITestOutputHelper output;
+
+    public SweepTargetRefusalNamingTests(ITestOutputHelper output) => this.output = output;
+
     /// <summary>The code the sweep's named-tile refusal is minted under, and the occupant it names after the colon.</summary>
     private const string TargetNotScytheWork = "sweep_target_not_scythe_work";
 
@@ -153,6 +158,52 @@ public sealed class SweepTargetRefusalNamingTests
             "its clearer was the 12th field, past the 160-character share the model reads");
     }
 
+    /// <summary>
+    /// THE GATE, over the whole occupant vocabulary rather than the twig. Population: every kind
+    /// <see cref="TileOccupantKind.Published"/> names that the scythe family does NOT declare it clears - derived from
+    /// the two declarations, so an occupant kind added tomorrow is examined without an edit here. Property: the refusal
+    /// the sweep mints for it names what stands there and what would open it, inside the share the model receives - a
+    /// published clearer with its own price, or `no_published_action_clears:&lt;kind&gt;` for a kind
+    /// <see cref="TileOccupantKind.Unclearable"/> says so about.
+    ///
+    /// <para>
+    /// THE COUNTS ARE PRINTED and zero population is a failure, because a census whose population silently emptied
+    /// agrees with itself. The falsifier sits at the end: a kind no declaration names and no `Unclearable` row declares
+    /// must come back OPAQUE, which is the shape the twig itself had in `round63`.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryOccupantTheScytheCannotMoveIsNamedWithWhatWould()
+    {
+        string[] examine = TileOccupantKind.Published
+            .Where(kind => !MeleeSweepOccupancy.Sweepable.Contains(kind))
+            .ToArray();
+        var opaque = new List<string>();
+        int actionable = 0;
+        foreach (string kind in examine)
+        {
+            string detail = MeleeSweepOccupancy.DescribeTargetNotScytheWork(kind, new Vector2(69f, 31f));
+            (bool ok, string why) = RefusalActionability.Judge(detail);
+            if (ok) actionable += 1;
+            else opaque.Add($"{kind} ({why})");
+        }
+
+        string line = $"occupants examined {examine.Length} · actionable {actionable} · opaque {opaque.Count}"
+            + (opaque.Count == 0 ? string.Empty : $" ({string.Join("; ", opaque)})");
+        this.output.WriteLine(line);
+        examine.Should().Contain(
+            TileOccupantKind.Twig,
+            "the population is the occupants the scythe does not clear, and the run's own blocker is one of them - " + line);
+        examine.Should().NotBeEmpty("a census that examines nothing proves nothing");
+        opaque.Should().BeEmpty("every occupant the scythe cannot move must name what would: {0}", line);
+
+        // THE FALSIFIER: a kind the catalogue knows nothing about is exactly what an undeclared new occupant would look
+        // like, and the same census must call it opaque rather than pass it.
+        string unknown = MeleeSweepOccupancy.DescribeTargetNotScytheWork("no_declared_occupant", new Vector2(69f, 31f));
+        RefusalActionability.Judge(unknown).Actionable.Should().BeFalse(
+            "`no_published_action_clears` is only lawful for a kind `TileOccupantKind.Unclearable` declares - got {0}", unknown);
+    }
+
     // ---- the census ----------------------------------------------------------
 
     /// <summary>
@@ -195,10 +246,18 @@ public sealed class SweepTargetRefusalNamingTests
                     : (true, $"declared unclearable: {unclearable}");
             }
 
-            return clears.Contains('(') && clears.EndsWith(')')
+            return clears.Split(',').All(entry => ActionIdPattern.IsMatch(entry))
                 ? (true, $"names {clears}")
-                : (false, $"clears_with={clears} names no action with its own price");
+                : (false, $"clears_with={clears} names no published action id");
         }
+
+        /// <summary>
+        /// One clearer as the catalogue spells it: the action id, with the declaration's own price in brackets when the
+        /// producer publishes one (`remove_placed_item(stamina:2,tool:target_requirement,turns:1)`).
+        /// </summary>
+        private static readonly Regex ActionIdPattern = new(
+            @"^[a-z][a-z0-9_]*(?:\([^()]*\))?$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         private static Dictionary<string, string> Fields(string text, bool truncated)
         {

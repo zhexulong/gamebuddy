@@ -746,8 +746,8 @@ function hasScytheSweepArcEvidence(evidence: Readonly<Record<string, string>>): 
   const arcClear = integerEvidenceValue(evidence.arc_clear);
   const tilesChanged = integerEvidenceValue(evidence.tiles_changed);
   if (arcTiles === null || arcSweepable === null || arcClear === null || tilesChanged === null) return false;
-  // A swing that happened sampled a real arc, and the Mod refuses an arc with nothing cuttable on it BEFORE swinging
-  // (`sweep_nothing_to_cut`), so a success reporting either is describing a different swing.
+  // A swing that happened sampled a real arc, and the Mod refuses a request whose NAMED tile carries nothing the scythe
+  // clears BEFORE swinging (`sweep_target_not_scythe_work`), so a success reporting either is describing a different swing.
   if (!(arcTiles > 0) || !(arcSweepable > 0)) return false;
   // The arc's counts partition it: a tile is sweepable, clear, or holding something a scythe does not cut.
   if (arcSweepable + arcClear > arcTiles) return false;
