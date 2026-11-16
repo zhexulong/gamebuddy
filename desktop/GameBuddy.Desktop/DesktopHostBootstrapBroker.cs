@@ -446,12 +446,16 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         if (closed) return;
         closed = true;
         sessionClosing.Cancel();
+        // The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
+        // reclamation waits for, so a child that is reclaiming must never be waiting behind this
+        // launcher's own containment. Disposing the server end closes the one instance the child is
+        // connected to; the child observes the loss on its own session and leaves by itself.
+        server.Dispose();
         try
         {
-            // Task contract: Desktop shutdown/session revocation closes only the
-            // retained Guardian control writer and waits for its redacted
-            // terminal outcome. CloseControlAndWaitForExitAsync is idempotent
-            // and returns ControlClosed once the native guardian has exited.
+            // Only then does the launcher give up the guardian it relays to. The native guardian
+            // exits on the control EOF this closes, which is how the roles it created are contained
+            // on this side even when the child never got to ask for it.
             if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -459,7 +463,6 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             // Teardown must never mask the original failure with a close error;
             // the caller's guard-lease disposal still terminates as a fallback.
         }
-        server.Dispose();
     }
 
     public async ValueTask DisposeAsync() => await CloseAsync(CancellationToken.None).ConfigureAwait(false);

@@ -22,7 +22,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     // and neither is the absence of fields beside them - see IsAcknowledgement.
     private static readonly string[] AcknowledgementRequiredProperties =
     [
-        "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema",
+        "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema", "drainDeadlineMs",
     ];
     // The acknowledgement means READY FOR SERVICE: by the time the child writes it, it has opened
     // its databases, provisioned the semantic authority, Magic Context and the Pi agent stores, and
@@ -50,6 +50,15 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     // that never publishes at all, because a launcher waiting for a presentation it will never
     // receive would be a launcher hanging on an optional fact.
     private static readonly TimeSpan PresentationHandoffWait = TimeSpan.FromSeconds(30);
+
+    // The acceptance bound on the exit deadline the child publishes in its acknowledgement. It is NOT
+    // a teardown budget and the launcher never substitutes it for one: the wait is exactly what the
+    // child declared, which is the child's own arithmetic over its reclamation steps
+    // (`host/src/composition/desktop-host-reclamation.ts`). This is the protocol's bound on a number
+    // that would otherwise be unbounded from the launcher's side - an hour is already far past any
+    // quit a player would sit through, so a child claiming more is broken rather than slow, and a
+    // refusal is a failed launch instead of a tray that never comes back.
+    private const long MaximumReportedDrainDeadlineMs = 3_600_000;
 
     /// <summary>
     /// The player's presentation, as this launch owns it: the entry the child published and the
@@ -213,7 +222,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             }
 
             var locks = runtime.TransferLocks();
-            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker);
+            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot);
             brokerTransferred = true;
             process = null;
             return lease;
@@ -572,10 +581,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // for the whole product to stop.
         await HostBootstrapPipeIo.ReadFramesAsync(reader, MaxWireBytes, (frame) =>
         {
-            var stage = DispatchBootstrapFrame(frame, selection, bootstrapId, watchdog);
+            var stage = DispatchBootstrapFrame(frame, selection, bootstrapId, watchdog, out var result);
             if (stage is null)
             {
-                acknowledgement = new HostBootstrapResult();
+                acknowledgement = result;
                 return false;
             }
             observedStage(stage);
@@ -593,8 +602,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     /// acknowledgement's fields is refused rather than served, and the acknowledgement is never
     /// read as one more status frame.
     /// </summary>
-    private static string? DispatchBootstrapFrame(byte[] frame, InstalledGenerationSelection selection, string bootstrapId, HostBootstrapWatchdog watchdog)
+    private static string? DispatchBootstrapFrame(byte[] frame, InstalledGenerationSelection selection, string bootstrapId, HostBootstrapWatchdog watchdog, out HostBootstrapResult? acknowledgement)
     {
+        acknowledgement = null;
         ValidateOneWireDocument(frame);
         using var document = JsonDocument.Parse(frame[..^1]);
         var value = document.RootElement;
@@ -609,7 +619,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             watchdog.ObserveFrame(waitingForPlayerInput);
             return stage;
         }
-        if (IsAcknowledgement(value, selection, bootstrapId)) return null;
+        if (IsAcknowledgement(value, selection, bootstrapId, out var drainDeadlineMs))
+        {
+            acknowledgement = new HostBootstrapResult(drainDeadlineMs);
+            return null;
+        }
         throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
 
@@ -630,18 +644,33 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     /// two sides to disagree about the same acknowledged fact. The status frame's own reader keeps
     /// its ordinal check, because there the position of the optional wait statement is exactly what
     /// makes three fields and four fields unambiguous.
+    ///
+    /// <para>
+    /// <c>drainDeadlineMs</c> is the child's exit deadline: how long its own reclamation says it may
+    /// take, derived from its own step table. It is required, because the launcher waits exactly that
+    /// and keeps no copy of its own to fall back on, and it is bounded here because a number a child
+    /// could make unbounded would be a tray that never comes back. It is returned rather than merely
+    /// accepted: the one wait that uses it is <see cref="RuntimeSupervisorLease.CloseAsync"/>.
+    /// </para>
     /// </summary>
-    private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId) =>
-        ack.ValueKind == JsonValueKind.Object &&
-        AcknowledgementRequiredProperties.All(name => ack.TryGetProperty(name, out _)) &&
-        ack.GetProperty("schema").GetString() == "gamebuddy-desktop-host-bootstrap/v1" &&
-        ack.GetProperty("protocolVersion").GetInt32() == 1 &&
-        ack.GetProperty("status").GetString() == "accepted" &&
-        ack.GetProperty("bootstrapId").GetString() == bootstrapId &&
-        ack.GetProperty("generation").GetString() == selection.Generation &&
-        ack.GetProperty("inventoryDigest").GetString() == selection.InventoryDigest &&
-        ack.GetProperty("runtimeAdmissionSha256").GetString() == selection.RuntimeAdmissionSha256 &&
-        ack.GetProperty("rootLayoutSchema").GetString() == "gamebuddy-windows-root-layout/v1";
+    private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId, out long drainDeadlineMs)
+    {
+        drainDeadlineMs = 0;
+        if (ack.ValueKind != JsonValueKind.Object ||
+            !AcknowledgementRequiredProperties.All(name => ack.TryGetProperty(name, out _)) ||
+            ack.GetProperty("schema").GetString() != "gamebuddy-desktop-host-bootstrap/v1" ||
+            ack.GetProperty("protocolVersion").GetInt32() != 1 ||
+            ack.GetProperty("status").GetString() != "accepted" ||
+            ack.GetProperty("bootstrapId").GetString() != bootstrapId ||
+            ack.GetProperty("generation").GetString() != selection.Generation ||
+            ack.GetProperty("inventoryDigest").GetString() != selection.InventoryDigest ||
+            ack.GetProperty("runtimeAdmissionSha256").GetString() != selection.RuntimeAdmissionSha256 ||
+            ack.GetProperty("rootLayoutSchema").GetString() != "gamebuddy-windows-root-layout/v1" ||
+            !ack.GetProperty("drainDeadlineMs").TryGetInt64(out var declared) ||
+            declared is <= 0 or > MaximumReportedDrainDeadlineMs) return false;
+        drainDeadlineMs = declared;
+        return true;
+    }
 
     /// <summary>
     /// Reads one status frame: the exact ordinal key sequence the child writes, two bounded tokens
@@ -858,8 +887,11 @@ internal static class HostBootstrapPipeIo
     }
 }
 
-/// <summary>Redacted evidence that the exact private bootstrap acknowledgement was accepted.</summary>
-internal sealed class HostBootstrapResult { }
+/// <summary>
+/// Redacted evidence that the exact private bootstrap acknowledgement was accepted, carrying the one
+/// number the launcher takes from it: the child's own exit deadline, in milliseconds.
+/// </summary>
+internal sealed record HostBootstrapResult(long DrainDeadlineMs);
 
 /// <summary>Owns the exact Host child and the two admitted file locks after bootstrap.</summary>
 internal sealed class RuntimeSupervisorLease : IAsyncDisposable
@@ -869,15 +901,19 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     private AdmittedRuntimeFile? bootstrap;
     private DesktopHostBootstrapBroker? broker;
     private GuardianSupervisorLease? residentGuardian;
+    // The admitted operational root: where this launcher writes its own teardown fact, beside the
+    // child's own exit records.
+    private readonly string operationalRoot;
     private readonly SemaphoreSlim guardianGate = new(1, 1);
     private int closed;
 
-    internal RuntimeSupervisorLease(WindowsNative.SafeProcessHandle process, AdmittedRuntimeFile runtime, AdmittedRuntimeFile bootstrap, HostBootstrapResult result, DesktopHostBootstrapBroker broker)
+    internal RuntimeSupervisorLease(WindowsNative.SafeProcessHandle process, AdmittedRuntimeFile runtime, AdmittedRuntimeFile bootstrap, HostBootstrapResult result, DesktopHostBootstrapBroker broker, string operationalRoot)
     {
         this.process = process;
         this.runtime = runtime;
         this.bootstrap = bootstrap;
         this.broker = broker;
+        this.operationalRoot = operationalRoot;
         Result = result;
     }
 
@@ -942,30 +978,69 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Ends the exact admitted child in the order a quit requires.
+    ///
+    /// Closing the authenticated broker is the ARM, not the epilogue. That broker owns the one pipe
+    /// this launcher shares with the child, and closing it is the controller EOF the child's own
+    /// exit reclamation waits for (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`: the
+    /// authenticated session's loss requests the same termination a signal would). Running the
+    /// termination first made that EOF unobservable on every clean quit - the child was already dead
+    /// when it would have arrived - so the child's eight named steps never ran and its own drain
+    /// budget was dead code on this path.
+    ///
+    /// So the order is: arm the child, wait for it to leave inside the deadline IT published in its
+    /// acknowledgement, and terminate only as the watchdog over that wait. The wait's expiry is a
+    /// named fact of this launcher's own (`host_teardown_timeout`, written beside the child's exit
+    /// records) because killing a child that was still reclaiming must never be silent.
+    /// </summary>
     internal async Task CloseAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var shouldTerminate = Interlocked.Exchange(ref closed, 1) == 0;
         var child = Interlocked.Exchange(ref process, null);
-        if (child is not null)
-        {
-            if (shouldTerminate) _ = WindowsNative.TerminateProcess(child, 1);
-            await Task.Run(() => _ = WindowsNative.WaitForSingleObject(child, 30_000), CancellationToken.None).ConfigureAwait(false);
-            child.Dispose();
-        }
         await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            // The authenticated broker closure is the only guardian signal we own:
-            // closing it drives the guardian's control EOF so the native guardian
-            // exits by itself. The resident guardian lease belongs to its caller
-            // (the composition/test scope that created and attached it); the host
-            // lease must not dispose it, or the caller observes a nulled handle.
+            // The authenticated broker closure is the child's controller EOF and the only guardian
+            // signal we own: closing it drives the guardian's control EOF so the native guardian
+            // exits by itself. The resident guardian lease belongs to its caller (the
+            // composition/test scope that created and attached it); the host lease must not dispose
+            // it, or the caller observes a nulled handle.
             await (Interlocked.Exchange(ref broker, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
         }
         finally { guardianGate.Release(); }
+        if (child is not null)
+        {
+            var waited = Stopwatch.StartNew();
+            if (shouldTerminate && !await WaitForExitWithinAsync(child, Result.DrainDeadlineMs).ConfigureAwait(false))
+            {
+                var pid = WindowsNative.GetProcessId(child);
+                _ = WindowsNative.TerminateProcess(child, 1);
+                DesktopHostTeardownRecord.Write(operationalRoot, pid, waited.ElapsedMilliseconds, Result.DrainDeadlineMs);
+                // The kill is this launch's last resort, so the handle is waited for once more: this
+                // is the bound on "the process did not even die", not a second teardown budget.
+                _ = await Task.Run(() => WindowsNative.WaitForSingleObject(child, 30_000), CancellationToken.None).ConfigureAwait(false);
+            }
+            child.Dispose();
+        }
         Interlocked.Exchange(ref bootstrap, null)?.Dispose();
         Interlocked.Exchange(ref runtime, null)?.Dispose();
+    }
+
+    /// <summary>
+    /// Waits for the exact child to leave, bounded by the deadline the child itself declared, and
+    /// reports whether it left inside it.
+    ///
+    /// The caller's token is deliberately not observed: the quit is already under way, and the one
+    /// thing it still has to learn is whether the child left. A child that is already gone returns at
+    /// once - the wait is on the process handle, not a sleep.
+    /// </summary>
+    private static async Task<bool> WaitForExitWithinAsync(WindowsNative.SafeProcessHandle child, long drainDeadlineMs)
+    {
+        var bounded = (uint)Math.Clamp(drainDeadlineMs, 0, int.MaxValue);
+        var result = await Task.Run(() => WindowsNative.WaitForSingleObject(child, bounded), CancellationToken.None).ConfigureAwait(false);
+        return result == WindowsNative.WaitObject0;
     }
 
     public ValueTask DisposeAsync() => new(CloseAsync(CancellationToken.None));

@@ -339,9 +339,11 @@ internal static class Program
     /// <summary>
     /// Waits for the one thing that ends an admitted session: the exact child exiting, or the
     /// player asking the primary instance to quit. On a quit this flow STOPS rather than reaping
-    /// the child here, because the lease's own close is the single path that terminates that exact
-    /// child and waits its bounded time for it; the tray has already said "closing", and no part of
-    /// this entry claims a Chat or Game close it cannot prove.
+    /// the child here, because the lease's own close is the single path that ends that exact child:
+    /// it hands the child its controller EOF, waits for the child's own exit reclamation inside the
+    /// deadline the child declared in its acknowledgement, and terminates it only if that wait
+    /// expires. The tray has already said "closing", and no part of this entry claims a Chat or Game
+    /// close it cannot prove.
     /// </summary>
     private static async Task<bool> WaitForSessionEndAsync(RuntimeSupervisorLease host, CancellationToken quitRequested, CancellationToken cancellationToken)
     {
