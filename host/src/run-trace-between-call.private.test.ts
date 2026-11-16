@@ -51,7 +51,6 @@ function service(loop: unknown, events: unknown, trace: ReturnType<typeof create
     undefined,
     undefined,
     undefined,
-    undefined,
     trace,
   );
 }

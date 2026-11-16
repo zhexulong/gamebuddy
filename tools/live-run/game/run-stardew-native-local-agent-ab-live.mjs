@@ -1723,10 +1723,12 @@ function assessDayStarts({ scheduledDays, readings } = {}) {
  * </p>
  *
  * <p>
- * The marker is the arrival paragraph's own invariant opening (`host/src/companion-arrival-fact.ts`,
- * `ARRIVAL_OPENING_*`), and the two openings are spelled here because the module does not export them; this runner's test
- * compares them against the owner's source so the marker cannot drift. The record is the authority, not the activation
- * flag: "the flag was set" and "the delivery happened" came apart in every other reading in this file.
+ * The marker is the arrival fact's own model-facing line - the one `<world-facts>` prints for it from
+ * `WORLD_FACT_KIND_ZH.companion_arrival` (`host/src/fact-brief.ts`) - spelled here because that table is module-local;
+ * this runner's test compares it against the owner's source so the marker cannot drift. It is the only thing in a
+ * delivery that names the arrival: the fact states no sentence of its own (the state it used to repeat is the batch's
+ * `<world-state>`). The record is the authority, not the activation flag: "the flag was set" and "the delivery
+ * happened" came apart in every other reading in this file.
  * </p>
  *
  * <p>
@@ -1735,10 +1737,7 @@ function assessDayStarts({ scheduledDays, readings } = {}) {
  * </p>
  */
 function assessCompanionArrival({ attached, texts } = {}) {
-  const openings = Object.freeze([
-    "你刚到这座农场，第一次真的站在这里",
-    "You have just arrived on this farm and are standing here for the first time",
-  ]);
+  const arrivalLine = "- 她到了";
   if (attached !== true)
     return Object.freeze({
       measured: false,
@@ -1755,7 +1754,7 @@ function assessCompanionArrival({ attached, texts } = {}) {
       reason: "session_record_unreadable",
       verdictCode: "companion_arrival_unmeasured",
     });
-  const said = texts.filter((text) => openings.some((opening) => text.includes(opening))).length;
+  const said = texts.filter((text) => text.includes(arrivalLine)).length;
   return Object.freeze({
     measured: true,
     said,

@@ -5597,8 +5597,8 @@ test("a blind day outranks her silence, and the attach's arrival is answered bef
 
 test("the attach's arrival fact is said once per session, and a run that never attached is not charged for it", () => {
   const [assessCompanionArrival] = extractRunnerFunction(RUNNER_SOURCE, ["assessCompanionArrival"]);
-  const arrivalZh = "你刚到这座农场，第一次真的站在这里。";
-  const once = assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY, arrivalZh] });
+  const arrivalDelivery = "<world-facts>\n- 她到了\n</world-facts>";
+  const once = assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY, arrivalDelivery] });
   assert.equal(once.said, 1);
   assert.equal(once.reading, "arrival said 1 of 1");
   assert.equal(once.verdictCode, null);
@@ -5610,7 +5610,7 @@ test("the attach's arrival fact is said once per session, and a run that never a
   assert.equal(
     assessCompanionArrival({
       attached: true,
-      texts: [arrivalZh, "You have just arrived on this farm and are standing here for the first time."],
+      texts: [arrivalDelivery, `${OBSERVED_FIRST_DELIVERY}\n${arrivalDelivery}`],
     }).verdictCode,
     "companion_arrival_said_twice",
   );
@@ -5623,9 +5623,9 @@ test("the attach's arrival fact is said once per session, and a run that never a
 });
 
 test("the runner reads the owner's own strings for both markers, so neither can drift in silence", () => {
-  // One authority per fact: the marker lives in `host/src/fact-brief.ts` and the arrival openings in
-  // `host/src/companion-arrival-fact.ts`. Neither is exported, so they are compared against the owner's source instead of
-  // being restated here (a copy that agrees today is a disagreement scheduled for later).
+  // One authority per fact: both markers are declared in `host/src/fact-brief.ts`. Neither is exported, so they are
+  // compared against the owner's source instead of being restated here (a copy that agrees today is a disagreement
+  // scheduled for later).
   const factBrief = readFileSync(new URL("../../../host/src/fact-brief.ts", import.meta.url), "utf8");
   const ownerMarker = /const NOTHING_OBSERVED = "([^"]+)";/u.exec(factBrief)?.[1];
   const runnerMarker = /const NOTHING_OBSERVED_WORLD = "([^"]+)";/u.exec(RUNNER_SOURCE)?.[1];
@@ -5636,16 +5636,15 @@ test("the runner reads the owner's own strings for both markers, so neither can 
   );
   assert.equal(runnerMarker, ownerMarker, "the blind marker must be the owner's wording, not a second copy of it");
 
-  const arrivalOwner = readFileSync(new URL("../../../host/src/companion-arrival-fact.ts", import.meta.url), "utf8");
-  const openings = [
-    /const ARRIVAL_OPENING_ZH = "([^"]+)";/u.exec(arrivalOwner)?.[1],
-    /const ARRIVAL_OPENING_EN = "([^"]+)";/u.exec(arrivalOwner)?.[1],
-  ];
-  assert.deepEqual(
-    openings.filter((opening) => (opening ?? "").length > 0).length,
-    2,
-    "the owner must still declare both arrival openings",
+  const arrivalLineOwner = /companion_arrival: "([^"]+)",/u.exec(factBrief)?.[1];
+  const runnerArrivalLine = /const arrivalLine = "- ([^"]+)";/u.exec(RUNNER_SOURCE)?.[1];
+  assert.ok(
+    (arrivalLineOwner ?? "").length > 0,
+    "the owner must still name `companion_arrival` in WORLD_FACT_KIND_ZH; if it was renamed, update this reading",
   );
-  for (const opening of openings)
-    assert.ok(RUNNER_SOURCE.includes(`"${opening}"`), `the arrival marker must be the host's own sentence: ${opening}`);
+  assert.equal(
+    runnerArrivalLine,
+    arrivalLineOwner,
+    "the arrival marker must be the line the owner prints for that kind, not a second copy of it",
+  );
 });
