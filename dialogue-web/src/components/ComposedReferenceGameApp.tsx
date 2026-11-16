@@ -25,12 +25,7 @@ import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import type { BrowserDraftV1, BrowserEventV1 } from "../reference-pipeline-api";
 import { TavernProblemError, TavernProtocolError } from "../reference-pipeline-api";
-import {
-  createReferencePipelineSession,
-  type PendingSubmission,
-  pendingSubmission,
-  ReferencePipelineSessionError,
-} from "../reference-pipeline-session";
+import { createReferencePipelineSession, ReferencePipelineSessionError } from "../reference-pipeline-session";
 import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
 import { createSerialDrain, type SerialDrain } from "../serial-drain";
 import { AppBar } from "./AppBar";
@@ -49,7 +44,7 @@ import {
   terminalTurnNotice,
 } from "./composed-chat-shell-state";
 import { ContextDrawer } from "./ContextDrawer";
-import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
+import { newIdempotencyKey } from "./composed-reference-game-view";
 import { GameSurface } from "./GameSurface";
 import { MemorySurface } from "./MemorySurface";
 import { createManagementPipelineApi } from "./management-surface-panels";
@@ -61,6 +56,7 @@ import { SkipLink } from "./SkipLink";
 import { LEADING_SURFACE_COUNT, surfaceBarEntries } from "./surface-bar-entries";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { SurfaceDrafts } from "./surface-drafts";
+import { createTurnMutation } from "./turn-mutation";
 import { markTurn, observeTurnEvent } from "./turn-timings";
 import { useArrivalReread } from "./use-arrival-reread";
 import { useAppearance } from "./use-appearance";
@@ -634,94 +630,25 @@ export function ComposedReferenceGameApp() {
   }, [view.kind, commit, eventStreamEpoch]);
 
   /**
-   * Begin the durable half of a turn-starting Chat mutation: the profile must
-   * offer `chat.submit` as `available` (the store admits exactly one turn at a
-   * time, so that availability *is* "no turn is in flight"), and the mutation's
-   * own pending record - correlated by the idempotency key it sends - must be
-   * published before its wire call.
+   * The one envelope both turn-starting mutations run through (`turn-mutation`): the record a press
+   * publishes before its wire call, and what becomes of that record when the wire call fails.
    *
-   * The record is not bookkeeping. `startPolling`'s first tick returns for a
-   * session with nothing pending, which is what keeps every idle session from
-   * polling, and that fallback poll is the only thing that settles a turn when
-   * no event stream is delivering it. Publishing in this one place is what keeps
-   * the next turn-starting mutation (send and regenerate are the two) from
-   * starting a poll that is dead on its first tick; a mutation that starts no
-   * turn (swipe) publishes nothing and polls nothing.
-   *
-   * The poll is started here, at the publication, and not by the callers after
-   * their wire call returns. A mutation's answer is one of the things that can
-   * simply never arrive - a request left open, a proxy that never closes - and
-   * the poll is the only reader that can resolve the record beside
-   * `chat.submission_status`. Started after the answer, it never ran for exactly
-   * the submission that needed it: the record stayed set, so the field stayed
-   * locked and the action slot stayed a spinner, with no Send, no Stop and no
-   * sentence, for as long as the tab lived.
-   *
-   * Returns null - having committed the rejected projection, or having found no
-   * available `chat.submit` - and the caller must then send nothing.
+   * It is handed the shell's own seams rather than owning them - the committed view, the turn key,
+   * the Chat problem, the two sentences and the poll - so send and regenerate cannot spell the
+   * publication, the settle rule or the poll start for themselves. The two names are the ones their
+   * call sites and `turn-timings-gate` already read: the gate's population is the call sites of
+   * `beginTurnMutation` in THIS file, so the seam keeps its name where it is called and the module
+   * owns the body.
    */
-  const beginTurnMutation = (idempotencyKey: string, current: ReadyView): PendingSubmission | null => {
-    const operation = current.session.snapshot.operations.find((op) => op.operationId === "chat.submit");
-    if (operation?.availability !== "available") return null;
-    try {
-      const pending = pendingSubmission(idempotencyKey, current.session.snapshot);
-      commit({ ...current, session: current.session.withPending(pending) });
-      // The last refusal described the last attempt, and this attempt is the answer to it. Cleared here
-      // rather than in the handler because this is the seam both turn-starting mutations share - send and
-      // regenerate - so neither can leave a sentence about an attempt it already superseded on screen.
-      setSendFailure(null);
-      // The last poll failure described the last attempt too, and this attempt is the answer to it.
-      setPollFailure(null);
-      startPolling();
-      return pending;
-    } catch (error) {
-      commitChatProblem(error);
-      return null;
-    }
-  };
-
-  /**
-   * Whether the Host itself answered a failed turn-starting mutation.
-   *
-   * `TavernProblemError` is the Host's own validated problem document: it answered, and the answer
-   * is that the command was not carried out. Everything else is the absence of an answer - a dropped
-   * connection, a timeout, a body this client could not read - and the absence of an answer is not a
-   * refusal: it says nothing about whether the Host admitted the submission.
-   */
-  const hostAnswered = (error: unknown): boolean => error instanceof TavernProblemError;
-
-  /**
-   * What a failed turn-starting mutation does with the record it published.
-   *
-   * Two facts, not one, and the difference decides whether the player may send again:
-   *
-   *   - **refused** - the Host answered. Nothing ran, so the record is spent and the composer is
-   *     handed back. `rereadChat`'s settle rule cannot do this: it spends a record for a *terminal
-   *     turn*, and a refusal leaves no turn at all, so the spinner of a submission no turn backs
-   *     would outlive the refusal until the player switched chats or reloaded.
-   *   - **unanswered** - no answer arrived. The record survives, because it is exactly the fact that
-   *     a submission may be held: it keeps the fallback poll live and keeps the send gate closed.
-   *     Handing it back invites a resend of a message the Host may already be answering, which is a
-   *     second player row and a second provider turn for one press. The poll is the one authority
-   *     that can say what happened, and it spends the record when the turn settles.
-   *
-   * Send and regenerate publish the same record through the same seam (`beginTurnMutation`), so they
-   * resolve it through the same one, and that seam is also where the poll that resolves it starts.
-   *
-   * Read from `viewRef` rather than from the caller's own view: this runs after the mutation's await
-   * (and, for regenerate, after its reread), so the view the caller captured is no longer the view
-   * the record lives in.
-   */
-  const settleFailedTurnMutation = (error: unknown): void => {
-    if (!hostAnswered(error)) return;
-    // An answered refusal means nothing ran, so no turn will ever settle the attempt this key names:
-    // it is not "waiting for a turn" any more, it is a name with no turn behind it. Forgotten here,
-    // at the one seam every turn-starting mutation settles through.
-    turnKeyRef.current = null;
-    const latest = viewRef.current;
-    if (latest.kind === "ready" && latest.session.pending !== null)
-      commit({ ...latest, session: latest.session.withPending(null) });
-  };
+  const { begin: beginTurnMutation, settleFailure: settleFailedTurnMutation } = createTurnMutation({
+    viewRef,
+    turnKeyRef,
+    commit,
+    commitChatProblem,
+    setSendFailure,
+    setPollFailure,
+    startPolling,
+  });
 
   const handleSend = async (): Promise<void> => {
     const current = viewRef.current;
