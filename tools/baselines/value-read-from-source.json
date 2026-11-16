@@ -1,0 +1,181 @@
+{
+  "gate": "cross_language_value_reads/v1",
+  "why": "Every entry is a reader that obtains a VALUE by parsing another language's SOURCE. This is recorded debt, not an exemption: an entry whose site is gone or whose pattern changed is `value_read_baseline_stale` and must be deleted, and the fix each entry names is its own unit.",
+  "sites": [
+    {
+      "file": "dialogue-web/tests/composed-reference-game-browser-api.test.mjs",
+      "target": "../../host/src/game-browser-contract/index.ts",
+      "value": "GameDiscoveryMutationResultV1Schema",
+      "pattern": "export const GameDiscoveryMutationResultV1Schema = Type\\.Union\\(\\[([\\s\\S]*?)\\]\\);",
+      "owed": "the frontend test lifts the discovery-mutation union's member names out of the Host's schema source; the browser contract should publish those members as data, the way `model-field-budget.published.json` does"
+    },
+    {
+      "file": "dialogue-web/tests/game-presentation.test.mjs",
+      "target": "src/game-presentation.ts",
+      "value": "code",
+      "pattern": "code === \"([a-z0-9_]+)\"",
+      "owed": "the presentation test lifts the code vocabulary out of the surface it tests; the presentation codes should be published as data the test reads"
+    },
+    {
+      "file": "host/src/body-program-script.test.ts",
+      "target": "../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+      "value": "group_1",
+      "pattern": "FarmhandActionLifecycle\\.([A-Za-z]+) => \"([a-z_]+)\"",
+      "owed": "the Host test lifts the Mod's lifecycle-to-filename mapping out of C# source; the generated action surface JSON is the artifact to read"
+    },
+    {
+      "file": "host/src/body-program-script.test.ts",
+      "target": "../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+      "value": "group_1",
+      "pattern": "\\bRegistrations\\b\\s*=\\s*Array\\.AsReadOnly\\(new\\[\\]\\s*\\{([\\s\\S]*?)\\}\\);",
+      "owed": "the same test then parses the registration list out of the same C# file; the same generated action surface closes both"
+    },
+    {
+      "file": "host/src/games/stardew/stardew-action-families.private.test.ts",
+      "target": "../../../../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+      "value": "group_1",
+      "pattern": "\\bRegistrations\\b\\s*=\\s*Array\\.AsReadOnly\\(new\\[\\]\\s*\\{([\\s\\S]*?)\\}\\);",
+      "owed": "the Host test parses the Mod's registration list out of C# source; the generated action surface JSON is the artifact to read"
+    },
+    {
+      "file": "host/src/tool-capability-lost-in-a-merge.test.ts",
+      "target": "integrations/stardew/src/Core/TileOccupantKind.cs",
+      "value": "group_1",
+      "pattern": "public const string (\\w+) = \"([^\"]+)\";",
+      "owed": "the Mod's occupant vocabulary is parsed out of its C# constants; the constants need a published artifact beside them, the shape `host/src/model-field-budget.published.json` already uses"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/AreaToolFootprintTests.cs",
+      "target": "host/src/protocol.ts",
+      "value": "group_1",
+      "pattern": "integerRow\\(\\\"charge\\\",\\s*(\\d+),\\s*(\\d+),",
+      "owed": "the Host's wire rows are read for the charge ladder's bounds; the table needs a published bounds artifact instead of a regex over `integerRow`"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/CharacterBlockedWalkTests.cs",
+      "target": "host/src/protocol.ts",
+      "value": "value",
+      "pattern": "function isReasonCode\\(value: unknown\\): value is string \\{\\s*return typeof value === \\\"string\\\" && /([^/]+)/",
+      "owed": "the Host's reason-code alphabet is lifted out of the validator's own source; the alphabet should be published as data the Mod and the Host both read"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/EngineParityRegistry.cs",
+      "target": "host/src/body-program-packing.ts",
+      "value": "tiles",
+      "pattern": "Object\\.freeze\\(\\{\\s*tiles:\\s*(?<tiles>\\d+),\\s*forward:\\s*(?<forward>\\d+),\\s*across:\\s*(?<across>\\d+),\\s*back:\\s*(?<back>\\d+)\\s*\\}\\)",
+      "owed": "the Host's footprint ladder is parsed out of the packing table; the ladder needs a published artifact the engine parity test reads"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/FishingCatchableReaderTests.cs",
+      "target": "host/src/protocol.ts",
+      "value": "ceiling",
+      "pattern": "value\\.length\\s*<=\\s*(?<ceiling>\\d+)\\s*&&\\s*value\\.every",
+      "owed": "the Host's field-array ceiling is taken out of the validator's body; the ceiling belongs in a published bound, not in a regex over the function that enforces it"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/HeldStatePerturbationTests.cs",
+      "target": "tools/audit-stardew-discovery-channels.mjs",
+      "value": "group_1",
+      "pattern": "^\\s{2}([a-z_]+):",
+      "owed": "a test reads another gate's report keys out of its source; the discovery-channels gate's JSON report is the artifact to read instead"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyRoundTripTests.cs",
+      "target": "host/src/protocol.ts",
+      "value": "field",
+      "pattern": "\\{ field: \\\"([A-Za-z]+)\\\"",
+      "owed": "the Host's snapshot family rows are parsed out of its source; `SNAPSHOT_FAMILY_RULES` needs a published table"
+    },
+    {
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ToolFootprintTableParityTests.cs",
+      "target": "host/src/body-program-packing.ts",
+      "value": "tiles",
+      "pattern": "Object\\.freeze\\(\\{\\s*tiles:\\s*(\\d+),\\s*forward:\\s*(\\d+),\\s*across:\\s*(\\d+),\\s*back:\\s*(\\d+)\\s*\\}\\)",
+      "owed": "the same footprint ladder as EngineParityRegistry.cs, read by a second test; one published artifact closes both"
+    },
+    {
+      "file": "tools/audit-stardew-discovery-channels.mjs",
+      "target": "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs",
+      "value": "group_1",
+      "pattern": "IReadOnlyList<Bridge\\w+>\\??\\s+(\\w+)\\b",
+      "owed": "the gate reads the Mod's bridge model properties out of C# source; the bridge frame table already has a generated JSON authority to read instead"
+    },
+    {
+      "file": "tools/audit-stardew-discovery-channels.mjs",
+      "target": "host/src/game-tools.ts",
+      "value": "group_1",
+      "pattern": "for \\(const action of (\\[[a-z0-9_\"\\s,]+\\]) as const\\) \\{[\\s\\S]*?makeGameActionTool\\(\\{",
+      "owed": "the gate reads the Host's published action list out of the loop that registers each tool; the action surface it audits should be read as the artifact the Host publishes"
+    },
+    {
+      "file": "tools/audit-stardew-scene-kind-projection.mjs",
+      "target": "host/src/protocol.ts",
+      "value": "OBSERVE_SCENE_KINDS",
+      "pattern": "const OBSERVE_SCENE_KINDS = new Set\\(\\[([^\\]]*)\\]\\)",
+      "owed": "the gate reads the wire kind set out of TypeScript; the protocol's kind table needs a published member list, the same gap the other protocol reads in this file record"
+    },
+    {
+      "file": "tools/check-credential-export-isolation.mjs",
+      "target": "host/src/runtime-identity.ts",
+      "value": "routeId",
+      "pattern": "routeId: \"([^\"]+)\"",
+      "owed": "the gate takes a route id literal out of the identity module; the route table it protects should be published for the gate to read"
+    },
+    {
+      "file": "tools/check-credential-export-isolation.mjs",
+      "target": "host/src/tavern/browser-contract/index.ts",
+      "value": "routeId",
+      "pattern": "routeId: \"([^\"]+)\"",
+      "owed": "the gate takes a route id out of the browser contract's literal; the route table it protects should be published for the gate to read"
+    },
+    {
+      "file": "tools/check-stardew-native-multiplayer-sensitivity.mjs",
+      "target": "integrations/stardew/BridgeSession.cs",
+      "value": "group_1",
+      "pattern": "operation is not \\(\"([a-z_]+)\" or \"([a-z_]+)\"\\)",
+      "owed": "the gate parses the C# switch for the operations a session dispatches; the Mod's generated action surface is the artifact to read"
+    },
+    {
+      "file": "tools/check-surface-journeys.mjs",
+      "target": "dialogue-web/src/composed-surface-route.ts",
+      "value": "group_1",
+      "pattern": "from \"(\\.[^\"]+)\"",
+      "owed": "the same import walk over the route module; the same published surface table closes both"
+    },
+    {
+      "file": "tools/check-surface-journeys.mjs",
+      "target": "dialogue-web/src/components/ComposedReferenceGameApp.tsx",
+      "value": "group_1",
+      "pattern": "from \"(\\.[^\"]+)\"",
+      "owed": "the gate walks a frontend component's relatives by parsing its import statements; a published route/surface table is the artifact this needs"
+    },
+    {
+      "file": "tools/lib/stardew-admission-hold-codes.test.mjs",
+      "target": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "value": "event_",
+      "pattern": "internal const string \\w+ = \"(event_[a-z0-9_]+)\"",
+      "owed": "the test lifts the Mod's `event_` hold codes out of its C# constants; a published hold-code list beside them is the fix"
+    },
+    {
+      "file": "tools/live-run/frontend/capture/observation.test.mjs",
+      "target": "vendor/magic-context/packages/pi-plugin/src/gamebuddy-stable-context-source.ts",
+      "value": "gamebuddy",
+      "pattern": "<(gamebuddy-[a-z0-9-]+)",
+      "owed": "the capture test reads the vendored plugin's block name out of its TypeScript; the observation the capture kit records should name it instead"
+    },
+    {
+      "file": "tools/stardew-native-local-runner-fixture-contract.test.mjs",
+      "target": "../integrations/stardew/ModConfig.cs",
+      "value": "group_1",
+      "pattern": "public\\s+([A-Za-z0-9_<>?,\\s]+?)\\s+([A-Za-z0-9_]+)\\s*\\{\\s*get;\\s*init;\\s*\\}",
+      "owed": "the test reads the Mod's config property names by matching C# property syntax; the fixture contract should be published beside the config it describes"
+    },
+    {
+      "file": "tools/stardew-native-multiplayer-sensitivity.test.mjs",
+      "target": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+      "value": "R",
+      "pattern": "\\b(E|R)\\(\\s*\"([a-z0-9_]+)\"",
+      "owed": "the test parses the Mod's declared action ids out of its C# registration calls; the same generated action surface closes this and the Host-side reads above"
+    }
+  ]
+}
