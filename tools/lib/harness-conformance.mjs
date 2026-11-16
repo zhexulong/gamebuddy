@@ -660,7 +660,8 @@ function describeRun(result) {
 }
 
 /**
- * The sixteen `tools/audit-*.mjs` gates half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s
+ * The `tools/audit-*.mjs` gates that print no self-verification report: the sixteen half B began scanning on 2026-11-13,
+ * plus `audit-hotspots.mjs`, which was written after. That widening happened when `tools/lib/gate-population.mjs`'s
  * gate-file rule became `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so the 17
  * `audit-*.mjs` gates that were in nobody's census became members of this one. Each prints what it found as lines, not as
  * the `{gate, checks[]}` report `checkGateFalsifiers` reads, so each is declared with one reason rather than run.
@@ -670,6 +671,9 @@ function describeRun(result) {
 const AUDIT_WITHOUT_SELF_REPORT = Object.freeze([
   "audit-chat-live-run.mjs",
   "audit-gate-red-proofs.mjs",
+  // A reading, not a verdict (`pnpm hotspots`): it always exits 0 and says so, and its falsifier is the `red-proof:`
+  // marker at tools/audit-hotspots.mjs:77 that `test:hotspots` keeps honest.
+  "audit-hotspots.mjs",
   "audit-preset-macro-frequency.mjs",
   "audit-run-reading-shape.mjs",
   "audit-stardew-action-admission-ledger.mjs",
@@ -1073,7 +1077,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "`use` with no `viewport` and one with a literal in its place, an exemption whose cell set no site evaluates, and " +
       "a tests root holding no spec at all blocked rather than green",
   },
-  // The sixteen audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
+  // The audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
   // `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
   // gates that were in nobody's census became members of this one. Each prints what it found as lines, not as a
   // `{gate, checks[]}` report this suite can read, so each is declared with the same reason rather than run; the
