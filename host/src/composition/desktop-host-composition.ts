@@ -76,7 +76,6 @@ export type DesktopHostSurface = "composed-reference-game" | "chat-only" | "mana
 /** Explicit product input supplied by the Host-owned formal entry seam. */
 export type DesktopHostAssemblyInput = Readonly<{
   manifest: HostDeploymentManifest;
-  gameSessionMode: "fresh" | "known";
   /** Composed surface selection; defaults to the composed reference-game surface. */
   surface?: DesktopHostSurface;
   /**
@@ -149,7 +148,6 @@ export async function createDesktopProductComposition(
         : Object.freeze({ tavernNarrativeGateNonceSha256: input.tavernNarrativeGateNonceSha256 });
     shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(
       input.manifest,
-      input.gameSessionMode,
       ...(mountOptions === undefined ? [] : [mountOptions]),
     );
     // The mounted Chat runtime is a sibling composition child of the Stardew

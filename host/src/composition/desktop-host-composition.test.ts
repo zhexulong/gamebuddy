@@ -123,8 +123,11 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   );
   assert.match(
     source,
-    /createSharedSemanticProductionAuthorityFromDeploymentManifest\(\s*input\.manifest,\s*input\.gameSessionMode,\s*\.\.\.\(mountOptions === undefined \? \[\] : \[mountOptions\]\),?\s*\)/,
+    /createSharedSemanticProductionAuthorityFromDeploymentManifest\(\s*input\.manifest,\s*\.\.\.\(mountOptions === undefined \? \[\] : \[mountOptions\]\),?\s*\)/,
   );
+  // The mount this composition performs is the Host's own answer from the durable records in
+  // the runtime root; nothing in the assembly input may name it.
+  assert.doesNotMatch(source, /gameSessionMode|GAME_SESSION_MODE/);
   assert.match(source, /input\.publishLaunchUrl\?\.\(presentationAdmission\.launchUrl\)/);
   assert.match(source, /createChatSemanticFacadeFromSharedAuthority\(shared\.chat\)/);
   assert.match(source, /startMountedChatRuntime\(\)/);

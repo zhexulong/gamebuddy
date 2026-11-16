@@ -111,7 +111,7 @@ async function runOwner(artifactRootPath, manifestPath) {
   const { loadHostDeploymentManifest } = await import(manifest);
   const loaded = await loadHostDeploymentManifest(manifestPath);
   const ownerPid = process.pid;
-  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(loaded, "fresh");
+  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(loaded);
   const permit = await shared.game.prepareEnter(
     Object.freeze({
       world: Object.freeze({ integrationId: "stardew", saveId: "save_dead_owner", worldId: "world_dead_owner" }),

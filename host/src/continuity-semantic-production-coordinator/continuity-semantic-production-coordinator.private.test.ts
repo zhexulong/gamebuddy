@@ -570,10 +570,7 @@ test(
     try {
       const manifestPath = manifest(root);
       const deployment = await loadHostDeploymentManifest(manifestPath);
-      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(
-        deployment,
-        "fresh",
-      );
+      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment);
       assert.deepEqual(Object.keys(shared).sort(), ["chat", "close", "game"]);
       assert.deepEqual(Object.keys(shared.chat).sort(), [
         "authority",
@@ -1514,6 +1511,62 @@ test(
       );
     } finally {
       await game?.close().catch(() => undefined);
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The mount is the Host's own decision, so this drives the real constructor over the two shapes
+ * a launcher used to classify by hand: a first run that died before publishing, and a published
+ * authority.
+ *
+ * RED against the cross-process flag: with `GAMEBUDDY_HOST_GAME_SESSION_MODE=known` this first
+ * `createSharedSemanticProductionAuthorityFromDeploymentManifest` call rejected with
+ * `production_authority_artifact_present`, and the installation could never finish that first run
+ * because nothing could discard the leftover any more. The flag had no way to be right without
+ * the launcher duplicating the records the Host already holds.
+ */
+test(
+  "the shared mount finishes a staged leftover and then opens the authority it published",
+  { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-mount-staged-leftover-");
+    const authorityRoot = join(root, "runtime", ".gamebuddy-semantic-continuity-v1");
+    const markerPath = join(authorityRoot, "production-authority-marker.json");
+    let shared:
+      | Awaited<ReturnType<typeof internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest>>
+      | undefined;
+    try {
+      const deployment = await loadHostDeploymentManifest(manifest(root));
+      const firstRun =
+        await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      await firstRun.close();
+      // The crash this state is: the database is bootstrapped, the publication marker never landed.
+      rmSync(markerPath);
+      // The launcher's own two records, in the runtime root it names as `runtimeRoot`.
+      writeFileSync(join(root, "runtime", "deployment-identity.json"), "{}\n");
+      writeFileSync(join(root, "runtime", "deployment-first-run-staging.json"), "{}\n");
+
+      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      const published = readFileSync(markerPath);
+      assert.ok(published.length > 0, "the shared mount did not publish an authority over the staged leftover");
+      // The composition starts the mounted Chat runtime on the mount it just made, and a known
+      // mount takes the terminal successor the previous run left behind.
+      await (await shared.chat.startMountedChatRuntime()).close();
+      await shared.close();
+      shared = undefined;
+
+      // The second launch is the ordinary one: the authority it just published is opened, and an
+      // open never rewrites the publication marker.
+      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      assert.deepEqual(
+        readFileSync(markerPath),
+        published,
+        "the second mount republished the authority, so it provisioned a root that was already complete",
+      );
+    } finally {
+      await shared?.close().catch(() => undefined);
       cleanup(root);
     }
   },

@@ -20,9 +20,11 @@ import {
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.js";
 import {
   createCanonicalProductionAuthorityAdmission,
+  decideProductionAuthorityMountMode,
   type FreshContinuityProvision,
   type FreshContinuityProvisionOptions,
   openKnownProductionContinuityFromCanonicalAdmission,
+  type ProductionAuthorityMountMode,
   provisionFreshProductionContinuityFromCanonicalAdmission,
 } from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
 import type {
@@ -2406,17 +2408,18 @@ export async function createKnownSemanticGameProductionAuthorityFromDeploymentMa
  * deployment selection boundary; both projections share one provision and one
  * Windows root mutex/broker. The Chat side is the real mounted Chat runtime
  * authority (`startMountedChatRuntime`), constructed over the same provision,
- * the shared store projection, and its own runtime binding. `fresh` provisions
- * the root and initializes the initial Chat exactly like the standalone fresh
- * Chat constructor; `known` reuses the standalone known-root successor wiring
- * (`reselectTerminalChatRuntimeSuccessor`). Projection close never closes the
- * shared provision/mutex; only the returned owner close drains the Game
- * projection, the Chat runtime projection, and then the single provision and
- * mutex/broker in that order.
+ * the shared store projection, and its own runtime binding. A `provision` mount
+ * initializes the initial Chat exactly like the standalone fresh Chat
+ * constructor; an `open` mount reuses the standalone known-root successor wiring
+ * (`reselectTerminalChatRuntimeSuccessor`). Which of the two this Host performs
+ * is `decideProductionAuthorityMountMode`'s answer from the durable records in
+ * the runtime root - not a caller's, and not a cross-process flag's. Projection
+ * close never closes the shared provision/mutex; only the returned owner close
+ * drains the Game projection, the Chat runtime projection, and then the single
+ * provision and mutex/broker in that order.
  */
 export async function createSharedSemanticProductionAuthorityFromDeploymentManifest(
   manifest: HostDeploymentManifest,
-  mode: "fresh" | "known",
   options: SemanticChatRuntimeMountOptions = {},
 ): Promise<SharedSemanticProductionAuthority> {
   const input: FreshContinuityProvisionOptions = Object.freeze({
@@ -2434,14 +2437,22 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
   let game: SemanticGameProductionAuthority | undefined;
   try {
     const admission = createCanonicalProductionAuthorityAdmission(input.runtimeCwd);
+    // The decision is taken inside the lease, not before it: it describes the exact
+    // root the very next statement mounts, and a second Host waiting on the same
+    // mutex must not mount a root this one just changed.
+    let mount: Readonly<{ mode: ProductionAuthorityMountMode }> | undefined;
     provision = await openProvisionWithAdmission(
-      () =>
-        mode === "fresh"
+      () => {
+        const decided = Object.freeze({ mode: decideProductionAuthorityMountMode(input.runtimeCwd) });
+        mount = decided;
+        return decided.mode === "provision"
           ? provisionFreshProductionContinuityFromCanonicalAdmission(input, admission)
-          : openKnownProductionContinuityFromCanonicalAdmission(input, admission),
+          : openKnownProductionContinuityFromCanonicalAdmission(input, admission);
+      },
       admission.authorityRootIdentity,
       mutex,
     );
+    const mode = mount!.mode;
     // Shared projections intentionally do not close the provision/mutex: an
     // explicit shared-ownership close flag suppresses those in each helper.
     semantic = create(provision, mutex, undefined, true);
@@ -2458,12 +2469,12 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
       (operationId) => game!.recoverDeadOwner(Object.freeze({ request: "recover_dead_owner" as const, operationId })),
       ownerDeathVerifier,
     );
-    if (mode === "fresh") {
+    if (mode === "provision") {
       await seedDefaultCompanionForFreshRoot(manifest);
       await initializeInitialChatAndCloseContentPort(semantic, manifest);
       binding = await createChatRuntimeBinding(manifest);
     } else {
-      // Known Chat is mounted as the terminal successor exactly like the
+      // An opened Chat is mounted as the terminal successor exactly like the
       // standalone known Chat runtime constructor; it never adopts a live Chat.
       binding = await createChatRuntimeBinding(manifest);
       // Same order as the standalone known construction: the durable transcript

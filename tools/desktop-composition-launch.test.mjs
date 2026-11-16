@@ -287,7 +287,9 @@ test("composition launch validates the child IPC ready fact and composes the chi
   });
   assert.equal(env.LOCALAPPDATA, "C:/fresh");
   assert.equal(env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST, "C:/fresh/dialogue.json");
-  assert.equal(env.GAMEBUDDY_HOST_GAME_SESSION_MODE, "fresh");
+  // No mount mode travels with the child: the Host derives provision-vs-open from the records in
+  // the runtime root, so a value declared here could only contradict them.
+  assert.equal("GAMEBUDDY_HOST_GAME_SESSION_MODE" in env, false);
   assert.equal(env.GAMEBUDDY_HOST_SURFACE, "chat-only");
   assert.equal(env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256, hex);
   assert.equal(env.SystemRoot, "C:/Windows");

@@ -110,7 +110,6 @@ const input = Object.freeze(
   scenario === "chat-only-surface" || scenario === "management-surface" || scenario === "gate-chat-only-surface"
     ? {
         manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
-        gameSessionMode: "fresh" as const,
         surface: (scenario === "management-surface" ? "management" : "chat-only") as "chat-only" | "management",
         ...(scenario === "gate-chat-only-surface"
           ? {
@@ -124,7 +123,6 @@ const input = Object.freeze(
       }
     : {
         manifest: Object.freeze({}) as unknown as HostDeploymentManifest,
-        gameSessionMode: "fresh" as const,
       },
 );
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
@@ -144,7 +142,6 @@ async function main(): Promise<void> {
       namedExports: {
         createSharedSemanticProductionAuthorityFromDeploymentManifest: async (
           _manifest: unknown,
-          _mode: unknown,
           options?: Readonly<{ tavernNarrativeGateNonceSha256?: string }>,
         ) => {
           counts.mountOptionsNonce = options?.tavernNarrativeGateNonceSha256 ?? null;

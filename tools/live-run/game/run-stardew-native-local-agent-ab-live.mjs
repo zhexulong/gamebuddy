@@ -4096,11 +4096,10 @@ const manifestPath = join(root, "manifest.json");
 //
 // ONE runtime root = ONE deployment identity. The product's authority marker binds
 // the `bootstrapOperationId` (and `authorityGeneration`) that provisioned the root
-// and refuses ANY later launch whose manifest does not match it — including one
-// that asks to open the existing authority as "known". So a second run on a real
-// continuity must reuse the stored manifest instead of minting a fresh id; a new
-// id is written only when the root has none yet. A stored manifest for a
-// DIFFERENT principal is refused loudly rather than silently re-provisioned.
+// and refuses ANY later launch whose manifest does not match it. So a second run on a
+// real continuity must reuse the stored manifest instead of minting a fresh id; a new
+// id is written only when the root has none yet. A stored manifest for a DIFFERENT
+// principal is refused loudly rather than silently re-provisioned.
 const storedManifest = await readFile(manifestPath, "utf8").then(
   (text) => JSON.parse(text),
   () => null,
@@ -4182,33 +4181,14 @@ if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
     onPhase: (name, elapsedMs) => {
       phaseTimings.marks[`seed_${name}`] = elapsedMs;
     },
-  }).catch(async (error) => {
-    // A continuity that already holds a provisioned authority — i.e. ANY second
-    // run on a real product continuity — cannot be mounted "fresh"; the product
-    // refuses with production_authority_artifact_present. That is correct
-    // behaviour, so open the existing authority instead of provisioning a new
-    // one. Only that specific refusal is retried: every other failure still
-    // surfaces, so a broken seed can never pass as seeded.
-    const message = String(error?.message ?? error);
-    if (!message.includes("production_authority_artifact_present")) throw error;
-    process.stderr.write("[run] covenant seed: authority already provisioned, opening as known\n");
-    return seedMemoriesViaManagementSurface({
-      root,
-      deploymentManifestPath: manifestPath,
-      seeds: ["之前商量好的：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
-      gameSessionMode: "known",
-      onPhase: (name, elapsedMs) => {
-        phaseTimings.marks[`seed_${name}`] = elapsedMs;
-      },
-    }).catch((knownError) => {
-      // Both modes were refused. The authority marker binds the
-      // bootstrapOperationId that provisioned the root, so when the stored
-      // manifest carries a DIFFERENT id the product correctly refuses — but the
-      // bare reason code hides which two ids disagree (a real run this session
-      // burned three diagnoses on exactly that). Name the ids when both files
-      // are readable; keep the original error otherwise.
-      throw withAuthorityIdentityMismatch(knownError, root, deploymentManifest);
-    });
+  }).catch((error) => {
+    // The Host decides provision-vs-open for itself from the records in the runtime root, so this
+    // seed call finishes a missing or staged root and opens a complete one without being told
+    // which - there is no mode to retry with. What it can still refuse is a manifest whose
+    // identity is not the one the authority was created with, and the bare reason code hides
+    // which two ids disagree (a real run this session burned three diagnoses on exactly that):
+    // name the ids when both files are readable, and keep the original error otherwise.
+    throw withAuthorityIdentityMismatch(error, root, deploymentManifest);
   });
   covenantSeed = Object.freeze({
     durable: seeded.result.durable,

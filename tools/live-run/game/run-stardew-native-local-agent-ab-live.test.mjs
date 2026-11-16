@@ -317,15 +317,16 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /worldBookPassed/);
   assert.match(RUNNER_SOURCE, /turn\.steerObserved =/);
   assert.match(RUNNER_SOURCE, /steer_may_have_been_silently_dropped/);
-  // A second run on the same product continuity must OPEN the already
-  // provisioned authority (mode known) instead of failing the whole ladder with
-  // production_authority_artifact_present; only that refusal is retried.
-  assert.match(RUNNER_SOURCE, /production_authority_artifact_present/);
-  assert.match(RUNNER_SOURCE, /gameSessionMode: "known"/);
+  // A second run on the same product continuity finishes or opens the authority from the records
+  // in the runtime root, so the runner declares no mount of its own: a mode here could only
+  // contradict them (a launcher saying `known` over a staged leftover used to fail the whole
+  // ladder with production_authority_artifact_present).
+  assert.doesNotMatch(RUNNER_SOURCE, /gameSessionMode/);
   // The authority marker binds the bootstrapOperationId that provisioned the
   // root, so a repeat run must reuse the stored deployment manifest - minting a
-  // new id makes BOTH fresh and known refuse with
-  // production_authority_artifact_present (verified by a real repeat run).
+  // new id makes the mount refuse with production_authority_artifact_present,
+  // because the identity it would open is not the one the authority was created
+  // with (verified by a real repeat run).
   assert.match(RUNNER_SOURCE, /const storedManifest = await readFile\(manifestPath, "utf8"\)/);
   assert.match(RUNNER_SOURCE, /if \(storedManifest === null\) \{/);
   assert.match(RUNNER_SOURCE, /runtime_root_principal_mismatch/);

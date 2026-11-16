@@ -652,7 +652,7 @@ export function reportBase(runId, startedAt, artifact) {
  * endpoint rejects, so the provider fails inside the product's own provider path
  * with no fake provider and no product change.
  */
-async function openComposedAttempt({ root, configPath, nonceSha256, gameSessionMode, environment }) {
+async function openComposedAttempt({ root, configPath, nonceSha256, environment }) {
   const spawnImpl =
     environment === undefined
       ? undefined
@@ -664,7 +664,6 @@ async function openComposedAttempt({ root, configPath, nonceSha256, gameSessionM
     nonceSha256,
     manifestPath: configPath,
     readyTimeoutMs: START_TIMEOUT_MS,
-    gameSessionMode,
     ...(spawnImpl === undefined ? {} : { spawnImpl }),
   });
   const child = launch.child;
@@ -903,16 +902,8 @@ function composeAttempt({
   });
 }
 
-async function withComposedAttempt({
-  root,
-  configPath,
-  nonceSha256,
-  gameSessionMode,
-  environment,
-  graceful = false,
-  run,
-}) {
-  const attempt = await openComposedAttempt({ root, configPath, nonceSha256, gameSessionMode, environment });
+async function withComposedAttempt({ root, configPath, nonceSha256, environment, graceful = false, run }) {
+  const attempt = await openComposedAttempt({ root, configPath, nonceSha256, environment });
   try {
     return await run(attempt);
   } finally {
@@ -926,7 +917,6 @@ async function runMainAttempt({ root, configPath, nonceSha256 }) {
     root,
     configPath,
     nonceSha256,
-    gameSessionMode: "fresh",
     run: async (attempt) => {
       const turn = await sendTurn(attempt.origin, attempt.client);
       await drainMarkers();
@@ -963,7 +953,6 @@ async function runFailureAttempt({ root, configPath, nonceSha256 }) {
     root,
     configPath,
     nonceSha256,
-    gameSessionMode: "fresh",
     environment: { CPA_OAI_API_KEY: rejectedProviderCredential() },
     run: async (attempt) => {
       const turn = await sendTurn(attempt.origin, attempt.client);
@@ -996,7 +985,6 @@ async function runRecoveryAttempt({ root, configPath, nonceSha256 }) {
     root,
     configPath,
     nonceSha256,
-    gameSessionMode: "fresh",
     graceful: true,
     run: async (attempt) => {
       const turn = await sendTurn(attempt.origin, attempt.client);
@@ -1017,7 +1005,6 @@ async function runRecoveryAttempt({ root, configPath, nonceSha256 }) {
     root,
     configPath,
     nonceSha256,
-    gameSessionMode: "known",
     run: async (attempt) => {
       const before = await readStateSnapshot(attempt.origin, attempt.client);
       let turn;

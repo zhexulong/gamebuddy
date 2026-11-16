@@ -319,17 +319,15 @@ export function composeDesktopChildEnvironment({
   manifestPath,
   surface = undefined,
   nonceSha256 = undefined,
-  gameSessionMode = "fresh",
 }) {
   if (typeof manifestPath !== "string" || manifestPath.length === 0)
     throw new Error("desktop_compose_manifest_invalid");
-  if (gameSessionMode !== "fresh" && gameSessionMode !== "known")
-    throw new Error("desktop_compose_session_mode_invalid");
   return Object.freeze({
     ...base,
     LOCALAPPDATA: localAppDataRoot,
     GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
-    GAMEBUDDY_HOST_GAME_SESSION_MODE: gameSessionMode,
+    // No mount mode: the Host derives provision-vs-open from the records in the runtime root
+    // (`decideProductionAuthorityMountMode`), so a caller-supplied one could contradict them.
     // The launched Host is the embedded long-lived process by architecture: it never spawns the `pi`
     // CLI, and the Magic Context fork gates its background historian on exactly this flag
     // (`pi-background-run-lifetime.ts`: a headless process with no UI may only run the historian when it
@@ -643,7 +641,6 @@ export async function launchDesktopCompositionGateChild({
   manifestPath,
   readyTimeoutMs = 60_000,
   spawnImpl = spawn,
-  gameSessionMode = "fresh",
 }) {
   if (typeof outputRoot !== "string" || !isAbsolute(outputRoot)) throw new Error("desktop_compose_output_root_invalid");
   if (typeof root !== "string" || !isAbsolute(root)) throw new Error("desktop_compose_root_invalid");
@@ -703,7 +700,6 @@ export async function launchDesktopCompositionGateChild({
         manifestPath,
         surface,
         nonceSha256,
-        gameSessionMode,
       }),
     });
     // The child may publish the IPC-ready fact and the gate markers while the

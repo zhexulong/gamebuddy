@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
+  decideProductionAuthorityMountMode,
   fingerprintDatabase,
   openKnownProductionContinuity,
+  PRODUCTION_AUTHORITY_RECORD_NAMES,
   provisionFreshProductionContinuity,
 } from "./continuity-semantic-provisioning.internal.js";
 
@@ -413,4 +416,161 @@ test("a known mount refuses a missing or leftover authority and deletes nothing"
       /* best effort */
     }
   }
+});
+
+/**
+ * The mount decision reads the records the Desktop writes in the runtime root
+ * (`DeploymentIdentity.cs:94`, `FirstRunStaging.cs:42`) plus the Host's own publication
+ * marker. These are the states that matter, each built from a real authority rather than
+ * from fixtures describing one.
+ */
+function stageLauncherRecords(root: string, present: Readonly<{ identity?: boolean; staging?: boolean }> = {}): void {
+  if (present.identity !== false)
+    writeFileSync(
+      join(root, "deployment-identity.json"),
+      `${JSON.stringify({ schemaVersion: "gamebuddy-deployment-identity/v1" })}\n`,
+    );
+  if (present.staging !== false)
+    writeFileSync(
+      join(root, "deployment-first-run-staging.json"),
+      `${JSON.stringify({ schemaVersion: "gamebuddy-deployment-first-run-staging/v1" })}\n`,
+    );
+}
+
+/** The shape a first run leaves when it dies between the bootstrapped database and its publication. */
+function interruptedFirstRunRoot(prefix: string): string {
+  const root = canonicalTestRootSync(prefix);
+  const fresh = provisionFreshProductionContinuity(input(root));
+  fresh.close();
+  rmSync(join(root, AUTHORITY, "production-authority-marker.json"));
+  return root;
+}
+
+function withCleanup(root: string, body: () => void): void {
+  try {
+    body();
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* SQLite handle cleanup is best effort on Windows */
+    }
+  }
+}
+
+test("an interrupted first run this installation staged is provisioned, because opening it is the dead end", () => {
+  const root = interruptedFirstRunRoot("mount-staged-leftover-");
+  withCleanup(root, () => {
+    stageLauncherRecords(root);
+    // What the old cross-process flag could produce: a launcher saying `known` over this root
+    // opens it, and the open path refuses the very authority the next first run has to finish.
+    assert.throws(
+      () => openKnownProductionContinuity(input(root)),
+      /production_authority_artifact_present/,
+      "an unfinished authority opened, so this gate no longer describes the dead end the discard prevents",
+    );
+    assert.equal(
+      decideProductionAuthorityMountMode(root),
+      "provision",
+      "a staged, unfinished root was not attributed to the mint this installation staged: the interrupted first run can never finish",
+    );
+    // And the mount it names clears the leftover and publishes an authority.
+    const provisioned = provisionFreshProductionContinuity(input(root));
+    provisioned.close();
+    assert.ok(existsSync(join(root, AUTHORITY, "production-authority-marker.json")));
+    assert.equal(decideProductionAuthorityMountMode(root), "open");
+  });
+});
+
+test("a complete authority beside a spent staging marker is opened and not one byte is removed", () => {
+  const root = canonicalTestRootSync("mount-complete-ghost-");
+  try {
+    const fresh = provisionFreshProductionContinuity(input(root));
+    fresh.close();
+    // A launch that died between its Host's acknowledgement and its own clear leaves exactly this.
+    stageLauncherRecords(root);
+    const authorityRoot = join(root, AUTHORITY);
+    const before = readdirSync(authorityRoot)
+      .sort()
+      .map((entry) => [entry, readFileSync(join(authorityRoot, entry)).length] as const);
+    assert.equal(decideProductionAuthorityMountMode(root), "open");
+    const opened = openKnownProductionContinuity(input(root));
+    opened.close();
+    assert.deepEqual(
+      readdirSync(authorityRoot)
+        .sort()
+        .map((entry) => [entry, readFileSync(join(authorityRoot, entry)).length] as const),
+      before,
+      "opening a complete authority changed its directory: the durable authority is not the mount mode's to touch",
+    );
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* best effort */
+    }
+  }
+});
+
+test("an unfinished root no record attributes is opened so the Host refuses by name and deletes nothing", () => {
+  const root = interruptedFirstRunRoot("mount-unattributed-leftover-");
+  withCleanup(root, () => {
+    // No staging marker at all: on disk this is the same shape as a root whose publication went
+    // missing, and the launcher has no fact that says the leftover is its own.
+    const leftover = readdirSync(join(root, AUTHORITY)).sort();
+    assert.equal(
+      decideProductionAuthorityMountMode(root),
+      "open",
+      "an unattributed leftover was provisioned, which discards a root nothing proved this installation created",
+    );
+    assert.throws(() => openKnownProductionContinuity(input(root)), /production_authority_artifact_present/);
+    assert.deepEqual(readdirSync(join(root, AUTHORITY)).sort(), leftover, "the refusal deleted part of the root");
+  });
+});
+
+test("a staging marker with no identity record records a mint that did not happen and attributes nothing", () => {
+  const root = interruptedFirstRunRoot("mount-staged-mint-that-did-not-happen-");
+  withCleanup(root, () => {
+    // FirstRunStaging writes its marker BEFORE the identity record, so this pair is the half where
+    // the mint never reached its identity: it may not license a discard.
+    stageLauncherRecords(root, { identity: false });
+    const leftover = readdirSync(join(root, AUTHORITY)).sort();
+    assert.equal(decideProductionAuthorityMountMode(root), "open");
+    assert.deepEqual(readdirSync(join(root, AUTHORITY)).sort(), leftover, "the decision deleted part of the root");
+  });
+});
+
+test("no authority position is provisioned, and that is the one direction with nothing to discard", () => {
+  const root = canonicalTestRootSync("mount-absent-authority-");
+  withCleanup(root, () => {
+    stageLauncherRecords(root);
+    assert.equal(decideProductionAuthorityMountMode(root), "provision");
+  });
+});
+
+/**
+ * The four names in `PRODUCTION_AUTHORITY_RECORD_NAMES` are the only hand-kept copies between the
+ * Host and the Desktop: the Host derives its mount from all four, the Desktop writes the identity
+ * record and the staging marker. A rename on one side is invisible to every compiler and fatal at
+ * launch - the launcher would leave a marker the Host never looks at, or the Host would open a root
+ * it cannot classify - so this holds the two sides together and names the key that drifted.
+ */
+test("every authority-root record name the Host reads is the name the Desktop writes", () => {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const desktopSources = ["ProductionAuthority.cs", "DeploymentIdentity.cs", "FirstRunStaging.cs"].map((file) =>
+    readFileSync(resolve(repositoryRoot, "desktop", "GameBuddy.Desktop", file), "utf8"),
+  );
+  const names = Object.entries(PRODUCTION_AUTHORITY_RECORD_NAMES);
+  // An empty or shortened population would pass silently, and this gate exists for names that have
+  // no other authority than this table.
+  assert.equal(
+    names.length,
+    4,
+    "the Host no longer names every record its mount decision reads, so this gate examined fewer names than the boundary has",
+  );
+  for (const [key, name] of names)
+    assert.ok(
+      desktopSources.some((source) => source.includes(`"${name}"`)),
+      `the Host reads ${key} as "${name}" and no Desktop source declares that literal: a rename landed on one side only`,
+    );
 });

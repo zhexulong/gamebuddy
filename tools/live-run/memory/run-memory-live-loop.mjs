@@ -673,7 +673,6 @@ export async function seedMemoriesViaManagementSurface({
   language,
   outputRoot,
   readyTimeoutMs,
-  gameSessionMode = "fresh",
   onPhase,
 } = {}) {
   const markers = [];
@@ -693,7 +692,6 @@ export async function seedMemoriesViaManagementSurface({
     nonceSha256: createHash("sha256").update(randomBytes(32)).digest("hex"),
     manifestPath: deploymentManifestPath,
     readyTimeoutMs: readyTimeoutMs ?? START_TIMEOUT_MS,
-    gameSessionMode,
     spawnImpl: (command, args, options) => {
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
@@ -771,7 +769,7 @@ async function closeIntoReport(capture, root, report) {
   }
 }
 
-async function withSurface({ surface, run, root, deploymentManifestPath, gameSessionMode = "fresh", capture }) {
+async function withSurface({ surface, run, root, deploymentManifestPath, capture }) {
   if (typeof root !== "string" || root.length === 0) throw new Error("runtime_root_required");
   if (typeof deploymentManifestPath !== "string" || deploymentManifestPath.length === 0)
     throw new Error("deployment_manifest_path_required");
@@ -797,7 +795,6 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     nonceSha256,
     manifestPath: deploymentManifestPath,
     readyTimeoutMs: START_TIMEOUT_MS,
-    gameSessionMode,
     spawnImpl: (command, args, options) => {
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
@@ -1324,7 +1321,6 @@ export async function runMemoryLiveLoop({
         surface: "chat-only",
         root,
         deploymentManifestPath,
-        gameSessionMode: "known",
         capture,
         run: async (origin, client) => {
           // Real turns first, in fixture order, so the probe is asked at the declared distance

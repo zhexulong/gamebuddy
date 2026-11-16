@@ -42,7 +42,6 @@ import {
 const STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
 const MOD_STEP_STAGE = "companion-mod";
 const GUARDIAN_STAGE = "guardian-session";
-const GAME_SESSION_MODE = "fresh";
 const GAME_EXECUTABLE = "Stardew Valley.exe";
 const SMAPI_EXECUTABLE = "StardewModdingAPI.exe";
 const MODS_DIRECTORY = "Mods";
@@ -168,7 +167,7 @@ async function runDesktopEntry({ installedRoot, generation, pointer, localAppDat
   const bootstrapId = randomBytes(32).toString("hex");
   const frame = composeDesktopBootstrapFrame({ bootstrapId, ...pointer, rootLayout });
   const env = {
-    ...composeDesktopChildEnvironment({ base: process.env, localAppDataRoot, manifestPath, gameSessionMode: GAME_SESSION_MODE }),
+    ...composeDesktopChildEnvironment({ base: process.env, localAppDataRoot, manifestPath }),
     // The Host's GOG proposal source reads this variable; pointing it at the sandbox
     // is what makes the fabricated installation discoverable without touching the
     // machine's real ProgramData, registry, Steam library or GOG entries.

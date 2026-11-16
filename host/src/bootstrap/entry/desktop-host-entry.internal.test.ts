@@ -193,7 +193,6 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
     const frame = Buffer.from(`${JSON.stringify(frameValue)}\n`);
     const environment = {
       GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
-      GAMEBUDDY_HOST_GAME_SESSION_MODE: "known",
     };
     const rejectedWithoutSession = await runEntry(frame, entryModule, fixtureRoot, environment);
     assert.notEqual(rejectedWithoutSession.code, 0);

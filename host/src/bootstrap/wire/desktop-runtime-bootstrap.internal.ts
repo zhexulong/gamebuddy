@@ -518,11 +518,9 @@ async function loadDesktopHostAssemblyInput(
   listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>,
 ): Promise<DesktopHostAssemblyInput> {
   const manifestPath = process.env.GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST;
-  const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
   const surface = process.env.GAMEBUDDY_HOST_SURFACE;
   const tavernNarrativeGateNonceSha256 = process.env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256;
   if (manifestPath === undefined || manifestPath.length === 0) throw unavailable("deployment_manifest_env_missing");
-  if (gameSessionMode !== "fresh" && gameSessionMode !== "known") throw unavailable("game_session_mode_env_invalid");
   if (
     surface !== undefined &&
     surface !== "composed-reference-game" &&
@@ -540,7 +538,6 @@ async function loadDesktopHostAssemblyInput(
   }
   return Object.freeze({
     manifest,
-    gameSessionMode,
     ...(surface === undefined ? {} : { surface }),
     ...(tavernNarrativeGateNonceSha256 === undefined ? {} : { tavernNarrativeGateNonceSha256 }),
     ...(voiceSurface === undefined ? {} : { voiceSurface }),

@@ -806,7 +806,6 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         GAMEBUDDY_WIRE_FIXTURE: JSON.stringify(wireFixture),
         LOCALAPPDATA: fixtureRoot,
         GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
-        GAMEBUDDY_HOST_GAME_SESSION_MODE: "known",
         ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }),
         ...(options.nonceSha256 === undefined
           ? {}

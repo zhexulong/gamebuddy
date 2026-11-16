@@ -27,6 +27,14 @@ import {
 const AUTHORITY_DIRECTORY_NAME = ".gamebuddy-semantic-continuity-v1";
 const DATABASE_NAME = "gamebuddy-continuity-v1.sqlite";
 const AUTHORITY_MARKER_NAME = "production-authority-marker.json";
+/**
+ * The launcher's two records beside the authority, in the same runtime root it names as
+ * `runtimeRoot`. The Host reads them; the Desktop writes them
+ * (`desktop/GameBuddy.Desktop/DeploymentIdentity.cs:94`, `FirstRunStaging.cs:42`), and a gate
+ * keeps the two spellings equal rather than letting a rename land on one side only.
+ */
+const DEPLOYMENT_IDENTITY_RECORD_NAME = "deployment-identity.json";
+const FIRST_RUN_STAGING_MARKER_NAME = "deployment-first-run-staging.json";
 const LEGACY_ROOT_ARTIFACTS = new Set([
   "companion-continuity.json",
   "game-runtime-owner.json",
@@ -210,6 +218,59 @@ export function openKnownProductionContinuityFromCanonicalAdmission(
     control?.close();
     throw provisionFailure(error);
   }
+}
+
+/** Which mount this Host performs: it provisions a new root, or opens the one already there. */
+export type ProductionAuthorityMountMode = "provision" | "open";
+
+/**
+ * The record names the Host and the Desktop must spell identically: the Host reads all four, and
+ * the Desktop writes the last two and reads the second. `@internal` so a gate can hold the two
+ * sides together - a rename on one side is invisible to the compiler and fatal at launch.
+ */
+export const PRODUCTION_AUTHORITY_RECORD_NAMES = Object.freeze({
+  authorityDirectory: AUTHORITY_DIRECTORY_NAME,
+  authorityMarker: AUTHORITY_MARKER_NAME,
+  deploymentIdentityRecord: DEPLOYMENT_IDENTITY_RECORD_NAME,
+  firstRunStagingMarker: FIRST_RUN_STAGING_MARKER_NAME,
+});
+
+/**
+ * The one decision between the two mounts above, taken from the durable records in the runtime
+ * root and from nothing a caller says. Provisioning is the only mount that may DISCARD a leftover
+ * root (`createFreshAuthorityRoot` -> `discardProvablyIncompleteAuthorityRoot`), so the criterion
+ * is the physical completeness of the authority, never a claim about it:
+ *
+ * <list type="bullet">
+ * <item>no authority position at all - provision. There is nothing to discard, and this is the
+ * state a companion who has never played here leaves behind;</item>
+ * <item>the completion marker is there - open. That marker is what publishes the authority: the
+ * provision path writes it LAST, after the database it bootstrapped has been read back, so it is
+ * the authority's own durability rather than a record of intent. Any leftover first-run staging
+ * marker beside it is a spent intent, and the open path deletes nothing;</item>
+ * <item>a root is there and unfinished - provision only when this installation's own records
+ * attribute the leftover to a mint it staged. `deployment-first-run-staging.json` is that
+ * attribution, and it is not enough alone: it is written BEFORE the identity record and the
+ * identity record before the manifest (`FirstRunStaging`'s own write order), so a marker with no
+ * identity record beside it records a mint that did not happen and cannot license a discard. The
+ * launch that completes such a mint provisions the leftover itself. Without both records the root
+ * is opened: the open path validates it strictly, refuses a broken one by name
+ * (`production_authority_artifact_present`), and deletes nothing. That is also the state a
+ * companion switch can leave by putting a parked root in the mount position, and refusing to
+ * discard it is what keeps the park reversible.</item>
+ * </list>
+ *
+ * It deliberately runs inside the caller's root-mutex lease, not before it: the root this answers
+ * about is the root the very next statement mounts.
+ */
+export function decideProductionAuthorityMountMode(runtimeCwd: string): ProductionAuthorityMountMode {
+  const root = authorityRoot(runtimeCwd);
+  if (!isDirectory(root)) return "provision";
+  if (isRegularFile(join(root, AUTHORITY_MARKER_NAME))) return "open";
+  return isRegularFile(join(runtimeCwd, DEPLOYMENT_IDENTITY_RECORD_NAME)) &&
+    isRegularFile(join(runtimeCwd, FIRST_RUN_STAGING_MARKER_NAME))
+    ? "provision"
+    : "open";
 }
 
 function openProductionStore(authorityRoot: string): ProductionContinuityStore {
@@ -534,10 +595,10 @@ function createFreshAuthorityRoot(runtimeCwd: string): string {
  * an absent marker is exactly what "never finished" leaves, and an absent marker is
  * also what "the marker was removed afterwards" leaves, and nothing on disk tells the
  * two apart. What makes discarding safe is the caller's context rather than the proof:
- * this runs only for a `fresh` mount, and the launcher asks for a fresh mount only
- * when its own deployment-identity record shows the identity was minted by a run it
- * never saw complete. A `known` mount never reaches this function and never deletes
- * anything.
+ * this runs only for a `provision` mount, and `decideProductionAuthorityMountMode`
+ * answers `provision` over a leftover only when this installation's own staging record
+ * and identity record attribute it to a mint it staged. An `open` mount never reaches
+ * this function and never deletes anything.
  */
 function discardProvablyIncompleteAuthorityRoot(root: string): void {
   let entries: string[];

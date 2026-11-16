@@ -8,14 +8,15 @@
  *
  * What this runs, all of it product code from one published generation (`host/dist/current.json`):
  *
- *   1. owner      `createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest, "fresh")` —
- *                 the same call the desktop composition makes on first launch — then the real Game enter
+ *   1. owner      `createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest)` —
+ *                 the same call the desktop composition makes on first launch, which provisions the root
+ *                 because there is no authority there yet — then the real Game enter
  *                 (`prepareEnter` → `commitEnter`) and the real close intent (`prepareClose`). The process
  *                 stops there, so the durable state is a live session whose close is in flight, owned by a
  *                 real PID with its real creation identity.
  *   2. kill       `taskkill /F /PID <that exact pid>`. Nothing is matched by image name.
- *   3. successor  the same product startup in `known` mode, which settles the pending recovery obligation
- *                 before admitting any Game work. The evidence is its stderr line plus the durable rows.
+ *   3. successor  the same product startup, which opens the completed root and settles the pending recovery
+ *                 obligation before admitting any Game work. The evidence is its stderr line plus the durable rows.
  *   4. control    an owner left running, and a successor started beside it: the settlement must refuse as
  *                 a single-instance conflict and recover nothing.
  *
@@ -140,8 +141,8 @@ async function runOwner(artifactRoot, manifestPath) {
   const { loadHostDeploymentManifest } = await load(artifactRoot, "manifest");
   const manifest = await loadHostDeploymentManifest(manifestPath);
   const ownerPid = process.pid;
-  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest, "fresh");
-  log(`  owner: product startup (fresh) opened the runtime root`);
+  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest);
+  log(`  owner: product startup provisioned the runtime root`);
   const permit = await shared.game.prepareEnter(
     Object.freeze({
       world: Object.freeze({ integrationId: "stardew", saveId: "save_dead_owner", worldId: "world_dead_owner" }),
@@ -166,12 +167,12 @@ async function runOwner(artifactRoot, manifestPath) {
   setInterval(() => undefined, 1_000);
 }
 
-/** The successor Host: the same product startup in `known` mode, which settles before admitting Game work. */
+/** The successor Host: the same product startup, which opens the root the owner left and so settles before admitting Game work. */
 async function runSuccessor(artifactRoot, manifestPath) {
   const { createSharedSemanticProductionAuthorityFromDeploymentManifest } = await load(artifactRoot, "shared");
   const { loadHostDeploymentManifest } = await load(artifactRoot, "manifest");
   const manifest = await loadHostDeploymentManifest(manifestPath);
-  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest, "known");
+  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest);
   await shared.close();
   log("SUCCESSOR_CLOSED");
 }
