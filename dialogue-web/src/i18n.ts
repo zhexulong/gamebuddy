@@ -118,14 +118,19 @@ const en = {
   // `stardew-production-lifecycle-coordinator.internal.ts`), so no control here lifts it and a
   // reload comes back to this same screen. The explicit endgame is not a way out either: it is a
   // control of an attached session, and it does not clear that lock even when it succeeds.
+  //
+  // The step is the product's own tray - `TrayShell`'s "Quit GameBuddy", which serves no browser
+  // route - and it is named by its location for the reason `companionActivationRestart` names it:
+  // a screen with nothing to press that says only "quit GameBuddy and start it again" leaves the
+  // player with the task manager as the one thing that matches the words.
   gameLaunchQuarantined:
-    "This launch failed in a way that locks the game off until GameBuddy itself is restarted: the lock lives in GameBuddy's own process, so no control on this page lifts it and reloading this page does not either. If Stardew Valley is still running, close it. The one step left is to quit GameBuddy itself and start it again.",
+    "This launch failed, and the lock it left is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - the restart is what frees the game from the attempt that failed.",
   // The same quarantined launch, without the failure claim: the Guardian reported the game's
   // process exiting with the OS's normal-termination code, so the player ended the game and the
   // panel says that instead of telling them it failed. The step is identical because the
   // quarantine is.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in, which locks the game off until GameBuddy itself is restarted: the lock lives in GameBuddy's own process, so no control on this page lifts it and reloading this page does not either. If Stardew Valley is still running, close it. The one step left is to quit GameBuddy itself and start it again.",
+    "Stardew Valley ended before your companion moved in, and the lock it leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - the restart is what frees the game from that attempt.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -1519,9 +1524,9 @@ const zh: Messages = {
   gameLaunch: "启动游戏",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   gameLaunchQuarantined:
-    "这次启动失败的方式，让游戏在 GameBuddy 自己重启之前一直处在锁定状态：这个锁在 GameBuddy 自己的进程里，本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。唯一剩下的一步，是退出 GameBuddy 本身，再重新打开。",
+    "这次启动失败了，它留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重新启动才会把这个游戏从那一次失败的尝试里释放出来。",
   gameEndedQuarantined:
-    "《星露谷物语》在伙伴搬进农场前就退出了，游戏因此锁定到 GameBuddy 自己重启为止：这个锁在 GameBuddy 自己的进程里，本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。唯一剩下的一步，是退出 GameBuddy 本身，再重新打开。",
+    "《星露谷物语》在伙伴搬进农场前就退出了，它留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重新启动才会把这个游戏从那一次尝试里释放出来。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",

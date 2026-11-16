@@ -77,6 +77,12 @@ const FACTS = {
   reloadDoesNot: { en: /reloading this page does not/iu, "zh-CN": /刷新本页也不行/u },
   /** The one step that exists, named rather than implied. */
   oneAction: { en: /quit GameBuddy itself/iu, "zh-CN": /退出 GameBuddy 本身/u },
+  /**
+   * …and where it is carried out. The step is the product's own tray ( `TrayShell`'s "Quit GameBuddy"),
+   * which serves no browser route, so a sentence that names the step without naming the tray sends the
+   * player to the task manager - the one place the product never meant to point at.
+   */
+  whereItIsCarriedOut: { en: /tray icon/iu, "zh-CN": /托盘图标/u },
 } as const;
 
 async function mountQuarantined(page: Page, key: QuarantineKey, locale: "en" | "zh-CN"): Promise<void> {
