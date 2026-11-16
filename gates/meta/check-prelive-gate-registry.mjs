@@ -538,6 +538,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:diff",
   },
   {
+    path: "tools/check-dotnet-target-and-language.mjs",
+    reason:
+      "debt: measured red at HEAD - no TargetFramework here is inside its support window, so the gate names sixteen " +
+      "projects to move to net10.0/net10.0-windows and the fix is an SDK this machine has not got (no .NET 10 in " +
+      "`dotnet --list-sdks`), not a rung · measured projects examined 30, supported 0, forced by an external constraint 12, " +
+      "unsupported 16, langversion in a csproj 0 at 61053fb21dfc",
+    runsIn: "pnpm check:dotnet-target-and-language",
+  },
+  {
     path: "tools/check-dist-runtime-exports.mjs",
     reason:
       "installed: imports `vendor/magic-context/packages/pi-plugin/dist` (a build output), which nothing in the " +

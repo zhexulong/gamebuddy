@@ -204,6 +204,7 @@
     "test:dependency-audit": "node --test tools/check-dependency-audit.test.mjs",
     "test:dialogue-web": "pnpm --filter @gamebuddy/dialogue-web test:static && pnpm --filter @gamebuddy/dialogue-web test:artifact && pnpm --filter @gamebuddy/dialogue-web test:mounted",
     "test:dialogue-web-boundaries": "node --test tools/check-dialogue-web-boundaries.test.mjs",
+    "test:dotnet-target-and-language": "node --test tools/check-dotnet-target-and-language.test.mjs",
     "test:error-identity-classification": "node --test tools/check-error-identity-classification.test.mjs",
     "test:duplicated-authority": "node --test tools/lib/duplicated-authority.test.mjs",
     "test:evidence-bundle": "node --test tools/lib/evidence-bundle.test.mjs",
