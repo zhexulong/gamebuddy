@@ -359,25 +359,6 @@ const RECORDED: readonly Readonly<{
       "either sentence deletes a fact about a surface, not a duplicate.",
   }),
   Object.freeze({
-    slug: "often-reach-whether-reach",
-    first: "chat-surface-block.ts:CHAT_SURFACE_ACTION_FORM",
-    second: "game-surface-prompt-floor.ts:body_language_is_native",
-    kind: "distinct",
-    why:
-      "the Game floor forbids writing a bracketed stage direction at all, while CHAT_SURFACE_ACTION_FORM hands the frequency " +
-      "of that same beat to her voice. One is a ban on the Game surface, the other a permission on the Chat surface.",
-  }),
-  Object.freeze({
-    slug: "often-reach-whether-reach",
-    first: "chat-surface-block.ts:CHAT_SURFACE_ACTION_FORM",
-    second: "chat-surface-block.ts:CHAT_SURFACE_DIVERGENCE",
-    kind: "distinct",
-    why:
-      "CHAT_SURFACE_DIVERGENCE says what the surface DRAWS and CHAT_SURFACE_ACTION_FORM says who decides how often; they " +
-      "share their subject and state different things about it. The second is also the Chat surface's skip signature for " +
-      "the Magic Context block, so it is read as an identity and not only as prose.",
-  }),
-  Object.freeze({
     slug: "first-line-names-revision",
     first: "game-surface-prompt-floor.ts:fact_batch_blocks",
     second: "games/stardew/prompt/stardew-game-conduct.ts:CONTENT_IDS_IN_WORDS",

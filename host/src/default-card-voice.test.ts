@@ -314,15 +314,21 @@ test("an authored voice that forbids asterisks keeps the style question, and the
       `the Chat block still overrules the authored voice: ${JSON.stringify(clause)}`,
     );
 
-  // And the frequency is handed to the voice, which is the card's own material. Read off the constant Magic Context
-  // skips on, so the sentence cannot be reworded without moving the signature with it, and stated exactly once: two
-  // spellings is how the formula grew back the first time.
+  // And the frequency is the CARD's, so the block does not state it at all: a permission about how much she speaks is
+  // ②'s claim, and that sentence was the last speech licence the Chat floor carried. Refused by name, the way the
+  // override clauses above are, because "just one more reminder of who decides" is how the licence comes back.
+  assert.doesNotMatch(
+    chat,
+    /is your voice's call|How often you reach for one/u,
+    "the block still claims a say in how often she reaches for a beat",
+  );
+  // The sentence Magic Context skips on is one the block actually carries, stated exactly once: two spellings is how the
+  // formula grew back the first time.
   assert.equal(
     chat.split(CHAT_SURFACE_SKIP_SIGNATURE).length - 1,
     1,
-    "the block states the style handover exactly once",
+    "the signature Magic Context skips on is stated exactly once",
   );
-  assert.match(CHAT_SURFACE_SKIP_SIGNATURE, /is your voice's call/u, "the handover names the voice as the decider");
 
   // WHY the card wins, executed rather than described: no consumer needs the marker. The bubble strips a beat when one
   // is written and passes asterisk-free text through unchanged, so an authored ban on beats costs the pipeline nothing -
