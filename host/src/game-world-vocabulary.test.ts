@@ -4,6 +4,16 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { BODY_WAY_FORWARD_EN, BODY_WAY_FORWARD_ZH, formatBodyState } from "./game-world-vocabulary.js";
+import {
+  OBSERVATION_SELECTION_ROWS_LIMIT_MAX,
+  TARGET_FAMILY_LABELS,
+  axisTileCount,
+  selectObservedRows,
+  selectionDisagreements,
+  selectionGateReport,
+  withoutRowFamilies,
+} from "./game-world-vocabulary.js";
+import type { Snapshot } from "./protocol.js";
 
 /**
  * `body_state_names_a_way_out`: a held body says who holds it and what to do next, never only that it cannot act.
@@ -205,4 +215,166 @@ test("body_state_names_a_way_out: the answers are a closed set, so a reader can 
     const answer = (matched.groups.answer ?? "").trim();
     assert.ok(WAY_FORWARD_ZH.includes(answer), `"${answer}" is a fifth answer nobody declared: ${line}`);
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// A SELECTION over the rows an observation already published.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * One observation with the shapes a strip question asks about: a 3-wide band of weeds, a row of twigs beyond it, one
+ * stump, the soil window underneath, and one row far away so the observation's published extent has an edge.
+ */
+function selectionSnapshot(): Snapshot {
+  const weeds = [60, 61, 62].flatMap((x) => [18, 19, 20, 21].map((y) => ({ targetId: `weed_${x}_${y}`, x, y })));
+  const twigs = [60, 61, 62].flatMap((x) => [10, 11].map((y) => ({ targetId: `grass_${x}_${y}`, x, y })));
+  const soil = [60, 61, 62].flatMap((x) =>
+    Array.from({ length: 14 }, (_unused, index) => ({ x, y: 13 + index, tillable: true })),
+  );
+  return {
+    revision: 383,
+    location: "Farm",
+    tile: { x: 61, y: 19 },
+    weedTargets: weeds,
+    grassTargets: twigs,
+    treeStumpTargets: [{ targetId: "stump_1", x: 60, y: 12 }],
+    soilTiles: soil,
+    minecartTargets: [{ targetId: "cart_1", x: 200, y: 40 }],
+  } as unknown as Snapshot;
+}
+
+const STRIP = Object.freeze({
+  predicates: Object.freeze([{ x: { from: 60, to: 62 }, y: { from: 10, to: 29 } }]),
+  tiles: Object.freeze([]),
+});
+
+test("selection counts every kind the strip holds, and the omission is counted", () => {
+  const snapshot = selectionSnapshot();
+  const answer = selectObservedRows(snapshot, STRIP, 6);
+  const countOf = (kind: string): number => answer.kinds.find((entry) => entry.kind === kind)?.count ?? -1;
+  assert.equal(countOf("weedTargets"), 12, "the twelve rows inside the strip are all inside it");
+  assert.equal(countOf("grassTargets"), 6);
+  assert.equal(countOf("treeStumpTargets"), 1);
+  assert.equal(countOf("soilTiles"), 42);
+  // The tiles are counted from the axes' own arithmetic, so a wrong stride or an off-by-one is a disagreement here.
+  assert.equal(
+    answer.tiles.named,
+    axisTileCount({ from: 60, to: 62 }) * axisTileCount({ from: 10, to: 29 }),
+    "the named tiles are the rectangle the axes describe",
+  );
+  assert.equal(
+    answer.tiles.named,
+    answer.tiles.withRows + answer.tiles.empty + answer.tiles.unreadable,
+    "every named tile is in exactly one bucket",
+  );
+  assert.equal(answer.tiles.unreadable, 0, "the whole strip lies inside the observation's published extent");
+  const weeds = answer.kinds.find((entry) => entry.kind === "weedTargets");
+  assert.ok(weeds !== undefined);
+  assert.equal(weeds.shown.length, 6, "the limit names six rows of the twelve");
+  assert.equal(weeds.count, weeds.shown.length + weeds.omitted, "and the other six are counted, never silent");
+  assert.match(answer.text, /其余 6 格未列出/u, `the row line counts what it did not print: ${answer.text}`);
+  assert.match(answer.text, /杂草 12/u, "the summary states the count in one place");
+  assert.deepEqual(selectionDisagreements(snapshot, STRIP, answer), [], "the summary agrees with its own rows");
+});
+
+test("the three zeroes stay apart: empty, unreadable, and not measured", () => {
+  const snapshot = selectionSnapshot();
+  // (1) A rectangle inside the observation's published extent that holds no row is EMPTY, and says so.
+  const empty = selectObservedRows(
+    snapshot,
+    { predicates: [{ x: { from: 100, to: 101 }, y: { from: 20, to: 21 } }], tiles: [] },
+    6,
+  );
+  assert.equal(empty.verdict, "empty", `a measured zero is empty, not unreadable: ${empty.text}`);
+  assert.equal(empty.tiles.unreadable, 0);
+  assert.match(empty.text, /确实是空的/u);
+  // (2) A tile outside the extent is UNREADABLE, named with the tile, and never reported as zero rows.
+  const beyond = selectObservedRows(snapshot, { predicates: [], tiles: [[300, 5]] }, 6);
+  assert.equal(beyond.verdict, "beyond_extent", `a tile this observation never published is not empty: ${beyond.text}`);
+  assert.equal(beyond.tiles.unreadable, 1);
+  assert.equal(beyond.tiles.empty, 0, "the tile must not fall into the measured-empty bucket as well");
+  assert.match(beyond.text, /未覆盖/u);
+  assert.match(beyond.text, /300，5/u, `the unreadable tile is named: ${beyond.text}`);
+  // (3) A family this observation does not carry is NOT MEASURED, which is neither of the two zeroes above.
+  const absent = selectObservedRows(snapshot, { predicates: [{ kinds: ["chests"] }], tiles: [] }, 6);
+  assert.equal(absent.kinds.find((entry) => entry.kind === "chests")?.coverage, "not_published");
+  assert.equal(absent.verdict, "not_measured");
+  assert.match(absent.text, /未测/u);
+  assert.match(absent.text, /不是 0/u);
+});
+
+test("a stride is counted from the tiles it names, not divided somewhere else", () => {
+  const snapshot = selectionSnapshot();
+  const stride = { predicates: [{ x: { from: 60, to: 60 }, y: { from: 10, to: 29, step: 2 } }], tiles: [] };
+  const answer = selectObservedRows(snapshot, stride, 6);
+  // Every other tile of a 20-tile column is TEN tiles, and the answer says ten.
+  assert.equal(axisTileCount({ from: 10, to: 29, step: 2 }), 10);
+  assert.equal(answer.tiles.named, 10, "step: 2 over y 10…29 names ten tiles");
+  const weeds = answer.kinds.find((entry) => entry.kind === "weedTargets");
+  assert.equal(weeds?.count, 2, "y 18 and y 20 are the two stride tiles the weeds stand on");
+  assert.equal(weeds?.shown.length, 2, "and no weed from y 19 or y 21 leaks into the answer");
+});
+
+test("region_summary_disagrees_with_the_rows: the gate refuses a summary that does not add up", () => {
+  const snapshot = selectionSnapshot();
+  const answer = selectObservedRows(snapshot, STRIP, 6);
+  assert.deepEqual(selectionDisagreements(snapshot, STRIP, answer), [], "the shipped construction holds");
+  // The gate's own population is printed, and a green reading is not an empty one.
+  const clean = selectionGateReport();
+  assert.match(clean, /^observations examined [1-9]\d* · kinds [1-9]\d* · disagreeing 0$/u, clean);
+  // A count that grew by one no row can back: the code names the selection and the drifting kind.
+  const inflated = {
+    ...answer,
+    kinds: answer.kinds.map((kind) => (kind.kind === "weedTargets" ? { ...kind, count: kind.count + 1 } : kind)),
+  };
+  const codes = selectionDisagreements(snapshot, STRIP, inflated);
+  assert.ok(
+    codes.includes(`region_summary_disagrees_with_the_rows:${answer.spelling}:weedTargets`),
+    `the refusal names the kind that disagreed: ${codes.join("；")}`,
+  );
+  // A row the filter should not have kept.
+  const leaked = {
+    ...answer,
+    kinds: answer.kinds.map((kind) =>
+      kind.kind === "weedTargets"
+        ? { ...kind, shown: [...kind.shown, { x: 900, y: 900, name: undefined, state: "", w: 1, h: 1 }] }
+        : kind,
+    ),
+  };
+  const leakCodes = selectionDisagreements(snapshot, STRIP, leaked);
+  assert.ok(
+    leakCodes.some((code) => code.startsWith(`region_summary_includes_a_row_outside_the_selection:${answer.spelling}`)),
+    "a row outside the selection is a leak, not a rounding difference",
+  );
+  // A tile that landed in no bucket, or in two.
+  const lostTile = { ...answer, tiles: { ...answer.tiles, withRows: answer.tiles.withRows - 1 } };
+  const tileCodes = selectionDisagreements(snapshot, STRIP, lostTile);
+  assert.deepEqual(tileCodes, [`region_tile_accounting_disagrees:${answer.spelling}`]);
+  // The counter is evidence, so an injected disagreement must move it: a gate whose verdict never changes is decoration.
+  const counted = (report: string): number =>
+    Number(/disagreeing (?<count>\d+)$/u.exec(report)?.groups?.count ?? "NaN");
+  const after = selectionGateReport();
+  assert.equal(
+    counted(after),
+    counted(clean) + codes.length + leakCodes.length + tileCodes.length,
+    `the report counts exactly the disagreements the gate returned: ${after}`,
+  );
+});
+
+test("a selection reads the observation and never writes it, and the row families are removed only from the copy", () => {
+  const snapshot = selectionSnapshot();
+  const before = JSON.stringify(snapshot);
+  const answer = selectObservedRows(snapshot, STRIP, OBSERVATION_SELECTION_ROWS_LIMIT_MAX);
+  assert.equal(JSON.stringify(snapshot), before, "a filter is a reading: the observed snapshot is unchanged");
+  assert.equal(
+    answer.kinds.reduce((total, kind) => total + kind.count, 0),
+    answer.kinds.reduce((total, kind) => total + kind.shown.length + kind.omitted, 0),
+    "the whole answer adds up, not only its four kinds",
+  );
+  const stripped = withoutRowFamilies(snapshot as unknown as Record<string, unknown>);
+  for (const family of Object.keys(TARGET_FAMILY_LABELS))
+    assert.equal(family in stripped, false, `${family} is a row family and must not print twice`);
+  assert.equal(stripped.location, "Farm", "the environment survives the strip");
+  assert.deepEqual(stripped.tile, { x: 61, y: 19 });
+  assert.ok(Object.keys(TARGET_FAMILY_LABELS).length > 0, "a zero population would agree with itself");
 });

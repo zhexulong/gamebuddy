@@ -26,7 +26,24 @@ import {
   noSnapshot,
 } from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
-import { boundObservedSnapshot } from "./stardew-observation-budget.js";
+import {
+  type ObservationSelection,
+  type SelectionAnswer,
+  type SelectionAxis,
+  type SelectionPredicate,
+  MAX_TARGET_TILES_SHOWN,
+  OBSERVATION_ENUMERATED_TILE_LIMIT,
+  OBSERVATION_SELECTION_RANGE_LIMIT,
+  OBSERVATION_SELECTION_ROWS_LIMIT_MAX,
+  OBSERVATION_SELECTION_TILE_LIMIT,
+  TARGET_FAMILY_LABELS,
+  axisTileCount,
+  selectObservedRows,
+  selectionDisagreements,
+  selectionGateReport,
+  withoutRowFamilies,
+} from "./game-world-vocabulary.js";
+import { type ObservationBudget, boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace.js";
 import {
@@ -168,6 +185,219 @@ type TileAreaReadIntegration = {
   tileArea(request: TileAreaRequest): Promise<TileAreaResult>;
 };
 
+/** The wire's own bound on one selection coordinate, matching the rectangle arithmetic the tile reader accepts. */
+const SELECTION_COORDINATE_LIMIT = 1000;
+/** Families one condition may name; past this the caller wants a narrower question, not a longer list. */
+const SELECTION_KINDS_LIMIT = 12;
+
+const selectionAxisSchema = Type.Object(
+  {
+    from: Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+    to: Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+    step: Type.Optional(Type.Integer({ minimum: 1, maximum: SELECTION_COORDINATE_LIMIT })),
+  },
+  { additionalProperties: false },
+);
+
+type Parsed<Value> = Readonly<{ ok: true; value: Value }> | Readonly<{ ok: false; code: string; hint: string }>;
+
+type SelectionRead =
+  | Readonly<{ ok: true; selection: ObservationSelection | null; limit: number }>
+  | Readonly<{ ok: false; code: string; hint: string }>;
+
+/** One observation answer's operator evidence, on every path: refused, unavailable, stale or answered. */
+type ObservationDetails = Readonly<{
+  available: boolean;
+  refresh: "fresh" | "cached";
+  refreshError: string | null;
+  reasonCode: string | undefined;
+  observationBudget: ObservationBudget | null;
+  selection: SelectionAnswer | null;
+  selectionGate: string | null;
+  snapshotJson: string | null;
+}>;
+
+const refused = (code: string, hint: string): Readonly<{ ok: false; code: string; hint: string }> => ({
+  ok: false,
+  code,
+  hint,
+});
+
+const readSmallInteger = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && Math.abs(value) <= SELECTION_COORDINATE_LIMIT
+    ? value
+    : undefined;
+
+function readSelectionAxis(raw: unknown, axis: "x" | "y"): Parsed<SelectionAxis> {
+  const hint = `\`${axis}\` 是一个区间：{ from, to, step? }，坐标在 ±${String(
+    SELECTION_COORDINATE_LIMIT,
+  )} 之内，from ≤ to。`;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return refused(`observation_selection_axis_invalid:${axis}`, hint);
+  const record = raw as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(record))
+    if (key !== "from" && key !== "to" && key !== "step")
+      return refused(
+        `observation_selection_unknown_key:${axis}.${key}`,
+        "区间只认 from / to / step：step 是步长，`step: 2` 就是每隔一格取一格。",
+      );
+  const from = readSmallInteger(record.from);
+  const to = readSmallInteger(record.to);
+  if (from === undefined || to === undefined || from > to)
+    return refused(`observation_selection_axis_invalid:${axis}`, hint);
+  if (record.step !== undefined) {
+    const step = readSmallInteger(record.step);
+    if (step === undefined || step < 1) return refused(`observation_selection_axis_invalid:${axis}`, hint);
+    return { ok: true, value: { from, to, step } };
+  }
+  return { ok: true, value: { from, to } };
+}
+
+/**
+ * One request's selection, read and refused BY NAME.
+ *
+ * Every field the rows already carry is accepted - `x`, `y` and the family a row came from - and nothing else is: an
+ * ignored key is a silent default, so `occupant` or `radius` comes back as `observation_selection_unknown_key:<key>`
+ * with the vocabulary that does exist. A condition is a RECTANGLE (`x` and `y` together) or a KIND FILTER (`kinds`
+ * alone); half a rectangle is refused rather than read as the whole column it would otherwise mean.
+ */
+function readObservationSelection(params: unknown): SelectionRead {
+  if (typeof params !== "object" || params === null || Array.isArray(params))
+    return refused(
+      "invalid_tool_parameters",
+      "stardew_observe 不带参数就是整块世界；要看一块，就带 `select`（矩形 / 步长 / kind）或 `tiles`（枚举格子），`limit` 控制每种列出几行。",
+    );
+  const record = params as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(record))
+    if (key !== "select" && key !== "tiles" && key !== "limit")
+      return refused(
+        `observation_selection_unknown_key:${key}`,
+        "已发布的每一行只带 x、y 和它所属的 kind，所以选择也只认 x / y / kinds；顶层只认 select、tiles、limit。",
+      );
+  let limit = MAX_TARGET_TILES_SHOWN;
+  if (record.limit !== undefined) {
+    const asked = readSmallInteger(record.limit);
+    if (asked === undefined || asked < 1 || asked > OBSERVATION_SELECTION_ROWS_LIMIT_MAX)
+      return refused(
+        `observation_selection_limit_invalid:${String(record.limit)}`,
+        `\`limit\` 是每种列出的行数，取 1～${String(
+          OBSERVATION_SELECTION_ROWS_LIMIT_MAX,
+        )}；其余的行只会计数，不会消失。`,
+      );
+    limit = asked;
+  }
+  const predicates: SelectionPredicate[] = [];
+  if (record.select !== undefined) {
+    if (!Array.isArray(record.select) || record.select.length === 0)
+      return refused(
+        "observation_selection_empty",
+        "`select` 是条件的并集：一个空数组什么也不选。要么给它至少一个条件，要么不带 `select`。",
+      );
+    if (record.select.length > OBSERVATION_SELECTION_RANGE_LIMIT)
+      return refused(
+        `observation_selection_too_many_ranges:${String(record.select.length)}:${String(
+          OBSERVATION_SELECTION_RANGE_LIMIT,
+        )}`,
+        `一次最多 ${String(OBSERVATION_SELECTION_RANGE_LIMIT)} 个范围；更多形状请直接枚举格子（\`tiles\`）。`,
+      );
+    for (const raw of record.select) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+        return refused("observation_selection_axis_invalid:select", "`select` 的每一项是 { x?, y?, kinds? }。");
+      const condition = raw as Readonly<Record<string, unknown>>;
+      for (const key of Object.keys(condition))
+        if (key !== "x" && key !== "y" && key !== "kinds")
+          return refused(
+            `observation_selection_unknown_key:select.${key}`,
+            "一个条件只认 x（区间）、y（区间）和 kinds（族名）：形状是这三样，别的都不是行里有的东西。",
+          );
+      if ((condition.x === undefined) !== (condition.y === undefined))
+        return refused(
+          `observation_selection_axis_partial:${condition.x === undefined ? "x" : "y"}`,
+          "矩形需要 x 和 y 一起给；只按位置以外的东西找，就只给 `kinds`。",
+        );
+      const predicate: { x?: SelectionAxis; y?: SelectionAxis; kinds?: readonly string[] } = {};
+      if (condition.x !== undefined) {
+        const axis = readSelectionAxis(condition.x, "x");
+        if (!axis.ok) return axis;
+        predicate.x = axis.value;
+      }
+      if (condition.y !== undefined) {
+        const axis = readSelectionAxis(condition.y, "y");
+        if (!axis.ok) return axis;
+        predicate.y = axis.value;
+      }
+      if (condition.kinds !== undefined) {
+        if (!Array.isArray(condition.kinds) || condition.kinds.length === 0)
+          return refused("observation_selection_axis_invalid:kinds", "`kinds` 至少给一个族名。");
+        if (condition.kinds.length > SELECTION_KINDS_LIMIT)
+          return refused(
+            `observation_selection_too_many_kinds:${String(condition.kinds.length)}:${String(SELECTION_KINDS_LIMIT)}`,
+            `一个条件最多 ${String(SELECTION_KINDS_LIMIT)} 个族名；更多就用多个条件。`,
+          );
+        const kinds: string[] = [];
+        for (const kind of condition.kinds) {
+          if (typeof kind !== "string" || !Object.hasOwn(TARGET_FAMILY_LABELS, kind))
+            return refused(
+              `observation_selection_unknown_kind:${String(kind)}`,
+              `\`kinds\` 里是该行所属的族名（观察里按 kind 发布），例如 ${Object.keys(TARGET_FAMILY_LABELS)
+                .slice(0, 8)
+                .join(" / ")}。`,
+            );
+          kinds.push(kind);
+        }
+        predicate.kinds = Object.freeze(kinds);
+      }
+      predicates.push(Object.freeze(predicate));
+    }
+  }
+  const tiles: (readonly [number, number])[] = [];
+  if (record.tiles !== undefined) {
+    if (!Array.isArray(record.tiles) || record.tiles.length === 0)
+      return refused("observation_selection_empty", "`tiles` 是一串 [x, y] 格子：空数组什么也不选。");
+    if (record.tiles.length > OBSERVATION_ENUMERATED_TILE_LIMIT)
+      return refused(
+        `observation_selection_too_many_tiles:${String(record.tiles.length)}:${String(
+          OBSERVATION_ENUMERATED_TILE_LIMIT,
+        )}`,
+        `最多枚举 ${String(OBSERVATION_ENUMERATED_TILE_LIMIT)} 格；更大的形状请用 \`select\` 里的 x/y 范围。`,
+      );
+    for (const raw of record.tiles) {
+      const pair = Array.isArray(raw) && raw.length === 2 ? raw : undefined;
+      const x = pair === undefined ? undefined : readSmallInteger(pair[0]);
+      const y = pair === undefined ? undefined : readSmallInteger(pair[1]);
+      if (x === undefined || y === undefined)
+        return refused(
+          `observation_selection_tile_invalid:${JSON.stringify(raw)}`,
+          `一个格子写成 [x, y]，坐标在 ±${String(SELECTION_COORDINATE_LIMIT)} 之内。`,
+        );
+      tiles.push(Object.freeze([x, y] as const));
+    }
+  }
+  if (predicates.length === 0 && tiles.length === 0) return { ok: true, selection: null, limit };
+  // The covered tiles are counted BEFORE they are enumerated, so an oversized rectangle is refused by name instead of
+  // spending the process enumerating a million tiles nobody can read.
+  const covered = predicates.reduce(
+    (total, predicate) =>
+      total +
+      (predicate.x === undefined || predicate.y === undefined
+        ? 0
+        : axisTileCount(predicate.x) * axisTileCount(predicate.y)),
+    tiles.length,
+  );
+  if (covered > OBSERVATION_SELECTION_TILE_LIMIT)
+    return refused(
+      `observation_selection_too_many_tiles:${String(covered)}:${String(OBSERVATION_SELECTION_TILE_LIMIT)}`,
+      `这个选择覆盖 ${String(covered)} 格，超过 ${String(
+        OBSERVATION_SELECTION_TILE_LIMIT,
+      )} 格；枚举最多 ${String(OBSERVATION_ENUMERATED_TILE_LIMIT)} 格，更大的范围请缩窄 x/y 或用 step 跳格。`,
+    );
+  return {
+    ok: true,
+    selection: Object.freeze({ predicates: Object.freeze(predicates), tiles: Object.freeze(tiles) }),
+    limit,
+  };
+}
+
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
 export function createStardewObservationTools(
   integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
@@ -183,10 +413,69 @@ export function createStardewObservationTools(
     name: "stardew_observe",
     label: "Observe Stardew",
     description:
-      "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left.",
-    parameters: Type.Object({}),
-    execute: async () => {
+      "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left. " +
+      "With NO argument you get the whole bounded world. To ask about a SHAPE instead - 'the 3-wide, 20-long strip', 'the row along the fence', 'what is on these three tiles' - pass a SELECTION and the answer is that filter over the rows this snapshot already published (it re-reads none of them from the world): " +
+      "`select` is a union of conditions, each { x?: {from,to,step?}, y?: {from,to,step?}, kinds?: [family,...] } - a rectangle, a stride (`step: 2` is every other tile), or kinds alone (every published row of those families wherever it stands); " +
+      "`tiles` is a union of explicit [x,y] tiles for any shape a rectangle cannot say. Both are unioned when both are given. " +
+      "`kinds` are the family names the observation already publishes (weedTargets, treeStumpTargets, soilTiles, debrisTargets, ...) and an unknown one is refused by name. " +
+      "`limit` (1-24, default 6) is how many rows of each kind are listed; the rest are COUNTED, never dropped. " +
+      "The answer always has one shape: how many tiles the selection named (with rows / measured-empty / unreadable), then per kind its count, then the nearest rows. The three zeroes stay apart: a tile inside the published area with nothing on it is EMPTY, a tile outside it is named UNREADABLE, and a kind this observation never published is NOT MEASURED.",
+    parameters: Type.Object(
+      {
+        select: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                x: Type.Optional(selectionAxisSchema),
+                y: Type.Optional(selectionAxisSchema),
+                kinds: Type.Optional(
+                  Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+                    minItems: 1,
+                    maxItems: SELECTION_KINDS_LIMIT,
+                  }),
+                ),
+              },
+              { additionalProperties: false },
+            ),
+            { minItems: 1, maxItems: OBSERVATION_SELECTION_RANGE_LIMIT },
+          ),
+        ),
+        tiles: Type.Optional(
+          Type.Array(
+            Type.Tuple([
+              Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+              Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+            ]),
+            { minItems: 1, maxItems: OBSERVATION_ENUMERATED_TILE_LIMIT },
+          ),
+        ),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: OBSERVATION_SELECTION_ROWS_LIMIT_MAX })),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (
+      _toolCallId,
+      params,
+    ): Promise<{ content: { type: "text"; text: string }[]; details: ObservationDetails }> => {
+      const asked = readObservationSelection(params);
       const state = integration.state;
+      // A malformed selection is refused BEFORE the bridge is asked anything: the request names a vocabulary this
+      // tool does not have, and a round trip would only spend the answer on the same refusal.
+      if (!asked.ok)
+        return {
+          content: [{ type: "text" as const, text: `${asked.code}。${asked.hint}` }],
+          details: {
+            available: state.connected && state.snapshot !== null,
+            refresh: "cached" as const,
+            refreshError: null,
+            reasonCode: asked.code,
+            observationBudget: null,
+            selection: null as SelectionAnswer | null,
+            selectionGate: null as string | null,
+            snapshotJson: null,
+          },
+        };
+      const selection = asked.selection;
       // A fresh solicited observe is the only way the Agent can see the world
       // after its own navigate/execute advanced the Mod revision; the Host
       // cache alone would still describe the pre-action location. The observed
@@ -231,32 +520,81 @@ export function createStardewObservationTools(
       // content now names it, and the reasonCode does too.
       const staleAfterFailedRefresh = available && refresh === "cached" && refreshError !== null;
       const revision = observed === null ? undefined : observed.revision;
+      // THE SELECTION is a filter over the rows this snapshot already publishes, so it is answered from `observed`
+      // (the one authority) and its gate runs before anything is handed to the model.
+      let selectionAnswer: SelectionAnswer | null = null;
+      let selectionGate: string | null = null;
+      if (selection !== null && observed !== null) {
+        const answer = selectObservedRows(observed, selection, asked.limit);
+        const disagreements = selectionDisagreements(observed, selection, answer);
+        selectionGate = selectionGateReport();
+        // A summary that does not add up is refused, not shipped: the model would have no way to tell which of the two
+        // numbers is the wrong one.
+        if (disagreements.length > 0)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `${disagreements.join("；")}。这张回答的分组和它自己带的行对不上，所以不交给你；重新 observe 一次再看。`,
+              },
+            ],
+            details: {
+              available,
+              refresh,
+              refreshError,
+              reasonCode: disagreements[0],
+              observationBudget: bounded === null ? null : bounded.budget,
+              selection: answer,
+              selectionGate,
+              snapshotJson: available ? JSON.stringify(snapshot) : null,
+            },
+          };
+        selectionAnswer = answer;
+      }
       // The answer is the SAME block the per-turn delivery composes (`fact-brief.ts`), from the snapshot the Mod just
       // published - not a second rendering of the world with its own wording. Measured `round44`: the JSON dump this
       // replaces was a median 20,980 characters per call, 648,059 over 31 calls, 81.1% of every tool-result byte.
-      const unchanged = bounded !== null && revision !== undefined && revision === observedRevisionShown;
-      const fresh = bounded !== null && revision !== undefined && !unchanged;
+      //
+      // A SELECTION also skips the unchanged-revision shortcut: the model asked a NEW question about the same revision,
+      // and "the world has not changed" would leave that question unanswered.
+      const unchanged =
+        selectionAnswer === null && bounded !== null && revision !== undefined && revision === observedRevisionShown;
+      const fresh = selectionAnswer === null && bounded !== null && revision !== undefined && !unchanged;
+      // The rows a selection answers are printed by the selection block, so the world block is composed without the
+      // published row families: one rendering of a row, never two.
+      const worldSnapshot =
+        selectionAnswer === null
+          ? bounded?.snapshot
+          : bounded === null
+            ? undefined
+            : withoutRowFamilies(bounded.snapshot);
       const worldText =
-        bounded === null || revision === undefined
+        bounded === null || revision === undefined || worldSnapshot === undefined
           ? ""
           : unchanged
             ? unchangedWorldAnswer(revision)
             : composeWorldState({
-                snapshot: bounded.snapshot as unknown as Snapshot,
+                snapshot: worldSnapshot as unknown as Snapshot,
                 revision,
                 ageTurns: 0,
                 // This answer IS the observation the block describes, so its age is zero on both measures.
                 ageMs: 0,
               });
+      const bodyText =
+        selectionAnswer === null
+          ? worldText
+          : worldText === ""
+            ? selectionAnswer.text
+            : `${selectionAnswer.text}\n${worldText}`;
       if (fresh) observedRevisionShown = revision;
       // A refresh the Mod refused still has a world to state - the last one it published - and the failure is said
       // FIRST, because a block that reads as current after a failed refresh is the deadlock this sentence exists for.
-      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them.\n${worldText}`;
+      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them.\n${bodyText}`;
       return {
         content: [
           {
             type: "text" as const,
-            text: available ? (staleAfterFailedRefresh ? staleText : worldText) : unavailableText,
+            text: available ? (staleAfterFailedRefresh ? staleText : bodyText) : unavailableText,
           },
         ],
         details: {
@@ -273,6 +611,9 @@ export function createStardewObservationTools(
           // Operator evidence that the bound ran and what it cost. Deliberately NOT in the payload: the
           // provider sends text blocks only, so a byte count there would never reach the model.
           observationBudget: bounded === null ? null : bounded.budget,
+          selection: selectionAnswer,
+          // `observations examined N · kinds K · disagreeing 0`: the gate's own population and verdict.
+          selectionGate,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };

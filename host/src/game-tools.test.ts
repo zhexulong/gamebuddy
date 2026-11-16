@@ -2111,3 +2111,173 @@ test("a failed observation refresh is named in the CONTENT, not hidden in detail
   // The data is still there, so a reader that understood the warning can use it.
   assert.match(text, /383/u);
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// `stardew_observe` with a SELECTION: the same published rows, filtered, with the omissions counted.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** One observation carrying the shapes a strip question asks about, plus the environment the block also states. */
+function selectionSnapshot(): Record<string, unknown> {
+  const weeds = [60, 61, 62].flatMap((x) => [18, 19, 20, 21].map((y) => ({ targetId: `weed_${x}_${y}`, x, y })));
+  const twigs = [60, 61, 62].flatMap((x) => [10, 11].map((y) => ({ targetId: `grass_${x}_${y}`, x, y })));
+  return {
+    revision: 383,
+    location: "Farm",
+    tile: { x: 61, y: 19 },
+    stamina: 90,
+    exhausted: false,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    activeExecution: null,
+    weedTargets: weeds,
+    grassTargets: twigs,
+    treeStumpTargets: [{ targetId: "stump_1", x: 60, y: 12 }],
+  };
+}
+
+function selectionIntegration(): { tools: ReturnType<typeof createStardewObservationTools>; refresh: () => number } {
+  let refreshes = 0;
+  const integration = {
+    state: { connected: true, snapshot: selectionSnapshot(), latestReasonCode: null, latestReceipt: null },
+    observe: async () => {
+      refreshes += 1;
+    },
+  };
+  return { tools: createStardewObservationTools(integration as never), refresh: () => refreshes };
+}
+
+const selectionExecute = async (tools: ReturnType<typeof createStardewObservationTools>, params: unknown) => {
+  const observe = tools.find((tool) => tool.name === "stardew_observe");
+  assert.ok(observe !== undefined);
+  const result = await observe.execute("t", params as never, new AbortController().signal, () => {}, {} as never);
+  return {
+    text: result.content[0]?.type === "text" ? result.content[0].text : "",
+    details: result.details as {
+      selection?: {
+        verdict?: string;
+        tiles?: { named?: number; withRows?: number; empty?: number; unreadable?: number };
+        kinds?: readonly { kind: string; count: number; shown: readonly unknown[]; omitted: number }[];
+        text?: string;
+      } | null;
+      selectionGate?: string | null;
+      reasonCode?: string;
+    },
+  };
+};
+
+test("stardew_observe answers the rectangle it was given, and the environment is still stated", async () => {
+  const { tools, refresh } = selectionIntegration();
+  const { text, details } = await selectionExecute(tools, {
+    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 } }],
+  });
+  assert.equal(refresh(), 1, "a selection is answered from a fresh observation, not from a stale cache");
+  assert.match(text, /选中（revision 383）/u, `the answer says what was selected and which revision: ${text}`);
+  assert.match(text, /杂草 9/u, `the 3x3 weeds of the rectangle are counted: ${text}`);
+  assert.match(text, /没有重读世界/u, "and it says the filter re-reads none of the rows from the world");
+  assert.match(text, /位置: 农场/u, `the environment fact survives the row strip: ${text}`);
+  // The rows of the world block are NOT printed beside the selection's rows: the strip removes them from the copy.
+  assert.equal(text.includes("(61,10)"), false, "a twig outside the rectangle is not printed at all");
+  assert.equal(details.selection?.tiles?.named, 9);
+  assert.equal(details.selection?.tiles?.unreadable, 0);
+  assert.equal(
+    details.selection?.kinds?.find((kind) => kind.kind === "weedTargets")?.count,
+    9,
+    "the structured answer carries the kind's count",
+  );
+  assert.match(
+    details.selectionGate ?? "",
+    /^observations examined [1-9]\d* · kinds [1-9]\d* · disagreeing 0$/u,
+    `the gate prints its own population and verdict: ${details.selectionGate}`,
+  );
+});
+
+test("stardew_observe enumerates tiles: one inside the published extent, one named unreadable", async () => {
+  const { tools } = selectionIntegration();
+  const { text, details } = await selectionExecute(tools, {
+    tiles: [
+      [60, 18],
+      [999, 1],
+    ],
+  });
+  assert.equal(details.selection?.tiles?.named, 2);
+  assert.equal(details.selection?.tiles?.withRows, 1, "the enumerated weed tile has a row");
+  assert.equal(details.selection?.tiles?.unreadable, 1, "the far tile was never published and is not a measured zero");
+  assert.match(text, /未覆盖/u, text);
+  assert.match(text, /999，1/u, `the unreadable tile is named with its coordinate: ${text}`);
+});
+
+test("stardew_observe limits how many rows a kind lists, and counts the rest", async () => {
+  const { tools } = selectionIntegration();
+  const { text, details } = await selectionExecute(tools, {
+    select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 21 } }],
+    limit: 2,
+  });
+  const weeds = details.selection?.kinds?.find((kind) => kind.kind === "weedTargets");
+  assert.equal(weeds?.count, 12);
+  assert.equal(weeds?.shown.length, 2);
+  assert.equal(weeds?.omitted, 10);
+  assert.match(text, /其余 10 格未列出/u, `the ten rows the limit dropped are counted: ${text}`);
+});
+
+test("a selection is a NEW question about the same revision, so the unchanged shortcut cannot swallow it", async () => {
+  const { tools } = selectionIntegration();
+  const first = await selectionExecute(tools, { select: [{ kinds: ["weedTargets"] }] });
+  assert.match(first.text, /杂草 12/u);
+  const second = await selectionExecute(tools, { select: [{ kinds: ["weedTargets"] }] });
+  assert.match(second.text, /选中（revision 383）/u, `a repeat selection still answers: ${second.text}`);
+  assert.match(second.text, /杂草 12/u);
+  // The world block's own shortcut still exists: a plain observation of the same revision says it has not changed.
+  const plainFirst = await selectionExecute(tools, {});
+  assert.match(
+    plainFirst.text,
+    /位置: 农场/u,
+    `the first plain observation still states the world: ${plainFirst.text}`,
+  );
+  const plainSecond = await selectionExecute(tools, {});
+  assert.match(plainSecond.text, /世界没有变化/u);
+});
+
+test("a selection the rows do not have is refused BY NAME, before the bridge is asked", async () => {
+  const { tools, refresh } = selectionIntegration();
+  const refused = [
+    [{ region: { x0: 60, y0: 18, x1: 62, y1: 20 } }, "observation_selection_unknown_key:region"],
+    [{ select: [{ kinds: ["weeds"] }] }, "observation_selection_unknown_kind:weeds"],
+    [{ select: [{ x: { from: 60, to: 62 } }] }, "observation_selection_axis_partial:y"],
+    [{ select: [{ x: { from: 62, to: 60 }, y: { from: 18, to: 20 } }] }, "observation_selection_axis_invalid:x"],
+    [
+      { select: [{ x: { from: 60, to: 62 }, y: { from: 18, to: 20 }, step: 2 }] },
+      "observation_selection_unknown_key:select.step",
+    ],
+    [{ select: [] }, "observation_selection_empty"],
+    [{ tiles: [[0, 0.5]] }, "observation_selection_tile_invalid:[0,0.5]"],
+    [
+      { select: [{ x: { from: 0, to: 1000 }, y: { from: 0, to: 1000 } }] },
+      "observation_selection_too_many_tiles:1002001:4096",
+    ],
+  ] as const;
+  for (const [params, code] of refused) {
+    const { text, details } = await selectionExecute(tools, params);
+    assert.ok(text.startsWith(code), `"${JSON.stringify(params)}" is refused by its own name, got: ${text}`);
+    assert.equal(details.reasonCode, code);
+    assert.ok(text.length > code.length + 4, `the refusal names the way out, not only the code: ${text}`);
+  }
+  assert.equal(refresh(), 0, "a refused selection costs no bridge round trip");
+});
+
+test("no selection is exactly today's observation", async () => {
+  const { tools } = selectionIntegration();
+  const { text, details } = await selectionExecute(tools, {});
+  assert.match(text, /位置: 农场/u);
+  assert.equal(text.includes("选中"), false, "the plain answer is the whole world block, unchanged");
+  assert.equal(details.selection, null);
+  assert.match(text, /\(61,10\)|草丛/u, `the world block still names the nearby families: ${text}`);
+});

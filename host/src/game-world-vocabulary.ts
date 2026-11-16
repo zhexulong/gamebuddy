@@ -1105,3 +1105,551 @@ function extentSide(value: unknown): number {
 function footprintSuffix(tile: { readonly w: number; readonly h: number }): string {
   return tile.w > 1 || tile.h > 1 ? ` [${String(tile.w)}×${String(tile.h)}]` : "";
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// A SELECTION over the rows one observation already published.
+// ---------------------------------------------------------------------------------------------------------------
+//
+// `stardew_observe` used to hand the model one bounded view of the whole world and accepted no argument, so the only
+// question it could answer was "what is near me" - a 3-wide strip, the row along the fence, or "what is at the tile I
+// am about to walk onto" all had to be reconstructed by the model from a square window it did not choose.
+//
+// A selection is a FILTER over the rows this snapshot already carries, never a second read of the world: the same
+// families, the same `ROW_TILE_FIELD_PAIRS` placement, the same `renderTargetFamily` sentence. Nothing here asks the
+// Mod anything, so a selection answer costs no bridge round trip and cannot disagree with the observation the model
+// is holding.
+//
+// TWO INPUT FORMS, ONE PREDICATE. A shape is a set of tiles, and a set can be ENUMERATED (`tiles`) or DECIDED
+// (`predicates`: an x/y rectangle with an optional stride, and an optional kind filter). The two forms are unioned,
+// because a caller that knows three tiles and one strip is asking about their union. There is deliberately no shape
+// grammar: a polygon, a circle or a stroke is also just a set, and `tiles` says the same thing with no language to
+// validate, version and explain.
+//
+// THE ANSWER IS ONE SHAPE, whatever the selector: the counts per kind, the nearest rows, and the omissions counted.
+// Generality lives in the selector, never in the answer - a model that has to re-parse an unpredictable structure
+// mis-reads the shape it has not seen.
+
+/** Tiles a request may enumerate outright. Past this the way out is a rectangle, and the refusal says so. */
+export const OBSERVATION_ENUMERATED_TILE_LIMIT = 32;
+/** Rectangles one request may name. A union of three strips fits; a hand-built mask does not. */
+export const OBSERVATION_SELECTION_RANGE_LIMIT = 8;
+/**
+ * Tiles the named rectangles may cover, deduplicated.
+ *
+ * The count is EXACT, which is why this bound exists: the answer states how many tiles the request named, and a
+ * number derived from `width × height` arithmetic would disagree with the tiles the rows are matched against as soon
+ * as two rectangles overlap. Under this bound the named tiles are enumerated into one set and counted.
+ */
+export const OBSERVATION_SELECTION_TILE_LIMIT = 4096;
+/** Rows one kind names before the answer counts the rest. Wider than `MAX_TARGET_TILES_SHOWN`: a strip needs its rows. */
+export const OBSERVATION_SELECTION_ROWS_LIMIT_MAX = 24;
+
+/** One axis of a rectangle: the tiles it names are `from`, `from + step`, … `to`. */
+export type SelectionAxis = Readonly<{ from: number; to: number; step?: number }>;
+
+/**
+ * One condition over the three fields a published row already carries: `x`, `y` and the family it came from.
+ *
+ * An axis pair is a rectangle, a `step` is the stride inside it, and `kinds` names the families. Neither is required
+ * on its own: `kinds` alone selects every published row of those kinds wherever it stands, which is what a
+ * kind-and-no-place question means and is reported as a condition that names no tile.
+ */
+export type SelectionPredicate = Readonly<{
+  x?: SelectionAxis;
+  y?: SelectionAxis;
+  kinds?: readonly string[];
+}>;
+
+/** What a caller selected: enumerated tiles, decided conditions, or both. */
+export type ObservationSelection = Readonly<{
+  predicates: readonly SelectionPredicate[];
+  tiles: readonly (readonly [number, number])[];
+}>;
+
+/** How many tiles one axis names, counted from its own stride. `step: 2` over 18…37 names 10, not 20. */
+export function axisTileCount(axis: SelectionAxis): number {
+  return Math.floor((axis.to - axis.from) / (axis.step ?? 1)) + 1;
+}
+
+/** The tiles one request named, deduplicated: the population the answer's tile counts are taken over. */
+export function namedSelectionTiles(selection: ObservationSelection): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const [x, y] of selection.tiles) keys.add(tileKey(x, y));
+  for (const predicate of selection.predicates) {
+    const x = predicate.x;
+    const y = predicate.y;
+    if (x === undefined || y === undefined) continue;
+    for (let tileX = x.from; tileX <= x.to; tileX += x.step ?? 1)
+      for (let tileY = y.from; tileY <= y.to; tileY += y.step ?? 1) keys.add(tileKey(tileX, tileY));
+  }
+  return keys;
+}
+
+/** One selected row, in the shape `renderTargetFamily` prints. */
+export type SelectedRow = Readonly<{
+  x: number;
+  y: number;
+  name: string | undefined;
+  state: string;
+  w: number;
+  h: number;
+}>;
+
+/**
+ * What one kind's rows in the selection say - the THREE ZEROES, kept apart.
+ *
+ * `measured` means rows fell inside. `empty` means the family published and the selection lies where this
+ * observation was looking, so the zero is a reading. `beyond_extent` means the family published rows somewhere this
+ * observation DID look and the selection lies outside that extent: the zero is the extent's edge, not the world's
+ * silence. `not_published` means the observation carries no such family at all, which is `not measured` - the oldest
+ * distinction in this repository, and the one a single `0` erases.
+ */
+export type SelectedKindCoverage = "measured" | "empty" | "beyond_extent" | "not_published";
+
+/** One kind's rows inside the selection, with everything the answer does not name counted. */
+export type SelectedKind = Readonly<{
+  kind: string;
+  label: string;
+  /** Rows of this kind the selection picked. The answer's summary states this number and nothing else. */
+  count: number;
+  /** The nearest `limit` of them. */
+  shown: readonly SelectedRow[];
+  /** Picked rows this answer does not name: the cap, plus every row carrying no readable tile. */
+  omitted: number;
+  /** Picked rows with no readable tile. Counted in `count` and in `omitted`, never silently dropped. */
+  unplaced: number;
+  /** Rows the family published in the whole observation: the ceiling beside the count. */
+  published: number;
+  coverage: SelectedKindCoverage;
+}>;
+
+/** The tiles a request named, and what happened to each: every named tile lands in exactly one bucket. */
+export type SelectionTiles = Readonly<{
+  named: number;
+  /** Named tiles at least one selected row stands on. */
+  withRows: number;
+  /** Named tiles inside the published extent with no selected row: measured, and empty. */
+  empty: number;
+  /** Named tiles outside the published extent: unreadable, and named rather than reported as zero. */
+  unreadable: number;
+  /** The first few unreadable tiles, so the answer says WHICH part of itself it could not read. */
+  unreadableNamed: readonly string[];
+  /** Conditions that filter by kind alone and therefore name no tile at all. */
+  kindOnlyConditions: number;
+}>;
+
+/** One answer shape for every selector. */
+export type SelectionAnswer = Readonly<{
+  verdict: "measured" | "empty" | "beyond_extent" | "not_measured";
+  tiles: SelectionTiles;
+  kinds: readonly SelectedKind[];
+  /** Families this observation published that the request's kind filter left out of this answer. */
+  kindsOutsideScope: number;
+  /** The extent of every row this observation published, or `undefined` when it published none it could place. */
+  extent: Readonly<{ x0: number; y0: number; x1: number; y1: number }> | undefined;
+  /** How the refusal codes spell this selection, so a code names the question it refused. */
+  spelling: string;
+  /** The model-facing block: counts first, then the nearest rows, then every absence named. */
+  text: string;
+}>;
+
+const tileKey = (x: number, y: number): string => `${String(x)},${String(y)}`;
+
+function axisAdmits(axis: SelectionAxis | undefined, value: number): boolean {
+  if (axis === undefined) return true;
+  const step = axis.step ?? 1;
+  return value >= axis.from && value <= axis.to && (value - axis.from) % step === 0;
+}
+
+/** Whether one axis names at least one value in `[low, high]`, which is how a stride is compared with an extent. */
+function axisMeetsRange(axis: SelectionAxis | undefined, low: number, high: number): boolean {
+  if (axis === undefined) return true;
+  const step = axis.step ?? 1;
+  const start = Math.max(axis.from, low);
+  const first = start + ((step - ((start - axis.from) % step)) % step);
+  return first <= Math.min(axis.to, high);
+}
+
+/** Whether a predicate admits a row that carries a place. */
+function predicateAdmitsRow(
+  predicate: SelectionPredicate,
+  family: string,
+  tile: Readonly<{ x: number; y: number }>,
+): boolean {
+  if (predicate.kinds !== undefined && !predicate.kinds.includes(family)) return false;
+  return axisAdmits(predicate.x, tile.x) && axisAdmits(predicate.y, tile.y);
+}
+
+/**
+ * Whether a predicate admits a row that carries NO place.
+ *
+ * A row with no readable tile can satisfy a kind filter and can never satisfy a coordinate one, so it is selected by
+ * a kind-only condition and by nothing else. It is still a row the response must account for: the answer counts it and
+ * says it could not be placed.
+ */
+function predicateAdmitsUnplacedRow(predicate: SelectionPredicate, family: string): boolean {
+  return (
+    (predicate.kinds === undefined || predicate.kinds.includes(family)) &&
+    predicate.x === undefined &&
+    predicate.y === undefined
+  );
+}
+
+/** The families one predicate puts in scope, or `undefined` for "every family the observation published". */
+function scopedKinds(selection: ObservationSelection): ReadonlySet<string> | undefined {
+  const named = new Set<string>();
+  for (const predicate of selection.predicates) {
+    if (predicate.kinds === undefined) return undefined;
+    for (const kind of predicate.kinds) named.add(kind);
+  }
+  return selection.tiles.length === 0 ? named : undefined;
+}
+
+/** The extent of every placeable row the observation published, or `undefined` when it published none. */
+export function observedRowExtent(
+  snapshot: Snapshot,
+): Readonly<{ x0: number; y0: number; x1: number; y1: number }> | undefined {
+  let extent: { x0: number; y0: number; x1: number; y1: number } | undefined;
+  for (const family of Object.keys(TARGET_FAMILY_LABELS)) {
+    const value = (snapshot as unknown as Record<string, unknown>)[family];
+    if (!Array.isArray(value)) continue;
+    for (const tile of placedTargetTiles(value, ROW_STATE_FIELDS[family])) {
+      extent =
+        extent === undefined
+          ? { x0: tile.x, y0: tile.y, x1: tile.x, y1: tile.y }
+          : {
+              x0: Math.min(extent.x0, tile.x),
+              y0: Math.min(extent.y0, tile.y),
+              x1: Math.max(extent.x1, tile.x),
+              y1: Math.max(extent.y1, tile.y),
+            };
+    }
+  }
+  return extent === undefined ? undefined : Object.freeze(extent);
+}
+
+/**
+ * The rows one selection picks out of the observation's published families, counted per kind.
+ *
+ * ORDER is the module's own: Chebyshev distance from her tile, then x, then y - the ranking `nearbyTargetFamilies`
+ * uses, so the nearest row of a strip is the one she reaches first and two snapshots render two equal sentences.
+ *
+ * The counts are taken ONCE, over the families this snapshot publishes. Nothing is re-read from the world and nothing
+ * is re-derived from the text: `count` is the picked population, `shown` is its nearest `limit`, and `omitted` is
+ * counted from the picked lists rather than subtracted in a second place.
+ */
+export function selectObservedRows(
+  snapshot: Snapshot,
+  selection: ObservationSelection,
+  limit: number,
+): SelectionAnswer {
+  const named = namedSelectionTiles(selection);
+  const extent = observedRowExtent(snapshot);
+  const scope = scopedKinds(selection);
+  const actor = snapshot.tile;
+  const readableActor = Number.isFinite(actor?.x) && Number.isFinite(actor?.y);
+  const distance = (tile: Readonly<{ x: number; y: number }>): number =>
+    readableActor ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
+  const admits = (family: string, tile: Readonly<{ x: number; y: number }>): boolean =>
+    named.has(tileKey(tile.x, tile.y)) ||
+    selection.predicates.some((predicate) => predicateAdmitsRow(predicate, family, tile));
+
+  const tilesWithRows = new Set<string>();
+  const tilesUnreadable = new Set<string>();
+  const kinds: SelectedKind[] = [];
+  let kindsOutsideScope = 0;
+  let kindOnlyConditions = 0;
+  for (const predicate of selection.predicates)
+    if (predicate.x === undefined && predicate.y === undefined) kindOnlyConditions += 1;
+
+  for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
+    const value = (snapshot as unknown as Record<string, unknown>)[family];
+    const inScope = scope === undefined || scope.has(family);
+    if (!inScope) {
+      if (Array.isArray(value) && value.length > 0) kindsOutsideScope += 1;
+      continue;
+    }
+    if (!Array.isArray(value)) {
+      kinds.push(
+        Object.freeze({
+          kind: family,
+          label,
+          count: 0,
+          shown: Object.freeze([]),
+          omitted: 0,
+          unplaced: 0,
+          published: 0,
+          coverage: "not_published" as const,
+        }),
+      );
+      continue;
+    }
+    const placeable = placedTargetTiles(value, ROW_STATE_FIELDS[family]);
+    const picked = placeable.filter((tile) => admits(family, tile));
+    for (const tile of picked) tilesWithRows.add(tileKey(tile.x, tile.y));
+    const unplaced = value.length - placeable.length;
+    const pickedUnplaced = selection.predicates.some((predicate) => predicateAdmitsUnplacedRow(predicate, family))
+      ? unplaced
+      : 0;
+    const ordered = [...picked].sort(
+      (left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y,
+    );
+    const shown = ordered.slice(0, limit);
+    const count = picked.length + pickedUnplaced;
+    // Counted, not subtracted: the rows the answer does not name are the picked ones past the cap, plus every row it
+    // could not place. `count === shown.length + omitted` is then a claim the gate can falsify instead of an identity.
+    const omitted = ordered.reduce((total, _tile, index) => total + (index < shown.length ? 0 : 1), 0) + pickedUnplaced;
+    kinds.push(
+      Object.freeze({
+        kind: family,
+        label,
+        count,
+        shown: Object.freeze(shown.map((tile) => Object.freeze(tile))),
+        omitted,
+        unplaced: pickedUnplaced,
+        published: value.length,
+        coverage: coverageOf(count, value.length, placeable.length, selection, extent),
+      }),
+    );
+  }
+
+  for (const key of named) {
+    const [x, y] = key.split(",").map((part) => Number(part)) as [number, number];
+    if (tilesWithRows.has(key)) continue;
+    const measured = extent !== undefined && x >= extent.x0 && x <= extent.x1 && y >= extent.y0 && y <= extent.y1;
+    if (!measured) tilesUnreadable.add(key);
+  }
+  const unreadableNamed = [...tilesUnreadable]
+    .sort((left, right) => left.localeCompare(right, "en", { numeric: true }))
+    .slice(0, MAX_COUNTED_FAMILIES_NAMED)
+    .map((key) => key.replace(",", "，"));
+  const tiles: SelectionTiles = Object.freeze({
+    named: named.size,
+    withRows: tilesWithRows.size,
+    empty: named.size - tilesWithRows.size - tilesUnreadable.size,
+    unreadable: tilesUnreadable.size,
+    unreadableNamed: Object.freeze(unreadableNamed),
+    kindOnlyConditions,
+  });
+  const answer: SelectionAnswer = Object.freeze({
+    verdict: verdictOf(kinds, tiles),
+    tiles,
+    kinds: Object.freeze(kinds),
+    kindsOutsideScope,
+    extent,
+    spelling: selectionSpelling(selection, named.size),
+    text: "",
+  });
+  return Object.freeze({ ...answer, text: renderSelectionAnswer(answer, snapshot.revision) });
+}
+
+/** How one kind's picked rows are classified: the three zeroes, plus the one non-zero answer. */
+function coverageOf(
+  count: number,
+  published: number,
+  placed: number,
+  selection: ObservationSelection,
+  extent: Readonly<{ x0: number; y0: number; x1: number; y1: number }> | undefined,
+): SelectedKindCoverage {
+  if (count > 0) return "measured";
+  // A family that published nothing, or whose every row carries no place, was still measured: the observation says
+  // the kind has nothing in it, and no extent can contradict a set of rows that has no coordinate to be outside of.
+  if (published === 0 || placed === 0 || extent === undefined) return "empty";
+  return selectionMeetsExtent(selection, extent) ? "empty" : "beyond_extent";
+}
+
+/** Whether anything the request names could lie inside `extent` at all. */
+function selectionMeetsExtent(
+  selection: ObservationSelection,
+  extent: Readonly<{ x0: number; y0: number; x1: number; y1: number }>,
+): boolean {
+  for (const [x, y] of selection.tiles)
+    if (x >= extent.x0 && x <= extent.x1 && y >= extent.y0 && y <= extent.y1) return true;
+  for (const predicate of selection.predicates) {
+    if (predicate.x === undefined && predicate.y === undefined) return true;
+    if (axisMeetsRange(predicate.x, extent.x0, extent.x1) && axisMeetsRange(predicate.y, extent.y0, extent.y1))
+      return true;
+  }
+  return false;
+}
+
+function verdictOf(kinds: readonly SelectedKind[], tiles: SelectionTiles): SelectionAnswer["verdict"] {
+  const measured = kinds.some((kind) => kind.coverage === "measured");
+  if (measured) return "measured";
+  const published = kinds.filter((kind) => kind.coverage !== "not_published");
+  if (published.length === 0) return "not_measured";
+  if (tiles.named > 0 && tiles.withRows === 0 && tiles.empty === 0) return "beyond_extent";
+  if (published.some((kind) => kind.coverage === "empty")) return "empty";
+  return "beyond_extent";
+}
+
+/** The selection as the refusal codes spell it: short, deterministic, and the same string every time. */
+function selectionSpelling(selection: ObservationSelection, namedTileCount: number): string {
+  const parts: string[] = [];
+  if (selection.tiles.length > 0) parts.push(`tiles:${String(selection.tiles.length)}`);
+  for (const predicate of selection.predicates) {
+    const axes: string[] = [];
+    if (predicate.x !== undefined)
+      axes.push(`x${String(predicate.x.from)}-${String(predicate.x.to)}/${String(predicate.x.step ?? 1)}`);
+    if (predicate.y !== undefined)
+      axes.push(`y${String(predicate.y.from)}-${String(predicate.y.to)}/${String(predicate.y.step ?? 1)}`);
+    if (predicate.kinds !== undefined) axes.push(`k:${[...predicate.kinds].sort().join("+")}`);
+    if (axes.length > 0) parts.push(axes.join(","));
+  }
+  return parts.length === 0 ? `tiles:${String(namedTileCount)}` : parts.join("+");
+}
+
+/**
+ * The model-facing block.
+ *
+ * The counts come first because they are the answer, and the rows come after them because they are the address. Every
+ * family the request put in scope is accounted for: rows it picked, or the "nothing here" line, or `未测`, or the
+ * extent sentence. A family that printed nothing would be the one omission this block cannot have.
+ */
+function renderSelectionAnswer(answer: SelectionAnswer, revision: number): string {
+  const lines: string[] = [];
+  const named = answer.tiles.named;
+  const conditions = answer.tiles.kindOnlyConditions;
+  lines.push(
+    `选中（revision ${String(revision)}）：${
+      named === 0 ? "只按 kind 过滤，不限位置" : `命名 ${String(named)} 格`
+    }${conditions === 0 ? "" : `；另有 ${String(conditions)} 个只按 kind 的条件`}。只过滤这次观察已经发布的行，没有重读世界。`,
+  );
+  if (named > 0)
+    lines.push(
+      `格子：${String(answer.tiles.withRows)} 格有行 · ${String(answer.tiles.empty)} 格测过是空的 · ${String(
+        answer.tiles.unreadable,
+      )} 格未覆盖${answer.tiles.unreadableNamed.length === 0 ? "" : `（这次观察没有发布到那里：${answer.tiles.unreadableNamed.join("、")}）`}`,
+    );
+  const measured = answer.kinds.filter((kind) => kind.count > 0);
+  const totalRows = measured.reduce((total, kind) => total + kind.count, 0);
+  const totalShown = measured.reduce((total, kind) => total + kind.shown.length, 0);
+  const totalOmitted = measured.reduce((total, kind) => total + kind.omitted, 0);
+  if (totalRows > 0)
+    lines.push(
+      `这块里的行：${measured.map((kind) => `${kind.label} ${String(kind.count)}`).join(" · ")}（共 ${String(totalRows)} 行；列出 ${String(totalShown)} 行，其余 ${String(totalOmitted)} 格未列出）`,
+    );
+  for (const kind of measured.slice(0, MAX_TARGET_FAMILIES_SHOWN))
+    lines.push(
+      `${renderTargetFamily(kind.label, kind.count, kind.shown, kind.omitted)}${
+        kind.unplaced === 0 ? "" : `（其中 ${String(kind.unplaced)} 行没有坐标）`
+      }`,
+    );
+  const droppedFamilies = measured.slice(MAX_TARGET_FAMILIES_SHOWN);
+  if (droppedFamilies.length > 0)
+    lines.push(
+      `其余 ${String(droppedFamilies.length)} 类有行未列出：${droppedFamilies
+        .slice(0, MAX_COUNTED_FAMILIES_NAMED)
+        .map((kind) => kind.label)
+        .join("、")}`,
+    );
+  const emptyKinds = answer.kinds.filter((kind) => kind.coverage === "empty");
+  if (emptyKinds.length > 0) lines.push(`选中范围里没有：${countedFamilyNames(emptyKinds)}`);
+  const beyond = answer.kinds.filter((kind) => kind.coverage === "beyond_extent");
+  if (beyond.length > 0)
+    lines.push(
+      `范围外：${countedFamilyNames(beyond)}——这些 kind 已发布的行都在${
+        answer.extent === undefined
+          ? "别处"
+          : ` x ${String(answer.extent.x0)}～${String(answer.extent.x1)} / y ${String(answer.extent.y0)}～${String(answer.extent.y1)} 内`
+      }，与选中范围不相交；0 是没覆盖到，不是没有。`,
+    );
+  const unmeasured = answer.kinds.filter((kind) => kind.coverage === "not_published");
+  if (unmeasured.length > 0)
+    lines.push(`未测：${countedFamilyNames(unmeasured)}——这次观察没有发布这些 kind，所以不是 0。`);
+  if (answer.kindsOutsideScope > 0)
+    lines.push(`按 kind 过滤掉的还有 ${String(answer.kindsOutsideScope)} 类有行，不在本次选择里。`);
+  if (totalRows === 0) lines.push(verdictSentence(answer));
+  return lines.join("\n");
+}
+
+/** A bounded list of family labels with the rest counted, the shape the "nothing here" line already uses. */
+function countedFamilyNames(kinds: readonly SelectedKind[]): string {
+  const named = kinds.slice(0, MAX_COUNTED_FAMILIES_NAMED).map((kind) => kind.label);
+  return `${named.join("、")}${kinds.length > named.length ? ` 等 ${String(kinds.length)} 类` : ""}`;
+}
+
+/** The sentence a selection with no rows answers with, and the three zeroes it must keep apart. */
+function verdictSentence(answer: SelectionAnswer): string {
+  if (answer.verdict === "beyond_extent") return "选中范围整块在这次观察的已发布范围之外：这不是空的，是没覆盖到。";
+  if (answer.verdict === "empty") return "这块里一行都没有，而且这些 kind 这次观察都测量到了：选中范围确实是空的。";
+  if (answer.verdict === "not_measured") return "未测：这次观察没有发布可答的 kind，范围里没有任何可读的行。";
+  return "";
+}
+
+/** The observation with every published row family removed, so a selection answer does not print the world twice. */
+export function withoutRowFamilies(snapshot: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const stripped: Record<string, unknown> = { ...snapshot };
+  for (const family of Object.keys(TARGET_FAMILY_LABELS)) delete stripped[family];
+  return Object.freeze(stripped);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The gate: a summary that disagrees with the rows it carries is refused, not shipped.
+// ---------------------------------------------------------------------------------------------------------------
+//
+// The population is every observation that carried a selection; the property is that each kind's stated count equals
+// the rows the same answer carries plus the rows it says it counted and did not name, and that the named tiles add up.
+// The recount below reads the SAME published rows the answer was built from, which is what makes a disagreement
+// possible at all: a filter that drops a row, a cap applied to the wrong list, or a bucket that loses a tile shows up
+// as a number that does not add up.
+
+const selectionGateCounters = { observations: 0, kinds: 0, disagreements: 0 };
+
+/** Operator evidence: `observations examined N · kinds K · disagreeing 0`. */
+export function selectionGateReport(): string {
+  return `observations examined ${String(selectionGateCounters.observations)} · kinds ${String(
+    selectionGateCounters.kinds,
+  )} · disagreeing ${String(selectionGateCounters.disagreements)}`;
+}
+
+/** Code for a summary that does not add up, spelling the selection and the kind that disagreed. */
+export function selectionDisagreementCode(spelling: string, kind: string): string {
+  return `region_summary_disagrees_with_the_rows:${spelling}:${kind}`;
+}
+
+/**
+ * Every way `answer` disagrees with the published rows it was built from. Empty means the construction holds.
+ *
+ * Naming the drifting member is the point: a code says which kind, so the next reader does not have to re-derive the
+ * whole selection to find the one row that went missing.
+ */
+export function selectionDisagreements(
+  snapshot: Snapshot,
+  selection: ObservationSelection,
+  answer: SelectionAnswer,
+): readonly string[] {
+  const named = namedSelectionTiles(selection);
+  const admissions = new Map(
+    answer.kinds.map((kind) => [
+      kind.kind,
+      (tile: Readonly<{ x: number; y: number }>): boolean =>
+        named.has(tileKey(tile.x, tile.y)) ||
+        selection.predicates.some((predicate) => predicateAdmitsRow(predicate, kind.kind, tile)),
+    ]),
+  );
+  const codes: string[] = [];
+  for (const kind of answer.kinds) {
+    const family = (snapshot as unknown as Record<string, unknown>)[kind.kind];
+    const value = Array.isArray(family) ? family : [];
+    const placeable = placedTargetTiles(value, ROW_STATE_FIELDS[kind.kind]);
+    const admits = admissions.get(kind.kind);
+    const recount =
+      admits === undefined
+        ? 0
+        : placeable.filter((tile) => admits(tile)).length +
+          (selection.predicates.some((predicate) => predicateAdmitsUnplacedRow(predicate, kind.kind))
+            ? value.length - placeable.length
+            : 0);
+    if (recount !== kind.count || kind.count !== kind.shown.length + kind.omitted)
+      codes.push(selectionDisagreementCode(answer.spelling, kind.kind));
+    if (admits !== undefined && kind.shown.some((row) => !admits(row)))
+      codes.push(`region_summary_includes_a_row_outside_the_selection:${answer.spelling}:${kind.kind}`);
+  }
+  if (answer.tiles.named !== answer.tiles.withRows + answer.tiles.empty + answer.tiles.unreadable)
+    codes.push(`region_tile_accounting_disagrees:${answer.spelling}`);
+  selectionGateCounters.observations += 1;
+  selectionGateCounters.kinds += answer.kinds.length;
+  selectionGateCounters.disagreements += codes.length;
+  return Object.freeze(codes);
+}
