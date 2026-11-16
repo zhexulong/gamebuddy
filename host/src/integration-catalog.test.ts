@@ -156,9 +156,12 @@ type HasExactKeys<T, TKeys extends PropertyKey> = Exclude<keyof T, TKeys> extend
 type GameLifecycleProviderCapabilityHasOnlyCloseAndPresentation = Assert<
   HasExactKeys<GameLifecycleProviderCapability, "close" | "presentation">
 >;
-/** The projection stays exactly the game profile, the game read, and the activation binding sink. */
+/** The projection stays exactly the game profile, the game read, the push channel, its end, and the sink. */
 type GamePresentationProjectionHasOnlyTheGameSeams = Assert<
-  HasExactKeys<GamePresentationProjection, "gameProfile" | "readGame" | "lifecycleActivationBindingSink">
+  HasExactKeys<
+    GamePresentationProjection,
+    "gameProfile" | "readGame" | "gameEventStream" | "close" | "lifecycleActivationBindingSink"
+  >
 >;
 
 // The two compile-time seam assertions above are only meaningful if they are
@@ -175,6 +178,9 @@ test("game presentation projection is the generic seam a provider exposes withou
       navigationItemIds: ["game"],
     }),
     readGame: async () => GameBrowserFixtureV1.state(),
+    // A presentation that holds no push channel still owes its producer's end: the composition closes it before
+    // the lifecycle it reads.
+    close: () => undefined,
     // The narrowest sink is the admission issuer binding alone; a provider adds
     // only the lifecycle command seams its own activation owner implements.
     lifecycleActivationBindingSink: { bindBrowserAdmissionIssuer: () => undefined },

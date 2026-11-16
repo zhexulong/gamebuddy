@@ -7,6 +7,7 @@ import type {
   ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
 import type { ComposedGameProfile, GameBrowserStateV1 } from "./game-browser-contract/index.js";
+import type { GameEventStream } from "./game-browser/game-event-stream.js";
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -59,6 +60,16 @@ export type GameLifecycleProviderCapability = Readonly<{
 export type GamePresentationProjection = Readonly<{
   gameProfile: ComposedGameProfile;
   readGame(context: ComposedReferenceGameBrowserReadContext): Promise<GameBrowserStateV1>;
+  /**
+   * The Game surface's own push channel, when the integration has one.
+   *
+   * It is carried here rather than constructed by the composition because its epoch and its ring are the Game
+   * side's facts: a process that mounts this surface mounts exactly one stream for it, and `/game` publishes its
+   * checkpoint. A presentation without one is a Game surface that only ever answers the snapshot.
+   */
+  gameEventStream?: GameEventStream;
+  /** Stops the producer of `gameEventStream` before the lifecycle that fills it is closed. */
+  close(): void;
   lifecycleActivationBindingSink: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
 }>;
 

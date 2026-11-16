@@ -8,6 +8,8 @@ import {
   type GameDiscoveryReadResultV1,
 } from "../../game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "../../game-browser/game-browser-state-provider.js";
+import { createGameEventStream } from "../../game-browser/game-event-stream.js";
+import { createGameFactPublisher } from "../../game-browser/game-fact-publisher.js";
 import type { GameIntegrationProvider, GamePresentationProjection } from "../../integration-catalog.js";
 import {
   createStardewProductionLifecycleCoordinator,
@@ -130,6 +132,14 @@ function createStardewGameDiscoveryBinding(
   });
 }
 
+/**
+ * The Game surface's presentation: the declared profile, the one projection over the lifecycle owner's readers, and
+ * the push channel those readers feed.
+ *
+ * The stream belongs to the projection rather than to the coordinator because it is a browser transport: its epoch is
+ * per process, its frames carry no lifecycle authority, and the coordinator only PUBLISHES into it through the fact
+ * subscription below - the same division the Chat channel has, where the Chat side publishes and the store does not.
+ */
 export function createStardewGamePresentationProjection(
   coordinator: StardewProductionLifecycleCoordinator,
 ): GamePresentationProjection {
@@ -159,7 +169,8 @@ export function createStardewGamePresentationProjection(
     ],
     navigationItemIds: ["game"],
   });
-  const readGame = createGameBrowserStateProvider(
+  const gameEventStream = createGameEventStream();
+  const provider = createGameBrowserStateProvider(
     gameProfile,
     coordinator.lifecycleReader,
     coordinator.attachmentReader,
@@ -168,15 +179,22 @@ export function createStardewGamePresentationProjection(
     coordinator.installationReader,
     coordinator.worldBindingReader,
     coordinator.capabilityReader,
-  ).readState;
+    gameEventStream,
+  );
+  // The transition seam's only consumer: the coordinator announces which fact moved, and the frame it produces is
+  // the same projection `/game` answers from.
+  const gameFacts = createGameFactPublisher(gameEventStream, (fact) => provider.readFact(fact));
+  coordinator.subscribeGameFacts((fact) => gameFacts.publish(fact));
   const lifecycleActivationBindingSink = Object.freeze({
     ...coordinator.activationOwner,
     gameDiscovery: createStardewGameDiscoveryBinding(coordinator.activationOwner),
   });
   return Object.freeze({
     gameProfile,
-    readGame,
+    readGame: provider.readState,
+    gameEventStream,
     lifecycleActivationBindingSink,
+    close: () => gameFacts.close(),
   });
 }
 
@@ -211,9 +229,15 @@ export function createStardewGameIntegrationProvider(): GameIntegrationProvider 
       console.error(
         formatStardewBootstrapRegistrationReconcile(await coordinator.reconcileHeldBootstrapRegistration()),
       );
+      const presentation = createStardewGamePresentationProjection(coordinator);
       return Object.freeze({
-        close: () => coordinator.close(),
-        presentation: createStardewGamePresentationProjection(coordinator),
+        // The push producer stops FIRST: after this the coordinator's transitions are announced to nobody, so a
+        // frame can never be projected out of a lifecycle that is already tearing down.
+        close: async () => {
+          presentation.close();
+          await coordinator.close();
+        },
+        presentation,
       });
     },
   });

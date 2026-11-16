@@ -52,6 +52,10 @@ function fakeCoordinator(
       return { status: "unavailable" };
     },
   } as unknown as StardewGameSurfaceActionAuthorityReader;
+  const worldBindingReader = { readWorldBindingView: async () => ({ status: "none" as const }) };
+  const capabilityReader = { readCapabilityView: () => ({ status: "none" as const }) };
+  /** The coordinator's transition seam, as the projection subscribes to it. */
+  const gameFactListeners = new Set<(fact: "instance" | "attachment" | "selectedWorld") => void>();
   const activationOwner = Object.freeze({
     bindBrowserAdmissionIssuer: () => undefined,
     async readInstallationDiscovery(this: unknown) {
@@ -108,13 +112,25 @@ function fakeCoordinator(
     discoveryReceivers,
     activationOwner,
     installation,
+    /** Announces a transition the way the real lifecycle does, through the same subscription. */
+    publishGameFact(fact: "instance" | "attachment" | "selectedWorld"): void {
+      for (const listener of [...gameFactListeners]) listener(fact);
+    },
     coordinator: {
       lifecycleReader,
       attachmentReader,
       launchReadinessReader,
       installationReader,
       actionAuthorityReader,
+      worldBindingReader,
+      capabilityReader,
       activationOwner,
+      subscribeGameFacts(listener: (fact: "instance" | "attachment" | "selectedWorld") => void) {
+        gameFactListeners.add(listener);
+        return () => {
+          gameFactListeners.delete(listener);
+        };
+      },
       close: async () => undefined,
     } as unknown as StardewProductionLifecycleCoordinator,
   };
@@ -322,4 +338,24 @@ test("a discovery candidate reaches the player with the mod loader its owner pub
   // The redaction is still the projection's job, and it is the one member deliberately not copied verbatim.
   assert.equal(result.candidates[1]?.hint, "Detected installation (path hidden)");
   assert.equal(result.candidates[0]?.hint, null);
+});
+
+test("a lifecycle transition reaches the projection's stream as one frame of that fact", async () => {
+  const { coordinator, publishGameFact } = fakeCoordinator();
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const stream = projection.gameEventStream!;
+  const subscription = { epoch: stream.epoch, after: stream.decodeCursor(stream.cursor)!.sequence };
+
+  publishGameFact("selectedWorld");
+  // The frame is produced by an authoritative read, so it lands a microtask later; the wait is bounded by the
+  // assertion itself rather than by a timer that might pass for the wrong reason.
+  for (let attempt = 0; attempt < 50 && stream.subscribe(subscription).events.length === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const frames = stream.subscribe(subscription).events;
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0]!.eventType, "game.fact_changed");
+  assert.deepEqual(frames[0]!.payload, { fact: "selectedWorld", game: { selectedWorld: null } });
+  projection.close();
 });

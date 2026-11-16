@@ -26,6 +26,7 @@ import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
+import type { GameEventStream } from "../game-browser/game-event-stream.js";
 import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type {
   GameBrowserStateV1,
@@ -56,6 +57,8 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   profile: ComposedReferenceGameBrowserProfile;
   bootstrapToken: string;
   readGame?: (context: ComposedReferenceGameBrowserReadContext) => Promise<GameBrowserStateV1>;
+  /** The Game surface's own push channel: `/game` publishes its checkpoint and this route serves it. */
+  gameEventStream?: GameEventStream;
   referenceStateFacade: ReferencePipelineStateFacade;
   pipelineService?: ChatPipelineService;
   eventStream?: ChatEventStream;
@@ -115,6 +118,7 @@ export async function startComposedReferenceGameStaticShellComposition(
     bootstrapToken: options.bootstrapToken,
     readChat,
     ...(options.readGame === undefined ? {} : { readGame: options.readGame }),
+    ...(options.gameEventStream === undefined ? {} : { gameEventStream: options.gameEventStream }),
     ...(options.lifecycleActivationBindingSink === undefined ||
     options.lifecycleActivationBindingSink.activate === undefined
       ? {}

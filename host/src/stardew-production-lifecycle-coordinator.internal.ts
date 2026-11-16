@@ -85,6 +85,7 @@ import type {
   GameDisconnectCommandV1,
   GameEndgameCommandV1,
   GameEndgameResultV1,
+  GameFactPatchV1,
   GamePrerequisitesSetupCommandV1,
   GameLaunchCommandV1,
   GameResumeCancelCommandV1,
@@ -631,6 +632,15 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly capabilityReader: StardewGameSurfaceCapabilityReader;
   /** The world this lifecycle holds bound, resolved through the integration-private resolver. */
   readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
+  /**
+   * Subscribes to the transitions of the facts that can change without a player acting (`instance`, `attachment`,
+   * `selectedWorld`).
+   *
+   * The listener is told WHICH fact moved, never its new value: the value is read through the same projection
+   * `/game` answers from (`game-browser/game-browser-state-provider.ts`), which is the only place a fact can be
+   * spelled. The returned function ends the subscription.
+   */
+  subscribeGameFacts(listener: (fact: GameFactPatchV1["fact"]) => void): () => void;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   readonly headlessOperationalGame: HeadlessOperationalGame;
   /**
@@ -1259,6 +1269,33 @@ function createCoordinator(
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
   /**
+   * The transitions of the facts that can change without a player acting.
+   *
+   * Three facts are announced here - `instance` (the game's own fate, with the compatibility attested beside it),
+   * `attachment` (the AI client's own connection, which the world's Mod opens, drops and re-syncs without being
+   * asked) and `selectedWorld` (the world this lifecycle holds bound). They are the facts the Game surface cannot
+   * learn from the result of one of its own commands, and they are announced AT the assignment that changed them,
+   * so nothing on this side has to compare two projections on a timer to notice one moved.
+   *
+   * The other facts the browser reads are deliberately not announced: `prerequisites` and `actionAuthority` only
+   * move when a command moved them (and every command's own confirmation read sees them), and
+   * `role`/`companionName`/`selectedSave` are `null` on every Host that has ever answered.
+   *
+   * A listener's failure is not this lifecycle's: the announcement happens inside command paths that have already
+   * decided their outcome, and a push that could fail a command would make the surface's transport part of the
+   * game's authority.
+   */
+  const gameFactListeners = new Set<(fact: GameFactPatchV1["fact"]) => void>();
+  const publishGameFact = (fact: GameFactPatchV1["fact"]): void => {
+    for (const listener of [...gameFactListeners]) {
+      try {
+        listener(fact);
+      } catch {
+        // The push is best effort: `/game` stays the authority and answers the same fact on the next read.
+      }
+    }
+  };
+  /**
    * The one durable home of "the game this lifecycle launched is gone".
    *
    * It is latched rather than sampled per reader so every answer this lifecycle gives
@@ -1284,6 +1321,7 @@ function createCoordinator(
     if (reported === null || reported.role !== "player_host") return null;
     playerHostExit = Object.freeze({ role: "player_host" as const, exitCode: reported.exitCode, atMs: Date.now() });
     launchTerminal = true;
+    publishGameFact("instance");
     return playerHostExit;
   };
   /**
@@ -1608,8 +1646,11 @@ function createCoordinator(
     if (owner === undefined) throw new Error("stardew_player_host_attestation_owner_missing");
     try {
       playerHostAttestationCorrelated = await internal.readAndCorrelateOwnedPlayerHostSession(owner);
+      // Attestation is what lets `compatibility` say anything at all: it can only move here.
+      publishGameFact("instance");
     } catch (error) {
       launchTerminal = true;
+      publishGameFact("instance");
       if (!isClosing()) transition("failed");
       try {
         await internal.quarantineOwnedPlayerHostOwner(owner);
@@ -1644,6 +1685,7 @@ function createCoordinator(
       const launchMayHaveRun = launchCompleted || didStardewOwnedPlayerHostStageCEnterControlledLaunch(error);
       if (launchMayHaveRun) {
         launchTerminal = true;
+        publishGameFact("instance");
         if (!isClosing()) transition("failed");
         try {
           await internal.quarantineOwnedPlayerHostOwner(owner);
@@ -2190,6 +2232,7 @@ function createCoordinator(
           attachmentGeneration = 1;
           attachmentConnectionStatus = "connected_idle";
           actionAuthorityStatus = "active";
+          publishGameFact("attachment");
           return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
         })
         .catch(async (error: unknown) => {
@@ -2254,6 +2297,7 @@ function createCoordinator(
       if (command.expectedAttachmentGeneration !== attachmentGeneration)
         throw new Error("stardew_game_attachment_generation_conflict");
       attachmentConnectionStatus = "stopping";
+      publishGameFact("attachment");
       let settled: Promise<void>;
       try {
         settled = lease.host.stopAll({
@@ -2263,15 +2307,22 @@ function createCoordinator(
         }).settled;
       } catch (error) {
         attachmentConnectionStatus = "failed";
+        publishGameFact("attachment");
         settled = Promise.reject(error);
       }
       const stopGeneration = attachmentGeneration;
       const promise = settled.then(
         () => {
-          if (attachmentGeneration === stopGeneration) attachmentConnectionStatus = "stopped";
+          if (attachmentGeneration === stopGeneration) {
+            attachmentConnectionStatus = "stopped";
+            publishGameFact("attachment");
+          }
         },
         (error: unknown) => {
-          if (attachmentGeneration === stopGeneration) attachmentConnectionStatus = "failed";
+          if (attachmentGeneration === stopGeneration) {
+            attachmentConnectionStatus = "failed";
+            publishGameFact("attachment");
+          }
           throw error;
         },
       );
@@ -2303,6 +2354,7 @@ function createCoordinator(
     // synchronously throw or re-enter STOP/disconnect admission.
     attachmentTeardownPromise = attempt;
     attachmentConnectionStatus = "stopping";
+    publishGameFact("attachment");
 
     try {
       leaseToCancel.cancelPromptDefinedTask();
@@ -2326,6 +2378,8 @@ function createCoordinator(
           attachmentConnectionStatus = "none";
           actionAuthorityStatus = "unavailable";
           resumedGameSessionId = undefined;
+          publishGameFact("attachment");
+          publishGameFact("selectedWorld");
         }
       })().then(() => {
         if (attachmentTeardownPromise === attempt) attachmentTeardownPromise = undefined;
@@ -2337,7 +2391,10 @@ function createCoordinator(
 
     void attempt.catch(() => {
       if (attachmentTeardownPromise === attempt) attachmentTeardownPromise = undefined;
-      if (attachmentGeneration === generationToClose) attachmentConnectionStatus = "failed";
+      if (attachmentGeneration === generationToClose) {
+        attachmentConnectionStatus = "failed";
+        publishGameFact("attachment");
+      }
     });
     return attempt;
   };
@@ -2567,6 +2624,7 @@ function createCoordinator(
     const owner = exactOwner;
     if (owner === undefined) return false;
     attachmentConnectionStatus = "syncing";
+    publishGameFact("attachment");
     try {
       if (farmhandGameRuntimeFacade === undefined) {
         // Fresh activation: leave the owner's one-shot activation in the shape
@@ -2614,6 +2672,7 @@ function createCoordinator(
             // The attempt stays accepted: the fresh attach is pending on the next
             // layer's fresh connection/launch authority for this owner.
             attachmentConnectionStatus = "reconnecting";
+            publishGameFact("attachment");
             return false;
           }
           throw error;
@@ -2628,6 +2687,7 @@ function createCoordinator(
         // The attempt stays accepted: the fresh attach is pending on the next
         // layer's fresh connection/launch authority for this owner.
         attachmentConnectionStatus = "reconnecting";
+        publishGameFact("attachment");
         return false;
       }
       throw error;
@@ -2647,6 +2707,7 @@ function createCoordinator(
     // The resumed world is attached with actions paused: the authority is
     // reopened only by a fresh explicit Game instruction (ready-actions-paused).
     attachmentConnectionStatus = "connected_idle";
+    publishGameFact("attachment");
     return true;
   };
 
@@ -2717,9 +2778,11 @@ function createCoordinator(
           // Actions pause until a new explicit Game instruction reopens the
           // authority; no old task or prompt state is resumed.
           resumedGameSessionId = gameSessionId;
+          publishGameFact("selectedWorld");
           attachmentGeneration = nextGeneration;
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
+          publishGameFact("attachment");
           const attached = await attachResumedWorld(resumeDeadlineMs, () => resumeCancelRequested, "re_arm");
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           // A cancel epoch that terminated the attempt (deferred path) must
@@ -2743,6 +2806,7 @@ function createCoordinator(
             throw error;
           }
           attachmentConnectionStatus = "failed";
+          publishGameFact("attachment");
           // A partial facade created before its lease entered must not outlive
           // the failed attempt; a facade+lease pair is retained for the shared
           // teardown on retry/close.
@@ -2975,6 +3039,7 @@ function createCoordinator(
           // the core, which is the only owner of that fact (see
           // `beginFarmhandAiClientActivation`).
           resumedGameSessionId = undefined;
+          publishGameFact("selectedWorld");
           await closeStaleAttachment();
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           // The world this create just bound is now the world this lifecycle owns,
@@ -2983,9 +3048,11 @@ function createCoordinator(
           // invisible: every projection of a just-created world said `selectedWorld:
           // null` while the session was already resumable.
           resumedGameSessionId = metadata.gameSessionId;
+          publishGameFact("selectedWorld");
           attachmentGeneration = Math.max(attachmentGeneration + 1, 1);
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
+          publishGameFact("attachment");
           const attached = await attachResumedWorld(createDeadlineMs, () => false, "core_admitted");
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           return Object.freeze({
@@ -3101,6 +3168,7 @@ function createCoordinator(
         // its armed value so Retry mints the next attempt identity (G+1).
         attachmentConnectionStatus = "disconnected";
         actionAuthorityStatus = "unavailable";
+        publishGameFact("attachment");
         return Object.freeze({ apiVersion: 1, status: "cancelled" });
       })();
       gameResumeCancels.set(
@@ -3452,6 +3520,7 @@ function createCoordinator(
         attachmentGeneration = 1;
         attachmentConnectionStatus = "connected_idle";
         actionAuthorityStatus = "active";
+        publishGameFact("attachment");
         let ingressActivated = false;
         let leaseClosed = false;
         const leaseUnavailable = (): never => {
@@ -3552,6 +3621,8 @@ function createCoordinator(
       attachmentConnectionStatus = "none";
       actionAuthorityStatus = "unavailable";
       resumedGameSessionId = undefined;
+      publishGameFact("attachment");
+      publishGameFact("selectedWorld");
       gameResumes.clear();
       gameResumeCancels.clear();
       gameReopens.clear();
@@ -3563,7 +3634,10 @@ function createCoordinator(
       transition("closed");
       return;
     }
-    if (attachmentGeneration !== 0) attachmentConnectionStatus = "stopping";
+    if (attachmentGeneration !== 0) {
+      attachmentConnectionStatus = "stopping";
+      publishGameFact("attachment");
+    }
     const activation = activationPromise;
     if (activation !== undefined) await activation.catch(() => undefined);
     const setup = setupPromise;
@@ -3661,6 +3735,8 @@ function createCoordinator(
     attachmentConnectionStatus = "none";
     actionAuthorityStatus = "unavailable";
     resumedGameSessionId = undefined;
+    publishGameFact("attachment");
+    publishGameFact("selectedWorld");
     gameResumes.clear();
     gameResumeCancels.clear();
     gameReopens.clear();
@@ -3697,6 +3773,13 @@ function createCoordinator(
     actionAuthorityReader,
     capabilityReader,
     worldBindingReader: createStardewGameSurfaceWorldBindingReader(worldBindingResolver, () => resumedGameSessionId),
+    subscribeGameFacts(listener) {
+      if (typeof listener !== "function") throw new TypeError("stardew_game_fact_listener_invalid");
+      gameFactListeners.add(listener);
+      return () => {
+        gameFactListeners.delete(listener);
+      };
+    },
     activationOwner,
     headlessOperationalGame,
     reconcileHeldBootstrapRegistration: () =>

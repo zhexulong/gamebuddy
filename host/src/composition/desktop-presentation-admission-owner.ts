@@ -1102,6 +1102,9 @@ export async function startDesktopPresentationAdmission(
         ? {}
         : {
             readGame: input.presentation.readGame,
+            ...(input.presentation.gameEventStream === undefined
+              ? {}
+              : { gameEventStream: input.presentation.gameEventStream }),
             lifecycleActivationBindingSink: input.presentation.lifecycleActivationBindingSink,
           }),
       inspector,

@@ -246,6 +246,9 @@ const presentation: GamePresentationProjection = Object.freeze({
       browserSession: Object.freeze({ expiresAtMs: context.browserSessionExpiresAtMs }),
     });
   },
+  // This fixture holds no Game push channel: it is a Game surface that only ever answers the snapshot, which is a
+  // legal mount, and its producer's end still has to exist.
+  close: () => undefined,
   lifecycleActivationBindingSink: Object.freeze({
     bindBrowserAdmissionIssuer: () => {
       issuerBound = true;
