@@ -132,6 +132,19 @@ internal static class CompanionSwitch
     /// <summary>Nominal UTC, fixed width, so the parked names sort by when they were set aside.</summary>
     private const string ParkedStampFormat = "yyyyMMdd'T'HHmmss'Z'";
 
+    /// <summary>
+    /// How long the switch waits for the Host that was running before it to finish leaving,
+    /// before it refuses to touch the authority at all.
+    ///
+    /// It is a ceiling and not a schedule: the wait ends the moment the files can be opened, and
+    /// a Host that was killed a moment before this launch is normally gone well within it. A Host
+    /// that is not gone inside it is one no honest rename can be built on.
+    /// </summary>
+    private static readonly TimeSpan HostReclaimCeiling = TimeSpan.FromSeconds(5);
+
+    /// <summary>How often the wait above asks whether the Host has left.</summary>
+    private static readonly TimeSpan HostReclaimInterval = TimeSpan.FromMilliseconds(100);
+
     internal static string RequestPath(CurrentUserRootLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
@@ -174,7 +187,7 @@ internal static class CompanionSwitch
     }
 
     internal static CompanionSwitchOutcome ApplyPending(CurrentUserRootLayout layout) =>
-        ApplyPending(layout, DateTimeOffset.UtcNow, null);
+        ApplyPending(layout, DateTimeOffset.UtcNow, null, HostReclaimCeiling);
 
     /// <summary>
     /// Runs a switch with a fault injected at one named step. The launcher never passes this:
@@ -184,8 +197,9 @@ internal static class CompanionSwitch
     internal static CompanionSwitchOutcome ApplyPendingForTesting(
         CurrentUserRootLayout layout,
         DateTimeOffset now,
-        Action<CompanionSwitchStep> fault) =>
-        ApplyPending(layout, now, fault);
+        Action<CompanionSwitchStep> fault,
+        TimeSpan? hostReclaimCeiling = null) =>
+        ApplyPending(layout, now, fault, hostReclaimCeiling ?? HostReclaimCeiling);
 
     /// <summary>
     /// Applies the pending switch, if there is one, and returns what happened. The clock is a
@@ -195,7 +209,8 @@ internal static class CompanionSwitch
     private static CompanionSwitchOutcome ApplyPending(
         CurrentUserRootLayout layout,
         DateTimeOffset now,
-        Action<CompanionSwitchStep>? fault)
+        Action<CompanionSwitchStep>? fault,
+        TimeSpan hostReclaimCeiling)
     {
         ArgumentNullException.ThrowIfNull(layout);
 
@@ -236,7 +251,7 @@ internal static class CompanionSwitch
             return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId, wanted.TargetCompanionId);
         }
 
-        return Switch(layout, active, wanted, now, fault);
+        return Switch(layout, active, wanted, now, fault, hostReclaimCeiling);
     }
 
     private static CompanionSwitchOutcome Switch(
@@ -244,7 +259,8 @@ internal static class CompanionSwitch
         DeploymentIdentityValues active,
         SwitchRequest request,
         DateTimeOffset now,
-        Action<CompanionSwitchStep>? fault)
+        Action<CompanionSwitchStep>? fault,
+        TimeSpan hostReclaimCeiling)
     {
         var parked = ReadParked(layout);
         var target = parked.FirstOrDefault(entry => StringComparer.Ordinal.Equals(entry.CompanionId, request.TargetCompanionId));
@@ -269,6 +285,20 @@ internal static class CompanionSwitch
         var parkedName = ParkedDirectoryNameFor(now, active.CompanionId);
         if (Directory.Exists(ParkedRootPath(layout, parkedName)))
             return Refuse(layout, request, "companion_switch_unavailable");
+
+        // The one predecessor this operation has is a Host that has left, and this is where it is
+        // proved rather than assumed. A clean quit is already proof - closing the authenticated
+        // broker is the child's controller EOF, and the launcher then waits for the child inside
+        // the deadline the child itself published, terminating it only as the watchdog over that
+        // wait (`RuntimeSupervisorLease.CloseAsync`). What that ordering cannot cover is the
+        // launcher that was killed or crashed instead: the child notices the same EOF by itself
+        // and leaves, but nothing bounds that against the next launch, and the app-instance mutex
+        // serializes launchers rather than Hosts. A Host still holding the authority's files would
+        // make the park below fail on a sharing violation, roll back and end the launch with a code
+        // that says nothing about why - so the switch asks first, waits out a Host that is already
+        // on its way, and refuses by name if one never leaves.
+        if (activeRootExists && !AuthorityIsReleased(activeRoot, hostReclaimCeiling))
+            return Refuse(layout, request, "companion_switch_host_still_running");
 
         // The identity the target will carry. A companion coming back from a parked root gets
         // the values her authority was created with - anything else makes the Host refuse the
@@ -426,6 +456,58 @@ internal static class CompanionSwitch
 
         Directory.Move(mineRoot, ProductionAuthority.DirectoryPath(layout));
         WriteParkedIndex(layout, parked.Where(entry => !ReferenceEquals(entry, mine)).ToArray());
+    }
+
+    /// <summary>
+    /// Whether nothing else holds the authority root's files, asked the way Windows answers it.
+    ///
+    /// The Host's store is opened with sharing, so the file that a rename would collide with is
+    /// the file this probe cannot open exclusively: the probe asks the same question the move
+    /// would ask, before anything is moved. It is also the bound on the one predecessor this
+    /// operation has - a Host from a launch that was killed rather than quit - because a child
+    /// that is already reclaiming releases these handles within the wait, and one that does not
+    /// is wedged rather than slow.
+    ///
+    /// Anything the launcher cannot open - including a file it has no permission for - counts as
+    /// held, and the caller refuses by name: the launcher may not rename a root it cannot prove
+    /// nobody is writing.
+    /// </summary>
+    private static bool AuthorityIsReleased(string authorityRoot, TimeSpan ceiling)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            if (AuthorityFilesAreFree(authorityRoot)) return true;
+            if (waited.Elapsed >= ceiling) return false;
+            Thread.Sleep(HostReclaimInterval);
+        }
+    }
+
+    private static bool AuthorityFilesAreFree(string authorityRoot)
+    {
+        string[] files;
+        try
+        {
+            files = Directory.GetFiles(authorityRoot);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            try
+            {
+                using var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string ParkedDirectoryNameFor(DateTimeOffset now, string companionId) =>

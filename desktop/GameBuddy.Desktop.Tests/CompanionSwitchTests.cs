@@ -218,6 +218,74 @@ public sealed class CompanionSwitchTests
     }
 
     [Fact]
+    public async Task A_host_that_still_holds_the_authority_refuses_the_switch_by_name_and_no_root_is_touched()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+        var recordBefore = File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName));
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+
+        // The one predecessor this operation has: a Host from a launch that was killed instead of
+        // quit. Its SQLite connection is exactly what the park would collide with, and exactly what
+        // this open handle stands in for. Before this check the move failed as a sharing violation,
+        // rolled back, and ended the launch with a code that said nothing about the Host.
+        using (new FileStream(database, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            var outcome = CompanionSwitch.ApplyPendingForTesting(
+                layout,
+                DateTimeOffset.UtcNow,
+                _ => { },
+                TimeSpan.FromMilliseconds(250));
+
+            Assert.Equal(CompanionSwitchStatus.Refused, outcome.Status);
+            Assert.Equal("companion_switch_host_still_running", outcome.Code);
+            Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
+            Assert.Equal(recordBefore, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
+            Assert.True(ProductionAuthority.IsComplete(layout));
+            Assert.Empty(CompanionSwitch.ReadParked(layout));
+            Assert.False(Directory.Exists(CompanionSwitch.ParkedDirectoryPath(layout)));
+        }
+    }
+
+    [Fact]
+    public async Task A_host_that_is_already_leaving_is_waited_for_instead_of_refusing_the_players_choice()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+
+        // A child that was killed is normally reclaiming, not wedged: it releases its handles well
+        // inside the ceiling. Waiting for that is the difference between a bound and a refusal -
+        // the player's choice is applied instead of being spent on a race with a process that was
+        // already on its way out.
+        var leaving = new FileStream(database, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(300).ConfigureAwait(false);
+            leaving.Dispose();
+        });
+
+        var outcome = CompanionSwitch.ApplyPendingForTesting(
+            layout,
+            DateTimeOffset.UtcNow,
+            _ => { },
+            TimeSpan.FromSeconds(30));
+
+        Assert.Equal(CompanionSwitchStatus.Switched, outcome.Status);
+        Assert.Equal("companion-target", DeploymentIdentity.ReadActive(layout).CompanionId);
+    }
+
+    [Fact]
     public async Task A_park_that_never_happened_does_not_block_her_from_ever_coming_back()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
