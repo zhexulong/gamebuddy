@@ -2,8 +2,10 @@ import {
   GAME_BROWSER_API_V1,
   type ComposedGameProfile,
   type GameBrowserStateV1,
+  type GameFactPatchV1,
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
+import type { GameEventStream } from "./game-event-stream.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
@@ -21,6 +23,9 @@ import type {
 import type { StardewRoleLifecycleReader, StardewRoleLifecycleView } from "../stardew-role-lifecycle-facade.js";
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/** One member of the closed fact union, named by its own `fact` tag. */
+export type GameFactPatchOf<K extends GameFactPatchV1["fact"]> = Extract<GameFactPatchV1, Readonly<{ fact: K }>>;
 
 /** Browser-session facts minted by the browser-session owner, never by Game state. */
 type GameBrowserReadStateContext = Readonly<{
@@ -42,6 +47,15 @@ type GameBrowserReadStateContext = Readonly<{
  */
 export type GameBrowserStateProvider = Readonly<{
   readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1>;
+  /**
+   * One fact group, exactly as `/game` projects it.
+   *
+   * This is what the push channel publishes at a transition, and it is a method of the projection rather than a
+   * second projection so a frame can never name a different fact than the snapshot beside it: both read the same
+   * readers and go through the same `projectGameFacts`. The browser read context is not needed because no fact here
+   * carries a session value.
+   */
+  readFact(fact: GameFactPatchV1["fact"]): Promise<GameFactPatchV1>;
 }>;
 
 export function createGameBrowserStateProvider(
@@ -53,109 +67,178 @@ export function createGameBrowserStateProvider(
   installation?: StardewGameSurfaceInstallationReader,
   worldBinding?: StardewGameSurfaceWorldBindingReader,
   capability?: StardewGameSurfaceCapabilityReader,
+  eventStream?: GameEventStream,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read")) throw new TypeError("game_browser_state_read_not_mounted");
 
+  /**
+   * Every reader one projection needs, read once.
+   *
+   * One function rather than one call per entry point: a transition publish and a snapshot read must observe the
+   * same set of readers, or the frame and the snapshot can disagree about a fact neither of them changed.
+   */
+  const readViews = async (): Promise<GameBrowserViews> => {
+    const lifecycleView = await lifecycle.readRoleLifecycleView();
+    const attachmentView = attachment.readAttachmentView();
+    const launchReadinessView = launchReadiness.readLaunchReadinessView();
+    const actionAuthorityView = actionAuthority?.readActionAuthorityView();
+    // The bound installation is the ONE authoritative answer to "is the game
+    // installed": the same registration the launch path gates on. Without it a
+    // registered, ready installation still projected `prerequisites: unknown`
+    // until a launch happened to be staged.
+    const installationView = installation === undefined ? undefined : await installation.readInstallationView();
+    // The bound world is the ONE durable answer to "which world is this player in".
+    // It reaches the projection through the integration-private resolver, so the
+    // browser and the resume seam can never name different worlds; no launch fact
+    // (dataRoot, pid, pipe, token, native frame) travels with it.
+    const worldBindingView = worldBinding === undefined ? undefined : await worldBinding.readWorldBindingView();
+    const capabilityView = capability?.readCapabilityView();
+    return {
+      lifecycleView,
+      attachmentView,
+      launchReadinessView,
+      actionAuthorityView,
+      installationView,
+      worldBindingView,
+      capabilityView,
+    };
+  };
+
   return Object.freeze({
     async readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1> {
       validateContext(context);
-      const lifecycleView = await lifecycle.readRoleLifecycleView();
-      const attachmentView = attachment.readAttachmentView();
-      const launchReadinessView = launchReadiness.readLaunchReadinessView();
-      const actionAuthorityView = actionAuthority?.readActionAuthorityView();
-      // The bound installation is the ONE authoritative answer to "is the game
-      // installed": the same registration the launch path gates on. Without it a
-      // registered, ready installation still projected `prerequisites: unknown`
-      // until a launch happened to be staged.
-      const installationView = installation === undefined ? undefined : await installation.readInstallationView();
-      // The bound world is the ONE durable answer to "which world is this player in".
-      // It reaches the projection through the integration-private resolver, so the
-      // browser and the resume seam can never name different worlds; no launch fact
-      // (dataRoot, pid, pipe, token, native frame) travels with it.
-      const worldBindingView = worldBinding === undefined ? undefined : await worldBinding.readWorldBindingView();
-      const capabilityView = capability?.readCapabilityView();
-      return projectGameBrowserState(
-        profile,
-        context,
-        lifecycleView,
-        attachmentView,
-        launchReadinessView,
-        actionAuthorityView,
-        installationView,
-        worldBindingView,
-        capabilityView,
-      );
+      return projectGameBrowserState(profile, context, await readViews(), eventStream);
     },
+    async readFact(fact: GameFactPatchV1["fact"]): Promise<GameFactPatchV1> {
+      const facts = projectGameFacts(await readViews());
+      switch (fact) {
+        case "instance":
+          return facts.instance;
+        case "attachment":
+          return facts.attachment;
+        case "selectedWorld":
+          return facts.selectedWorld;
+      }
+    },
+  });
+}
+
+type GameBrowserViews = Readonly<{
+  lifecycleView: StardewRoleLifecycleView;
+  attachmentView: StardewGameSurfaceAttachmentView;
+  launchReadinessView: StardewGameSurfaceLaunchReadinessView;
+  actionAuthorityView: StardewGameSurfaceActionAuthorityView | undefined;
+  installationView: "registered" | "absent" | undefined;
+  worldBindingView: StardewGameSurfaceWorldBindingView | undefined;
+  capabilityView: StardewGameSurfaceCapabilityView | undefined;
+}>;
+
+/**
+ * The four facts that can change without a player acting, as the push channel publishes them.
+ *
+ * The same values `/game` publishes, from the same readers: `projectGameBrowserState` below is built out of this, so
+ * a fact cannot mean one thing on the stream and another in the snapshot. The grouping is the contract's
+ * (`GameFactPatchV1Schema`): instance carries its own compatibility and outcome, attachment carries the attached
+ * runtime's catalog count because that count can only move with the attachment, and the selected world stands
+ * alone.
+ */
+function projectGameFacts(views: GameBrowserViews): Readonly<{
+  instance: GameFactPatchOf<"instance">;
+  attachment: GameFactPatchOf<"attachment">;
+  selectedWorld: GameFactPatchOf<"selectedWorld">;
+}> {
+  const launchFailed = views.launchReadinessView.status === "failed";
+  // The game's own fate is the exit code the Guardian reported, not the launch attempt's
+  // terminality: an attempt the player ended by quitting the game is over too, but the game did
+  // not fail. `0` is the OS's normal-termination code, so it reads as the ending it is and keeps
+  // the `crashed` word for the code that really is a crash. With no reported exit there is no
+  // code to read, and a launch that failed for its own reasons keeps the word it always had.
+  const endedCleanly = launchFailed && views.launchReadinessView.playerHostExitCode === 0;
+  const instanceStatus: GameBrowserStateV1["game"]["instance"]["status"] = launchFailed
+    ? endedCleanly
+      ? "stopped"
+      : "crashed"
+    : projectInstanceStatus(views.lifecycleView.playerHost);
+  return Object.freeze({
+    instance: Object.freeze({
+      fact: "instance" as const,
+      game: Object.freeze({
+        instance: Object.freeze({
+          status: instanceStatus,
+          // A game the Host has not read has no title to publish: naming one here would be
+          // the projection naming a game it has just said it could not see.
+          gameTitle: instanceStatus === "none" || instanceStatus === "unread" ? null : "Stardew Valley",
+          generation: views.launchReadinessView.generation,
+          // Published only when the Guardian actually reported an exit for this
+          // lifecycle's game: absent means "this Host observed no exit", which is a
+          // different claim from an exit code of 0 and must not be defaulted.
+          ...(views.launchReadinessView.playerHostExitCode === null
+            ? {}
+            : { playerHostExitCode: views.launchReadinessView.playerHostExitCode }),
+        }),
+        compatibility: Object.freeze(projectCompatibility(views.lifecycleView)),
+        // The coordinator's launch terminality is the only honest source of a
+        // failed Game outcome this provider can attest: it is set once the owned
+        // Player Host launch or attestation correlation failed and the owner was
+        // quarantined. The browser refreshes recover this fact from the root
+        // state instead of trusting volatile client memory. A game the player
+        // ended themselves is terminal the same way but is not a failed outcome,
+        // so it publishes `none` rather than borrowing the crash's word.
+        latestOutcome: launchFailed && !endedCleanly ? ("failed" as const) : ("none" as const),
+      }),
+    }),
+    attachment: Object.freeze({
+      fact: "attachment" as const,
+      game: Object.freeze({
+        attachment: Object.freeze({
+          status: views.attachmentView.status,
+          generation: views.attachmentView.generation,
+        }),
+        connectionStatus: views.attachmentView.connectionStatus,
+        capabilitySummary: projectCapabilitySummary(views.attachmentView, views.capabilityView),
+      }),
+    }),
+    selectedWorld: Object.freeze({
+      fact: "selectedWorld" as const,
+      game: Object.freeze({
+        selectedWorld: views.worldBindingView?.status === "bound" ? views.worldBindingView.worldRef : null,
+      }),
+    }),
   });
 }
 
 function projectGameBrowserState(
   profile: ComposedGameProfile,
   context: GameBrowserReadStateContext,
-  lifecycle: StardewRoleLifecycleView,
-  attachment: StardewGameSurfaceAttachmentView,
-  launchReadiness: StardewGameSurfaceLaunchReadinessView,
-  actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
-  installation: "registered" | "absent" | undefined,
-  worldBinding: StardewGameSurfaceWorldBindingView | undefined,
-  capability: StardewGameSurfaceCapabilityView | undefined,
+  views: GameBrowserViews,
+  eventStream: GameEventStream | undefined,
 ): GameBrowserStateV1 {
-  const compatibility = projectCompatibility(lifecycle);
-  const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
+  const launchReadiness = views.launchReadinessView;
+  const playerHostStarted = views.lifecycleView.playerHost.ownership === "gamebuddy_direct_spawn";
   const launchFailed = launchReadiness.status === "failed";
   const prerequisitesMet =
-    playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
-  // The game's own fate is the exit code the Guardian reported, not the launch attempt's
-  // terminality: an attempt the player ended by quitting the game is over too, but the game did
-  // not fail. `0` is the OS's normal-termination code, so it reads as the ending it is and keeps
-  // the `crashed` word for the code that really is a crash. With no reported exit there is no
-  // code to read, and a launch that failed for its own reasons keeps the word it always had.
-  const endedCleanly = launchFailed && launchReadiness.playerHostExitCode === 0;
-  const instanceStatus: GameBrowserStateV1["game"]["instance"]["status"] = launchFailed
-    ? endedCleanly
-      ? "stopped"
-      : "crashed"
-    : projectInstanceStatus(lifecycle.playerHost);
+    playerHostStarted || launchReadiness.status === "ready" || launchFailed || views.installationView === "registered";
+  const facts = projectGameFacts(views);
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
     csrfToken: context.csrfToken,
     browserSession: Object.freeze({ expiresAtMs: context.browserSessionExpiresAtMs }),
+    ...(eventStream === undefined
+      ? {}
+      : { eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }) }),
     game: Object.freeze({
       prerequisites: prerequisitesMet
         ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
         : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
-      instance: Object.freeze({
-        status: instanceStatus,
-        // A game the Host has not read has no title to publish: naming one here would be
-        // the projection naming a game it has just said it could not see.
-        gameTitle: instanceStatus === "none" || instanceStatus === "unread" ? null : "Stardew Valley",
-        generation: launchReadiness.generation,
-        // Published only when the Guardian actually reported an exit for this
-        // lifecycle's game: absent means "this Host observed no exit", which is a
-        // different claim from an exit code of 0 and must not be defaulted.
-        ...(launchReadiness.playerHostExitCode === null
-          ? {}
-          : { playerHostExitCode: launchReadiness.playerHostExitCode }),
-      }),
-      compatibility: Object.freeze(compatibility),
-      attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
-      connectionStatus: attachment.connectionStatus,
-      actionAuthority: actionAuthority?.status ?? "unavailable",
+      ...facts.instance.game,
+      ...facts.attachment.game,
+      ...facts.selectedWorld.game,
+      actionAuthority: views.actionAuthorityView?.status ?? "unavailable",
       role: null,
       companionName: null,
-      selectedWorld: worldBinding?.status === "bound" ? worldBinding.worldRef : null,
       selectedSave: null,
-      capabilitySummary: projectCapabilitySummary(attachment, capability),
-      // The coordinator's launch terminality is the only honest source of a
-      // failed Game outcome this provider can attest: it is set once the owned
-      // Player Host launch or attestation correlation failed and the owner was
-      // quarantined. The browser refreshes recover this fact from the root
-      // state instead of trusting volatile client memory. A game the player
-      // ended themselves is terminal the same way but is not a failed outcome,
-      // so it publishes `none` rather than borrowing the crash's word.
-      latestOutcome: launchFailed && !endedCleanly ? "failed" : "none",
     }),
   });
 }

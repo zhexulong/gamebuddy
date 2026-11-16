@@ -34,7 +34,9 @@ import {
   type GameDiscoveryConfirmCommandV1,
   type GameDiscoveryMutationResultV1,
   type GAME_BROWSER_OPERATION_IDS_V1,
+  type GameEventV1,
 } from "./game-browser-contract/index.js";
+import type { GameEventStream, GameResyncReason } from "./game-browser/game-event-stream.js";
 
 export type ComposedReferenceGameBrowserReadContext = Readonly<{
   csrfToken: string;
@@ -46,6 +48,18 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   bootstrapToken: string;
   readChat: (context: ComposedReferenceGameBrowserReadContext) => Promise<TavernStateSnapshotV1>;
   readGame?: (context: ComposedReferenceGameBrowserReadContext) => Promise<GameBrowserStateV1>;
+  /**
+   * The Game surface's own push channel, when this Host holds one.
+   *
+   * It is a separate stream from the Chat channel's on purpose: Game frames carry no Chat selection generation,
+   * the route is admitted on this broker's own session rather than a mounted Chat lease, and a Chat failure must
+   * not take the Game panel down. `/game` stays the authority and the recovery path - this route only ends a wait
+   * that would otherwise be spent re-reading an identical projection.
+   *
+   * Absent, the route answers `not_found` exactly as any other unmounted route does: a mount that holds no stream
+   * publishes no stream, rather than an empty one that looks alive.
+   */
+  gameEventStream?: GameEventStream;
   /**
    * The lifecycle activation seam: stage the owned player host for this authenticated
    * presentation session. It is the one command on this wire that carries no browser
@@ -197,6 +211,7 @@ type JsonObject = Record<string, unknown>;
 const BOOTSTRAP_PATH = "/api/composed-reference-game/v1/bootstrap";
 const STATE_PATH = "/api/composed-reference-game/v1/state";
 const GAME_PATH = "/api/composed-reference-game/v1/game";
+const GAME_EVENTS_PATH = "/api/composed-reference-game/v1/events";
 const GAME_SETUP_PATH = `${GAME_PATH}/prerequisites/setup`;
 const GAME_LAUNCH_PATH = `${GAME_PATH}/launch`;
 const GAME_STOP_PATH = `${GAME_PATH}/stop`;
@@ -759,6 +774,46 @@ function isEmptyQuery(url: URL): boolean {
 }
 
 /**
+ * True when the query carries nothing but the named parameters, each at most once.
+ *
+ * A repeated parameter is refused rather than read: `get` would answer the first and `getAll` the rest, which is two
+ * different requests wearing one URL. Only the push route passes any name here, and only `cursor`.
+ */
+function hasOnlyQueryParams(url: URL, allowed: readonly string[]): boolean {
+  if (url.search === "") return true;
+  const names = [...url.searchParams.keys()];
+  return (
+    names.length > 0 &&
+    names.every((name) => allowed.includes(name)) &&
+    new Set(names).size === names.length &&
+    names.length === url.searchParams.size
+  );
+}
+
+function writeGameSseEvent(response: ServerResponse, event: GameEventV1, stream: GameEventStream): void {
+  const id = stream.encodeCursor({ epoch: event.epoch, sequence: event.sequence });
+  response.write(`id: ${id}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * The one answer a cursor this stream cannot serve gets: a single frame naming why, then the end of the response.
+ * It never carries facts, because the caller's projection is not this route's to guess at - the client replaces it
+ * from `/game`, the same snapshot every Game command already confirms against.
+ */
+function sendGameSseResync(response: ServerResponse, stream: GameEventStream, reason: GameResyncReason): void {
+  if (!response.headersSent) {
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      Connection: "keep-alive",
+      "X-Content-Type-Options": "nosniff",
+    });
+  }
+  writeGameSseEvent(response, stream.resync(reason), stream);
+  response.end();
+}
+
+/**
  * Runtime-branded opaque delegated-auth capability minted by the broker. It
  * carries no observable fields: a structural clone (including an
  * `Object.freeze` spread copy) or hand-written fake is not branded and every
@@ -1050,7 +1105,7 @@ type ComposedBrowserRoute = Readonly<{
 }>;
 
 /** The inbound kinds that carry no lifecycle admission. */
-type SessionRouteKind = "bootstrap" | "state_read" | "game_read";
+type SessionRouteKind = "bootstrap" | "state_read" | "game_read" | "game_events";
 
 /** What a route requires of the request body before its seam runs. */
 type RouteBody =
@@ -1384,6 +1439,8 @@ export function createComposedReferenceGameBrowserRequestHandler(
   let bootstrapConsumed = false;
   let session: BrowserSession | undefined;
   const dispatches = new Set<Promise<void>>();
+  /** Every open Game event connection, so a closed handler stops answering on all of them. */
+  const gameEventConnections = new Set<() => void>();
 
   const delegatedAuthCapability: ComposedReferenceGameBrowserDelegatedAuthCapability = Object.freeze({});
   delegatedAuthCapabilities.add(delegatedAuthCapability);
@@ -1572,8 +1629,9 @@ export function createComposedReferenceGameBrowserRequestHandler(
    */
   const openSessionContext = async (
     context: RouteRequest,
+    allowedQuery: readonly string[] = [],
   ): Promise<ComposedReferenceGameBrowserReadContext | undefined> => {
-    if (!isEmptyQuery(context.url) || !hasEmptyRequestBodyHeaders(context.request)) {
+    if (!hasOnlyQueryParams(context.url, allowedQuery) || !hasEmptyRequestBodyHeaders(context.request)) {
       sendProblem(context.response, 409, "malformed_request");
       return undefined;
     }
@@ -1638,6 +1696,71 @@ export function createComposedReferenceGameBrowserRequestHandler(
     } catch {
       sendProblem(context.response, 409, "state_unavailable");
     }
+  };
+
+  /**
+   * The one push route this surface owns.
+   *
+   * It is admitted exactly like `/game` - same session cookie, same origin, same empty body - and carries exactly
+   * one query the snapshot route refuses: the cursor the browser last saw. A cursor this stream cannot serve is
+   * not an error: it answers one `game.stream_resync_required` frame and closes, and the client's answer to that
+   * is the `/game` snapshot, which is why `/game` stays.
+   *
+   * The subscription goes through `listen`, so the frame that starts the connection and the frames that follow it
+   * arrive in one order: no publication can slip between the replay and the live subscription.
+   */
+  const readGameEventsRoute = async (context: RouteRequest): Promise<void> => {
+    const stream = options.gameEventStream;
+    const readContext = await openSessionContext(context, ["cursor"]);
+    if (readContext === undefined) return;
+    if (stream === undefined) {
+      sendProblem(context.response, 404, "not_found");
+      return;
+    }
+    const rawHeaderCursor = context.request.headers["last-event-id"];
+    if (Array.isArray(rawHeaderCursor)) {
+      sendGameSseResync(context.response, stream, "ambiguous_cursor");
+      return;
+    }
+    const queryCursor = context.url.searchParams.get("cursor");
+    // `?? null`, not a bare read: an absent header is `undefined`, and `undefined !== null` would classify every
+    // first connection - which carries no header at all - as an unreadable cursor.
+    const headerCursor = singleHeaderValue(rawHeaderCursor) ?? null;
+    const decodedQuery = queryCursor === null ? null : stream.decodeCursor(queryCursor);
+    const decodedHeader = headerCursor === null ? null : stream.decodeCursor(headerCursor);
+    if ((queryCursor !== null && decodedQuery === null) || (headerCursor !== null && decodedHeader === null)) {
+      sendGameSseResync(context.response, stream, "ambiguous_cursor");
+      return;
+    }
+    // The last id the browser's own transport saw wins over the one the URL still carries: `EventSource` re-sends
+    // the original query on every automatic reconnect and moves only the header.
+    const effective = decodedHeader ?? decodedQuery ?? { epoch: stream.epoch, sequence: 0 };
+    context.response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      Connection: "keep-alive",
+      "X-Content-Type-Options": "nosniff",
+    });
+    const connection = stream.listen({ epoch: effective.epoch, after: effective.sequence }, (event) => {
+      if (!context.response.destroyed && !context.response.writableEnded)
+        writeGameSseEvent(context.response, event, stream);
+    });
+    if (connection.result.kind === "resync") {
+      connection.close();
+      sendGameSseResync(context.response, stream, connection.result.reason ?? "ambiguous_cursor");
+      return;
+    }
+    for (const event of connection.result.events) writeGameSseEvent(context.response, event, stream);
+    // A live subscription has no replay events; flush the response head so the browser observes an open 200 stream
+    // before the first publication.
+    context.response.flushHeaders();
+    const close = () => {
+      connection.close();
+      gameEventConnections.delete(close);
+    };
+    gameEventConnections.add(close);
+    context.request.once("aborted", close);
+    context.response.once("close", close);
   };
 
   /**
@@ -1844,6 +1967,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
     bootstrap: { method: "POST", path: BOOTSTRAP_PATH, handle: handleBootstrap },
     state_read: { method: "GET", path: STATE_PATH, handle: readStateRoute },
     game_read: { method: "GET", path: GAME_PATH, handle: readGameRoute },
+    game_events: { method: "GET", path: GAME_EVENTS_PATH, handle: readGameEventsRoute },
   } satisfies Record<SessionRouteKind, ComposedBrowserRoute>;
 
   // One lookup per request, and one admission operation per admitted shape: both are read from the declarations
@@ -1920,6 +2044,9 @@ export function createComposedReferenceGameBrowserRequestHandler(
     async close(): Promise<void> {
       closed = true;
       session = undefined;
+      // The push connections hold no session themselves, so they end here rather than when the socket dies: a
+      // closed handler stops answering on every stream it opened.
+      for (const closeConnection of [...gameEventConnections]) closeConnection();
       await Promise.allSettled([...dispatches]);
       session = undefined;
     },

@@ -284,6 +284,83 @@ const GameCapabilitySummaryV1Schema = strictObject({
   count: Type.Integer({ minimum: 0, maximum: 512 }),
 });
 
+/**
+ * The Game surface's own push checkpoint: which process epoch its stream is in, and where that stream has
+ * reached. `cursor` is the opaque encoding of `{epoch, sequence}` (`game-browser/game-event-stream.ts`).
+ *
+ * It is the Game channel's own epoch and never the Chat channel's: the Game panel's facts must not depend on
+ * which Chat is mounted, so nothing here is stamped with a Chat selection generation.
+ */
+const GameEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
+
+/**
+ * The facts that can change without a player acting, one frame's worth at a time.
+ *
+ * A closed union, one member per fact, and each member names exactly the projection fields that fact owns. The
+ * closure is the point: a producer cannot publish `prerequisites` (command-driven), `actionAuthority`
+ * (command-driven), or `role`/`companionName`/`selectedSave` (never anything but `null`), because there is no
+ * frame shape that carries them. `fact` names the transition seam that published, so a journey can say which
+ * one it drove.
+ *
+ * The members are the `/game` projection's own field schemas, not copies of them: a field that changes shape
+ * upstream changes here too, or this file stops compiling.
+ */
+const GameInstanceFactPatchV1Schema = strictObject({
+  fact: Type.Literal("instance"),
+  game: strictObject({
+    instance: GameInstanceV1Schema,
+    compatibility: GameCompatibilityV1Schema,
+    latestOutcome: Outcome,
+  }),
+});
+
+const GameAttachmentFactPatchV1Schema = strictObject({
+  fact: Type.Literal("attachment"),
+  /** The attached runtime's own catalog count rides the attachment frame: it can only move with it. */
+  game: strictObject({
+    attachment: GameAttachmentStateV1Schema,
+    connectionStatus: ConnectionStatus,
+    capabilitySummary: GameCapabilitySummaryV1Schema,
+  }),
+});
+
+const GameSelectedWorldFactPatchV1Schema = strictObject({
+  fact: Type.Literal("selectedWorld"),
+  game: strictObject({ selectedWorld: SafeWorldLabel }),
+});
+
+export const GameFactPatchV1Schema = Type.Union([
+  GameInstanceFactPatchV1Schema,
+  GameAttachmentFactPatchV1Schema,
+  GameSelectedWorldFactPatchV1Schema,
+]);
+
+/**
+ * One frame of the Game surface's stream.
+ *
+ * `game.stream_resync_required` is the one frame that carries no facts: the caller's cursor cannot be served
+ * (window, epoch, or shape), so the caller replaces its whole projection from the `/game` snapshot, which stays
+ * the authority.
+ */
+export const GameEventV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    epoch: OpaqueHandle,
+    sequence: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    eventType: Type.Literal("game.fact_changed"),
+    payload: GameFactPatchV1Schema,
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    epoch: OpaqueHandle,
+    sequence: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    eventType: Type.Literal("game.stream_resync_required"),
+    payload: strictObject({
+      reason: Type.Union([Type.Literal("gap"), Type.Literal("epoch_changed"), Type.Literal("ambiguous_cursor")]),
+    }),
+  }),
+]);
+
 export const GameBrowserStateV1Schema = strictObject({
   apiVersion: ApiVersion,
   build: strictObject({
@@ -292,6 +369,12 @@ export const GameBrowserStateV1Schema = strictObject({
   }),
   csrfToken: OpaqueHandle,
   browserSession: strictObject({ expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }),
+  /**
+   * Additive optional v1 field, the same shape the Chat snapshot has carried: absent means this Host holds no
+   * Game event stream, which is a Host (or a test mount) that only ever answers the snapshot. The client
+   * subscribes exactly when the field is present, and retires its cursor whenever the epoch differs.
+   */
+  eventStream: Type.Optional(GameEventStreamV1Schema),
   game: strictObject({
     prerequisites: GamePrerequisiteStateV1Schema,
     instance: GameInstanceV1Schema,
@@ -913,6 +996,9 @@ export const GameBrowserContractV1 = Object.freeze({
     GameCompatibilityV1Schema,
     GameAttachmentStateV1Schema,
     GameCapabilitySummaryV1Schema,
+    GameEventStreamV1Schema,
+    GameFactPatchV1Schema,
+    GameEventV1Schema,
     GamePrerequisitesReadCommandV1Schema,
     GamePrerequisitesSetupCommandV1Schema,
     GameStateReadCommandV1Schema,
@@ -957,6 +1043,9 @@ export type GameOperationId = (typeof GAME_BROWSER_OPERATION_IDS_V1)[number];
 export type GameDiscoveryReadResultV1 = Static<typeof GameDiscoveryReadResultV1Schema>;
 export type GameDiscoveryConfirmCommandV1 = Static<typeof GameDiscoveryConfirmCommandV1Schema>;
 export type GameBrowserStateV1 = Static<typeof GameBrowserStateV1Schema>;
+export type GameEventStreamV1 = Static<typeof GameEventStreamV1Schema>;
+export type GameFactPatchV1 = Static<typeof GameFactPatchV1Schema>;
+export type GameEventV1 = Static<typeof GameEventV1Schema>;
 export type GamePrerequisitesSetupCommandV1 = Static<typeof GamePrerequisitesSetupCommandV1Schema>;
 export type GameLaunchCommandV1 = Static<typeof GameLaunchCommandV1Schema>;
 export type GameStopCommandV1 = Static<typeof GameStopCommandV1Schema>;

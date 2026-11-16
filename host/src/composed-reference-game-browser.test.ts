@@ -11,6 +11,7 @@ import {
   issueComposedReferenceGameBrowserLifecycleActivationAdmission,
 } from "./composed-reference-game-browser.js";
 import { composeGameProfile, GameBrowserFixtureV1 } from "./game-browser-contract/index.js";
+import { createGameEventStream } from "./game-browser/game-event-stream.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
 import { StardewPlayerSettingsRevisionConflict } from "./games/stardew/stardew-player-settings.js";
 
@@ -3813,6 +3814,203 @@ test("the settings routes are absent when the profile does not declare them", as
     await initial.json();
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const response = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { code: "not_found" });
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The Game surface's own push route.
+ *
+ * These are the transport's own facts - the epoch and cursor the snapshot carries, a frame arriving on a live
+ * connection, and the one answer a cursor the stream cannot serve gets. What the frames mean to a player is the
+ * mounted journeys' subject (`dialogue-web/tests/`); what they are is this.
+ */
+function parseSseFrame(block: string): { id: string; event: string; data: unknown } | null {
+  let id = "";
+  let event = "";
+  let data = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("id: ")) id = line.slice(4);
+    else if (line.startsWith("event: ")) event = line.slice(7);
+    else if (line.startsWith("data: ")) data = line.slice(6);
+  }
+  if (event === "" || data === "") return null;
+  return { id, event, data: JSON.parse(data) as unknown };
+}
+
+/** One open event connection: the status it answered, the frames it delivered, and its own end. */
+function openGameEvents(origin: string, headers: Record<string, string>, path: string) {
+  const frames: Array<{ id: string; event: string; data: unknown }> = [];
+  const waiters: Array<{ count: number; resolve: (value: typeof frames) => void }> = [];
+  let resolveStatus!: (status: number) => void;
+  const status = new Promise<number>((resolve) => {
+    resolveStatus = resolve;
+  });
+  const url = new URL(path, origin);
+  const request = httpRequest(
+    {
+      host: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "GET",
+      headers: { ...headers, host: url.host },
+    },
+    (response) => {
+      resolveStatus(response.statusCode ?? 0);
+      let buffer = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        buffer += chunk;
+        for (let boundary = buffer.indexOf("\n\n"); boundary >= 0; boundary = buffer.indexOf("\n\n")) {
+          const frame = parseSseFrame(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          if (frame === null) continue;
+          frames.push(frame);
+          for (const waiter of [...waiters]) {
+            if (frames.length < waiter.count) continue;
+            waiters.splice(waiters.indexOf(waiter), 1);
+            waiter.resolve(frames);
+          }
+        }
+      });
+    },
+  );
+  request.end();
+  return {
+    frames,
+    status,
+    waitFor(count: number): Promise<typeof frames> {
+      if (frames.length >= count) return Promise.resolve(frames);
+      return new Promise((resolve) => waiters.push({ count, resolve }));
+    },
+    close() {
+      request.destroy();
+    },
+  };
+}
+
+test("the game event route streams a fact change and carries the epoch/cursor the snapshot published", async () => {
+  const stream = createGameEventStream();
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      const base = stateForGame(context);
+      return { ...base, eventStream: { epoch: stream.epoch, cursor: stream.cursor } };
+    },
+    gameEventStream: stream,
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    await initial.json();
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const snapshot = await fetch(`${server.origin}/api/composed-reference-game/v1/game`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(snapshot.status, 200);
+    const { eventStream } = (await snapshot.json()) as { eventStream: { epoch: string; cursor: string } };
+    assert.equal(eventStream.epoch, stream.epoch);
+
+    // The cursor the snapshot carried replays nothing (it IS the stream's position) and leaves a live
+    // subscription behind: the frame below is published after the connection is open.
+    const connection = openGameEvents(
+      server.origin,
+      { origin: server.origin, cookie },
+      `/api/composed-reference-game/v1/events?cursor=${encodeURIComponent(eventStream.cursor)}`,
+    );
+    assert.equal(await connection.status, 200);
+    stream.publish({ fact: "selectedWorld", game: { selectedWorld: "Farm_1" } });
+    const frames = await connection.waitFor(1);
+    connection.close();
+
+    assert.equal(frames[0]!.event, "game.fact_changed");
+    assert.deepEqual((frames[0]!.data as { payload: unknown }).payload, {
+      fact: "selectedWorld",
+      game: { selectedWorld: "Farm_1" },
+    });
+    assert.deepEqual(stream.decodeCursor(frames[0]!.id), { epoch: stream.epoch, sequence: 1 });
+  } finally {
+    await server.close();
+  }
+});
+
+test("a game event cursor this stream cannot serve is answered with one resync frame naming the reason", async () => {
+  const stream = createGameEventStream(2);
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+    gameEventStream: stream,
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    await initial.json();
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const headers = { origin: server.origin, cookie };
+    const readReason = async (cursor: string): Promise<string> => {
+      const connection = openGameEvents(
+        server.origin,
+        headers,
+        `/api/composed-reference-game/v1/events?cursor=${encodeURIComponent(cursor)}`,
+      );
+      assert.equal(await connection.status, 200);
+      const frames = await connection.waitFor(1);
+      connection.close();
+      assert.equal(frames[0]!.event, "game.stream_resync_required");
+      assert.equal(frames.length, 1);
+      return (frames[0]!.data as { payload: { reason: string } }).payload.reason;
+    };
+
+    // A cursor minted by another process epoch: this stream never held that position.
+    assert.equal(await readReason(stream.encodeCursor({ epoch: "Z".repeat(43), sequence: 0 })), "epoch_changed");
+    // A cursor that is not this stream's encoding at all.
+    assert.equal(await readReason("not-a-cursor"), "ambiguous_cursor");
+    // A position ahead of anything this stream published.
+    assert.equal(await readReason(stream.encodeCursor({ epoch: stream.epoch, sequence: 9 })), "ambiguous_cursor");
+
+    // A position the bounded window no longer holds: three frames into a two-frame ring.
+    for (const world of ["Farm_1", "Farm_2", "Farm_3"]) {
+      stream.publish({ fact: "selectedWorld", game: { selectedWorld: world } });
+    }
+    assert.equal(await readReason(stream.encodeCursor({ epoch: stream.epoch, sequence: 0 })), "gap");
+  } finally {
+    await server.close();
+  }
+});
+
+test("the game event route is not mounted on a handler that holds no stream", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    await initial.json();
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/events`, {
       headers: { origin: server.origin, cookie },
     });
     assert.equal(response.status, 404);

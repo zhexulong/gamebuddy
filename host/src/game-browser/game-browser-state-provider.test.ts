@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GameBrowserValidatorsV1, composeGameProfile } from "../game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "./game-browser-state-provider.js";
+import { createGameEventStream } from "./game-event-stream.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceActionAuthorityView,
@@ -563,4 +564,67 @@ test("terminal launch failure remains met/crashed without a retry generation", a
   });
   assert.equal(failed.game.connectionStatus, "none");
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(failed), true);
+});
+
+/**
+ * The push channel's own projection.
+ *
+ * A frame must name exactly what `/game` names, so the two entry points are one projection: these tests hold the
+ * snapshot and the fact group to each other, field by field, rather than to a second hand-written copy.
+ */
+test("the game snapshot publishes the stream checkpoint and each fact group matches the snapshot", async () => {
+  const stream = createGameEventStream();
+  const provider = createGameBrowserStateProvider(
+    profile(),
+    lifecycle(authenticatedView("verified")),
+    attachedSurface(),
+    launchReadiness(),
+    actionAuthority("paused"),
+    undefined,
+    undefined,
+    capability(Object.freeze({ status: "published", count: 12 })),
+    stream,
+  );
+
+  const state = await provider.readState(context);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+  assert.deepEqual(state.eventStream, { epoch: stream.epoch, cursor: stream.cursor });
+
+  const instance = await provider.readFact("instance");
+  assert.deepEqual(instance, {
+    fact: "instance",
+    game: {
+      instance: state.game.instance,
+      compatibility: state.game.compatibility,
+      latestOutcome: state.game.latestOutcome,
+    },
+  });
+  const attached = await provider.readFact("attachment");
+  assert.deepEqual(attached, {
+    fact: "attachment",
+    game: {
+      attachment: state.game.attachment,
+      connectionStatus: state.game.connectionStatus,
+      capabilitySummary: state.game.capabilitySummary,
+    },
+  });
+  const world = await provider.readFact("selectedWorld");
+  assert.deepEqual(world, { fact: "selectedWorld", game: { selectedWorld: state.game.selectedWorld } });
+
+  // Every published frame is a frame the contract accepts.
+  for (const patch of [instance, attached, world]) {
+    assert.equal(GameBrowserValidatorsV1.GameFactPatchV1Schema.Check(patch), true);
+    assert.equal(GameBrowserValidatorsV1.GameEventV1Schema.Check(stream.publish(patch)), true);
+  }
+});
+
+test("a mount that holds no stream publishes no checkpoint rather than an empty one", async () => {
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(notStartedView()),
+    attachment(),
+    launchReadiness(),
+  ).readState(context);
+  assert.equal(Object.hasOwn(state, "eventStream"), false);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
 });
