@@ -302,6 +302,44 @@ public sealed class CompanionSwitchTests
     }
 
     [Fact]
+    public async Task A_refusal_about_a_moment_keeps_the_players_request_for_the_next_launch()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+
+        // A Host that is still leaving is a moment, not a state: this launch is inside it and the
+        // next one is not. Spending the player's request here would make her ask a second time for
+        // something that was already on its way - and nothing tells her to, so she would not.
+        using (new FileStream(database, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            var refused = CompanionSwitch.ApplyPendingForTesting(
+                layout,
+                DateTimeOffset.UtcNow,
+                _ => { },
+                TimeSpan.FromMilliseconds(250));
+
+            Assert.Equal(CompanionSwitchStatus.Refused, refused.Status);
+            Assert.Equal("companion_switch_host_still_running", refused.Code);
+            Assert.Equal(CompanionSwitchRefusalLifetime.Transient, refused.Lifetime);
+            Assert.True(CompanionSwitch.HasPendingRequest(layout));
+        }
+
+        // The relaunch the player would make anyway applies the choice she already made: the same
+        // request, the same facts, and now a Host that has gone.
+        var applied = CompanionSwitch.ApplyPending(layout);
+
+        Assert.Equal(CompanionSwitchStatus.Switched, applied.Status);
+        Assert.Equal("companion-target", applied.ActiveCompanionId);
+        Assert.False(CompanionSwitch.HasPendingRequest(layout));
+    }
+
+    [Fact]
     public async Task A_host_that_is_already_leaving_is_waited_for_instead_of_refusing_the_players_choice()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
@@ -396,6 +434,12 @@ public sealed class CompanionSwitchTests
         Assert.Equal("companion_switch_request_stale", outcome.Code);
         Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
         Assert.True(ProductionAuthority.IsComplete(layout));
+
+        // A stale request is refused by the state itself: every later launch would compare the same
+        // record against the same identity and answer identically, so it is spent and the request
+        // is gone rather than left to refuse forever.
+        Assert.Equal(CompanionSwitchRefusalLifetime.Permanent, outcome.Lifetime);
+        Assert.False(CompanionSwitch.HasPendingRequest(layout));
     }
 
     [Fact]

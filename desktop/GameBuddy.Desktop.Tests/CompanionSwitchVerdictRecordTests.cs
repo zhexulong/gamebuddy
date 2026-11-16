@@ -24,7 +24,8 @@ public sealed class CompanionSwitchVerdictRecordTests
             CompanionSwitchStatus.Refused,
             "companion_switch_unavailable",
             "companion-first",
-            "companion-target");
+            "companion-target",
+            CompanionSwitchRefusalLifetime.Permanent);
 
         CompanionSwitchVerdictRecord.Write(fixture.OperationalRoot, refused);
 
@@ -39,9 +40,11 @@ public sealed class CompanionSwitchVerdictRecordTests
         Assert.Equal("companion_switch_unavailable", record.GetProperty("code").GetString());
         Assert.Equal("companion-target", record.GetProperty("targetCompanionId").GetString());
         Assert.Equal("companion-first", record.GetProperty("activeCompanionId").GetString());
+        // A refusal the state itself gives spends the request, and the record says so.
+        Assert.False(record.GetProperty("requestKept").GetBoolean());
         // The record is the whole shape, not a bag a later change can grow.
         Assert.Equal(
-            ["activeCompanionId", "code", "outcome", "recordedAtUnixMs", "schema", "targetCompanionId", "version"],
+            ["activeCompanionId", "code", "outcome", "recordedAtUnixMs", "requestKept", "schema", "targetCompanionId", "version"],
             record.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray());
 
         // The instant is both a field and the name an operator sorts the directory by, and it is
@@ -60,14 +63,39 @@ public sealed class CompanionSwitchVerdictRecordTests
 
         CompanionSwitchVerdictRecord.Write(
             fixture.OperationalRoot,
-            new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, "companion-target", "companion-target"));
+            new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, "companion-target", "companion-target", null));
         CompanionSwitchVerdictRecord.Write(
             fixture.OperationalRoot,
-            new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null));
+            new CompanionSwitchOutcome(CompanionSwitchStatus.None, null, null, null, null));
 
         // A switch that happened is in the identity record, and a launch with nothing to do
         // produced no fact about a player's choice: neither belongs in a diagnostic directory.
         Assert.Empty(Directory.GetFiles(fixture.OperationalRoot, "companion-switch-*.json"));
+    }
+
+    [Fact]
+    public async Task A_refusal_about_a_moment_says_the_request_is_kept_instead_of_spent()
+    {
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+
+        // The other half of the same fact: this refusal is not the answer to the player's choice,
+        // so the record must not read like one. `requestKept` is the difference between "ask again"
+        // and "the next launch already has it".
+        CompanionSwitchVerdictRecord.Write(
+            fixture.OperationalRoot,
+            new CompanionSwitchOutcome(
+                CompanionSwitchStatus.Refused,
+                "companion_switch_host_still_running",
+                "companion-first",
+                "companion-target",
+                CompanionSwitchRefusalLifetime.Transient));
+
+        var written = Assert.Single(Directory.GetFiles(fixture.OperationalRoot, "companion-switch-*.json"));
+        using var document = JsonDocument.Parse(File.ReadAllBytes(written));
+        var record = document.RootElement;
+
+        Assert.Equal("companion_switch_host_still_running", record.GetProperty("code").GetString());
+        Assert.True(record.GetProperty("requestKept").GetBoolean());
     }
 
     [Fact]

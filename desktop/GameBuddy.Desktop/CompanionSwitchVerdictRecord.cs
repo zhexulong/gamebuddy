@@ -27,6 +27,12 @@ namespace GameBuddy.Desktop;
 /// still in play - the fact that remains true after the refusal. Every value is an identifier the
 /// request parser or the identity record already validated, plus the instant: no path, no
 /// credential, no player text and no stack, so it can be handed to an operator as it is.
+///
+/// **What it says about the request.** A refusal is either the answer to a state or to a moment in
+/// it, and only the permanent kind spends the player's request (<see cref="CompanionSwitchRefusalLifetime"/>).
+/// `requestKept` is that difference on the record, because it is the difference between "ask again"
+/// and "this will not change": a transient refusal is applied by the next launch on its own, and a
+/// player told nothing would ask a second time for something already on its way.
 /// </summary>
 internal static class CompanionSwitchVerdictRecord
 {
@@ -54,6 +60,7 @@ internal static class CompanionSwitchVerdictRecord
                 ["code"] = code,
                 ["targetCompanionId"] = outcome.TargetCompanionId,
                 ["activeCompanionId"] = outcome.ActiveCompanionId,
+                ["requestKept"] = outcome.Lifetime == CompanionSwitchRefusalLifetime.Transient,
                 ["recordedAtUnixMs"] = recordedAt.ToUnixTimeMilliseconds(),
             };
             var stamp = recordedAt.ToString("yyyy-MM-dd'T'HH-mm-ss-fff'Z'", CultureInfo.InvariantCulture);
