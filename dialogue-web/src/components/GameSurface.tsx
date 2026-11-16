@@ -42,7 +42,6 @@ import {
   STARDEW_GAME_INTEGRATION_ID,
   type ViewState,
 } from "./composed-reference-game-view";
-import { terminalTurn } from "./use-composed-bootstrap";
 
 /**
  * Who asked for the cabin read, which decides how the panel reports it.
@@ -71,21 +70,18 @@ type CabinHandoffAnswer = "choices" | "missing" | "unavailable";
  * It owns the Game lifecycle wiring the shell used to hold: cabin discovery, the
  * first-run activation/setup/launch controls, the session stop/disconnect/
  * resume/reopen/create commands, the bounded authoritative rereads that decide
- * when one of them is really done, and the panel that renders all of it. The
- * shell supplies only the session seam it cannot own - the live view, the commit
- * that publishes a new Game projection, the preview reset a reread performs when
- * the read says the conversation's turn is over, the cancellation flag, the two
- * clients and the labels.
+ * shell supplies only the session seam it cannot own - the live view, the commit that publishes a
+ * new Game projection, the cancellation flag, the two clients and the labels. Nothing here writes the
+ * conversation: the projection of the Game, and the fact that its own command finished, is the whole
+ * of what a Game operation may publish.
  *
  * It is always mounted while the shell has a ready view and returns null when it
  * is not the selected surface, so its state survives a surface switch exactly as
  * it did inside the shell (a peer surface that resets its in-flight attempt on
- * every AppBar click would forget a resume the player is watching). The one thing
- * an arrival does add is the shell's own re-read of the projection it renders,
- * taken in the shell's arrival effect rather than here: that read must not touch
- * this surface's in-flight attempt, and it must not discard the conversation's
- * streaming preview the way a Game operation's `rereadGame` does. When it fails,
- * the shell hands this surface the refusal's sentence as `arrivalNotice`.
+ * every AppBar click would forget a resume the player is watching). The one thing an arrival does add
+ * is the shell's own re-read of the projection it renders, taken in the shell's arrival effect rather
+ * than here, so it cannot touch this surface's in-flight attempt. When it fails, the shell hands this
+ * surface the refusal's sentence as `arrivalNotice`.
  */
 export function GameSurface({
   selected,
@@ -95,7 +91,6 @@ export function GameSurface({
   labels,
   readView,
   commit,
-  clearPreview,
   isCancelled,
   composedApi,
   managementApi,
@@ -109,15 +104,6 @@ export function GameSurface({
   labels: Messages;
   readView: () => ViewState;
   commit: (next: ViewState) => void;
-  /**
-   * Spends the conversation's streaming preview.
-   *
-   * It belongs to the turn the preview was built from, so a Game read calls it only when that same
-   * read publishes no running turn - the state `rereadChat` spends the preview in, where the
-   * authoritative transcript has taken the reply over. A read taken while the turn still runs is not
-   * a read that outlived the preview, and spending it there erased a reply the player was watching.
-   */
-  clearPreview: () => void;
   isCancelled: () => boolean;
   composedApi: ComposedReferenceGameBrowserApi;
   managementApi: ManagementPipelineApi;
@@ -358,33 +344,33 @@ export function GameSurface({
   };
 
   /**
-   * Authoritative reread for a Game-owned operation. A Game operation's subject
-   * is the composed root's game/lifecycle projection, never the Chat draft, so
-   * this reads only that projection and applies it: a Chat draft revision that
-   * moves between the reads (the player typing in the conversation, another
-   * tab, a background poll) must never fail a Game operation. A Game operation
-   * that needs a "did the thing I acted on change" check uses the Game
-   * projection's own attachment generation, which its handler compares against
-   * the generation it acted on.
+   * Authoritative reread for a Game-owned operation, published into the slice it owns.
    *
-   * The reply streaming into the conversation is not this read's to spend. The preview belongs to the
-   * turn it was built from, and the Chat channel owns it: `companion.delta` appends to it, a committed
-   * message or a turn transition spends it, and the shell's recovery read, `reconcile` and
-   * `rereadChat`'s own settle rule spend it too - all of which run while this surface is selected,
-   * because the stream, the poll and the mutations are gated on the mounted conversation and never on
-   * the surface. So a Game operation that rereads mid-reply keeps it; the unconditional reset left the
-   * conversation with no streaming row at all until the stream's next delta rebuilt it from that delta
-   * alone, which is the red reading `game-operation-reread.spec.ts` reproduces. What this read does
-   * settle is the turn the read says is over: a root publishing no running turn is the state
-   * `rereadChat` spends the preview in.
+   * Two things make this the right read rather than the convenient one.
+   *
+   * It commits the Game projection and NOTHING else. The composed root carries a Chat half beside the
+   * Game one, and a Game command has no business deciding what the conversation holds: the Chat channel
+   * already reads it on its own schedule (the shell's `rereadChat` on arrival, `reconcile` and `recover`
+   * under the stream, the fallback poll while a turn is pending), and a Game read is not one of its
+   * writers. Applying `root.chat` here also made every Game command a Chat refresh, which is why the
+   * Chat draft revision used to be able to fail one.
+   *
+   * It reads the view AFTER its round trip. A read is a round trip, and a commit that lands inside it - a
+   * send's own pending record, a refusal's settle, a problem view - is newer than the photograph this
+   * read took before leaving; committing that photograph erased them, and the erased pending record is
+   * the one that keeps the fallback poll alive and the send gate shut, so the player's just-sent line
+   * left the screen and the composer unlocked mid-turn (`game-read-leaves-the-conversation-alone.spec.ts`,
+   * and the same rule `rereadChat` states at its own site).
+   *
+   * What a Game operation needs to know about its own command - did the thing I acted on change - is the
+   * Game projection's own attachment generation, which each handler compares against the generation it
+   * acted on.
    */
   const rereadGame = async (): Promise<void> => {
+    const root = await composedApi.readState();
     const current = readView();
     if (current.kind !== "ready") return;
-    const root = await composedApi.readState();
-    const runningTurn = root.chat.chat?.turn ?? null;
-    if (runningTurn === null || terminalTurn(runningTurn)) clearPreview();
-    commit({ ...current, root, session: current.session.applySnapshot(root.chat) });
+    commit({ ...current, root });
   };
 
   /**

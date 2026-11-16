@@ -1801,7 +1801,6 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 readView={() => viewRef.current}
                 commit={commit}
-                clearPreview={() => setPreview(null)}
                 isCancelled={() => cancelledRef.current}
                 composedApi={composedApiRef.current}
                 managementApi={managementPipelineApiRef.current}
