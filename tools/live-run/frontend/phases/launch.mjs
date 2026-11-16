@@ -17,8 +17,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runPaths, loadRunConfig } from "../lib/config.mjs";
+import { COMPANION_LOCALE } from "../../../lib/companion-locale.mjs";
 import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
 import { seedRunConnection } from "../lib/seed-connection.mjs";
+import { seedRunLocale } from "../lib/seed-locale.mjs";
 import { seedRunPreset } from "../lib/preset-seed.mjs";
 import { startWireCapture } from "../lib/wire-capture.mjs";
 
@@ -341,6 +343,21 @@ async function main() {
       : `preset NOT bound (${preset.reason}) — the INJECTION preset claim reports unobserved:no_preset_imported`,
   );
 
+  // The language this run is testing, put into the root through the product's own preference record
+  // before the Host reads it: the Host projects that choice into the Mod's `PresentationLocale`, and
+  // the Mod holds its native world entry until the live game locale is that language. Without it a
+  // fresh root tells the Mod nothing and the game comes up in the player's own Stardew language.
+  const locale = await seedRunLocale({
+    artifactRoot: paths.artifact,
+    runtimeRoot: declaredDataRoot,
+    locale: COMPANION_LOCALE,
+  });
+  say(
+    locale.kind === "seeded"
+      ? `companion locale seeded: ${String(locale.locale)} (revision ${String(locale.revision)})`
+      : `companion locale NOT seeded (${locale.reason}) - the game keeps the player's own Stardew language and the driver's locale verdict names any mismatch`,
+  );
+
   const measureNow = async () =>
     launcher.measureDesktopCompositionRunRoots({
       root: paths.runRoot,
@@ -568,6 +585,7 @@ async function main() {
         mounted: Boolean(mounted),
         connection,
         preset,
+        locale,
         principal,
         wireCapture: wireCaptureFact,
         roleBroker: launch.roleBrokerFacts(),

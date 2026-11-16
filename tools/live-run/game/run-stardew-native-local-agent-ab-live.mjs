@@ -26,6 +26,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { turnSettled } from "../../lib/turn-settled.mjs";
+import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
 import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -215,8 +216,9 @@ const configPath =
 // Single language configuration point: this env mirrors the frontend-set
 // language preference (Tavern settings/language). Everything that needs a
 // locale — Agent session language, materializer companionLocale, fixture
-// ModConfig.PresentationLocale, and the live prompt — derives from it.
-const COMPANION_LOCALE = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
+// ModConfig.PresentationLocale, and the live prompt — derives from
+// `COMPANION_LOCALE` in `tools/lib/companion-locale.mjs`, which the frontend
+// live run reads for the same reason.
 // The runtime root is a product configuration value, not a script invention:
 // the Game materializer assembles the companion persona and world book from the
 // same identity-profile/worldbook files the Chat surface consumes under this
@@ -4312,9 +4314,8 @@ try {
   // different walk lengths, and the coaching they carried (named tools, ordered steps, "batch your calls")
   // hid real observation defects - a live trace showed the Agent succeeding only because the prompt had told
   // it what to do. What is left states the player's intent and the world's facts, and nothing about the route.
-  const prompt =
-    process.env.GAMEBUDDY_AGENT_PROMPT ?? SCENARIO_PROMPTS[SCENARIO][COMPANION_LOCALE === "zh-CN" ? "zh" : "en"];
-  const localeKey = COMPANION_LOCALE === "zh-CN" ? "zh" : "en";
+  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? SCENARIO_PROMPTS[SCENARIO][COMPANION_LOCALE_KEY];
+  const localeKey = COMPANION_LOCALE_KEY;
   // The multi-day scenario's per-day prompt is a FUNCTION (it carries the day number), so the single-goal
   // path below stays a string and only this branch calls it.
   // Whether the in-game DAY is spent, answered by the engine and never by a turn boundary.

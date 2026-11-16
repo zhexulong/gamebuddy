@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
+import { COMPANION_LOCALE } from "./companion-locale.mjs";
 import { STARDEW_BRIDGE_PIPE_NAME, STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 const BUNDLE_FILES = Object.freeze([
@@ -1229,8 +1230,7 @@ function configureNativeLocalPlayerBootstrap(
   // frontend-set language preference flows into the Mod config, so the
   // Mod-side companion presentation locale stays aligned with the Agent
   // session locale.
-  const companionLocale = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
-  result.PresentationLocale = companionLocale;
+  result.PresentationLocale = COMPANION_LOCALE;
   return result;
 }
 export function configureNativeLocalPlayer(
@@ -1282,8 +1282,7 @@ export function configureNativeLocalPlayer(
   // frontend-set language preference flows into the Mod config, so the
   // Mod-side companion presentation locale stays aligned with the Agent
   // session locale.
-  const companionLocale = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "en-US" : "zh-CN";
-  result.PresentationLocale = companionLocale;
+  result.PresentationLocale = COMPANION_LOCALE;
   return result;
 }
 async function rollbackFailedPreparation(context, backup, backupName, backupCreated, publicError) {
