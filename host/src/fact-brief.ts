@@ -146,6 +146,16 @@ type SettledNode = Readonly<{
   reasonCode?: string;
   hint?: string;
   reasonDetail?: string;
+  /**
+   * The pass's own row table, verbatim, from the Mod's `BodyProgramJournalNode.Evidence`.
+   *
+   * `for_each` settles ONE node for sixty tiles, so this row - not sixty facts - is where a batch's per-row outcome lives,
+   * and it is the row `round63` read as `{"nodeId":"n02","actionId":"for_each","state":"succeeded"}`: fifteen tiles
+   * tilled, forty-five untouched, and not one tile named.
+   */
+  evidence?: string;
+  /** The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`. */
+  postconditionVerification?: string;
 }>;
 
 /**
@@ -873,13 +883,47 @@ function settlementLine(fact: WorldFact): string {
     counts !== null && typeof counts === "object" ? Number((counts as Record<string, unknown>).succeeded ?? 0) : 0;
   const head = Number.isFinite(total) ? `${done}/${total} 步做成了` : "计划收尾了";
   const nodes = Array.isArray(fact.payload.nodes) ? (fact.payload.nodes as readonly SettledNode[]) : [];
+  // WHAT THE STEPS PROVED, for every node that reported a row table - including one whose own state is `succeeded`,
+  // because the table IS that node's answer: a `for_each` of sixty tiles proves which sixty, and `succeeded` alone does
+  // not. Printed before the shortfalls, in the order the effect happened and then what did not.
+  const proofs = nodes
+    .filter((node) => node.state === "succeeded")
+    .map((node) => proofLine(node))
+    .filter((words): words is string => words !== "");
   const failures = nodes
     .filter((node) => typeof node.state === "string" && node.state !== "succeeded")
     .map((node) => failureWords(node))
     .filter((words): words is string => words !== "");
+  const said = [...proofs, ...failures];
   const omitted = Number(fact.payload.omitted);
   const more = Number.isFinite(omitted) && omitted > 0 ? `（另有 ${omitted} 步未列出）` : "";
-  return `- ${head}${more}${failures.length === 0 ? "" : `：${failures.join("；")}`}`;
+  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}`;
+}
+
+/**
+ * One node's own proof of what it did: its action, the pass's verdict line, and the row table - all the Mod's bytes.
+ *
+ * <p>
+ * NOTHING IS SUMMARISED HERE, and that is the point rather than an omission. A sixty-row table rendered as `60 格`/`45 格`
+ * is the same drop one layer further out: the model already receives the count, and what it cannot reconstruct is WHICH
+ * tile and what was on it. So the two fields are printed verbatim, in the producer's own spelling, under the producer's
+ * own names' order - the `for_each_pass:decided=…` line first, because it is the sentence, and the table second, because
+ * it is the evidence.
+ * </p>
+ *
+ * <p>
+ * WHY NO CEILING FROM `MODEL_FIELD_CEILINGS`. That table exists to stop a HOST-sized share of a line being spent on a
+ * field whose producer declares no bound (`a receipt's evidence.detail`); these two are bounded at their producer
+ * (1..4096, `BodyProgramValidation.IsOpaqueTerminalProof`) and the row table counts what it could not fit into that
+ * number itself (`rowsOmitted`). A Host ceiling below the producer's would cut a table that is already whole, and it would
+ * cut it at a `;` boundary that means nothing in a JSON document - the operator this file already recorded for `hint`.
+ * </p>
+ */
+function proofLine(node: SettledNode): string {
+  const words = proofTail(node);
+  if (words === undefined) return "";
+  const action = typeof node.actionId === "string" ? node.actionId : (node.nodeId ?? "一步");
+  return `${action} ${words}`;
 }
 
 /**
@@ -904,12 +948,27 @@ function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
   // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
-  // introduces the code, so the two halves stay distinguishable in the line.
-  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail)]
+  // introduces the code, so the two halves stay distinguishable in the line. A node that ALSO carries a row table - the
+  // `partially_succeeded` half of a batch - keeps it beside its reason, because the rows that did happen and the reason
+  // for the ones that did not are one answer about one node.
+  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail), proofTail(node)]
     .filter((part): part is string => part !== undefined)
     .join("｜");
   const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
   return reason === undefined ? `${action} 没做成` : `${action} 没做成（${reason}）`;
+}
+
+/**
+ * The two proof fields, joined as one part of a line - or nothing at all when the node carried neither.
+ *
+ * The action is not named here: `failureWords` already opens with it, and `proofLine` names it for the succeeded node,
+ * so a `partially_succeeded` row reads `for_each 没做成（…）` once rather than once per half.
+ */
+function proofTail(node: SettledNode): string | undefined {
+  const words = [node.postconditionVerification, node.evidence]
+    .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+    .join("｜");
+  return words === "" ? undefined : words;
 }
 
 /**

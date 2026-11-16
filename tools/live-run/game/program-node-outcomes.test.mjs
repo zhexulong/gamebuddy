@@ -111,3 +111,54 @@ test("the journal row's own state name wins over the position, so a reordered sn
     { nodeId: "n02", actionId: "plant_seed", state: "rejected", reasonCode: "policy_denied" },
   ]);
 });
+
+test("a batch node's own row table and verdict line are copied to the bundle, uncut", () => {
+  // `round63` measured the drop this case closes: `plan_239_2793c52c60b8cadf` node `n02` was a `for_each` that settled
+  // `succeeded` with fifteen `soil_tilled` receipts in the log, and the run's own bundle kept
+  // `{nodeId, actionId, state}` - `for_each_pass` and `postconditionVerification` appear ZERO times in either artifact.
+  // The projection is not allowed to summarise: a count would be the same loss one layer out.
+  const evidence = JSON.stringify({
+    state: "partially_succeeded",
+    succeeded: 1,
+    failed: 0,
+    refused: 1,
+    left_alone: 0,
+    not_matched: 0,
+    deferred: 0,
+    omitted: 0,
+    healed: 0,
+    rowsOmitted: 0,
+    rows: [
+      { x: 61, y: 18, action: "till_soil", state: "succeeded", reasonCode: null, healed: null },
+      { x: 62, y: 18, action: "till_soil", state: "refused", reasonCode: "no_safe_clear", healed: null },
+    ],
+  });
+  const postconditionVerification = "for_each_pass:partially_succeeded:decided=2:succeeded=1:failed=0:refused=1";
+  const rows = programNodeOutcomes(
+    [compiledNode("n02", "for_each")],
+    [statusRow("n02", "partially_succeeded", { evidence, postconditionVerification })],
+  );
+  assert.deepEqual(rows, [
+    {
+      nodeId: "n02",
+      actionId: "for_each",
+      state: "partially_succeeded",
+      evidence,
+      postconditionVerification,
+    },
+  ]);
+  // The row's own bytes survive, not just the field: the bundle a run audit reads names the refused tile and its reason.
+  assert.ok(rows[0].evidence.includes("no_safe_clear"), "the refused row reaches the bundle");
+});
+
+test("a node that proved nothing carries neither proof key, so absence is still distinguishable", () => {
+  // ADR-006: the two proof fields belong to a node that proved an effect. A `failed` row that invented them would be the
+  // bundle asserting something the Mod never said, so they stay ABSENT - never null, never an empty string.
+  const rows = programNodeOutcomes(
+    [compiledNode("n02", "for_each")],
+    [statusRow("n02", "failed", { failureCode: "no_rule_matched" })],
+  );
+  assert.equal(Object.hasOwn(rows[0], "evidence"), false);
+  assert.equal(Object.hasOwn(rows[0], "postconditionVerification"), false);
+  assert.deepEqual(Object.keys(rows[0]).sort(), ["actionId", "nodeId", "reasonCode", "state"]);
+});

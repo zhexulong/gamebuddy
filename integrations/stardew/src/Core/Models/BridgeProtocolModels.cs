@@ -1681,7 +1681,36 @@ string? ActionId = null,
 /// </summary>
 int? X = null,
 /// <summary>The tile's y, beside <see cref="X"/>.</summary>
-int? Y = null
+int? Y = null,
+/// <summary>
+/// The pass's own ROW TABLE - the journal's `BodyProgramJournalNode.Evidence`, verbatim.
+///
+/// <para>
+/// A `for_each` node settles sixty tiles as ONE node, and this is the sixty rows: `{"state":"succeeded","succeeded":0,
+/// …, "rows":[{"x":67,"y":19,"action":"till_soil","state":"refused","reasonCode":…,"detail":…}]}`, built by
+/// <see cref="Core.BodyPrograms.RouteReenteringBodyProgramExecutor"/>'s own aggregate. The journal has always stored it; this
+/// projection dropped it, so a pass that tilled fifteen of sixty tiles reached every reader as `succeeded` with no tile
+/// named - measured `round63`, `plan_239_2793c52c60b8cadf` node `n02`, whose own run bundle kept `{"nodeId":"n02",
+/// "actionId":"for_each","state":"succeeded"}` and not one row.
+/// </para>
+/// <para>
+/// Legal only where the node PROVED an effect (`succeeded`/`partially_succeeded`, the same `provesEffect`
+/// <see cref="Core.BodyPrograms.OpenBodyProgramJournalAuthority"/> decides with), and bounded by
+/// <see cref="Core.BodyPrograms.BodyProgramValidation.IsOpaqueTerminalProof"/> - which is the aggregate's own ceiling, so a
+/// table that arrives whole is printed whole and one that does not says so itself (`rowsOmitted`). Omitted when null.
+/// </para>
+string? Evidence = null,
+/// <summary>
+/// The pass's own verdict line - the journal's `BodyProgramJournalNode.PostconditionVerification`, verbatim:
+/// `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`, or the `partially_succeeded` spelling with
+/// `failed`/`refused` beside them.
+///
+/// <para>
+/// The one field that says HOW MANY of the rows in <see cref="Evidence"/> did the thing, and the only place a
+/// `partially_succeeded` batch says so on its own row. Same state rule and same bound as <see cref="Evidence"/>; omitted
+/// when null.
+/// </para>
+string? PostconditionVerification = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

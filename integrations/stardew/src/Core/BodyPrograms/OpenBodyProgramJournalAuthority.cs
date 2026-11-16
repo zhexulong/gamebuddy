@@ -686,9 +686,9 @@ public sealed class OpenBodyProgramJournalAuthority
             // reason, not a payload, and a control character would let it forge a line of its own.
             || (result.RefusalDetail is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidRefusalDetail(result.RefusalDetail)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         // The two statements are decided ONCE, here: an outcome that proves an effect carries the proof, and one that
-        // names a shortfall carries the reason. `PartiallySucceeded` is in both sets - that is the whole point of it.
-        bool provesEffect = result.Outcome is BodyProgramNodeOutcome.Succeeded or BodyProgramNodeOutcome.PartiallySucceeded;
-        bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
+        // names a shortfall carries the reason. `PartiallySucceeded` is in both sets - that is the whole point of it. WHICH
+        // outcome proves an effect is asked of `BodyProgramValidation.MayCarryProof`, the same declaration the wire
+        // validator refuses a frame by, so a node this stores proof on is exactly a node the wire will carry it for.
         BodyProgramNodeState nodeState = result.Outcome switch
         {
             BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded,
@@ -697,6 +697,8 @@ public sealed class OpenBodyProgramJournalAuthority
             BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled,
             _ => BodyProgramNodeState.RecoveryRequired,
         };
+        bool provesEffect = BodyProgramValidation.MayCarryProof(nodeState);
+        bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
         IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;

@@ -557,6 +557,20 @@ internal static class BodyProgramValidation
     internal static bool MayCarryRefusalDetail(BodyProgramNodeState state) => state
         is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.PartiallySucceeded;
     /// <summary>
+    /// The states that PROVED an effect, and are therefore the only ones that may carry
+    /// <see cref="BodyProgramJournalNode.Evidence"/> or <see cref="BodyProgramJournalNode.PostconditionVerification"/>.
+    ///
+    /// <para>
+    /// ONE DECLARATION, THREE READERS: <see cref="OpenBodyProgramJournalAuthority.TryComplete"/> decides what to STORE with it,
+    /// the wire validator (<c>BridgeProtocol.IsProofShape</c>) decides what it will ACCEPT by it, and the projection carries
+    /// what was stored. Three hand-written state lists would be three chances to disagree about a field that only one state
+    /// shape may carry at all. `PartiallySucceeded` is in the set for the reason it is in
+    /// <see cref="MayCarryRefusalDetail"/>: a `for_each` pass that did forty-five of sixty rows proved those forty-five.
+    /// </para>
+    /// </summary>
+    internal static bool MayCarryProof(BodyProgramNodeState state) => state
+        is BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded;
+    /// <summary>
     /// The one state that may carry a <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>: the one whose whole meaning
     /// is "the outcome could not be determined", so the reason there is a diagnostic and not a cause.
     /// </summary>

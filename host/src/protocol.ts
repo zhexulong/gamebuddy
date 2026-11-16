@@ -2033,6 +2033,31 @@ export const MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = 512;
 
 /** The Mod's own bound on a recovery diagnostic (`BodyProgramValidation.MaximumRecoveryDiagnosticLength`). */
 export const MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH = 4096;
+
+/**
+ * The states a node may carry `evidence` / `postconditionVerification` on: the ones where it PROVED an effect.
+ *
+ * The wire half of one rule the Mod already states once - `OpenBodyProgramJournalAuthority.TryComplete`'s
+ * `provesEffect = outcome is Succeeded or PartiallySucceeded`, which decides both the validation and the assignment
+ * (`Evidence = provesEffect ? result.Evidence : null`). `partially_succeeded` is in the set because a `for_each` pass that
+ * did forty-five of sixty rows proved those forty-five; `failed`/`cancelled`/`rejected`/`recovery_required` prove nothing and
+ * carry the reason instead (ADR-006). A state this set names and the journal forbids, or one it omits and the journal
+ * writes, is a frame one side sends and the other refuses.
+ */
+export const BODY_PROGRAM_PROOF_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set([
+  "succeeded",
+  "partially_succeeded",
+]);
+
+/**
+ * The Mod's own bound on one proof field, verbatim.
+ *
+ * `BodyProgramValidation.IsOpaqueTerminalProof` is 1..4096 and control-character free, and it is not a number chosen for
+ * this wire: the aggregate a `for_each` pass writes into `Evidence` is built to the same 4096
+ * (`RouteReenteringBodyProgramExecutor.MaximumAggregateChars`) and counts the rows it could not fit. A smaller ceiling
+ * here would truncate a table that is already whole, which is the drop this field exists to stop.
+ */
+export const MAX_BODY_PROGRAM_PROOF_LENGTH = 4096;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 type BodyProgramDiagnostic = Readonly<{
   severity: string;
@@ -2084,6 +2109,23 @@ type BodyProgramNodeStatus = Readonly<{
    * that then has to say "no reason" would be saying something it already knew to be false.
    */
   recoveryDiagnostic?: string | null;
+  /**
+   * The pass's own row table - the Mod's `BodyProgramJournalNode.Evidence`, verbatim.
+   *
+   * One `for_each` node settles sixty tiles, and this is the sixty rows: which tile, which action, which state, which
+   * reason, and what was on it. A node that proved an effect carries it and no other state may; `round63`'s
+   * `plan_239_2793c52c60b8cadf` node `n02` settled `succeeded` and its own bundle kept `{nodeId, actionId, state}` and
+   * none of the table.
+   */
+  evidence?: string | null;
+  /**
+   * The pass's own verdict line - the Mod's `BodyProgramJournalNode.PostconditionVerification`, verbatim:
+   * `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`.
+   *
+   * The only field that says how many of the rows in `evidence` did the thing, and the only place a `partially_succeeded`
+   * batch says so on the row itself.
+   */
+  postconditionVerification?: string | null;
   /**
    * The action this node runs, from the journal's own compiled descriptor.
    *
@@ -5347,7 +5389,17 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     hasExactKeysOrOptional(
       value,
       ["nodeId", "state", "nodeAttempt", "admissionAttempt", "actionId"],
-      ["rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "x", "y"],
+      [
+        "rejectionCode",
+        "failureCode",
+        "hint",
+        "refusalDetail",
+        "recoveryDiagnostic",
+        "evidence",
+        "postconditionVerification",
+        "x",
+        "y",
+      ],
     ) &&
     isOpaqueId(value.nodeId) &&
     isOpaqueId(value.actionId) &&
@@ -5372,6 +5424,19 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     (value.recoveryDiagnostic === undefined ||
       value.recoveryDiagnostic === null ||
       value.state === "recovery_required") &&
+    // The two PROOF fields a batch node carries, on the same footing: the Mod's own bound and the Mod's own state rule
+    // (`BODY_PROGRAM_PROOF_NODE_STATES`). Admitting the keys without the rule would let a `rejected` node present a row
+    // table it never produced - the one reading ADR-006 forbids - and refusing the keys is what made this field
+    // unreachable in the first place (`hasExactKeysOrOptional` refuses an unlisted key, and
+    // `local-stardew-bridge.ts` answers that refusal by closing the transport).
+    isOptionalBoundedReason(value.evidence, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.evidence === undefined ||
+      value.evidence === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+    isOptionalBoundedReason(value.postconditionVerification, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.postconditionVerification === undefined ||
+      value.postconditionVerification === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
