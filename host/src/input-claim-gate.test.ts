@@ -391,15 +391,6 @@ const RECORDED: readonly Readonly<{
       "revision, the other about the fact line naming a held tool. Different referents behind the same four words.",
   }),
   Object.freeze({
-    slug: "用你自己一贯开口的语气-说你想说的第一句话-可以是你看到的-你在意的",
-    first: "companion-arrival-fact.ts:arrivalText",
-    second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
-    kind: "distinct",
-    why:
-      "the arrival fact hands the turn to her first words on the morning she arrives; the desk guidance says how a reply is " +
-      "numbered and what a marking is. They share the second person, not a claim.",
-  }),
-  Object.freeze({
     slug: "你正在和自小一起长大的发小-user-同屏联机开黑打-星露谷物语",
     first: "assets/tavern/presets/amber-game.json:prompts.content",
     second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
@@ -416,15 +407,6 @@ const RECORDED: readonly Readonly<{
     why:
       "these are two ALTERNATIVE Main Prompts, never both mounted: a session binds exactly one preset, so the rule is the " +
       "preset's once and each document has to state it or a session on the other surface loses it.",
-  }),
-  Object.freeze({
-    slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",
-    first: "assets/tavern/presets/amber-chat.json:prompts.content",
-    second: "companion-arrival-fact.ts:arrivalText",
-    kind: "distinct",
-    why:
-      "the arrival fact hands the turn to her first words on the morning she arrives; the preset states whose voice may " +
-      "speak and whose reactions stay the player's. They share the second person and say different things with it.",
   }),
   Object.freeze({
     slug: "speak-voice-lines-above",

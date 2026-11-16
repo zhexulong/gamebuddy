@@ -1,17 +1,24 @@
 /**
  * The companion's arrival on the farm, said once per Game session.
  *
- * The rule this module implements: she greets the player when she arrives. Nothing in the game says "I
- * arrived" - the AI attaching to an already-running world is an event of the HOST, and the Host is also
- * the only party holding both halves it takes to say it well: that the attach completed
- * (`acceptInitialFacts`, the one call `activateIngress` makes) and how the world looks at that moment
- * (the Mod's own snapshot: clock, date, weather, location). So the Host mints the one fact that says
- * both, and the EXISTING Game mechanism does the rest: event pump -> `CompanionLoop` -> one proactive Pi
- * turn. Her words come from the provider, exactly as they do when the Mod's own `day_started` fact makes
- * her speak; this module writes no speech.
+ * THE FACT. She has arrived, and this is the world's first clock reading of the day. Nothing in the game says "I
+ * arrived" - the AI attaching to an already-running world is an event of the HOST, and the Host is also the only party
+ * holding both halves it takes to say it: that the attach completed (`acceptInitialFacts`, the one call `activateIngress`
+ * makes) and how the world looks at that moment (the Mod's own snapshot: clock, date, weather, location). So the Host
+ * mints the one fact that says both, and the EXISTING Game mechanism does the rest: event pump -> `CompanionLoop` -> one
+ * proactive Pi turn. Her words come from the provider, exactly as they do when the Mod's own `day_started` fact opens a
+ * turn; this module writes no speech.
  *
- * WHY `world_fact`, AND WHY A NEW SEMANTIC KIND. `world_fact` is the pump's existing "something in the
- * world is worth her attention" kind, and `semanticKind` is the label `CompanionLoop` already reads to
+ * IT WRITES NO INSTRUCTION TO SPEAK EITHER. Until 2026-11-22 the paragraph went on to tell her how to open (「用你自己一贯
+ * 开口的语气，说你想说的第一句话」 / "Open this morning in the voice you always open with: say the first thing you want to
+ * say") and then how not to say it (a ban on reading the clock out as a status report). The first made speaking the
+ * consequence of the event, which `design/input-authority.md` § three calls a defect in this writer "including when it
+ * arrives as a description of a fact"; the second is form. Both were deleted rather than moved, and `arrivalText` below
+ * records where each of them already lives. `conversational-stance-gate.test.ts` reads this module's strings with the
+ * `speech_mandated` detector, so the third location cannot come back here.
+ *
+ * WHY `world_fact`, AND WHY A NEW SEMANTIC KIND. `world_fact` is the pump's existing "something in the world is worth her
+ * attention" kind, and `semanticKind` is the label `CompanionLoop` already reads to
  * decide which facts may open a native companion turn. The two kinds it whitelists (`day_started`,
  * `time_milestone`) are the MOD's own events; borrowing either name for a Host-minted fact would claim
  * the Mod said something it did not. The whitelist therefore gains exactly one name -
@@ -143,9 +150,28 @@ function safeInteger(value: unknown): number | undefined {
 /**
  * The one prompt line this fact carries, in the player's own language.
  *
- * It states the two things only the Host knows - she has just arrived, and this is the world's first
- * clock reading of the day - and then hands the turn to her: her opening words are hers, in the voice
- * she opens with, not a status report about arriving, the hour or the weather.
+ * IT STATES THE TWO FACTS AND STOPS. The two are the ones only the Host knows at this instant: she has just arrived, and
+ * this is the world's first clock reading of the day. That is the whole of what a fact block may say.
+ *
+ * WHAT IT USED TO SAY, AND WHERE THOSE TWO SENTENCES ALREADY LIVED. It ended with 「用你自己一贯开口的语气，说你想说的第一
+ * 句话：可以是你看到的、你在意的，或者你想去做的。」 / "Open this morning in the voice you always open with: say the first
+ * thing you want to say", and then 「不要把时间和天气念成播报」 / "Do not read the clock or the weather out as a status
+ * report". The first is a speech mandate: it makes speaking the consequence of the event, which is the persona's
+ * sentence and nobody else's (`design/input-authority.md` § three). The second is FORM. Both were DELETED rather than
+ * moved, because the layer that owns each one already states it:
+ *
+ *  - the card's own directive (mounted by every Game session as `characterVoice`) says 先接住人 / 只说你自己 /
+ *    只从手头实物或一句闲聊开口 / 不报进度 / 不报备 / 动作回执绝不翻成台词广播;
+ *  - the floor's CHANNEL says the rest (`machine_fields_translated`: "Tool results, receipts and status fields are written
+ *    for machines ... say what they MEAN to a person instead of reading them out").
+ *
+ * And moving the 「open with a line」 rule into the preset would have reversed a deliberate owner decision
+ * (`assets/tavern/presets/PERSONA-REVISION.md`: 2026-11-13 "replace broken positive declarations forcing chatter with
+ * action-with-spoken-intent", 2026-11-15 "de-bloat presets to positive co-op gaming identity (silent on work, speak on
+ * coordination)"), so there was nothing to move it to.
+ *
+ * The detector that found it reads this function's two sentences - the shipped ones - and `conversational-stance-gate.test.ts`
+ * pins both directions: the paragraph that shipped is red, this one is not.
  */
 function arrivalText(
   zh: boolean,
@@ -154,20 +180,13 @@ function arrivalText(
   weatherLabel: string,
   location: string | undefined,
 ): string {
-  if (zh) {
-    const when = date === "" ? clock : `${date} ${clock}`;
-    return [
-      `${ARRIVAL_OPENING_ZH}；世界已经走起来了：现在是${when}，${weatherLabel}${
-        location === undefined ? "" : `，此刻在${location}`
-      }。`,
-      "用你自己一贯开口的语气，说你想说的第一句话：可以是你看到的、你在意的，或者你想去做的。",
-      "不要把时间和天气念成播报，也不要只说“我到了”。",
-    ].join("");
-  }
   const when = date === "" ? clock : `${date} ${clock}`;
-  return [
-    `${ARRIVAL_OPENING_EN}; the world has started moving: it is ${when}, ${weatherLabel}${location === undefined ? "" : `, here in ${location}`}.`,
-    " Open this morning in the voice you always open with: say the first thing you want to say - something you see, something you care about, something you want to do.",
-    ' Do not read the clock or the weather out as a status report, and do not merely announce "I have arrived".',
-  ].join("");
+  const here = location === undefined ? "" : location;
+  if (zh)
+    return `${ARRIVAL_OPENING_ZH}；世界已经走起来了：现在是${when}，${weatherLabel}${
+      here === "" ? "" : `，此刻在${here}`
+    }。`;
+  return `${ARRIVAL_OPENING_EN}; the world has started moving: it is ${when}, ${weatherLabel}${
+    here === "" ? "" : `, here in ${here}`
+  }.`;
 }

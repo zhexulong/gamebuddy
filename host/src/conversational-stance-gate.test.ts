@@ -479,8 +479,8 @@ function readToolDescriptions(
  * `native-notice-fact.ts`, and `host-service.ts`'s voice-interruption note) plus one that composes the snapshot's
  * (`snapshot-projection.ts`, reached through `stardew-integration-launcher-body-program.internal.ts`'s
  * `contextProjection: projection`) · 6 modules read · 549 literals, 64 of them prose · of the prose, 60 facts, 2 form
- * sentences and 2 speech mandates - all four of those in `companion-arrival-fact.ts`. Read the same way AFTER: 60 prose,
- * 60 facts, 0 form, 0 mandates.
+ * sentences and 2 speech mandates - all four of those in `companion-arrival-fact.ts`. Read the same way AFTER: 543
+ * literals, 59 prose, 59 facts, 0 form, 0 mandates.
  * </p>
  *
  * <p>
