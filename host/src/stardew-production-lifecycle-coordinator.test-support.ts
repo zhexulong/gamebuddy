@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import type { FarmhandActionPolicyRequest } from "./protocol.js";
 import { publishStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
 import {
   createComposedReferenceGameBrowserRequestHandler,
@@ -693,6 +694,13 @@ export async function createFixture(
     }>
   > = [];
   const bridgeCloseCalls: string[] = [];
+  /**
+   * Every action policy the coordinator pushed to the RUNNING Mod, in order.
+   *
+   * The push is one-way and its answer is the `catalog_update` the Mod already publishes, so this is the only place a
+   * test can see whether a settings save reached the live half at all.
+   */
+  const actionPolicyPushes: FarmhandActionPolicyRequest[] = [];
   let gameRuntimeFacadeEnterCalls = 0;
   let gameRuntimeVoiceStopperAttachCalls = 0;
   let gameRuntimeIngressActivationCalls = 0;
@@ -823,6 +831,10 @@ export async function createFixture(
             });
           },
           recoverDeadOwner: async () => undefined,
+          pushActionPolicy: (policy: FarmhandActionPolicyRequest): boolean => {
+            actionPolicyPushes.push(policy);
+            return true;
+          },
           close: async () => {
             if (!(gameRuntimeBindingCloseResults.shift() ?? true))
               throw new Error("controlled_game_runtime_binding_close_failure");
@@ -846,6 +858,7 @@ export async function createFixture(
     playerKillCalls,
     bridgeConnectCalls,
     bridgeCloseCalls,
+    actionPolicyPushes: () => actionPolicyPushes,
     lifecycleOrder,
     gameRuntimeFacadeEnterCalls: () => gameRuntimeFacadeEnterCalls,
     gameRuntimeVoiceStopperAttachCalls: () => gameRuntimeVoiceStopperAttachCalls,

@@ -22,9 +22,9 @@ import { readStrictJsonFile } from "../../strict-json-reader.js";
  * Two field groups, and each states only what it can:
  *
  *  - `deniedActionFamilies` removes whole action families from the Agent-visible
- *    capability surface. The Mod re-reads the action policy from `config.json` on
- *    a 120-tick throttle (`FarmhandPolicyRefreshThrottle`, 2 s at 60 Hz), so a
- *    change reaches a RUNNING game without a restart.
+ *    capability surface. The Mod learns the change from a `farmhand_action_policy_request`
+ *    frame the Host pushes on the authenticated bridge, so it reaches a RUNNING game
+ *    without a restart; `config.json` carries the same two keys for the next one.
  *  - `advanceDayMinimumOnlineFarmers` is the co-op night floor: how many farmers
  *    must be connected before a dispatched `sleep` may start a night. The
  *    Mod reads it once, at embodiment initialisation

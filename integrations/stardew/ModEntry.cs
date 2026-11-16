@@ -159,6 +159,13 @@ public sealed partial class ModEntry : Mod
 
     public override void Entry(IModHelper helper)
     {
+        // The ONE config.json read. It is startup state and stays: a policy the player set while the
+        // game was closed cannot arrive as a message, because there was no pipe to deliver it on, so
+        // the file is the only path for it. After this line the document is never re-read - a live
+        // change arrives as a `farmhand_action_policy_request` frame (`HandleFarmhandActionPolicy`),
+        // which is the same payload the Host's own projection writes here. `config.json` remains the
+        // Mod's own write target (`PersistVerifiedFarmhandScope`), which is why the pushed policy is
+        // never copied into `this.config`: this field keeps describing what is on disk.
         this.config = helper.ReadConfig<ModConfig>();
         // One Perfetto trace per run, next to the SMAPI log. Created before anything else so the first span of a
         // run is not missing, and owned by a timer thread that keeps flushing even when the tick stops returning.
@@ -1336,9 +1343,7 @@ public sealed partial class ModEntry : Mod
         // This tick is past every gate, so a gate span opened by an earlier tick ends here - before the work it was
         // excluding from the timeline.
         ModTrace.NoteTickGatePassed();
-        this.LogStageOnce("capability_publication");
-        this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
-        this.LogStageOnce("capability_publication_done");
+
             this.LogStageOnce("observe_bridge_generation");
         this.ObserveBridgeGeneration(nativeLocalState);
         this.LogStageOnce("observe_bridge_generation_done");
@@ -1414,7 +1419,6 @@ public sealed partial class ModEntry : Mod
             return;
 
         ScreenEmbodimentState state = this.GetEmbodimentState();
-        this.RefreshFarmhandCapabilityPublication(state, e.Ticks);
         this.ObserveBridgeGeneration(state);
         this.ObserveNativeChatPipeDeliveries(state);
         this.ObserveNavigationPipeDeliveries(state);
@@ -1882,37 +1886,59 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
-    /// <summary>Game-thread only policy reload. It can only re-publish the fixed catalog's enabled subset.</summary>
-    private void RefreshFarmhandCapabilityPublication(ScreenEmbodimentState state, uint currentTick)
+    /// <summary>
+    /// One pushed action policy. The Host sends the same two denial keys `config.json` carries, so a
+    /// player's settings save reaches a RUNNING world as a message on the authenticated bridge rather
+    /// than as a disk poll; <see cref="Entry"/> says why the file is still read once at startup.
+    /// </summary>
+    private string? HandleFarmhandActionPolicy(ScreenEmbodimentState state, string json, string? correlationId)
     {
+        if (!BridgeProtocol.TryDeserializeInbound(json, "farmhand_action_policy_request", out BridgeEnvelope<FarmhandActionPolicy>? request, out string parseReason, "deniedActions", "deniedActionFamilies")
+            || request is null)
+        {
+            this.Monitor.Log($"GameBuddy rejected a malformed Farmhand action policy push: {parseReason}.", LogLevel.Warn);
+            return this.SerializeError(state, correlationId, parseReason);
+        }
+        // The pushed pair is laid OVER the startup-loaded config rather than replacing it. The file
+        // owns everything the policy does not - the bridge credentials, the fixture fields and the
+        // test-only ExperimentalActions opt-in - and a frame that carried those would be a second
+        // config authority. The copy is local: `this.config` keeps matching config.json on disk, so
+        // the scope persist below never writes a Host-pushed policy back as the player's own.
+        ModConfig pushed = this.config with
+        {
+            DeniedActions = request.Payload.DeniedActions,
+            DeniedActionFamilies = request.Payload.DeniedActionFamilies,
+        };
+        if (!this.ApplyFarmhandActionPolicy(state, pushed))
+        {
+            this.Monitor.Log("GameBuddy refused a pushed Farmhand action policy that names something the catalogue does not declare.", LogLevel.Warn);
+            return this.SerializeError(state, correlationId, "invalid_farmhand_action_policy");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Game-thread only policy application. It can only re-publish the fixed catalog's enabled subset,
+    /// so a pushed policy can never add an action the Mod does not register. Returns false when the
+    /// policy itself is refused, before any publication is derived from it.
+    /// </summary>
+    private bool ApplyFarmhandActionPolicy(ScreenEmbodimentState state, ModConfig policy)
+    {
+        if (!policy.HasValidActionPolicy)
+            return false;
         if (state.CapabilityPublication is null || state.BridgeSession is null || state.LocalPipeBridge is null)
-            return;
-        // The reload re-reads config.json, so it is gated to the frozen 120-tick
-        // interval instead of running on every frame; see
-        // FarmhandPolicyRefreshThrottle for the bound and why it counts ticks.
-        if (!state.PolicyRefreshThrottle.ShouldRefresh(currentTick))
-            return;
-        ModConfig refreshed;
-        try { refreshed = this.Helper.ReadConfig<ModConfig>(); }
-        catch (Exception exception)
+            return true;
+        FarmhandCapabilityPublication next = state.CapabilityPublication.WithEnabledActions(policy.EnabledActionSet);
+        if (!ReferenceEquals(next, state.CapabilityPublication))
         {
-            this.Monitor.Log($"GameBuddy ignored unreadable Farmhand action policy reload: {exception.GetType().Name}.", LogLevel.Warn);
-            return;
+            state.CapabilityPublication = next;
+            long generation = state.LocalPipeBridge.CurrentGeneration;
+            string correlationId = Guid.NewGuid().ToString("N");
+            if (generation != 0 && state.BridgeSession.TryCreateCatalogUpdate(generation, state.LastPublishedCatalogRevision, correlationId, out string json)
+                && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
+                state.LastPublishedCatalogRevision = next.CapabilityRevision;
         }
-        if (!refreshed.HasValidActionPolicy)
-        {
-            this.Monitor.Log("GameBuddy ignored invalid Farmhand action policy reload.", LogLevel.Warn);
-            return;
-        }
-        FarmhandCapabilityPublication next = state.CapabilityPublication.WithEnabledActions(refreshed.EnabledActionSet);
-        if (ReferenceEquals(next, state.CapabilityPublication))
-            return;
-        state.CapabilityPublication = next;
-        long generation = state.LocalPipeBridge.CurrentGeneration;
-        string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && state.BridgeSession.TryCreateCatalogUpdate(generation, state.LastPublishedCatalogRevision, correlationId, out string json)
-            && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
-            state.LastPublishedCatalogRevision = next.CapabilityRevision;
+        return true;
     }
 
     private void ObserveBridgeGeneration(ScreenEmbodimentState state)
@@ -2021,6 +2047,7 @@ public sealed partial class ModEntry : Mod
                     "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
                     "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
                     "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
+                    "farmhand_action_policy_request" => this.HandleFarmhandActionPolicy(state, inbound.Json, correlationId),
                     _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
 
@@ -3206,12 +3233,6 @@ public sealed partial class ModEntry : Mod
         internal long StopObservationEpoch { get; set; }
         internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }
-        /// <summary>
-        /// Ticks the per-frame action-policy reload. The owner froze the bound:
-        /// an edit to `config.json` reaches the capability surface within 120
-        /// ticks (2 s at 60 Hz). See FarmhandPolicyRefreshThrottle.
-        /// </summary>
-        internal FarmhandPolicyRefreshThrottle PolicyRefreshThrottle { get; } = new();
         internal Queue<NativeChatPipeDelivery> NativeChatPipeDeliveries { get; } = new();
         internal Queue<NavigationPipeDelivery> NavigationPipeDeliveries { get; } = new();
         internal Queue<ExecutionResponsePipeDelivery> ExecutionResponsePipeDeliveries { get; } = new();

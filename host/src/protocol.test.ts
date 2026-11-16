@@ -4864,3 +4864,35 @@ test("a machine row's published acceptance is bounded by the wire schema and kee
   ])
     assert.equal(isMachineTargetFact(bad), false, `refused: ${JSON.stringify(bad.accepts).slice(0, 80)}`);
 });
+
+/**
+ * The action-policy frame's payload is the two denial keys and nothing else.
+ *
+ * The population that matters is "the keys the Mod's `config.json` binds", and the frame deliberately carries the half a
+ * RUNNING Mod honours. An extra key is refused rather than ignored: the document already owns the credential, fixture and
+ * test-only fields, and a frame that could carry them would be a second config authority over a running world.
+ */
+test("the action-policy frame admits exactly the two denial keys, in the casing the bridge codec uses", () => {
+  const envelope = (payload: unknown) =>
+    newEnvelope("farmhand_action_policy_request", scope, payload as never, "policy_01", now);
+
+  assert.equal(validateBridgeMessage(envelope({ deniedActions: [], deniedActionFamilies: [] }), scope, now), null);
+  assert.equal(
+    validateBridgeMessage(envelope({ deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] }), scope, now),
+    null,
+  );
+
+  for (const refused of [
+    { deniedActions: [] },
+    { deniedActions: [], deniedActionFamilies: [], experimentalActions: ["x"] },
+    { DeniedActions: [], DeniedActionFamilies: [] },
+    { deniedActions: [""], deniedActionFamilies: [] },
+    { deniedActions: ["not an id"], deniedActionFamilies: [] },
+    { deniedActions: [], deniedActionFamilies: "crops" },
+  ])
+    assert.equal(
+      validateBridgeMessage(envelope(refused), scope, now),
+      "invalid_farmhand_action_policy_request",
+      `refused: ${JSON.stringify(refused)}`,
+    );
+});

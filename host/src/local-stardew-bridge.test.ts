@@ -1462,6 +1462,85 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
   }
 });
 
+test("local Stardew bridge pushes the action policy as one frame and reports whether a world is there to tell", async () => {
+  const pipeName = `gamebuddy_action_policy_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const received: BridgeMessage["type"][] = [];
+  const pushed: Extract<BridgeMessage, { type: "farmhand_action_policy_request" }>[] = [];
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        received.push(request.type);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_hello_action_policy",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_action_policy",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          continue;
+        }
+        // No reply. The Mod's answer to a policy push is the `catalog_update` it already publishes when its
+        // capability moves, and awaiting a second correlated receipt would be two spellings of one answer.
+        if (request.type === "farmhand_action_policy_request") pushed.push(request);
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    assert.equal(
+      client.pushActionPolicy({ deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] }),
+      true,
+      "an authenticated, connected bridge is a world that can be told",
+    );
+    for (let waited = 0; waited < 2_000 && pushed.length === 0; waited += 5)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.deepEqual(pushed[0]?.payload, { deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] });
+    assert.equal(pushed[0]?.scope.companionId, scope.companionId, "the frame is scoped to this exact bridge");
+    // The push is one message, not a request the client then polls: nothing else was written for it.
+    assert.deepEqual(received, ["hello", "farmhand_action_policy_request"]);
+    client.close();
+    assert.equal(
+      client.pushActionPolicy({ deniedActions: [], deniedActionFamilies: [] }),
+      false,
+      "a closed pipe is a state rather than a throw: the durable record already carries the change to the next world load",
+    );
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("local Stardew bridge authenticates and observes Mod-declared capabilities", async () => {
   const pipeName = `gamebuddy_phase2_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;

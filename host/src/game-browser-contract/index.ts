@@ -612,9 +612,10 @@ const StardewActionFamilyV1Schema = strictObject({
  *
  * `appliesToRunningGame` is the honest per-field answer to "did that just change
  * anything?", and it is the reason the surface can promise anything at all:
- *  - the action policy is re-read from `config.json` on a 120-tick throttle
- *    (`FarmhandPolicyRefreshThrottle`), so a change reaches a RUNNING game in about
- *    two seconds and this flag is true;
+ *  - the action policy is pushed to a RUNNING Mod as a `farmhand_action_policy_request`
+ *    frame on the authenticated bridge, and the Mod replays its capability as a
+ *    `catalog_update`, so a change reaches a running game within a turn of the pipe
+ *    rather than on a timer;
  *  - the co-op night floor is read once at embodiment initialisation
  *    (`ConfigureLifecycleMinimumFarmers`), so a change takes effect the next time the
  *    world loads and its own sentence says so.

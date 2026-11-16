@@ -108,6 +108,31 @@ test("language-neutral schema accepts all production presentation and system-not
   );
 });
 
+test("language-neutral schema accepts the action-policy frame and refuses any key the Mod's config document owns", async () => {
+  const validate = await schemaValidator();
+  const [base] = (await fixture("golden-sequence.json")).messages as readonly Record<string, unknown>[];
+  const frame = {
+    ...base,
+    messageId: "action_policy_01",
+    correlationId: "correlation_01",
+    type: "farmhand_action_policy_request",
+    payload: { deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] },
+  };
+  assert.equal(validate(frame), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate({ ...frame, payload: { deniedActions: [], deniedActionFamilies: [] } }),
+    true,
+    "an empty pair is a policy: it means the catalogue's own default consent set",
+  );
+  for (const refused of [
+    { deniedActions: [] },
+    { deniedActions: [], deniedActionFamilies: [], bridgeToken: "nope" },
+    { DeniedActions: [], DeniedActionFamilies: [] },
+    { deniedActions: ["not an id"], deniedActionFamilies: [] },
+  ])
+    assert.equal(validate({ ...frame, payload: refused }), false, `refused: ${JSON.stringify(refused)}`);
+});
+
 test("language-neutral schema accepts body_settled only with its exact stop observation", async () => {
   const validate = await schemaValidator();
   const [base] = (await fixture("golden-sequence.json")).messages as readonly Record<string, unknown>[];

@@ -2230,6 +2230,23 @@ export type BodyProgramEventsResult = Readonly<{
   highWater: number;
 }>;
 
+/**
+ * The player's action policy, pushed to a RUNNING Mod.
+ *
+ * The SAME two denial keys `config.json` carries, holding the same values that `writeStardewModActionPolicyIntoConfig`
+ * merges into the document - one shape, two carriers: the file for the next world load, this frame for the world that is
+ * already running. The Mod reads them into the `FarmhandActionPolicy` record its own config document binds to, through the
+ * bridge's one camelCase codec, so neither side keeps a second schema for the same policy.
+ *
+ * Only the denial half travels. Consent is deny-by-exception on the Mod's own registration catalog, so a frame can only
+ * ever narrow the published action surface - and a push the Mod refuses is answered with an `error` naming the policy,
+ * never by silently applying part of it.
+ */
+export type FarmhandActionPolicyRequest = Readonly<{
+  deniedActions: readonly string[];
+  deniedActionFamilies: readonly string[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<
@@ -2275,6 +2292,7 @@ export type BridgeMessage =
   | Envelope<"cancel_request", CancelRequestPayload>
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
+  | Envelope<"farmhand_action_policy_request", FarmhandActionPolicyRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
   | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
@@ -2314,6 +2332,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "cancel_request",
   "companion_presentation_request",
   "system_notice_request",
+  "farmhand_action_policy_request",
   "system_notice_receipt",
   "companion_presentation_receipt",
   "player_control_receipt",
@@ -2668,6 +2687,15 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isBcp47Locale(payload.locale)
         ? null
         : "invalid_system_notice_request";
+    case "farmhand_action_policy_request":
+      // Two keys, and the same two the config document carries. Each list is identifier-shaped and may be empty (the
+      // catalogue's default consent set). No length is imposed beyond the frame's own byte bound: the population is the
+      // Mod's registration catalog, which grows, and a second cap here would be a number no code derives from.
+      return hasExactKeys(payload, ["deniedActions", "deniedActionFamilies"]) &&
+        isOpaqueIdList(payload.deniedActions) &&
+        isOpaqueIdList(payload.deniedActionFamilies)
+        ? null
+        : "invalid_farmhand_action_policy_request";
     case "system_notice_receipt":
       return hasExactKeys(payload, ["noticeId", "revision"]) &&
         isOpaqueId(payload.noticeId) &&
@@ -5943,6 +5971,16 @@ function isNonNegativeInt32(value: unknown): value is number {
 }
 function isUniqueOpaqueIdArray(value: unknown): value is readonly string[] {
   return isStringArray(value) && value.every(isOpaqueId) && new Set(value).size === value.length;
+}
+/**
+ * Identifier-shaped list that may repeat a member.
+ *
+ * The action-policy frame carries the two denial lists verbatim from the player's record, and a record that names one
+ * family twice would be refused by a uniqueness rule the Mod itself does not impose (its own reader collapses the list
+ * into a set). Refusing here would make one of the two carriers stricter than the other for the same payload.
+ */
+function isOpaqueIdList(value: unknown): value is readonly string[] {
+  return isStringArray(value) && value.every(isOpaqueId);
 }
 function isValidRuntimeAttestation(role: unknown, generation: unknown): boolean {
   return role === "farmhand_client"

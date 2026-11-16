@@ -5,10 +5,7 @@ import {
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { GameOperationalGateEvidence } from "./game-operational-gate-evidence.js";
-import type {
-  ConnectedSemanticGameLease,
-  ConstructedUnmountedGameSemanticFacade,
-} from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
+import type { ConnectedSemanticGameLease } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,11 +56,13 @@ import {
 } from "./games/stardew/stardew-player-settings.js";
 import {
   projectStardewModActionPolicy,
+  projectStardewModActionPolicyFrame,
   type StardewModActionPolicyProjection,
 } from "./games/stardew/stardew-mod-action-policy-projection.js";
 import { STARDEW_ACTION_FAMILIES } from "./games/stardew/stardew-action-families.js";
 import {
   createStardewOwnedFarmhandGameSessionMaterializer,
+  type StardewFarmhandGameSessionFacade,
   type StardewOwnedFarmhandGameSessionMaterializer,
 } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
 import {
@@ -1253,7 +1252,7 @@ function createCoordinator(
   const runtimeContained: { playerHost: boolean; aiClient: boolean } = { playerHost: false, aiClient: false };
   let runtimeClosed = false;
   let brokerClosed = false;
-  let farmhandGameRuntimeFacade: ConstructedUnmountedGameSemanticFacade | undefined;
+  let farmhandGameRuntimeFacade: StardewFarmhandGameSessionFacade | undefined;
   let farmhandGameRuntimeLease: ConnectedSemanticGameLease | undefined;
   let farmhandGameRuntimeFacadeClosed = false;
   let attachmentGeneration = 0;
@@ -3264,6 +3263,12 @@ function createCoordinator(
       if (owner !== undefined) {
         await internal.projectPlayerActionPolicyIntoOwnedAttempt(owner, policy);
       }
+      // The live half, and the only path a change takes to a world that is ALREADY running: one frame carrying the same
+      // two denial keys the document just received. `false` means no world is attached (or the pipe closed between the
+      // CAS above and this line), which is not a failure - the config write above is what the next world load reads.
+      // Best effort for the same reason the write is: the durable record already committed, so throwing here would
+      // report a failure the player would retry into a stale-revision conflict.
+      farmhandGameRuntimeFacade?.pushActionPolicy(projectStardewModActionPolicyFrame(policy));
       return projectPlayerSettings(saved);
     });
 

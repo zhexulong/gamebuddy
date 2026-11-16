@@ -9,6 +9,7 @@ import { createBuildWindowsStaleLockReclaimer } from "../../windows-stale-lock-r
 import {
   mergeStardewModActionPolicy,
   projectStardewModActionPolicy,
+  projectStardewModActionPolicyFrame,
   readStardewModPresentationLocale,
   writeStardewModActionPolicyIntoConfig,
 } from "./stardew-mod-action-policy-projection.js";
@@ -208,4 +209,41 @@ test("a document this module cannot merge into is refused, not replaced", async 
     // The refusal left the document exactly as it was.
     assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), ["not", "an", "object"]);
   });
+});
+
+/**
+ * ONE PAYLOAD, TWO CARRIERS.
+ *
+ * The frame a running Mod receives and the document the next world load reads are the same two denial keys from the same
+ * projection object - the file is not one schema and the frame another. This is asserted against the merge's own output
+ * rather than against a second hand-written expectation, so a field added to the projection has to be decided here: either
+ * it travels live (and the Mod consumes it) or it stays in the document, and the difference has a reason.
+ */
+test("the pushed frame carries exactly the two denial keys the config document merge writes", () => {
+  const policy = projectStardewModActionPolicy(
+    {
+      deniedActionFamilies: ["crops", "animals"],
+      advanceDayMinimumOnlineFarmers: 2,
+      deniedActions: ["water_crop"],
+      windowMode: "hidden",
+    },
+    "fr-FR",
+  );
+
+  const frame = projectStardewModActionPolicyFrame(policy);
+  const merged = mergeStardewModActionPolicy({}, policy);
+
+  assert.deepEqual(Object.keys(frame).sort(), ["deniedActionFamilies", "deniedActions"]);
+  assert.deepEqual(frame.deniedActions, merged.DeniedActions);
+  assert.deepEqual(frame.deniedActionFamilies, merged.DeniedActionFamilies);
+
+  // The keys the running Mod cannot honour must not travel, or the frame advertises a live change that cannot happen.
+  for (const absent of [
+    "windowMode",
+    "WindowMode",
+    "presentationLocale",
+    "PresentationLocale",
+    "advanceDayMinimumOnlineFarmers",
+  ])
+    assert.equal(absent in frame, false, `the live frame must not carry ${absent}`);
 });

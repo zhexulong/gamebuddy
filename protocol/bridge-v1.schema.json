@@ -52,6 +52,7 @@
         "cancel_request",
         "companion_presentation_request",
         "system_notice_request",
+        "farmhand_action_policy_request",
         "system_notice_receipt",
         "companion_presentation_receipt",
         "player_control_receipt",
@@ -399,6 +400,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/systemNoticeRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "farmhand_action_policy_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/farmhandActionPolicyRequest"
           }
         }
       }
@@ -7563,6 +7580,28 @@
         "presentationEpoch": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "farmhandActionPolicyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deniedActions",
+        "deniedActionFamilies"
+      ],
+      "properties": {
+        "deniedActions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          }
+        },
+        "deniedActionFamilies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          }
         }
       }
     },
