@@ -141,6 +141,21 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:gate-red-proofs",
   },
   {
+    path: "tools/audit-hotspots.mjs",
+    reason:
+      "report: it ranks every file by revisions in a 30-day window × lines at HEAD and exits 0 whatever the ranking says, " +
+      "because the retrospection it was built from refuses the verdict: over the 15 fix commits of 2026-11-13..15 the " +
+      "rule shape `in the top decile AND no test names it` fires on 208 of the 324 decile members at 5.3% precision - " +
+      "worse than the decile alone at 6.8% - and the alternative `fails when a file enters the top decile` needs last " +
+      "week's membership (75 files in, 75 out, per week measured), which is the hotspot baseline this repository does not " +
+      "keep. A rung would therefore call it green while it prints a reading nobody gates on. It also costs 67 s (measured " +
+      "2026-11-17: `measure` 25.8 s, churn 41.0 s, importers 0.14 s, tool mentions 0.16 s), of which the 25.8 s is the " +
+      "size ratchet's own reading, not a new one. It expires when a rule survives its own retrospection, which the " +
+      "report prints under --why-not-a-gate" +
+      " · measured 208 of the 324 decile members fire at 5.3% precision at 43299f2a",
+    runsIn: "pnpm hotspots",
+  },
+  {
     path: "tools/audit-gate-inputs.mjs",
     reason:
       "debt: measured red at HEAD (exit 1) - its own report reads `examined 385 · authority 288 · hand-listed 23 · " +

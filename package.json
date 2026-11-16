@@ -176,6 +176,7 @@
     "reconcile:stardew-reachable-exits": "node integrations/stardew/action-development/src/analysis/stardew-reachable-exit-reconciliation.mjs",
     "render:stardew-uncovered-exit-table": "node integrations/stardew/action-development/src/analysis/stardew-uncovered-exit-table.mjs",
     "replay:gate-on-history": "node tools/replay-gate-on-history.mjs",
+    "hotspots": "node tools/audit-hotspots.mjs",
     "report:clones": "jscpd --config jscpd.json",
     "report:stardew-remaining-actions": "node integrations/stardew/action-development/src/analysis/stardew-remaining-actions-report.mjs",
     "run:chat-live-audit": "node tools/live-run/chat/run-chat-live-audit.mjs",

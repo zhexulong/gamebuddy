@@ -536,3 +536,48 @@ What it cannot see is printed rather than hidden: `external` gates whose rule li
 in a vendored package are named and counted, `.py`/`.ps1` gates are `unreadable`, and a gate whose reading this
 grammar cannot attribute is `unknown` and listed by name. A zero-guard in a dead branch reads like one on the verdict
 path, which is why every member is printed as a gate to inspect rather than declared a proven defect.
+
+## Hotspots: which files are both busy and large (`hotspots`)
+
+`tools/audit-hotspots.mjs` ranks every source file by **revisions in a 30-day window × physical lines at
+HEAD**, and prints for the top 30 what the tree already knows about each one: how many tracked test files
+name it by a relative import, and how many sources under `tools/` name its path. It is a **report** and not
+a gate, and it says so on its own output.
+
+```powershell
+pnpm hotspots                              # top 30, the population line, and the decile boundary
+pnpm hotspots --window 7                    # the same reading over another window
+pnpm hotspots --locate host/src/protocol.ts # where one file ranks: rank 3 of 3243, 88 revisions, 5775 lines
+pnpm hotspots --why-not-a-gate              # the retrospection below, as numbers
+node tools/audit-hotspots.mjs --root <worktree> --json   # read another tree (must be a git work tree)
+```
+
+The two numbers have owners rather than opinions: the frequency axis is `git log --name-only --since=<window>`
+(1.2 ms per commit, measured — `--numstat` costs 270 ms per commit here, 20.031 s for 74 commits against
+0.086 s, so a 30-day window would cost ~13 minutes instead of 41 s), and the size axis is `measure()` in
+`tools/scripts/check-file-complexity-gate.mjs` — the same `git ls-files` population and the same line count
+the size ratchet already judges. A whole run costs 67 s here (`measure` 25.8 s, churn 41.0 s, test importers
+0.14 s, tool mentions 0.16 s), which is why it is not a prelive rung, and `tools/check-prelive-gate-registry.mjs`
+exempts it as `report:`.
+
+Why it stops at a reading: measured against the 15 defect-fix commits of 2026-11-13..15,
+**22 of the 48 files a shipped defect named are in the top decile against 26 below it (6.8% against 0.9%)**, so
+the ranking carries signal — and the rule that would make it a gate does not. `in the top decile AND no test
+names it` fires on **208 of the 324 decile members at HEAD, 11 of them with a defect (5.3% precision)** — worse
+than the decile alone, because 18 of the 26 product defect files *are* named by a test. `fails when a file
+enters the top decile` needs last week's membership, and 75 files enter and 75 leave the decile every week.
+A threshold would therefore need a 208-row hotspot baseline, which this repository does not keep.
+
+Run on the tree at `43299f2a` — the commit before the first of those fixes — **15 of the 26 files the fixes
+would touch were already in that tree's top decile** (`i18n.ts` rank 5, `management-pipeline-api.ts` 7,
+`tavern/browser-contract/index.ts` 8, `ComposedReferenceGameApp.tsx` 19). The misses are the metric's honest
+limit and they are two shapes: files the fix itself created (one revision or none, invisible to a churn
+ranking) and files outside the population's extension set — the largest being `dialogue-web/src/style.css`,
+185 commits and 15,348 changed lines over the 90-day window, with no line ceiling, so it is not in this report
+at all.
+
+`replay-gate-on-history` cannot measure this reading and says so: it extracts each revision with `git archive`,
+which carries no `.git`, so the run is `not_measured  reason=findings_unreadable  exit=2` with
+`hotspots_blocked:population_unreadable: ... fatal: not a git repository`. The equivalent proof is the one
+above — the same tool on a detached work tree of the earlier commit (`git worktree add --detach <dir> <rev>`
+then `--root <dir>`), which is a reading of that tree rather than a verdict about it.
