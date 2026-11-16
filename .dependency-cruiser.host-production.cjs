@@ -39,14 +39,22 @@ module.exports = {
       },
       to: {
         path: "^host/src/(?:bootstrap|containment|composition)/",
-        // Exactly the one exception ADR-0007 records: the staging provenance
-        // contract, which carries no process, transport, pipe, token or launch
-        // authority. `containment/runtime/contract` is ADR-permitted for the game
-        // layer and is excluded here only so this rule does not double-report the
-        // seam checker's own allowlist. runtime/core and the auth transport are NOT
-        // exempt: the game layer has no edge to either, and the slots were removed
-        // with the retired seam in 3b12a18/3485dbf.
-        pathNot: "^host/src/(?:containment/runtime/contract|bootstrap/roots/stardew-private-mod-profile-staging)",
+        // The same two exceptions ADR-0007 records, in the same shape the seam gate
+        // allows them:
+        //   - `containment/runtime/contract/game-runtime`: the stable game-facing
+        //     contract. The exemption names the exact module, not the directory,
+        //     because a second module added under contract/ has no such permission
+        //     (tools/check-host-game-physical-seam.mjs exempts only this module).
+        //   - `bootstrap/roots/stardew-private-mod-profile-staging`: the staging
+        //     provenance contract, which carries no process, transport, pipe, token or
+        //     launch authority. The seam gate narrows it further, to its one lifecycle
+        //     importer; a forbidden rule cannot express an importer-specific exception,
+        //     so the seam gate owns that clause.
+        // runtime/core and the auth transport are NOT exempt: the game layer has no
+        // edge to either, and the slots were removed with the retired seam in
+        // 3b12a18/3485dbf.
+        pathNot:
+          "^host/src/(?:containment/runtime/contract/game-runtime\\.ts|bootstrap/roots/stardew-private-mod-profile-staging)",
       },
     },
     {
@@ -71,6 +79,32 @@ module.exports = {
     tsConfig: {
       fileName: path.join(__dirname, "host", "tsconfig.production.json"),
     },
+    // This graph cannot see type-only edges, and every rule below is blind to them.
+    //
+    // With this off, each TypeScript module is transpiled to JavaScript and the result
+    // is parsed, so `import type` edges are erased before the graph exists. The rule
+    // that matters here is `games-must-not-import-unapproved-generic-layers`: a
+    // `games/**` type-only import of `containment/auth` is not in this graph at all --
+    // `containment/auth/desktop-guardian-session.internal.ts` never appears in the 243
+    // modules -- and the rule reports passed over it. That is how the edge fixed in
+    // 1634c8cc survived until the seam checker caught it.
+    //
+    // The authority for type-only edges is tools/check-host-game-physical-seam.mjs,
+    // which reads source text (`import type`, `import("path").Type`, `require`,
+    // import-equals) and does see them. tools/check-host-game-physical-seam.test.mjs
+    // holds the two gates to the same policy and fails when this option changes
+    // without the reconciliation below.
+    //
+    // Enabling it IS the eventual fix, and not a free switch: 254 modules (+11) and
+    // 1018 edges (+59%) also surface 29 pre-existing
+    // `no-host-production-circular-dependencies` violations, every one a cycle that only
+    // closes through a type-only edge and therefore never happens at run time (this
+    // graph has no run-time cycle today). Restricting that rule to non-type-only edges
+    // still leaves 22, because depcruise reports the run-time edge of a mixed cycle.
+    // So the blocker is 29 type-only cycles that need adjudication -- either the cycles
+    // are removed or the circular rule is rewritten to judge the run-time graph -- and
+    // never a baseline entry. Until that is done, this option stays off and the seam
+    // checker above owns the edges it cannot see.
     tsPreCompilationDeps: false,
     combinedDependencies: false,
     enhancedResolveOptions: {

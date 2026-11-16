@@ -4,10 +4,14 @@
 //   `host/src/containment/runtime/contract/game-runtime.ts` declared
 //   `FarmhandBridgeConnectionNotAvailableError` -> `generic_runtime_names_game` naming that
 //   file, its line and the identifier, token `farmhand` (re-run of the checker on that tree)
+// red-proof: inject  `tsPreCompilationDeps: true` written into .dependency-cruiser.host-production.cjs ->
+//   `× the module graph declares the type-only edges it cannot see` names the option and the 29
+//   circular violations turning it on costs (tools/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { checkHostGamePhysicalSeam } from "./check-host-game-physical-seam.mjs";
 
@@ -560,5 +564,158 @@ test("a comment that names the game to say the layer does not own the fact is no
       assert.equal(report.verdict, "passed");
       assert.equal(report.vocabulary.examined, 1);
     },
+  );
+});
+
+// The other gate that polices this boundary is `check:host-module-graph`
+// (dependency-cruiser, .dependency-cruiser.host-production.cjs). Its rule
+// `games-must-not-import-unapproved-generic-layers` is the same rule, but its graph is
+// built by transpiling TypeScript to JavaScript, so `import type` edges are erased before
+// the graph exists: it reported `passed` over the games -> containment/auth edge that this
+// file caught (1634c8cc). Enabling `tsPreCompilationDeps` is not free -- measured 254
+// modules and 29 pre-existing circular violations -- so the split is declared instead of
+// flipped, and the three tests below hold the two gates to one policy so neither can drift
+// away from the other in silence.
+const requireFromRepository = createRequire(import.meta.url);
+const moduleGraphConfig = requireFromRepository("../.dependency-cruiser.host-production.cjs");
+const moduleGraphBoundaryRule = moduleGraphConfig.forbidden.find(
+  (rule) => rule.name === "games-must-not-import-unapproved-generic-layers",
+);
+const GENERIC_TARGET = /^host\/src\/(?:bootstrap|containment|composition)\//u;
+const GAME_MODULE = /^host\/src\/games\//u;
+
+/** What `check:host-module-graph`'s rule says about a `games/** -> <module>` edge, read from its own rule. */
+function moduleGraphForbidsGameImport(module) {
+  return (
+    new RegExp(moduleGraphBoundaryRule.to.path, "u").test(module) &&
+    !new RegExp(moduleGraphBoundaryRule.to.pathNot, "u").test(module)
+  );
+}
+
+/** The `./`-relative specifier one fixture module uses to reach another, as the checker resolves it. */
+function specifierTo(importer, target) {
+  const relativePath = relative(dirname(importer), target)
+    .replaceAll("\\", "/")
+    .replace(/\.(?:[cm]?ts|tsx)$/u, ".js");
+  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+}
+
+/** Every layer-relative production module, taken from the checker's own inspected population. */
+function inspectedProductionModules() {
+  const report = checkHostGamePhysicalSeam();
+  return {
+    genericTargets: report.inspectedFiles.filter((path) => GENERIC_TARGET.test(path)),
+    gameModules: report.inspectedFiles.filter((path) => GAME_MODULE.test(path)),
+  };
+}
+
+// A fixture root needs one generic runtime source: the checker also reads that layer's
+// vocabulary and blocks a tree where the layer holds no production source at all. The stub
+// declares nothing, so it neither satisfies nor hides anything these tests assert.
+const GENERIC_RUNTIME_SOURCE = "host/src/containment/runtime/seam-authority-port.ts";
+const GENERIC_RUNTIME_STUB = "export type SeamAuthorityPort = unknown;\n";
+
+test("the module graph declares the type-only edges it cannot see", () => {
+  assert.equal(
+    moduleGraphConfig.options.tsPreCompilationDeps,
+    false,
+    [
+      "check:host-module-graph builds its graph by transpiling TypeScript to JavaScript, so `import type`",
+      "edges are erased before any rule sees them: `games-must-not-import-unapproved-generic-layers` is",
+      "blind to them and tools/check-host-game-physical-seam.mjs is their authority. Turning",
+      "tsPreCompilationDeps on adds 11 modules and 378 edges and makes 29 pre-existing",
+      "`no-host-production-circular-dependencies` violations red (22 of them survive restricting that",
+      "rule to non-type-only edges), so it may only be flipped together with that rule's reconciliation,",
+      "never with a baseline entry.",
+    ].join(" "),
+  );
+  assert.ok(moduleGraphBoundaryRule, "the module graph no longer carries the game-boundary rule at all");
+  assert.equal(moduleGraphBoundaryRule.severity, "error");
+});
+
+test("both boundary gates agree on every generic module a game may and may not reach", async () => {
+  const { genericTargets, gameModules } = inspectedProductionModules();
+  assert.ok(genericTargets.length > 0, "examined 0 generic target(s): the layers moved");
+  assert.ok(gameModules.length > 0, "examined 0 game module(s): the layer moved");
+
+  // One fixture holding the whole generic population, reached by a game module that owns no
+  // exemption, so the checker's verdict per target is its general one.
+  const probeImporter = "host/src/games/stardew/probe.ts";
+  const probeFiles = { [GENERIC_RUNTIME_SOURCE]: GENERIC_RUNTIME_STUB };
+  for (const target of genericTargets) probeFiles[target] = "export const value = 1;\n";
+  probeFiles[probeImporter] = genericTargets
+    .map((target) => `import '${specifierTo(probeImporter, target)}';`)
+    .join("\n");
+  let seamForbidden = new Set();
+  await withFixture(probeFiles, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    seamForbidden = new Set(
+      report.violations
+        .filter((violation) => violation.kind === "game_imports_generic_layer")
+        .map((violation) => violation.target),
+    );
+  });
+
+  const drifting = [];
+  for (const target of genericTargets) {
+    if (moduleGraphForbidsGameImport(target)) {
+      if (!seamForbidden.has(target)) drifting.push(`${target}: the module graph forbids it, the seam allowed it`);
+      continue;
+    }
+    // The module graph exempts this target. An exemption is only legitimate when some real
+    // game module may actually import it: the seam gate narrows the staging provenance
+    // contract to its one lifecycle importer, and a forbidden rule cannot say that, so the
+    // target-level exemption has to stay live rather than widen into a directory.
+    if (!(await seamAllowsSomeGameModule(target, gameModules)))
+      drifting.push(`${target}: the module graph exempts it, no game module may import it`);
+  }
+  assert.deepEqual(drifting, []);
+});
+
+/** Whether at least one real game module is allowed to import this generic target. */
+async function seamAllowsSomeGameModule(target, gameModules) {
+  const files = { [target]: "export const value = 1;\n", [GENERIC_RUNTIME_SOURCE]: GENERIC_RUNTIME_STUB };
+  for (const module of gameModules) files[module] = `import '${specifierTo(module, target)}';\n`;
+  let allowed = false;
+  await withFixture(files, (root) => {
+    const report = checkHostGamePhysicalSeam({ root });
+    const blocked = new Set(
+      report.violations
+        .filter((violation) => violation.kind === "game_imports_generic_layer")
+        .map((violation) => violation.importer),
+    );
+    allowed = gameModules.some((module) => !blocked.has(module));
+  });
+  return allowed;
+}
+
+// The edge that started this: a type-only import of the containment auth transport from the
+// game layer. The module graph cannot see it, so this checker has to name it exactly -- the
+// importer, the target and the line -- and the module graph's rule has to want to forbid the
+// same target, so the two disagree about extraction and never about policy.
+test("names the type-only game import the module graph cannot see, which its own rule would forbid", async () => {
+  const importer = "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts";
+  const target = "host/src/containment/auth/desktop-guardian-session.internal.ts";
+  await withFixture(
+    {
+      [importer]: [
+        "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
+        "export const owner = {} as unknown as DesktopGuardianSession;\n",
+      ].join("\n"),
+      [target]: "export type DesktopGuardianSession = unknown;\n",
+      [GENERIC_RUNTIME_SOURCE]: GENERIC_RUNTIME_STUB,
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.deepEqual(
+        report.violations.map((violation) => [violation.kind, violation.importer, violation.target, violation.line]),
+        [["game_imports_generic_layer", importer, target, 1]],
+      );
+    },
+  );
+  assert.equal(
+    moduleGraphForbidsGameImport(target),
+    true,
+    "the module graph's rule must forbid exactly the target this checker blocks, or the split is a hole",
   );
 });
