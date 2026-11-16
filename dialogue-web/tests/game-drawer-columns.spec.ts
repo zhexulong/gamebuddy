@@ -96,7 +96,7 @@ function composedRoot(published: boolean) {
         companionName: null,
         selectedWorld: null,
         selectedSave: null,
-        capabilitySummary: published ? { available: true, count: 4 } : { available: false, count: 0 },
+        capabilitySummary: published ? { status: "published", count: 4 } : { status: "not_measured", reason: "no_attached_runtime" },
         latestOutcome: "none",
       },
     },

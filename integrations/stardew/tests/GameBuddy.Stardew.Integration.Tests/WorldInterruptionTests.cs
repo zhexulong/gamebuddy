@@ -327,11 +327,15 @@ public sealed class WorldInterruptionTests
     [Fact]
     public void ArbitrationSkipsAnOwnedModalAndTheLeaseIsReleasedWhereAnExecutionEnds()
     {
-        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string arbitrationPartial = ControllerPartials.Declaring("ArbitrateWorldChangeInterruptions");
+        // The forwarding count stays scoped to the dispatcher, which is what it has always read: the ledger's one
+        // interface forwarding. `this.ReleaseModalOwner(` also appears in an action partial, and counting the family
+        // here would answer a different question (does any action release the lease it opened) in this test's name.
+        string dispatcher = ControllerPartials.Read(ControllerPartials.Main);
         string store = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ExecutionReceiptStore.cs")));
 
         // The ruling: a modal interrupts only when it is NOT the owning execution's own.
-        MethodBody(source, "private void ArbitrateWorldChangeInterruptions(")
+        MethodBody(arbitrationPartial, "private void ArbitrateWorldChangeInterruptions(")
             .Should().Contain("case ActorDispositionKind.Modal when !this.disposition.ModalActionOwned:",
                 "WIA §4.2: an actionOwned modal is closed by its own action, so it cannot interrupt that action");
 
@@ -341,7 +345,7 @@ public sealed class WorldInterruptionTests
         MethodBody(store, "internal LocalExecutionReceipt Remember(LocalExecutionReceipt receipt)")
             .Should().Contain("this.ownership.ReleaseModalLease(receipt.ExecutionId);");
         CountReleaseCalls(store).Should().Be(1, "one owner, one release");
-        CountReleaseCalls(source).Should().Be(1, "the controller only forwards ReleaseModalLease to the owner lease it holds");
+        CountReleaseCalls(dispatcher).Should().Be(1, "the controller only forwards ReleaseModalLease to the owner lease it holds");
     }
 
     private static int CountReleaseCalls(string source)
@@ -360,7 +364,7 @@ public sealed class WorldInterruptionTests
     [Fact]
     public void ArbitrationLetsACommittedArrivalOwnTheTerminal()
     {
-        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string source = ControllerPartials.Declaring("ArbitrateWorldChangeInterruptions");
         string arbitration = MethodBody(source, "private void ArbitrateWorldChangeInterruptions(");
 
         // A world-change disposition must not void a travel the engine already warped: the actor left the origin, so the

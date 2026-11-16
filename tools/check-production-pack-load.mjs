@@ -26,6 +26,13 @@
 // This is a read-only gate: it never writes into dist/, never launches the
 // Host, and never acquires the publisher lock.
 
+export const gateDeclaration = {
+  id: "check-production-pack-load",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";

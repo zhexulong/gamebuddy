@@ -128,11 +128,20 @@
  * treated as a pass, a raw-text sweep in place of the syntax tree, a count of a test's own recorder, a count of a
  * string, a new site, a stale baseline entry, and a file the grammar cannot read.
  */
+
+export const gateDeclaration = {
+  id: "check-derived-population",
+  domain: "data",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseJavaScript } from "./lib/javascript-ast.mjs";
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -915,9 +924,7 @@ const shapeLine = (counts) =>
     .join(" · ");
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const json = argv.includes("--json");
   auditDerivedPopulation({ root })
     .then(({ examined, violations, unparsed, setAside }) => {

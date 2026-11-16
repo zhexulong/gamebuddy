@@ -12,6 +12,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validFixtureSlotRelationship } from "./lib/native-local-runner-primitives.mjs";
 
 const SCENARIO = "native_fertilize_tile_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "fertilize_tile", "inspect_self", "move_to_tile", "travel"];
@@ -308,15 +309,6 @@ function assertNativeLocalFixtureConfig(value, scenario) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-}
-
-function validFixtureSlotRelationship(logicalName, observedSlot) {
-  return (
-    typeof logicalName === "string" &&
-    /^GameBuddyFixture[A-Za-z0-9]{0,64}$/.test(logicalName) &&
-    typeof observedSlot === "string" &&
-    new RegExp(`^${logicalName}_[0-9]{1,32}$`).test(observedSlot)
-  );
 }
 
 function parseEvidence(evidence) {

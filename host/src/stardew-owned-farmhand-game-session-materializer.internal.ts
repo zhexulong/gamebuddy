@@ -5,17 +5,28 @@ import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-ru
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import type { FarmhandActionPolicyRequest } from "./protocol.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   STARDEW_INTEGRATION_LAUNCHER,
 } from "./stardew-integration-launcher.js";
 
+/**
+ * The constructed semantic facade plus the ONE Stardew-only seam the lifecycle coordinator needs beside it.
+ *
+ * `pushActionPolicy` belongs to the bridge, not to the semantic facade: the facade is the generic Game runtime and knows
+ * nothing about a Mod's action policy. It rides here because the authenticated bridge client is created and owned by
+ * this seam, and handing the coordinator the client itself would hand it the whole transport.
+ */
+export type StardewFarmhandGameSessionFacade = ConstructedUnmountedGameSemanticFacade &
+  Readonly<{ pushActionPolicy(policy: FarmhandActionPolicyRequest): boolean }>;
+
 export type StardewOwnedFarmhandGameSessionMaterializer = Readonly<{
   materialize(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
-  ): Promise<ConstructedUnmountedGameSemanticFacade>;
+  ): Promise<StardewFarmhandGameSessionFacade>;
 }>;
 
 /**
@@ -41,7 +52,7 @@ export function createStardewOwnedFarmhandGameSessionMaterializer(
     materialize: async (
       connection: StardewPrivateFarmhandBridgeConnection,
       deadlineMs: number,
-    ): Promise<ConstructedUnmountedGameSemanticFacade> => {
+    ): Promise<StardewFarmhandGameSessionFacade> => {
       const bridge = await LocalStardewBridgeClient.connectFarmhand(
         connection.scope,
         connection.pipeName,
@@ -72,7 +83,10 @@ export function createStardewOwnedFarmhandGameSessionMaterializer(
         }),
       );
       try {
-        return constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer());
+        return Object.freeze({
+          ...constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer()),
+          pushActionPolicy: (policy: FarmhandActionPolicyRequest): boolean => bridge.pushActionPolicy(policy),
+        });
       } catch (error) {
         // A failed construction owns only this binding; the injected shared
         // Game authority must remain live for the composition owner's close.

@@ -2,6 +2,14 @@
 // red-proof: fixture  the legal synthetic certificate/universe/boundary-model/source set in
 //                    tools/fixtures/stardew-native-source-closure exits 0 (`mechanismCount 1`, partial_with_unknown_blocking);
 //                    its one certificate edge renamed to an absent universe ID -> `certificate edge not in validated universe: gap:fixture-input-content-interpreters`, exit 1
+
+export const gateDeclaration = {
+  id: "check-stardew-native-source-closure",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";

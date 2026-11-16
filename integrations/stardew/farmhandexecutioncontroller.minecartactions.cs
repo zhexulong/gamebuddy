@@ -40,11 +40,6 @@ internal sealed partial class ExecutionManager
 {
     private const int MinecartTargetDiscoveryRadius = 12;
 
-    /// <summary>
-    /// Every available minecart ride from the current map: the union of the
-    /// unlocked networks serving a station tile in range and each destination
-    /// whose own condition holds. Read-only projection of the game's data.
-    /// </summary>
     private IReadOnlyList<BridgeMinecartTarget> DiscoverMinecartTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
@@ -171,7 +166,6 @@ internal sealed partial class ExecutionManager
         }
         catch
         {
-            // A malformed token falls back to the raw data string below.
         }
         string text = string.IsNullOrWhiteSpace(parsed) ? destination.DisplayName : parsed;
         if (string.IsNullOrWhiteSpace(text))
@@ -179,22 +173,12 @@ internal sealed partial class ExecutionManager
         return text.Length <= 128 ? text : text[..128];
     }
 
-    /// <summary>
-    /// Opaque selector for one (network, destination) ride offered by a station
-    /// tile. The station tile is part of the identity because the same
-    /// destination may be offered from several stations on one map.
-    /// </summary>
     private static string BuildMinecartTargetId(string networkId, string destinationId, int stationX, int stationY)
     {
         string raw = $"minecart:{networkId}:{destinationId}:{stationX},{stationY}";
         return $"minecart_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// Resolve the exact published ride the caller named. Every fact is
-    /// re-derived on the game thread from the live location and the game's own
-    /// data; the client-supplied ID is only a selector, never authority.
-    /// </summary>
     private static MinecartRideResolution ResolveMinecartRide(
         StardewValley.GameLocation location, int stationX, int stationY, string expectedTargetId)
     {
@@ -233,10 +217,6 @@ internal sealed partial class ExecutionManager
         return MinecartRideResolution.Reject("minecart_target_changed");
     }
 
-    /// <summary>
-    /// One resolved ride, or the reason the published target no longer matches
-    /// the live world.
-    /// </summary>
     private sealed record MinecartRideResolution(
         bool Accepted,
         string ReasonCode,
@@ -250,13 +230,6 @@ internal sealed partial class ExecutionManager
             new(false, reasonCode, string.Empty, null);
     }
 
-    /// <summary>
-    /// Performs the native ride and returns the amount of gold the native ticket
-    /// path would have charged, or -1 when the ride was refused. `MinecartWarp`
-    /// itself does not charge; the price only exists in the menu's dialog
-    /// callback, so the Mod applies exactly that documented transaction
-    /// (`who.Money -= price`) before the ride.
-    /// </summary>
     private static int RideMinecart(MinecartDestinationData destination, string networkId, Farmer player)
     {
         int price = Math.Max(0, destination.Price);

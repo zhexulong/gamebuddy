@@ -21,8 +21,17 @@
  *   mp-insensitive -> `mp_sensitivity_classification_drift: use_mine_ladder declares StardewValley.Locations/MineShaft.cs
  *   mp-insensitive but the exact source reads the decisive token(s) IsLocalPlayer.`, exit 2
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-native-multiplayer-sensitivity",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fail } from "./lib/gate-preamble.mjs";
 import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 import {
   collectDispatchUnit,
@@ -33,13 +42,6 @@ import {
 /** Admission tokens that constitute an outright multiplayer rejection. */
 const MP_REJECT_PATTERN =
   /Context\.IsMultiplayer|!Game1\.IsMasterGame|getAllFarmers\(\)\.Count\(\)\s*!=\s*1|Game1\.server\s+is not null/;
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 function parseArgs(argv) {
   const result = { report: false };

@@ -1,0 +1,31 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "toggle_animal_door",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"],
+    "require": { "isOpen": false }
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "animal_door_open_before": "false",
+    "animal_door_open_after": "true",
+    "animal_door_open_changed": "true"
+  },
+  "worldAfter": [
+    { "field": "animalDoorTargets", "excludesTarget": true },
+    { "field": "animalDoorTargets", "rowAtTargetTile": { "isOpen": true } }
+  ],
+  "stale": {
+    "refusedWith": ["animal_door_target_changed"]
+  },
+  "afterStale": [
+    { "field": "animalDoorTargets", "excludesTarget": true },
+    { "field": "animalDoorTargets", "rowAtTargetTile": { "isOpen": true } }
+  ]
+}

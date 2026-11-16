@@ -1,0 +1,15 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "harvest_bush",
+  "expectedReasonCode": "bush_harvested",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  }
+}

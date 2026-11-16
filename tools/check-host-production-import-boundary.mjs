@@ -1,5 +1,13 @@
 // red-proof: inject  a production Host module the walk already visited (the action registry) gains a side-effect
 //   `import "./companion-control-server.test.js"` -> verdict blocked, violation kind production_reaches_test_only_module naming importer/specifier/line 1396, exit 2 (restored: passed, examined 186)
+
+export const gateDeclaration = {
+  id: "check-host-production-import-boundary",
+  domain: "product",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";

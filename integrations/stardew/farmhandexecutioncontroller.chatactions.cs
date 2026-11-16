@@ -36,11 +36,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const long ChatMessageMinimumIntervalMs = 2_000;
 
-    /// <summary>
-    /// Unix ms of the last send this ledger allowed. Mod-owned state, armed by the ATTEMPT
-    /// (before the native call) so an uncertain send still holds the interval instead of
-    /// letting an immediate retry post the line twice. 0 means never.
-    /// </summary>
     private long lastChatSendUnixMs;
 
     /// <summary>
@@ -84,8 +79,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            // The line may or may not have left the process, so this is Uncertain - never a
-            // success (nobody can claim the send happened) and never a retryable refusal.
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "chat_message_native_exception",
                 $"length={text.Length};role={role};native_exception={nativeException.GetType().Name}");
         }

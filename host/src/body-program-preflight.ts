@@ -1,9 +1,4 @@
-import {
-  forEachRules,
-  PLAN_FOR_EACH_BY_KIND_ACTION,
-  type PlanForEachLoop,
-  readForEachLoop,
-} from "./body-program-for-each.js";
+import { PLAN_FOR_EACH_BY_KIND_ACTION, type PlanForEachLoop, readForEachLoop } from "./body-program-for-each.js";
 import { PLAN_FORM_ACTION_IDS } from "./body-program-script.js";
 import { isRecord } from "./protocol-target-facts.js";
 
@@ -237,25 +232,22 @@ function planFormLoopOf(node: Record<string, unknown>): PlanForEachLoop | null {
 }
 
 /**
- * The row actions this connection does not offer, in the order the rules name them.
+ * The row actions this connection does not offer, in the order the chain names them.
  *
- * EVERY STEP OF A CHAIN IS ASKED. A rule's `do` is a chain, so reading only its first action would report a loop as runnable
- * while its second step names an action this connection cannot do - and the row would refuse on the game thread with a code
- * the preflight could have answered before submitting.
+ * EVERY STEP OF A CHAIN IS ASKED. A `do` is a chain, so reading only its first action would report a loop as runnable while
+ * its second step names an action this connection cannot do - and the row would refuse on the game thread with a code the
+ * preflight could have answered before submitting.
  *
  * `by_kind` names no action of its own: the row's action is decided on the game thread by the Mod's own classifier, so
  * there is nothing here to compare it with - which is the same exemption the compiler makes when it reads a `do`.
  */
 function refusedRowActions(loop: PlanForEachLoop | null, visible: ReadonlySet<string>): readonly string[] {
-  if (loop === null) return [];
+  if (loop === null || loop.do === null) return [];
   const refused: string[] = [];
-  for (const rule of forEachRules(loop)) {
-    if (rule.do === null) continue;
-    for (const step of rule.do) {
-      const action = step.action;
-      if (action === PLAN_FOR_EACH_BY_KIND_ACTION || visible.has(action)) continue;
-      if (!refused.includes(action)) refused.push(action);
-    }
+  for (const step of loop.do) {
+    const action = step.action;
+    if (action === PLAN_FOR_EACH_BY_KIND_ACTION || visible.has(action)) continue;
+    if (!refused.includes(action)) refused.push(action);
   }
   return refused;
 }

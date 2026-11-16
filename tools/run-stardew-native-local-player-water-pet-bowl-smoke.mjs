@@ -12,6 +12,7 @@ import {
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { sameTile } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "water_pet_bowl";
 const SCENARIO = "native_water_pet_bowl_v1";
@@ -389,10 +390,6 @@ function adjacent(tile, target) {
     Number.isInteger(tile?.y) &&
     Math.max(Math.abs(tile.x - target.x), Math.abs(tile.y - target.y)) === 1
   );
-}
-
-function sameTile(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
 }
 
 function summarize(snapshot) {

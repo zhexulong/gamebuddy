@@ -1,0 +1,29 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "pet_animal",
+  "expectedReasonCode": "pet_completed",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "target": { "equalsTarget": "targetId" },
+    "friendship_before": "0",
+    "friendship_after": "12",
+    "day_recorded": "true",
+    "friendship_callback": "true"
+  },
+  "worldAfter": [
+    { "field": "petTargets", "excludesTarget": true }
+  ],
+  "unasserted": {
+    "evidence.location": "the runner asserts evidence.location === before.location, the location the pre-action snapshot reported; the format compares one key to one literal, not to another observation",
+    "evidence.tile": "the runner asserts evidence.tile === `${target.x},${target.y}`; one $target.<field> substitution cannot build two fields into one string"
+  }
+}

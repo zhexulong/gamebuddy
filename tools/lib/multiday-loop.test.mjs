@@ -18,14 +18,16 @@ import {
   decideHeldMenu,
   OBJECTIVE_STATE,
   objectiveProgressKey,
-  QUIET_BOUND_MS,
   readHeldMenu,
   readObjectiveState,
   runMultiDayLoop,
   WAKE_REASON,
-  wakeReasonReachability,
+  WAKE_REASONS,
   WAKE_SUPPRESSION,
+  WAKE_SUPPRESSION_REASONS,
+  wakeReasonReachability,
   watchRollover,
+  worldFactWake,
 } from "./multiday-loop.mjs";
 
 /** A scripted world: each observe() returns the next snapshot, and dismiss() records the call. */
@@ -89,7 +91,89 @@ const held = (menuType, dayOfMonth) => ({
   actorDispositionDetail: menuType,
 });
 
-const instant = { sleep: async () => {}, now: () => 0, pollIntervalMs: 0 };
+const instant = { sleep: async () => {}, now: () => 0, lookCeilingMs: 0 };
+
+/**
+ * THE CADENCE IS THE WORLD'S, NOT A TIMER'S.
+ *
+ * `round56` measured the defect this pins: 742 observations inside ONE 208.6 s night window (3.56 Hz, period median
+ * 289 ms) to detect a rollover that happens about once per twenty real minutes - and 618 of that run's 624 suppressed
+ * flushes carried no fact at all, so the asks bought nothing. The loop must take its cadence from whatever the caller can
+ * see the world with (`waitForLook`), and its own interval must degrade to a CEILING for a silent world.
+ */
+test("the night watcher looks when the caller says the world moved, and its timer is only the ceiling", async () => {
+  // The scripted night: five statements, then the calendar crosses. Nothing here is timed - the test says when a look is
+  // due, which is the property under test.
+  const statements = 6;
+  const scripted = world([held("ShippingMenu", 6), free(6), free(6), held("ShippingMenu", 6), free(6), free(7)]);
+  let looks = 0;
+  const outcome = await watchRollover(scripted, {
+    dayBefore: 6,
+    timeoutMs: 600_000,
+    now: () => 0,
+    // A waiter that answers only when the test publishes a statement: the loop must be driven by this, not by a clock.
+    waitForLook: async () => {
+      looks += 1;
+    },
+    sleep: async () => {
+      throw new Error("the watcher waited on a timer: the world's statements are what it is watching for");
+    },
+  });
+
+  assert.equal(outcome.crossed, true, `the calendar moved, so the night was crossed: ${JSON.stringify(outcome)}`);
+  assert.equal(outcome.dayAfter, 7);
+  assert.equal(
+    looks,
+    statements - 1,
+    "one look per statement after the first observation, and not one per tick: the look count is the world's own count",
+  );
+  assert.equal(
+    scripted.observed.length,
+    statements,
+    "and exactly one observation per look, so nothing was asked twice",
+  );
+});
+
+/**
+ * The pending statement is not lost, and a statement does not wake the loop twice.
+ *
+ * Both directions are the latch's whole contract: a fact that lands while the loop is between a look and its wait must
+ * shorten the NEXT wait (otherwise the watcher sleeps a full ceiling over news it already had), and a wake must not leave
+ * a phantom behind that makes the following wait return at once (that would be an observe with nothing that caused it -
+ * the timer defect wearing a different hat).
+ */
+test("a statement shortens the next wait, and waking consumes exactly one", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const wake = worldFactWake();
+  const settled = [];
+  const wait = (ceilingMs, label) => wake.wait(ceilingMs).then(() => settled.push(label));
+
+  // 1. A statement with a waiter standing ends the wait at once.
+  const standing = wait(2_000, "standing");
+  wake.factPublished();
+  await standing;
+  assert.deepEqual(settled, ["standing"], "the statement ended the wait, not the ceiling");
+
+  // 2. A statement with NOBODY waiting is remembered, so the next wait does not spend a ceiling on news already in hand.
+  wake.factPublished();
+  await wait(2_000, "remembered");
+  assert.deepEqual(settled, ["standing", "remembered"]);
+
+  // 3. And that memory is spent by that one wait: the next one waits out its ceiling instead of looking again for nothing.
+  let ceilingReached = false;
+  const next = wait(2_000, "ceiling").then(() => {
+    ceilingReached = true;
+  });
+  await Promise.resolve();
+  assert.equal(ceilingReached, false, "no phantom wake survived the last one");
+  t.mock.timers.tick(1_999);
+  await Promise.resolve();
+  assert.equal(ceilingReached, false, "the ceiling is 2000 ms, and the wait has not reached it");
+  t.mock.timers.tick(1);
+  await next;
+  assert.equal(ceilingReached, true, "and at the ceiling the world that said nothing is looked at anyway");
+  assert.deepEqual(settled, ["standing", "remembered", "ceiling"]);
+});
 
 test("the night is not crossed while a menu still holds the actor, even if the calendar moved", async () => {
   // The calendar moves FIRST (that is the real order), so a loop that trusted the day number would
@@ -212,7 +296,7 @@ test("a menu that stands while no observed fact moves is named a DEADLOCK, not a
   const outcome = await watchRollover(scripted, {
     dayBefore: 6,
     timeoutMs: 600_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 250;
@@ -251,7 +335,7 @@ test("the same menu standing while the game's own clock runs is a SLOW night, no
   const outcome = await watchRollover(moving, {
     dayBefore: 6,
     timeoutMs: 300_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 60_000;
@@ -271,7 +355,7 @@ test("an execution in flight is an owner, so a standing menu is not a deadlock",
   const outcome = await watchRollover(scripted, {
     dayBefore: 6,
     timeoutMs: 60_000,
-    pollIntervalMs: 250,
+    lookCeilingMs: 250,
     now: () => clock,
     sleep: async () => {
       clock += 250;
@@ -456,7 +540,7 @@ test("a close the ENGINE owns is waited for instead of being counted as a failed
     now: () => Date.now(),
     sleep: async () => {},
     timeoutMs: 5_000,
-    pollIntervalMs: 1,
+    lookCeilingMs: 1,
   }).then((outcome) => {
     assert.equal(outcome.crossed, true, JSON.stringify(outcome));
     assert.equal(outcome.dayAfter, 6);
@@ -469,7 +553,7 @@ test("a day-start transition is WAITED for, not answered as a cutscene verdict",
   // had crossed one of its two nights. The fade finished two seconds later, on its own. An event that clears itself is
   // a wait; only an event that never clears is a stop, and then it must say how long it waited.
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const fading = [
     { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 6 },
     { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 7 },
@@ -494,7 +578,7 @@ test("a day-start transition is WAITED for, not answered as a cutscene verdict",
 
 test("an event that never clears stops by name, with the time it was given", async () => {
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const stuck = {
     async observe() {
       clock += 1000;
@@ -520,7 +604,7 @@ test("a cutscene cannot outrank a calendar that already moved", async () => {
   // uncrossed on a day record whose own terminal said `day_advanced`. A menu holds a night because the harness must not
   // close it; a cutscene has already let the world move, and the day moving IS the crossing.
   let clock = 0;
-  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const advancing = { sleep: async () => {}, now: () => clock, lookCeilingMs: 0 };
   const transitionAfterCrossing = {
     async observe() {
       clock += 500;
@@ -685,8 +769,6 @@ const ROUND44_SETTLEMENT = Object.freeze({
   // The body has an accepted programme whose terminal has not arrived: the Mod's own pass continues.
   programRunning: true,
   admissionPending: false,
-  // The session has been quiet for three bounds; the wake is NOT being withheld for want of quiet.
-  quietMs: QUIET_BOUND_MS * 3,
   lateDay: false,
   dayEndOffered: false,
   stalled: false,
@@ -706,22 +788,66 @@ test("an accepted dispatch with no terminal is body work, whatever the snapshot 
   assert.equal(admitted.reason, WAKE_SUPPRESSION.bodyStillWorking);
 });
 
-test("a quiet session that has not been quiet for the bound is not a wake either", () => {
-  const recent = decideDayWake({
-    ...ROUND44_SETTLEMENT,
-    programRunning: false,
-    quietMs: QUIET_BOUND_MS - 1,
-  });
-  assert.equal(recent.wake, false);
-  assert.equal(recent.reason, WAKE_SUPPRESSION.quietPeriod);
+// THE CLOCK IS GONE, AND THIS IS THE GUARD THAT KEEPS IT GONE.
+//
+// Measured 2026-11-13 (`round47`, 64 delivered turns): 523.2 s of a 1,153.8 s run was idle between turns and 16 of the 30
+// idle gaps after turn 34 sat in a 19-22 s band - the harness's own bound elapsing, and then prompting her "carry on" for
+// a world that had published nothing at all. A settlement is not a reason to think, and neither is the absence of one:
+// what may open a turn is a fact (a stall, a stale reading, a world moment, the evening, the player), never a clock.
+test("the harness does not ask on a clock: a quiet world is not, by itself, a reason to prompt her", () => {
+  const stopped = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false });
+  assert.equal(stopped.wake, false, "nothing has stopped and nothing has happened: no prompt is owed");
+  assert.equal(stopped.reason, WAKE_SUPPRESSION.waitingForTheWorld);
+  // AND NO AMOUNT OF QUIET CHANGES IT. Every shape a bound used to be handed - a huge quiet, a small one, no quiet at
+  // all, an unmeasurable one - answers the same, because there is no bound left to wait out. A `quietMs` that still woke
+  // her here would be the timer back under another name.
+  for (const quietMs of [0, 20_000, 3_600_000, null, undefined, Number.NaN]) {
+    const quiet = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs });
+    assert.equal(quiet.wake, false, `quietMs=${String(quietMs)} must not be a licence to prompt her`);
+    assert.equal(quiet.reason, WAKE_SUPPRESSION.waitingForTheWorld);
+  }
+  // AND THE REASON IS NOT IN THE CLOSED SET ANY MORE. A set that still declared `continuation` would let the clock's
+  // branch be re-added without anyone deciding to add it, which is how it got here.
+  assert.ok(!WAKE_REASONS.includes("continuation"), "`continuation` is not a reason any more");
+  assert.ok(!WAKE_SUPPRESSION_REASONS.includes("quiet_period"), "and nor is the quiet bound's own suppression");
 });
 
-test("an unmeasured quiet is not a licence to wake her", () => {
-  for (const quietMs of [null, undefined, Number.NaN]) {
-    const wake = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs });
-    assert.equal(wake.wake, false, `quietMs=${String(quietMs)} cannot say the session is quiet`);
-    assert.equal(wake.reason, WAKE_SUPPRESSION.quietPeriod);
+/**
+ * Every way a settlement can be answered with NO prompt, each with the facts that make the decider answer it.
+ *
+ * The population is `WAKE_SUPPRESSION_REASONS`, for the same reason the wake table's is the wake set: a suppression
+ * declared with no producer here fails `declared_suppression_unreachable:<reason>`, and a producer for a suppression
+ * nobody declares fails it from the other side. `quiet_period` left this set with the quiet bound - a run that published
+ * it after this change would mean a clock nobody removed.
+ */
+const SUPPRESSION_PRODUCERS = Object.freeze({
+  objective_met: () => decideDayWake({ ...ROUND44_SETTLEMENT, objectiveMet: true, programRunning: false }).reason,
+  body_still_working: () => decideDayWake(ROUND44_SETTLEMENT).reason,
+  already_offered: () =>
+    decideDayWake({
+      ...ROUND44_SETTLEMENT,
+      objectiveMet: true,
+      programRunning: false,
+      lateDay: true,
+      dayEndOffered: true,
+    }).reason,
+  waiting_for_the_world: () => decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false }).reason,
+});
+
+test("every suppression the decider declares is reachable, and no other", () => {
+  console.log(
+    `wake gate: examined ${String(WAKE_SUPPRESSION_REASONS.length)} declared suppression(s): ${WAKE_SUPPRESSION_REASONS.join(", ")}`,
+  );
+  for (const reason of WAKE_SUPPRESSION_REASONS) {
+    const produce = SUPPRESSION_PRODUCERS[reason];
+    assert.equal(typeof produce, "function", `declared_suppression_unreachable:${reason}`);
+    assert.equal(produce(), reason, `declared_suppression_unreachable:${reason}`);
   }
+  assert.deepEqual(
+    Object.keys(SUPPRESSION_PRODUCERS).sort(),
+    [...WAKE_SUPPRESSION_REASONS].sort(),
+    "a declared suppression with no producer, or a producer for a suppression nobody declares",
+  );
 });
 
 test("the day's work being done is not a wake before the day is nearly over", () => {
@@ -771,12 +897,12 @@ test("a stalled body wakes her whatever the objective and the body say", () => {
   }
 });
 
-test("a stale world reading wakes her to look, and outranks the quiet bound that would have said carry on", () => {
+test("a stale world reading wakes her to look, and is the kind of fact that may open a turn", () => {
   // Measured 2026-11-10 (`round45`): fifty turns were issued as `continuation` while the block she was handed stayed at
   // `revision 352` - `06:00 第 6 天` through two 02:00 pass-outs and two day starts - and she dispatched nothing for the
   // last thirty minutes. A frozen picture of the world is not a quiet world.
-  const stale = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs: 0, worldStateStale: true });
-  assert.equal(stale.wake, true, "a reading older than its bound is a reason to look, whatever the silence says");
+  const stale = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, worldStateStale: true });
+  assert.equal(stale.wake, true, "a reading older than its bound is a reason to look");
   assert.equal(stale.reason, WAKE_REASON.staleWorld);
   // A pass in hand is still the owner: it publishes its own facts, and re-reading the world would race it.
   const busy = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: true, worldStateStale: true });
@@ -813,7 +939,6 @@ const MEASURED_TURN_SPAN_MS = 40_000;
  */
 const DAY_LOOP_PRODUCERS = Object.freeze({
   day_start: () => decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 }).reason,
-  continuation: () => decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false }).reason,
   stall_wake: () => decideDayWake({ ...ROUND44_SETTLEMENT, stalled: true }).reason,
   stale_world: () => decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, worldStateStale: true }).reason,
   day_end_offer: () =>
@@ -885,7 +1010,7 @@ test("an achieved, an advancing and a stalled objective are three answers, and o
  * the replay invents. `dayEndOffered` is set by whatever this decider answered, so a replay exercises the once-per-day
  * rule the runner keeps.
  */
-function replayDay({ polls, objectiveSpanMs = MEASURED_TURN_SPAN_MS, quietMs = QUIET_BOUND_MS * 2 }) {
+function replayDay({ polls, objectiveSpanMs = MEASURED_TURN_SPAN_MS }) {
   const wakes = [];
   let progressKey = null;
   let progressAtMs = 0;
@@ -905,7 +1030,6 @@ function replayDay({ polls, objectiveSpanMs = MEASURED_TURN_SPAN_MS, quietMs = Q
       objectiveSpanMs,
       programRunning: false,
       admissionPending: false,
-      quietMs,
       lateDay: poll.lateDay === true,
       dayEndOffered,
       stalled: false,
@@ -963,7 +1087,13 @@ test("objective_state_conflates_stalled_and_advancing: a still objective past th
     false,
     "an objective whose reading moves is still being worked on, whatever the clock says",
   );
-  assert.ok(moving.some((wake) => wake.reason === WAKE_REASON.continuation));
+  // AND THE DAY'S OWN OPENING IS THE ONLY PROMPT IT GETS: the clock that used to fill the rest of the day is gone, so
+  // an objective that keeps moving is left to the companion rather than narrated at her every twenty seconds.
+  assert.deepEqual(
+    moving.filter((wake) => wake.wake === true).map((wake) => wake.reason),
+    [WAKE_REASON.dayStart],
+    "nothing but the day's opening may prompt her while the objective keeps moving",
+  );
 
   // AND BEFORE THE EVENING THE SAME STILL OBJECTIVE IS NOT AN OFFER: the day still has hours in it.
   const early = replayDay({ polls: pollsOf(STILL_FISHING_READING, { lateDay: false }) });
@@ -972,7 +1102,15 @@ test("objective_state_conflates_stalled_and_advancing: a still objective past th
     false,
     "`unreachable_for_today` names a day that is nearly over, not an objective that is hard",
   );
-  assert.ok(early.some((wake) => wake.reason === WAKE_REASON.continuation));
+  assert.equal(
+    early.filter((wake) => wake.wake === true).length,
+    1,
+    "before the evening a still objective is not a question the harness asks",
+  );
+  assert.ok(
+    early.every((wake) => wake.wake === true || wake.reason === WAKE_SUPPRESSION.waitingForTheWorld),
+    "and the silence is named rather than left unaccounted for",
+  );
 
   // WHAT THE DECIDER ANSWERED BEFORE THIS CHANGE, from the same replay: with no span there is no third state, every poll
   // is `continuation`, and the day is never offered - which is exactly `round45`'s 60 wakes and two 02:00 pass-outs.
@@ -982,9 +1120,9 @@ test("objective_state_conflates_stalled_and_advancing: a still objective past th
     false,
   );
   assert.equal(
-    noSpan.filter((wake) => wake.reason === WAKE_REASON.continuation).length,
-    noSpan.length - 1,
-    "one measured span, and the one branch that conflated `still working` with `cannot be done today` is gone",
+    noSpan.filter((wake) => wake.wake === true).length,
+    1,
+    "one measured span, and the one branch that conflated `still working` with `cannot be done today` is gone - and the clock that filled the rest of the day went with it",
   );
 });
 
@@ -1029,7 +1167,10 @@ test("wake_reason_never_reachable: a run's own wake account names every reason i
     [...DECIDER_WAKE_REASONS],
     "the population comes from the decider, not a list here",
   );
-  assert.equal(reading.issued.continuation, 60);
+  // THE ACCOUNT'S OWN `continuation 60` IS STILL IN THE RECORD, AND IS NOT RESURRECTED AS A REASON: the population is the
+  // closed set, so a count of a reason the loop no longer owns is not a count this reading reports.
+  assert.ok(!reading.examined.includes("continuation"));
+  assert.equal(reading.issued.continuation, undefined);
   assert.ok(
     reading.violations.includes("wake_reason_never_reachable:day_end_offer"),
     "round45 never asked her whether to end the day: the offer branch was unreachable while the objective was not achieved",

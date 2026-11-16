@@ -129,13 +129,21 @@
  *   `claim_museum_reward` cites `LibraryMuseum.getRewardsForPlayer`, so the reward desk's deeper method is claimed
  *   and the player's own way in is not (tools/check-engine-affordance-census.test.mjs, against the exact tree)
  */
+
+export const gateDeclaration = {
+  id: "check-engine-affordance-census",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Language, Parser } from "web-tree-sitter";
-
+import { fail } from "./lib/gate-preamble.mjs";
 import { assertStardewDecompileRoot, STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "./lib/stardew-decompile-root.mjs";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -242,13 +250,6 @@ export const AFFORDANCE_DECLARATIONS = Object.freeze([
 const OWNER_KINDS = new Set(["class_declaration", "struct_declaration", "record_declaration", "interface_declaration"]);
 const MENU_ASSIGNMENT = /activeClickableMenu\s*=\s*new\s+(?:StardewValley(?:\.Menus)?\.)?([A-Za-z_][\w.]*)/g;
 const SELECTOR_LABEL = /case\s+"([^"\n]+)"\s*:/g;
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 /** The marker a census key names: the half after `::`. */
 function markerOf(key) {

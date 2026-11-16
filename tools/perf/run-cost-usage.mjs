@@ -11,19 +11,13 @@
  * `cacheRead`/`cacheWrite`, so a trace cannot answer the cache question at all.
  */
 import { readFileSync } from "node:fs";
+import { sessionEntries } from "../lib/session-jsonl.mjs";
 
 /** Every message's provider usage in order, plus the tool-definition sizes the session recorded. */
 export function readUsages(sessionPath) {
   const usages = [];
   const toolsAdded = [];
-  for (const line of readFileSync(sessionPath, "utf8").split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of sessionEntries(readFileSync(sessionPath, "utf8"))) {
     if (entry.message?.usage !== undefined) usages.push({ ...entry.message.usage, at: entry.timestamp ?? null });
     if (entry.systemMessage?.toolsAdded !== undefined) toolsAdded.push(entry.systemMessage.toolsAdded);
   }

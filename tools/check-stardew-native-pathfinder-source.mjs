@@ -9,6 +9,14 @@
  * the game, but it can make that dangerous overload unrepresentable in the Mod
  * tree and require the adjacent evidence contract at every call site.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-native-pathfinder-source",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

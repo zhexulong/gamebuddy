@@ -59,36 +59,20 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_out_of_range",
                 $"target={targetId};tile={x},{y};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(silo!)}");
 
-        // Admission in the native seam's own terms, before any mutation.
-        // (1) Hay available: GetHayFromAnySilo needs piecesOfHay >= 1; an empty
-        //     store is a refusal, not a no-op success.
         int siloHayBefore = farm.piecesOfHay.Value;
         if (siloHayBefore < 1)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_empty", $"target={targetId};silo_hay_before={siloHayBefore}");
-        // (2) Capacity: the seam hands back the item instead of inserting it, so
-        //     the Hay is lost the moment it is taken. Prove the actor's own
-        //     inventory can hold one (O)178 BEFORE the native call; there is no way
-        //     to un-take it afterwards. `couldInventoryAcceptThisItem` is the
-        //     game's own read-only capacity predicate.
         if (!Game1.player.couldInventoryAcceptThisItem("(O)178", 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetId};item=(O)178");
 
         int carriedBefore = CountQualifiedItem(Game1.player, "(O)178");
         StardewValley.Object? hay = GameLocation.GetHayFromAnySilo(farm);
         int siloHayAfter = farm.piecesOfHay.Value;
-        // (3) Native refusal: the seam returned no Hay even though the store was
-        //     non-empty when this execution was admitted. Distinct from an empty
-        //     silo so the two never collapse into one story.
         if (hay is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_withdraw_refused", $"target={targetId};silo_hay_before={siloHayBefore};silo_hay_after={siloHayAfter}");
 
         bool carried = Game1.player.addItemToInventory(hay) is null;
         int carriedAfter = CountQualifiedItem(Game1.player, "(O)178");
-        // The postcondition is the OBSERVED move, re-read from the world and the
-        // actor after the native call — never from the seam's own return. Both
-        // halves matter because the mutation is a TRANSFER: a silo that dropped
-        // without the actor gaining means the Hay was destroyed, and an actor that
-        // gained without the silo dropping means it was duplicated.
         bool siloHayDecreased = siloHayAfter == siloHayBefore - 1;
         bool carriedHayIncreased = carried && carriedAfter == carriedBefore + 1;
         string evidence = $"target={targetId};item=(O)178;silo_hay_before={siloHayBefore};silo_hay_after={siloHayAfter};silo_hay_decreased={siloHayDecreased.ToString().ToLowerInvariant()};carried_before={carriedBefore};carried_after={carriedAfter};carried_hay_increased={carriedHayIncreased.ToString().ToLowerInvariant()};inventory_inserted={carried.ToString().ToLowerInvariant()}";

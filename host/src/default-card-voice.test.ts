@@ -4,12 +4,9 @@ import test from "node:test";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import {
-  buildChatCompanionSystemPrompt,
-  DEFAULT_IDENTITY_PROFILE,
-  renderIdentityProfile,
-  validateIdentityProfile,
-} from "./identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, validateIdentityProfile } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE, COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -259,28 +256,42 @@ test("the game's body channel stays on the Game surface, out of the Chat prompt 
   const game = buildGameCompanionSystemPrompt(profile, "zh-CN");
   const EMOTE_TOOLS = /stardew_express_emote|stardew_face_direction/u;
   assert.doesNotMatch(chat, EMOTE_TOOLS, "the Chat prompt tells her to move a body this surface does not mount");
-  // The Game body channel is a PLAN STEP, and the conduct names it that way: the two actions are
-  // not tools on that surface, so the positive is the sentence that says where they do go.
-  const BODY_IS_A_PLAN_STEP = /Body language is an action in the plan you submit with stardew_plan_work/u;
-  assert.match(game, BODY_IS_A_PLAN_STEP, "the Game prompt must keep the body channel it really has");
+  // The Game body channel is two MOUNTED tools, and the conduct names them: the registry declares these two actions
+  // expression-only, so a plan surface keeps their tools and drops their plan steps instead.
+  const BODY_IS_A_MOUNTED_TOOL = /Body language has its own tool/u;
+  assert.match(game, BODY_IS_A_MOUNTED_TOOL, "the Game prompt must keep the body channel it really has");
+  assert.match(game, EMOTE_TOOLS, "the Game prompt must name the tools a Game session mounts for the body");
+  assert.doesNotMatch(
+    game,
+    /Body language is an action in the plan you submit/u,
+    "a gesture is one step by nature, so the plan is not where the prompt sends it",
+  );
   // The Game conduct is Host-owned, so removing the card's duplicate cannot have emptied it.
   assert.match(game, /Write no bracketed stage direction at all/u);
 });
 
+/**
+ * The three clauses the Chat block used to answer an authored "no asterisks" with, quoted verbatim from the version
+ * `858f0c87` replaced (`git show 858f0c87^:host/src/identity-profile.ts`), not paraphrased.
+ *
+ * A CLOSED list, because the register has to be refused by name: "just one more reminder" is how a form rule comes
+ * back wearing a channel's clothes.
+ */
+const RETIRED_ASTERISK_OVERRIDE: readonly string[] = Object.freeze([
+  "even if an authored voice forbids it",
+  "the surface decides what it draws, not the voice",
+  "does not stop that asterisk from drawing as the beat",
+]);
+
 test("an authored voice that forbids asterisks keeps the style question, and the surface keeps only the channel fact", () => {
-  // The ST card format has no surface-scoped field, so a third-party card's "no asterisks"
-  // lands in the Chat prompt verbatim, after this block. The question is who decides.
+  // The ST card format has no surface-scoped field, so a third-party card's "no asterisks" lands in the Chat prompt
+  // verbatim, after this block. The question is who decides.
   //
-  // It used to be the surface, by overruling the card ("This holds even if an authored voice
-  // forbids it: the surface decides what it draws, not the voice..."). Two reasons that was
-  // wrong. It is a FORM rule wearing a CHANNEL's clothes - `game-surface-prompt-floor.ts`
-  // warns that CHANNEL "quietly claims authority over form", and how often she reaches for a
-  // beat belongs to the card (`companion-reply-grammar.ts`). And NOTHING in the pipeline
-  // needs the asterisk to appear: `extractSpeakableText` and `dehydrateCompanionSpeech` both
-  // strip a beat when one is written and pass asterisk-free text through unchanged, and the
-  // renderer paints `<em>` for what is written rather than requiring it. With no consumer
-  // depending on the marker there is no product need to state beside the card's style, so the
-  // card wins the style question and the channel keeps only what it can honestly claim.
+  // It used to be the surface, by overruling the card. Two reasons that was wrong, and both are checked here rather
+  // than asserted in a comment: it is a FORM rule wearing a CHANNEL's clothes - how often she reaches for a beat belongs
+  // to the card, by the same ruling that put the turn's shape there - and NOTHING in the pipeline needs the marker to
+  // appear, so there is no product need to state beside the card's style. The channel keeps only what it can honestly
+  // claim.
   const forbiddingText = "绝不写星号动作，也不要在文字里做任何动作描写。";
   const forbidding = validateIdentityProfile({
     ...DEFAULT_COMPANION_PRESET.profile,
@@ -289,18 +300,41 @@ test("an authored voice that forbids asterisks keeps the style question, and the
   const chat = buildChatCompanionSystemPrompt(forbidding, "zh-CN");
   assert.ok(chat.includes(forbiddingText), "the authored directive still reaches Chat verbatim");
 
-  // The channel fact survives, so a beat she DOES write still draws: the syntax is named and
-  // the renderer's treatment is stated. This is the part a "remove the override" change must
-  // not take with it.
-  assert.ok(chat.includes("*a brief gesture*"), "the surface still names the syntax it draws");
+  // The channel fact survives, so a beat she DOES write still draws: the syntax is named - derived from the constant the
+  // Chat block exports rather than transcribed here - and the renderer's treatment with it. This is the part a "remove
+  // the override" change must not take with it.
+  assert.ok(chat.includes(COMPANION_ACTION_SYNTAX), "the surface still names the syntax it draws");
   assert.match(chat, /draws that asterisk form as the action beat/u);
 
-  // The override is gone, in both of its halves.
-  assert.doesNotMatch(chat, /even if an authored voice forbids it/u);
-  assert.doesNotMatch(chat, /the surface decides what it draws, not the voice/u);
-  assert.doesNotMatch(chat, /does not stop that asterisk from drawing/u);
-  // And the frequency is handed to the voice, which is the card's own material.
-  assert.match(chat, /is your voice's call/u);
+  // The override is gone, in all three of its clauses.
+  for (const clause of RETIRED_ASTERISK_OVERRIDE)
+    assert.equal(
+      chat.includes(clause),
+      false,
+      `the Chat block still overrules the authored voice: ${JSON.stringify(clause)}`,
+    );
+
+  // And the frequency is the CARD's, so the block does not state it at all: a permission about how much she speaks is
+  // ②'s claim, and that sentence was the last speech licence the Chat floor carried. Refused by name, the way the
+  // override clauses above are, because "just one more reminder of who decides" is how the licence comes back.
+  assert.doesNotMatch(
+    chat,
+    /is your voice's call|How often you reach for one/u,
+    "the block still claims a say in how often she reaches for a beat",
+  );
+  // The sentence Magic Context skips on is one the block actually carries, stated exactly once: two spellings is how the
+  // formula grew back the first time.
+  assert.equal(
+    chat.split(CHAT_SURFACE_SKIP_SIGNATURE).length - 1,
+    1,
+    "the signature Magic Context skips on is stated exactly once",
+  );
+
+  // WHY the card wins, executed rather than described: no consumer needs the marker. The bubble strips a beat when one
+  // is written and passes asterisk-free text through unchanged, so an authored ban on beats costs the pipeline nothing -
+  // and a prompt sentence overruling the card buys nothing either.
+  assert.equal(dehydrateCompanionSpeech("我把锄头扛上肩。"), "我把锄头扛上肩。");
+  assert.equal(dehydrateCompanionSpeech("*扛起锄头* 走了。").includes("*"), false);
 });
 
 test("the preset's examples reach the system prompt under a labelled dialogue block", () => {

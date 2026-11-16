@@ -21,6 +21,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const EMOTE_ACTION = "express_emote";
 const FACING_ACTION = "face_direction";
@@ -41,7 +42,7 @@ export async function runExpressionSmoke(
     // Inside the try so a non-isolated topology is reported as a blocked result
     // rather than escaping as an unhandled throw; every runner outcome must be
     // a value the caller can record.
-    validateNativeLocalFixtureConfig(config);
+    validateNativeLocalFixtureConfig(config, { action: "express_emote" });
     const before = await observeFresh(client, { actionable: true });
     if (!before.capabilities.includes(EMOTE_ACTION)) throw new Error("native_local_express_emote_capability_missing");
     if (!before.capabilities.includes(FACING_ACTION)) throw new Error("native_local_face_direction_capability_missing");
@@ -240,15 +241,4 @@ function assertExactProof({ emote, emoteTerminal, facing, facingTerminal, afterE
   if (facingTerminal.revision <= emoteTerminal.revision) throw new Error("expression_revision_not_monotonic");
   if (afterEmote.revision < emoteTerminal.revision || afterFacing.revision < facingTerminal.revision)
     throw new Error("expression_postcondition_revision_mismatch");
-}
-
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
 }

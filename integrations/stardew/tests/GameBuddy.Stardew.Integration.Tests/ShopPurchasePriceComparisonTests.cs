@@ -102,13 +102,13 @@ public sealed class ShopPurchasePriceComparisonTests
     public void ThePurseIsJudgedAtThePriceTheShopChargesAndNotAtTheItemsValue()
     {
         (long affordableAtCharge, int purchasableAtCharge) =
-            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(20, 5), currencyHeld: 50, requestedQuantity: 1);
+            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(20, 5), currencyHeld: 50, requestedQuantity: 1, packPurchases: 1);
 
         affordableAtCharge.Should().Be(2, "50g pays for two units of a 20g row");
         purchasableAtCharge.Should().Be(1);
 
         (long affordableAtValue, int purchasableAtValue) =
-            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(200, 5), currencyHeld: 50, requestedQuantity: 1);
+            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(200, 5), currencyHeld: 50, requestedQuantity: 1, packPurchases: 1);
 
         affordableAtValue.Should().Be(0, "200 is the item's value, not the shop's asking price");
         purchasableAtValue.Should().Be(0, "judging by the value refuses a purchase the purse can pay for");
@@ -126,7 +126,7 @@ public sealed class ShopPurchasePriceComparisonTests
     public void ARowAboveThePurseIsRefusedWithBothSidesOfTheComparisonNamed()
     {
         (long affordable, int purchasable) =
-            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(500, 5), currencyHeld: 50, requestedQuantity: 1);
+            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(500, 5), currencyHeld: 50, requestedQuantity: 1, packPurchases: 1);
 
         affordable.Should().Be(0);
         purchasable.Should().Be(0);
@@ -136,7 +136,7 @@ public sealed class ShopPurchasePriceComparisonTests
         evidence.Should().Contain(";held=50", "the amount she holds");
         evidence.Should().Contain(";short=450", "the gap between them, so the next attempt can adapt");
 
-        ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(20, 5), currencyHeld: 50, requestedQuantity: 1)
+        ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(20, 5), currencyHeld: 50, requestedQuantity: 1, packPurchases: 1)
             .Purchasable.Should().Be(1, "20 is the item's value: the number that let this request through before");
     }
 
@@ -144,7 +144,12 @@ public sealed class ShopPurchasePriceComparisonTests
     public void AnItemTradeWithZeroPriceIsAffordableEvenWithEmptyPurse()
     {
         (long affordable, int purchasable) =
-            ExecutionManager.ShopPurchaseCapacity(new ItemStockInformation(0, 5), currencyHeld: 0, requestedQuantity: 2);
+            ExecutionManager.ShopPurchaseCapacity(
+                new ItemStockInformation(0, 5),
+                currencyHeld: 0,
+                requestedQuantity: 2,
+                packPurchases: 2
+            );
 
         affordable.Should().Be(2, "a 0g item trade does not require currency, so any requested amount is affordable");
         purchasable.Should().Be(2, "the stock has 5 available and 2 were requested");
@@ -171,7 +176,7 @@ public sealed class ShopPurchasePriceComparisonTests
             "int unitPrice = charged.Price;",
             "the receipt's unit_price is the number the menu charges, so the live purse comparison can hold");
         code.Should().Contain(
-            "ShopPurchaseCapacity(charged, currencyHeld, quantity)",
+            "ShopPurchaseCapacity(charged, currencyHeld, quantity, packPurchases)",
             "the affordability decision is handed the entry itself, so no second price can enter it");
         code.Should().NotContain(
             "salePrice",

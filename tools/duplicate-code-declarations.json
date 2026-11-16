@@ -1,0 +1,209 @@
+{
+  "schema": "gamebuddy-duplicate-code-declarations/v1",
+  "note": "Groups tools/check-code-duplication.mjs reads as STRUCTURAL duplication whose fix is owned by a lane this one may not edit. An entry is a HOLD WITH AN OWNER, not a claim that the copies should exist: it names the group by the hash of the text, the site count it was declared at, the lane that owns the fix, and why that fix is not here. Nothing writes this file but a hand editing it - the gate only reads it - and the gate fails an entry whose group GREW (a declaration never buys a new copy), whose group SHRANK, and whose group left the population (the fix landed: delete the entry). The declared groups stay in the census as duplication and are printed one per run, so the door cannot hide what walked through it. Do not declare a group this repository can fix here; that is what the rule and the baseline are for.",
+  "declarations": [
+    {
+      "hash": "0804dfdde884",
+      "sites": 4,
+      "tokens": 40,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `(state, reasonCode) = PostconditionVerdict(succeeded, \"watering_can_refilled\", \"waterin...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "18082b2d8aae",
+      "sites": 3,
+      "tokens": 109,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "5745550f7028",
+      "sites": 3,
+      "tokens": 79,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, I...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "72fc77528444",
+      "sites": 5,
+      "tokens": 128,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "b0f8d2962c80",
+      "sites": 5,
+      "tokens": 48,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `(state, reasonCode) = PostconditionVerdict(succeeded, \"clump_broken\", \"postcondition_no...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "ebd20901d6dd",
+      "sites": 3,
+      "tokens": 94,
+      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
+      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
+    },
+    {
+      "hash": "6b4320dbe568",
+      "sites": 3,
+      "tokens": 62,
+      "owner": "Host continuity lane (host/src/continuity-semantic-game-runtime-materializer)",
+      "reason": "the window at `};` closes the same three-store write in host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts:1340; the Host lane owns those stores"
+    },
+    {
+      "hash": "0ba836ed5f28",
+      "sites": 6,
+      "tokens": 72,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `throw new Error(\"native_local_fixture_topology_not_isolated\");` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "26572fedd8b4",
+      "sites": 6,
+      "tokens": 43,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `species: readings.map((reading) => reading.species),` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "2ed6e2789074",
+      "sites": 3,
+      "tokens": 156,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `chestStoreTargets: snapshot.chestStoreTargets?.length ?? 0,` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "36fc0ca1faad",
+      "sites": 5,
+      "tokens": 44,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `throw new Error(\"chest_retrieve_target_malformed\");` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "41b6a9a0ee14",
+      "sites": 12,
+      "tokens": 52,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `throw new Error(`break_container_source_evidence_${key}:${evidence[key] ?? \"missing\"}:$...` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "4979a64a0bf7",
+      "sites": 11,
+      "tokens": 42,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `return text.length > 0 ? text : \"no_evidence\";` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "51337c58ae5e",
+      "sites": 4,
+      "tokens": 53,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `export async function runChopTreeSourceApproachSmoke(` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "54032cab30fd",
+      "sites": 4,
+      "tokens": 77,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "54f5045b81ca",
+      "sites": 3,
+      "tokens": 86,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `throw new Error(`claim_mail_attachment_evidence_${key}:${evidence[key] ?? \"missing\"}:${...` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "5e82f92b30fd",
+      "sites": 11,
+      "tokens": 50,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `export async function runAcceptSpecialOrderSmoke(client, receipts, _config, { terminalT...` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "667e632dbd8e",
+      "sites": 5,
+      "tokens": 168,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `reasonCode: passed ? \"stump_cleared\" : \"chop_stump_postcondition_mismatch\",` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "866bce1db3c2",
+      "sites": 3,
+      "tokens": 102,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `const key = part.slice(0, index);` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "8d7cbc002d5b",
+      "sites": 3,
+      "tokens": 42,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `throw lastError ?? new Error(\"native_local_bridge_connect_timeout\");` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "98fca398edd9",
+      "sites": 3,
+      "tokens": 73,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `validateNativeLocalFixtureConfig(config, { action: \"answer_dialogue\", requiredActions: ...` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "a573ecdd12e1",
+      "sites": 79,
+      "tokens": 49,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `const result = await runAcceptSpecialOrderSmoke(session.client, session.receipts, config);` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "abb765138e86",
+      "sites": 3,
+      "tokens": 69,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `if (detail.length === 0) throw new Error(\"native_local_evidence_empty\");` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "b8f3ebe8b8c8",
+      "sites": 8,
+      "tokens": 83,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `return match ? { x: Number(match[1]), y: Number(match[2]) } : null;` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "bd38a6981159",
+      "sites": 5,
+      "tokens": 43,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `postconditionTimeoutMs = 5_000,` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "c865fd79ddcb",
+      "sites": 4,
+      "tokens": 67,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `evidence,` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "dbfd66005ada",
+      "sites": 3,
+      "tokens": 43,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `const result = await runInteractNpcWithItemSmoke(session.client, session.receipts, conf...` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "f5abe50285a4",
+      "sites": 4,
+      "tokens": 47,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `if (adjacent.length === 0) throw new Error(\"clear_cask_no_adjacent_target\");` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    },
+    {
+      "hash": "fa794682dc27",
+      "sites": 3,
+      "tokens": 791,
+      "owner": "L1 runner extraction (tools/lib/native-local-runner-*)",
+      "reason": "the runner tail at `return waitForFreshSnapshot(client, {` is the slab the L1 extraction is moving into tools/lib/native-local-runner-*; that module is the owner's file, and each runner stays an independent CLI entry until the extraction lands"
+    }
+  ]
+}

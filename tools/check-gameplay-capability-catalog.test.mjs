@@ -1,15 +1,24 @@
 // red-proof: inject  one published primitive action with no catalog row pushed into the generated action-surface
 //   artefact -> `✖ catalog seed covers every published registry action without claiming completeness` and
 //   `Published registry actions missing covered catalog rows: probe_uncovered_action.`, exit 1
+// red-proof: history the tree at HEAD, where the Host retired-label table wrote `end_day: [sleep_ready,
+//   sleep_after_ready]` -> `✖ the Host retired-label table names only terms a declaration owns` with
+//   `capability_term_undeclared:sleep_after_ready:end_day` and
+//   `capability_term_unnamed:advance_day_after_ready:end_day (composite end_day_multiplayer_v1)`
+//   (tools/check-gameplay-capability-catalog.test.mjs)
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   basisPrimitiveIdsFromSource,
   checkGameplayCapabilityCatalog,
+  declaredSurfaceActionIds,
   publishedRegistryEntries,
+  retiredMigrationFamiliesFromSource,
   validateGameplayCapabilityCatalog,
+  validateRetiredMigrationTerms,
 } from "./check-gameplay-capability-catalog.mjs";
 
 // The catalog and its Basis document live in the separately mounted private
@@ -25,9 +34,33 @@ const artifactSourcePath = new URL(
   import.meta.url,
 );
 const basisSourcePath = new URL("../design/legacy/12_STARDEW_PRIMITIVE_ACTION_BASIS.md", import.meta.url);
+const registrySourcePath = new URL("../host/src/action-registry.ts", import.meta.url);
 
 async function loadCatalog() {
   return JSON.parse(await readFile(catalogPath, "utf8"));
+}
+
+async function realFamilies() {
+  return retiredMigrationFamiliesFromSource(await readFile(registrySourcePath, "utf8"));
+}
+
+/** The declarations that own names, read from the sources themselves, so no expectation here is a
+ * second hand-written copy of what the product already states. */
+async function realDeclarations() {
+  const [catalog, artifactSource] = await Promise.all([loadCatalog(), readFile(artifactSourcePath, "utf8")]);
+  return {
+    surfaceActionIds: declaredSurfaceActionIds(artifactSource),
+    catalogTerms: new Set(
+      catalog.records.flatMap((record) => [
+        ...(record.basisPrimitiveIds || []),
+        ...(record.implementationActionIds || []),
+      ]),
+    ),
+    coordinationContracts: new Set(
+      (catalog.coordinationContracts || []).map((contract) => contract?.coordinationContractId),
+    ),
+    compositeGraphs: catalog.compositeGraphs,
+  };
 }
 
 async function publishedEntries() {
@@ -254,3 +287,100 @@ test(
     assert.match(graphStepErrors.join("\n"), /graph step must be a typed primitive or declared coordination contract/);
   },
 );
+
+test("the Host retired-label table names only terms a declaration owns", { skip: designMountSkipReason }, async () => {
+  const [families, declarations] = await Promise.all([realFamilies(), realDeclarations()]);
+  const { errors, census } = validateRetiredMigrationTerms({ families, ...declarations });
+  assert.deepEqual(
+    errors,
+    [],
+    "a replacement id nothing declares points an operator migrating off a retired label at no capability",
+  );
+  // The census is the difference between "nothing to do" and "nothing measured". Every denominator
+  // comes from a source read here, so a reader can tell the population from a silent pass.
+  assert.equal(census.familiesExamined, families.size);
+  assert.ok(census.familiesExamined > 0, "the retired-label table must declare families");
+  assert.ok(census.replacementIdsChecked >= census.familiesExamined);
+  assert.ok(census.catalogTermsChecked > 0, "the catalog and surface must declare terms");
+  assert.ok(census.coordinationContractsChecked > 0, "the catalog must declare coordination contracts");
+  process.stdout.write(
+    `families examined ${census.familiesExamined} · replacement ids checked ${census.replacementIdsChecked} · ` +
+      `declared terms checked ${census.catalogTermsChecked} · coordination contracts checked ` +
+      `${census.coordinationContractsChecked}\n`,
+  );
+});
+
+test(
+  "a replacement id no declaration owns reds and names the family that wrote it",
+  { skip: designMountSkipReason },
+  async () => {
+    const [families, declarations] = await Promise.all([realFamilies(), realDeclarations()]);
+    const injected = new Map(families);
+    injected.set("tool_upgrade", [...families.get("tool_upgrade"), "probe_undeclared_term"]);
+    const { errors } = validateRetiredMigrationTerms({ families: injected, ...declarations });
+    assert.deepEqual(errors, ["capability_term_undeclared:probe_undeclared_term:tool_upgrade"]);
+  },
+);
+
+test(
+  "a declared coordination step the family never names reds, and is the shipped defect",
+  {
+    skip: designMountSkipReason,
+  },
+  async () => {
+    const [families, declarations] = await Promise.all([realFamilies(), realDeclarations()]);
+    // The real tree before this check existed wrote `sleep_after_ready` here. Nothing in this repository
+    // or the design mount declares that name; the catalog declares `advance_day_after_ready` as the
+    // second coordination step of `end_day_multiplayer_v1`. Replaying the shipped value reds both
+    // directions, which is why the subset check alone would have kept it green.
+    const replayed = new Map(families);
+    replayed.set(
+      "end_day",
+      families.get("end_day").map((term) => (term === "advance_day_after_ready" ? "sleep_after_ready" : term)),
+    );
+    const { errors } = validateRetiredMigrationTerms({ families: replayed, ...declarations });
+    assert.deepEqual(errors, [
+      "capability_term_undeclared:sleep_after_ready:end_day",
+      "capability_term_unnamed:advance_day_after_ready:end_day (composite end_day_multiplayer_v1)",
+    ]);
+  },
+);
+
+test(
+  "a family whose replacement list is empty reds rather than passing quietly",
+  { skip: designMountSkipReason },
+  async () => {
+    const [families, declarations] = await Promise.all([realFamilies(), realDeclarations()]);
+    const emptied = new Map(families);
+    emptied.set("tool_upgrade", []);
+    const { errors } = validateRetiredMigrationTerms({ families: emptied, ...declarations });
+    assert.deepEqual(errors, ["family_without_actions:tool_upgrade"]);
+  },
+);
+
+test("the family reader reads the Host declaration itself and blocks on a missing table", async () => {
+  const families = await realFamilies();
+  assert.ok(families.size > 1, "the reader must find the table in host/src/action-registry.ts");
+  assert.deepEqual(families.get("tool_upgrade"), ["request_tool_upgrade", "claim_tool_upgrade"]);
+  assert.throws(
+    () => retiredMigrationFamiliesFromSource("export const UNRELATED = Object.freeze({});"),
+    /no longer declares RETIRED_ACTION_POLICY_MIGRATIONS/,
+  );
+  assert.throws(
+    () => retiredMigrationFamiliesFromSource("export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({\n});"),
+    /declares no families; the reader is blocked, not passing/,
+  );
+});
+
+test("an absent design mount is not_measured with a named reason, never a pass", async () => {
+  await assert.rejects(
+    checkGameplayCapabilityCatalog({
+      catalogFile: fileURLToPath(new URL("./probe-absent-catalog.json", import.meta.url)),
+    }),
+    (error) => {
+      assert.equal(error.code, "not_measured");
+      assert.match(error.message, /design mount not present: the gameplay-semantic catalog/);
+      return true;
+    },
+  );
+});

@@ -20,6 +20,8 @@ import {
   type ActionExecutionCoordinator,
   createActionExecutionCoordinator,
 } from "./action-execution-coordinator.internal.js";
+import { keepsOwnToolOnPlanSurface } from "./action-registry.js";
+import { planActionsFromRegistrations } from "./body-program-script.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
@@ -35,8 +37,6 @@ import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   assertProfileMatchesBinding,
-  buildChatCompanionSystemPrompt,
-  CHAT_SURFACE_SKIP_SIGNATURE,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   type IdentityProfile,
@@ -47,6 +47,8 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE } from "./chat-surface-block.js";
 import { buildCompanionDeskGuidance, COMPANION_DESK_GUIDANCE_FILE_NAME } from "./magic-context-companion-guidance.js";
 import { magicContextContentLanguage } from "./magic-context-content-language.js";
 import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
@@ -59,7 +61,7 @@ import {
   renderGameEnvironmentFactsObservation,
   type GameEnvironmentFactsRender,
 } from "./game-world-vocabulary.js";
-import type { ExecutionReceipt } from "./protocol.js";
+import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
 import {
   createProviderTurnHeaderScope,
   PROVIDER_TURN_HEADER_EXTENSION_NAME,
@@ -67,7 +69,7 @@ import {
   providerTurnHeaderExtension,
 } from "./provider-turn-header.internal.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
-import type { RunTrace } from "./run-trace.js";
+import { RUN_SPAN_NAMES, type RunTrace, tracedStep } from "./run-trace.js";
 import {
   type CompanionIdentity,
   type CompanionModelConfig,
@@ -112,13 +114,7 @@ import type { MacroContext } from "./tavern/preset-macros.js";
 import { createPresetStore } from "./tavern/preset-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
-import {
-  applyToolDescriptionOverrides,
-  assertToolSurface,
-  type DeclaredToolGroup,
-  planToolSurface,
-  type ToolSurfacePlan,
-} from "./tool-surface.js";
+import { assertToolSurface, type DeclaredToolGroup, planToolSurface, type ToolSurfacePlan } from "./tool-surface.js";
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 export { identityKey, resolveRuntimePaths };
 export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
@@ -1032,6 +1028,10 @@ export async function createRuntimeWithFixedToolsCore(
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
+  // Hoisted because the mount's own assembly - the system prompt, the tool descriptions, the Magic Context bootstrap -
+  // is time that used to land in no span at all: a run's first 34 s had a trace whose earliest event was the first
+  // model call (2026-11-15, round62).
+  const runTrace = actionExecutionOptions.trace;
   if (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)) {
     throw new Error("invalid_tavern_marker_config");
   }
@@ -1432,13 +1432,19 @@ export async function createRuntimeWithFixedToolsCore(
   // One string, built here rather than inline below, because it is also what the two guards read: the shared
   // Magic Context config skips its guidance block by a SUBSTRING of the Chat prompt, so the substring has to be
   // shown to cross no surface boundary in either direction. See `assertMagicContextSurfaceSignature`.
-  const companionSystemPrompt =
+  const buildCompanionSystemPrompt = (): string =>
     runtimeSurface === "chat"
       ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
       : withPresetMain(
           buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
           gameSessionPreset,
         );
+  const companionSystemPrompt = tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.promptSystem,
+    { surface: runtimeSurface, preset: gameSessionPreset !== null, addition: gamePromptAddition !== undefined },
+    buildCompanionSystemPrompt,
+  );
   assertMagicContextSurfaceSignature(runtimeSurface, companionSystemPrompt);
   // The turn a provider request belongs to is stated on the request itself, because nothing else on the
   // wire carries it and a captured body could otherwise only be attributed by its arrival position. The
@@ -1469,31 +1475,42 @@ export async function createRuntimeWithFixedToolsCore(
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
   // Preview has no approved Magic Context capability, so it does not mount or
   // bootstrap the extension at all.
+  //
+  // One span around the whole bootstrap: this is where the memory/recall capability becomes available, and it used to
+  // be time that landed in no span (it runs before the first model call). `extension` says whether memory was actually
+  // mounted, so a Preview run's near-zero span is not read as a fast mount of something that is not there.
   const previousEmbeddedRuntimeMarker = loadMagicContextExtension ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME : undefined;
-  if (loadMagicContextExtension) {
-    process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
-    try {
-      // The extension discovers config/data through Node process globals. The
-      // helper scopes and serializes that bootstrap so opaque partitions cannot
-      // race each other during loader.reload().
-      await reloadMagicContextInRuntimeRoot(loader, paths.runtimeCwd);
+  await tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.memoryMount,
+    { surface: runtimeSurface, extension: loadMagicContextExtension },
+    async () => {
+      if (loadMagicContextExtension) {
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
+        try {
+          // The extension discovers config/data through Node process globals. The
+          // helper scopes and serializes that bootstrap so opaque partitions cannot
+          // race each other during loader.reload().
+          await reloadMagicContextInRuntimeRoot(loader, paths.runtimeCwd);
 
-      if (loader.getExtensions().errors.length > 0) {
-        throw new Error(
-          `Magic Context extension failed to load: ${loader
-            .getExtensions()
-            .errors.map((error) => error.error)
-            .join("; ")}`,
-        );
+          if (loader.getExtensions().errors.length > 0) {
+            throw new Error(
+              `Magic Context extension failed to load: ${loader
+                .getExtensions()
+                .errors.map((error) => error.error)
+                .join("; ")}`,
+            );
+          }
+        } catch (error) {
+          if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+          else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+          throw error;
+        }
+      } else {
+        await loader.reload();
       }
-    } catch (error) {
-      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
-      throw error;
-    }
-  } else {
-    await loader.reload();
-  }
+    },
+  );
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
   // ONE application point for both surfaces: whichever preset bag this surface assembled (the Chat's durable binding,
@@ -1515,7 +1532,6 @@ export async function createRuntimeWithFixedToolsCore(
   const fixedToolNames = fixedTools.map((tool) => tool.name);
   if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
-  const runTrace = actionExecutionOptions.trace;
   const dispatchController =
     integration === undefined ? undefined : createRuntimeDispatchController(integration, actionExecutionOptions);
   // One private supervisor per game runtime. It is retained by closure so an
@@ -1549,11 +1565,27 @@ export async function createRuntimeWithFixedToolsCore(
   // vocabulary, never hand-written per action), so a one-step tool mounted beside it only invites one-step runs. A
   // tool the adapter does not publish as an action stays mounted - `stardew_stop_action` is deliberately not an
   // action. The decision is the composition's to declare, not a Stardew tool name's to imply here.
+  //
+  // WHICH TOOLS SURVIVE IS `keepsOwnToolOnPlanSurface`'S ANSWER, not a predicate of this file's. The plan replaces the
+  // flat tools for exactly the actions its vocabulary CARRIES, so an action it cannot carry keeps its own tool - and the
+  // plan vocabulary for this connection is read through the same function the plan tools themselves read
+  // (`continuity-semantic-game-runtime-materializer.ts` `readPlanActions`). Measured 2026-11-14: this filter kept only
+  // the expression exception while the plan vocabulary excluded the Mod's `experimental` lifecycle, so the seven
+  // experimental actions the Host admits were dropped here and absent there - no route at all, and nothing in the
+  // companion's context said they existed.
+  const catalogRegistrations = (
+    integration as { state?: { catalogRegistrations?: readonly ActionRegistration[] } } | undefined
+  )?.state?.catalogRegistrations;
+  const planActionIds = new Set(
+    planActionsFromRegistrations(catalogRegistrations ?? []).map((action) => action.actionId),
+  );
   const actionToolsToMount =
     integrationToolSet === undefined
       ? []
       : planActionSurface
-        ? integrationToolSet.actions.filter((tool) => integrationModule?.actionIdForToolName(tool.name) === null)
+        ? integrationToolSet.actions.filter((tool) =>
+            keepsOwnToolOnPlanSurface(integrationModule?.actionIdForToolName(tool.name) ?? null, planActionIds),
+          )
         : integrationToolSet.actions;
   // Tool definitions remain mounted for the lifetime of a Pi session. Every adapter tool therefore receives a
   // Host-owned execution fence so a later lifecycle loss revokes stale closures rather than trusting the adapter
@@ -1609,18 +1641,25 @@ export async function createRuntimeWithFixedToolsCore(
           ...integrationToolGroups,
           { toolClass: "world_context", tools: worldBookTools },
         ];
-  const toolSurface = planToolSurface({
-    surface: runtimeSurface,
-    groups: hostToolGroups,
-    // The Magic Context extension contributes a session's own archive and memory readers. Its entry is the one
-    // extension path this runtime hands the loader, so the class and the load site cannot drift apart.
-    extensions: loadMagicContextExtension ? [{ entry: magicContextEntry, toolClass: "session_inspection" }] : [],
-    registered: loader.getExtensions().extensions.map((extension) => ({
-      entry: extension.path,
-      tools: [...extension.tools.keys()],
-    })),
-  });
-  applyToolDescriptionOverrides(loader.getExtensions().extensions, toolSurface);
+  const toolSurface = tracedStep(
+    runTrace,
+    RUN_SPAN_NAMES.promptTools,
+    { surface: runtimeSurface, extensions: loadMagicContextExtension ? 1 : 0 },
+    () => {
+      const planned = planToolSurface({
+        surface: runtimeSurface,
+        groups: hostToolGroups,
+        // The Magic Context extension contributes a session's own archive and memory readers. Its entry is the one
+        // extension path this runtime hands the loader, so the class and the load site cannot drift apart.
+        extensions: loadMagicContextExtension ? [{ entry: magicContextEntry, toolClass: "session_inspection" }] : [],
+        registered: loader.getExtensions().extensions.map((extension) => ({
+          entry: extension.path,
+          tools: [...extension.tools.keys()],
+        })),
+      });
+      return planned;
+    },
+  );
   const inactiveFixedToolNames = fixedTools.filter((tool) => tool.defaultActive === false).map((tool) => tool.name);
   const expectedToolNames = toolSurface.mounted.filter((name) => !inactiveFixedToolNames.includes(name));
   const customTools = hostToolGroups

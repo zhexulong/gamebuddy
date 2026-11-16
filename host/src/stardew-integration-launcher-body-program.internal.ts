@@ -451,6 +451,9 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
         correlationId: message.correlationId,
         revision: message.payload.revision,
         payload: message.payload,
+        // The standing state rides in the world fact's own `text` (the `<world-state>` paragraph) rather than as a
+        // projection beside it: the projection describes the snapshot that was observed and may be old by now, while the
+        // re-stated state belongs where the companion actually reads it.
         contextProjection: projection,
       };
     }

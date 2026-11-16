@@ -26,6 +26,14 @@
  *   verify_chain  the anchor is a delegation chain; the terminal hop still needs
  *                 a live receipt but the static shape is sound
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-loop-closure",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

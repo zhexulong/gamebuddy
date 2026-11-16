@@ -5,10 +5,7 @@ import {
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { GameOperationalGateEvidence } from "./game-operational-gate-evidence.js";
-import type {
-  ConnectedSemanticGameLease,
-  ConstructedUnmountedGameSemanticFacade,
-} from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
+import type { ConnectedSemanticGameLease } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,11 +60,13 @@ import {
 } from "./games/stardew/stardew-player-settings.js";
 import {
   projectStardewModActionPolicy,
+  projectStardewModActionPolicyFrame,
   type StardewModActionPolicyProjection,
 } from "./games/stardew/stardew-mod-action-policy-projection.js";
 import { STARDEW_ACTION_FAMILIES } from "./games/stardew/stardew-action-families.js";
 import {
   createStardewOwnedFarmhandGameSessionMaterializer,
+  type StardewFarmhandGameSessionFacade,
   type StardewOwnedFarmhandGameSessionMaterializer,
 } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
 import {
@@ -126,7 +125,15 @@ import type {
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import { FarmhandBridgeConnectionNotAvailableError } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { createStardewRoleLifecycleFacade, type StardewRoleLifecycleReader } from "./stardew-role-lifecycle-facade.js";
+import type { HostGameLifecycleSnapshot } from "./game-status/game-status.js";
 import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
+import {
+  STARDEW_GAME_LIFECYCLE_INITIAL_STATE,
+  hasGameLifecycleTransition,
+  isGameLifecycleClosing,
+  isGameLifecyclePlayerHostUp,
+  type StardewGameLifecycleState,
+} from "./stardew-game-lifecycle-state.internal.js";
 import type {
   StardewOwnedPlayerHostStageCResult,
   StardewOwnedAiClientStageDResult,
@@ -144,16 +151,12 @@ export type StardewPrivateActivationSnapshot = Readonly<{
   requestId: string;
   authorityGeneration: number;
   revision: number;
-  state:
-    | "inactive"
-    | "reserving"
-    | "staging"
-    | "staged"
-    | "launching_player_host"
-    | "awaiting_player_host_attestation"
-    | "failed"
-    | "closing"
-    | "closed";
+  /**
+   * The one Game lifecycle state. The browser never reads this word directly: it reaches
+   * the surface through `game.state.read`, which projects it (see
+   * `stardew-game-lifecycle-state.internal.ts` for the graph and the projection rule).
+   */
+  state: StardewGameLifecycleState;
 }>;
 
 export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
@@ -372,22 +375,14 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
 }>;
 
 /**
- * How many actions the attached game actually advertises for this session.
+ * What the live capability surface published, or why this lifecycle could not read it.
  *
- * The count is not a table kept here: it is the length of the one live projection the Host
- * already derives for every consumer that may act - `actionCatalog.visibleActions` over the
- * attached connection's registrations and capabilities (reduced by
- * `IntegrationLifecycleSnapshot` in the materializer, whose `availableCapabilities` this view
- * renames and nothing more).
- *
- * Three states, because zero because there is no game is not the same fact as the game
- * having published nothing: `none` means this lifecycle holds no attached runtime at all, so
- * nothing could have been published; `unavailable` means an attachment exists but its
- * capability read produced no current fact; `published` is the game's own answer, and its
- * `count` may legitimately be 0.
+ * `published` carries a count the runtime itself produced - `0` there is a measured zero, a Mod that answered and
+ * advertised nothing. `not_measured` carries NO count: a projection that could not see the surface does not know the
+ * number, and a `0` in its place is the browser telling the player a fact nobody measured.
  */
 export type StardewGameSurfaceCapabilityView = Readonly<
-  { status: "none" } | { status: "unavailable" } | { status: "published"; count: number }
+  { status: "published"; count: number } | { status: "not_measured"; reason: string }
 >;
 
 export type StardewGameSurfaceCapabilityReader = Readonly<{
@@ -416,6 +411,33 @@ export type StardewGameSurfaceWorldBindingView = Readonly<
 export type StardewGameSurfaceWorldBindingReader = Readonly<{
   readWorldBindingView(): Promise<StardewGameSurfaceWorldBindingView>;
 }>;
+
+/**
+ * The live connection's capability count, as the ONE redacted fact the browser publishes about it.
+ *
+ * <p>
+ * The number already exists: `IntegrationLifecycleSnapshot` reduces the attached connection to
+ * `availableCapabilities` (`continuity-semantic-game-runtime-materializer.ts`), counting the integrations the policy
+ * keeps visible, and `ConnectedSemanticGameLease.lifecycleSnapshot()` is the only handle on it. This maps that reading
+ * and adds nothing: no second count, no default.
+ * </p>
+ *
+ * <p>
+ * THREE ZEROS STAY APART. `unavailable` means the source produced no reading at all and a non-`current` freshness means
+ * the reading it produced is not this moment's - both are `not_measured`, and neither carries a count, because the
+ * number is unknown. A measured `0` is `published` with `count: 0`: the runtime answered and advertised nothing.
+ * </p>
+ */
+export function projectCapabilityView(
+  lifecycle: HostGameLifecycleSnapshot | undefined,
+): StardewGameSurfaceCapabilityView {
+  if (lifecycle === undefined) return Object.freeze({ status: "not_measured", reason: "no_attached_runtime" });
+  if (lifecycle.availability !== "available")
+    return Object.freeze({ status: "not_measured", reason: "host_game_state_unavailable" });
+  if (lifecycle.freshness !== "current")
+    return Object.freeze({ status: "not_measured", reason: `host_game_state_${lifecycle.freshness}` });
+  return Object.freeze({ status: "published", count: lifecycle.availableCapabilities.count });
+}
 
 /**
  * The one consumer of the integration-private resolver: turns the lifecycle's own
@@ -628,7 +650,14 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly installationReader: StardewGameSurfaceInstallationReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
-  /** How many actions the attached game advertises, read from the entered runtime's own lease. */
+  /**
+   * The capability surface the attached runtime published, as ONE count this lifecycle measured.
+   *
+   * It is a reader rather than a field the browser derives because the number already exists one layer down:
+   * `IntegrationLifecycleSnapshot` reduces the live connection to `availableCapabilities` (the count of actions the
+   * Mod advertises that the policy keeps visible), and `ConnectedSemanticGameLease.lifecycleSnapshot()` is the only
+   * handle on it. A second count here would be a second authority for one fact.
+   */
   readonly capabilityReader: StardewGameSurfaceCapabilityReader;
   /** The world this lifecycle holds bound, resolved through the integration-private resolver. */
   readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
@@ -681,7 +710,6 @@ export type HeadlessOperationalGame = Readonly<{
 }>;
 
 type BootstrapComposition = StardewPrivateBootstrapInternalComposition;
-type ActivationState = StardewPrivateActivationSnapshot["state"];
 type MaterializeFarmhandGameSession = StardewOwnedFarmhandGameSessionMaterializer["materialize"];
 
 /**
@@ -1254,7 +1282,7 @@ function createCoordinator(
     composition.playerHostProcessOwner,
   );
 
-  let activationState: ActivationState = "inactive";
+  let lifecycleState: StardewGameLifecycleState = STARDEW_GAME_LIFECYCLE_INITIAL_STATE;
   let revision = 0;
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   let acceptedAdmission: ComposedReferenceGameBrowserLifecycleActivationAdmission | undefined;
@@ -1266,8 +1294,13 @@ function createCoordinator(
   const expectedPlayerHostInstanceGeneration = 1;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   const installationDiscoveryProvider = installationDiscovery;
-  let launchTerminal = false;
-  let playerHostAttestationCorrelated = false;
+  /**
+   * Whether THIS lifecycle asked the Player Host to start. It is the one fact the composed
+   * role view needs beyond the lifecycle state, because an ordinary close deliberately
+   * preserves a launched Player Host: after that, "the game is up but unattested" and "nothing
+   * was ever started" are different facts about the same closed state.
+   */
+  let playerHostLaunchAttempted = false;
   /**
    * The transitions of the facts that can change without a player acting.
    *
@@ -1309,32 +1342,19 @@ function createCoordinator(
    * Reads the Guardian's exit report and latches it. Returns the latched record, or
    * null while the transport whose process this is reported none.
    *
-   * Recording it also marks this attempt's launch terminal: the process the attempt
-   * launched is gone, and relaunching it through the same owner/attempt would be a
-   * launch this lifecycle cannot attest. That is the same terminal a failed launch
-   * reaches, so later launch commands refuse with the same quarantined identity
-   * instead of a second vocabulary for the same dead end.
+   * It records the FACT only: an exit reaches the readers as
+   * `game.instance.playerHostExitCode`, and the refusal of a relaunch needs nothing from
+   * here - `lifecycleState` is the one lifecycle fact, an attested or quarantined attempt
+   * is not `staged`, and the launch path only launches from `staged`.
    */
   const recordPlayerHostExit = (): StardewPlayerHostExitRecord | null => {
     if (playerHostExit !== null) return playerHostExit;
     const reported = readPlayerHostRoleExit === undefined ? null : readPlayerHostRoleExit();
     if (reported === null || reported.role !== "player_host") return null;
     playerHostExit = Object.freeze({ role: "player_host" as const, exitCode: reported.exitCode, atMs: Date.now() });
-    launchTerminal = true;
     publishGameFact("instance");
     return playerHostExit;
   };
-  /**
-   * The refusal the cabin read answers with when the game it would read cabins from has
-   * ended, as this lifecycle's own bounded code.
-   *
-   * It is not `state_unavailable` ("this Host does not know") and not
-   * `stardew_cabin_handoff_unavailable` ("no launch is awaiting attestation"): both
-   * would send a player whose game just crashed back to a retry that cannot succeed.
-   * The code states the condition only - the exit code itself is published once, in the
-   * state read's `game.instance.playerHostExitCode`.
-   */
-  const PLAYER_HOST_EXITED_REFUSAL = "stardew_player_host_exited";
   /**
    * The player Mods the launched Player Host carried into its `--mods-path` root, as that
    * launch reported them. It is the workload reading every attach deadline in this lifecycle
@@ -1351,7 +1371,7 @@ function createCoordinator(
   const runtimeContained: { playerHost: boolean; aiClient: boolean } = { playerHost: false, aiClient: false };
   let runtimeClosed = false;
   let brokerClosed = false;
-  let farmhandGameRuntimeFacade: ConstructedUnmountedGameSemanticFacade | undefined;
+  let farmhandGameRuntimeFacade: StardewFarmhandGameSessionFacade | undefined;
   let farmhandGameRuntimeLease: ConnectedSemanticGameLease | undefined;
   let farmhandGameRuntimeFacadeClosed = false;
   let attachmentGeneration = 0;
@@ -1493,9 +1513,11 @@ function createCoordinator(
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
     readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
       const exit = recordPlayerHostExit();
-      if (exit !== null) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
-      if (launchTerminal) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
-      if (exactOwner !== undefined && activationState === "staged") {
+      if (exit !== null)
+        return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
+      if (lifecycleState === "launch_quarantined")
+        return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
+      if (exactOwner !== undefined && lifecycleState === "staged") {
         return Object.freeze({
           generation: expectedPlayerHostInstanceGeneration,
           status: "ready",
@@ -1521,21 +1543,9 @@ function createCoordinator(
       return Object.freeze({ status: actionAuthorityStatus });
     },
   });
-  // The attached runtime's own capability count, read through the lease this lifecycle holds -
-  // the same connection the action tools execute against, so the board can never advertise a
-  // surface the Host would refuse to act on. The lease is the gate: with no lease there is no
-  // attachment, and no attachment published nothing.
   const capabilityReader: StardewGameSurfaceCapabilityReader = Object.freeze({
     readCapabilityView(): StardewGameSurfaceCapabilityView {
-      const lease = farmhandGameRuntimeLease;
-      if (lease === undefined) return Object.freeze({ status: "none" as const });
-      const snapshot = lease.lifecycleSnapshot();
-      if (snapshot.availability !== "available" || snapshot.freshness !== "current")
-        return Object.freeze({ status: "unavailable" as const });
-      return Object.freeze({
-        status: "published" as const,
-        count: snapshot.availableCapabilities.category === "available" ? snapshot.availableCapabilities.count : 0,
-      });
+      return projectCapabilityView(farmhandGameRuntimeLease?.lifecycleSnapshot());
     },
   });
   // The lifecycle's own launch facts compose the Player Host slot for every
@@ -1545,24 +1555,32 @@ function createCoordinator(
   // authoritative for idle/stopped/unavailable states.
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
-      // A game the Guardian reported ended is not waited on: correlating attestation
-      // for a process that is gone is a read of nothing, and its failure used to take
-      // the whole state read down to "unavailable" - the exact shape in which a dead
-      // game reads as a game that is still starting.
-      if (
-        activationState === "awaiting_player_host_attestation" &&
-        !playerHostAttestationCorrelated &&
-        recordPlayerHostExit() === null
-      )
-        await correlatePlayerHostAttestation();
-      return composeCoordinatorRoleLifecycleView(activationState, await facade.readRoleLifecycleView());
+      // A launch whose advertisement had not landed yet is retried here: this read is the
+      // only place that can observe the late advertisement, and the state it transitions to
+      // is the one state the whole projection follows.
+      if (lifecycleState === "awaiting_player_host_attestation") await correlatePlayerHostAttestation();
+      return composeCoordinatorRoleLifecycleView(
+        lifecycleState,
+        await facade.readRoleLifecycleView(),
+        playerHostLaunchAttempted,
+      );
     },
   });
-  const isClosing = (): boolean => activationState === "closing" || activationState === "closed";
+  const isClosing = (): boolean => isGameLifecycleClosing(lifecycleState);
 
-  const transition = (next: ActivationState): void => {
-    if (activationState === next) return;
-    activationState = next;
+  /**
+   * The ONE transition function, and the reason the graph is not a second description.
+   *
+   * An edge `stardew-game-lifecycle-state.internal.ts` does not declare is refused here by
+   * name, at the site that tried it, so the code and the graph cannot disagree: a state
+   * added to the union without an edge fails the first time anything reaches for it, and the
+   * reachability gate reads the very table this refuses against.
+   */
+  const transition = (next: StardewGameLifecycleState): void => {
+    if (lifecycleState === next) return;
+    if (!hasGameLifecycleTransition(lifecycleState, next))
+      throw new Error(`stardew_lifecycle_transition_undeclared:${lifecycleState}->${next}`);
+    lifecycleState = next;
     revision += 1;
   };
   const snapshot = (): StardewPrivateActivationSnapshot =>
@@ -1571,13 +1589,52 @@ function createCoordinator(
       requestId,
       authorityGeneration,
       revision,
-      state: activationState,
+      state: lifecycleState,
     });
 
   const bindBrowserAdmissionIssuer = (candidate: ComposedReferenceGameBrowserLifecycleActivationIssuer): void => {
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     if (issuer !== undefined) throw new Error("stardew_lifecycle_activation_issuer_already_bound");
     issuer = candidate;
+  };
+
+  /**
+   * Reserves the owned Player Host for this attempt and stages its profile. It is the body
+   * both the admitted activation and the retry of a settled failure run, so the two paths
+   * cannot diverge: `reserving` is the state the caller has already transitioned into.
+   *
+   * It throws `stardew_lifecycle_closing` after quarantining what it just reserved, which is
+   * why it never returns an owner it has not staged.
+   */
+  const reserveAndStageOwnedPlayerHost = async (
+    browserSessionId: string,
+    expiresAtMs: number,
+  ): Promise<StardewOwnedPlayerHostBootstrap> => {
+    const claim = composition.broker
+      .confirm({
+        playerId,
+        companionId,
+        browserSessionId,
+        expiresAtMs: Math.min(expiresAtMs, Date.now() + 10 * 60_000),
+      })
+      .consume(browserSessionId);
+    const owner = await internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
+    exactOwner = owner;
+    if (isClosing()) {
+      await internal.quarantineOwnedPlayerHostOwner(owner);
+      ownerQuarantined = true;
+      throw new Error("stardew_lifecycle_closing");
+    }
+    transition("staging");
+    await internal.stageOwnedPlayerHostProfile(owner);
+    if (isClosing()) {
+      await internal.quarantineOwnedPlayerHostOwner(owner);
+      ownerQuarantined = true;
+      internal.terminalizeOwnedPlayerHostOwner(owner);
+      throw new Error("stardew_lifecycle_closing");
+    }
+    transition("staged");
+    return owner;
   };
 
   const runActivation = async (
@@ -1591,38 +1648,13 @@ function createCoordinator(
         boundIssuer,
         admission,
         "lifecycle_activation",
-        ({ browserSessionId, expiresAtMs }) => {
-          const claim = composition.broker
-            .confirm({
-              playerId,
-              companionId,
-              browserSessionId,
-              expiresAtMs: Math.min(expiresAtMs, Date.now() + 10 * 60_000),
-            })
-            .consume(browserSessionId);
-          return internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
-        },
+        ({ browserSessionId, expiresAtMs }) => reserveAndStageOwnedPlayerHost(browserSessionId, expiresAtMs),
       );
       if (ownerPromise === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
-      const owner = await ownerPromise;
-      exactOwner = owner;
-      if (isClosing()) {
-        await internal.quarantineOwnedPlayerHostOwner(owner);
-        ownerQuarantined = true;
-        throw new Error("stardew_lifecycle_closing");
-      }
-      transition("staging");
-      await internal.stageOwnedPlayerHostProfile(owner);
-      if (isClosing()) {
-        await internal.quarantineOwnedPlayerHostOwner(owner);
-        ownerQuarantined = true;
-        internal.terminalizeOwnedPlayerHostOwner(owner);
-        throw new Error("stardew_lifecycle_closing");
-      }
-      transition("staged");
+      await ownerPromise;
       return snapshot();
     } catch (error) {
-      if (!isClosing()) transition("failed");
+      if (!isClosing()) transition("activation_failed");
       throw new Error("stardew_lifecycle_activation_failed", { cause: error });
     }
   };
@@ -1630,8 +1662,7 @@ function createCoordinator(
   const activate = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
   ): Promise<StardewPrivateActivationSnapshot> => {
-    if (activationState === "closing" || activationState === "closed")
-      return Promise.reject(new Error("stardew_lifecycle_closing"));
+    if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
     if (acceptedAdmission !== undefined) {
       if (acceptedAdmission !== admission) return Promise.reject(new Error("stardew_lifecycle_activation_conflict"));
       return activationPromise!;
@@ -1641,30 +1672,61 @@ function createCoordinator(
     return activationPromise;
   };
 
+  /**
+   * The one terminal for a launch this lifecycle could not complete.
+   *
+   * The Player Host may have started, so its containment cannot be proven from inside this
+   * process: the attempt is quarantined, which is the durable state that records exactly
+   * that. Settlement is deliberately not called and could not help: a launch that never reached
+   * the contained runtime has no runtime to contain, and where it did, the settlement's first
+   * durable transition (`arm`) requires the `reserved` predecessor the quarantine consumed. The
+   * exit this shape needs is a proof of non-existence - `never_spawned` - not a containment, so
+   * no `settle` belongs here. That is the gap named rather than papered over: see
+   * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
+   * `stardew-game-lifecycle-state.internal.ts`.
+   */
+  const failPlayerHostAttempt = async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
+    // One failure, one terminal. The attestation correlation quarantines the attempt from its
+    // own catch before rethrowing, and the launch's catch then sees the SAME error: without
+    // this guard the second visit would drive a second terminal for one attempt, which the
+    // declared graph refuses by name (and which the previous boolean latch silently absorbed).
+    // A closing lifecycle no longer advances at all.
+    if (isClosing() || lifecycleState === "launch_quarantined") return;
+    transition("launch_quarantined");
+    // The attempt is over, so the in-flight latch must not outlive it: `game_launch` reads
+    // this latch to refuse an overlapping launch, and a quarantined attempt is the shape the
+    // graph's own trapped-terminal declaration describes, not a launch in flight.
+    launchPromise = undefined;
+    try {
+      await internal.quarantineOwnedPlayerHostOwner(owner);
+      ownerQuarantined = true;
+    } catch {
+      // Close retains and retries the exact-owner quarantine.
+    }
+  };
+
   const correlatePlayerHostAttestation = async (): Promise<void> => {
     const owner = exactOwner;
     if (owner === undefined) throw new Error("stardew_player_host_attestation_owner_missing");
+    let correlated: boolean;
     try {
-      playerHostAttestationCorrelated = await internal.readAndCorrelateOwnedPlayerHostSession(owner);
-      // Attestation is what lets `compatibility` say anything at all: it can only move here.
-      publishGameFact("instance");
+      correlated = await internal.readAndCorrelateOwnedPlayerHostSession(owner);
     } catch (error) {
-      launchTerminal = true;
-      publishGameFact("instance");
-      if (!isClosing()) transition("failed");
-      try {
-        await internal.quarantineOwnedPlayerHostOwner(owner);
-        ownerQuarantined = true;
-      } catch {
-        // Preserve the terminal private correlation failure.
-      }
+      await failPlayerHostAttempt(owner);
       throw new Error("stardew_player_host_attestation_failed", { cause: error });
     }
+    // A world that has not advertised yet is still a live launch, not a failure: the read
+    // that observes the late advertisement is the one that advances this state.
+    if (correlated && !isClosing()) transition("player_host_attested");
   };
 
   const runPlayerHostLaunch = async (): Promise<StardewPrivateActivationSnapshot> => {
     const owner = exactOwner;
     if (owner === undefined) throw new Error("stardew_player_host_launch_owner_missing");
+    // From here on this attempt has asked the Player Host to start, which is what the composed
+    // role view reports for the states that outlive the attempt (a failed launch, a close that
+    // deliberately preserves the game).
+    playerHostLaunchAttempted = true;
     transition("launching_player_host");
     let launchCompleted = false;
     try {
@@ -1684,15 +1746,7 @@ function createCoordinator(
     } catch (error) {
       const launchMayHaveRun = launchCompleted || didStardewOwnedPlayerHostStageCEnterControlledLaunch(error);
       if (launchMayHaveRun) {
-        launchTerminal = true;
-        publishGameFact("instance");
-        if (!isClosing()) transition("failed");
-        try {
-          await internal.quarantineOwnedPlayerHostOwner(owner);
-          ownerQuarantined = true;
-        } catch {
-          // Close retains and retries the exact-owner quarantine.
-        }
+        await failPlayerHostAttempt(owner);
       } else if (!isClosing()) {
         launchPromise = undefined;
         transition("staged");
@@ -1703,9 +1757,10 @@ function createCoordinator(
 
   const launchSelectedPlayerHost = (): Promise<StardewPrivateActivationSnapshot> => {
     if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
-    if (launchTerminal) return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
+    if (lifecycleState === "launch_quarantined")
+      return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
     if (launchPromise !== undefined) return launchPromise;
-    if (activationState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+    if (lifecycleState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
     launchPromise = runPlayerHostLaunch();
     return launchPromise;
   };
@@ -2063,7 +2118,7 @@ function createCoordinator(
       }
       if (setupPromise !== undefined) return Promise.reject(new Error("stardew_game_setup_in_progress"));
       if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
-      if (activationState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+      if (lifecycleState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
       let promise!: Promise<void>;
       promise = (async () => {
         try {
@@ -2107,9 +2162,11 @@ function createCoordinator(
       if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
       if (setupPromise !== undefined) return Promise.reject(new Error("stardew_game_setup_in_progress"));
       if (launchPromise !== undefined) return Promise.reject(new Error("stardew_game_launch_in_progress"));
+      if (lifecycleState === "launch_quarantined")
+        return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
       if (command.expectedInstanceGeneration !== expectedPlayerHostInstanceGeneration)
         return Promise.reject(new Error("stardew_game_instance_generation_conflict"));
-      if (activationState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+      if (lifecycleState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
       const promise = launchSelectedPlayerHost();
       gameLaunches.set(
         command.idempotencyKey,
@@ -2127,11 +2184,7 @@ function createCoordinator(
   ): Promise<StardewCabinChoicesV1> =>
     consumeBrowserAdmission(admission, "cabin_read", async (browserSessionId, sessionExpiry) => {
       const owner = exactOwner;
-      // The handoff needs the game this lifecycle launched. When the Guardian reported
-      // that process ended, no cabin read can succeed and no state the handoff passes
-      // through changes that - so the exit is answered first, by name.
-      if (recordPlayerHostExit() !== null) throw new Error(PLAYER_HOST_EXITED_REFUSAL);
-      if (owner === undefined || activationState !== "awaiting_player_host_attestation")
+      if (owner === undefined || !isGameLifecyclePlayerHostUp(lifecycleState))
         throw new Error("stardew_cabin_handoff_unavailable");
       const boundRevision = revision;
       const choices = await handoffCoordinator.list(owner);
@@ -2893,11 +2946,7 @@ function createCoordinator(
       // a stale command and fails closed here, instead of silently persisting a
       // binding intent and sitting at `accepted` forever. Create never launches:
       // the single launch authority stays `launchPlayerHost`.
-      if (
-        exactOwner === undefined ||
-        activationState !== "awaiting_player_host_attestation" ||
-        !playerHostAttestationCorrelated
-      )
+      if (exactOwner === undefined || lifecycleState !== "player_host_attested")
         throw new Error("stardew_game_create_player_host_unavailable");
       // The store-level creation request and world binding operation identities
       // are minted inside the coordinator's idempotency slot and retained in it
@@ -3367,6 +3416,12 @@ function createCoordinator(
       if (owner !== undefined) {
         await internal.projectPlayerActionPolicyIntoOwnedAttempt(owner, policy);
       }
+      // The live half, and the only path a change takes to a world that is ALREADY running: one frame carrying the same
+      // two denial keys the document just received. `false` means no world is attached (or the pipe closed between the
+      // CAS above and this line), which is not a failure - the config write above is what the next world load reads.
+      // Best effort for the same reason the write is: the durable record already committed, so throwing here would
+      // report a failure the player would retry into a stale-revision conflict.
+      farmhandGameRuntimeFacade?.pushActionPolicy(projectStardewModActionPolicyFrame(policy));
       return projectPlayerSettings(saved);
     });
 
@@ -3475,7 +3530,7 @@ function createCoordinator(
         // Auto-select the first registered Farmhand cabin (this one-shot
         // operational topology owns exactly one AI Farmhand attachment).
         const ownerForHandoff = exactOwner;
-        if (ownerForHandoff === undefined || activationState !== "awaiting_player_host_attestation")
+        if (ownerForHandoff === undefined || !isGameLifecyclePlayerHostUp(lifecycleState))
           throw new Error("stardew_cabin_handoff_unavailable");
         const choices = await handoffCoordinator.list(ownerForHandoff);
         const choice = choices[0];
@@ -3579,14 +3634,14 @@ function createCoordinator(
   });
 
   const closeAttempt = async (): Promise<void> => {
-    if (activationState !== "closed") transition("closing");
+    if (lifecycleState !== "closed") transition("closing");
     // Join the in-flight create before ANY return below can skip it, including
     // the terminal endgame branch. Joining it is what makes close drive the
     // create path's own durable failure closure: an interrupted create settles
     // its rows (no registered binding with resumable metadata may survive a
     // close) before this close starts tearing anything down -- and before this
     // close can RESOLVE. An endgame does not end the admissibility of a create:
-    // its body changes neither `activationState` nor `exactOwner`, so the
+    // its body changes neither `lifecycleState` nor `exactOwner`, so the
     // admission guards still pass afterwards and a create really can be
     // outstanding on the endgame path.
     const create = createPromise;
@@ -3753,14 +3808,14 @@ function createCoordinator(
   };
 
   const close = (): Promise<void> => {
-    if (activationState === "closed") return closePromise ?? Promise.resolve();
+    if (lifecycleState === "closed") return closePromise ?? Promise.resolve();
     if (closePromise !== undefined) return closePromise;
     // Reject bind/activate synchronously before any drain starts.
     transition("closing");
     const attempt = closeAttempt();
     closePromise = attempt;
     void attempt.catch(() => {
-      if (activationState !== "closed") closePromise = undefined;
+      if (lifecycleState !== "closed") closePromise = undefined;
     });
     return attempt;
   };

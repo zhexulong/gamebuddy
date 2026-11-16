@@ -43,9 +43,11 @@ import {
 } from "../../lib/live-run-teardown.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
+import { assertPromptSurfaceFresh } from "../core/prompt-surface-freshness.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
+import { createLaunchPhaseLog, writeLaunchPhaseHandover } from "../core/launch-phase.mjs";
 
 const repo = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const args = process.argv.slice(2);
@@ -130,6 +132,50 @@ const templateName = option("template", saveName);
 const suffix = label.length > 0 ? `-${label}` : "";
 const resultPath = path.join(repo, "tools", `_${scenario}${suffix}.result.json`);
 const logPath = path.join(repo, "tools", `_${scenario}${suffix}-live-runner.log`);
+// THIS LANE'S SMAPI CONSOLE, named here and handed down, so the launch's own phase measurement reads the same file the
+// game writes: the orchestrator used to derive it from the runner log's directory, which meant the only process that
+// could say when the game started had no idea where the game was talking.
+const laneLogPath = path.join(repo, "tools", `_${scenario}${suffix}-smapi-console.log`);
+
+// THE LAUNCH CLOCK, started before the first thing this launcher waits for.
+//
+// The runner's log begins when the RUNNER starts, so the save template copy, the Mod deploy and the game's own load were
+// one blank in it and "why is startup slow" could not be answered by subtraction (measured 2026-11-15, `round55`: no
+// phase for the first 25.7s). Every step below marks itself on this clock, and the records are handed to the runner
+// (`GAMEBUDDY_LAUNCH_PHASE_HANDOVER`) so its log carries ONE table from `launcher_start` to `first_model_response`.
+const launchPhases = createLaunchPhaseLog({ startedAtMs: Date.now() });
+const launchPhasesPath = path.join(repo, "tools", `_${scenario}${suffix}-launch-phases.json`);
+const markPhase = (phase, atMs) => {
+  const record = launchPhases.mark(phase, atMs);
+  // Written on every mark, so a launch that dies before it spawns the runner still leaves the steps it reached.
+  writeLaunchPhaseHandover({
+    path: launchPhasesPath,
+    startedAtMs: launchPhases.startedAtMs,
+    records: launchPhases.records,
+  });
+  return record;
+};
+markPhase("launcher_start");
+
+// A RUN'S NUMBERS BELONG TO THE PROMPT IT MEASURED, and this checkout is not the only place that prompt lives. The
+// artifact gate (`assertLiveRunArtifactFresh`, called by the launch helper the orchestrator runs) compares
+// `host/dist-test` against `host/src` and is
+// blind to `assets/`: rounds 47 and 48 were launched from a worktree whose `assets/tavern/presets/amber-game.json` was
+// byte-identical to the commit BEFORE the one that withdrew its chatter-forcing sentences, so both measured a persona two
+// commits behind `main` and were then read as evidence about the current one.
+//
+// HERE, and not in the runner that used to own it, because the gate reads the WORKTREE (`git ls-tree <revision>` plus a
+// `git diff` of the paths a rule admits) and nothing the launch produces: no save copy, no Mod deploy, no game. Checked
+// where the runner checked it, the refusal could only arrive after the orchestrator had started SMAPI and the bridge had
+// answered - measured 2026-11-14, `_multiday_routine-phase-table`: `environment_facts_done` at 21,546 ms, refused at
+// 59,281 ms, with a game running that then had to be torn down to say no. Refused here it costs one git query and no game
+// process exists to reclaim. The runner cannot be reached any other way: `_ladder-live-orchestrator.mjs` spawns it, and
+// this file spawns the orchestrator, so this is the outermost layer that decides whether the launch happens at all.
+const promptSurface = assertPromptSurfaceFresh({ repositoryRoot: repo });
+markPhase("prompt_surface_checked");
+process.stderr.write(
+  `[run] prompt surface current: ${promptSurface.examined} path(s) against ${promptSurface.refs.join(",")} at ${promptSurface.revision}\n`,
+);
 
 // A `result.json` this launch did not write is not this attempt's answer, and the tail below reads it as one: a run that
 // died before writing its own bundle left the previous run's file exactly where the report looks, so a crash printed a
@@ -183,6 +229,31 @@ async function waitForFreeFixture(deadlineMs = Date.now() + 45 * 60 * 1000) {
     if (Date.now() > deadlineMs) throw new Error("fixture_never_became_free");
     console.log(`[wait] fixture busy (game=${game.join(",") || "none"}, lock=${locked}); retrying in 30s`);
     await sleep(30_000);
+  }
+}
+
+/**
+ * When the game started talking, from the one file this launch already owns.
+ *
+ * The launch helper opens this lane's SMAPI console log (`flags: "w"`) immediately before it spawns the game, and pipes
+ * the game's own console into it, so "the game produced its first byte after this launch spawned it" is a fact on disk.
+ * Reading it costs nothing: polling the process table instead would spawn a PowerShell per tick while the game is loading
+ * the very code whose load time is being measured.
+ *
+ * The reading is bounded by the poll interval (`+0..pollMs`), which is a ceiling on the game's own start rather than a
+ * tie: a 100 ms bound is a fifth of the shortest phase this table is used to judge. Returns `null` when the game wrote
+ * nothing inside the window - the launch then fails further on, at the pipe wait, and that failure is the reading.
+ */
+async function waitForGameLaunched({ laneLogPath, sinceMs, deadlineMs, pollMs = 100 }) {
+  for (;;) {
+    try {
+      const status = fs.statSync(laneLogPath);
+      if (status.size > 0 && status.mtimeMs > sinceMs) return markPhase("game_launched");
+    } catch {
+      // The file does not exist yet: the fixture has not opened it, so the game has not been spawned.
+    }
+    if (Date.now() > deadlineMs) return null;
+    await sleep(pollMs);
   }
 }
 
@@ -284,6 +355,7 @@ function restoreFixtureTransaction() {
 installLiveRunInterrupt({ onInterrupt: killedTeardown });
 
 await waitForFreeFixture();
+markPhase("fixture_free");
 
 // A previous run that died before restoring leaves its working save behind, and prepare then refuses
 // with `native_local_fixture_working_save_exists`. That refusal is right, but it makes one failed run
@@ -324,6 +396,9 @@ if (fs.existsSync(orphan)) {
   fs.renameSync(orphan, aside);
   console.log("[recover] orphaned backup preserved as:", path.basename(aside));
 }
+// The two recovery steps above are the launch's own "clean": a transaction a previous run could not restore and a backup
+// this launcher left behind are exactly what a fresh launch has to settle before it can measure anything else.
+markPhase("clean_done");
 
 // Preparing is racy on a shared root: another lane can start a session in the gap between the
 // free-fixture check and the file operation, and the fixture refuses to touch a running game. That
@@ -346,6 +421,9 @@ const prepareAttempt = (attempt) => {
     ],
     { cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
   );
+  // The save template copied into the real save root: a native save (its named save file + SaveGameInfo), written as
+  // this run's working save. This is the step a blank log could not tell apart from the deploy below it.
+  markPhase("save_template_copied");
   run([
     "tools/prepare-stardew-native-local-player-fixture.mjs",
     "--root",
@@ -405,6 +483,9 @@ for (let attempt = 1; ; attempt += 1) {
     await waitForFreeFixture();
   }
 }
+// The fixture transaction exists: this run's working save, Mod config and the built Release bundle are deployed into the
+// mods root the game will load. Everything after this point is the GAME's own startup.
+markPhase("deploy_done");
 
 let exitCode = null;
 const myOwnerId = currentOwnerId();
@@ -457,6 +538,11 @@ childSettled = new Promise((resolve) => {
       // repro plan has no slot to name and the bundle contract refuses it (measured 2026-10-16).
       GAMEBUDDY_DAY_START_SLOT: saveName,
       GAMEBUDDY_LADDER_LIVE_LOG: logPath,
+      // The path the game's own console is piped into, named HERE so this launcher and the orchestrator cannot disagree
+      // about which file the game is talking into: the launch phase `game_launched` is the first byte in it.
+      GAMEBUDDY_LADDER_SMAPI_LOG: laneLogPath,
+      // The launch's own record, so the runner's log carries the steps only this process could see.
+      GAMEBUDDY_LAUNCH_PHASE_HANDOVER: launchPhasesPath,
       // Both names: the orchestrator uses LADDER_WINDOW_MODE for the game child, and the RUNNER records the
       // window mode it ran under from GAMEBUDDY_WINDOW_MODE. Setting only the former made a hidden run describe
       // itself as `visible` in its own evidence bundle (which the contract then refused, correctly).
@@ -465,6 +551,7 @@ childSettled = new Promise((resolve) => {
       GAMEBUDDY_PROCESS_RECLAMATION_FILE: processReclamationPath,
     },
   });
+  markPhase("orchestrator_spawned");
   // stdio is inherited now (the orchestrator and SMAPI need a real console), so there
   // are no pipes to collect. The orchestrator writes its own diagnostics to the
   // terminal and to its runner log; nothing here fabricates a stdout artefact from a
@@ -485,6 +572,12 @@ childSettled = new Promise((resolve) => {
 });
 // The child's own completion. A signal does not wait here: the trap's teardown runs concurrently, gives the runner its
 // settle window, and then exits the process - so this await is simply where an ORDINARY run continues.
+//
+// THE GAME'S OWN START is measured BEFORE that await, because this process is idle while the orchestrator loads the
+// game: the fixture opens this lane's SMAPI console log immediately before spawning SMAPI, so the first byte written to
+// it after that spawn is the game producing output. Watching a file costs no process and does not compete with the very
+// load it is measuring (a `Get-Process` poll would).
+await waitForGameLaunched({ laneLogPath, sinceMs: launchedAtMs, deadlineMs: launchedAtMs + 150_000 });
 await childSettled;
 console.log("live runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
 // The child's own exit code IS this process's exit code. It was captured above and used only for a console line, so a

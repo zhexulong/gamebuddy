@@ -123,27 +123,37 @@ internal sealed class StardewSalientEventHooks : IDisposable
     {
         int totalDays = Game1.Date?.TotalDays ?? 1;
         long observedTick = Game1.ticks;
-        this.TryEmitTimeMilestone(totalDays, e.NewTime, observedTick, CompanionInBed());
+        this.TryEmitTimeMilestone(totalDays, e.NewTime, observedTick, CompanionAsleep());
     }
 
     /// <summary>
-    /// Whether the companion HERSELF is in bed - the only player whose bed decides whether an hour is news to her.
+    /// Whether the companion has ENDED HER DAY - the only reason an hour stops being news to her.
     ///
     /// <para>
     /// `Game1.player` is this client's own farmer, and these hooks publish only on the configured AI Farmhand's screen
     /// (`ModEntry.IsConfiguredAiScreen` refuses every screen whose `Game1.player.UniqueMultiplayerID` is not the
     /// configured farmhand), so the farmer read here is her. The host player is a DIFFERENT `Farmer`, reached through
-    /// `Game1.MasterPlayer` or `Game1.otherFarmers`, and its bed state answers a question nobody asked: in a shared save
+    /// `Game1.MasterPlayer` or `Game1.otherFarmers`, and its bedtime answers a question nobody asked: in a shared save
     /// her going to bed leaves the host playing and the day unadvanced, so the host lying down or staying up says
     /// nothing about whether she is awake.
     /// </para>
     /// <para>
-    /// `Farmer.isInBed` is the engine's own flag, derived from the tile the farmer occupies carrying the "Bed" property
-    /// (`Farmer.cs:7478`). It goes true as she reaches her bed and stays true through the multiplayer ready barrier
-    /// while she waits for the host - exactly the state in which a clock fact must stay silent.
+    /// `Farmer.timeWentToBed` is the engine's own record of WHEN she went to bed, and it is day-scoped at both ends:
+    /// `GameLocation.startSleep` stores `Game1.timeOfDay` in it (`GameLocation.cs:11178`), and `Farmer.dayupdate`
+    /// writes 0 into it at the start of the next day (`Farmer.cs:3574`) - read out of the shipped assembly, where
+    /// `Farmer.dayupdate` contains `ldfld timeWentToBed; ldc.i4.0; callvirt NetInt.set_Value`. A fact the engine clears
+    /// for her every morning is the only kind this gate may read.
+    /// </para>
+    /// <para>
+    /// `Farmer.isInBed` is NOT that fact, although it reads like it. It is set true when the sleep prompt is answered
+    /// (`GameLocation.answerDialogueAction`) and NOTHING in the assembly sets it back to false - not `startSleep`, not
+    /// `Farmer.dayupdate`, not `Game1.NewDay`, all of which only read it - so after her first night it stays true for
+    /// the rest of the process. Gating on it silenced an entire awake day: measured 2026-11-22 (`round53`), clock
+    /// 06:10 -> 16:20 (610 game minutes, the 12:00 milestone crossed), `BRIDGE_FACT 0`, `time_milestone 0`, while she
+    /// stood in the farmhouse and the Mod's own tick counter advanced (2,310 -> 19,630 in `round52`).
     /// </para>
     /// </summary>
-    internal static bool CompanionInBed() => Game1.player.isInBed.Value;
+    internal static bool CompanionAsleep() => Game1.player.timeWentToBed.Value != 0;
 
     public bool TryEmitDayStarted(int totalDays, long observedTick, string gameTime = "0600")
     {
@@ -180,7 +190,7 @@ internal sealed class StardewSalientEventHooks : IDisposable
         return true;
     }
 
-    public bool TryEmitTimeMilestone(int totalDays, int timeOfDay, long observedTick, bool companionInBed)
+    public bool TryEmitTimeMilestone(int totalDays, int timeOfDay, long observedTick, bool companionAsleep)
     {
         BridgeSession? session = this.sessionProvider();
         if (session is null)
@@ -190,7 +200,7 @@ internal sealed class StardewSalientEventHooks : IDisposable
         }
 
         string? scopeId = this.scopeProvider?.Invoke()?.SaveId ?? session.Scope?.SaveId;
-        if (!this.filter.IsTimeMilestoneSalient(totalDays, timeOfDay, companionInBed, out string eventId, out string formattedTime, scopeId))
+        if (!this.filter.IsTimeMilestoneSalient(totalDays, timeOfDay, companionAsleep, out string eventId, out string formattedTime, scopeId))
             return false;
 
         string payloadJson = $"{{\"milestone\":\"{formattedTime}\"}}";

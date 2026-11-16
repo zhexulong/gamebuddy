@@ -6,6 +6,7 @@ import {
   consumptionCoverage,
   fieldLevelCoverage,
   handlerFieldReads,
+  loadConsumptionSources,
   locationCollectionPopulation,
   modMethodBodies,
   modRowFields,
@@ -138,9 +139,7 @@ const SCHEMA = Object.freeze({
  *
  * The cases below measure collections, channels, addressability, postconditions or gates, so the
  * consumption section must be handed an inventory that says "this family is read" - otherwise every
- * case would also be a case about F, and its finding list would say so. `perTurnLine` is the per-turn
- * nearby-target line's own table: it names a family none of these cases asserts on, so the table is
- * readable (the section reports an unreadable one) without consuming the families under test.
+ * case would also be a case about F, and its finding list would say so.
  */
 const CONSUMPTION_FIXTURE = Object.freeze({
   inventory: `
@@ -159,18 +158,14 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export const PROJECTION_SOURCES = Object.freeze([
-  "host/src/game-world-vocabulary.ts",
+  "host/src/fact-brief.ts",
   "host/src/snapshot-projection.ts",
 ]);
 `,
   tools: "Copy the expectedTargetId from the worldObjectTargets entries of the MOST RECENT observe result.",
-  perTurnLine: `
-export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  soilTiles: "\u53ef\u52c4\u7684\u5730\u5757",
-});
-`,
+  perTurnFields: new Set(),
   projectionSources: new Map([
-    ["host/src/game-world-vocabulary.ts", ""],
+    ["host/src/fact-brief.ts", ""],
     ["host/src/snapshot-projection.ts", ""],
   ]),
 });
@@ -201,10 +196,7 @@ test("the collection population is derived from the decompiled type, not from a 
     ["buildings", "objects", "furniture", "animals", "Game1.locations"],
   );
   // `Objects` is the property over `objects`: one collection, one row.
-  assert.deepEqual(
-    population.filter((entry) => entry.id.toLowerCase() === "objects").map((entry) => entry.id),
-    ["objects"],
-  );
+  assert.equal(population.filter((entry) => entry.id.toLowerCase() === "objects").length, 1);
 });
 
 /**
@@ -691,7 +683,7 @@ test("the human summary names each section and every ungranted gap, on the same 
   assert.match(text, /E publication\s+0 advertisement gates over 0 families, 0 family\/action pair\(s\) gated off/);
   assert.match(
     text,
-    /F consumption\s+1 published families: 0 read by a projection, 0 by the per-turn line, 1 named in a tool description; 0 with no consumer/,
+    /F consumption\s+1 published families: 0 read by a projection, 0 named in the per-turn text, 1 named in a tool description; 0 with no consumer/,
   );
   assert.match(text, /on-demand delivery is not a gap/);
   assert.match(
@@ -731,7 +723,7 @@ test("the real tree is measured, and every red it reports is named", () => {
   assert.ok(report.publicationGating.gates.length >= 70, `gates ${report.publicationGating.gates.length}`);
   assert.ok(report.consumption.population >= 80, `families ${report.consumption.population}`);
   assert.ok(report.consumption.rows.some((row) => row.projections.length > 0));
-  assert.ok(report.consumption.rows.some((row) => row.perTurnLine));
+  assert.ok(report.consumption.rows.some((row) => row.perTurn));
   assert.deepEqual(report.publicationGating.gatedOff, []);
   // Measured, not floored. `FarmAnimalPetTargets` is declared withheld by `snapshot-projection-coverage.ts` now
   // (`UNPROJECTED_OBSERVED_FAMILIES`), so the F section classifies it and no finding is left there; the G section's two
@@ -751,10 +743,9 @@ test("the real tree is measured, and every red it reports is named", () => {
   // population is 83 (not a list here): 55 actor-bounded, 12 map-fixed, 16 the actor's own state, 0 with no answer.
   //
   // Re-measured 2026-11-07. The two quadrant exemptions that used to excuse `MineElevatorFloorTargets` and
-  // `ShopTargets` are gone, and correctly so: both are read every turn now (`row.perTurnLine`, asserted below), so the gap they
-  // excused is closed and `red`/`baselined` are 0. What moved with them: those two families left the actor-bounded
-  // half, and `RefillWateringCanTargets` and `FixedInteractionPoints` entered the map-fixed half, which is why the four
-  // numbers that are not `perTurnLine` moved together.
+  // `ShopTargets` are gone, and correctly so: both are named by the per-turn text now (`row.perTurn`, asserted below),
+  // so the gap they excused is closed and `red`/`baselined` are 0. What moved with them: those two families left the
+  // actor-bounded half, and `RefillWateringCanTargets` and `FixedInteractionPoints` entered the map-fixed half.
   //
   // Re-measured 2026-11-08: `Warps` was published with no `Discover*` to read, so the section called it undeclared
   // while the code plainly builds it from the current location's whole warp table; it is `map_fixed` now. The two
@@ -786,23 +777,22 @@ test("the real tree is measured, and every red it reports is named", () => {
     "MailboxTargets",
     "FixedInteractionPoints",
   ]);
-  // The per-turn nearby-target line closed the mine ladders, the mailbox and - measured 2026-11-07 - the elevator
-  // floors and the shops. The `[State HUD: ...]` block that used to feed this channel was composed into text nobody
-  // received and was deleted; the channel now reads the table `nearbyTargetFamilies` iterates into `<world-state>`.
-  // Those last two used to be excused by a baseline entry; they are asserted as READ now, because an exemption that
-  // outlives the defect it excused hides the next one.
-  const perTurnRead = report.quadrant.rows.filter((row) => row.perTurnLine).map((row) => row.key);
-  assert.ok(perTurnRead.includes("mineEntranceTargets"), "the way out of a mine level is in the per-turn block now");
+  // The per-turn text names the mine ladders, the mailbox and - measured 2026-11-07 - the elevator floors and the
+  // shops. Those last two used to be excused by a baseline entry; they are asserted as READ now, because an exemption
+  // that outlives the defect it excused hides the next one. The reader that names them is `<world-state>`: the `[State
+  // HUD: …]` block answered this question until `213cde50` deleted it.
+  const perTurnRead = report.quadrant.rows.filter((row) => row.perTurn).map((row) => row.key);
+  assert.ok(perTurnRead.includes("mineEntranceTargets"), "the way out of a mine level is in the per-turn text now");
   assert.ok(perTurnRead.includes("mailboxTargets"));
   for (const family of ["MineElevatorFloorTargets", "ShopTargets"]) {
     const row = report.quadrant.rows.find((entry) => entry.family === family);
     assert.ok(row, `${family} is not in the report at all`);
     assert.equal(row.quadrant, "map_fixed", `${family} is no longer map-fixed`);
-    assert.equal(row.perTurnLine, true, `${family} left the per-turn read, so its closed gap has reopened`);
+    assert.equal(row.perTurn, true, `${family} left the per-turn text, so its closed gap has reopened`);
   }
   // Nothing map-fixed and targeted is left unread: a new one here has to be read and explained rather than absorbed.
   assert.deepEqual(
-    report.quadrant.rows.filter((row) => row.quadrant === "map_fixed" && row.targeted && !row.perTurnLine).map((row) => row.family),
+    report.quadrant.rows.filter((row) => row.quadrant === "map_fixed" && row.targeted && !row.perTurn).map((row) => row.family),
     [],
   );
   // The three families no `Discover*` publishes are classified by a declaration that names the code deciding them.
@@ -815,6 +805,49 @@ test("the real tree is measured, and every red it reports is named", () => {
       ["DiscoveryExclusions", "actor_owned"],
     ],
   );
+});
+
+/**
+ * The reader of a map-fixed family is the per-turn text, and the gate says so in its own words.
+ *
+ * WHY THIS CASE EXISTS (2026-11-13). Both flags on this row used to be read out of `host/src/snapshot-hud.ts`, which
+ * `213cde50` deleted; the analyzer then threw ENOENT before it had classified a single family. The claim is not "the
+ * HUD is gone" - it is that the six families a HUD line used to answer are answered by `<world-state>` now, which is
+ * what makes the gate's own question answerable at all.
+ */
+test("a map-fixed family is answered by the per-turn text, and an empty per-turn set reds it under the new name", () => {
+  const report = observeActionGaps({});
+  const rows = new Map(report.quadrant.rows.map((row) => [row.family, row]));
+  for (const family of [
+    "MineElevatorFloorTargets",
+    "ShopTargets",
+    "MineEntranceTargets",
+    "MailboxTargets",
+    "RefillWateringCanTargets",
+    "WaterTargets",
+  ]) {
+    const row = rows.get(family);
+    assert.ok(row, `${family} is not in the report at all`);
+    assert.equal(row.perTurn, true, `${family} is map-fixed and printed every turn, so it is not a quadrant error`);
+  }
+  // Nothing in the report names the retired module: a finding that does is a claim about a file that does not exist, and
+  // it is how this reader stayed broken without anything saying so.
+  assert.ok(
+    !JSON.stringify(report.findings).includes("snapshot-hud"),
+    "a finding still names host/src/snapshot-hud.ts, which was deleted in 213cde50",
+  );
+
+  // The falsifier: hand the analyzer an empty per-turn set and the same families must come back under the name that no
+  // longer promises a HUD line - so the flag is READ, not merely present.
+  const withoutPerTurn = observeActionGaps({
+    consumption: { ...loadConsumptionSources(), perTurnFields: new Set() },
+  });
+  const red = withoutPerTurn.findings.filter((finding) => finding.kind === "quadrant").map((finding) => finding.code);
+  assert.ok(
+    red.includes("map_fixed_family_not_per_turn:ShopTargets"),
+    `an empty per-turn set must red the shop family, got ${JSON.stringify(red.slice(0, 4))}`,
+  );
+  assert.ok(!red.some((code) => code.includes("in_hud")), "the finding code must not name a module that is gone");
 });
 
 const GATED_MODELS = `
@@ -1004,26 +1037,20 @@ test("a published family nothing consumes is advisory, red only when an action t
   );
 });
 
-test("a family consumed only by the per-turn line is not red", () => {
-  const perTurnLine = `export const TARGET_FAMILY_LABELS = Object.freeze({
-  worldObjectTargets: "可交互的物件",
-});`;
+test("a family the per-turn text names is not red", () => {
   const coverage = consumptionCoverage({
     families: ["WorldObjectTargets"],
     ...CONSUMPTION_FIXTURE,
     tools: "",
-    perTurnLine,
+    perTurnFields: new Set(["worldObjectTargets"]),
     targetField: { place_owned_object: "WorldObjectTargets" },
   });
-  assert.deepEqual(
-    coverage.rows.map((row) => [row.family, row.perTurnLine, row.consumed]),
-    [["WorldObjectTargets", true, true]],
-  );
+  assert.deepEqual(coverage.rows.map((row) => [row.family, row.perTurn, row.consumed]), [["WorldObjectTargets", true, true]]);
   assert.deepEqual(coverage.findings, []);
   assert.deepEqual(
     coverage.rows.filter((row) => !row.consumed),
     [],
-    "a per-turn line is a consumer, so the family is not advisory either",
+    "the per-turn text is a consumer, so the family is not advisory either",
   );
 });
 
@@ -1032,7 +1059,7 @@ test("an inventory whose tables cannot be read is reported instead of classifyin
     families: ["WorldObjectTargets"],
     inventory: "export const SOMETHING_ELSE = Object.freeze([]);\n",
     tools: "",
-    perTurnLine: "",
+    perTurnFields: new Set(),
     projectionSources: new Map(),
     targetField: {},
   });
@@ -1043,7 +1070,6 @@ test("an inventory whose tables cannot be read is reported instead of classifyin
       "consumption_inventory_unreadable:UNPROJECTED_OBSERVED_FAMILIES",
       "consumption_inventory_unreadable:REQUIRED_PROJECTED_KEYS",
       "consumption_inventory_unreadable:WITHHELD_SCALAR_KEYS",
-      "consumption_inventory_unreadable:TARGET_FAMILY_LABELS",
     ],
   );
   // And the consequence is stated rather than hidden: an inventory that classifies nothing classifies nothing,
@@ -1114,18 +1140,18 @@ const QUADRANT_TARGET_FIELD = Object.freeze({
   use_item: "FoodTargets",
 });
 
-function quadrants({ perTurnFamilies = new Set() } = {}) {
+function quadrants({ perTurnFields = new Set() } = {}) {
   const sources = fixture([QUADRANT_SOURCES]);
   return observationQuadrants({
     families: QUADRANT_FAMILIES,
     discoveries: parseDiscoveries(sources),
     bodies: modMethodBodies(sources),
-    perTurnFamilies,
+    perTurnFields,
     targetField: QUADRANT_TARGET_FIELD,
   });
 }
 
-test("a map-fixed family an action targets and no per-turn line prints is red, and a family of the table closes it", () => {
+test("a map-fixed family an action targets and nothing prints per turn is red, and a per-turn name closes it", () => {
   const before = quadrants();
   assert.deepEqual(
     before.rows.map((row) => [row.family, row.quadrant]),
@@ -1137,7 +1163,7 @@ test("a map-fixed family an action targets and no per-turn line prints is red, a
     "the ladder family publishes a whole-map branch; the crop scan is actor-bounded; the pack is neither",
   );
   assert.deepEqual(before.findings.map((finding) => finding.code), [
-    "map_fixed_family_not_in_a_per_turn_line:MineEntranceTargets",
+    "map_fixed_family_not_per_turn:MineEntranceTargets",
   ]);
   // The evidence names BOTH branches, because that mixed shape is the reason the rule exists: the entrance window alone
   // would have classified this family local, and the ladder - the one fact the companion needs - would have stayed hidden.
@@ -1145,7 +1171,7 @@ test("a map-fixed family an action targets and no per-turn line prints is red, a
   assert.match(ladder.evidence[0], /map-fixed: a whole-layer scan inside TryFindMineTileWithIndex/u);
   assert.match(ladder.evidence[0], /actor-bounded: a scan window around the actor/u);
 
-  const after = quadrants({ perTurnFamilies: new Set(["mineEntranceTargets"]) });
+  const after = quadrants({ perTurnFields: new Set(["mineEntranceTargets"]) });
   assert.deepEqual(after.findings, [], "the line reads the family now, so the observe is no longer the only way to ask");
   assert.deepEqual(after.counts, {
     local: 1,
@@ -1176,7 +1202,7 @@ test("a family nothing discovers is classified by its declaration, and a family 
     ],
     discoveries: [],
     bodies: new Map(),
-    perTurnFamilies: new Set(),
+    perTurnFields: new Set(),
     targetField: {},
   });
   // Two families `record BridgeSnapshot(...)` assembles by hand: the warp table at the call site and the exclusion
@@ -1197,7 +1223,7 @@ test("a family nothing discovers is classified by its declaration, and a family 
     families: [{ name: "PackedItems", row: "BridgeItemTarget" }],
     discoveries: [],
     bodies: new Map(),
-    perTurnFamilies: new Set(),
+    perTurnFields: new Set(),
     targetField: { travel: "PackedItems" },
   });
   assert.equal(unclassified.rows[0].quadrant, "undeclared");
@@ -1211,7 +1237,7 @@ test("a family nothing discovers is classified by its declaration, and a family 
     families: [{ name: "Warps", row: "BridgeWarp" }],
     discoveries: parseDiscoveries(fixture([DISCOVERED_WARPS])),
     bodies: modMethodBodies(fixture([DISCOVERED_WARPS])),
-    perTurnFamilies: new Set(),
+    perTurnFields: new Set(),
     targetField: {},
   });
   assert.equal(discovered.rows[0].quadrant, "local");
@@ -1240,7 +1266,7 @@ const MAP_FIXED_OBJECTS = `
     }
 `;
 
-test("a quadrant gap can be baselined once, and an entry whose family now has a per-turn line fails as stale", () => {
+test("a quadrant gap can be baselined once, and an entry whose family is printed per turn now fails as stale", () => {
   const sources = fixture([MAP_FIXED_OBJECTS]);
   const baseline = {
     schema: "gamebuddy-stardew-observation-gap-baseline/v1",
@@ -1250,28 +1276,23 @@ test("a quadrant gap can be baselined once, and an entry whose family now has a 
   const red = observe({ sources });
   assert.deepEqual(
     red.findings.filter((finding) => finding.kind === "quadrant").map((finding) => finding.code),
-    ["map_fixed_family_not_in_a_per_turn_line:WorldObjectTargets"],
+    ["map_fixed_family_not_per_turn:WorldObjectTargets"],
   );
 
   const excused = observe({ sources, baseline });
   assert.deepEqual(excused.findings.filter((finding) => finding.kind === "quadrant"), []);
   assert.equal(excused.quadrant.counts.baselined, 1);
 
-  const inPerTurnLineNow = observe({
+  const printedNow = observe({
     sources,
     baseline,
-    consumption: {
-      ...CONSUMPTION_FIXTURE,
-      perTurnLine: `export const TARGET_FAMILY_LABELS = Object.freeze({
-  worldObjectTargets: "可交互的物件",
-});`,
-    },
+    consumption: { ...CONSUMPTION_FIXTURE, perTurnFields: new Set(["worldObjectTargets"]) },
   });
-  const stale = inPerTurnLineNow.findings.find(
+  const stale = printedNow.findings.find(
     (finding) => finding.code === "stale_baseline_entry:quadrant:WorldObjectTargets",
   );
   assert.ok(stale, "a line reads the family now, so the baseline entry must be deleted rather than excusing the next one");
-  assert.match(stale.detail, /printed by a family of host\/src\/game-world-vocabulary\.ts/u);
+  assert.match(stale.detail, /named by the per-turn text now/u);
 });
 
 test("a quadrant baseline entry that names no published family is neither stale nor silently accepted", () => {

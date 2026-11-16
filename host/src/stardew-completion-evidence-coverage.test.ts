@@ -1412,6 +1412,84 @@ test("shop_purchase: a receipt that spent nothing and gained nothing is not a pu
   assert.equal(completionEvidence("shop_purchase", "item_purchased", detail(noop)), false);
 });
 
+test("shop_purchase: a tool upgrade is its OWN terminal, and the upgrade facts decide it", () => {
+  // The second half of the same action. A tool upgrade is bought through the same route and never enters the pack: the
+  // engine charges, `Tool.actionWhenPurchased` records `Farmer.toolBeingUpgraded`/`daysLeftForToolUpgrade` and removes the
+  // tool the upgrade consumes (`Tool.cs:875-895`), and the entry is discarded (`ShopMenu.cs:1369-1378`). `gained > 0` is
+  // exactly the clause that made a finished upgrade unreadable, so this terminal must not inherit it - and must not be
+  // acceptible from a shop that is not the upgrade counter.
+  const upgrade: readonly (readonly [string, string])[] = [
+    ["shop", "ClintUpgrade"],
+    ["owner", "Clint"],
+    ["entry", "npc_owner"],
+    ["item", "(T)SteelHoe"],
+    ["requested", "1"],
+    ["purchased", "1"],
+    ["unit_price", "5000"],
+    ["money_before", "5000"],
+    ["money_after", "0"],
+    ["owned_before", "0"],
+    ["owned_after", "0"],
+    ["gained", "0"],
+    ["stock_before", "1"],
+    ["stock_after", "1"],
+    ["owner_tile", "9,5"],
+    ["menu_closed", "true"],
+    ["clicks", "1[click0:row=0|cursor=0|held_after=none]"],
+    ["drops", "0[]"],
+    ["tool_upgraded", "(T)SteelHoe"],
+    ["days_left", "2"],
+    ["required_tool", "(T)CopperHoe"],
+    ["required_before", "1"],
+    ["required_after", "0"],
+    ["purchase_dialogue", "closed"],
+  ];
+  const withField = (key: string, value: string) =>
+    upgrade.map(([fieldKey, fieldValue]) => [fieldKey, fieldKey === key ? value : fieldValue] as const);
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(upgrade)),
+    true,
+    "the engine's recorded upgrade is a completion, even though the pack gained nothing",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(withField("shop", "SeedShop"))),
+    false,
+    "no shop but the upgrade counter's own branch can produce this terminal, so any other id is refused by name",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(withField("tool_upgraded", "(T)GoldHoe"))),
+    false,
+    "a tool already at the blacksmith's is not this purchase's upgrade",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(withField("required_after", "1"))),
+    false,
+    "an upgrade that did not consume the tool it upgrades is not a completed upgrade",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(withField("days_left", "0"))),
+    false,
+    "a fresh upgrade is due back in two days, never zero",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "tool_upgrade_purchased", detail(withField("gained", "1"))),
+    false,
+    "the pack did not gain the entry, so a `gained` that disagrees with the counts is unreadable",
+  );
+
+  assert.equal(
+    completionEvidence("shop_purchase", "item_purchased", detail(upgrade)),
+    false,
+    "the ordinary terminal refuses the upgrade fields: the two shapes do not blur",
+  );
+});
+
 test("respond_level_up: the profession branch settles, and a contradicting receipt does not", () => {
   // The rule accepts ONE shape, so the generated cases above - which remove a key at a time - cannot tell its
   // validate clause from `() => true`: removing a required key already fails `declaredCompletionEvidence`'s required-set

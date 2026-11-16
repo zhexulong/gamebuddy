@@ -161,23 +161,26 @@ public sealed class FarmhandForEachExpansionTests
     private static Dictionary<string, FarmhandForEachValue> Row(string kind = "empty_tillable") =>
         new(StringComparer.Ordinal) { ["kind"] = FarmhandForEachValue.Of(kind) };
 
-    private static FarmhandForEachPredicate Stride(string axis, int every, int offset) =>
-        new(null, FarmhandForEachComparison.In, Array.Empty<FarmhandForEachValue>())
-        {
-            Axis = axis,
-            Stride = new FarmhandForEachStride(every, offset),
-        };
+    private static FarmhandForEachPredicate Field(string field, params string[] values) =>
+        new(field, values.Select(FarmhandForEachValue.Of).ToArray());
 
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
         new(x, y, w, h);
 
     /// <summary>One live tile row, with the occupant the farm world publishes for it in the `Clears` vocabulary.</summary>
     private static FarmhandForEachRow Occupied(int x, int y, int localColumn, string occupant) =>
-        new(x, y, localColumn, 0, new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
+        Live(occupant, occupant, x, y, localColumn);
+
+    /// <summary>One live tile row: the kind its classifier names, and what stands on the tile.</summary>
+    private static Dictionary<string, FarmhandForEachValue> Live(string kind, string occupant) =>
+        new(StringComparer.Ordinal)
         {
-            ["kind"] = FarmhandForEachValue.Of(occupant),
+            ["kind"] = FarmhandForEachValue.Of(kind),
             [FarmhandForEachHealing.OccupantField] = FarmhandForEachValue.Of(occupant),
-        });
+        };
+
+    private static FarmhandForEachRow Live(string kind, string occupant, int x, int y, int localColumn) =>
+        new(x, y, localColumn, 0, Live(kind, occupant));
 
     /// <summary>The live rows a rectangle source yields, exactly as the Mod reads them off the map.</summary>
     private static IEnumerable<FarmhandForEachRow> AreaRows(FarmhandForEachSource source) =>
@@ -214,55 +217,55 @@ public sealed class FarmhandForEachExpansionTests
         new(new FarmhandForEachStep("plant_seed", new Dictionary<string, string>(StringComparer.Ordinal) { ["seed"] = seed }));
 
     /// <summary>
-    /// THE INTERCROPPED PATCH, per tile, nothing coalesced: hops on columns 0, 3, 6..., coffee on 1, 4, 7..., path on
-    /// 2, 5, 8... - three rules of ONE pass, so each of the 60 tiles is decided exactly once.
+    /// TWO CALLS OVER ONE RECTANGLE WORK EACH TILE AT MOST ONCE, and each reports the tiles it does not own.
+    ///
+    /// <para>
+    /// IT USED TO DIVIDE THE PATCH BY COLUMN ARITHMETIC (`col: { every: 3, offset: n }`), which is the spelling this form
+    /// no longer has: measured over every plan script a run captured, a position guard was authored `0 of 2,871` and the
+    /// filter the corpus does write is what stands on the tile. What that third spelling bought is asserted HERE instead of
+    /// assumed - each tile of the patch is worked by AT MOST ONE call - and the COST is stated rather than glossed: every
+    /// call decides the whole rectangle, so each tile is `not_matched` in the call that does not own it (30 + 30 = 60).
+    /// </para>
     /// </summary>
     [Fact]
-    public void AnIntercroppedPatchIsOnePassAndEveryTileIsDecidedExactlyOnce()
+    public void ARectangleSplitBetweenTwoCallsWorksEachTileAtMostOnceAndReportsTheRest()
     {
         FarmhandForEachSource patch = Rect(60, 18, 20, 3);
-        var hops = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) };
-        var coffee = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) };
-        var path = new FarmhandForEachPredicate[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) };
-        var loop = new FarmhandForEachLoop(patch, hops, Plant("hops"), new[]
-        {
-            new FarmhandForEachRule(coffee, Plant("coffee")),
-            new FarmhandForEachRule(path, null),
-        });
+        var weeds = new FarmhandForEachLoop(patch, new[] { Field(FarmhandForEachHealing.OccupantField, "weed") }, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
+        var stones = new FarmhandForEachLoop(patch, new[] { Field(FarmhandForEachHealing.OccupantField, "stone") }, new FarmhandForEachEffect(new FarmhandForEachStep("break_rock")));
 
         var handler = new RecordingHandler();
-        (FarmhandActionRouter router, Ledger ledger) = Table(handler, "plant_seed");
-
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true, _ => null);
-
-        pass.Decided.Should().Be(60, "20 columns by 3 rows is one intent and the measured patch");
-        pass.Omitted.Should().Be(0);
-        pass.Stopped.Should().BeFalse();
-        pass.NotMatched.Should().Be(0, "every column of the patch is a deliberate decision");
-        pass.LeftAlone.Should().Be(18, "columns 2, 5, 8 ... are a path, three per row");
-        pass.Succeeded.Should().Be(42, "hops on 7 columns and coffee on 7, per row");
-        pass.Refused.Should().Be(0);
-        handler.Requests.Should().HaveCount(42, "a path column starts no native effect at all");
-
-        // The seed each tile was given comes from the rule that claimed it, and it is asserted PER TILE.
-        string[] firstRow = pass.Targets
-            .Where(target => target.LocalRow == 0)
-            .OrderBy(target => target.LocalColumn)
-            .Select(target => target.Target switch
-            {
-                null => "path",
-                FarmhandForEachTarget decided => decided.Arguments!["seed"],
-            })
+        (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds", "break_rock");
+        // Every even column stands weeds, every odd one stones: thirty of each in the 20x3 patch.
+        FarmhandForEachRow[] rows = FarmhandForEachRules.AreaRows(patch)
+            .Select(row => new FarmhandForEachRow(
+                row.X,
+                row.Y,
+                row.LocalColumn,
+                row.LocalRow,
+                new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
+                {
+                    ["kind"] = FarmhandForEachValue.Of("ground"),
+                    [FarmhandForEachHealing.OccupantField] = FarmhandForEachValue.Of(row.LocalColumn % 2 == 0 ? "weed" : "stone"),
+                }))
             .ToArray();
-        firstRow.Should().Equal(
-            "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops",
-            "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee");
 
-        // Every target reached the router with ITS OWN coordinates: the tile travels with the receipt, not with the plan.
-        handler.Requests.Select(request => (request.Args.X, request.Args.Y)).Should().OnlyHaveUniqueItems();
-        pass.Targets.Where(target => target.Outcome == FarmhandForEachTargetOutcome.Succeeded)
-            .Should().OnlyContain(target => target.ExecutionId != null && target.Tile != null);
-        pass.Targets.Select(target => target.ExecutionId).OfType<string>().Should().OnlyHaveUniqueItems(
+        FarmhandForEachPassResult[] passes = new[] { weeds, stones }
+            .Select((loop, index) => FarmhandForEachExpansion.Expand(loop, $"pass_{index}", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null))
+            .ToArray();
+
+        passes.Select(pass => pass.Decided).Should().Equal(new[] { 60, 60 }, "each call decides the rectangle it named");
+        passes.Sum(pass => pass.Succeeded).Should().Be(60, "thirty weeds and thirty stones, each worked exactly once");
+        passes.Sum(pass => pass.NotMatched).Should().Be(60, "every tile is reported by the call that does not own it");
+        handler.Requests.Should().HaveCount(60, "no tile starts two native effects");
+
+        var actionOfTile = passes
+            .SelectMany(pass => pass.Targets)
+            .Where(target => target.Target is not null)
+            .ToLookup(target => (target.X, target.Y), target => target.Target!.ActionId);
+        actionOfTile.Count.Should().Be(60);
+        actionOfTile.Should().OnlyContain(group => group.Count() == 1, "no tile may be worked by two calls");
+        passes.SelectMany(pass => pass.Targets).Select(target => target.ExecutionId).OfType<string>().Should().OnlyHaveUniqueItems(
             "each target keeps its own receipt lineage, or two effects could not be told apart");
     }
 
@@ -383,21 +386,21 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void AnUnclaimedRowNamesItsKindAndItsTile()
     {
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), new[] { Field(FarmhandForEachHealing.OccupantField, "weed") }, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
         var rows = new List<FarmhandForEachRow>
         {
-            new(60, 18, 0, 0, Row("rock")),
-            new(61, 18, 1, 0, Row("rock")),
+            new(60, 18, 0, 0, Live("rock", "weed")),
+            new(61, 18, 1, 0, Live("rock", "stone")),
         };
 
         FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_miss", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         pass.NotMatched.Should().Be(1);
-        pass.Targets[0].ReasonCode.Should().Be("no_rule_matched:rock@60,18");
         pass.Succeeded.Should().Be(1);
-        pass.Targets[1].Tile.Should().Be("61,18", "the receipt names the tile, not only the row index");
+        pass.Targets[1].ReasonCode.Should().Be("no_rule_matched:rock@61,18");
+        pass.Targets[0].Tile.Should().Be("60,18", "the receipt names the tile, not only the row index");
     }
 
     /// <summary>
@@ -420,7 +423,6 @@ public sealed class FarmhandForEachExpansionTests
             {
                 new FarmhandForEachPredicate(
                     FarmhandForEachHealing.OccupantField,
-                    FarmhandForEachComparison.Eq,
                     new[] { FarmhandForEachValue.Of("weed") }),
             },
             new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
@@ -442,8 +444,8 @@ public sealed class FarmhandForEachExpansionTests
         pass.Targets.Select(target => target.ReasonCode).Distinct(StringComparer.Ordinal).Should().ContainSingle(
             "every row missed the same test, which is one statement about the patch");
         reason.Should().Be(
-            $"{FarmhandForEachRules.NoRowMatchedWhere}:occupant_eq_weed:stone_none",
-            "the code names the test the caller wrote and the occupants in row order, once");
+            $"{FarmhandForEachRules.NoRowMatchedWhere}:{FarmhandForEachHealing.OccupantField}_{FarmhandForEachPredicate.InOperator}_weed:stone_none",
+            "the code names the test the caller wrote - the field and the comparison the model declares - and the occupants in row order, once");
         reason.Should().NotContain(
             FarmhandForEachRules.NoRuleMatchedReasonCode("stone", 60, 18),
             "the per-tile word is the mixed pass's, not this one");
@@ -531,27 +533,23 @@ public sealed class FarmhandForEachExpansionTests
     }
 
     /// <summary>
-    /// The ordered rule list is spelled once. A reader that rebuilt it from `Where`/`Then` itself would be a second
-    /// enumeration of the same pass, and the two would disagree the first time a rule was added.
+    /// ONE LOOP IS ONE RULE. The loop carries its conjunction and its effect and nothing else, so there is no second
+    /// enumeration of the same pass for a reader to rebuild and disagree with.
     /// </summary>
     [Fact]
-    public void TheRulesOfAPassAreEnumeratedInTheOrderTheyAreDecided()
+    public void OneLoopIsOneRuleAndItsPredicateBoundIsTheLoopsOwn()
     {
         var own = new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds"));
-        var second = new FarmhandForEachRule(new[] { Stride(FarmhandForEachPredicate.RowOperator, 2, 1) }, Plant("coffee"));
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 3), null, own, new[] { second });
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 3), new[] { Field(FarmhandForEachHealing.OccupantField, "weed") }, own);
 
-        loop.Rules.Should().HaveCount(2);
-        loop.Rules[0].Do.Should().Be(own, "the loop's own effect is its FIRST rule");
-        loop.Rules[1].Should().Be(second);
-        loop.Rules[0].Where.Should().BeNull("an absent predicate list means every row, and is carried through as absent");
+        loop.Where.Should().ContainSingle();
+        loop.Do.Should().Be(own, "the loop's own effect is the only effect it can have");
 
         var tooMany = new FarmhandForEachLoop(
             Rect(60, 18, 3, 3),
-            null,
-            own,
-            Enumerable.Range(0, FarmhandForEachLoop.MaximumRules).Select(_ => second).ToArray());
-        tooMany.IsValid.Should().BeFalse("a pass with more rules than the bound is refused, not truncated");
+            Enumerable.Range(0, FarmhandForEachLoop.MaximumPredicates + 1).Select(_ => Field(FarmhandForEachHealing.OccupantField, "weed")).ToArray(),
+            own);
+        tooMany.IsValid.Should().BeFalse("a conjunction past the bound is refused, not truncated");
     }
 
     /// <summary>

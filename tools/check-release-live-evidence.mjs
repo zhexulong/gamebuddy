@@ -64,6 +64,14 @@
  * red-proof: fixture one measured surface beside one `not_measured` surface -> exit 0, and the summary line
  *                    names only the unmeasured one (tools/check-release-live-evidence.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-release-live-evidence",
+  domain: "data",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

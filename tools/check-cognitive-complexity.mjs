@@ -154,6 +154,14 @@
  *   `class_size_grew`; equal structure and 30 more lines is `class_size_grew`
  *   (tools/check-cognitive-complexity.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-cognitive-complexity",
+  domain: "arch",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

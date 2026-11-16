@@ -275,7 +275,7 @@ jobs:
           GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT: ${{ runner.temp }}/desktop-launcher-generation
 
   # Which gates run, and which do not, is DERIVED from package.json on every run by
-  # `tools/check-ci-coverage.mjs` - not written out here. Every `check:*` / `audit:*` / `lint*` /
+  # `gates/meta/check-ci-coverage.mjs` - not written out here. Every `check:*` / `audit:*` / `lint*` /
   # `typecheck*` / `report:*` script that no other job names lands in this job's `--run` set, so a
   # new gate is live in CI by being named like one. The job installs the workspace and builds the
   # test artifact because two gates in that derived set are not source-only: `check:harness-conformance`
@@ -345,9 +345,9 @@ jobs:
       # makes GitHub reject the whole file with "Unrecognized named-value: 'secrets'", and
       # `KEY: ${{ env.KEY }}` re-exporting a value an earlier step wrote to GITHUB_ENV is always empty. Neither is
       # visible in review and both are fatal at runtime, so the workflow file itself is now checked.
-      - run: node tools/check-workflow-expressions.mjs
-      - run: node --test tools/check-workflow-expressions.test.mjs
-      - run: node tools/check-ci-coverage.mjs
+      - run: node gates/meta/check-workflow-expressions.mjs
+      - run: node --test gates/meta/check-workflow-expressions.test.mjs
+      - run: node gates/meta/check-ci-coverage.mjs
       # `check-ci-coverage` asks whether a gate script runs in a workflow. This asks the neighbouring
       # question about the LADDER a developer runs (`pnpm prelive`): the ladder's members are read from
       # `tools/prelive.mjs`'s own declarations, and a member no workflow step covers is either run here
@@ -360,12 +360,12 @@ jobs:
       # summary exactly like a real finding - the shape this repo keeps paying for.
       - run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
         timeout-minutes: 10
-      - run: node tools/check-ci-coverage.mjs --run
+      - run: node gates/meta/check-ci-coverage.mjs --run
       # The totality audit's full finding list, kept per run so "is this getting better?" has an answer that is not a
       # memory. `--verbose` prints every site (the default report prints counts with a bounded sample), and the step runs
       # after the gate so a red gate still leaves its evidence behind.
       - if: always()
-        run: node tools/audit-totality.mjs --verbose > audit-totality.txt
+        run: node gates/meta/audit-totality.mjs --verbose > audit-totality.txt
         continue-on-error: true
       - if: always()
         uses: actions/upload-artifact@v4
@@ -564,6 +564,13 @@ jobs:
       - name: Stardew discovery reads the collections its entities live in
         if: ${{ !cancelled() }}
         run: pnpm check:stardew-discovery-collection-coverage
+      # A running world learns an action-policy change from the `farmhand_action_policy_request` frame, not from
+      # a reread of `config.json`. The gate that keeps it that way reads every `.cs` of the Mod and requires the
+      # only document read to be the startup load in `Entry`, so a poll added anywhere - a new class, a retry in
+      # the frame handler, a "fall back to the file" branch - fails here by name. Static text, no game folder.
+      - name: A policy change reaches a running world as a message, not a poll
+        if: ${{ !cancelled() }}
+        run: pnpm check:policy-change-is-learned-by-polling
       # The two suites above are immune to a failing step ahead of them; this keeps the THIRD reading
       # readable from the run itself, because "the job said failure" is exactly what let a never-run
       # compile gate pass for a whole commit. `steps.<id>.outcome` is empty for a step that never

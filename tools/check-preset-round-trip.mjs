@@ -30,6 +30,14 @@
  *                    and `preset_round_trip_field_missing:prompts[main].injection_depth` for each of the fixture's five
  *                    in-chat entries on the import_to_export and source_to_reexport readings (tools/check-preset-round-trip.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-preset-round-trip",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

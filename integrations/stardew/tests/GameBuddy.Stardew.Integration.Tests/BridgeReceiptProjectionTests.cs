@@ -28,9 +28,32 @@ public sealed class BridgeReceiptProjectionTests
         string[] notices = { "Out of season.", "Inventory Full" };
         LocalExecutionReceipt receipt = Receipt() with { NativeNotices = notices };
 
-        BridgeSession.TryProjectReceipt(receipt, ActionId, out BridgeReceipt bridge).Should().BeTrue();
+        BridgeSession.TryProjectReceipt(receipt, ActionId, Programme(), out BridgeReceipt bridge).Should().BeTrue();
 
         bridge.NativeNotices.Should().Equal(notices);
+    }
+
+    /// <summary>
+    /// THE PROVENANCE IS A REQUIRED ARGUMENT, so this projection cannot publish a receipt without one - and the value it
+    /// publishes is the one it was handed, never one it derived. That is the whole contract: the journal says which
+    /// programme an execution belongs to, and this layer's only job is to carry it.
+    /// </summary>
+    [Fact]
+    public void TryProjectReceipt_CarriesTheProvenanceTheJournalStated()
+    {
+        BridgeSession.TryProjectReceipt(Receipt(), ActionId, Programme(), out BridgeReceipt bridge).Should().BeTrue();
+
+        bridge.Origin.Kind.Should().Be("programme");
+        bridge.Origin.ProgramId.Should().Be("plan_01");
+        bridge.Origin.NodeId.Should().Be("n01");
+    }
+
+    [Fact]
+    public void TryProjectReceipt_RefusesAReceiptWithNoProvenanceAtAll()
+    {
+        // A null is not "no programme": `standalone` is. Refusing it here is what keeps the wire's union total, so a
+        // reader downstream never has to decide what an absent origin meant.
+        BridgeSession.TryProjectReceipt(Receipt(), ActionId, null!, out _).Should().BeFalse();
     }
 
     [Fact]
@@ -39,7 +62,7 @@ public sealed class BridgeReceiptProjectionTests
         // A dispatch that produced no notice must stay absent rather than become an
         // empty list: publishing an empty array would read as a claim that the game
         // said nothing, when the truth is only that nothing was captured.
-        BridgeSession.TryProjectReceipt(Receipt(), ActionId, out BridgeReceipt bridge).Should().BeTrue();
+        BridgeSession.TryProjectReceipt(Receipt(), ActionId, Programme(), out BridgeReceipt bridge).Should().BeTrue();
 
         bridge.NativeNotices.Should().BeNull();
     }
@@ -64,7 +87,7 @@ public sealed class BridgeReceiptProjectionTests
             NativeNotices = new[] { "Out of season." },
         };
 
-        BridgeSession.TryProjectReceipt(receipt, ActionId, out BridgeReceipt bridge).Should().BeTrue();
+        BridgeSession.TryProjectReceipt(receipt, ActionId, Programme(), out BridgeReceipt bridge).Should().BeTrue();
 
         bridge.Evidence.Should().NotBeNull();
         bridge.Evidence!["detail"].Should().Be("target=seed;slot=0");
@@ -78,8 +101,10 @@ public sealed class BridgeReceiptProjectionTests
     {
         // The wire identity charset is the contract; a receipt whose action lineage
         // cannot be represented must fail closed rather than publish a broken id.
-        BridgeSession.TryProjectReceipt(Receipt(), "not a valid id!", out _).Should().BeFalse();
+        BridgeSession.TryProjectReceipt(Receipt(), "not a valid id!", Programme(), out _).Should().BeFalse();
     }
+
+    private static BridgeExecutionOrigin Programme() => new("programme", "plan_01", "n01");
 
     private static LocalExecutionReceipt Receipt() =>
         new(ExecutionId, RequestId, ExecutionState.Succeeded, "seed_planted", 12, null, ActionId);

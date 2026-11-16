@@ -77,6 +77,15 @@
  *            (`source_shape_read_from_raw_text:<file>:<line>:<tokens>:<pattern>`), while the same pattern over `.shape`
  *            is examined and passes.
  */
+
+export const gateDeclaration = {
+  id: "check-source-shape-readers",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -441,9 +450,7 @@ export function statusOf({ files, reads, matches, notShape, unparsed }) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const json = argv.includes("--json");
   const reading = auditSourceShapeReaders({ root });
   const status = statusOf(reading);

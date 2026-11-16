@@ -116,37 +116,48 @@ const PATCH = "{ x: 60, y: 18, w: 20, h: 3 }";
 /**
  * THE RED CASE, and the one a kind-keyed dispatch table fails.
  *
- * hops on columns 0,3,6..., coffee on 1,4,7..., and column 2,5,8... is deliberately a path. Three loops, one shape,
- * one seed each. A `{ empty_tillable: "plant_seed" }` table can express exactly one of these three decisions for every
- * empty tillable tile, which is why intercropping cannot be declared with it.
+ * A mixed patch: what stands on the tile decides the row, not the kind its classifier names. Filtering by `kind` asks
+ * "whatever the Mod would clear with a scythe", which sent a weed tool at the stones and reported the stones as worked, so
+ * the caller names the OCCUPANT - the engine's own word - and writes one loop per thing that is standing there. A
+ * `{ empty_tillable: "plant_seed" }` table can express exactly one of these three decisions for every empty tillable
+ * tile, which is why a mixed patch cannot be declared with it.
  */
-test("intercropped planting is three loops over one patch, each decided by column, and the path is left alone explicitly", () => {
-  const loop = loopOf(
+test("a mixed patch is three loops over one rectangle, each decided by what stands there, and the crop row is left alone explicitly", () => {
+  const nodes = nodesOf(
     compile(
       `builder.for_each({
        source: { area: ${PATCH} },
-       where: [{ col: { every: 3, offset: 0 } }],
-       do: { action: "plant_seed", seed: "hops" }
+       where: [{ occupant: "weed" }],
+       do: { action: "cut_weeds" }
      });
      builder.for_each({
        source: { area: ${PATCH} },
-       where: [{ col: { every: 3, offset: 1 } }],
-       do: { action: "plant_seed", seed: "coffee" }
+       where: [{ occupant: "stone" }],
+       do: { action: "break_rock" }
      });
      builder.for_each({
        source: { area: ${PATCH} },
-       where: [{ col: { every: 3, offset: 2 } }],
+       where: [{ occupant: "crop" }],
        do: null
      });`,
     ),
   );
-  assert.deepEqual(loop.source, { area: { x: 60, y: 18, w: 20, h: 3 } });
-  assert.deepEqual(loop.where, [{ col: { every: 3, offset: 0 } }]);
-  assert.deepEqual(
-    loop.do,
-    [{ action: "plant_seed", seed: "hops" }],
-    "the single form reads back as the chain of length one",
+  assert.equal(
+    nodes.length,
+    3,
+    "three calls are three nodes: the Mod expands each over the game thread, not the compiler",
   );
+  const loops = nodes.map((node) => node.arguments.loop as Record<string, unknown>);
+  assert.deepEqual(
+    loops.map((loop) => [loop.where, loop.do]),
+    [
+      [[{ occupant: "weed" }], [{ action: "cut_weeds" }]],
+      [[{ occupant: "stone" }], [{ action: "break_rock" }]],
+      [[{ occupant: "crop" }], null],
+    ],
+    "each node carries the one predicate and the one effect its own call wrote, in the caller's order",
+  );
+  for (const loop of loops) assert.deepEqual(loop.source, { area: { x: 60, y: 18, w: 20, h: 3 } });
 });
 
 /**
@@ -156,8 +167,8 @@ test("intercropped planting is three loops over one patch, each decided by colum
 test("no observation call is needed before the loop: the caller declares the loop without reading the world", () => {
   const script = `builder.for_each({
        source: { area: ${PATCH} },
-       where: [{ col: { every: 3, offset: 0 } }],
-       do: { action: "plant_seed", seed: "hops" }
+       where: [{ occupant: "weed" }],
+       do: { action: "cut_weeds" }
      });`;
   assert.equal(
     /inspect_tiles|soilTiles|cropTargets|targetId|snapshot\./u.test(script),
@@ -227,7 +238,7 @@ test("a loop larger than the row bound is refused with the row count, not trunca
 test("the compiled loop node passes the Mod's request validator", () => {
   const nodes = nodesOf(
     compile(
-      `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });`,
+      `builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });`,
     ),
   );
   assert.equal(validateBodyProgramCandidateRequest({ programId: "area_loop", nodes: nodes as never }), null);

@@ -343,7 +343,7 @@ test("the census says not measured naming its record when the session published 
 test("no question prints undefined for a field its records do not carry", (t) => {
   t.diagnostic(`population: ${QUESTIONS.length} question kinds - ${QUESTIONS.join(", ")}`);
   const records = [
-    userBatch(START - 1_000, "<player-note>seed the row</player-note>"),
+    userBatch(START - 1_000, "seed the row\n<world-state>\n世界：尚未收到观察\n</world-state>"),
     assistantMessage(START, [
       { type: "thinking", thinking: "the seed row is ready" },
       { type: "toolCall", id: "call_a", name: "stardew_plan_work", arguments: {} },
@@ -490,7 +490,7 @@ test("reading_without_a_source_is_silent: every declared question prints its fou
       ],
     },
     records: [
-      userBatch(START - 1_000, "<player-note>seed the row</player-note>"),
+      userBatch(START - 1_000, "seed the row\n<world-state>\n世界：尚未收到观察\n</world-state>"),
       assistantMessage(START, [
         { type: "thinking", thinking: "the seed row is ready" },
         { type: "toolCall", id: "call_a", name: "stardew_observe", arguments: {} },
@@ -565,7 +565,7 @@ test("reading_without_a_source_is_silent: every declared question prints its fou
 test("bubbles counts speech per prompt turn, so a turn that speaks twice is two bubbles and not one turn", (t) => {
   const directory = fixture({
     records: [
-      userBatch(START, "<player-note>clear the strip</player-note>"),
+      userBatch(START, "clear the strip\n<world-state>\n世界：尚未收到观察\n</world-state>"),
       assistantMessage(START + 1_000, [
         { type: "text", text: "推开门。" },
         { type: "toolCall", id: "call_a", name: "stardew_observe", arguments: {} },

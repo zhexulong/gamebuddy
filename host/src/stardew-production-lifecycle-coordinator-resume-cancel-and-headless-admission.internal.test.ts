@@ -73,6 +73,7 @@ test("game.resume.cancel terminates the reconnect epoch, keeps the armed generat
         });
       },
       recoverDeadOwner: async () => undefined,
+      pushActionPolicy: () => false,
       close: async () => undefined,
     });
   const transientError = Object.assign(new Error("bridge-not-ready"), { code: "ECONNREFUSED" });

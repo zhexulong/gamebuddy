@@ -15,6 +15,14 @@
  * red-proof: inject  an empty `catch {}` with no declaration -> `silent_failure:<kind>:<path>:<symbol>`
  *                    (tools/lib/silent-failure.test.mjs, "an empty catch with no declaration is a finding")
  */
+
+export const gateDeclaration = {
+  id: "check-silent-failure",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkSilentFailures, formatFinding } from "./lib/silent-failure.mjs";

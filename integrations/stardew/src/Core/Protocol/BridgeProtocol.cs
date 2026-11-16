@@ -993,7 +993,10 @@ public static class BridgeProtocol
          // The refusal detail and the recovery diagnostic carry the same two rules the journal enforces: a bound (so a
          // reason cannot become a payload) and a STATE (so a node that proved an effect can never also describe its
          // absence). The state rule is asked of the same declaration the journal uses, not restated here.
-         && IsLocatedReasonShape(node.State, node.RefusalDetail, node.RecoveryDiagnostic);
+         && IsLocatedReasonShape(node.State, node.RefusalDetail, node.RecoveryDiagnostic)
+         // The two fields a BATCH node proves with, on the same footing and the opposite direction: those name the absence
+         // of an effect, these ARE the effect, and each is legal only on the states its declaring layer permits.
+         && IsProofShape(node.State, node.Evidence, node.PostconditionVerification);
 
 private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @event is not null
          && IsJavaScriptSafeInteger(@event.Cursor)
@@ -1017,14 +1020,15 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "actionId", "x", "y" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "evidence", "postconditionVerification", "actionId", "x", "y" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
          && IsAbsentNullOrIdentifier(value, "actionId")
          && IsAbsentNullOrCoordinatePair(value)
          && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
          && IsAbsentNullOrBoundedHint(value, "hint")
-         && IsLocatedReasonShape(value);
+         && IsLocatedReasonShape(value)
+         && IsProofShape(value);
 
     /// <summary>
     /// An optional action id: absent, JSON null, or a program identifier in the journal's own grammar.
@@ -1101,6 +1105,36 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         return TryReadOptionalString(value, "refusalDetail", out string? refusalDetail)
             && TryReadOptionalString(value, "recoveryDiagnostic", out string? recoveryDiagnostic)
             && IsLocatedReasonShape(stateValue.GetString(), refusalDetail, recoveryDiagnostic);
+    }
+
+    /// <summary>
+    /// The two PROOF fields a batch node carries, checked against the state that may carry them.
+    ///
+    /// <para>
+    /// The mirror of <see cref="IsLocatedReasonShape(string, string, string)"/>: that pair names the ABSENCE of an effect and
+    /// is legal exactly on the states that stopped short, while `Evidence`/`PostconditionVerification` ARE the effect and are
+    /// legal only where it was proved (<see cref="BodyProgramValidation.MayCarryProof"/>). The bound is the journal's own
+    /// <see cref="BodyProgramValidation.IsOpaqueTerminalProof"/>, which is also the aggregate's ceiling
+    /// (`MaximumAggregateChars`), so a frame this accepts cannot be one the journal would have refused - and a frame it
+    /// refuses cannot be one the journal stored. Both overloads recover the state through the same `ToWireValue` projection
+    /// that produced the token.
+    /// </para>
+    /// </summary>
+    private static bool IsProofShape(string? wireState, string? evidence, string? postconditionVerification)
+    {
+        BodyProgramNodeState[] named = Enum.GetValues<BodyProgramNodeState>().Where(state => ToWireValue(state) == wireState).ToArray();
+        if (named.Length != 1) return false;
+        bool proved = BodyProgramValidation.MayCarryProof(named[0]);
+        return (evidence is null || (proved && BodyProgramValidation.IsOpaqueTerminalProof(evidence)))
+            && (postconditionVerification is null || (proved && BodyProgramValidation.IsOpaqueTerminalProof(postconditionVerification)));
+    }
+
+    private static bool IsProofShape(JsonElement value)
+    {
+        if (!value.TryGetProperty("state", out JsonElement stateValue) || stateValue.ValueKind != JsonValueKind.String) return false;
+        return TryReadOptionalString(value, "evidence", out string? evidence)
+            && TryReadOptionalString(value, "postconditionVerification", out string? postconditionVerification)
+            && IsProofShape(stateValue.GetString(), evidence, postconditionVerification);
     }
 
     /// <summary>
@@ -1209,7 +1243,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             snapshot.Nodes.Select(node =>
             {
                 BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y);
+                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification);
             }).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)

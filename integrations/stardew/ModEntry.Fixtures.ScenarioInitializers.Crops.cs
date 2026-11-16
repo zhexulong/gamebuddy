@@ -43,9 +43,7 @@ public sealed partial class ModEntry
         finally { Game1.currentLocation = previousLocation; }
         bool groundExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
             .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
-            .Any(tile => farm.GetHoeDirtAtTile(tile) is null
-                && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
-                && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+            .Any(tile => ExecutionManager.IsTillableTile(farm, (int)tile.X, (int)tile.Y));
         if (!groundExists)
             throw new InvalidOperationException("fixture_native_tillable_soil_missing");
         this.nativeLocalPlayerFixtureInitialized = true;
@@ -182,9 +180,7 @@ public sealed partial class ModEntry
         finally { Game1.currentLocation = staminaSetupPreviousLocation; }
         bool staminaGroundExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
             .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
-            .Any(tile => farm.GetHoeDirtAtTile(tile) is null
-                && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
-                && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+            .Any(tile => ExecutionManager.IsTillableTile(farm, (int)tile.X, (int)tile.Y));
         if (!staminaGroundExists)
             throw new InvalidOperationException("fixture_native_tillable_soil_missing");
         // Below the runner's low-stamina threshold, well above the -15 pass-out floor.
@@ -304,9 +300,7 @@ public sealed partial class ModEntry
                 throw new InvalidOperationException("fixture_native_local_crop_research_remove_dirt_command_unavailable");
             tillableSoilExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
                 .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
-                .Any(tile => farm.GetHoeDirtAtTile(tile) is null
-                    && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
-                    && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+                .Any(tile => ExecutionManager.IsTillableTile(farm, (int)tile.X, (int)tile.Y));
         }
         finally { Game1.currentLocation = cropResearchPreviousLocation; }
         if (!tillableSoilExists)
@@ -518,7 +512,7 @@ public sealed partial class ModEntry
         // inventory, and emits the authoritative receipt.
         Vector2 fixtureArrival = new(64f, 15f);
         Vector2? dirtTile = FindNativeLocalFarmFixtureTile(farm, fixtureArrival, 12, requireEmptyObjectTile: true,
-            extraPredicate: candidate => !farm.terrainFeatures.ContainsKey(candidate) && farm.doesTileHaveProperty((int)candidate.X, (int)candidate.Y, "Diggable", "Back") is not null && !farm.isWaterTile((int)candidate.X, (int)candidate.Y));
+            extraPredicate: candidate => ExecutionManager.IsTillableTile(farm, (int)candidate.X, (int)candidate.Y));
         if (dirtTile is null) throw new InvalidOperationException("fixture_native_local_clear_hoedirt_placement_missing");
         Vector2[] standingCandidates = new[]
         {

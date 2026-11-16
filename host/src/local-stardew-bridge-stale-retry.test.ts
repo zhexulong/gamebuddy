@@ -161,6 +161,7 @@ async function runAgainstPeer(behaviour: PeerBehaviour) {
               reasonCode: "target_reached",
               revision: behaviour.refreshedRevision,
               evidence: { retried: true },
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
             },
           }),
         );

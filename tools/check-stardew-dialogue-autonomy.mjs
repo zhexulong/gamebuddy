@@ -26,6 +26,14 @@
  * *                    `"reason": "incomplete:a4"` with `a4: false`, exit 2
  * *                    (tools/check-stardew-dialogue-autonomy.mjs, the judge this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-dialogue-autonomy",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import process from "node:process";

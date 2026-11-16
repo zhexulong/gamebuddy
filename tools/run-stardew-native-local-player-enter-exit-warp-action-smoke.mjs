@@ -9,6 +9,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence, validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "enter_exit";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
@@ -52,7 +53,7 @@ export async function runEnterExitWarpActionSmoke(
   // A config that is not the isolated native-local topology is a harness error, not a run
   // result: it throws rather than reporting `blocked` (same contract as the sibling
   // enter-exit runner).
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: ACTION });
   try {
     let snapshot = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -210,31 +211,7 @@ function assertEvidence(evidence, key, expected) {
  * dialogue half is the game's own refusal text and may itself contain ';', so only the
  * FIRST '=' of each segment is a separator and the value keeps everything after it.
  */
-function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-}
 
 function snapshotSummary(snapshot) {
   return { ...summarizeSnapshot(snapshot), location: snapshot.location, tile: snapshot.tile };
-}
-
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
 }

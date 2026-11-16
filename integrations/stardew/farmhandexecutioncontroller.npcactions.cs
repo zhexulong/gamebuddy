@@ -162,9 +162,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: this seam starts no tool swing and drives no tool
-        // lifecycle — it is the same instantaneous native object/NPC interaction
-        // `pet_animal` admits through this path.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -189,19 +186,12 @@ internal sealed partial class ExecutionManager
         return this.ExecuteTalkToNpc(executionId, requestId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body, reached both in range and on arrival from the
-    /// approach leg. It re-validates the target identity, the actor's hands and
-    /// the geometry, because the walk can take several ticks and the villager
-    /// walks too.
-    /// </summary>
     private LocalExecutionReceipt ExecuteTalkToNpc(string executionId, string requestId, string targetId)
     {
         GameLocation location = Game1.player.currentLocation;
         TalkNpcTargetResolution resolution = ResolveTalkNpcTarget(location, targetId);
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
-        // The same fact as the request path, re-read on arrival: the walk takes several ticks and the pack can change.
         int previousSlot = Game1.player.CurrentToolIndex;
         int emptyHandSlot = SelectEmptyHandedSlot(Game1.player);
         if (emptyHandSlot < 0)
@@ -211,11 +201,6 @@ internal sealed partial class ExecutionManager
         StardewValley.NPC npc = resolution.Npc!;
         int npcTileX = (int)npc.Tile.X;
         int npcTileY = (int)npc.Tile.Y;
-        // The villager walks too, so this is the post-approach re-check, not the
-        // planner's out-of-range refusal: the actor DID arrive, and the person has
-        // moved. `target_out_of_reach` is the shared approach leg's own vocabulary
-        // for "the walk ended out of reach", and both tiles are reported so the
-        // moved target is visible rather than inferred.
         if (!IsTileWithinChebyshevRadius(Game1.player, npcTileX, npcTileY, 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach",
                 $"{resolution.Identity};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
@@ -227,9 +212,6 @@ internal sealed partial class ExecutionManager
         bool handled;
         try
         {
-            // THE SEAM. The native entry itself, with the hand emptied for the
-            // call so it selects the talk branch. No input edge, no synthesized
-            // click, no reproduced dialogue construction.
             Game1.player.CurrentToolIndex = emptyHandSlot;
             handled = npc.checkAction(Game1.player, location);
         }
@@ -243,10 +225,6 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        // Re-read the world AFTER the call. The dialogue is the talk branch's
-        // observable outcome; the relationship facts are corroboration only,
-        // because grantConversationFriendship is a no-op once the farmer has
-        // already talked to this villager today.
         bool dialogueUpAfter = Game1.dialogueUp;
         bool dialogueBoxUpAfter = Game1.activeClickableMenu is DialogueBox;
         string menuAfter = Game1.activeClickableMenu?.GetType().Name ?? "none";
@@ -263,17 +241,9 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "talk_to_npc_talked", evidence);
         if (!handled)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "talk_to_npc_not_handled", evidence);
-        // checkAction returned true through one of the entry's other exits
-        // (spouse kiss, Dwarf/Krobus shop, Leo memory, pants easter egg). The
-        // native call ran and no dialogue came up: say exactly that.
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "talk_to_npc_no_dialogue", evidence);
     }
 
-    /// <summary>
-    /// One resolved talk subject, or the named reason the published target can no
-    /// longer be talked to. <see cref="Identity"/> is the evidence prefix shared
-    /// by every receipt this body mints.
-    /// </summary>
     private sealed record TalkNpcTargetResolution(
         bool Accepted,
         string ReasonCode,
@@ -285,15 +255,6 @@ internal sealed partial class ExecutionManager
             new(false, reasonCode, evidence, string.Empty, null);
     }
 
-    /// <summary>
-    /// Re-derives the person the opaque id names, on the game thread, from the
-    /// actor's CURRENT location. The id is the family identity
-    /// (`BuildNpcRelationshipTargetId`), so this is the same subject
-    /// npc_relationship/interact_npc_with_item resolve — and deliberately without
-    /// their friendship-record requirement: the native talk branch can draw from
-    /// an already-queued dialogue without one, and refusing here would refuse
-    /// worlds the native entry serves.
-    /// </summary>
     private static TalkNpcTargetResolution ResolveTalkNpcTarget(GameLocation location, string expectedTargetId)
     {
         StardewValley.NPC? npc = location.characters
@@ -309,9 +270,6 @@ internal sealed partial class ExecutionManager
 
         string identity = $"location={location.NameOrUniqueName};target={expectedTargetId};npc={npc.Name};tile={(int)npc.Tile.X},{(int)npc.Tile.Y}";
 
-        // checkAction's own early refusals (:2466-2478), before any dialogue
-        // logic: an invisible or sleeping villager can never reach the talk
-        // branch, so the actor is not sent walking first.
         if (npc.IsInvisible || npc.isSleeping.Value)
             return TalkNpcTargetResolution.Reject(
                 "talk_to_npc_target_unavailable",

@@ -6,7 +6,8 @@
  * reaches the model: `snapshot-projection.ts` (the user-turn fact block), `fact-brief.ts` (the per-turn paragraph),
  * `game-world-vocabulary.ts` (the world-sense line both of those render), `runtime-core.internal.ts` (the
  * `<runtime-environment>` header), `stardew-observation-budget.ts` (the `stardew_observe` payload),
- * `body-program-script.ts` (the plan builder's action set). When the native layer grows a field, nothing forces any of them to notice.
+ * `body-program-script.ts` (the plan builder's action set). When the native layer grows a field, nothing forces any of
+ * them to notice.
  *
  * Measured 2026-10-28: `actorDispositionDetail` had been on the wire since the disposition work
  * (`farmhandexecutioncontroller.cs:2401`, `protocol.ts:272-276`), and a `ShippingMenu` owned the screen while the
@@ -44,11 +45,13 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   "weather",
   "catalogRevision",
   "capabilities",
+  // The night's own location verdict: the `Sleep:` line states where the day can end from it, because the condition is
+  // the executor's FarmHouse TYPE test and `location` is a map name that cannot answer it. Measured 2026-11-23: the line
+  // said "from wherever you are" while `SleepAndAdvanceDayLifecycle` refused `not_home`.
   // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
   // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
   "cookingStationTargets",
-  // The water a rod may be cast at on this map, read by the nearby-target line `<world-state>` prints: the family is a
-  // key of `TARGET_FAMILY_LABELS` (`game-world-vocabulary.ts`), so the line names its tiles every turn.
+  // The water a rod may be cast at on this map, read by the per-turn paragraph's water line.
   //
   // `DiscoverWaterTargets` is a whole-map scan of the engine's own `canFishHere` + `isTileFishable` pair, so the family
   // is a property of the MAP: only its order and its cap depend on where the actor stands. And `fish_here` refuses
@@ -179,10 +182,8 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "The number of distinct (family, reason) rows the Mod's cap left out of `discoveryExclusions`, paired with the register it counts. Without it a bounded register reads as a complete one - the same defect `soilTilesOmitted` exists for, one layer out. Delivered by `stardew_observe`.",
   currentToolSlotItem:
     "The qualified item id in the current tool slot; `currentTool` and `toolSlots[].label` already publish the tool identity, which the environment line renders as a tool word, so this would be a second spelling of a fact already in the prompt.",
-  seedSupplyTargets:
-    "Where the seeds the actor HOLDS are sold, for how much, and whether the shop's own hours query says it is open. Read by the live harness, which is the layer that knows the DAY's task: the shortage is `task patch tiles` minus `heldCount`, and the Host's per-turn fact block has no task to subtract from. Publishing it into the environment line would state a supply with no shortage beside it, once per turn, for a fact that changes once a day. Delivered by `stardew_observe` to the harness.",
   seedSupplyTargetsOmitted:
-    "The number of `seedSupplyTargets` rows the Mod's cap (8) left out, paired with the family it counts. Nothing reads it today: the family is withheld above, and the only reader of the rows - `tools/lib/seed-shortage.mjs`, the live harness that turns them into the day's seed-shortage fact - computes the shortage from the rows alone and never consults this count, so a supply truncated at eight rows still reads as a complete one to that layer. That file is where it has to be read if the fact is ever to state the truncation; until then the wire validates it and no product text shows it.",
+    "The number of `seedSupplyTargets` rows the Mod's cap (8) left out, paired with the family it counts. The family's seed half now prints as `种子: …` in `<world-state>` (`formatHeldSeeds`), and this count still reaches no product text: a seed dropped by that cap is printed by the pack list instead (it is only left out of the seed sentence when a row names it), so the understatement is bounded rather than silent. The live harness (`tools/lib/seed-shortage.mjs`) computes the shortage from the rows alone and never consults this count, so a supply truncated at eight rows still reads as a complete one to that layer. That file is where it has to be read if the fact is ever to state the truncation.",
 });
 
 /**
@@ -227,6 +228,11 @@ export function projectionReads(source: string, key: string): boolean {
     // A destructure binding is a read too: `const { actorDispositionDetail } = snapshot` names the key with no
     // dot and no quotes, and that is how the projections actually take most fields.
     new RegExp(`\\{[^}]*\\b${key}\\b[^}]*\\}\\s*=`),
+    // A LABEL-TABLE ENTRY is a read. `TARGET_FAMILY_LABELS` maps a family key to the words she reads
+    // (`waterTargets: "可下竿的水面"`), and the renderer iterates that table - so the key reaches her without its
+    // name ever appearing in field position. Without this, retiring a module that read the key literally would make
+    // a still-rendered fact look unprojected, and the gate would push a second reader into the tree.
+    new RegExp(`^\\s*["']?${key}["']?:\\s*["']`, "m"),
   ];
   // Strip comments first: this file's own prose names keys it does not read, and a gate that counts its own
   // documentation as a read is the "check that reads the wrong thing" failure this repo keeps paying for.

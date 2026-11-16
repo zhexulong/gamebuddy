@@ -256,10 +256,12 @@ public sealed class TileAreaQueryTests
     [Fact]
     public void EveryPublishedFactNamesOneOwner()
     {
-        string[] published =
-        {
-            "x", "y", "tillable", "occupant", "hoed", "watered", "crop", "passable",
-        };
+        // The population is the ROW's own definition rather than a list here, so a field added to the record without an
+        // owner in `PublishedFacts` fails by name, and a table entry the row no longer carries fails too.
+        string[] published = typeof(BridgeTileAreaRow)
+            .GetProperties()
+            .Select(property => char.ToLowerInvariant(property.Name[0]) + property.Name[1..])
+            .ToArray();
         TileAreaQuery.PublishedFacts.Select(entry => entry.Fact).Should().OnlyHaveUniqueItems();
         TileAreaQuery.PublishedFacts.Select(entry => entry.Fact).Should().BeEquivalentTo(published);
         TileAreaQuery.PublishedFacts.Should().OnlyContain(entry => entry.Owner.Contains('.'), "an owner names type and member");

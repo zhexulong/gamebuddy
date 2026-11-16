@@ -70,6 +70,15 @@
  *            `dark` reading of it still passes; a `[data-theme="sepia"]` root written outside the token-root shape ->
  *            `theme_selector_unread:sepia` (tools/check-contrast-tokens.test.mjs builds each in a temp dir).
  */
+
+export const gateDeclaration = {
+  id: "check-contrast-tokens",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -535,9 +544,7 @@ export function reportContrastTokens(result, { fail = false, out = process.stdou
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   return reportContrastTokens(checkContrastTokens({ root }), { fail: argv.includes("--fail") });
 }
 

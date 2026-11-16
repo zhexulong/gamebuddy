@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { companionArrivalAlreadySaid } from "./companion-arrival-fact.js";
 import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
 import { CompanionLoop } from "./companion-loop.js";
@@ -502,7 +501,6 @@ function productionDependencies(): FarmhandCompanionPreviewDependencies {
         turnTracker,
         runtime.bindIntegrationReceipt,
         evidence,
-        Object.freeze({ alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager) }),
       ),
   });
 }

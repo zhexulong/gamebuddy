@@ -30,6 +30,18 @@ type StardewPlayerHostSlot =
   | Readonly<{ state: "not_started"; ownership: "none" }>
   | Readonly<{ state: "pending"; ownership: "gamebuddy_direct_spawn" }>
   | Readonly<{ state: "awaiting_attestation"; ownership: "gamebuddy_direct_spawn" }>
+  /**
+   * The Player Host this lifecycle launched is up AND its own signed advertisement has been
+   * correlated: the game exists and can be read.
+   *
+   * The facade never produces this member - it has no attestation authority, and the
+   * `authenticated` member below is the one an independent attachment flow produces. It is
+   * declared here because the composed view can carry it: the coordinator's single
+   * lifecycle state is what knows the launch it drove has been attested, and a union that
+   * could not say so is exactly what forced the projection to override the facade with an
+   * attestation state the coordinator never left.
+   */
+  | Readonly<{ state: "attested"; ownership: "gamebuddy_direct_spawn" }>
   | Readonly<{ state: "stopped"; ownership: "gamebuddy_direct_spawn" }>
   | Readonly<{ state: "unknown"; ownership: "player_external" }>
   | Readonly<{ state: "unavailable"; ownership: "player_external" }>

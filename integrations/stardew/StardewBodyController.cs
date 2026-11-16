@@ -1880,20 +1880,26 @@ internal sealed class StardewBodyController
                 return null;
             // A clump's row is published by ONE family whichever clump it is, because "which tool removes this" is a
             // property of the clump and `debrisTargets` carries it as a field rather than as a separate list.
-            return new Occupancy(clumpKind, clumpPrice.Cost, ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
+            return new Occupancy(clumpKind, clumpPrice.Cost, TileOccupancy.ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
         }
 
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
         {
-            // The object's own word for itself, which is also what `ClearableKind` prices: `(O)2` is the engine's stone
-            // and `Object.IsWeeds()` is the engine's weed (Object.cs:6117). Naming the occupant from a SECOND test here
-            // would let the priced tile and the named tile be different tiles.
-            string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
+            // The object's own word for itself - the SAME one the rectangle publishes and the same predicates each
+            // clearing action's preflight asks (`TileOccupancy.ObjectKind`). A second test here would let the priced tile
+            // and the named tile be different tiles, which is what `(O)2`-only used to do to twig litter.
+            string detail = TileOccupancy.ObjectKind(item);
             if (ClearableKind.Map("object", detail) is not { } objectKind)
                 return null;
-            if (Price(objectKind, toolPower, mining) is not { } objectPrice)
+            // A twig is AXE work (`Object.cs:1182`) and an axe charges foraging, the way a clump's stump does.
+            if (Price(objectKind, toolPower, detail == TileOccupantKind.Twig ? foraging : mining) is not { } objectPrice)
                 return null;
-            return new Occupancy(objectKind, objectPrice.Cost, detail, detail == "weed" ? "weedTargets" : "rockSourceTargets", objectPrice.Stamina);
+            return new Occupancy(objectKind, objectPrice.Cost, detail, detail switch
+            {
+                TileOccupantKind.Weed => "weedTargets",
+                TileOccupantKind.Twig => "worldObjectTargets",
+                _ => "rockSourceTargets",
+            }, objectPrice.Stamina);
         }
 
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -1951,37 +1957,6 @@ internal sealed class StardewBodyController
     /// </summary>
     internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
 
-    /// <summary>
-    /// The ENGINE's own name for one resource clump, from the constants its own type declares
-    /// (<c>ResourceClump.cs:15-35</c>): <c>stumpIndex</c>, <c>hollowLogIndex</c>, <c>meteoriteIndex</c>,
-    /// <c>boulderIndex</c>, <c>quarryBoulderIndex</c> and the four <c>mineRock*Index</c> rows.
-    ///
-    /// <para>
-    /// Named from the engine rather than from the costing table because the two answer different questions and a
-    /// refusal has to answer the caller's: `rock` is what a quarry boulder COSTS to remove, and "a quarry boulder" is
-    /// what is standing there. Written against the constants, not their values, so a target-version change to the
-    /// native table lands here as a compile-time rename rather than as a silently wrong word.
-    /// </para>
-    /// <para>
-    /// The fallback is unreachable for a PRICED clump (<c>TryGetDebrisToolRequirement</c> prices exactly these nine),
-    /// and it is kept because the honest answer to "a clump was priced but this function has no name for it" is a word
-    /// no action declares - which the refusal reports as `no_published_action_clears:resource_clump` - rather than a
-    /// name borrowed from a neighbour. A future engine constant therefore announces itself instead of lying.
-    /// </para>
-    /// </summary>
-    internal static string ClumpOccupant(int parentSheetIndex) => parentSheetIndex switch
-    {
-        StardewValley.TerrainFeatures.ResourceClump.stumpIndex => "stump",
-        StardewValley.TerrainFeatures.ResourceClump.hollowLogIndex => "hollow_log",
-        StardewValley.TerrainFeatures.ResourceClump.meteoriteIndex => "meteorite",
-        StardewValley.TerrainFeatures.ResourceClump.boulderIndex => "boulder",
-        StardewValley.TerrainFeatures.ResourceClump.quarryBoulderIndex => "quarry_boulder",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock1Index => "mine_rock_1",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock2Index => "mine_rock_2",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock3Index => "mine_rock_3",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock4Index => "mine_rock_4",
-        _ => "resource_clump",
-    };
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
         GameLocation? location = localPlayer.currentLocation;

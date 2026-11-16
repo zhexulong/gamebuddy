@@ -51,45 +51,22 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalShipItem(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
                 $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveShippingBin(Game1.player) is not ResolvedShippingBin bin)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_target_changed", $"target={targetX},{targetY};expected={expectedTargetId}");
-        // Everything that does not depend on where the actor stands is decided BEFORE
-        // the geometry, so a walk is only committed for a bin and a stack that could
-        // actually ship on arrival.
         if (FindCarriedShippableSlot(expectedQualifiedItemId, out StardewValley.Object? carried) < 0 || carried is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
-        // Closed admission guard against permanent item destruction: the native
-        // seam accepts any Item, but only shipped Objects are priced at the next
-        // new day; a Tool would settle for 0g and be cleared with the bin.
         if (!carried.canBeShipped())
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId}");
-        // W-rule: the actor must stand next to the bin's actual footprint; the
-        // client-supplied tile is only a stale-planning hint and never the
-        // authority for the native call. Farm's building and IslandWest's island
-        // bin both resolve to an origin-plus-extent footprint, so one rule is
-        // enough for either location. Out of it, the actor walks in rather than
-        // being refused: the native bin is an ordinary building on the map the
-        // actor already stands on.
         if (ShippingBinChebyshevDistance(Game1.player, bin) > 1)
         {
             return this.TryBeginToolApproach(
@@ -97,10 +74,6 @@ internal sealed partial class ExecutionManager
                 executionId,
                 "ship_item",
                 Game1.player.currentLocation,
-                // The walk's target is the bin's occupied tiles, never its anchor: a
-                // shipping bin is 2x2 (and larger), so a tile beside the anchor can be
-                // INSIDE the bin - standing in the bin is not approaching it - and the
-                // south face is two rows below the anchor, outside its own ring.
                 (bin.TileX, bin.TileY),
                 ShippingBinFootprintTiles(bin),
                 expectedTargetId,
@@ -112,15 +85,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteShipItem(executionId, requestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes ship_item against the current world, re-reading the bin, the footprint distance and the stack
-    /// because an approach leg may have taken several ticks. Shared by the in-range path and the
-    /// post-approach path, so neither is a copy of the other.
-    ///
-    /// The two arrival failures keep different names: a bin that is no longer the requested one is
-    /// <c>shipping_bin_target_changed</c>, and a footprint the actor still cannot reach after walking is
-    /// <c>target_out_of_range</c>.
-    /// </summary>
     private LocalExecutionReceipt ExecuteShipItem(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         if (Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
@@ -130,8 +94,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_target_changed", $"target={targetX},{targetY};expected={expectedTargetId};actual={bin.TargetId}");
-        // The stack is re-resolved HERE, after the walk, not read back from the request: the pack shifted on the way
-        // and a request's slot would name whatever now occupies it. Same rule chest_store uses.
         int slot = FindCarriedShippableSlot(expectedQualifiedItemId, out StardewValley.Object? carried);
         if (slot < 0 || carried is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
@@ -146,9 +108,6 @@ internal sealed partial class ExecutionManager
         int binCountBefore = ShippingBinItemCount(binInventory, expectedQualifiedItemId);
         int inventoryCountBefore = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         bool menuBefore = Game1.activeClickableMenu is not null;
-        // The one native call: Farm.shipItem performs the inventory release, the
-        // shipping-bin write, the native shipment animation and
-        // lastItemShipped in the same order the game's own UI callback does.
         Game1.getFarm().shipItem(shippable, Game1.player);
         bool menuAfter = Game1.activeClickableMenu is not null;
 
@@ -161,7 +120,7 @@ internal sealed partial class ExecutionManager
             && binCountAfter == binCountBefore + stackShipped
             && lastItemShippedMatches;
         string evidence = $"location={bin.LocationName};target={expectedTargetId};bin={bin.TileX},{bin.TileY};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={slot};stack={stackShipped};inventory_before={inventoryCountBefore};inventory_after={inventoryCountAfter};bin_before={binCountBefore};bin_after={binCountAfter};last_item_shipped_matched={lastItemShippedMatches.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "item_shipped" : "item_shipped_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "item_shipped", "item_shipped_postcondition_unavailable", evidence);
     }
 
     /// <summary>
@@ -227,14 +186,6 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
-    /// <summary>
-    /// Opaque island bin identity. The published id namespace itself carries the
-    /// location, so an island target and a Farm target are separated by
-    /// construction rather than by the chance of two truncated hashes differing:
-    /// the Farm ids are always prefixed `shipping_bin_` and these always
-    /// `shipping_bin_island_`, so the two sets can never intersect even if both
-    /// locations somehow produced the same coordinate string.
-    /// </summary>
     private static string BuildIslandShippingBinTargetId(StardewValley.Locations.IslandWest island)
     {
         Microsoft.Xna.Framework.Point position = island.shippingBinPosition;
@@ -242,14 +193,6 @@ internal sealed partial class ExecutionManager
         return $"shipping_bin_island_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The bin's occupied tiles, which is the walk target and the distance measurement alike.
-    ///
-    /// A shipping bin is multi-tile: 2x1 on the Farm and 2x2 on Ginger Island, taken from the
-    /// building's own live extent so a resized bin is measured as it actually is. Both rules read
-    /// this ONE enumeration of the extent, so the tiles the distance check measures and the tiles the approach
-    /// hands to the walk selector cannot drift apart. The extent always grows +x/+y from the footprint origin.
-    /// </summary>
     private static (int X, int Y)[] ShippingBinFootprintTiles(ResolvedShippingBin bin)
     {
         return new FootprintRect(bin.TileX, bin.TileY, bin.TilesWide, bin.TilesHigh)
@@ -300,15 +243,6 @@ internal sealed partial class ExecutionManager
         return -1;
     }
 
-    /// <summary>
-    /// Advertise one shippable backpack slot per shipping bin. The slot identifies
-    /// the exact item the actor would hand to <c>Farm.shipItem</c>; the bin tile
-    /// is where the actor must stand next to. Both bins the actor can reach -- the
-    /// Farm's Shipping Bin building and, after the island house upgrade,
-    /// IslandWest's island bin -- go through the same resolver, so discovery can
-    /// never offer a bin the execution would refuse. Only items that pass the same
-    /// <c>canBeShipped</c> admission the execution redeems are advertised.
-    /// </summary>
     private IReadOnlyList<BridgeShippingBinTarget> DiscoverShippingBinTargets(Farmer player)
     {
         if (player.currentLocation is not (Farm or StardewValley.Locations.IslandWest)) return Array.Empty<BridgeShippingBinTarget>();

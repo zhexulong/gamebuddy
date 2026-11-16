@@ -3,19 +3,17 @@ import { createContext, runInContext } from "node:vm";
 import {
   FOR_EACH_SOURCE_UNRECOGNISED,
   forEachDocumentLength,
-  forEachRules,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
-  MAX_FOR_EACH_RULES,
   MAX_FOR_EACH_STEPS,
+  PLAN_FOR_EACH_LOOP_KEYS,
   PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
   readForEachLoop,
-  sameForEachSource,
-  withForEachRule,
 } from "./body-program-for-each.js";
+import { isExpressionOnlyAction } from "./action-registry.js";
 import { packAreaSteps, packingKindOf, toolChargeCeilingForClaim } from "./body-program-packing.js";
 import {
   type ActionRegistration,
@@ -114,11 +112,19 @@ type PublishedPlanToolRequirement =
  * One action as the Mod published it for Body Programs: the id, the family it belongs to, and everything a script or a
  * program must supply or can read back. Every field is the Mod's own declaration, so a refusal or a shape answer cannot
  * describe an action differently from the surface the Mod actually enforces.
+ *
+ * <p>
+ * WHAT IS NOT HERE IS DELIBERATE: the registration's `lifecycle` is OUR release maturity, not a fact a caller can act on.
+ * It used to ride along in every shape answer (`stardew_plan_shape` printed `published`, `live_verified` or `experimental`
+ * per action), which is a word that answers nothing the companion can do: whether an action is plannable is decided by the
+ * vocabulary she is handed and by the Mod's admission, not by a label she has to interpret. The label still lives where it
+ * is used - the registry, the gates, the dashboards - and `agent_visible_field_is_our_bookkeeping:<field>`
+ * (`body-program-script.test.ts`) keeps any other field of ours from reaching her the same way.
+ * </p>
  */
 export type PublishedPlanAction = Readonly<{
   actionId: string;
   familyId: string;
-  lifecycle: string;
   arguments: readonly PlanArgumentShape[];
   outputFacts: readonly Readonly<{ name: string; type: string }>[];
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
@@ -212,7 +218,7 @@ const MAX_REPORTED_PLAN_INSERTIONS = 16;
  * insertions displace for every call after them. Every list is bounded (see `MAX_REPORTED_PLAN_CALLS`) and every count is
  * not, so a bounded list never reads as "that was the whole of it".
  *
- * THE FOUR LISTS PARTITION THE CALLS THE SCRIPT REACHED: each call lands in exactly one of `acceptedSteps`, `merged`,
+ * THE THREE LISTS PARTITION THE CALLS THE SCRIPT REACHED: each call lands in exactly one of `acceptedSteps`,
  * `noStepNeeded` and `dropped`, so their counts sum to the number of builder calls the script made. That is the invariant
  * `tools/check-plan-legal-fixpoint.mjs` asserts over the whole published vocabulary, and the reason an `ok` answer can no
  * longer hide a step that was thrown away.
@@ -226,16 +232,6 @@ type PlanCallAccount = Readonly<{
   /** Her calls whose own step is a node of the program. */
   acceptedSteps: readonly string[];
   acceptedStepsCount: number;
-  /**
-   * Her loops that joined an EARLIER node's loop instead of becoming their own: `n07:into=n03:same_source`.
-   *
-   * A `for_each` over a source a previous `for_each` already names is a second RULE of that one pass - the Mod expands one
-   * pass per source - so the call did change the program, just not into a node of its own. Named because a fold the author
-   * cannot see is the program quietly disagreeing with her script, which is the same defect as a drop one notch softer: the
-   * result still looks right.
-   */
-  merged: readonly string[];
-  mergedCount: number;
   /** Her calls that had nothing to do: `n04:equip_for:already_held`, the tool the action needs was already in hand. */
   noStepNeeded: readonly string[];
   noStepNeededCount: number;
@@ -642,6 +638,15 @@ const ABSENT_PLAN_GLOBALS: readonly string[] = Object.freeze([
  * The builder's action vocabulary: exactly the registrations the Mod's own Body Program catalog will accept -
  * `published` or `live_verified`, executable, and with every declared argument carrying a Body Program value
  * contract - so a generated method can never name an action a program may not carry.
+ *
+ * <p>
+ * MINUS THE EXPRESSION DECLARATION (`action-registry.ts` `EXPRESSION_ONLY_ACTION_IDS`). Expression is one step by nature,
+ * so a plan step is the wrong home for it: the gesture would queue behind the work steps in front of it and be reported
+ * settled by the plan's own settlement rather than by itself. Those actions reach the actor through their own mounted
+ * tool instead, which `runtime-core.internal.ts` keeps for exactly this declaration - one declaration, one route per
+ * action. Measured `round47` (2026-11-12, 64 assistant turns, 188 planned nodes): every emote the run did not make was a
+ * plan step it never wrote.
+ * </p>
  */
 export function planActionsFromRegistrations(
   registrations: readonly ActionRegistration[],
@@ -649,13 +654,13 @@ export function planActionsFromRegistrations(
   const actions: PublishedPlanAction[] = [];
   for (const registration of registrations) {
     if (!PLAN_ACTION_LIFECYCLES.includes(registration.lifecycle) || registration.kind !== "execution") continue;
+    if (isExpressionOnlyAction(registration.actionId)) continue;
     const declared = declaredArgumentsOf(registration);
     if (declared === undefined || !declared.every((argument) => PLAN_ARGUMENT_TYPES.includes(argument.type))) continue;
     actions.push(
       Object.freeze({
         actionId: registration.actionId,
         familyId: registration.familyId,
-        lifecycle: registration.lifecycle,
         arguments: Object.freeze(declared),
         outputFacts: Object.freeze(declaredOutputFactsOf(registration)),
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
@@ -912,7 +917,18 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
 }
 
 /**
- * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
+ * The most characters the `stardew_plan_work` description may occupy.
+ *
+ * A BUDGET, not a measurement: the block is handed to the model on every Game turn, so every sentence in it spends the
+ * context a plan is written in. Each change that adds prose pays for it here, the number may only fall, and the gate that
+ * reads it (`body-program-script.test.ts`) refuses an overrun by name
+ * (`plan_description_exceeds_budget:<chars>:<budget>`) instead of leaving the cost to be noticed in a transcript.
+ */
+export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 9261;
+
+/**
+ * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
+ * arguments they declare.
  *
  * The names belong HERE, in the description the companion already holds, rather than one tool call away behind
  * `stardew_plan_shape`. Measured 2026-10-28 (`round6`): a run reached 22:00 without ever dispatching `advance_day`,
@@ -922,8 +938,8 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * remove.
  *
  * The vocabulary is the actions handed in - the same `PublishedPlanAction[]` `planShape` answers from - so there is no
- * hand-maintained list to drift from the Mod's catalog. Every id is printed once, under the family the Mod declared it
- * in; nothing else in the block is prose, because the block is read as a vocabulary.
+ * hand-maintained list to drift from the Mod's catalog. Every action is printed once, under the family the Mod declared
+ * it in, as the call it is: its declared argument names in parentheses, `sleep()` for the five that declare none.
  *
  * The other thing it has to teach is SUBMIT, THEN END THE TURN. `plan_work` returns as soon as the Mod accepts, because a
  * held call makes `stop`, `append` and a player's steering unreachable exactly while they matter. The wake is not
@@ -937,23 +953,33 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * taught a shape the compiler then refuses with a different number. Change one and the printed sentence moves with it;
  * change the sentence's MEANING without changing the reader and the two disagree silently, which is how a form ends up
  * named in the description and absent from the tool it names.
+ *
+ * EVERY ROW IT PRINTS IS A CALL THE DECLARATION ALREADY ANSWERS. `planActionVocabularyText` renders the arguments from
+ * `PublishedPlanAction.arguments`, the same field `planShape` reads, so a row and a shape answer cannot disagree - and the
+ * prose that used to explain the argument rules paid for them: the for_each paragraph states what a step must carry in one
+ * sentence per refusal instead of re-teaching the rule beside each spelling.
+ *
+ * THE ROW THAT USED TO SIT BESIDE THE SEQUENCE IS GONE, and the reason is the route's: `express_emote` was taught here as
+ * one example builder call (`c63a5763`), and it is no longer a builder method at all - expression reaches the actor
+ * through its own mounted tool (`EXPRESSION_ONLY_ACTION_IDS`), so an example here would teach a call the compiler now
+ * refuses as `plan_script_unknown_action`. The conduct names the tool.
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn; speak to the player when there is something to coordinate or share, or keep focused on the work. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses voids the whole plan - nothing runs - and the answer names which calls were dropped beside which ones compiled, so repair that step and resend the same piece of work. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn. Every answer carries `nodes`: one row per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none - so one row is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the row along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupant`, `occupantKind` in the very words the `where` filter above takes, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. One call the compiler refuses voids the whole plan - nothing runs - and the answer names the dropped calls beside the compiled ones, so repair and resend. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
-    "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
+    "// Or ONE LOOP over live world rows, expanded by the Mod on the game thread:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
-    "  where: [{ col: { every: 3, offset: 0 } }],\n" +
+    '  where: [{ occupant: "none" }, { field: "tillable", in: [true] }],\n' +
     '  do: { action: "till_soil", ' +
     planExampleCharge("till_soil") +
     " }\n" +
     "});\n" +
-    "// A tile's work is a CHAIN when one action does not finish it - till, then sow, in this order:\n" +
+    "// Or a CHAIN, when one action does not finish a tile:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     '  do: [{ action: "till_soil", ' +
@@ -966,19 +992,21 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     planExampleCharge("water_crop") +
     " });\n" +
     "}\n" +
-    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    "builder.for_each({ " +
+    PLAN_FOR_EACH_LOOP_KEYS.join(", ") +
+    " }) is ONE loop over live world rows, expanded by the Mod on the game thread: `where` a CONJUNCTION of single tests on ONE row, `do` an ORDERED CHAIN of steps on ONE tile - each an action from the list above with its own arguments, at most " +
     String(MAX_FOR_EACH_STEPS) +
-    " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
+    ' of them, or one action, or null to leave the row alone. EACH for_each CALL IS ITS OWN NODE, in the order written. A predicate is ONE test: what stands on the tile ({ occupant: "weed" } - weed, stone, crop, tree, tree_stump, grass, object, terrain, none) or a field the row reports ({ field: "kind", in: ["weed"] }, `in` the one comparison, over accepted values); the pair in the example above claims the rows BOTH empty and tillable, two tests in ONE object is refused, and a word it lacks is refused as for_each_where_unrecognised:<given>;allowed=<its words>. Without it every tile in the rectangle is a row. ' +
     forEachRowIdentityText() +
-    "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
+    "Unclaimed rows are REPORTED - no_row_matched_where:<field>_<test>_<value>:<the occupants> when NO row matched, no_rule_matched:<kind>@<x>,<y> when some did; at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", " +
+    ' rows per loop, and a nested loop is refused by name. The Mod EXECUTES the loop against the world as it stands: the answer carries per-tile counts, ONE ROW PER TILE with its action, state and reasonCode, `steps` and stopped_at=<step>:<reasonCode> on a chain, and not_on_farm, row_action_not_enabled:<actionId>, no_action_for_kind:<kind> named per row. A step carries its action\'s declared arguments - the list beside it above: row_argument_missing:<name>, row_argument_unknown:<name> - and one only you can supply is refused at compile time (loop_do_argument_missing:<name>:declared=[<its arguments>]): fresh ground is tilled with `{ action: "till_soil", ' +
     planExampleCharge("till_soil") +
-    " }` - the range's own minimum is the one named tile - so a step always DECLARES a charge. What that value does NOT decide is the footprint of a packable AREA: the rectangle names the tiles, the held tool's whole footprint covers them, and the compiler emits those native uses at the charge that footprint needs. The one value that is not the compiler's is a charge ABOVE the held tool, which leaves the loop alone for the Mod to refuse by name (charge_exceeds_tool_upgrade:<asked>:<ceiling>); a charge at or below it does not bound the footprint either. `by_kind` covers only the kinds whose work needs no per-action argument. " +
+    " }`, the range's own minimum, so a step always DECLARES a charge; one ABOVE the held tool leaves the loop for the Mod to refuse by name (charge_exceeds_tool_upgrade:<asked>:<ceiling>). `by_kind` covers only kinds whose work takes no per-action argument. " +
     forEachSourceText() +
-    " And one loop document may be at most " +
+    " One loop document is at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
-    " characters - the wire's own bound on the string the loop travels in - so a longer one is refused by the compiler with its own count rather than by the bridge."
+    " characters - the wire's bound on the string it travels in."
   );
 }
 
@@ -992,7 +1020,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
  */
 function forEachSourceText(): string {
   const shapes = PLAN_FOR_EACH_SOURCES.map((source) => `{ ${source}: { x, y, w, h } }`).join(", ");
-  return `\`source\` is exactly one of ${shapes} - an existing rectangle of live map tiles whose rows the pass reads, so the shape of the work is a rectangle to read rather than a reason to observe again - and a source word the form does not have is refused as ${FOR_EACH_SOURCE_UNRECOGNISED}:<given>;allowed=${PLAN_FOR_EACH_SOURCES.join(",")}.`;
+  return `\`source\` is exactly one of ${shapes}, and a source word the form lacks is refused as ${FOR_EACH_SOURCE_UNRECOGNISED}:<given>;allowed=${PLAN_FOR_EACH_SOURCES.join(",")}.`;
 }
 
 /**
@@ -1003,18 +1031,30 @@ function forEachSourceText(): string {
  * shape of the same fact - a row the world cannot name is a row that does not run, and it says which action and family.
  */
 function forEachRowIdentityText(): string {
-  return `\`expectedTargetId\` is FILLED BY THE MOD for each row from the live tile, by the family that action's own descriptor declares, so never write one yourself: a \`do\` carrying it is refused as ${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}, and an action whose family cannot name that tile answers row_target_identity_unavailable:<actionId>:<family> for that row instead of running. `;
+  return `\`expectedTargetId\` is FILLED BY THE MOD per row, by the family its descriptor declares, so never write one: a \`do\` carrying it is refused as ${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}, and a family that cannot name the tile answers row_target_identity_unavailable:<actionId>:<family>. `;
 }
 
-/** One line per family, its members comma-separated, in the order the surface declared them. */
+/**
+ * One line per family, its members printed as the calls they are, in the order the surface declared them.
+ *
+ * THE PARENTHESES ARE THE DECLARATION, NOT THIS FUNCTION'S. The names come from `PublishedPlanAction.arguments` - the
+ * same field `planShape` answers from - so a row cannot print an argument list the compiler does not enforce, and an
+ * action added to the Mod's catalog arrives with its arguments in the same edit that names it.
+ *
+ * AN ACTION THAT TAKES NOTHING PRINTS EMPTY PARENS. Measured `round54`: her own thinking read "Sleep action is
+ * world_lifecycle builder.sleep - args? Probably x,y? ... that costs a turn ... Simpler: speak", and twelve turns of
+ * speech followed by a 02:00 pass-out. The declaration said `sleep` takes no arguments; a bare `sleep` beside `till_soil`
+ * read as an action whose arguments were simply not printed, and only one tool call could tell her which it was.
+ */
 function planActionVocabularyText(actions: readonly PublishedPlanAction[]): string {
   const families = new Map<string, string[]>();
   for (const action of actions) {
+    const row = `${action.actionId}(${action.arguments.map((argument) => argument.name).join(",")})`;
     const members = families.get(action.familyId);
-    if (members === undefined) families.set(action.familyId, [action.actionId]);
-    else members.push(action.actionId);
+    if (members === undefined) families.set(action.familyId, [row]);
+    else members.push(row);
   }
-  return [...families].map(([familyId, actionIds]) => `${familyId}: ${actionIds.join(", ")}`).join("\n");
+  return [...families].map(([familyId, rows]) => `${familyId}: ${rows.join(", ")}`).join("\n");
 }
 
 /**
@@ -1355,7 +1395,6 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     rejected: [],
     rejectedCount: 0,
     acceptedSteps: [],
-    merged: [],
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
@@ -1441,24 +1480,21 @@ export function planResourceConflictCodes(
 /**
  * What became of every call the author wrote, rendered from the state the script left behind.
  *
- * The four lists are built HERE and nowhere else, so no caller can spell the same fact a second way: `acceptedSteps` from
- * the calls that produced their own node, `merged`/`noStepNeeded` from the calls whose work was done another way, and
- * `dropped` from the refusals - the same records `rejected` carries, rendered as the names an author reads. A refusal
- * raised before the script ran (an empty script, a bad snapshot) has no state and therefore no calls, which is a true
- * account of zero rather than a missing one.
+ * The three lists are built HERE and nowhere else, so no caller can spell the same fact a second way: `acceptedSteps` from
+ * the calls that produced their own node, `noStepNeeded` from the calls whose work was already done, and `dropped` from
+ * the refusals - the same records `rejected` carries, rendered as the names an author reads. A refusal raised before the
+ * script ran (an empty script, a bad snapshot) has no state and therefore no calls, which is a true account of zero rather
+ * than a missing one.
  */
 function planCallAccount(state: PlanScriptState | undefined): PlanCallAccount {
   const bounded = <TValue>(entries: readonly TValue[]): readonly TValue[] =>
     Object.freeze(entries.slice(0, MAX_REPORTED_PLAN_CALLS));
   const rejected = state?.rejected ?? [];
   const acceptedSteps = state?.acceptedSteps ?? [];
-  const merged = state?.merged ?? [];
   const noStepNeeded = state?.noStepNeeded ?? [];
   return Object.freeze({
     acceptedSteps: bounded(acceptedSteps.map(planStepName)),
     acceptedStepsCount: acceptedSteps.length,
-    merged: bounded(merged),
-    mergedCount: merged.length,
     noStepNeeded: bounded(noStepNeeded),
     noStepNeededCount: noStepNeeded.length,
     dropped: bounded(rejected.map((rejection) => `${planStepName(rejection.call)}:${rejection.reasonCode}`)),
@@ -1521,12 +1557,10 @@ type PlanScriptState = {
    * The calls whose own step became a node, by position: the `acceptedSteps` half of the account.
    *
    * Recorded where the node is written rather than derived from `builderCalls - rejectedCount` afterwards, because a call
-   * can be honoured WITHOUT adding a node (a `for_each` that merges into an earlier pass, an `equipFor` whose tool is
-   * already in hand) and a subtraction would count those as steps that do not exist.
+   * can be honoured WITHOUT adding a node (an `equipFor` whose tool is already in hand) and a subtraction would count those
+   * as steps that do not exist.
    */
   acceptedSteps: number[];
-  /** The calls whose loop joined an earlier node's loop, `n07:into=n03:same_source`. */
-  merged: string[];
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
@@ -1544,7 +1578,7 @@ type PlanScriptState = {
    */
   insertedNodeIds: string[];
   /**
-   * Which call wrote each node, so a fold can name the call whose loop it joined rather than a node id nothing else in
+   * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
    */
   callOfNode: Map<string, number>;
@@ -2161,7 +2195,7 @@ function emitPlanNode(
       bindings: Object.freeze({}),
     }),
   );
-  // Her step is in the program, so her call is accounted for and cannot also appear as dropped, merged or unneeded.
+  // Her step is in the program, so her call is accounted for and cannot also appear as dropped or unneeded.
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(authorNodeId, state.builderCalls);
 }
@@ -2333,11 +2367,11 @@ function transitionApproachNode(
  * </p>
  * <p>
  * A FILTERED LOOP IS NEVER PACKED. `where` decides a row against the live world, so a loop that carries one names a SUBSET
- * of its rectangle - the path column inside an intercropped patch - and the compiler cannot know which tiles those are. A
- * packed use covers every tile of its footprint, so packing a filtered loop would till the columns the caller excluded: the
- * one thing a packed native use may never do (the same rule the Mod's own sweep applies to an arc nobody named,
- * `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is left exactly as written, and the Mod's
- * per-row rules decide it live.
+ * of its rectangle - the empty tillable tiles inside a patch of weeds and stone - and the compiler cannot know which tiles
+ * those are. A packed use covers every tile of its footprint, so packing a filtered loop would till the rows the caller
+ * excluded - an EFFECT rather than a refusal, and the one thing a packed native use may never do (the same rule the Mod's
+ * own sweep applies to an arc nobody named, `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is
+ * left exactly as written, and the Mod's per-row rules decide it live.
  * </p>
  * <p>
  * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable tool reading leaves the loop exactly as
@@ -2352,11 +2386,9 @@ function tryEmitPackedArea(
   actions: readonly PublishedPlanAction[],
   state: PlanScriptState,
 ): boolean {
-  const rules = forEachRules(loop);
-  if (rules.length !== 1) return false;
-  // A rule with a predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
-  if (rules[0]!.where !== undefined) return false;
-  const effect = rules[0]!.do;
+  // A predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
+  if (loop.where !== undefined) return false;
+  const effect = loop.do;
   // A chain is several actions over the SAME tile: the last one's footprint is not the one the first needs, so a chain is
   // never packed.
   if (effect === null || effect.length !== 1) return false;
@@ -2417,13 +2449,19 @@ function tryEmitPackedArea(
  *
  * ONE CALL, ONE NODE - UNLESS THE LOOP IS A PACKABLE AREA, in which case the packing pass above turns it into the native
  * uses that cover the rectangle exactly. That is the ONE exception, and it exists because the loop's own expansion is one
- * target per tile (`FarmhandForEachExpansion.cs:373`): a packed area left as a loop is walked tile by tile again, which
- * hands back every walk the packing saved.
+ * target per tile (`FarmhandForEachExpansion.cs`): a packed area left as a loop is walked tile by tile again, which hands
+ * back every walk the packing saved.
+ *
+ * A LOOP THAT NAMES A SOURCE AN EARLIER LOOP ALREADY NAMES IS STILL ITS OWN NODE. The compiler used to fold it into that
+ * earlier node as a second rule of one pass (`then`), which made one pass claim two kinds of row; measured over every plan
+ * call she wrote, the fold was the ONLY writer of that key and `then` itself was authored `0 of 37`. Two kinds of row in
+ * one rectangle are two calls, and each reports the rows it did not claim - which is a fact she can read per node instead
+ * of a fold she cannot see.
  *
  * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
- * caller did not write, a rectangle past the row bound with its own count, a stride that claims no index, an action the
- * surface does not publish - so one bad loop is one named refusal beside the loops that did read, and the author corrects
- * that call rather than rewriting the script.
+ * caller did not write, a rectangle past the row bound with its own count, an action the surface does not publish - so one
+ * bad loop is one named refusal beside the loops that did read, and the author corrects that call rather than rewriting the
+ * script.
  */
 function emitForEachNode(
   value: unknown,
@@ -2451,30 +2489,6 @@ function emitForEachNode(
   // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
   refuseMissingStepArguments(loop, actions, state);
   const previous = state.nodes[state.nodes.length - 1];
-  if (previous !== undefined && previous.actionId === FOR_EACH_PLAN_ACTION_ID) {
-    const previousLoop = previous.arguments.loop as PlanForEachLoop | undefined;
-    if (previousLoop !== undefined && sameForEachSource(previousLoop, loop)) {
-      // ONE PASS PER SOURCE. Two `for_each` calls over the same rectangle are two RULES of one intent and not two intents:
-      // separate passes would each report the tile the other one owns as `no_rule_matched`, and a tile both claim would
-      // be worked twice. The first rule stays where the caller wrote it; every rule of the rest joins it in order.
-      const merged: PlanForEachLoop = mergeForEachRules(previousLoop, loop, state);
-      // The LENGTH is measured on the document that would result, not on the call that was just read: composing rules
-      // grows the document, and a check that only saw the new rule would let the merge cross the wire's bound.
-      RefuseOversizedDocument(merged, state);
-      state.nodes[state.nodes.length - 1] = Object.freeze({
-        ...previous,
-        arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...merged }) }),
-      });
-      // HER LOOP DID CHANGE THE PROGRAM, just not into a node of its own: a second rule over the same source is a rule
-      // of that one pass. Named, because a fold she cannot see is the program quietly disagreeing with her script - and
-      // the result still looks right, which makes it harder to notice than a drop.
-      const into = state.callOfNode.get(previous.nodeId);
-      state.merged.push(
-        `${planStepName(state.builderCalls)}:into=${into === undefined ? previous.nodeId : planStepName(into)}:same_source`,
-      );
-      return;
-    }
-  }
   RefuseOversizedDocument(loop, state);
   state.nodes.push(
     Object.freeze({
@@ -2490,54 +2504,6 @@ function emitForEachNode(
   );
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(state.nodes[state.nodes.length - 1]!.nodeId, state.builderCalls);
-}
-
-/**
- * Two `for_each` calls over one source as ONE pass carrying every rule both of them wrote - or a refusal that says how
- * much of the second one could not be carried.
- *
- * <p>
- * MEASURED at `516e2559`: the merge appended exactly `forEachRules(loop)[0]`, so a loop whose own intent was TWO ordered
- * rules - a predicate and an ordered follow-up under `then` - compiled `ok: true` with the follow-up gone. She wrote it,
- * the compiler dropped it, and the answer said the plan was accepted.
- * </p>
- *
- * <p>
- * SO A MERGE IS ALLOWED ONLY WHEN EVERY RULE SURVIVES IT. `MAX_FOR_EACH_RULES` is the pass's own representable size and
- * the Mod's reader enforces it, so a union past it has rules with nowhere to go; trimming would hand the Mod a pass the
- * caller did not write. The refusal's counts are the INCOMING loop's: `<kept>:<dropped>` of the rules it wrote, so the
- * caller reads which of its rules the pass has no room for rather than a document length. The union is compared to the
- * ceiling itself - `refuseForEachMergeOverflow` is where the code is spelled - so the measurement and the refusal that
- * names it are the same statement.
- * </p>
- */
-function mergeForEachRules(
-  previous: PlanForEachLoop,
-  incoming: PlanForEachLoop,
-  state: PlanScriptState,
-): PlanForEachLoop {
-  const previousRules = forEachRules(previous);
-  const incomingRules = forEachRules(incoming);
-  if (previousRules.length + incomingRules.length > MAX_FOR_EACH_RULES)
-    refuseForEachMergeOverflow(Math.max(MAX_FOR_EACH_RULES - previousRules.length, 0), incomingRules.length, state);
-  const merged = incomingRules.reduce(withForEachRule, previous);
-  // AND THE RESULT IS CHECKED AGAINST THE UNION rather than trusted to the fold: the rules the pass reports ARE the union,
-  // in the order the caller wrote them, or this refuses instead of shipping a pass that disagrees with her script.
-  const carried = forEachRules(merged);
-  const kept = incomingRules.filter(
-    (rule, index) => JSON.stringify(carried[previousRules.length + index]) === JSON.stringify(rule),
-  ).length;
-  if (kept !== incomingRules.length || carried.length !== previousRules.length + incomingRules.length)
-    refuseForEachMergeOverflow(kept, incomingRules.length, state);
-  return merged;
-}
-
-/**
- * Refuses a merge the pass has no room for, naming how many of THIS loop's rules survive it and how many have nowhere to
- * go - `plan_script_for_each_merge_would_drop_rules:<kept>:<dropped>`, the one spelling of that refusal.
- */
-function refuseForEachMergeOverflow(kept: number, incoming: number, state: PlanScriptState): never {
-  rejectPlanCall(`plan_script_for_each_merge_would_drop_rules:${String(kept)}:${String(incoming - kept)}`, state);
 }
 
 /**
@@ -2799,11 +2765,11 @@ export const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze([
 /**
  * The arguments a step may still leave out, and why it is not every argument.
  *
- * MEASURED, and it is a finding rather than a permission: every shipped loop example - the one in the description and the
- * intercropping one in `body-program-area-dispatch.test.ts` - writes `do: { action: "plant_seed", seed: "hops" }`,
- * which omits `slot` and `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
+ * MEASURED, and it is a finding rather than a permission: the description's own chain example writes
+ * `do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]`, which omits `slot` and
+ * `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
  * refuses every one of those rows today, because `TryBuildRowArguments` demands each declared argument the row cannot
- * derive, so those examples are ALREADY broken per row. Moving them to plan time here would turn a repair of this unit
+ * derive, so that example is ALREADY broken per row. Moving it to plan time here would turn a repair of this unit
  * into a rewrite of that form's documentation, so they are named instead; a THIRD name is a capability decision, and the
  * test that reads this list asserts it holds exactly these two.
  */
@@ -2831,26 +2797,24 @@ function refuseMissingStepArguments(
   state: PlanScriptState,
 ): void {
   const declared = new Map(actions.map((action) => [action.actionId, action.arguments]));
-  for (const rule of forEachRules(loop)) {
-    if (rule.do === null) continue;
-    for (const step of rule.do) {
-      const arguments_ = declared.get(step.action);
-      if (arguments_ === undefined) continue;
-      const supplied = new Set(Object.keys(step));
-      const declaredNames = arguments_.map((argument) => argument.name);
-      const missing = declaredNames.filter(
-        (name) =>
-          !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
-          !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
-          !supplied.has(name),
-      );
-      if (missing.length === 0) continue;
-      rejectPlanCall(
-        `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
-        state,
-        undefined,
-        Object.freeze(missing),
-      );
-    }
+  if (loop.do === null) return;
+  for (const step of loop.do) {
+    const arguments_ = declared.get(step.action);
+    if (arguments_ === undefined) continue;
+    const supplied = new Set(Object.keys(step));
+    const declaredNames = arguments_.map((argument) => argument.name);
+    const missing = declaredNames.filter(
+      (name) =>
+        !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
+        !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
+        !supplied.has(name),
+    );
+    if (missing.length === 0) continue;
+    rejectPlanCall(
+      `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
+      state,
+      undefined,
+      Object.freeze(missing),
+    );
   }
 }

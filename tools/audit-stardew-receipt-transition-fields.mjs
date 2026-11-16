@@ -39,6 +39,14 @@
 // red-proof: inject  restoring the two fabricated literals this gate was written for (`before = "none"` in
 //                    till_soil, `chunk_removed=true` in the pickup receipt) -> `fabricated_delta:<file>:<line>:<field>`
 //                    on each exact line (tools/audit-stardew-receipt-transition-fields.test.mjs)
+
+export const gateDeclaration = {
+  id: "audit-stardew-receipt-transition-fields",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

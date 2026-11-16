@@ -65,18 +65,6 @@
       "reason": "asserted immediately after the minecart ride, i.e. while the native transition may still be settling"
     },
     {
-      "file": "run-stardew-native-local-player-shake-tree-smoke.mjs",
-      "fact": "shakeTreeTargets",
-      "count": 1,
-      "reason": "`if ((snapshot.shakeTreeTargets ?? []).some(...)) throw target_still_advertised` on a one-shot re-read"
-    },
-    {
-      "file": "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-      "fact": "pedestalTargets",
-      "count": 1,
-      "reason": "`if ((snapshot.pedestalTargets ?? []).some(...)) throw target_still_advertised` on a one-shot re-read"
-    },
-    {
       "file": "run-stardew-native-local-player-travel-smoke.mjs",
       "fact": "tile",
       "count": 1,

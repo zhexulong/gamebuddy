@@ -23,6 +23,14 @@
  * red-proof: self-check  `--rules` runs every rule against a synthetic timeline that violates it, so the gate
  *                    cannot pass without being able to fail (node tools/check-live-run-silence.mjs --rules)
  */
+
+export const gateDeclaration = {
+  id: "check-live-run-silence",
+  domain: "data",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 

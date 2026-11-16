@@ -18,12 +18,19 @@
  * </p>
  *
  * <p>
+ * THE HEAD OF THE MESSAGE IS SPEECH, and it is not a block. The player's own words are the first text in the message,
+ * character for character what they typed, outside every block and under no label: a person talking to their companion
+ * is not a field of the machine's report. Until `2026-11-14` they arrived inside `<player-note>` and were split by an
+ * attribution rule (`player-note.ts`) that guessed, per sentence, whether the words were his own business or a job for
+ * her - machinery that existed only because speech had been presented as data. An imperative addressed to her is hers
+ * and a statement about him is context; nothing has to classify that, and nothing does any more.
+ * </p>
+ *
+ * <p>
  * WHICH BLOCK A FACT BELONGS IN is a property of the fact, not of the batch:
  * </p>
  *
  * <ul>
- *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact: his text split by whose
- *       each sentence is, one label per run (`player-note.ts` reads the note);</li>
  *   <li>`<world-state>` - the snapshot as a paragraph: clock, date, weather, where, stamina, what she carries, and the
  *       nearby target families with their tiles;</li>
  *   <li>`<in-flight>` - the programme she has DISPATCHED and not yet seen settle: what `action_program_status` would
@@ -43,15 +50,17 @@
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
 import {
+  formatBodyState,
   formatGameClock,
   formatGameEnvironmentFacts,
+  formatRipeCrops,
   MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
-import { playerNoteLines } from "./player-note.js";
 import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
-import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
+import { MAX_WORLD_FACT_LINES, boundedField } from "./model-field-budget.js";
+import type { Snapshot } from "./protocol.js";
 
 /**
  * The closed set of block names a delivery may use.
@@ -67,7 +76,6 @@ import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protoco
  * list.
  */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
-  "player-note",
   "world-state",
   "in-flight",
   "world-facts",
@@ -75,17 +83,6 @@ export const FACT_BRIEF_BLOCKS = Object.freeze([
 ] as const);
 
 export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
-
-/**
- * The most fact lines `<world-facts>` names before it counts the rest.
- *
- * The pump already bounds how many facts a batch may hold (`MAX_PENDING_*`) and how large the whole delivery may be
- * (`MAX_BATCH_BYTES`), and the byte bound is what protects the context. This cap is the SECOND bound, and it exists
- * because dropping the oldest fact is right for a run and wrong for a REPORT: a batch of ninety receipts answered "what
- * just happened" with the thirty newest ones and said nothing about the sixty it left out. So the line count is
- * bounded where the sentences are composed, and the remainder is named.
- */
-const MAX_WORLD_FACT_LINES = 24;
 
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
@@ -139,6 +136,16 @@ type SettledNode = Readonly<{
   reasonCode?: string;
   hint?: string;
   reasonDetail?: string;
+  /**
+   * The pass's own row table, verbatim, from the Mod's `BodyProgramJournalNode.Evidence`.
+   *
+   * `for_each` settles ONE node for sixty tiles, so this row - not sixty facts - is where a batch's per-row outcome lives,
+   * and it is the row `round63` read as `{"nodeId":"n02","actionId":"for_each","state":"succeeded"}`: fifteen tiles
+   * tilled, forty-five untouched, and not one tile named.
+   */
+  evidence?: string;
+  /** The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`. */
+  postconditionVerification?: string;
 }>;
 
 /**
@@ -186,7 +193,7 @@ export type FactBriefInput = Readonly<{
   locale: string;
 }>;
 
-/** No programme in flight: the reading a batch carries when the journal has nothing unsettled to name. */
+/** No programme in flight: the reading a batch carries when the journal has nothing to name at all. */
 export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
   programmes: Object.freeze([]),
   omittedProgrammes: 0,
@@ -200,8 +207,8 @@ export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
  */
 export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
-  const note = composePlayerNote(input.inputs);
-  if (note !== "") blocks.push(note);
+  const speech = playerSpeech(input.inputs);
+  if (speech !== "") blocks.push(speech);
   const state = composeWorldState(input.snapshot);
   if (state !== "") blocks.push(state);
   const inFlight = composeInFlight(input.inFlight ?? NOTHING_IN_FLIGHT);
@@ -215,12 +222,37 @@ export function composeFactBrief(input: FactBriefInput): string {
   return blocks.join("\n");
 }
 
-/** The player's own words, verbatim, split by whose each sentence is (`player-note.ts` reads the note). Empty when
- * nobody said anything. */
-function composePlayerNote(inputs: readonly PlayerInput[]): string {
-  const lines = playerNoteLines(inputs.map((input) => input.text));
-  if (lines.length === 0) return "";
-  return block("player-note", lines.join("\n"));
+/**
+ * The player's own words, verbatim, as the head of the message: outside every block and under no label.
+ *
+ * <p>
+ * NOTHING IS ADDED, REMOVED OR REORDERED. Not trimmed, not re-punctuated, not joined into sentences: the text is what
+ * the person typed, and one message per input, in arrival order. A blank input is dropped rather than rendered as an
+ * empty line, which is the one thing a caller can hand over that is not words.
+ * </p>
+ *
+ * <p>
+ * It is deliberately not wrapped in a block. A block is the machine's channel, and the prompt floor tells her that
+ * everything in a block is written by the machine; putting speech in one made the person a field of a report, which is
+ * the defect `<player-note>` carried for three days of live runs.
+ * </p>
+ *
+ * <p>
+ * IT IS NOT FILTERED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Passed through unchanged, a player who types a
+ * block's own markup (`<world-state>`, `</world-state>`) puts that markup in the message, and position alone no longer
+ * tells their words from the machine's report. It is left alone because this channel has ONE sender: `player_text` is
+ * minted by the authenticated control surface of the person this companion belongs to (`companion-control-server.ts`),
+ * so imitating a block imitates it to themselves - there is no third party to deceive, and the words grant nothing.
+ * Everything they could ask for is still admitted by the Mod against the live world on the game thread
+ * (`FarmhandCapabilitySurface`), and a run's verdicts read receipts rather than prose. Escaping or stripping the markup
+ * would silently edit what the player said, which is the one thing this function promises not to do.
+ * </p>
+ */
+function playerSpeech(inputs: readonly PlayerInput[]): string {
+  return inputs
+    .map((input) => input.text)
+    .filter((text) => text !== "")
+    .join("\n");
 }
 
 /**
@@ -254,17 +286,23 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
-      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了；先看一眼再动手）`,
+      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了）`,
     );
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
   const health = formatOwnHealth(world);
   if (health !== "") parts.push(health);
+  const body = formatBodyState(world, true);
+  if (body !== "") parts.push(body);
+  const ripeCrops = formatRipeCrops(world, true);
+  if (ripeCrops !== "") parts.push(ripeCrops);
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);
   if (carrying !== "") parts.push(carrying);
+  const seeds = formatHeldSeeds(world);
+  if (seeds !== "") parts.push(seeds);
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
@@ -303,20 +341,106 @@ const MAX_CARRYING_ROWS = 8;
  * is `displayName` - the wire's own spelling, the one the shipping bin and every other reader uses. ABSENT means the Mod
  * did not publish the family at all - the field is gated on the actions that read the inventory - and stays silent,
  * which is a different statement from `身上没有别的东西`.
+ *
+ * THE PLANTABLE SEEDS ARE NOT PRINTED TWICE: the ids `seedSupplyTargets` names are left out here and printed by
+ * `formatHeldSeeds`, which states the count AND the one thing this list cannot - that a measured empty one means she can
+ * sow nothing. One count in two sentences would be two readings of one fact, and the seed half has a consumer (the tilled
+ * ground waiting for it) this list does not serve.
+ *
+ * THE SLOT AND THE ID ARE THE ADDRESS, AND BOTH ARE PRINTED. `slot` and `expectedQualifiedItemId` are the pair
+ * `open_geode` demands (`host/src/protocol.ts:3748`), `slot` alone is what `deposit_silo_hay` and
+ * `put_item_in_fish_tank` demand - and this line used to drop the slot it was handed, so the number she is asked for was
+ * a number she was never shown. The row's `displayName` is the label and cannot substitute: two stacks of the same item
+ * share a name, and no action accepts a name. Both are the wire's own values, printed unmodified.
+ *
+ * THE CAP NAMES WHERE THE REST IS. A truncated row cannot be addressed from here, so the sentence says which reading
+ * carries the slots this bound dropped (`stardew_observe` publishes the whole family) rather than counting them into a
+ * silence.
  */
 function formatCarrying(world: Snapshot): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
+  const seeds = plantableSeedIds(world);
   const named = rows
     .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
+    .filter((row) => !seeds.has(row.qualifiedItemId))
+    // THE MAPPED ROW KEEPS THE WIRE'S OWN NAMES. An alias (`name: row.displayName`) is how the drop this function is
+    // written against became invisible: a reader of the map saw `name` and `stack` and could not see that the slot had
+    // been left behind. `tools/check-inventory-row-field-rendering.mjs` reads these names against the schema's own.
     .map((row) => ({
-      name: row.displayName.trim(),
+      displayName: row.displayName.trim(),
+      qualifiedItemId: row.qualifiedItemId,
+      slot: row.slot,
       stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
     }));
   if (named.length === 0) return "身上没有别的东西";
-  const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
+  const shown = named
+    .slice(0, MAX_CARRYING_ROWS)
+    .map((row) => `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]`);
   const rest = named.length - shown.length;
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}`;
+}
+
+/**
+ * The qualified ids of the seeds she is holding, as the supply family states them.
+ *
+ * ONE AUTHORITY, TWO SPELLINGS REFUSED. `seedSupplyTargets` is the Mod's own answer to "which seeds in this pack can be
+ * planted" - it reads `Object.SeedsCategory` on the game thread - and its `heldCount` is summed from the same
+ * `inventoryItemFacts` rows this pack list prints. So the seed half of the pack is printed once, from that family:
+ * whichever renderer prints the count, the other one leaves those ids alone.
+ */
+function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return new Set();
+  return new Set(rows.map((row) => row.qualifiedItemId));
+}
+
+/**
+ * The seeds she can actually plant, and how many of each.
+ *
+ * <p>
+ * WHY IT IS HERE. Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and never said
+ * whether she held a seed, so her own thinking answered it - `Note 让种地，但我背包似乎没种子？` - and she did not check the
+ * pack and did not plan to buy one; she went and chopped trees instead. The tile fact was true and she could not act on
+ * it. The two readings that decide whether hoeing is worth anything are the can's water (`formatCarriedCanWater`) and
+ * this one.
+ * </p>
+ *
+ * <p>
+ * THE ZERO IS THE FACT, AND IT IS MEASURED. `seedSupplyTargets` is published only while `plant_seed` is advertised, and
+ * the Mod answers with an empty row set only when no pack slot holds an `Object.SeedsCategory` item - so `[]` is "she
+ * holds no plantable seed", the sentence that turns her guess into a plan. A family the snapshot does not carry prints
+ * NOTHING: absent is not zero, exactly as for the can and for the pack list.
+ * </p>
+ *
+ * <p>
+ * THE COUNT IS THE WIRE'S OWN, NEVER A DEFAULT. A row's `heldCount` is absent when the pack rows were not published at
+ * all, and then the seed is named without a number rather than counted as `0`. Rows are (seed x shop), so the seeds are
+ * de-duplicated by id and the seed's first row states its count.
+ * </p>
+ *
+ * <p>
+ * NO SHOP IS NAMED BESIDE IT. The rows carry where a seed she HOLDS is sold (`shopLocation` / `shopDestination`), and a
+ * zero-seed actor has no row at all - so a counter named beside the zero would be the one invention this line exists to
+ * prevent. The zero is the whole next step: with no seed, hoeing sows nothing.
+ * </p>
+ */
+function formatHeldSeeds(world: Snapshot): string {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return "";
+  if (rows.length === 0) return "种子: 0（背包里没有种子）";
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.qualifiedItemId)) continue;
+    seen.add(row.qualifiedItemId);
+    const name =
+      typeof row.displayName === "string" && row.displayName.trim() !== ""
+        ? row.displayName.trim()
+        : row.qualifiedItemId;
+    seeds.push(Number.isFinite(row.heldCount) ? `${String(row.heldCount)} ${name}` : `${name}（数量未测）`);
+  }
+  return `种子: ${seeds.join("、")}`;
 }
 
 /**
@@ -428,21 +552,6 @@ function composeNearbyTargets(world: Snapshot): readonly string[] {
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * What the block says about every row it just printed: dispatched is not done.
- *
- * <p>
- * THIS SENTENCE IS THE FIX, and it is a STATEMENT rather than an instruction. Measured 2026-11-11 (`round46`):
- * `plan_work` was accepted at 07:25:53 with `settled: false, remaining: 2`; she spoke 11 s later
- * (`*推开门，晨风凉凉地扑在脸上* 门前这片草和石头还横着呢…`), corrected the plan at 07:26:17, spoke again 9 s after that
- * (`*靴底踩着屋里的木地板往西挪*`), and the world was first observed moving at 07:26:34. Neither batch said a step was
- * outstanding, so "I sent it" and "it happened" were the same sentence to her. A "don't narrate work you haven't
- * done" rule would be the wrong shape - she was not told the work was outstanding, so the rule would be scolding her
- * for the batch's silence. This line is the fact the batch owed her.
- * </p>
- */
-const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于一步都还没做成。";
-
-/**
  * `<in-flight>`: the programme she has dispatched, with its own words drawing the line at `settled`.
  *
  * <p>
@@ -457,7 +566,9 @@ const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于�
  * (`identity-profile.ts`, from `FACT_BRIEF_BLOCKS`), so the block's own first line is no longer the only place its
  * meaning comes from: `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` stays readable as nothing but
  * what it is, which is what a batch needs when a reader - a person, a run audit, or the model - arrives with no floor
- * in hand.
+ * in hand. Nothing follows the rows to explain them, for that same reason: `settled=0;total=2;remaining=2` IS the fact
+ * that dispatched is not done, and a sentence saying it would be the block explaining what it means, which is the
+ * floor's subject.
  * </p>
  *
  * <p>
@@ -493,7 +604,6 @@ function inFlightProgrammeLines(programme: InFlightProgramme): readonly string[]
   }
   if (programme.omitted > 0)
     lines.push(`其余 ${String(programme.omitted)} 步未列出（这个计划一共 ${String(programme.total)} 步）`);
-  lines.push(NOT_YET_TRUE);
   return lines;
 }
 
@@ -608,49 +718,6 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
   return boundedField("evidence", (evidence as { detail?: unknown }).detail) ?? "";
 }
 
-/**
- * A node hint's ceiling, which is the wire's own number: `protocol.ts:isBodyProgramNodeStatus` refuses a frame carrying a
- * longer one, so a hint that arrived through the bridge can never meet this ceiling, let alone a smaller one.
- *
- * `fact-brief.private.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
- * bound the Mod's journal enforces.
- */
-const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
-
-/**
- * The ceiling every Mod-authored field this file prints is held to, and where each number comes from.
- *
- * <p>
- * TWO KINDS OF FIELD, TWO KINDS OF NUMBER. A node's `hint` and `reasonDetail` are bounded by their PRODUCER: the Mod's
- * journal refuses a hint over 256 characters and a refusal detail over 512
- * (`BodyProgramValidation.MaximumNodeHintLength` / `MaximumNodeRefusalDetailLength`), and `protocol.ts` refuses a frame
- * over the same two numbers. Printing them up to those bounds is printing them WHOLE, and a smaller number is a Host
- * opinion about a field the Mod already sized.
- * </p>
- *
- * <p>
- * WHAT A SMALLER ONE COST, measured 2026-11-11 (`round45`). All 15 failed `for_each` hints reached this file between 169
- * and 255 characters (median 248) and all 15 of their details between 480 and 507, against a flat 160 ceiling: 30 cuts in
- * one run's model-visible text. The ledger survived every cut and the per-code tail - `no_safe_clear:crop:scythe_crop=3;
- * no_rule_matched:ground_58_9=1;…`, the part that says WHICH rows failed - was exactly what fell off, mid-token. The
- * ceiling was wrong, not the text.
- * </p>
- *
- * <p>
- * A receipt's `evidence.detail` is the other kind: the wire declares no bound on an `evidence` object, so 160 here is the
- * Host's own measured share of one `<world-facts>` line. Measured in the same run, a receipt's evidence is 200-600
- * characters of proof facts - a tool result's job to carry, not one line's.
- * </p>
- */
-export const MODEL_FIELD_CEILINGS = Object.freeze({
-  hint: MAX_BODY_PROGRAM_NODE_HINT_CHARS,
-  reasonDetail: MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH,
-  evidence: 160,
-});
-
-/** Every Mod-authored field this file prints under a ceiling. */
-export type ModelVisibleField = keyof typeof MODEL_FIELD_CEILINGS;
-
 function worldFactLine(fact: WorldFact, at: string): string {
   const kind = fact.semanticKind ?? "";
   switch (kind) {
@@ -677,14 +744,6 @@ function worldFactLine(fact: WorldFact, at: string): string {
             .filter((text): text is string => text !== undefined)
         : [];
       return `- ${at}${speaker}说：「${pages.join(" ")}」${choices.length === 0 ? "" : `（可以答：${choices.join(" / ")}）`}`;
-    }
-    case "companion_arrival": {
-      // The fact carries its own model-facing sentence (the Host's words: she has just arrived, and this is the day's
-      // first clock reading). Printing only 她到了 would drop the instruction that makes her open the morning, and with
-      // it the opening `companionArrivalAlreadySaid` looks for.
-      const own = fact.contextProjection?.text;
-      if (typeof own === "string" && own.trim() !== "") return `- ${at}${own.trim()}`;
-      return `- ${at}${WORLD_FACT_KIND_ZH.companion_arrival ?? "她到了"}`;
     }
     case "native_notice": {
       // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the
@@ -753,13 +812,47 @@ function settlementLine(fact: WorldFact): string {
     counts !== null && typeof counts === "object" ? Number((counts as Record<string, unknown>).succeeded ?? 0) : 0;
   const head = Number.isFinite(total) ? `${done}/${total} 步做成了` : "计划收尾了";
   const nodes = Array.isArray(fact.payload.nodes) ? (fact.payload.nodes as readonly SettledNode[]) : [];
+  // WHAT THE STEPS PROVED, for every node that reported a row table - including one whose own state is `succeeded`,
+  // because the table IS that node's answer: a `for_each` of sixty tiles proves which sixty, and `succeeded` alone does
+  // not. Printed before the shortfalls, in the order the effect happened and then what did not.
+  const proofs = nodes
+    .filter((node) => node.state === "succeeded")
+    .map((node) => proofLine(node))
+    .filter((words): words is string => words !== "");
   const failures = nodes
     .filter((node) => typeof node.state === "string" && node.state !== "succeeded")
     .map((node) => failureWords(node))
     .filter((words): words is string => words !== "");
+  const said = [...proofs, ...failures];
   const omitted = Number(fact.payload.omitted);
   const more = Number.isFinite(omitted) && omitted > 0 ? `（另有 ${omitted} 步未列出）` : "";
-  return `- ${head}${more}${failures.length === 0 ? "" : `：${failures.join("；")}`}`;
+  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}`;
+}
+
+/**
+ * One node's own proof of what it did: its action, the pass's verdict line, and the row table - all the Mod's bytes.
+ *
+ * <p>
+ * NOTHING IS SUMMARISED HERE, and that is the point rather than an omission. A sixty-row table rendered as `60 格`/`45 格`
+ * is the same drop one layer further out: the model already receives the count, and what it cannot reconstruct is WHICH
+ * tile and what was on it. So the two fields are printed verbatim, in the producer's own spelling, under the producer's
+ * own names' order - the `for_each_pass:decided=…` line first, because it is the sentence, and the table second, because
+ * it is the evidence.
+ * </p>
+ *
+ * <p>
+ * WHY NO CEILING FROM `MODEL_FIELD_CEILINGS`. That table exists to stop a HOST-sized share of a line being spent on a
+ * field whose producer declares no bound (`a receipt's evidence.detail`); these two are bounded at their producer
+ * (1..4096, `BodyProgramValidation.IsOpaqueTerminalProof`) and the row table counts what it could not fit into that
+ * number itself (`rowsOmitted`). A Host ceiling below the producer's would cut a table that is already whole, and it would
+ * cut it at a `;` boundary that means nothing in a JSON document - the operator this file already recorded for `hint`.
+ * </p>
+ */
+function proofLine(node: SettledNode): string {
+  const words = proofTail(node);
+  if (words === undefined) return "";
+  const action = typeof node.actionId === "string" ? node.actionId : (node.nodeId ?? "一步");
+  return `${action} ${words}`;
 }
 
 /**
@@ -784,8 +877,10 @@ function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
   // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
-  // introduces the code, so the two halves stay distinguishable in the line.
-  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail)]
+  // introduces the code, so the two halves stay distinguishable in the line. A node that ALSO carries a row table - the
+  // `partially_succeeded` half of a batch - keeps it beside its reason, because the rows that did happen and the reason
+  // for the ones that did not are one answer about one node.
+  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail), proofTail(node)]
     .filter((part): part is string => part !== undefined)
     .join("｜");
   const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
@@ -793,51 +888,16 @@ function failureWords(node: SettledNode): string {
 }
 
 /**
- * How a cut names what it withheld: how many whole fields a line did not show, and - when one field alone is over the
- * ceiling - that field's own length against the ceiling it met. One spelling each, so a run audit greps one name.
- */
-const FIELDS_NOT_SHOWN = "fields_not_shown";
-const FIELD_OVER_CEILING = "field_over_ceiling";
-
-/**
- * One Mod-authored field's share of a line, cut at its own ceiling - on a FIELD boundary, never inside one.
+ * The two proof fields, joined as one part of a line - or nothing at all when the node carried neither.
  *
- * <p>
- * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`), and slicing it at the character ceiling produced a
- * token that looks like a fact and is not one: a 254-character proof cut at 160 ended mid-value (`stamina_bef`), and the
- * only thing the line then added was `[evidence_detail_over_ceiling:254:160]` - the byte arithmetic of a budget, which
- * tells a reader the budget was exceeded and nothing about what it lost. So every field is either printed WHOLE or not
- * printed at all, and the line says how many whole fields it did not show.
- * </p>
- *
- * <p>
- * A single field that alone exceeds the ceiling cannot be shown at any prefix, so it is replaced by
- * `[field_over_ceiling:<length>:<ceiling>]`: the field is named as withheld, and the two numbers are the ones that decide
- * whether the frame should have arrived at all. At the ceiling the value prints exactly as the Mod wrote it, because the
- * point of `MODEL_FIELD_CEILINGS` is that a field inside its producer's bound is printed whole.
- * </p>
+ * The action is not named here: `failureWords` already opens with it, and `proofLine` names it for the succeeded node,
+ * so a `partially_succeeded` row reads `for_each 没做成（…）` once rather than once per half.
  */
-function boundedField(field: ModelVisibleField, value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const text = value.trim();
-  if (text === "") return undefined;
-  const ceiling = MODEL_FIELD_CEILINGS[field];
-  if (text.length <= ceiling) return text;
-  const fields = text.split(";");
-  const oversized = fields.find((entry) => entry.length > ceiling);
-  if (oversized !== undefined) return `[${FIELD_OVER_CEILING}:${String(oversized.length)}:${String(ceiling)}]`;
-  // The notice's own room is reserved before each field is tried, so the count never pushes the text past the ceiling.
-  const notice = (dropped: number): string => `…[${FIELDS_NOT_SHOWN}:${String(dropped)}]`;
-  const kept: string[] = [];
-  let length = 0;
-  for (const entry of fields) {
-    const grown = kept.length === 0 ? entry.length : length + 1 + entry.length;
-    if (grown + notice(fields.length - kept.length).length > ceiling) break;
-    kept.push(entry);
-    length = grown;
-  }
-  const dropped = fields.length - kept.length;
-  return kept.length === 0 ? notice(dropped) : `${kept.join(";")}${notice(dropped)}`;
+function proofTail(node: SettledNode): string | undefined {
+  const words = [node.postconditionVerification, node.evidence]
+    .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+    .join("｜");
+  return words === "" ? undefined : words;
 }
 
 /**

@@ -50,10 +50,9 @@ public sealed class OvernightMenuForwardActionTests
             $"examined {population.Count} overnight menus ({Names(population)}); each must be answered by a published "
                 + "modal-family action or state why it needs none");
 
-        // The three the engine pushes, and no placeholder among them: an entry that survives the property above but names a
-        // menu the engine does not raise would be a rule about nothing.
-        population.Select(menu => menu.MenuType).Should().BeEquivalentTo(
-            new[] { typeof(ShippingMenu), typeof(SaveGameMenu), typeof(LevelUpMenu) });
+        // WHICH types the engine actually raises is not restated here: `OvernightMenuPopulationTests` derives that set
+        // from `showEndOfNightStuff` itself and fails by name on a member the engine no longer pushes or a push with no
+        // member. A hand-written list here would be a second spelling of the same fact, and the one that goes stale.
         population.Should().OnlyHaveUniqueItems(menu => menu.MenuType, "a menu declared twice is two answers to one question");
     }
 

@@ -286,6 +286,9 @@ function receiptMessage(state: ExecutionState): BridgeMessage {
       reasonCode: `reason_${state}`,
       revision: 2,
       evidence: null,
+      // Every receipt the Mod emits states whose execution it is (`protocol.ts#ExecutionOrigin`); a frame without one is
+      // refused as `invalid_receipt`, so a fixture that omitted it would be testing the refusal instead of the wake.
+      origin: { kind: "programme", programId: "plan_launcher_01", nodeId: "n01" },
     },
   };
 }

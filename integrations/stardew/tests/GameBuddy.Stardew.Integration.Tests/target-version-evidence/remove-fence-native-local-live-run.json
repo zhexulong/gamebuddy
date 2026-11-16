@@ -1,0 +1,157 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "remove_fence",
+  "fixtureScenario": "native_remove_fence_v1",
+  "resolvedRunner": "run-stardew-native-local-player-remove-fence-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/live-captures/remove_fence.log",
+    "durable": false,
+    "note": "The runner prints its result object to stdout and writes nothing durable. This bundle is that object, verbatim, captured from the stdout of one disposable native-local run driven by tools/run-stardew-native-local-player-move-fixture.ps1; the capture path is gitignored and will not survive."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "fence_removed",
+    "target": {
+      "targetId": "placed_item_4de455228db6c8f1",
+      "kind": "removable_object",
+      "location": "Farm",
+      "x": 2,
+      "y": 9,
+      "qualifiedItemId": "(O)322",
+      "displayName": "木围栏",
+      "slot": 0
+    },
+    "swings": 1,
+    "freshTile": {
+      "x": 2,
+      "y": 9
+    },
+    "freshRow": null,
+    "freshRowAbsent": true,
+    "drops": [
+      "(O)322"
+    ],
+    "evidence": {
+      "target": "placed_item_4de455228db6c8f1",
+      "location": "Farm",
+      "tile": "2,9",
+      "item": "(O)322",
+      "is_gate": "false",
+      "tool": "(T)Axe",
+      "slot": "0",
+      "swings": "1",
+      "held_object_before": "false",
+      "health_before": "54.94",
+      "max_health": "54.94",
+      "removed": "true",
+      "tile_object_after": "none",
+      "drops": "(O)322",
+      "drop_count": "1",
+      "stamina_before": "270",
+      "stamina_after": "268"
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "fence_removed",
+      "revision": 1,
+      "hasEvidence": true
+    },
+    "observations": {
+      "before": {
+        "revision": 0,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 9
+        }
+      },
+      "after": {
+        "revision": 1,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 9
+        }
+      }
+    },
+    "trace": [
+      {
+        "phase": "observed",
+        "revision": 0,
+        "location": "Farm",
+        "tile": {
+          "x": 3,
+          "y": 9
+        },
+        "actionable": true,
+        "removable": "placed_item_4de455228db6c8f1@2,9=(O)322;slot=0"
+      },
+      {
+        "phase": "chosen",
+        "fence": {
+          "targetId": "placed_item_4de455228db6c8f1",
+          "kind": "removable_object",
+          "location": "Farm",
+          "x": 2,
+          "y": 9,
+          "slot": 0,
+          "qualifiedItemId": "(O)322",
+          "displayName": "木围栏"
+        }
+      },
+      {
+        "phase": "remove_fence",
+        "action": "remove_fence",
+        "args": {
+          "x": 2,
+          "y": 9,
+          "slot": 0,
+          "expectedTargetId": "placed_item_4de455228db6c8f1"
+        },
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "fence_removed",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "terminal",
+        "state": "succeeded",
+        "reasonCode": "fence_removed",
+        "evidence": {
+          "target": "placed_item_4de455228db6c8f1",
+          "location": "Farm",
+          "tile": "2,9",
+          "item": "(O)322",
+          "is_gate": "false",
+          "tool": "(T)Axe",
+          "slot": "0",
+          "swings": "1",
+          "held_object_before": "false",
+          "health_before": "54.94",
+          "max_health": "54.94",
+          "removed": "true",
+          "tile_object_after": "none",
+          "drops": "(O)322",
+          "drop_count": "1",
+          "stamina_before": "270",
+          "stamina_after": "268"
+        }
+      }
+    ],
+    "durationMs": 419
+  },
+  "whatThisProves": [
+    "The Mod ran the game's own `Fence.performToolAction` — which answers false on every branch, including the one that destroys the fence — against the wood fence `placed_item_4de455228db6c8f1` at Farm (2,9): receipt `succeeded/fence_removed`, revision 0 -> 1, after 1 axe swing.",
+    "Success is the WORLD's fact and not the native return value: `removed=true`, `tile_object_after=none`, health 54.94 -> gone, and the fresh observation no longer publishes the target id (`freshRow=null`).",
+    "The fence's own drop is real: `drop_count=1` of `(O)322`.",
+    "The tool cost is real: stamina 270 -> 268 for the single swing."
+  ],
+  "whatThisDoesNotProve": [
+    "A plain fence only: `is_gate=false`. The gate half of the family is `toggle_fence_gate`, a separate action.",
+    "No `remove_fence_tool_cannot_remove_target` refusal was driven.",
+    "No cancellation, deadline, replay, save/reload or shared-world (Farmhand) coverage."
+  ]
+}

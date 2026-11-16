@@ -527,3 +527,32 @@ test("the launcher completes the account with the two steps only it can measure,
   assert.match(orchestrator, /pid: game\?\.pid \?\? null,/u);
   assert.match(orchestrator, /exit: game\?\.exit \?\? null,/u);
 });
+
+// ── The input a run was handed, written beside the result ───────────────────────────────────────────────────────────
+//
+// MEASURED 2026-11-14: `round53` -> `round54` went from 0 to 10 submitted plans and no artifact held the input, so the
+// cause was reconstructed by hand from a session record, wrongly, three times in one day. The runner drives a real game
+// and cannot be unit-run, so what is checkable here is the wiring: the manifest comes from the shared builder, reads
+// THIS run's session record, runs on the one assembly every exit path uses, and lands beside the result.
+
+test("the input manifest is written beside the result, from the one assembly every exit uses", () => {
+  assert.match(SOURCE, /import \{ writeInputManifest \} from "\.\.\/core\/input-manifest\.mjs";/u);
+  const assembly = SOURCE.slice(
+    SOURCE.indexOf("async function buildRunResult({"),
+    SOURCE.indexOf("async function writeRunBundle({"),
+  );
+  assert.match(assembly, /result\.inputManifest = writeInputManifest\(\{/u);
+  // The record this run bound - the same binding the player-text reading uses - never a neighbour's.
+  assert.match(assembly, /sessionPath: runSessionRecord\.path \?\? null,/u);
+  // Beside the result both the launcher and the iteration loop read, and before that result is written so the result
+  // itself carries what the manifest says.
+  assert.match(assembly, /resultPath: RESULT_FILE \}\);/u);
+  assert.ok(
+    assembly.indexOf("writeInputManifest({") < assembly.indexOf("await writeFile(RESULT_FILE"),
+    "the manifest must be written before the result that reports it",
+  );
+  // And the refusals that keep a missing manifest from reading as a run handed nothing.
+  const builder = readFileSync(new URL("../core/input-manifest.mjs", import.meta.url), "utf8");
+  assert.match(builder, /session_record_not_bound/u);
+  assert.match(builder, /input_manifest_empty/u);
+});

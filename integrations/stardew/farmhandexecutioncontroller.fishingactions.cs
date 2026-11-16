@@ -54,29 +54,37 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed partial class ExecutionManager
 {
-    /// <summary>
-    /// The cap on published cast tiles, equal to the Host's `maxItems` for `waterTargets`: one entry past it would close
-    /// the bridge rather than shorten the list.
-    /// </summary>
     private const int MaximumWaterTargets = 32;
 
     private LocalFishingCastSpec? activeFishing => this.slots.Fishing.Peek();
 
     /// <summary>
-    /// The tiles a rod may be cast at here, WHOLE MAP, nearest first.
+    /// The tiles a rod may be cast at here, WHOLE MAP, nearest first - and only the ones a cast can be MADE FROM.
     ///
     /// <para>
-    /// The predicate is the engine's own pair, asked exactly as the cast asks it (`FishingRod.cs:411`):
+    /// The water predicate is the engine's own pair, asked exactly as the cast asks it (`FishingRod.cs:411`):
     /// <c>location.canFishHere()</c> and <c>location.isTileFishable(tileX, tileY)</c>. `isTileFishable` is where a
     /// `NoFishing` tile, a water tile under a building, and a fishable building (a FishPond) all arrive as the engine's
     /// answer rather than as a second reading of the map.
     /// </para>
     ///
     /// <para>
-    /// The surrounding standable set is the same rule the water landmark already uses
-    /// (`DerivedDestinationSet.TryCreateWaterLandmark`): a water tile is impassable, so the row is only a target while a
-    /// cardinal neighbour is somewhere this body may stand. It is asked of `StardewBodyController.IsStandableTile` - the
-    /// body's own answer, not the map's - so discovery can never publish a row the walk refuses.
+    /// THE SECOND QUESTION IS THE WALK'S, AND IT IS ASKED WITH THE WALK'S OWN FUNCTION. A water tile is never stood on:
+    /// the body stands beside it and swings, so the row is only a target while some tile in the water's ring is one the
+    /// approach leg would send her to. Discovery used to answer a weaker version of that - "is any CARDINAL neighbour
+    /// standable" - which is not the question the walk is refused on, and the two disagreed for twenty dispatches:
+    /// measured `round63`, every `fish_here` receipt was `no_reachable_approach:&lt;x&gt;:&lt;y&gt;` with
+    /// <c>standable_neighbour=unreachable;standable_tiles=1..4</c> and not one cast. A row that no walk can reach is a
+    /// target the companion can only re-aim at, so it is not published at all; the shore becoming walkable (a weed cut,
+    /// a wall opened) publishes it on the next snapshot, which is what makes the clearing a precondition rather than a
+    /// refusal.
+    /// </para>
+    ///
+    /// <para>
+    /// `SelectToolApproachTile` is the SAME choice `TryBeginToolApproach` makes, with the same two predicates, so
+    /// this cannot publish a row the walk would refuse. Reachability is undecided when the flood exceeds its budget
+    /// (<see cref="StardewBodyController.BuildWalkableComponent"/> answers null), and undecided is not "nothing is
+    /// reachable": no filter is applied, exactly as the leg lets the native planner decide.
     /// </para>
     ///
     /// <para>
@@ -91,12 +99,19 @@ internal sealed partial class ExecutionManager
         if (!location.canFishHere()) return Array.Empty<BridgeWaterTarget>();
         int width = location.map.Layers[0].LayerWidth;
         int height = location.map.Layers[0].LayerHeight;
+        (int X, int Y) actor = ((int)player.Tile.X, (int)player.Tile.Y);
+        Func<(int X, int Y), bool> isStandable = tile =>
+            StardewBodyController.IsStandableTile(location, player, new Vector2(tile.X, tile.Y))
+            && !IsWarpBufferTile(location, tile);
+        Func<(int X, int Y), bool> isReachable = StardewBodyController.BuildWalkableComponent(location, player) is { } component
+            ? tile => component(new Vector2(tile.X, tile.Y))
+            : _ => true;
         List<(int X, int Y)> candidates = new();
         for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
         {
             if (!location.isTileFishable(x, y)) continue;
-            if (!HasCastEdge(location, player, x, y)) continue;
+            if (SelectToolApproachTile((x, y), actor, isStandable, isReachable) is null) continue;
             candidates.Add((x, y));
         }
         return candidates
@@ -106,14 +121,6 @@ internal sealed partial class ExecutionManager
             .Take(MaximumWaterTargets)
             .Select(tile => new BridgeWaterTarget(BuildWaterTargetId(location, tile.X, tile.Y), tile.X, tile.Y))
             .ToArray();
-    }
-
-    private static bool HasCastEdge(GameLocation location, Farmer player, int x, int y)
-    {
-        foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
-            if (StardewBodyController.IsStandableTile(location, player, new Vector2(nx, ny)))
-                return true;
-        return false;
     }
 
     /// <summary>
@@ -139,14 +146,9 @@ internal sealed partial class ExecutionManager
         GameLocation? location = Game1.player.currentLocation;
         if (location is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // The caller's own binding first: an id that no longer names this tile means the water it named is not the water
-        // it is asking about, which is a different fact from "this water cannot be fished".
         if (!string.Equals(BuildWaterTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "water_not_fishable:target_changed",
                 $"target={expectedTargetId};tile={targetX},{targetY};actual={BuildWaterTargetId(location, targetX, targetY)};blocked_by={new RefusalLayerToken(RefusalLayerKind.LocationConstraint, "target_changed").Format()}");
-        // Ask before walking: a pack that cannot cast is refused NOW rather than after an approach leg the action could
-        // never finish - the same order `refill_watering_can` keeps. The refusal is re-asked on arrival, because the pack
-        // and the actor move during the walk.
         if (this.RefuseCastingRig(requestId, executionId) is LocalExecutionReceipt rigRefusal)
             return rigRefusal;
         // ASK THE WORLD BEFORE THE WALK AND BEFORE THE CAST. The derivation reads the game's own two fish tables - the
@@ -170,20 +172,8 @@ internal sealed partial class ExecutionManager
         return this.ExecuteFishHere(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
     }
 
-    /// <summary>
-    /// The three facts about the ACTOR and her rig, as one refusal or nothing: a rod in the pack, a bait that rod needs, and
-    /// enough stamina to cast. It mutates nothing (it does not select the rod), so it can be asked before a walk and again on
-    /// arrival without leaving a tool held.
-    ///
-    /// <para>
-    /// ONE implementation for both asks. The pair would otherwise be two places for "why can she not cast" to disagree, and
-    /// the walk would be the only place that knew the answer had changed.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? RefuseCastingRig(string requestId, string executionId)
     {
-        // The pack's own answer. `ResolveDeclaredTool` reads the action's `tool:fishing_rod` claim and reports the ONE word
-        // that explains an empty pack, so this file does not keep a second opinion about which tool a rod is.
         DeclaredToolResolution resolution = ResolveDeclaredTool(Game1.player.Items, "fish_here");
         if (resolution.RefusalCode is { } rodRefusal)
         {
@@ -207,30 +197,6 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
-    /// <summary>
-    /// Whether a cast here could produce anything at all, asked of the SAME derivation the `data` lookup's `LocationFish`
-    /// row answers with - one evaluation, two consumers.
-    ///
-    /// <para>
-    /// WHY THIS IS NOT THE WATCHDOG'S JOB. A cast whose every species the conditions exclude still opens the engine's line,
-    /// waits out the bite, plays the win path and settles as a catch of something else - a minute bought for nothing. The
-    /// watchdog stays as the fallback for the case this cannot judge; the judgement itself happens here, at admission, in
-    /// zero milliseconds.
-    /// </para>
-    ///
-    /// <para>
-    /// SOUND-OR-SILENT. A refusal is minted only from a MEASURED answer whose every row is blocked
-    /// (<c>NothingCatchable() == true</c>). An unreadable premise - either table missing, no location data, a level nobody
-    /// could read - is admitted and logged as <c>not measured: reason</c>, because a false refusal blocks the capability and a
-    /// missed refusal costs the minute we are trying to remove.
-    /// </para>
-    ///
-    /// <para>
-    /// THE EVIDENCE NAMES THE CHEAPEST CHANGE, not the absence. "Nothing bites here" is what she already suspects; the fact
-    /// worth carrying is the one she could act on - the species closest to being catchable and the condition that blocks it -
-    /// and then the blocked rows themselves, so a reader can see the whole population rather than one sample of it.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? RefuseNothingCatchable(string requestId, string executionId, GameLocation location, int targetX, int targetY)
     {
         FishingCatchableQuery.FishingCatchAnswer answer = FishingCatchableQuery.Answer(Game1.player, string.Empty, targetX, targetY);
@@ -345,9 +311,6 @@ internal sealed partial class ExecutionManager
 
             float staminaBefore = Game1.player.Stamina;
             int baitBefore = rod.GetBait()?.Stack ?? 0;
-            // The timing cast's hold-and-release frames are the only part of a cast that reads input, so they are the only
-            // part skipped: `beginUsing` runs (it is what records the facing, the last user and the rod's own reset), and
-            // then the timing flag is cleared so the engine's tool tick does not replay the hold.
             if (!rod.beginUsing(location, targetX, targetY, Game1.player))
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rod_not_equipped", $"rod={rod.QualifiedItemId};slot={selection.Slot};begin_using=refused;blocked_by={new RefusalLayerToken(RefusalLayerKind.Tool, "begin_using_refused").Format()}");
             rod.isTimingCast = false;
@@ -362,8 +325,6 @@ internal sealed partial class ExecutionManager
             rod.DoFunction(location, targetX, targetY, 1, Game1.player);
             if (!rod.isFishing)
             {
-                // The engine's own refusal to fish this tile. Reached only if the pair above disagreed with `DoFunction`,
-                // which is why it is Uncertain rather than Rejected: the cast may already have spent stamina.
                 this.revision++;
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "fish_here_cast_not_accepted",
                     $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};rod={rod.QualifiedItemId};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.####", CultureInfo.InvariantCulture)}");
@@ -431,8 +392,6 @@ internal sealed partial class ExecutionManager
                 }
                 if (nowMs > spec.DeadlineMs)
                 {
-                    // The WORLD never bit inside this action's own budget. It is not a lost fish and it consumes nothing
-                    // beyond the cast: the rod is reeled in with the engine's own stop, which spends no bait or tackle.
                     this.SettleFishingCast(spec, ExecutionState.Expired, "fish_here_bite_deadline_expired",
                         $"location={spec.Location};target={spec.TargetId};tile={spec.TargetX},{spec.TargetY};waited_ms={(nowMs - spec.StartedAtMs).ToString(CultureInfo.InvariantCulture)};nibbling=false;phase=waiting_for_bite");
                 }
@@ -443,11 +402,7 @@ internal sealed partial class ExecutionManager
             {
                 if (Game1.activeClickableMenu is BobberBar bar && !string.IsNullOrWhiteSpace(bar.whichFish))
                 {
-                    // The engine built this bar for THIS catch (`FishingRod.startMinigameEndFunction`, `:891-940`), which is
-                    // where the size and the quality are decided from `Data/Fish` and its own roll, and where the difficulty
-                    // comes from. Both are handed on UNMODIFIED: no size formula, no quality upgrade, no experience bonus.
                     string fishQualifiedItemId = ItemRegistry.QualifyItemId(bar.whichFish);
-                    // The "before" reading of the engine's own catch record, taken while the win path still has not run.
                     int countBefore = ReadCaughtCount(Game1.player, fishQualifiedItemId);
                     // The bar's own challenge-bait count is part of the same object; `numCaught` is 1 otherwise
                     // (`BobberBar.cs:353-358`).
@@ -464,9 +419,6 @@ internal sealed partial class ExecutionManager
                     // every cast.
                     rod.pullFishFromWater(fishQualifiedItemId, bar.fishSize, bar.fishQuality, (int)bar.difficulty, bar.treasureCaught,
                         wasPerfect: false, fromFishPond: bar.fromFishPond, bar.setFlagOnCatch, bar.bossFish, numCaught);
-                    // Dismissed because it cannot be played from here: `BobberBar.update` reads the player's held buttons
-                    // (`:423`) and `readyToClose` is false (`:635`), so the menu would block the actor forever. Closing it
-                    // unplayed is exactly why the pull outcome is reported `not_verified`, with the unobserved field named.
                     Game1.exitActiveMenu();
                     this.slots.Fishing.Assign(spec with
                     {
@@ -507,8 +459,6 @@ internal sealed partial class ExecutionManager
                 // the one place the game performs it. A player reaches it by clicking the held fish (`:2273-2275`).
                 rod.doneHoldingFish(Game1.player);
                 int inventoryAfter = CountQualifiedItem(Game1.player, fishQualifiedItemId);
-                // THE CREDIT, from the one record the engine keeps and never clears: the same key, read again, against
-                // the reading taken before the win path ran.
                 int caughtAfter = ReadCaughtCount(Game1.player, fishQualifiedItemId);
                 bool credited = caughtAfter > spec.CaughtCountBefore;
                 float staminaAfter = Game1.player.Stamina;
@@ -582,22 +532,15 @@ internal sealed partial class ExecutionManager
         return left;
     }
 
-    /// <summary>
-    /// The ONE exit for an active cast: hand the actor's own tool selection back, reel the engine's rod in when it is still
-    /// in use (the engine's own stop, which spends no bait and no tackle), then mint the terminal.
-    /// </summary>
     private void SettleFishingCast(LocalFishingCastSpec spec, ExecutionState state, string reasonCode, string evidence)
     {
         this.slots.Fishing.Clear();
         if (spec.PreviousSlot >= 0 && spec.PreviousSlot < Game1.player.Items.Count)
             Game1.player.CurrentToolIndex = spec.PreviousSlot;
-        // A cast that never reached the engine's win path is reeled in with `doneFishing(who)` - the overload that consumes
-        // nothing - so the rod is not left holding a line nobody drives after the action has ended.
         if (spec.Phase != LocalFishingPhase.AwaitingCredit
             && spec.RodSlot >= 0 && spec.RodSlot < Game1.player.Items.Count
             && Game1.player.Items[spec.RodSlot] is FishingRod rod && rod.inUse())
             rod.doneFishing(Game1.player);
-        // The catch window the engine opened may still be on screen if the action ended between the bite and the win.
         if (Game1.activeClickableMenu is BobberBar) Game1.exitActiveMenu();
         this.revision++;
         this.RememberTerminal(spec.RequestId, spec.ExecutionId, state, reasonCode, evidence);

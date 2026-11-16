@@ -729,6 +729,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "target_reached",
       revision: 5,
       evidence: { tile: "11,12" },
+      origin: { kind: "programme", programId: "plan_01", nodeId: "n001" },
     },
     "receipt_01",
     now,
@@ -752,6 +753,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "navigation_completed",
       revision: 6,
       evidence: { detail: "destination=SeedShop;arrived=true" },
+      origin: { kind: "programme", programId: "plan_01", nodeId: "n002" },
       piggybackedScene: {
         observationId: "so1_ABCDEFGHIJKLMNOPQRSTUV",
         currentLocation: "SeedShop",
@@ -805,6 +807,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "player_stop",
       revision: 6,
       evidence: null,
+      origin: { kind: "standalone" },
     },
     "receipt_02",
     now,
@@ -820,6 +823,7 @@ test("bridge message payloads fail closed", () => {
       state: "cancelled",
       reasonCode: "player_stop",
       revision: 7,
+      origin: { kind: "standalone" },
     },
     "receipt_03",
     now,
@@ -841,6 +845,8 @@ test("bridge message payloads fail closed", () => {
         revision: 8,
         location: "Farm",
         tile: { x: 10, y: 12 },
+        // A body trace states the same provenance its receipt does (`validateBodyTrace` refuses a frame without it).
+        origin: { kind: "programme", programId: "plan_trace_01", nodeId: "n01" },
       },
     },
     "semantic_trace_01",
@@ -4857,4 +4863,36 @@ test("a machine row's published acceptance is bounded by the wire schema and kee
     { ...row, accepts: { inputs: [], omitted: 0, extra: 1 } },
   ])
     assert.equal(isMachineTargetFact(bad), false, `refused: ${JSON.stringify(bad.accepts).slice(0, 80)}`);
+});
+
+/**
+ * The action-policy frame's payload is the two denial keys and nothing else.
+ *
+ * The population that matters is "the keys the Mod's `config.json` binds", and the frame deliberately carries the half a
+ * RUNNING Mod honours. An extra key is refused rather than ignored: the document already owns the credential, fixture and
+ * test-only fields, and a frame that could carry them would be a second config authority over a running world.
+ */
+test("the action-policy frame admits exactly the two denial keys, in the casing the bridge codec uses", () => {
+  const envelope = (payload: unknown) =>
+    newEnvelope("farmhand_action_policy_request", scope, payload as never, "policy_01", now);
+
+  assert.equal(validateBridgeMessage(envelope({ deniedActions: [], deniedActionFamilies: [] }), scope, now), null);
+  assert.equal(
+    validateBridgeMessage(envelope({ deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] }), scope, now),
+    null,
+  );
+
+  for (const refused of [
+    { deniedActions: [] },
+    { deniedActions: [], deniedActionFamilies: [], experimentalActions: ["x"] },
+    { DeniedActions: [], DeniedActionFamilies: [] },
+    { deniedActions: [""], deniedActionFamilies: [] },
+    { deniedActions: ["not an id"], deniedActionFamilies: [] },
+    { deniedActions: [], deniedActionFamilies: "crops" },
+  ])
+    assert.equal(
+      validateBridgeMessage(envelope(refused), scope, now),
+      "invalid_farmhand_action_policy_request",
+      `refused: ${JSON.stringify(refused)}`,
+    );
 });

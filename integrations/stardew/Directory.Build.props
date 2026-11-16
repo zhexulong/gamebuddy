@@ -28,4 +28,35 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
+  <!--
+    One language version for every project under integrations/stardew/, set here and nowhere
+    else. Measured on 2026-11-16 before this line existed: not one of the eleven csproj named
+    LangVersion, so all eleven compiled at whatever the SDK defaults for their target
+    framework - C# 10 for net6.0 - and nothing in the tree said so. That default is invisible
+    and moves with the SDK, which is the property this file replaces: a project added
+    tomorrow inherits 12.0 instead of silently compiling at a different language version.
+
+    WHY 12.0 AND NOT 13.0. The ceiling is the pinned compiler, not a preference: global.json
+    pins SDK 8.0.424 (rollForward latestPatch -> 8.0.425), whose Roslyn accepts up to C# 12.
+    Asking for 13.0 fails the build outright - `error CS1617: invalid option "13.0" for
+    /langversion` - so a higher number here is not "more modern", it is a broken build. Raise
+    this line only after global.json selects a newer SDK.
+
+    WHY NO POLYSHARP. PolySharp exists to backfill the runtime types modern syntax needs on old
+    target frameworks. Measured on net6.0 with TreatWarningsAsErrors (a throwaway net6.0 project
+    at LangVersion 12.0): raw string literals, collection expressions over arrays, Span and
+    List<T>, `ref readonly` parameters, `u8` literals and primary constructors all compile with
+    0 warnings and 0 errors on the bare framework. Only inline arrays need a polyfilled
+    `InlineArrayAttribute`, and this tree contains none (`grep InlineArray` over the whole
+    Stardew integration: 0 hits). A package that backfills one unused feature is a dependency
+    that buys nothing and is re-evaluated the day the first inline array is wanted.
+
+    NOT SET HERE: TargetFramework. net6.0 is fixed by SMAPI - Stardew's mod host loads this
+    assembly inside its own .NET 6 process - so it is an external constraint, not a choice this
+    file may revisit. `tools/check-dotnet-target-and-language.mjs` asserts both halves.
+  -->
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+  </PropertyGroup>
+
 </Project>

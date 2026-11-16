@@ -44,9 +44,7 @@ public sealed partial class ModEntry
         Vector2[] eligibleSoil = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
             .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight)
                 .Select(y => new Vector2(x, y)))
-            .Where(tile => farm.GetHoeDirtAtTile(tile) is null
-                && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
-                && !farm.isWaterTile((int)tile.X, (int)tile.Y))
+            .Where(tile => ExecutionManager.IsTillableTile(farm, (int)tile.X, (int)tile.Y))
             .Take(64)
             .ToArray();
         if (eligibleSoil.Length == 0)

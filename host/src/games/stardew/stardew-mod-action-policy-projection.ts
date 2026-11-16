@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile, withPathLock } from "../../path-lock.js";
+import type { FarmhandActionPolicyRequest } from "../../protocol.js";
 import { readStrictJsonFile } from "../../strict-json-reader.js";
 import { readStoredCompanionLocale } from "../../settings/player-preference-store.js";
 import type { StardewPlayerSettings } from "./stardew-player-settings.js";
@@ -24,14 +25,13 @@ import type { StardewPlayerSettings } from "./stardew-player-settings.js";
  * write is a merge: the document is read, the three owned keys are set, and every
  * other key is written back exactly as it was found.
  *
- * Second, a `config.json` can be a *live* file: while a world is running the Mod
- * re-reads it every 120 ticks (`FarmhandPolicyRefreshThrottle`, about two seconds
- * at 60 Hz) and applies the action policy to the capability surface it publishes.
- * It is also the file the Mod itself rewrites (`PersistVerifiedFarmhandScope` ->
- * `Helper.WriteConfig`), which is why this write is a bounded best effort rather
- * than a claim: a save that lands while the Mod is rewriting the same document is
- * not a failure the player caused, and the durable record is what makes the
- * answer survive either way.
+ * Second, a `config.json` can be a *live* file, and the two denial keys are the half that travels by message as well as by
+ * document: the Host pushes them to a RUNNING Mod as a `farmhand_action_policy_request` frame (see
+ * `projectStardewModActionPolicyFrame`), and that frame - not a reread of this document - is how a settings save reaches a
+ * world that is already running. Everything else here reaches the Mod at its next startup, which is why the document is
+ * still written. It is also the file the Mod itself rewrites (`PersistVerifiedFarmhandScope` -> `Helper.WriteConfig`),
+ * which is why this write is a bounded best effort rather than a claim: a save that lands while the Mod is rewriting the
+ * same document is not a failure the player caused, and the durable record is what makes the answer survive either way.
  *
  * Third, `PresentationLocale` is present only when the player has chosen a
  * companion language. When they have not, the key is absent and the Mod's own
@@ -81,6 +81,27 @@ export async function readStardewModPresentationLocale(runtimeRoot: string): Pro
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The live half of the same projection: the frame a RUNNING Mod receives.
+ *
+ * This is not a second schema for the policy. It is the wire rendering of the two keys `mergeStardewModActionPolicy`
+ * writes into the document - the same values, from the same projection object, in the one casing the bridge's codec uses
+ * for every frame (the Mod reads them back into the same record its own config document binds to). One shape, two
+ * carriers: the file for the next world load, this frame for a world that is already running.
+ *
+ * `windowMode`, `presentationLocale` and `advanceDayMinimumOnlineFarmers` are deliberately NOT projected here. Nothing
+ * on the Mod re-reads them while a world is running, so a frame that carried them would advertise a live change that
+ * cannot happen - the surface's own `appliesToRunningGame` states the difference.
+ */
+export function projectStardewModActionPolicyFrame(
+  policy: StardewModActionPolicyProjection,
+): FarmhandActionPolicyRequest {
+  return Object.freeze({
+    deniedActions: policy.DeniedActions,
+    deniedActionFamilies: policy.DeniedActionFamilies,
+  });
 }
 
 export function projectStardewModActionPolicy(

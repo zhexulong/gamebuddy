@@ -109,7 +109,7 @@ export function compatibilityLabel(labels: Messages, compatibility: GameProjecti
 }
 
 export function capabilitiesLabel(labels: Messages, summary: GameProjection["capabilitySummary"]): string {
-  return summary.available
+  return summary.status === "published"
     ? labels.gameCapabilityCount.replace("{{count}}", String(summary.count))
     : labels.gameCapabilitiesUnavailable;
 }
@@ -471,14 +471,13 @@ function actingDetail(labels: Messages, authority: GameProjection["actionAuthori
 
 export function deriveCapabilityBoard(labels: Messages, projection: GameProjection): CapabilityBoard {
   const summary = projection.capabilitySummary;
+  // PUBLISHED IS THE ONLY WORD THAT CARRIES A NUMBER. `not_measured` has no count at all (`game_browser_api/v1`), so a
+  // board that printed `0` for it would be stating a fact the Host never produced.
+  const published = summary.status === "published";
   const companionName = projection.companionName ?? labels.gameBoardCompanionTitle;
   return Object.freeze({
     title: labels.gameBoardTitle,
-    line: summary.available
-      ? withCount(labels.gameBoardLinePublished, summary.count)
-      : projection.attachment.status === "attached"
-        ? labels.gameBoardLineAttachedEmpty
-        : labels.gameBoardLineNoGame,
+    lead: published ? withCount(labels.gameBoardPublishedLead, summary.count) : labels.gameBoardUnpublishedLead,
     cards: Object.freeze([
       Object.freeze({
         key: "companion" as const,
@@ -492,12 +491,10 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
       Object.freeze({
         key: "abilities" as const,
         icon: "abilities" as const,
-        title: summary.available
+        title: published
           ? withCount(labels.gameBoardAbilitiesPublished, summary.count)
           : labels.gameBoardAbilitiesUnpublished,
-        detail: summary.available
-          ? labels.gameBoardAbilitiesPublishedDetail
-          : labels.gameBoardAbilitiesUnpublishedDetail,
+        detail: published ? labels.gameBoardAbilitiesPublishedDetail : labels.gameBoardAbilitiesUnpublishedDetail,
       }),
       Object.freeze({
         key: "action" as const,
@@ -506,7 +503,7 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
         detail: actingDetail(labels, projection.actionAuthority),
       }),
     ]),
-    waiting: summary.available ? null : labels.gameBoardWaiting,
+    waiting: published ? null : labels.gameBoardWaiting,
   });
 }
 

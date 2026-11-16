@@ -95,8 +95,27 @@ public sealed class HeldRequestAbsorptionTests
         answer.Payload.Evidence!["detail"].Should().Be(holdEvidence);
     }
 
+    /// <summary>
+    /// A CUTSCENE IS WAITED OUT, and the wait is bounded by the request's own deadline rather than by the flat
+    /// admission's retry window.
+    ///
+    /// <para>
+    /// The measured case (`round56`, day 6 06:00, the furnace cutscene): the event began at 19:55:53, the first request
+    /// was refused at 19:55:54.61 with `cutscene_active`, and the world was free again at 19:55:59 - four and a half
+    /// seconds after that refusal and two and a half seconds after the retry window this park used to be bounded by.
+    /// The park that covered a tool swing could not cover an event, so the request was answered `rejected` on arrival and
+    /// the only thing left was a model round-trip whose median is 3.4 s and whose p90 is 25 s (measured 2026-10-19,
+    /// `g99cross`) to re-issue the same request into a world that had freed itself.
+    /// </para>
+    /// <para>
+    /// A cutscene is not an action's obstacle: it advances itself or the player advances it, the engine raises
+    /// `Game1.eventUp` for exactly as long as it runs, and the request it holds is the same request afterwards. So the
+    /// hold is parked like a transient lock and released the moment the world says so - bounded not by a guessed window
+    /// but by the deadline the request itself declared, past which its admission can no longer be consumed at all.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void AHoldThatCannotClearItself_StillRefusesImmediately()
+    public void ACutsceneParksTheRequest_PastTheRetryWindow_AndTheFreedWorldDispatchesItExactlyOnce()
     {
         Absorption absorption = Park("cutscene", canMove: false, usingTool: false);
         bool eventUpBefore = Game1.eventUp;
@@ -105,18 +124,83 @@ public sealed class HeldRequestAbsorptionTests
             Game1.eventUp = true;
             absorption.Session.TryExecute(1, absorption.Request, out BridgeEnvelope<BridgeReceipt>? answer, out string reason)
                 .Should().BeTrue(reason);
-            answer.Should().NotBeNull("a cutscene cannot clear inside a bounded window, so it is refused rather than parked");
-            answer!.Payload.State.Should().Be("rejected");
-            answer.Payload.ReasonCode.Should().Be("cutscene_active");
+            answer.Should().BeNull("a cutscene that is still running is a wait, not an answer: the request is held");
+            reason.Should().Be(ExecutionManager.HeldRequestMarker);
+            absorption.Handler.Invocations.Should().Be(0, "nothing may be dispatched into a running event");
+
+            // THE OLD WINDOW, SPENT IN FULL: two seconds of wall clock is longer than the park the tool-swing case uses,
+            // and the event is still running, so the wait must still be a wait.
+            Thread.Sleep(WorldModel.TransientRetryWindowMs + 250);
+            absorption.Executions.PumpHeldRequests();
+            absorption.Handler.Invocations.Should().Be(0, "the retry window is not the bound for an event");
+            absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should()
+                .BeFalse("a wait that has not ended answers nothing - cutscene_active here would spend the request on a hold that is still in force");
         }
         finally
         {
             Game1.eventUp = eventUpBefore;
         }
 
-        absorption.Handler.Invocations.Should().Be(0);
+        // FALSIFIER for the park: the event ends and the body frees, and the SAME request runs - so the wait above was
+        // the admission holding the request, not a request that can no longer run.
+        absorption.FreeTheBody();
         absorption.Executions.PumpHeldRequests();
-        absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse("nothing was parked");
+
+        absorption.Handler.Invocations.Should().Be(1, "the freed world dispatches the waited request exactly once");
+        BridgeEnvelope<BridgeReceipt> dispatched = absorption.TakeAnswer();
+        dispatched.CorrelationId.Should().Be(absorption.Request.CorrelationId, "the answer belongs to the request that waited");
+        dispatched.Payload.State.Should().Be("accepted");
+        string detail = dispatched.Payload.Evidence!["detail"];
+        var heldMs = System.Text.RegularExpressions.Regex.Match(detail, "(^|;)held_ms=(?<ms>[0-9]+)$");
+        heldMs.Success.Should().BeTrue($"the dispatch says how long it waited: {detail}");
+        long.Parse(heldMs.Groups["ms"].Value, System.Globalization.CultureInfo.InvariantCulture).Should().BeGreaterThanOrEqualTo(
+            WorldModel.TransientRetryWindowMs,
+            "the wait covered the whole retry window the event outlived, which is the fact the old park could not state");
+        absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse("one wait, one answer");
+    }
+
+    /// <summary>
+    /// THE WAIT IS BOUNDED BY THE REQUEST'S OWN DEADLINE, and when that runs out the request gets the refusal it would
+    /// have had on arrival - the same code, the same evidence, byte for byte.
+    ///
+    /// <para>
+    /// This is the half that keeps the park from becoming a strand: an event that outlives the deadline the caller
+    /// declared cannot be waited out any further, because past that instant `Admit` refuses the request as
+    /// `invalid_deadline` regardless of the world. The bound is therefore the caller's own declaration, not a number
+    /// this Mod picked: the parking window is derived from the request, exactly as the body-program pump derives its
+    /// bound from the node's own watchdog.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ACutsceneThatOutlivesTheRequestsOwnDeadline_EndsInTheNamedRefusal()
+    {
+        Absorption absorption = Park("cutscene-deadline", canMove: false, usingTool: false, deadlineInMs: 300);
+        bool eventUpBefore = Game1.eventUp;
+        try
+        {
+            Game1.eventUp = true;
+            absorption.Session.TryExecute(1, absorption.Request, out BridgeEnvelope<BridgeReceipt>? parked, out string reason)
+                .Should().BeTrue(reason);
+            parked.Should().BeNull("the cutscene is waited out");
+            reason.Should().Be(ExecutionManager.HeldRequestMarker);
+
+            Thread.Sleep(500);
+            absorption.Executions.PumpHeldRequests();
+
+            absorption.Handler.Invocations.Should().Be(0, "a deadline that ran out is not a licence to dispatch into the hold");
+            BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
+            answer.Payload.State.Should().Be("rejected");
+            answer.Payload.ReasonCode.Should().Be(
+                "cutscene_active",
+                "the wait ends in the same named refusal an arrival would have carried; it is the world's statement, not the Mod's");
+            answer.Payload.Evidence!["detail"].Should().Be(
+                ArrivalHold(absorption.Actor).HoldEvidence,
+                "the evidence is the hold's own - the same one WorldModel produces for this cutscene - not a second story");
+        }
+        finally
+        {
+            Game1.eventUp = eventUpBefore;
+        }
     }
 
     [Fact]
@@ -196,7 +280,7 @@ public sealed class HeldRequestAbsorptionTests
 
     private const long DeadlineMs = 1_700_000_000_000;
 
-    private static Absorption Park(string suffix, bool canMove, bool usingTool)
+    private static Absorption Park(string suffix, bool canMove, bool usingTool, int deadlineInMs = 30_000)
     {
         var persistence = new FakePersistence();
         var scope = new BridgeScope("stardew", $"save-{suffix}", $"world-{suffix}", ActorId.ToString(), $"companion-{suffix}");
@@ -228,7 +312,7 @@ public sealed class HeldRequestAbsorptionTests
                 "move_to_tile",
                 new BridgeExecutionArgs { X = 5, Y = 6 },
                 executions.Revision,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000));
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + deadlineInMs));
         return new Absorption(executions, session, handler, actor, request);
     }
 
@@ -260,6 +344,13 @@ public sealed class HeldRequestAbsorptionTests
 
     private static BridgeEnvelope<BridgeHello> Hello(BridgeScope scope, string token) =>
         new(BridgeProtocol.Version, "msg_hello", "corr_hello", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "hello", new BridgeHello(token));
+
+    /// <summary>The pair the one WorldModel authority produces for the hold this probe actor is under.</summary>
+    private static (string HoldCode, string HoldEvidence) ArrivalHold(Farmer actor)
+    {
+        ActorWorldFacts facts = WorldModel.ReadFacts(actor);
+        return WorldModel.DescribeCurrentBodyHold(WorldModel.Classify(facts), facts, actor.CanMove);
+    }
 
     private sealed record Absorption(
         ExecutionManager Executions,

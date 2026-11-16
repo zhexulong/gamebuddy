@@ -576,6 +576,7 @@ test("game.create whose first AI activation bridge retry expires settles durably
             });
           },
           recoverDeadOwner: async () => undefined,
+          pushActionPolicy: () => false,
           close: async () => undefined,
         });
       },

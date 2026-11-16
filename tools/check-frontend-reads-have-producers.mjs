@@ -104,6 +104,14 @@
  * red-proof: inject an interface's `path: string;` beside a local helper `const string = (): string => ...` -> not a
  *   registration, so the population is unchanged and no unreadable line is printed for it.
  */
+
+export const gateDeclaration = {
+  id: "check-frontend-reads-have-producers",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 

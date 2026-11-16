@@ -139,6 +139,15 @@ export const CHAT_TRANSCRIPT_DELIVERY_UNIT = "message" as const;
  * boundary to stop at). This is a CADENCE fact, not a text fact - a turn that trips it spoke more
  * than one bubble's worth inside one turn.
  * </p>
+ *
+ * <p>
+ * THE CUT DELETES TEXT, AND NOTHING HERE CAN DELIVER IT. The bubble's unit is the turn and its one channel is
+ * `onFinalText`, so a turn longer than the ceiling has no second commit to carry its tail (`deliverTurn`); the sound
+ * that opens the bubble is spent from the same ceiling. What the surface owes her is the STATEMENT that the excess is
+ * deleted - `game-surface-prompt-floor.ts` `one_bubble_of_size` states it, at the number this cut was taken at - and
+ * what the run owes itself is this count, which `companion-loop.ts` prints as `speech_truncated:` for the turn it
+ * happened on.
+ * </p>
  */
 export type NativeCompanionTurnBubble = Readonly<{
   chars: number;
@@ -287,6 +296,16 @@ export type NativeCompanionContentObserver = Readonly<{
    * presented earlier, because text produced later belongs in the same bubble, and a stopped or
    * uncertain turn must not speak after the fact - a revoked or closed observer therefore delivers
    * nothing.
+   * </p>
+   *
+   * <p>
+   * ONE COMMIT IS THE WHOLE CONTRACT, so a turn longer than the ceiling loses its tail. The split
+   * `budgetedSpeechPieces` offers the message unit needs a second channel to carry the earlier pieces,
+   * and this lane has none: the only sink it is given is `onFinalText`, and calling it twice is two
+   * bubbles for one turn - the running commentary the turn unit replaced. So the speech is cut where
+   * the ceiling falls and the report says what that cost; the conduct states the deletion
+   * (`game-surface-prompt-floor.ts`) rather than leaving her to budget by a size that is not enforced
+   * gently.
    * </p>
    *
    * @returns `null` when the turn said nothing (absent, not an empty bubble), when the unit is the
@@ -517,7 +536,8 @@ export function attachNativeCompanionContent(
    * was delivered as a reply of its own. The floor asks for one spoken line per reply, and a reply is
    * one prompt turn; the two spellings of "reply" were the defect. Coalescing cannot lose text: every
    * non-empty text part of the turn is in the result, and the only cut is the bubble's ceiling, which
-   * `deliverTurn` reports by name rather than hiding (`bubble_truncated:`, printed by the turn loop).
+   * `deliverTurn` reports by name rather than hiding (`speech_truncated:`, printed by the turn loop,
+   * and the deletion it means is stated to her in the conduct).
    * </p>
    */
   const deliverTurn = (): NativeCompanionTurnBubble | null => {

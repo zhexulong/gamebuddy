@@ -217,8 +217,7 @@ public sealed class SlimeHutchTroughActionTests
         code.Should().NotContain("crop_watered");
 
         // Discovery advertises exactly the fixed tiles the handler accepts.
-        string discovery = File.ReadAllText(RepositorySourcePath(
-            Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string discovery = ControllerPartials.Declaring("DiscoverSlimeHutchTroughTargets");
         discovery.Should().Contain("DiscoverSlimeHutchTroughTargets");
         discovery.Should().Contain("IsSlimeHutchTroughTile(SlimeHutchTroughColumn, y)");
     }

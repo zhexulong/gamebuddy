@@ -25,6 +25,14 @@
  * Set `GAMEBUDDY_HEAD_TYPECHECK_DIR` to put the throwaway worktree somewhere other than the system
  * temporary directory (on a machine whose `C:` is full, point it at another drive).
  */
+
+export const gateDeclaration = {
+  id: "check-head-typecheck",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

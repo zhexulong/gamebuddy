@@ -147,10 +147,9 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     {
         string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
 
-        transition.Should().Contain("AdjacentExitStep(exits, actorTile)",
-            "the one step that stood in the way must be taken instead of refused, and the decision reads the actor's "
-            + "tile only: `enter_exit` means leave this location, so it must not also demand that the tile she named was "
-            + "the door");
+        transition.Should().Contain("AdjacentExitStep(exits, Game1.player)",
+            "the one step that stood in the way must be taken instead of refused, and the decision asks the actor itself "
+            + "- never the tile she named - so the engine's own radius gate can read the tile it is asked about");
         transition.Should().Contain("approach=adjacent_door;door=",
             "a substituted door is named in the receipt, exactly as every other approach leg in this Mod is");
         transition.Should().Contain("DispatchNativeDoor(location, doorPoint",
@@ -158,7 +157,7 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
             + "there and bypass every native door gate");
 
         int unresolvedGuard = transition.IndexOf("if (warp is null || warp.TargetName is null or \"\")", StringComparison.Ordinal);
-        int rescue = transition.IndexOf("AdjacentExitStep(exits, actorTile)", StringComparison.Ordinal);
+        int rescue = transition.IndexOf("AdjacentExitStep(exits, Game1.player)", StringComparison.Ordinal);
         unresolvedGuard.Should().BeGreaterThanOrEqualTo(0);
         rescue.Should().BeGreaterThan(unresolvedGuard,
             "a request that names a DIFFERENT door which resolves is honoured: the one-step rescue may only run once the "

@@ -64,8 +64,7 @@ internal sealed partial class ExecutionManager
         bool droppedInFrame = debrisAfter > debrisBefore
             && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};ready_for_harvest_before={readyBefore.ToString().ToLowerInvariant()};ready_for_harvest_after={readyAfter.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};item_dropped_in_frame={droppedInFrame.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, harvested ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            harvested ? "bush_harvested" : "bush_harvest_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, harvested, "bush_harvested", "bush_harvest_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetHarvestableBush(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush)
@@ -107,7 +106,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>The one harvestability rule, shared by the discovery, the lookup and the postcondition read.</summary>
     private static bool IsReadyBush(StardewValley.TerrainFeatures.Bush bush)
     {
         return bush.tileSheetOffset.Value == 1 && bush.inBloom() && bush.readyForHarvest();
@@ -136,8 +134,7 @@ internal sealed partial class ExecutionManager
         int debrisAfter = location.debris.Count;
         bool fruitDropped = debrisAfter > debrisBefore && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};debris_before={debrisBefore};debris_after={debrisAfter};fruit_dropped={fruitDropped.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, fruitDropped ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            fruitDropped ? "fruit_tree_harvested" : "fruit_tree_harvest_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, fruitDropped, "fruit_tree_harvested", "fruit_tree_harvest_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetHarvestableFruitTree(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.FruitTree? tree)
@@ -203,8 +200,7 @@ internal sealed partial class ExecutionManager
         bool shakenAfter = tree.wasShakenToday.Value;
         bool succeeded = !seedAfter && shakenAfter;
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};has_seed_before={seedBefore.ToString().ToLowerInvariant()};has_seed_after={seedAfter.ToString().ToLowerInvariant()};shaken_today={shakenAfter.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "tree_shaken" : "tree_shake_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "tree_shaken", "tree_shake_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetShakeableTree(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Tree? tree)
@@ -260,19 +256,12 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>
-    /// One bush candidate: the single filter and the single publisher the discovery uses, so a published target
-    /// cannot be a target the harvest refuses.
-    /// </summary>
     private static void PublishBushTarget(GameLocation location, Farmer player, Vector2 tile, StardewValley.TerrainFeatures.TerrainFeature feature, List<BridgeBushTarget> published)
     {
         if (published.Count >= 32) return;
         if (feature is not StardewValley.TerrainFeatures.Bush bush || !IsReadyBush(bush)) return;
         if ((int)tile.X < 0 || (int)tile.X > 1000 || (int)tile.Y < 0 || (int)tile.Y > 1000) return;
         if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) return;
-        // ONE TILE, ONE BUSH. A save can hold the same bush in both collections (an old one in `terrainFeatures`, a
-        // new one in `largeTerrainFeatures`), and the id is a function of location and tile - so publishing twice
-        // would hand the model two ids for one target and let a plan act on a bush it already harvested.
         if (published.Any(existing => existing.X == (int)tile.X && existing.Y == (int)tile.Y)) return;
         published.Add(new BridgeBushTarget(BuildBushTargetId(location, (int)tile.X, (int)tile.Y, bush),
             location.NameOrUniqueName, (int)tile.X, (int)tile.Y));

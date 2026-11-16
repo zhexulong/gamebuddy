@@ -30,12 +30,10 @@
  *              the text she reads every turn, and the only surface that answers "does she know this fact".
  *   player     the browser's own Game panel (`dialogue-web/src/components/GameStatePanel.tsx`, fed by
  *              `game_browser_api/v1`). A fact printed there is real and useful, and it is still not a fact she has.
- *   unread     text composed and delivered to nobody. The one member this audience ever had was
- *              `host/src/snapshot-hud.ts`, which composed a `[State HUD: …]` block into `WorldFact.contextProjection.hud`
- *              whose only read in the tree was a `typeof` guard; `composeFactBrief` reads the projection's `text` and
- *              never `hud`. That module and its block were deleted, so no renderer is declared `unread` today - the
- *              audience stays because a module can be wired into this declaration the day it composes text for nobody,
- *              and because the report's `printedToNoReader` is what made the defect visible.
+ *   unread     text composed and delivered to nobody. There is no such renderer today: the `[State HUD: …]` block was
+ *              retired, because a string nothing reads is not a surface, and its three facts nobody else rendered moved
+ *              into the per-turn paragraph. The audience stays in the vocabulary because the gate must be able to name
+ *              a rendering into it if one reappears.
  *
  * Until this unit the gate judged one question and answered another. `health` and `harvestWhereabouts` were cleared by
  * `printedBy: "host/src/snapshot-hud.ts"` - a rendering into the third bucket - so "she knows her own hit points" was
@@ -71,9 +69,18 @@
  * red-proof: inject  a `player_only` exemption with a blank reason, and one with no player-audience renderer printing
  *            the field -> `player_only_without_reason` / `player_only_without_a_player_renderer` (the same suite)
  */
+
+export const gateDeclaration = {
+  id: "check-snapshot-field-rendering",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutComments } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -100,12 +107,13 @@ const UNREAD = "unread";
  * its own is NOT a renderer here: the companion's player reads the Game turn, and that is what this gate protects.
  * </p>
  * <p>
- * `snapshot-hud.ts` was the one member with audience `unread` - it composed text from the same `Snapshot` and delivered
- * it to nobody (the measurement is in the header) - and it was deleted rather than kept for the report's sake. What the
- * declaration must keep is the distinction, not that module: a member whose text reaches no reader clears nothing, and
- * a reader of the report can tell "she reads it" from "a module writes it". What makes a module a member of this set is
- * that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field by field. A module that merely reads a snapshot field
- * to decide something is not a renderer; adding one would credit its reads as renderings.
+ * The `[State HUD: …]` block was the third audience's only member: it composed text from the same `Snapshot` and
+ * delivered it to nobody, so 22 of 120 fields were printed and read by no one. It is gone - the three facts nobody else
+ * rendered moved into the paragraph, and the rest were already there - so `printedToNoReader` now reads 0. The audience
+ * stays, because the next renderer wired to nothing must be namable rather than invisible. What makes a module a member
+ * of this set is that it COMPOSES TEXT FROM THE SNAPSHOT - it is read here field
+ * by field. A module that merely reads a snapshot field to decide something is not a renderer; adding one would credit
+ * its reads as renderings.
  * </p>
  * <p>
  * THE AUDIENCE IS THE CLAIM. `companion` is the only one that clears an obligation; `player` is the audience a
@@ -138,23 +146,10 @@ export const RENDERER_TABLES = Object.freeze([
  * A fact printed into text NOBODY receives is not the player's either - which is how `health` sat exempted for a while,
  * crediting a HUD block no reader in this tree consumes.
  */
-const BODY_HELD_REASON =
-  "what is holding her body (a modal, an event, a pass-out) and whether a new command can take it over. The observation's projection states it for `stardew_observe` and the refusal receipt states it after the attempt; `<world-state>` does not, so a companion who is blocked learns it only by trying.";
 const TRUNCATION_COUNT_REASON =
   "the number of rows a Mod cap left out, paired with the family it counts. `<world-state>` prints that family, so the count beside it is the next unit: a family truncated at its cap reads as complete without it.";
 
 export const RENDERING_EXEMPTIONS = Object.freeze({
-  actionable: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  actorDispositionKind: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  actorDispositionDetail: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  actorDispositionActionOwned: { reason: BODY_HELD_REASON, owedBy: "host/src/fact-brief.ts" },
-  harvestWhereabouts: {
-    reason:
-      "the WHOLE-MAP ripe-crop count. `<world-state>` names only the radius-bounded `可收的作物` family, so ripe crops " +
-      "beyond that radius are in neither the prose nor a count beside it - the gap the dry-crop line closed for " +
-      "`wateringWhereabouts`, still open for this family.",
-    owedBy: "host/src/fact-brief.ts",
-  },
   warps: {
     reason:
       "the map's own warp table, addresses rather than places to walk to. `doorTargets` is the family `<world-state>` prints; a warp with a button tile is addressed by `move_to_tile` and read from the observation.",
@@ -236,15 +231,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
   },
 });
 
-/** A line comment, a block comment: text a reader wrote for a person, never a read of a field. */
-function withoutComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/u, ""))
-    .join("\n");
-}
-
 /** Whether a source reads a snapshot field: `.field`, `"field"`, `source.field`, or a destructure binding. */
 export function rendersField(source, field) {
   const code = withoutComments(source);
@@ -255,13 +241,34 @@ export function rendersField(source, field) {
   ].some((pattern) => pattern.test(code));
 }
 
-/** The keys of one `export const <table> = Object.freeze({...})` literal, in declaration order. */
+/**
+ * The keys of one `export const <table> = Object.freeze({...})` literal, in declaration order.
+ *
+ * The slice ends at the literal's own closing brace: reading to the end of the file picked up the keys of every table
+ * declared after it, which credited a field to a table it is not in (`perTurnFamilies` read 85 "row" families where the
+ * row table declares 74, the extra eleven being the tail of the file). A reader that over-reads is the same failure as
+ * one that stops early - it answers a different question than the one it prints.
+ */
 export function tableKeys(source, table) {
   const declaration = source.indexOf(`export const ${table}`);
   if (declaration < 0) return [];
   const open = source.indexOf("{", declaration);
   if (open < 0) return [];
-  const body = withoutComments(source.slice(open));
+  const code = withoutComments(source.slice(open));
+  let depth = 0;
+  let close = -1;
+  for (let index = 0; index < code.length; index += 1) {
+    if (code[index] === "{") depth += 1;
+    else if (code[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close < 0) return [];
+  const body = code.slice(0, close + 1);
   const keys = [];
   for (const match of body.matchAll(/^\s+(\w+):/gmu)) keys.push(match[1]);
   return keys;
@@ -304,6 +311,58 @@ const read = (root, path) => {
     return null;
   }
 };
+
+/** A table a renderer ITERATES: `Object.entries(T)`, `Object.keys(T)`, `for (const x of T)`. */
+function iterates(rendererSources, table) {
+  const pattern = new RegExp(`Object\\.(?:entries|keys)\\(\\s*${table}\\s*\\)|of\\s+${table}\\b`, "u");
+  return rendererSources.some((source) => pattern.test(withoutComments(source)));
+}
+
+/**
+ * The names `<world-state>` carries: the keys of every row table a renderer ITERATES, plus every member the renderer
+ * sources read. One set, exported so the question "does the per-turn text name this family" has one answer.
+ *
+ * WHY THIS IS HERE AND NOT IN EACH CALLER (2026-11-13). `host/src/snapshot-hud.ts` was the second authority for that
+ * question: it declared `fields` per line, and two other readers parsed that table by text. `213cde50` deleted the
+ * module, and both readers went red for a year of turns with nothing saying why - `check-stardew-observation-consumers`
+ * blocked on `missing_input`, and the observation-gap analyzer threw ENOENT inside its `loadConsumptionSources`. Two
+ * readers of one deleted file is what a second list of "what the per-turn text prints" costs, so the answer lives with
+ * the renderer declaration it is derived from and everyone imports it.
+ *
+ * A table is included only when a renderer iterates it. `NON_ROW_FAMILIES` is declared here and is not one: it says
+ * which families the row line does NOT print, so reading it as a per-turn source would turn its reasons into claims.
+ *
+ * `problems` is never silently empty: a table that is iterated but unreadable, a renderer that is gone, and zero rows
+ * are all reported, because a set that shrinks to nothing agrees with every question asked of it.
+ */
+export function perTurnFamilies({ root = REPOSITORY_ROOT, renderers: declared = RENDERER_SOURCES } = {}) {
+  const rendererSources = [];
+  const problems = [];
+  for (const renderer of declared) {
+    const source = read(root, renderer.path);
+    if (source === null) {
+      problems.push(`per_turn_renderer_missing:${renderer.path}`);
+      continue;
+    }
+    rendererSources.push(source);
+  }
+  const rows = new Set();
+  for (const entry of RENDERER_TABLES) {
+    if (!iterates(rendererSources, entry.table)) continue;
+    const source = read(root, entry.source);
+    const keys = source === null ? [] : tableKeys(source, entry.table);
+    if (keys.length === 0) {
+      problems.push(`per_turn_table_unread:${entry.source}#${entry.table}`);
+      continue;
+    }
+    for (const key of keys) rows.add(key);
+  }
+  const mentioned = new Set();
+  for (const source of rendererSources)
+    for (const match of withoutComments(source).matchAll(/\.([A-Za-z][A-Za-z0-9]*)/gu)) mentioned.add(match[1]);
+  if (rows.size === 0) problems.push("per_turn_rows_empty:no renderer iterates a row table");
+  return { rows, mentioned, families: new Set([...rows, ...mentioned]), problems };
+}
 
 /**
  * What is wrong with one exemption: no owner, no reason, or a `player_only` claim that does not hold.

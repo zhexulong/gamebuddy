@@ -37,7 +37,15 @@
 // red-proof: inject  deleting `bool? IsRaised` from a copy of `BridgeProtocolModels.cs`, so the crop row stops
 //   publishing a field `ContentDataQuery.CropRow` still projects -> `not_reachable:isRaised` and three
 //   `wire_extra:isRaised`, `blocked (4 finding(s))`, exit 1 (tools/check-stardew-crop-row-derivation.test.mjs)
-import { readFileSync } from "node:fs";
+
+export const gateDeclaration = {
+  id: "check-stardew-crop-row-derivation",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -365,6 +373,37 @@ function defaultRead(root, relativePath) {
   return readFileSync(path.join(root, relativePath), "utf8");
 }
 
+/**
+ * The controller partial that DECLARES `member`, resolved from the family instead of assumed.
+ *
+ * This gate used to read `farmhandexecutioncontroller.cs` by name, and a filename is not an owner: when the target
+ * discovery members were extracted into their own partial the file was still there and the body was not, so the gate
+ * reported `row_discovery_missing` for a move that changed no behaviour. The second hardcoded path is the same defect
+ * one move later, so the file is asked for by the member's DECLARATION - a signature line carrying a modifier, which a
+ * call site cannot imitate - and a member declared nowhere, or in two partials, blocks the gate by name.
+ */
+function controllerPartialDeclaring(root, member, read) {
+  const directory = "integrations/stardew";
+  let names = [];
+  try {
+    names = readdirSync(path.join(root, directory));
+  } catch {
+    throw new Error(`crop_row_controller_family_unreadable: ${directory} could not be listed`);
+  }
+  const declaration = new RegExp(`^ {4}(?:private|internal|public|protected)[^;=]*\\b${member}\\s*\\(`, "mu");
+  const declaring = names
+    .filter((name) => /^farmhandexecutioncontroller.*\.cs$/u.test(name))
+    .filter((name) => declaration.test(read(`${directory}/${name}`)))
+    .sort();
+  if (declaring.length !== 1)
+    throw new Error(
+      declaring.length === 0
+        ? `crop_row_discovery_not_declared: no controller partial declares ${member}`
+        : `crop_row_discovery_ambiguous: ${member} is declared in ${declaring.join(", ")}`,
+    );
+  return `${directory}/${declaring[0]}`;
+}
+
 const sorted = (values) => [...values].sort();
 
 /**
@@ -384,7 +423,7 @@ export function checkStardewCropRowDerivation({
   const protocolFields = extractProtocolRowFields(read(PROTOCOL_PATH));
   const validatorFields = extractValidatorRowFields(read(VALIDATOR_PATH));
   const schemaFields = extractSchemaRowFields(read(SCHEMA_PATH));
-  const discoveryBody = extractRowDiscoveryBody(read(EXECUTION_CONTROLLER_PATH));
+  const discoveryBody = extractRowDiscoveryBody(read(controllerPartialDeclaring(root, ROW_DISCOVERY_FUNCTION, read)));
 
   // 0. A NULLABLE wire key must be OMITTED when null, never sent as `null`.
   //

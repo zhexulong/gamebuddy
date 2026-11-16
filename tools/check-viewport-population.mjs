@@ -44,6 +44,14 @@
  *   `viewport_default_undeclared: <the config> inherits the device viewport ...` and exit 1
  *   (tools/check-viewport-population.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-viewport-population",
+  domain: "product",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";

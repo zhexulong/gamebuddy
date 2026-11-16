@@ -17,8 +17,11 @@
  *
  * red-proof: history  the pre-fix hook replayed from `d8567157^` in a copy of this tree, over the same scenario,
  *                     committed 210 insertions and 61 deletions - the neighbouring lane's whole rewrite - where the
- *                     index held 2 insertions -> `× a commit carries the staged bytes when the worktree holds a
+ *                     index held 2 insertions -> `✖ a commit carries the staged bytes when the worktree holds a
  *                     foreign hunk`, exit 1 (tools/scripts/pre-commit.test.mjs)
+ * red-proof: inject  a formatter that rewrites a character, and a hook that takes its output -> `✖ a character the
+ *                     author wrote is not formatting`, the commit carries `×` where `✖` was staged (undo the guard in
+ *                     `rewriteFormattedBlobs` to see it)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -70,17 +73,49 @@ if (!args.some((arg) => arg.startsWith("--stdin-file-path="))) {
   process.stderr.write("formatter fixture: neither --write nor --stdin-file-path was given\\n");
   process.exit(1);
 }
-process.stdout.write(format_(readFileSync(0, "utf8")));
+// biome 2.2.4's stdin mode, reproduced: exactly the five substitutions measured over this tree's 2010 non-ASCII
+// codepoints. FILE mode does not do this, which is the difference the hook has to care about.
+const STDIN_SUBSTITUTIONS = [
+  ["\\u2716", "\\u00d7"],
+  ["\\u2714", "\\u221a"],
+  ["\\u2139", "e"],
+  ["\\u26a0", "!"],
+  ["\\ufe0f", ""],
+];
+const stdinFormatted = STDIN_SUBSTITUTIONS.reduce(
+  (text, [from, to]) => text.split(from).join(to),
+  format_(readFileSync(0, "utf8")),
+);
+process.stdout.write(stdinFormatted);
 `;
 
-const fixture = () => {
+/**
+ * A formatter that rewrites a character in FILE mode too - the shape the hook's invariant guard exists for, because no
+ * measured formatter does this today and a future one can.
+ */
+const CHARACTER_REWRITING_FORMATTER = `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+const [, ...paths] = args.filter((arg) => !arg.startsWith("--"));
+if (args.includes("--write")) {
+  for (const path of paths) {
+    const text = readFileSync(path, "utf8");
+    writeFileSync(path, text.replace(/\\{(\\w+):(\\w+)\\}/g, "{ $1: $2 }").split("\\u2716").join("\\u00d7"));
+  }
+  process.exit(0);
+}
+process.stdout.write(readFileSync(0, "utf8"));
+`;
+
+const fixture = ({ formatter = FORMATTER } = {}) => {
   const root = mkdtempSync(join(tmpdir(), "pre-commit-hook-"));
   const write = (relative, content) => {
     mkdirSync(dirname(join(root, relative)), { recursive: true });
     writeFileSync(join(root, relative), content);
   };
   for (const file of COPIED_FILES) write(file, readFileSync(join(REPOSITORY_ROOT, file)));
-  write("node_modules/@biomejs/biome/bin/biome", FORMATTER);
+  write("node_modules/@biomejs/biome/bin/biome", formatter);
   for (const step of STUBBED_STEPS) write(step, `process.stdout.write("${step}: stub\\n");\n`);
   write(".gitignore", "node_modules/\n.formatter-invocations\n");
   write("biome.json", "{}\n");
@@ -198,4 +233,46 @@ test("with GIT_INDEX_FILE the hook formats that index and leaves the shared one 
   );
   assert.equal(ok(["show", `:${SCENARIO}`]), sharedBlob, "the shared index holds another lane's staging");
   assert.equal(readFileSync(join(root, SCENARIO), "utf8"), foreignBytes);
+});
+test("the marker characters of a staged blob survive the hook", () => {
+  const { write, git, ok } = fixture();
+  const staged = "// red: \u2716 a gate prints this, and \u2714 marks a pass\nconst lane = {p:8};\n";
+  write(SCENARIO, staged);
+  ok(["add", "--", SCENARIO]);
+
+  const commit = git(["commit", "-m", "red proof"]);
+  assert.equal(commit.status, 0, combined(commit));
+  const committed = ok(["show", `HEAD:${SCENARIO}`]);
+  assert.equal(
+    [...committed].filter((character) => character === "\u2716").length,
+    1,
+    "the marker the author staged must still be U+2716 in the commit",
+  );
+  assert.equal(
+    [...committed].filter((character) => character === "\u00d7").length,
+    0,
+    "U+00D7 is what the formatter's stdin mode makes of the marker, and it may not reach a commit",
+  );
+  assert.match(committed, /\{ p: 8 \}/, "the file must still be formatted");
+  assert.doesNotMatch(combined(commit), /NOT reformatting/);
+});
+
+test("a character the author wrote is not formatting", () => {
+  const { write, git, ok } = fixture({ formatter: CHARACTER_REWRITING_FORMATTER });
+  const staged = "// red: \u2716 a gate prints this\nconst lane = {p:8};\n";
+  write(SCENARIO, staged);
+  ok(["add", "--", SCENARIO]);
+
+  const commit = git(["commit", "-m", "rewriting formatter"]);
+  assert.equal(commit.status, 0, combined(commit));
+  assert.equal(
+    ok(["show", `HEAD:${SCENARIO}`]),
+    staged,
+    "when the formatter changes a character, the staged bytes are what the commit carries",
+  );
+  assert.match(
+    combined(commit),
+    /pre-commit: NOT reformatting tools\/scenario\.mjs \(U\+2716 \(\u2716\) -> U\+00D7 \(\u00d7\)\)/,
+    "the hook must name the file and the character it refused to change",
+  );
 });

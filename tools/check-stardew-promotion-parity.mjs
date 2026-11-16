@@ -45,6 +45,14 @@
  *   `experimental=present:run-stardew-native-local-player-use-mine-ladder-smoke.mjs`
  *   (tools/check-stardew-promotion-parity.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-promotion-parity",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

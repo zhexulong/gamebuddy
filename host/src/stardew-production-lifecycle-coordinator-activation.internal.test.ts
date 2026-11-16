@@ -157,7 +157,7 @@ test("same admission joins the exact activation Promise while a conflicting admi
     );
     second.activationOwner.bindBrowserAdmissionIssuer(fixture.broker.handler.lifecycleActivationIssuer);
     await assert.rejects(second.activationOwner.activate(conflicting), /stardew_lifecycle_activation_failed/);
-    assert.equal(second.activationOwner.readPrivateActivationSnapshot().state, "failed");
+    assert.equal(second.activationOwner.readPrivateActivationSnapshot().state, "activation_failed");
     await second.close();
   } finally {
     release();
@@ -800,7 +800,7 @@ test("contained Player Host launch failure after the claim durably quarantines t
         }),
         /stardew_player_host_launch_failed/,
       );
-      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "launch_quarantined");
       // Durable authority, not just the lifecycle snapshot: the exact owner record
       // must be quarantined (termination of the launchMayHaveRun path).
       assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
@@ -950,8 +950,11 @@ test("contained AI and Player roles share one per-owner runtime, close drains AI
       // without a pid, so the bridge correlation succeeds and both lifecycle
       // view slots stay authoritative.
       assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+      // The contained launch correlated the Player Host's advertisement, so the lifecycle's own
+      // state is the attested one - the slot the browser reads follows it, and the AI-client
+      // slot stays the facade's own reading.
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
-        state: "awaiting_attestation",
+        state: "attested",
         ownership: "gamebuddy_direct_spawn",
       });
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {

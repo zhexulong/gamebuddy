@@ -41,6 +41,14 @@
 // red-proof: history the tree at HEAD: BridgeSnapshot's construction site passes 118 arguments and the wire
 //                    record declares 120 -> `[construction_arity_mismatch]` and `0 families derived`, exit 1
 //                    (tools/check-stardew-snapshot-family-bounds.mjs, the arity rule this marker names)
+
+export const gateDeclaration = {
+  id: "check-stardew-snapshot-family-bounds",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

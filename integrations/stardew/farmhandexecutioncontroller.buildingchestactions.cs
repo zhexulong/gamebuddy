@@ -163,9 +163,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: this seam starts no tool swing and drives no tool
-        // lifecycle — it is the same instantaneous non-tool container transaction
-        // `chest_store` admits through this path.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -191,11 +188,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteLoadBuildingChest(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one load execution body, reached both in range and on arrival from the approach
-    /// leg. It re-resolves the target, the held item and the geometry, because the walk can
-    /// take several ticks and any of them can change.
-    /// </summary>
     private LocalExecutionReceipt ExecuteLoadBuildingChest(string executionId, string requestId, int slot, int x, int y, string targetId)
     {
         BuildingChestResolution resolution = ResolveBuildingChest(x, y, targetId, BuildingChestAction.Load);
@@ -214,13 +206,6 @@ internal sealed partial class ExecutionManager
         Building building = resolution.Building!;
         Chest chest = building.GetBuildingChest(resolution.ChestId)!;
         string qualifiedItemId = heldObject.QualifiedItemId;
-        // The native branch's own two admission facts, read with the SAME public API it
-        // reads (:774 GetItemConversionForItem, :777 GetNumberOfItemThatCanBeAddedToThis-
-        // InventoryList). They LABEL an observed refusal; they never refuse before the call,
-        // because the game's own red message is the Agent-facing reason. The capacity is
-        // read before the native branch's own `consolidateStacks`/`clearNulls` (:775-776),
-        // so it is the chest's addable count as this action found it, not as the branch
-        // normalised it.
         BuildingItemConversion? conversion = building.GetItemConversionForItem(heldObject, chest);
         int requiredCount = conversion?.RequiredCount ?? 0;
         int chestCapacityBefore = conversion is null ? 0 : Utility.GetNumberOfItemThatCanBeAddedToThisInventoryList(heldObject, chest.Items, 36);
@@ -267,8 +252,6 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        // Re-read the world AFTER the call: both halves of the quantised transfer are
-        // observations, not the seam's return value.
         int heldCountAfter = CountQualifiedItem(Game1.player, qualifiedItemId);
         int chestItemAfter = ChestItemCount(chest, qualifiedItemId);
         int chestSlotsAfter = BuildingChestSlotCount(chest);
@@ -330,11 +313,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteCollectBuildingChestOutput(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one collect execution body, reached both in range and on arrival from the
-    /// approach leg. It re-resolves the target and re-reads the chest's own stack layout,
-    /// because the walk can take several ticks.
-    /// </summary>
     private LocalExecutionReceipt ExecuteCollectBuildingChestOutput(string executionId, string requestId, int x, int y, string targetId)
     {
         BuildingChestResolution resolution = ResolveBuildingChest(x, y, targetId, BuildingChestAction.Collect);
@@ -358,12 +336,6 @@ internal sealed partial class ExecutionManager
         int carriedBefore = single is null ? 0 : CountQualifiedItem(Game1.player, single.QualifiedItemId);
         bool menuBefore = Game1.activeClickableMenu is not null;
 
-        // Every refusal this branch can name is decided BEFORE anything is touched, and the
-        // three cases are mutually exclusive: an empty chest, the >= 2-stack case the owner
-        // ruled a named refusal, and a single stack that does not entirely fit — because the
-        // native branch adds what it can and then opens `ItemGrabMenu` for the remainder
-        // (:2080-2085), and this action must not leave an undriveable menu open. The
-        // `couldInventoryAcceptThisItem` precondition is the same one `chest_retrieve` uses.
         if (chestSlotsBefore == 0 || chestSlotsBefore >= 2 || single is null || !Game1.player.couldInventoryAcceptThisItem(single))
         {
             string reasonCode = chestSlotsBefore == 0
@@ -419,11 +391,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "building_chest_collect_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// One resolved building chest, or the named reason the published target no longer
-    /// matches the live world. <see cref="Identity"/> is the evidence prefix shared by every
-    /// receipt this pair mints.
-    /// </summary>
     private sealed record BuildingChestResolution(
         bool Accepted,
         string ReasonCode,
@@ -436,18 +403,12 @@ internal sealed partial class ExecutionManager
             new(false, reasonCode, evidence, string.Empty, null, string.Empty);
     }
 
-    /// <summary>Which of the two scriptable native branches the caller wants.</summary>
     private enum BuildingChestAction
     {
         Load,
         Collect,
     }
 
-    /// <summary>
-    /// Re-derives the named building chest on the game thread. A mismatch is a named
-    /// refusal, never a silent re-target, and the branch the native code would take is named
-    /// before anything is called.
-    /// </summary>
     private static BuildingChestResolution ResolveBuildingChest(int x, int y, string expectedTargetId, BuildingChestAction action)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -470,8 +431,6 @@ internal sealed partial class ExecutionManager
 
             string branch = DescribeBuildingChestBranch(declared.Type);
             string chestIdentity = $"{identity};chest_id={declared.Id};branch={branch}";
-            // The Chest type opens `ItemGrabMenu` unconditionally (:760-762), so it is not a
-            // target this Mod can serve whichever half the caller wanted.
             if (declared.Type == BuildingChestType.Chest)
                 return BuildingChestResolution.Reject("building_chest_requires_menu", $"{chestIdentity};native_menu_required=true");
             if (action == BuildingChestAction.Load && declared.Type != BuildingChestType.Load)
@@ -551,13 +510,6 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>
-    /// The first inventory slot holding an item this Load chest's conversion accepts and that
-    /// carries at least one whole `RequiredCount` quantum — the exact `slot` argument
-    /// `load_building_chest` needs — or false when the actor holds nothing loadable right now.
-    /// The acceptance test is the native branch's own predicate, so the published hint can never
-    /// offer a slot the native branch would refuse as the wrong item.
-    /// </summary>
     private static bool TryFindLoadableInventorySlot(Building building, Chest chest, out int slot, out string itemId, out int stack)
     {
         slot = -1;
@@ -609,11 +561,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>
-    /// Whether one map action string is the native `BuildingChest` action for this chest,
-    /// parsed with the game's own space splitter and the same argument position
-    /// `GameLocation.performAction` reads (:10130).
-    /// </summary>
     private static bool NamesBuildingChest(string? action, string chestId)
     {
         if (string.IsNullOrWhiteSpace(action)) return false;
@@ -643,12 +590,6 @@ internal sealed partial class ExecutionManager
         _ => "unknown",
     };
 
-    /// <summary>
-    /// The Object held in one inventory slot, or false when the slot does not exist or holds
-    /// something that is not an Object (a Tool has no `ActiveObject`). The slot is selected as the
-    /// held one around the native call rather than required to already be held, mirroring
-    /// `machine_load`: the native branch reads `who.ActiveObject` and this action supplies it.
-    /// </summary>
     private static bool TryGetInventoryObjectInSlot(int slot, [NotNullWhen(true)] out StardewValley.Object? heldObject)
     {
         heldObject = null;
@@ -667,7 +608,6 @@ internal sealed partial class ExecutionManager
     private static int BuildingChestSlotCount(Chest chest) =>
         chest.GetItemsForPlayer().Where(item => item is not null).Count();
 
-    /// <summary>The chest's own live item count, across every stack it holds.</summary>
     private static int BuildingChestItemCount(Chest chest) =>
         chest.GetItemsForPlayer().Where(item => item is not null).Sum(item => item.Stack);
 

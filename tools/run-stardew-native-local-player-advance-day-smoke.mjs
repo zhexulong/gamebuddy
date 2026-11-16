@@ -10,6 +10,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "sleep";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -51,7 +52,7 @@ export async function runAdvanceDaySmoke(client, receipts, config, { terminalTim
     if (terminal.executionId !== accepted.executionId || terminal.requestId !== requestId)
       throw new Error("advance_day_terminal_identity_mismatch");
 
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     // The postcondition of a day advance is that the day advanced, NOT that the
     // actor is actionable: a new day legitimately opens with a fade/day-start
     // sequence during which the world is briefly not actionable. Requiring
@@ -112,20 +113,6 @@ function validateTopologyConfig(value) {
   // deny-by-exception block, so the shape check is what still applies.
   validateNativeLocalFixturePolicy(value, {});
   return topology;
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 if (import.meta.main) {

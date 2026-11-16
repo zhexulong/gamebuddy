@@ -203,7 +203,28 @@ const GAME_INSTANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
 ]);
 const GAME_COMPATIBILITY_KEYS = ["status", "message"] as const;
 const GAME_ATTACHMENT_KEYS = ["status", "generation"] as const;
-const GAME_CAPABILITY_SUMMARY_KEYS = ["available", "count"] as const;
+const GAME_CAPABILITY_PUBLISHED_KEYS = ["status", "count"] as const;
+const GAME_CAPABILITY_NOT_MEASURED_KEYS = ["status", "reason"] as const;
+
+/**
+ * The capability summary is ONE of two shapes, never a shape with a count that may be absent.
+ *
+ * `published` carries a count the Host measured - `0` there means the Mod advertised nothing. `not_measured` carries a
+ * reason and no count at all: a count beside an unmeasured reading is the panel stating a number nobody produced, which
+ * is what `{available: false, count: 0}` did on every reply.
+ */
+function isCapabilitySummary(value: Record<string, unknown>): boolean {
+  if (value.status === "published")
+    return hasExactKeys(value, GAME_CAPABILITY_PUBLISHED_KEYS) && isSafeInteger(value.count, 0) && value.count <= 512;
+  if (value.status === "not_measured")
+    return (
+      hasExactKeys(value, GAME_CAPABILITY_NOT_MEASURED_KEYS) &&
+      typeof value.reason === "string" &&
+      value.reason.length > 0 &&
+      value.reason.length <= 64
+    );
+  return false;
+}
 
 export type GameBrowserStateV1 = Readonly<{
   apiVersion: 1;
@@ -249,7 +270,7 @@ export type GameBrowserStateV1 = Readonly<{
     companionName: string | null;
     selectedWorld: string | null;
     selectedSave: string | null;
-    capabilitySummary: Readonly<{ available: boolean; count: number }>;
+    capabilitySummary: Readonly<{ status: "published"; count: number } | { status: "not_measured"; reason: string }>;
     latestOutcome: (typeof OUTCOMES)[number];
   }>;
 }>;
@@ -1147,10 +1168,7 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
     !isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH) ||
     !isNullableLabel(game.selectedSave, MAX_GAME_LABEL_LENGTH) ||
     !isRecord(game.capabilitySummary) ||
-    !hasExactKeys(game.capabilitySummary, GAME_CAPABILITY_SUMMARY_KEYS) ||
-    typeof game.capabilitySummary.available !== "boolean" ||
-    !isSafeInteger(game.capabilitySummary.count, 0) ||
-    game.capabilitySummary.count > 512 ||
+    !isCapabilitySummary(game.capabilitySummary) ||
     !isOneOf(game.latestOutcome, OUTCOMES)
   ) {
     return false;

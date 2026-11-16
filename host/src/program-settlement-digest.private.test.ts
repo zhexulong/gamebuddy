@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CompanionEventPump, type PendingBatch } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch } from "./event-pump.js";
 import {
   createProgramSettlementReporter,
   MAX_SETTLED_DIGEST_NODES,
@@ -55,7 +55,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
   // the world did something else first, which is the silent ledger this digest exists to end.
   const compiled = [planNode("n01"), planNode("n02")];
   const pump = new CompanionEventPump();
-  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
+  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact, FACT_PRODUCER.programSettlement));
   const reads: unknown[] = [
     status("plan_1", "active", [
       { nodeId: "n01", state: "succeeded" },
@@ -201,7 +201,7 @@ test("a refused move's reachability hint reaches the digest row and the text the
   // own serialization - and the fact has to be present in the last one, because that is the text a model actually reads.
   const compiled = [planNode("n01", "move_to_tile", 49, 14)];
   const pump = new CompanionEventPump();
-  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
+  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact, FACT_PRODUCER.programSettlement));
   reporter.report({
     programId: "plan_h",
     settledAtMs: 3,
@@ -349,7 +349,10 @@ test("the digest is wired to the pump on the one path every program takes", asyn
     materializer,
     /if \(code === "accepted" \|\| code === "idempotent"\) \{\s+revealReaders\(\);\s+startSettlementWatch\(request\.programId, request\.nodes\);/u,
   );
-  assert.match(materializer, /announceHostFact = \(fact\) => host\.acceptHostMintedFact\(fact\);/u);
+  assert.match(
+    materializer,
+    /announceHostFact = \(fact, producedBy\) => host\.acceptHostMintedFact\(fact, producedBy\);/u,
+  );
   // AND SO IS THE POLL. A status read of a STOPPED program answers with the ledger the fact was minted from, never
   // with a second derivation: this is the wiring that makes "one poll is enough" true rather than aspirational.
   assert.match(
@@ -366,7 +369,7 @@ test("the digest is wired to the pump on the one path every program takes", asyn
   const { shape: hostService } = readSourceShape(join(root, "host-service.ts"));
   assert.match(
     hostService,
-    /public acceptHostMintedFact\(fact: WorldFact\): void \{\s+if \(this\.#closed\) return;\s+this\.loop\.pump\.enqueueFact\(fact\);/u,
+    /public acceptHostMintedFact\(fact: WorldFact, producedBy: FactProducer\): void \{\s+if \(this\.#closed\) return;\s+this\.loop\.pump\.enqueueFact\(fact, producedBy\);/u,
   );
 });
 
@@ -400,7 +403,7 @@ test("a refused shop purchase reaches the model with the reason the counter gave
   ];
   const detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
   const pump = new CompanionEventPump();
-  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
+  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact, FACT_PRODUCER.programSettlement));
   const reported = reporter.report({
     programId: "plan_shop",
     settledAtMs: 4_242,

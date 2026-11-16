@@ -1,3 +1,10 @@
+export const gateDeclaration = {
+  id: "check-host-windows-test-preflight",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { lstat, readdir, readFile } from "node:fs/promises";
 /**
  * Windows test-preflight gate: a host test that parents its temp directory at a POSIX path cannot pass on the

@@ -7,8 +7,9 @@ import {
   worldStateStaleCode,
   worldStateStaleThreshold,
 } from "./fact-brief.js";
+import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
 import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
-import type { ExecutionState, Snapshot } from "./protocol.js";
+import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
@@ -75,8 +76,18 @@ export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "refused"
  * separately by the layer that sees Pi's event stream and the assistant message itself.
  */
 export const TURN_PRODUCTION = Object.freeze({
-  /** It ran at least one tool: the turn moved something. */
+  /** It ran at least one tool and delivered speech: it moved something and said what it moved. */
   worked: "worked",
+  /**
+   * It ran at least one tool and delivered NO speech: it worked and chose not to narrate the work.
+   *
+   * This is the member that makes `turn_settled_silent` a shape a turn can LAND on. Measured 2026-11-15
+   * (`round58`, 21 opened turns): every turn in the run both acted and spoke, so `bubbles 21 / turns 21` and the
+   * account had one counter for the turn spent on speech (`turn_closed_without_action`) and none for the turn spent
+   * on work with nothing said. Silence was not refused by any layer - `deliverTurn` draws no bubble for it and the
+   * loop's `PROVIDER_EMPTY_COMPLETION` excludes a message that asked for a tool - it simply collapsed into `worked`.
+   */
+  workedSilently: "worked_silently",
   /** It carried assistant text and ran no tool: narration. */
   spoke: "spoke",
   /**
@@ -88,14 +99,67 @@ export const TURN_PRODUCTION = Object.freeze({
 
 export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION];
 
+/** Every member of the closed list, derived - the population of every histogram over it and of the printer below. */
+export const TURN_PRODUCTIONS = Object.freeze(Object.values(TURN_PRODUCTION));
+
+/**
+ * What one turn produced, from the two raw facts, in ONE spelling over the closed list.
+ *
+ * <p>
+ * The loop asks it per delivered batch (work executed, text delivered) and the pump asks it per assistant RECORD (a tool
+ * asked for, text carried), so the two units cannot be classified by two expressions that disagree - see
+ * `AssistantTurnTally`.
+ * </p>
+ */
+export function turnProductionOf(producedWork: boolean, producedText: boolean): TurnProduction {
+  if (producedWork) return producedText ? TURN_PRODUCTION.worked : TURN_PRODUCTION.workedSilently;
+  return producedText ? TURN_PRODUCTION.spoke : TURN_PRODUCTION.saidNothing;
+}
+
+/**
+ * Did the turn carry any assistant text? One spelling of that question, over the closed list.
+ *
+ * <p>
+ * The two working members differ in exactly this bit, which is why it is asked here and not re-derived at every call
+ * site: `worked` and `spoke` delivered speech, `workedSilently` and `saidNothing` did not.
+ * </p>
+ */
+export function turnProducedSpeech(production: TurnProduction): boolean {
+  return production === TURN_PRODUCTION.worked || production === TURN_PRODUCTION.spoke;
+}
+
+/** Did the turn run at least one tool? Both working members did; narration and an empty message did not. */
+export function turnProducedWork(production: TurnProduction): boolean {
+  return production === TURN_PRODUCTION.worked || production === TURN_PRODUCTION.workedSilently;
+}
+
 /**
  * The closed list of things that make a batch worth a turn, and the whole population of the opening decision.
  *
  * <p>
- * THE INVARIANT: a turn opens only when the batch carries at least one thing she did not have and that can change what
- * she does next. Everything outside this list does not open one - in particular a snapshot that re-states the revision
- * she already has, a programme still in flight with no state change, and an event that only re-states a fact already
- * delivered.
+ * THE INVARIANT: a turn opens only when something NEEDS A DECISION now. Everything outside this list does not open one -
+ * in particular a programme still in flight with no state change, an event that only re-states a fact already delivered,
+ * and THE READING ITSELF.
+ * </p>
+ * <p>
+ * THE READING IS STANDING STATE, AND IT TOOK TWO PATHS. A snapshot is the `<world-state>` block: `takeBatch` renders the
+ * last reading into every delivery (`#worldStateReading`), and `fact-brief.ts` prints nothing for a snapshot fact ("The
+ * snapshot is the state block, not news"). The opener asked the opposite question - does this reading differ from the one
+ * she was last shown - so it opened turns for a paragraph the next turn would have carried anyway.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-15 (`round55`, `tools/_multiday_routine-round55-live-runner.log`): 120 turns opened, 115 of them
+ * `observation`, and 86 of those closed `turn_closed_without_action {observation:nothing_pending}`. The run's bridge
+ * traffic says why: of its 131 examined flushes, 90 carried no fact at all - no receipt, no semantic event, no world fact,
+ * no lifecycle, no player word - only a snapshot, and 87 of those 90 turns ended with speech and no action. The other 41
+ * windows carried a fact, and 28 of those turns acted. At about three per action turn, those 90 were the observations her
+ * own tool calls left in the pump, re-stated by `HostService.#restateWorldSnapshot` and turned into a new turn.
+ * </p>
+ * <p>
+ * NOTHING SHE SEES IS LOST, and the forward path is the facts: a person's words, an outcome, a clock mark, a due wake.
+ * Each of those opens the turn it needs and carries the freshest reading with the header `刚刚更新`, so the reading is
+ * delivered by the turn that has something to decide. A suppressed flush still ASKS the world about an aged reading
+ * (`#beginAgedReadingAsk`), which is the refresh the run's `auto_observe_on_stale` already measured as working.
  * </p>
  * <p>
  * MEASURED 2026-11-11 (`round46b`, `2026-11-11T07-25-22-940Z_01a1c97f`): two consecutive prompt turns,
@@ -110,8 +174,6 @@ export const TURN_OPENING = Object.freeze({
   playerInput: "player_input",
   /** A fact whose content she has not received before: a settlement, a refusal, a notice, a clock mark. */
   worldFact: "world_fact",
-  /** A snapshot whose revision has moved past the one she was last shown. */
-  observation: "observation",
   /** A Host-owned schedule came due: the stall watch, a stale reading, a narration run (`HOST_MINTED_WAKE_KINDS`). */
   due: "due",
 });
@@ -121,20 +183,109 @@ export const TURN_OPENINGS = Object.freeze(Object.values(TURN_OPENING));
 export type TurnOpening = (typeof TURN_OPENINGS)[number];
 
 /**
+ * Who can put a fact on this pump, declared once.
+ *
+ * <p>
+ * `TURN_OPENING` answers why a turn opened at the granularity of a REASON, so a run that printed `world_fact: 28` said
+ * a fact woke her twenty-eight times and nothing about which of the pump's entrances produced one of them - the producer
+ * was something a reader found by reading `enqueueFact`'s call sites. Measured 2026-11-15 (`round56`): 28 of 31 turns
+ * were `world_fact`, and the account could not separate the Mod's own traffic from the Host re-stating a reading it
+ * already held.
+ * </p>
+ * <p>
+ * THE MEMBERS ARE THE CALL SITES. One entry per `enqueueFact` call site, in the order a fact can arrive: the adapter's
+ * stream first, then the Host's own mints, then the two the Host publishes on another layer's behalf. The Host's
+ * Host-minted route (`acceptHostMintedFact`) carries five of them, which is why the producer is a parameter of that
+ * route and not a property of the fact.
+ * </p>
+ * <p>
+ * A member without a call site, and a call site without a member, are what `event-pump.fact-producer.test.ts` reds on -
+ * and the second is also a compile error, because `enqueueFact` demands a producer.
+ * </p>
+ */
+export const FACT_PRODUCER = Object.freeze({
+  /** `HostService.acceptIntegrationFact`: the authenticated adapter's own fact stream - snapshot, receipt, semantic event, world fact. */
+  adapterIngress: "adapter_ingress",
+  /** `HostService.acceptLifecycleEvent`: the local adapter transport going away - the one fact that is not the world speaking. */
+  transportLifecycle: "transport_lifecycle",
+  /** `HostService.#sayArrivalOnce`: the once-per-session "I have arrived, and the clock has ticked" fact. */
+  companionArrival: "companion_arrival",
+  /** `HostService.#admitNativeNotices`: an unseen native notice lifted out of the payload of the receipt that carried it. */
+  nativeNotice: "native_notice",
+  /** `HostService.#injectVoiceInterruptionNote`: the player cut the previous utterance off (Voice-local, never Chat or Game state). */
+  voiceInterruption: "voice_interruption",
+  /** `HostService.#restateWorldSnapshot`: the Host re-states the session's current reading before composing a batch. */
+  snapshotRestate: "snapshot_restate",
+  /** The settled-plan digest, announced by the materializer's `announceHostFact` once the Mod's journal reports a plan stopped. */
+  programSettlement: "program_settlement",
+  /** `HostService.#publishStallFact`: an execution stopped making progress, on the Host's own timer. */
+  stallWatch: "stall_watch",
+  /** `HostService.#publishWorldStateStaleFact`: the reading this session re-states has outlived its bound. */
+  worldStateStale: "world_state_stale",
+  /** `HostService.#publishNarrationWithoutWorkFact`: an awake companion spoke and ran nothing. */
+  narrationWithoutWork: "narration_without_work",
+  /** The pump's own refresh probe came back refused, published through the materializer's `publish` port. */
+  worldStateRefreshRefused: "world_state_refresh_refused",
+});
+
+export const FACT_PRODUCERS = Object.freeze(Object.values(FACT_PRODUCER));
+
+export type FactProducer = (typeof FACT_PRODUCERS)[number];
+
+/** One examined flush's decision, with the producer of the fact that made it. `undefined` means no fact decided it. */
+type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; producedBy: FactProducer | undefined }>;
+
+/**
  * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
  *
- * The two re-statement reasons are derived from the member they answer: a batch whose only pending content is the
- * `observation` member at a revision already delivered, or `world_fact` members she already received. A fact whose
+ * A batch whose only pending content is a `world_fact` she already received is the re-statement reason. A fact whose
  * content is a MOMENT rather than a statement is never a re-statement (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no
  * reason of its own: a Host-minted wake fact carries its re-arm counter in its content, and a clock or day fact is news
  * every time.
  *
+ * A flush that held a reading and nothing else used to be ONE member, `observation_is_state`, and that member was a second
+ * spelling of the bucket it labelled: `HostService.#restateWorldSnapshot` re-states the session's reading before EVERY
+ * flush, so every suppressed flush that carried no restated fact held a reading, and the member could only ever equal
+ * `suppressed - world_fact_restated`. Measured 2026-11-15 (`round56`): `suppressed 624 {observation_is_state: 610,
+ * world_fact_restated: 5, nothing_pending: 9}` - the 610 said exactly what the 624 said.
+ *
+ * It is now the one question such a flush can answer about ITSELF, asked of the reading against the reading the pump
+ * already held. `observation_restated` is a re-reading of a world whose own last statement it repeats - what asking again
+ * costs when nothing moved; `observation_moved` is a reading that says something the held one did not and still opens no
+ * turn, which is the rule "a reading is standing state, not news" (`TURN_OPENING`) applied to a reading she has not been
+ * handed. On `round56` the night window was 742 watches at 3.56 Hz and the second number is what says how many of them
+ * were the world moving at all.
+ *
  * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
  * (`examined === opened + every suppressed reason`).
+ *
+ * `in_flight_progress` is the same rule applied to INGRESS rather than to the reading: a step of a programme she already
+ * dispatched is standing state too, and the programme's settlement is the turn that carries it
+ * (`IN_FLIGHT_RECEIPT_PROGRESS_STATES`). What makes it a step is the fact's own `origin`, not what the ledger happens to
+ * be naming - see `factExecutionOrigin`.
  */
 export const TURN_SUPPRESSION = Object.freeze({
-  observationRestated: `${TURN_OPENING.observation}_restated`,
+  /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
+  observationRestated: "observation_restated",
+  /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
+  observationMoved: "observation_moved",
   worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
+  /**
+   * The flush held a step of a programme: the receipt's own provenance says a programme owns its execution, and that
+   * settlement is the turn which states it.
+   */
+  inFlightProgress: "in_flight_progress",
+  /**
+   * The flush held facts the classification calls progress and she has not been shown: they travel in the next turn that
+   * opens for a decision.
+   *
+   * A separate member from the reading reasons because it is a different statement: `observation_restated` says the world
+   * said nothing new, and this says the machine finished a piece of work it was told to do. Measured 2026-11-15
+   * (`round59`): a reading is re-stated before EVERY flush (`HostService.#restateWorldSnapshot`), so without this member
+   * every successful programme's settlement would be counted as a re-stated reading and the turns this rule removes would
+   * be invisible in the account that exists to count them.
+   */
+  progress: "progress",
   nothingPending: "nothing_pending",
 });
 
@@ -148,6 +299,155 @@ export type TurnDecision =
   | Readonly<{ kind: "suppressed"; reason: TurnSuppression }>;
 
 /**
+ * Why a turn that spoke and ran no tool closed with nothing done, in the three conditions the pump can tell apart.
+ *
+ * MEASURED 2026-11-13 (`round47`, the companion's own account): 64 assistant turns, 41 of them speech only, median 27
+ * characters, while the world reading stood still for eighteen turns. Her explanation was economic and exact - "a line of
+ * speech passes, the cost is zero; submitting a plan may be refused, may fail, and has to be awaited". Nothing in the run
+ * could say how many of those turns were that shape, because a turn that spoke was counted as a turn that happened.
+ *
+ * <p>
+ * The three reasons are the conditions that can make acting impossible WITHOUT being a refusal, and they are ordered:
+ * a contradicted picture first (the block itself already calls an aged reading "the world is not like this any more"),
+ * then a body the engine holds, then the residual - nothing was pending and she was free to act. `nothing_pending` is the
+ * one this measurement exists to expose: it is the shape where the zero-cost exit won with nothing at all in its way.
+ * </p>
+ */
+export const TURN_WITHOUT_ACTION_REASON = Object.freeze({
+  /** The turn was handed a reading it did not bring: her picture of the world was already out of date. */
+  worldStale: "world_stale",
+  /** The snapshot says the body cannot take a command (`actionable: false`): the engine is holding the actor. */
+  bodyHeld: "body_held",
+  /** A fresh reading, a free body, and still no action. */
+  nothingPending: "nothing_pending",
+});
+
+export const TURN_WITHOUT_ACTION_REASONS = Object.freeze(Object.values(TURN_WITHOUT_ACTION_REASON));
+
+export type TurnWithoutActionReason = (typeof TURN_WITHOUT_ACTION_REASONS)[number];
+
+/** The emitted name of one empty-turn shape: `turn_closed_without_action:<opener>:<reason>`. */
+export const TURN_WITHOUT_ACTION = "turn_closed_without_action";
+
+/** The one shape key, so a log reader and this counter spell a shape the same way. */
+export type TurnWithoutActionShape = `${TurnOpening}:${TurnWithoutActionReason}`;
+
+/** The shape key of one `<opener>:<reason>` pair: one spelling for the counter, the printer and any reader. */
+export function turnWithoutActionShape(opener: TurnOpening, reason: TurnWithoutActionReason): TurnWithoutActionShape {
+  return `${opener}:${reason}`;
+}
+
+export function turnWithoutActionToken(opener: TurnOpening, reason: TurnWithoutActionReason): string {
+  return `${TURN_WITHOUT_ACTION}:${turnWithoutActionShape(opener, reason)}`;
+}
+
+/**
+ * Silence in the unit Pi writes it: the ASSISTANT TURN - one assistant record inside a delivered batch.
+ *
+ * <p>
+ * EVERY OTHER COUNTER IN THIS ACCOUNT IS COUNTED PER DELIVERED BATCH (`#observeTurnProduction`), which is the unit the
+ * product pays for and not the unit silence happens in. MEASURED 2026-11-15 (`round60`, one Game session): **169** assistant
+ * records, **133** with text, **36** that ran a tool and said no word - and `turn_settled_silent` printed `0`. The pump
+ * re-segmented the same run into 86 batches (29 spoke, 57 worked), and a batch carrying any line is `worked` by
+ * construction because `turnProduction` ORs `producedText` over the whole batch. So none of the 36 landed in any counter: a
+ * batch-shaped number and a turn-shaped number are different facts about the same run, and neither can stand for the other.
+ * </p>
+ * <p>
+ * The population is the same closed list `turnProduction` uses, classified by the same `turnProductionOf`, so the two units
+ * cannot disagree about what a member means. `examined` is DERIVED from `byProduction`, so the members sum to it and an
+ * assistant turn cannot be counted and then disappear from the account.
+ * </p>
+ */
+export type AssistantTurnTally = Readonly<{
+  examined: number;
+  byProduction: Readonly<Record<TurnProduction, number>>;
+}>;
+
+/** The assistant turns that carried text - `worked` + `spoke`, derived over the closed list. */
+export function assistantTurnsWithText(tally: AssistantTurnTally): number {
+  return countAssistantTurns(tally, turnProducedSpeech);
+}
+
+/**
+ * The assistant turns that ran a tool and said nothing: work without text, derived from the two predicates rather than
+ * named, so it stays the same question `turn_settled_silent` asks - in the other unit.
+ */
+export function assistantTurnsToolOnly(tally: AssistantTurnTally): number {
+  return countAssistantTurns(tally, (production) => turnProducedWork(production) && !turnProducedSpeech(production));
+}
+
+function countAssistantTurns(tally: AssistantTurnTally, counted: (production: TurnProduction) => boolean): number {
+  return TURN_PRODUCTIONS.reduce(
+    (total, production) => (counted(production) ? total + tally.byProduction[production] : total),
+    0,
+  );
+}
+
+/** The account line's label for the assistant-turn group: the unit is named in the label, not in a reader's memory. */
+export const ASSISTANT_TURNS_EXAMINED = "assistant turns examined";
+/** The two headline readings inside that group, both derived from the members beside them. */
+export const ASSISTANT_TURNS_WITH_TEXT = "with text";
+export const ASSISTANT_TURNS_TOOL_ONLY = "tool-only";
+/**
+ * The unit of every segment that follows this one on the account line: one DELIVERED BATCH.
+ *
+ * It is stated once, at the head of the group it governs, because repeating it on nine segments would say the same word
+ * nine times - and because a reader who adds `assistant turns examined` to `turns opened` is the defect this whole unit
+ * exists to close.
+ */
+export const PER_DELIVERED_BATCH = "per delivered batch:";
+
+/**
+ * The label of the provenance reading: every fact that stated which programme its execution belongs to.
+ *
+ * MEASURED, THRICE. `round57` `turns opened 66 {adapter_ingress: 57}`, `round59` `88 {adapter_ingress: 79}`, `round62`
+ * `82 {adapter_ingress: 82}` against 224 programme dispatches - and no artifact could say how many of those receipts even
+ * claimed a programme, because the wire had no field for it. This segment is that reading: `programme` + `standalone` must
+ * equal the receipts a run delivered, and `unstated` must be 0 for a bridge that validates its frames.
+ */
+export const RECEIPTS_WITH_PROVENANCE = "receipts with provenance";
+
+/**
+ * A defect token, not a counter: the Mod's journal could not say which programme owns an execution.
+ *
+ * It prints the count and the executions (bounded), so `unattributed_execution 3 {exec_a, exec_b, exec_c}` is joinable to
+ * the Mod's own diagnostic and to a body-program status read. An execution nobody can attribute is the condition that made
+ * every previous fix a guess.
+ */
+export const UNATTRIBUTED_EXECUTION_TOKEN = "unattributed_execution";
+
+/**
+ * Turns that delivered speech, ran no action, and closed - counted by BOTH halves of the shape.
+ *
+ * The opener is half of it because the two mean different things: a `player_input` turn that spoke and did nothing was
+ * an answer to the person, while a `due` turn that spoke and did nothing is the robot narrating to itself. `total` is
+ * counted beside the shapes so the two can be checked against each other, and the shape population is the product of the
+ * two closed lists so a new opener or reason cannot go unreported.
+ */
+export type TurnWithoutActionResult = Readonly<{
+  total: number;
+  byShape: Readonly<Record<TurnWithoutActionShape, number>>;
+}>;
+
+/**
+ * The provenance reading: what the Mod's journal said about the executions whose facts this pump admitted.
+ *
+ * One count per `ExecutionOrigin` member plus `unstated` (a fact that carried none), and the executions that could not be
+ * attributed - the ones whose `unattributed_execution:<id>` a run's account has to be able to name.
+ */
+export type ExecutionProvenanceAccount = Readonly<{
+  facts: Readonly<{ programme: number; standalone: number; unattributed: number; unstated: number }>;
+  unattributedExecutions: readonly string[];
+  omittedUnattributed: number;
+}>;
+
+/**
+ * How many unattributed executions the account names. A defect is not traffic: past this many, the count still closes and
+ * the names stop, which is what keeps a stuck journal from growing the account with the session.
+ */
+export const MAX_NAMED_UNATTRIBUTED_EXECUTIONS = 8;
+
+/**
  * What this pump has done with the flushes it examined: one counter per member, one per suppression reason.
  *
  * `examined` is DERIVED (`opened + every suppressed reason`) rather than counted, so a flush cannot be decided and then
@@ -156,21 +456,163 @@ export type TurnDecision =
 export type TurnAccount = Readonly<{
   opened: number;
   byReason: Readonly<Record<TurnOpening, number>>;
+  /**
+   * Which producer's fact opened each turn, per opener.
+   *
+   * The nested half of `byReason`: `world_fact: 28` and `due: 1` are both `Σ producer`, while a `player_input` turn's
+   * cause is a person's word rather than a fact and stays zero on every producer. `byReason[opener]` is the authority
+   * for the count; this says which entrance the fact came in through.
+   */
+  openedByProducer: Readonly<Record<TurnOpening, Readonly<Record<FactProducer, number>>>>;
   suppressed: Readonly<Record<TurnSuppression, number>>;
+  /** Which producer's fact decided each suppressed flush: the re-stated fact, or the reading held as state. */
+  suppressedByProducer: Readonly<Record<TurnSuppression, Readonly<Record<FactProducer, number>>>>;
   examined: number;
+  /**
+   * The assistant turns Pi wrote, per production member: the unit silence is counted in, beside the batch counters that
+   * cannot see it - see `AssistantTurnTally`.
+   */
+  assistantTurns: AssistantTurnTally;
+  emptyTurns: TurnWithoutActionResult;
+  /** The turns that settled silently: work delivered, no text - see `TurnSettledSilentResult`. */
+  silentSettled: TurnSettledSilentResult;
+  /** The settled turns that closed with one of her own executions still running - see `TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT`. */
+  settledWithExecutionInFlight: number;
+  /**
+   * Every fact this pump admitted that stated an execution's provenance, by what it said.
+   *
+   * The reading `round62` could not produce: `unattributed` is a NAMED defect (the Mod's journal could not say which
+   * programme owns an execution), and `unstated` is a fact that said nothing at all - the shape the wire now refuses. Both
+   * are counted rather than inferred from an absence, because an absence is what the Host used to resolve by time.
+   */
+  executionProvenance: ExecutionProvenanceAccount;
+  /** The flushes a stale reading decided, and why - see `AutoObserveAccount`. */
+  autoObserve: AutoObserveAccount;
   lastDecision: TurnDecision | undefined;
 }>;
 
 /**
  * The account as the one line a run's log carries, in the shape the invariant is read back in.
  *
- * `turns opened N · suppressed M {reason: count} · flushes examined F`. A suppression reason that has never fired is
- * still printed as `0`: it is a declared member of the closed list, and a reader must be able to see that it exists and
- * never happened rather than guess from its absence.
+ * <p>
+ * THE LINE IS TWO READING GROUPS, AND EACH GROUP'S HEAD NAMES ITS UNIT. First the ASSISTANT TURNS - one assistant record
+ * Pi wrote: `assistant turns examined N {worked: count, worked_silently: count, spoke: count, said_nothing: count}`, then
+ * the two headline readings derived from those members, `with text T` and `tool-only O`. Then the DELIVERED BATCHES, from
+ * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · suppressed M {reason: count} · flushes
+ * examined F` (F derived, so the arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `·
+ * turn_settled_silent S {opener: count}` `· turn_settled_with_execution_in_flight I` `· aged readings A ·
+ * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason:
+ * count}`.
+ * </p>
+ * <p>
+ * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
+ * nothing, and an account that printed `turn_settled_silent 0` - because every one of those turns sat inside a batch that
+ * also carried a line, and the batch is the unit every counter on the second half of the line is counted in. A reader who
+ * adds the two groups together reads a number nobody measured, so the unit is stated at each group's head rather than
+ * left to the doc.
+ * </p>
+ *
+ * A reason that has
+ * never fired is still printed as `0`: it is a declared member of a closed list, and a reader must be able to see that it
+ * exists and never happened rather than guess from its absence. The opener histogram is printed for the same reason at the level above: `opened 55` said a number and nothing
+ * about what opened them, so "she was woken by the clock fifty times" and "the person spoke fifty times" were the same
+ * line.
+ *
+ * A reason a FACT decided carries the producers of those facts inside its own braces - `world_fact: 28 {adapter_ingress:
+ * 26, narration_without_work: 2}` - because the reason alone still collapses six entrances into one word, and `flushes
+ * examined 655` with no producer on it was a question answered by reading `enqueueFact`'s call sites instead of the log.
+ * Only producers that FIRED are printed: the closed set is declared once above, the reason's own count is the declared
+ * total beside it, and eleven zeroes repeated on each of a run's six hundred lines would be noise where the reading is
+ * one number.
+ *
+ * The three stale segments are what makes a REMOVED turn countable AND a turn that was NOT removed explainable. A refresh
+ * costs no turn, so without them "the stale notices stopped opening turns" and "the stale notices stopped happening"
+ * would print the same line; with them, `A` is how many examined flushes reached their decision holding a reading they
+ * did not bring, `R` is how many of those asked the world and were answered, and `U` is how many could not be asked,
+ * split by why. `A` is printed first because it is the population the other two partition: an aged reading with `R + U`
+ * short of it is one nobody has accounted for. `W` is not in that partition - it is not a turn - and it exists because
+ * `U`'s `refresh_attempts_spent` hides the one question a frozen world forces: WHAT earned the budget back. After
+ * `round61` the answer can be the world's own statement that it moved while the snapshot stayed frozen, and a reader who
+ * could not see that number would read the pump as deaf for ten and a half minutes.
  */
 export function turnAccountLine(account: TurnAccount): string {
-  const suppressed = TURN_SUPPRESSIONS.map((reason) => `${reason}: ${String(account.suppressed[reason])}`).join(", ");
-  return `turns opened ${String(account.opened)} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)}`;
+  const assistantProductions = TURN_PRODUCTIONS.map(
+    (production) => `${production}: ${String(account.assistantTurns.byProduction[production])}`,
+  ).join(", ");
+  const opened = TURN_OPENINGS.map(
+    (reason) => `${reason}: ${String(account.byReason[reason])}${producerBlock(account.openedByProducer[reason])}`,
+  ).join(", ");
+  const suppressed = TURN_SUPPRESSIONS.map(
+    (reason) =>
+      `${reason}: ${String(account.suppressed[reason])}${producerBlock(account.suppressedByProducer[reason])}`,
+  ).join(", ");
+  const empty = emptyTurnShapes()
+    .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
+    .join(", ");
+  const silent = SILENT_SETTLED_OPENINGS.map(
+    (opener) => `${opener}: ${String(account.silentSettled.byOpener[opener])}`,
+  ).join(", ");
+  const unavailable = AUTO_OBSERVE_UNAVAILABLE_REASONS.map(
+    (reason) => `${reason}: ${String(account.autoObserve.unavailable[reason])}`,
+  ).join(", ");
+  // The age is printed only where a refresh happened: `0` is a real age (a reading asked about on the turn it moved),
+  // so a zero printed for "no refresh yet" would be the one number a reader could not tell apart from a measurement.
+  const refreshed =
+    account.autoObserve.refreshed === 0 || account.autoObserve.lastAgeTurns === undefined
+      ? `${AUTO_OBSERVE_ON_STALE} 0`
+      : `${AUTO_OBSERVE_ON_STALE} ${String(account.autoObserve.refreshed)} {ageTurns: ${String(account.autoObserve.lastAgeTurns)}}`;
+  const declined = AUTO_OBSERVE_UNAVAILABLE_REASONS.reduce(
+    (total, reason) => total + account.autoObserve.unavailable[reason],
+    0,
+  );
+  const rearmed = AUTO_OBSERVE_REARM_REASONS.map(
+    (reason) => `${reason}: ${String(account.autoObserve.rearmed[reason])}`,
+  ).join(", ");
+  const rearmedAgain = AUTO_OBSERVE_REARM_REASONS.reduce(
+    (total, reason) => total + account.autoObserve.rearmed[reason],
+    0,
+  );
+  // The provenance reading, and the defect it exists to name. A run whose journal cannot attribute an execution says
+  // `unattributed_execution <id>` here, in the same line a reader already greps for turns: the missing field that let
+  // `round62` open 82 ingress turns was invisible in every artifact a run produced.
+  const provenance = account.executionProvenance;
+  const unattributed = `${UNATTRIBUTED_EXECUTION_TOKEN} ${String(provenance.facts.unattributed)}${
+    provenance.unattributedExecutions.length === 0
+      ? ""
+      : ` {${provenance.unattributedExecutions.join(", ")}${provenance.omittedUnattributed === 0 ? "" : `, +${String(provenance.omittedUnattributed)}`}}`
+  }`;
+  const receiptProvenance = `${RECEIPTS_WITH_PROVENANCE} ${String(
+    provenance.facts.programme +
+      provenance.facts.standalone +
+      provenance.facts.unattributed +
+      provenance.facts.unstated,
+  )} {programme: ${String(provenance.facts.programme)}, standalone: ${String(provenance.facts.standalone)}, unattributed: ${String(provenance.facts.unattributed)}, unstated: ${String(provenance.facts.unstated)}}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+}
+
+/**
+ * Every shape an empty turn can have: the product of the two closed lists, in one spelling.
+ *
+ * Derived rather than listed, so an opener added to `TURN_OPENINGS` (or a reason added beside this function) is printed
+ * and counted without anyone remembering to extend a second table.
+ */
+export function emptyTurnShapes(): readonly TurnWithoutActionShape[] {
+  return TURN_OPENINGS.flatMap((opener) =>
+    TURN_WITHOUT_ACTION_REASONS.map((reason) => turnWithoutActionShape(opener, reason)),
+  );
+}
+
+/**
+ * One frozen copy of a producer histogram per reason: the account is a reading, so a caller cannot move a counter by
+ * holding what it was handed.
+ */
+function freezeProducerHistograms<Reason extends string>(
+  counts: Readonly<Record<Reason, Record<FactProducer, number>>>,
+  reasons: readonly Reason[],
+): Readonly<Record<Reason, Readonly<Record<FactProducer, number>>>> {
+  const frozen = {} as Record<Reason, Readonly<Record<FactProducer, number>>>;
+  for (const reason of reasons) frozen[reason] = Object.freeze({ ...counts[reason] });
+  return Object.freeze(frozen);
 }
 
 function suppressedTotal(account: TurnAccount): number {
@@ -178,12 +620,163 @@ function suppressedTotal(account: TurnAccount): number {
 }
 
 /**
+ * The producers that fired inside one reason's braces, or nothing when none did.
+ *
+ * Nothing is printed for `player_input` and `nothing_pending` for the reason a zero block would be a lie about the
+ * question: no fact decided those flushes, so no producer of one can be named. A reason no producer fired for is the
+ * same shape - the reason's own count beside it is the reading, and it is the declared member that says so.
+ */
+function producerBlock(counts: Readonly<Record<FactProducer, number>>): string {
+  const fired = FACT_PRODUCERS.filter((producer) => counts[producer] > 0).map(
+    (producer) => `${producer}: ${String(counts[producer])}`,
+  );
+  return fired.length === 0 ? "" : ` {${fired.join(", ")}}`;
+}
+
+/** The counter, keyed by the closed set of shapes rather than by what this run happened to do. */
+function initializedEmptyTurns(): Record<TurnWithoutActionShape, number> {
+  const counts = {} as Record<TurnWithoutActionShape, number>;
+  for (const shape of emptyTurnShapes()) counts[shape] = 0;
+  return counts;
+}
+
+/** One all-zero counter per reason in a closed list, derived so a second table cannot forget a member. */
+function initializedByReason<Reason extends string>(reasons: readonly Reason[]): Record<Reason, number> {
+  const counts = {} as Record<Reason, number>;
+  for (const reason of reasons) counts[reason] = 0;
+  return counts;
+}
+
+/**
+ * One all-zero producer histogram per reason, from the two closed lists.
+ *
+ * Derived rather than listed, so a producer added to `FACT_PRODUCER` (or a reason added to its own list) is counted
+ * without anyone remembering to extend a second table - and a pair that never fired is a declared zero rather than an
+ * absent key.
+ */
+function initializedByProducer<Reason extends string>(
+  reasons: readonly Reason[],
+): Record<Reason, Record<FactProducer, number>> {
+  const counts = {} as Record<Reason, Record<FactProducer, number>>;
+  for (const reason of reasons) {
+    const producers = {} as Record<FactProducer, number>;
+    for (const producer of FACT_PRODUCERS) producers[producer] = 0;
+    counts[reason] = producers;
+  }
+  return counts;
+}
+
+/**
+ * The emitted name of a turn that settled SILENT: it produced work and delivered no speech - counted by the opener beside
+ * it.
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round47`): 188 planned nodes across 55 turns, `turn_closed_without_action` 41 of 64 assistant
+ * turns, and the run's own clock split 376 s in turns that acted against 239 s in turns of pure talk. Those 41 are one
+ * statement, "she spoke and did nothing", and the account had no second statement for the turn whose only sanctioned
+ * outcome was a line of speech because the batch that opened it carried RECEIPTS that had already settled everything in
+ * it. That shape exists by construction - the plan tool's description ends with "…end your turn and speak to the player",
+ * and a terminal receipt is a non-held fact that opens a follow-up turn (`#hasPendingFactTrigger`) - and nothing could
+ * count it.
+ * </p>
+ * <p>
+ * It is the OTHER HALF of `turn_closed_without_action`, not a second name for it: that one delivered speech and no action,
+ * this one delivered action and no speech. With both on the line a reader can tell "she spent the turn talking" from "she
+ * spent the turn working", which is the distinction no artifact of that run carried.
+ * </p>
+ * <p>
+ * A READING, NOT A PERMISSION. Nothing here forbids speech, suppresses it, or asks for silence: the counter reports how a
+ * turn ended, and it cannot make a turn end that way. Measured 2026-11-15 (`round58`): 21 opened turns, 21 bubbles, this
+ * counter `0`, because the reading only recognised `said_nothing` - the one member a completed turn cannot reach - so the
+ * act-without-a-word shape had no name and every count of "one bubble per turn" had to be inferred from the difference
+ * between two other numbers.
+ * </p>
+ * <p>
+ * MEASURED AGAIN 2026-11-15 (`round59`): 42 settled turns, all 42 with text, this counter `0` - and a probe of the same
+ * tree returned `0` for a quiet turn whose own receipt was in flight while returning `1` for the same turn with nothing in
+ * flight. The counter was gated on "nothing of hers is still settling", and she submits a programme on nearly every turn,
+ * so the shape it exists to name was excluded by the state it most often lands in. That condition is gone from the
+ * classification; the number it was hiding behind is printed beside this one.
+ * </p>
+ * <p>
+ * COUNTED PER DELIVERED BATCH, WHICH IS WHY IT READ `0` AGAIN. MEASURED 2026-11-15 (`round60`): 169 assistant turns, 36 of
+ * them silent, and this counter `0` - every one of those 36 sat inside a batch that also carried a line, and a batch with
+ * any text in it is `worked` by construction. So the silence of a turn is counted where the turn is written
+ * (`AssistantTurnTally`, printed as `assistant turns examined N {…} · with text T · tool-only O`), and this counter keeps
+ * the question it CAN answer: how many DELIVERIES spent themselves on work with no word. The two are different populations
+ * of the same run and neither is the other's total.
+ * </p>
+ */
+export const TURN_SETTLED_SILENT = "turn_settled_silent";
+
+/**
+ * A silent settlement cannot be the person's turn: a turn the person opened is owed an answer.
+ *
+ * <p>
+ * `player_input` is the one opener whose silence is a different defect with its own reading - someone spoke and got
+ * nothing - so counting it here would say "there was nothing to say" about the one case where the opposite is known. The
+ * class is stated as the complement of that single member rather than as a list of the openers a turn may fall silent on,
+ * so a new opener is counted without anyone returning to this declaration.
+ * </p>
+ */
+export type SilentSettledOpening = Exclude<TurnOpening, "player_input">;
+
+/** Every opener a silent settlement can have, derived from `TURN_OPENINGS` - the population is the closed list. */
+export const SILENT_SETTLED_OPENINGS = Object.freeze(
+  TURN_OPENINGS.filter((opener): opener is SilentSettledOpening => opener !== TURN_OPENING.playerInput),
+);
+
+/**
+ * Turns that produced work and delivered no speech, counted by opener.
+ *
+ * The opener is half of it for the reason the empty-turn counter gives: a fact arriving is a turn the HOST owed, the
+ * world's own clock or notice is a turn the WORLD owed, and a due wake is a turn her own schedule owed - three different
+ * statements about why a companion had a turn and used it for nothing.
+ *
+ * What it counts is the turn that had something to do and did it without a word: `workedSilently`, or - stated as the two
+ * properties rather than the member's name - work produced and no text produced. A turn that did nothing at all produces
+ * neither and is not counted here, and a turn whose own receipt was still in flight when it closed is silence like any
+ * other; how many turns closed that way is `settledWithExecutionInFlight` beside it.
+ */
+export type TurnSettledSilentResult = Readonly<{
+  total: number;
+  byOpener: Readonly<Record<SilentSettledOpening, number>>;
+}>;
+
+/** The counter, keyed by the declared openers rather than by what this run happened to do. */
+function initializedSilentSettled(): Record<SilentSettledOpening, number> {
+  const counts = {} as Record<SilentSettledOpening, number>;
+  for (const opener of SILENT_SETTLED_OPENINGS) counts[opener] = 0;
+  return counts;
+}
+
+/**
+ * The emitted name of the settled turns that closed with one of her own executions still running: `28` of `36` programme
+ * turns, on the one run that was read to find this.
+ *
+ * <p>
+ * THIS IS THE CONDITION THAT USED TO EXCLUDE, written down instead of acted on. `turn_settled_silent` counts the turn that
+ * worked and said nothing, and a receipt still in flight describes how much of that work is left - not whether anything was
+ * said. But until this segment existed the in-flight bit was only a discount on the other counter, so a run whose every
+ * working turn was quiet (`round59`: `42 settled turns · with text 42 · tool-only 0`, `turn_settled_silent 0`) could not
+ * say whether the silence was hers or whether the counter's own gate had been shut 28 times. A reader asked to reconstruct
+ * that from session logs is being asked to re-derive a number this pump already held at the only moment it could be asked.
+ * </p>
+ * <p>
+ * It is a POPULATION OF ALL SETTLED TURNS, not a subclass of the silent ones: a turn that worked, spoke and was still
+ * running when it closed counts here and in neither silence counter.
+ * </p>
+ */
+export const TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT = "turn_settled_with_execution_in_flight";
+
+/**
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
  *
  * <p>
- * The text is `composeFactBrief`'s named blocks of prose (`fact-brief.ts`). It is one string and nothing parses it: what
- * a reader needs structurally - the batch identity, the inputs' locales, the presentation events - is a field here, so
- * there is exactly one spelling of each and no JSON envelope inside the model's user message.
+ * The text is the player's own words verbatim at its head, then `composeFactBrief`'s named blocks of prose
+ * (`fact-brief.ts`). It is one string and nothing parses it: what a reader needs structurally - the batch identity, the
+ * inputs' locales, the presentation events - is a field here, so there is exactly one spelling of each and no JSON
+ * envelope inside the model's user message.
  * </p>
  */
 export type PendingBatch = Readonly<{
@@ -196,6 +789,15 @@ export type PendingBatch = Readonly<{
   events: readonly NormalizedEvent[];
   /** The exact model-facing text. Retained verbatim if the sink rejects it. */
   text: string;
+  /**
+   * Whether THIS batch brought the observation, as `takeBatch` decided it for the world-state block.
+   *
+   * Carried on the batch rather than re-derived at settlement because it is the batch's own statement: the model was
+   * told `刚刚更新` or `本轮无新观察` according to this flag, so a turn that spoke and did nothing can be split into "her
+   * picture was already old" and "her picture was current" without a second computation that could disagree with the
+   * one the model read.
+   */
+  broughtObservation: boolean;
 }>;
 
 export type NormalizedEvent = Readonly<{
@@ -301,24 +903,166 @@ export const WORLD_STATE_STALE_SEMANTIC_KIND = "world_state_stale";
 export const WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND = "world_state_refresh_refused";
 
 /**
- * Fresh observations one CROSSED reading may be asked for, and why three.
+ * Fresh observations one AGED reading may be asked for, and why three.
  *
  * <p>
- * A crossing is one reading revision that outlived `WORLD_STATE_STALE_TURNS` while the world said it moved. The probe is
- * re-armed when the REVISION MOVES, never per turn, so a frozen world cannot become a spin: the same revision is never
- * asked about more than this many times, however many turns it lasts.
+ * The unit is one READING - the content of one observation she has already been shown: every flush decided while that
+ * content is still the current one is decided on the same reading, so the budget is re-armed when the READING MOVES and
+ * never per flush or per counter. A frozen world therefore cannot become a spin: the same reading is never asked about
+ * more than this many times, however many flushes it lasts - and a re-observation that only bumped the Mod's revision is
+ * still the same reading, which is why the key is the content and not that number.
+ * </p>
+ *
+ * <p>
+ * THE READING IS NOT THE ONLY RE-ARM KEY, and it cannot be (`AUTO_OBSERVE_REARM`, measured in `round61`): its content is
+ * produced by the ask this bound gates, so a snapshot channel that stopped publishing was a budget that could never come
+ * back while the clock kept advancing. The world saying it moved earns the next ask. Neither key is the flush, so the
+ * cadence this refuses to poll at is still refused.
  * </p>
  *
  * <p>
  * One would cover the ordinary case - the bridge is up and the answer moves the reading. The other two exist because the
  * first can land on a transient (a `bridge_response_timeout` at the exact moment the world crossed), and the cost of not
- * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong. Three and
- * not more, because the probes are spent one per stale fact and `worldStateStaleThreshold` spaces those fifteen turns
- * apart (5, 20, 35, 50), so three probes span most of an hour of a frozen world. A run that spends all three has a
- * bridge that is not answering, which is then SAID (`world_state_refresh_refused:<reason>`) rather than retried.
+ * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round50b`): two turns in, three asks were still unspent and the reading was already aged - the
+ * filter that had to pass first (a flush opened by nothing but a stale notice) was not the condition the diagnosis was
+ * made on, so `world_stale` was classified and nothing asked. The budget is now spent by every flush that reaches its
+ * decision holding the aged reading - including the ones it then suppresses - which is why three asks is also the longest
+ * a frozen reading goes quiet: past the third ask the world is not answering, and that is SAID (`world_state_stale`, then
+ * `auto_observe_unavailable:refresh_attempts_spent`) rather than retried.
  * </p>
  */
 export const WORLD_STATE_REFRESH_ATTEMPTS = 3;
+
+/**
+ * Why a flush holding an aged reading could not be cured, in the conditions this pump can tell apart.
+ *
+ * <p>
+ * Each of them means the same thing for what follows: the refresh did not happen, so the reading stays as it was and (past
+ * its own threshold) still carries the stale notice - and the account says which condition it was, because "nobody
+ * asked", "the budget is spent" and "the bridge refused" are different readings of one frozen world.
+ * </p>
+ */
+export const AUTO_OBSERVE_UNAVAILABLE = Object.freeze({
+  /** No port is attached: this pump structurally cannot ask (a reduced composition, or a wiring bug). */
+  noBridge: "no_bridge",
+  /** This reading has already spent `WORLD_STATE_REFRESH_ATTEMPTS`, and the world has said nothing new since the last
+   * ask; asking again asks the same question. */
+  attemptsSpent: "refresh_attempts_spent",
+  /** The route was asked and refused - `world_state_refresh_refused` carries the route's own words. */
+  refused: "refresh_refused",
+});
+
+export const AUTO_OBSERVE_UNAVAILABLE_REASONS = Object.freeze(Object.values(AUTO_OBSERVE_UNAVAILABLE));
+
+export type AutoObserveUnavailableReason = (typeof AUTO_OBSERVE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * The two signals that earn a spent refresh budget again, one spelling each.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round61`): `GAME_CLOCK_STALLED` reported `sinceLastSnapshotMs 630353` while `GAME_CLOCK_READ` read
+ * the clock every 30 s all the way to day 6 - the bridge answered and the world moved, the snapshot never arrived - and
+ * the pump had spent its three asks before that, so `refresh_attempts_spent` was every aged turn it could state for ten
+ * and a half minutes. Thirteen turns closed `world_stale` and the companion had no world to act in.
+ * </p>
+ *
+ * <p>
+ * The defect was the SHAPE of the bound, not its size: the re-arm key was the reading's own content, and the only producer
+ * of a different reading is the ask that budget gates - so a frozen snapshot was a budget that could never come back, and
+ * the reset condition was the success of the operation it bounds. The two signals here are the two independent things that
+ * make "is there a reading other than this one" a NEW question: the reading moved (an ask was answered), or the world
+ * SAID it moved while the reading did not (the Mod's own clock, day, pass-out and `snapshot_changed` facts, as
+ * `describeWorldChange` reads them). The clock is the member that carries the second in practice, and it is proof the
+ * bridge is answering - so a frozen snapshot is a publish problem, not a world that is not answering.
+ * </p>
+ *
+ * <p>
+ * NEITHER SIGNAL IS THE FLUSH. A flush that brings no statement from the world re-arms nothing, however many of them
+ * there are: the re-arm is what the world said, never the fact that a turn happened, which is what keeps the flush cadence
+ * from becoming a probe cadence in a world that is genuinely still (`WORLD_STATE_REFRESH_ATTEMPTS`).
+ * </p>
+ */
+export const AUTO_OBSERVE_REARM = Object.freeze({
+  /** The reading's content changed: the ask was answered with a different world. */
+  readingMoved: "reading_moved",
+  /** The world said it moved - the clock, the day, a pass-out, a warp - while the reading stayed frozen. */
+  worldMoved: "world_moved",
+});
+
+export const AUTO_OBSERVE_REARM_REASONS = Object.freeze(Object.values(AUTO_OBSERVE_REARM));
+
+export type AutoObserveRearmReason = (typeof AUTO_OBSERVE_REARM_REASONS)[number];
+
+/** The emitted name of the budget's re-arm: `refresh_rearmed W {reason: count}`, once per signal. */
+export const AUTO_OBSERVE_REARMED = "refresh_rearmed";
+
+/** The emitted name of one refresh: `auto_observe_on_stale:<ageTurns>`, one per refresh. */
+export const AUTO_OBSERVE_ON_STALE = "auto_observe_on_stale";
+
+export function autoObserveOnStaleToken(ageTurns: number): string {
+  return `${AUTO_OBSERVE_ON_STALE}:${String(ageTurns)}`;
+}
+
+/** The emitted name of one crossing the world could not be asked about: `auto_observe_unavailable:<reason>`. */
+export const AUTO_OBSERVE_UNAVAILABLE_TOKEN = "auto_observe_unavailable";
+
+export function autoObserveUnavailableToken(reason: AutoObserveUnavailableReason): string {
+  return `${AUTO_OBSERVE_UNAVAILABLE_TOKEN}:${reason}`;
+}
+
+/**
+ * The printed name of the population the refresh serves: `aged readings N`, one per examined flush that reached its
+ * decision holding a reading she had already been shown.
+ */
+export const AUTO_OBSERVE_AGED_TURNS = "aged readings";
+
+/**
+ * What the pump did about the turns it was about to compose from a reading the world had already moved past.
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round47`): 22 of the 41 talk-only turns were handed `world_state_stale:...`. The Host opened a
+ * turn to tell her that the world she could not see was out of date, and the cheapest thing she could do with that turn
+ * was describe it - the same observation the Host could have fetched for free. So a stale reading is answered by ASKING,
+ * and the turn that would have been spent narrating the notice does not open.
+ * </p>
+ *
+ * <p>
+ * THE THREE NUMBERS ADD UP, and that is what makes them a reading rather than three counters: `agedTurns` is every
+ * examined flush that reached its decision holding a reading she already had, and each of those is exactly one of
+ * `refreshed` (the world was asked and answered, so whatever turn follows states the answer) or `unavailable` (it could not
+ * be asked, by reason). `refreshed` is therefore one per `auto_observe_on_stale:<ageTurns>` and NOT one per request: an ask
+ * the route refused is counted in `unavailable[refresh_refused]`, and `worldStateRefresh.probes` remains the count of
+ * requests made. `lastAgeTurns` is the age the most recent refresh was applied at, and `undefined` before any - so the
+ * count and the number it was counted at cannot be confused with a zero.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-13 (`round50b`), which is why `agedTurns` is printed at all: the account said
+ * `auto_observe_on_stale 0 · auto_observe_unavailable 0 {...}` for a run whose only two turns were `world_stale` and
+ * `nothing_pending`. Both counters were truthful and the account could not say that anything had been aged, so "the cure
+ * never fired" and "no turn was aged" read as the same line.
+ * </p>
+ */
+export type AutoObserveAccount = Readonly<{
+  /** Examined flushes that reached their decision on a reading she had already been shown: the population every other
+   * field here partitions. */
+  agedTurns: number;
+  refreshed: number;
+  lastAgeTurns: number | undefined;
+  unavailable: Readonly<Record<AutoObserveUnavailableReason, number>>;
+  /**
+   * How a SPENT budget was earned again, one count per `AUTO_OBSERVE_REARM` member.
+   *
+   * The two are different readings of one recovery and a reader must be able to tell them apart: `readingMoved` is the ask
+   * being answered, `worldMoved` is the world saying it moved while the snapshot stayed frozen (`round61`). Neither is a
+   * turn count, so neither belongs in the `agedTurns` partition above.
+   */
+  rearmed: Readonly<Record<AutoObserveRearmReason, number>>;
+}>;
 
 /**
  * Where a stale reading is acted on: the integration's own fresh observation, and the one route a Host-minted fact is
@@ -351,6 +1095,25 @@ export type WorldStateRefreshReading = Readonly<{
   /** `world_state_refresh_refused` facts published over this pump's life. */
   refusals: number;
 }>;
+
+/**
+ * One request for a fresh observation, taken as far as it can go synchronously.
+ *
+ * <p>
+ * The two arms are two different things for the caller to do, and they are one type because they are one decision: a
+ * `declined` ask means no request is possible, so there is nothing to wait for and the turn is composed from the reading
+ * it has (the account records why); an `inFlight` ask is the request itself, which the turn that is about to be composed
+ * WAITS for. Collapsing the two into "a promise that may reject" would make "nobody asked" indistinguishable from "the
+ * bridge refused", which is the distinction the whole block exists for.
+ * </p>
+ *
+ * <p>
+ * The return is synchronous for a reason a test found: a pump with no port, or a revision whose attempts are spent, must
+ * decide before the batch is composed rather than a microtask later - `flush` composes nothing it did not decide, and a
+ * pump that cannot ask must compose exactly what it did before this existed.
+ * </p>
+ */
+type FreshObservationAsk = Readonly<{ declined: AutoObserveUnavailableReason } | { inFlight: Promise<void> }>;
 
 /**
  * The semantic kind of the fact the Host mints when an awake companion has spoken without acting for a while.
@@ -636,6 +1399,22 @@ export class CompanionEventPump {
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
   /**
+   * Whether the reading in that slot says what the reading the pump already held said.
+   *
+   * <p>
+   * The ONE comparison admission already makes to decide whether the world moved (see the `changes` branch of
+   * `enqueueFact`), kept beside the slot rather than computed again at flush time: a second spelling of "the reading says
+   * something else" is the disagreement this file exists to prevent. It travels with the slot - cleared by `takeBatch`
+   * with it - because it is a property of the reading being held, not of the session.
+   * </p>
+   * <p>
+   * What reads it is the suppressed-flush reason: `#suppressionReason` names a re-statement of the held reading
+   * (`observation_restated`) apart from a reading that moved (`observation_moved`), which is the difference between "the
+   * watcher asked again and the world had not spoken" and "the world spoke and a reading still opens no turn".
+   * </p>
+   */
+  #snapshotRestatesPrevious = false;
+  /**
    * The world as LAST HEARD, for rendering `<world-state>` on every batch.
    *
    * <p>
@@ -646,17 +1425,35 @@ export class CompanionEventPump {
    * </p>
    */
   #lastSnapshot: WorldFact | undefined;
-  /** The snapshot revision the model has already been shown, so a re-statement cannot read as a fresh observation. */
-  #lastSnapshotDeliveredRevision: number | undefined;
-  /** `#deliveredBatches` when that revision was composed into a batch; the difference is the age `<world-state>` states. */
+  /**
+   * The reading she was last TOLD ABOUT, as its own content (`readingContentIdentity`), so a re-statement cannot read as a
+   * fresh observation.
+   *
+   * <p>
+   * NOT the Mod's `revision`. That number is the Mod's action-echo counter: it moves inside action handlers
+   * (`farmhandexecutioncontroller.cs:1779`, `:348`) and not when the world does - a time milestone is published as its own
+   * fact carrying the UNCHANGED revision (`StardewSalientEventHooks.cs:196-207`). Measured (`round53`): a reading whose
+   * clock walked `06:10` -> `11:30`, whose location changed to the town, whose stamina fell to 41 and whose weather turned
+   * to rain arrived at the SAME revision as the one she had been shown and was suppressed as a re-statement - 320 game
+   * minutes dropped because no action had run. In the other direction (`round46b`) a byte-identical payload carrying a
+   * bumped revision opened a turn to say what the previous turn had said.
+   * </p>
+   *
+   * <p>
+   * The suppressor's question is "does this reading tell her something the delivered one did not", so it is asked of the
+   * reading's own content - the same fields the block renders - and `revision` is left to the purposes that need a counter
+   * (ordering two readings of one world, naming a reading in a fact).
+   * </p>
+   */
+  #lastSnapshotDeliveredIdentity: string | undefined;
+  /** `#deliveredBatches` when that content was composed into a batch; the difference is the age `<world-state>` states. */
   #lastSnapshotDeliveredBatch = 0;
   /**
-   * When the CURRENT reading's revision was admitted, for the `ageMs` half of `world_state_stale`.
+   * When the CURRENT reading's content was first admitted, for the `ageMs` half of `world_state_stale`.
    *
-   * Advanced only by a revision that moves, because a re-stated copy of one reading arrives as a `snapshot` fact too
-   * (`host-service.ts#restateWorldSnapshot`) and this layer cannot tell it from a re-observation of an unchanged world -
-   * the block's own comment makes the same concession for `#lastSnapshotDeliveredRevision`. The one error it can make is
-   * aging a reading too far, which is the safe direction for a warning.
+   * Advanced only by a reading that says something else, because a re-stated copy of one reading arrives as a `snapshot`
+   * fact too (`host-service.ts#restateWorldSnapshot`) and the Mod's revision cannot tell the two apart - it is minted per
+   * frame and bumped by its own action receipts, so a counter-keyed clock would report a fifty-turn-old picture as fresh.
    */
   #lastSnapshotArrivedAtMs = 0;
   /** Stale facts already published for the current reading; the re-arm, and the fact's own `staleFactsSoFar`. */
@@ -669,15 +1466,47 @@ export class CompanionEventPump {
    */
   #worldStateRefreshPort: WorldStateRefreshPort | undefined;
   /**
-   * The crossed reading whose probes have been spent, and whether its refusal has already been said.
+   * The crossed READING whose probes have been spent, whether its refusal has already been said, and how far the world had
+   * said it moved when the last ask was made.
    *
-   * The re-arm key is the REVISION, not the turn: a probe can only be answered by a NEW reading, so a second probe under
-   * the revision still waiting asked the question this one would ask. That, and `WORLD_STATE_REFRESH_ATTEMPTS`, is what
-   * keeps a frozen world from becoming a spin.
+   * The reading's own CONTENT (`readingContentIdentity`) is one of the two re-arm keys, not the turn and not the Mod's
+   * revision: a probe can only be answered by a reading that says something else, so a second probe under the same content
+   * asks the question the first one asked. Keyed on the revision instead, a re-observation that only bumped the counter
+   * re-armed the budget and a frozen world became a spin; keyed on content, `WORLD_STATE_REFRESH_ATTEMPTS` is spent by the
+   * reading and only a reading that actually moved earns a new one. `revision` is kept beside the key because the refusal
+   * fact names the reading it could not replace in the Mod's own numbering.
+   *
+   * CONTENT ALONE WAS THE DEADLOCK (`round61`, `AUTO_OBSERVE_REARM`): it is produced by the ask this budget gates, so a
+   * snapshot channel that stopped publishing while the clock kept advancing was a budget that could never come back.
+   * `worldChanges` is the second key - `#worldChangesSinceReading` as of the last ask - so a world statement made after the
+   * budget was spent earns the next ask once, and the same statement cannot earn a second one.
    */
-  #worldStateRefreshFor: { revision: number; probes: number; refusalPublished: boolean } | undefined;
+  #worldStateRefreshFor:
+    | { identity: string; revision: number; probes: number; refusalPublished: boolean; worldChanges: number }
+    | undefined;
   #worldStateRefreshProbes = 0;
   #worldStateRefreshRefusals = 0;
+  /**
+   * Turns composed from an aged reading, and how many of those the world answered (see `AutoObserveAccount`).
+   *
+   * `#autoObserveAgedTurns` is the population: `#autoObserveRefreshed + every #autoObserveUnavailable member` is its
+   * partition, so a turn counted as aged and then neither asked about nor declined is an arithmetic break rather than a
+   * quiet omission.
+   */
+  #autoObserveAgedTurns = 0;
+  #autoObserveRefreshed = 0;
+  #autoObserveLastAgeTurns: number | undefined;
+  /** Crossings the world could not be asked about, one count per `AUTO_OBSERVE_UNAVAILABLE_REASONS` member. */
+  readonly #autoObserveUnavailable: Record<AutoObserveUnavailableReason, number> = {
+    [AUTO_OBSERVE_UNAVAILABLE.noBridge]: 0,
+    [AUTO_OBSERVE_UNAVAILABLE.attemptsSpent]: 0,
+    [AUTO_OBSERVE_UNAVAILABLE.refused]: 0,
+  };
+  /** Spent budgets the world earned back, one count per `AUTO_OBSERVE_REARM` member. */
+  readonly #autoObserveRearmed: Record<AutoObserveRearmReason, number> = {
+    [AUTO_OBSERVE_REARM.readingMoved]: 0,
+    [AUTO_OBSERVE_REARM.worldMoved]: 0,
+  };
   /**
    * Facts since the current reading that say the WORLD moved: the clock, the day, a pass-out, a warp, or a body that is
    * standing somewhere else.
@@ -733,21 +1562,85 @@ export class CompanionEventPump {
    * </p>
    */
   readonly #deliveredFactIdentities = new Set<string>();
+  /**
+   * What each execution's provenance said, so "a receipt nobody could attribute" is a READING rather than an absence.
+   *
+   * <p>
+   * One count per fact that stated a provenance, and the names of the executions the Mod's journal could not attribute.
+   * `unattributed` is a defect the Mod names (`unattributed_execution:<id>`, `OpenBodyProgramJournalAuthority`'s
+   * `AttributeExecution`), and a pump that filed such a fact and said nothing would be the same silence that let the
+   * missing field last three rounds.
+   * </p>
+   * <p>
+   * BOUNDED, WITH A DRAIN: the names stop at `MAX_NAMED_UNATTRIBUTED_EXECUTIONS` and the remainder is counted in
+   * `omittedUnattributed`, so the total is always exact and the list never grows with the session. A session that keeps
+   * producing unattributed executions is naming a defect, not traffic to keep.
+   * </p>
+   */
+  readonly #executionProvenance = {
+    programme: 0,
+    standalone: 0,
+    unattributed: 0,
+    unstated: 0,
+    unattributedExecutions: [] as string[],
+    omittedUnattributed: 0,
+  };
   /** Turns this pump opened, one count per `TURN_OPENINGS` member. */
   readonly #openedByReason: Record<TurnOpening, number> = {
     [TURN_OPENING.playerInput]: 0,
     [TURN_OPENING.worldFact]: 0,
-    [TURN_OPENING.observation]: 0,
     [TURN_OPENING.due]: 0,
   };
   #openedTurns = 0;
-  /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member. */
-  readonly #suppressedByReason: Record<TurnSuppression, number> = {
-    [TURN_SUPPRESSION.observationRestated]: 0,
-    [TURN_SUPPRESSION.worldFactRestated]: 0,
-    [TURN_SUPPRESSION.nothingPending]: 0,
-  };
+  /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member - DERIVED, so a reason added to that
+   * list is counted here without a second table to extend. */
+  readonly #suppressedByReason: Record<TurnSuppression, number> = initializedByReason(TURN_SUPPRESSIONS);
+  /** The nested half of both histograms above: which `FACT_PRODUCER` entrance the deciding fact came in through. */
+  readonly #openedByProducer = initializedByProducer(TURN_OPENINGS);
+  readonly #suppressedByProducer = initializedByProducer(TURN_SUPPRESSIONS);
+  /**
+   * Which producer put each WAITING fact here, by slot key.
+   *
+   * Beside the windows rather than on the fact: a fact is delivered to the model verbatim (`takeBatch` -> `batch.facts`),
+   * so a field added for the Host's own counting would travel into the prompt as a label about the Host's plumbing. The
+   * record's population is the windows', not the run's - `#pruneProducedBy` drains it with them.
+   */
+  readonly #producedBy = new Map<string, FactProducer>();
+  /** Which producer put the reading in the snapshot slot. The one slot whose key is not a fact slot. */
+  #snapshotProducedBy: FactProducer | undefined;
   #lastTurnDecision: TurnDecision | undefined;
+  /**
+   * Turns that spoke, ran no action and closed, one count per `<opener>:<reason>` shape.
+   *
+   * Its population is `emptyTurnShapes()`, so the counter and the line a run prints cannot disagree about which shapes
+   * exist - a shape nobody has taken is still a declared zero rather than an absent key.
+   */
+  readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
+  #emptyTurns = 0;
+  /**
+   * Turns that produced work and delivered no speech, one count per opener, beside `#emptyTurns`.
+   *
+   * The two counters answer one question between them - did a delivered turn spend itself on speech, or on work it did not
+   * narrate? - and they are counted in the same place, from the same settlement, so they cannot disagree about which turns
+   * existed.
+   */
+  readonly #silentSettledByOpener: Record<SilentSettledOpening, number> = initializedSilentSettled();
+  #silentSettledTurns = 0;
+  /**
+   * Settled turns that closed with one of her own executions still running.
+   *
+   * Taken from `hasExecutionInFlight` at the same settlement, and published rather than used to decide anything: the turn
+   * was silent or it was not, and this says whether its work was still running when it said so.
+   */
+  #settledWithExecutionInFlight = 0;
+  /**
+   * Assistant turns Pi wrote, one count per production member - the population is `TURN_PRODUCTIONS`.
+   *
+   * Counted where the record is (`noteAssistantTurn`, from the loop's `message_end`), not at settlement: a batch's own
+   * settlement sees one aggregate per delivery and cannot see that one of the two assistant turns inside it said nothing,
+   * which is exactly the reading `round60`'s 36 silent turns had nowhere to land in.
+   */
+  readonly #assistantTurnsByProduction: Record<TurnProduction, number> = initializedByReason(TURN_PRODUCTIONS);
   /**
    * One timing record per execution the pump has seen and not seen settle.
    *
@@ -763,7 +1656,7 @@ export class CompanionEventPump {
    * One field rather than two, because a retry that lost its opening reason would be a batch the gate could neither open
    * a turn for nor name a suppression for: the two facts are one decision and are stored as one.
    */
-  #retry: Readonly<{ batch: PendingBatch; opening: TurnOpening }> | undefined;
+  #retry: Readonly<{ batch: PendingBatch; opening: FlushDecision<TurnOpening> }> | undefined;
   /**
    * How many batches this pump has handed to a turn that accepted them.
    *
@@ -794,7 +1687,16 @@ export class CompanionEventPump {
   // captured batch so a late rejection cannot resurrect stale facts.
   #generation = 0;
 
-  public enqueueFact(fact: WorldFact): void {
+  /**
+   * Admit one fact, naming the entrance it came in through.
+   *
+   * <p>
+   * `producedBy` is REQUIRED, and that is the whole point: a new ingress cannot appear without saying who it is, because
+   * a call that omits it does not compile. It is not part of the fact - a fact is delivered to the model verbatim - so the
+   * pump keeps it beside the window entry, and the account prints it under the reason the fact decided.
+   * </p>
+   */
+  public enqueueFact(fact: WorldFact, producedBy: FactProducer): void {
     if (typeof fact.source !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(fact.source))
       throw new Error("invalid_world_fact_source");
     if (fact.source === "host_local_transport" && (fact.kind !== "lifecycle" || fact.revision !== 0))
@@ -802,12 +1704,23 @@ export class CompanionEventPump {
     const frozen = Object.freeze({ ...fact });
     this.#observeWorldTransition(frozen);
     this.#observeExecutionProgress(frozen);
+    this.#observeExecutionProvenance(frozen);
     if (fact.kind === "snapshot") {
       const previous = this.#lastSnapshot;
-      const advances = previous === undefined || fact.revision > previous.revision;
-      if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
-      if (previous === undefined || fact.revision >= previous.revision) this.#lastSnapshot = frozen;
-      if (advances) {
+      // An OLDER reading describes an older world (`takeBatch` applies the same rule to a batch that is too large), so
+      // neither slot takes it. One guard for both slots, because two guards left the pending slot able to hold a reading
+      // the block would never render.
+      if (previous !== undefined && fact.revision < previous.revision) return;
+      // The world MOVED only if the reading says something else: the Mod's revision also moves when the Mod publishes a
+      // receipt of its own action (`farmhandexecutioncontroller.cs`), and a counter that counts her actions cannot witness
+      // a world that stood still. Keyed on content, a re-stated reading keeps its age and keeps the `world_state_stale`
+      // evidence beside it (`#worldChangesSinceReading`) instead of resetting both without an observation.
+      const changes = previous === undefined || readingContentIdentity(fact) !== readingContentIdentity(previous);
+      this.#snapshot = frozen;
+      this.#lastSnapshot = frozen;
+      this.#snapshotRestatesPrevious = !changes;
+      this.#snapshotProducedBy = producedBy;
+      if (changes) {
         this.#lastSnapshotArrivedAtMs = Date.now();
         this.#worldStateStalePublished = 0;
         this.#worldChangesSinceReading = 0;
@@ -878,10 +1791,16 @@ export class CompanionEventPump {
           fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",
         );
       destination.delete(evictedKey);
+      // The producer leaves with the fact it was recorded for, or the record grows with the session instead of with the
+      // windows it describes.
+      this.#producedBy.delete(evictedKey);
       this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
-    if (previous === undefined || fact.revision >= previous.revision) destination.set(key, frozen);
+    if (previous === undefined || fact.revision >= previous.revision) {
+      destination.set(key, frozen);
+      this.#producedBy.set(key, producedBy);
+    }
   }
 
   /**
@@ -910,6 +1829,22 @@ export class CompanionEventPump {
     const key = factSlotKey(fact);
     if (!destination.has(key)) destination.set(key, fact);
   }
+
+  /**
+   * Forget the producers of facts no window holds any more.
+   *
+   * The record's population is the four windows' (plus the snapshot slot, which is emptied with them), so it is BOUNDED by
+   * the same numbers that bound the pump - and a fact a bound evicted already had its entry deleted at the eviction. This
+   * runs after `takeBatch` has put back what the byte bound pushed out, which is why it can be a plain sweep rather than a
+   * before/after copy.
+   */
+  #pruneProducedBy(): void {
+    for (const key of [...this.#producedBy.keys()]) {
+      if (this.#receipts.has(key) || this.#semanticEvents.has(key)) continue;
+      if (this.#lifecycle.has(key) || this.#worldFacts.has(key)) continue;
+      this.#producedBy.delete(key);
+    }
+  }
   public enqueuePlayerInput(input: PlayerInput): void {
     if (input.text.length === 0)
       throw new Error(input.source === "voice_final" ? "empty_final_voice_input" : "empty_player_input");
@@ -931,8 +1866,10 @@ export class CompanionEventPump {
   public clear(): void {
     this.#generation++;
     this.#snapshot = undefined;
+    this.#snapshotRestatesPrevious = false;
+    this.#snapshotProducedBy = undefined;
     this.#lastSnapshot = undefined;
-    this.#lastSnapshotDeliveredRevision = undefined;
+    this.#lastSnapshotDeliveredIdentity = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
     this.#lastSnapshotArrivedAtMs = 0;
     this.#worldStateStalePublished = 0;
@@ -941,12 +1878,18 @@ export class CompanionEventPump {
     this.#worldStateRefreshFor = undefined;
     this.#worldStateRefreshProbes = 0;
     this.#worldStateRefreshRefusals = 0;
+    this.#autoObserveAgedTurns = 0;
+    this.#autoObserveRefreshed = 0;
+    this.#autoObserveLastAgeTurns = undefined;
+    for (const reason of AUTO_OBSERVE_UNAVAILABLE_REASONS) this.#autoObserveUnavailable[reason] = 0;
+    for (const reason of AUTO_OBSERVE_REARM_REASONS) this.#autoObserveRearmed[reason] = 0;
     this.#worldChangesSinceReading = 0;
     this.#lastWorldChange = undefined;
     this.#receipts.clear();
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
     this.#worldFacts.clear();
+    this.#producedBy.clear();
     this.#inputs.length = 0;
     this.#deliveredProgress.clear();
     this.#watch.clear();
@@ -962,6 +1905,16 @@ export class CompanionEventPump {
     this.#openedTurns = 0;
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
     for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
+    for (const reason of TURN_OPENINGS)
+      for (const producer of FACT_PRODUCERS) this.#openedByProducer[reason][producer] = 0;
+    for (const reason of TURN_SUPPRESSIONS)
+      for (const producer of FACT_PRODUCERS) this.#suppressedByProducer[reason][producer] = 0;
+    for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
+    this.#emptyTurns = 0;
+    for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
+    this.#silentSettledTurns = 0;
+    this.#settledWithExecutionInFlight = 0;
+    for (const production of TURN_PRODUCTIONS) this.#assistantTurnsByProduction[production] = 0;
     this.#lastTurnDecision = undefined;
   }
 
@@ -993,8 +1946,40 @@ export class CompanionEventPump {
     return Object.freeze({
       opened: this.#openedTurns,
       byReason: Object.freeze({ ...this.#openedByReason }),
+      openedByProducer: freezeProducerHistograms(this.#openedByProducer, TURN_OPENINGS),
       suppressed: Object.freeze({ ...this.#suppressedByReason }),
+      suppressedByProducer: freezeProducerHistograms(this.#suppressedByProducer, TURN_SUPPRESSIONS),
       examined: this.#openedTurns + suppressed,
+      assistantTurns: Object.freeze({
+        examined: TURN_PRODUCTIONS.reduce(
+          (total, production) => total + this.#assistantTurnsByProduction[production],
+          0,
+        ),
+        byProduction: Object.freeze({ ...this.#assistantTurnsByProduction }),
+      }),
+      emptyTurns: Object.freeze({ total: this.#emptyTurns, byShape: Object.freeze({ ...this.#emptyTurnsByShape }) }),
+      silentSettled: Object.freeze({
+        total: this.#silentSettledTurns,
+        byOpener: Object.freeze({ ...this.#silentSettledByOpener }),
+      }),
+      settledWithExecutionInFlight: this.#settledWithExecutionInFlight,
+      executionProvenance: Object.freeze({
+        facts: Object.freeze({
+          programme: this.#executionProvenance.programme,
+          standalone: this.#executionProvenance.standalone,
+          unattributed: this.#executionProvenance.unattributed,
+          unstated: this.#executionProvenance.unstated,
+        }),
+        unattributedExecutions: Object.freeze([...this.#executionProvenance.unattributedExecutions]),
+        omittedUnattributed: this.#executionProvenance.omittedUnattributed,
+      }),
+      autoObserve: Object.freeze({
+        agedTurns: this.#autoObserveAgedTurns,
+        refreshed: this.#autoObserveRefreshed,
+        lastAgeTurns: this.#autoObserveLastAgeTurns,
+        unavailable: Object.freeze({ ...this.#autoObserveUnavailable }),
+        rearmed: Object.freeze({ ...this.#autoObserveRearmed }),
+      }),
       lastDecision: this.#lastTurnDecision,
     });
   }
@@ -1003,14 +1988,34 @@ export class CompanionEventPump {
    * What the most recently DELIVERED turn did, as the layer that saw Pi's event stream measured it.
    *
    * <p>
-   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's stream. The three states
-   * are the whole population, and they are separate because the pump acts differently on each: `worked` clears the
-   * narration run, `spoke` extends it, `silent` ends it. A boolean could not say `silent`, and reading a turn that
-   * carried nothing as narration would blame her for a provider that answered with nothing - which
-   * `provider_empty_completion` already names on its own path.
+   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's stream. The four states are
+   * the whole population, and they are separate because the pump acts differently on each: `worked` and `workedSilently`
+   * clear the narration run, `spoke` extends it, the two silent members end it and are the ones `turn_settled_silent`
+   * counts. A boolean could not say `silent`, and reading a turn that carried nothing as narration would blame her for a
+   * provider that answered with nothing - which `provider_empty_completion` already names on its own path.
    * </p>
    */
   public turnProduction: TurnProduction = TURN_PRODUCTION.saidNothing;
+
+  /**
+   * Record ONE assistant turn: one assistant record Pi wrote, inside whatever batch it landed in.
+   *
+   * <p>
+   * This is the hook the loop did not have. `turnProduction` is published once per DELIVERED BATCH, so a batch that
+   * carried a line and then worked silently is `worked` and its silence is invisible (`round60`: 36 such records, every
+   * counter `0`). A message is a turn in Pi's own record, so it is classified here as it arrives, in the same member
+   * vocabulary, with the same `turnProductionOf`.
+   * </p>
+   * <p>
+   * The two facts are the record's own content, not the turn's: a message either carried text or asked for a tool. A
+   * message that carries neither is `said_nothing` - a provider that answered with nothing, or a message whose tool call
+   * never ran - and it is counted rather than dropped, because a population with a silently missing member is not a
+   * population.
+   * </p>
+   */
+  public noteAssistantTurn(facts: Readonly<{ hasText: boolean; hasToolCall: boolean }>): void {
+    this.#assistantTurnsByProduction[turnProductionOf(facts.hasToolCall, facts.hasText)] += 1;
+  }
 
   /**
    * The steer currently queued into a running turn, until Pi settles it.
@@ -1256,6 +2261,37 @@ export class CompanionEventPump {
   }
 
   /**
+   * Count what one admitted fact said about the programme its execution belongs to.
+   *
+   * <p>
+   * Counted HERE and not where the filing happens, because the filing asks the same question more than once per flush
+   * (`#opening` skims the window, `#suppressionReason` explains it) and a fact is admitted once. The population is
+   * "facts that state an execution's provenance", which is every `execution_receipt` and every body trace - the two
+   * spellings of one step.
+   * </p>
+   */
+  #observeExecutionProvenance(fact: WorldFact): void {
+    const statesAnExecution =
+      fact.kind === "execution_receipt" || (fact.kind === "semantic_event" && fact.payload.bodyTrace !== undefined);
+    if (!statesAnExecution) return;
+    const origin = factExecutionOrigin(fact);
+    if (origin === undefined) {
+      this.#executionProvenance.unstated += 1;
+      return;
+    }
+    this.#executionProvenance[origin.kind] += 1;
+    if (origin.kind !== "unattributed") return;
+    const executionId = fact.executionId;
+    if (executionId === undefined || executionId.length === 0) return;
+    if (this.#executionProvenance.unattributedExecutions.includes(executionId)) return;
+    if (this.#executionProvenance.unattributedExecutions.length >= MAX_NAMED_UNATTRIBUTED_EXECUTIONS) {
+      this.#executionProvenance.omittedUnattributed += 1;
+      return;
+    }
+    this.#executionProvenance.unattributedExecutions.push(executionId);
+  }
+
+  /**
    * Keep the stall timing for whichever execution this fact belongs to.
    *
    * <p>
@@ -1339,27 +2375,53 @@ export class CompanionEventPump {
       return undefined;
     }
     const retry = this.#retry;
-    const opening = retry === undefined ? this.#opening() : retry.opening;
-    if (opening === undefined) {
-      this.#suppress(this.#suppressionReason());
-      return undefined;
-    }
     this.#delivering = true;
     const generation = this.#generation;
-    const pending = retry?.batch ?? this.takeBatch();
-    this.#retry = undefined;
-    this.#openedTurns += 1;
-    this.#openedByReason[opening] += 1;
-    this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening });
+    // THE CURE RUNS BEFORE THE DIAGNOSIS, AND THE DIAGNOSIS IS TAKEN ON THE ANSWER. A flush holding a reading it did not
+    // bring is the same condition that makes an empty turn `world_stale` (`#readingIsAged`), and it is where the reading
+    // can still be replaced: ask the integration first, then decide on whatever the answer made current. Asked BEFORE the
+    // batch is taken, because `takeBatch` consumes the snapshot slot - and asked before the DECISION, because a flush that
+    // suppresses for that exact reason used to return without ever reaching the cure (`round53`: nine clock-only
+    // suppressions, zero probes), while the answer the one probe did get re-entered the same predicate.
+    //
+    // A retry does not ask again: it must send the exact text the sink rejected, which was composed from the reading of
+    // that moment, and asking for a new one would put a second, unreviewed composition behind one turn.
+    let pending: PendingBatch | undefined;
+    let opening: FlushDecision<TurnOpening> | undefined;
     try {
+      const aged = retry === undefined ? this.#beginAgedReadingAsk() : undefined;
+      if (aged !== undefined) {
+        if ("declined" in aged) this.#autoObserveUnavailable[aged.declined] += 1;
+        else {
+          await aged.inFlight;
+          // A clear() while the observation was in flight revokes this turn: the pump belongs to no run, and a turn
+          // opened on the other side of a teardown is a delivery nobody asked for.
+          if (this.#generation !== generation) {
+            this.#lastTurnDecision = undefined;
+            return undefined;
+          }
+        }
+      }
+      opening = retry === undefined ? this.#opening() : retry.opening;
+      if (opening === undefined) {
+        this.#suppress(this.#suppressionReason());
+        return undefined;
+      }
+      pending = retry?.batch ?? this.takeBatch();
+      this.#retry = undefined;
+      this.#openedTurns += 1;
+      this.#openedByReason[opening.decision] += 1;
+      if (opening.producedBy !== undefined) this.#openedByProducer[opening.decision][opening.producedBy] += 1;
+      this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening.decision });
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
-      this.#observeTurnProduction(outcome);
+      this.#observeTurnProduction(outcome, opening.decision, pending.broughtObservation);
       return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.
-      if (this.#generation === generation) this.#retry = Object.freeze({ batch: pending, opening });
+      if (pending !== undefined && opening !== undefined && this.#generation === generation)
+        this.#retry = Object.freeze({ batch: pending, opening });
       throw error;
     } finally {
       this.#delivering = false;
@@ -1370,14 +2432,20 @@ export class CompanionEventPump {
    * Why this flush would open a turn, or `undefined` when everything waiting is something she already has.
    *
    * ONE place: `hasPendingDelivery`, `flush` and the account all ask this, so "is a turn owed" and "was one taken"
-   * cannot disagree.
+   * cannot disagree. The snapshot slot is deliberately not asked: a reading is standing state (`TURN_OPENING`), so the
+   * flush that holds only a reading suppresses and names which reading it held (`TURN_SUPPRESSION.observationRestated` /
+   * `observationMoved`).
    */
-  #opening(): TurnOpening | undefined {
-    if (this.#inputs.length > 0) return TURN_OPENING.playerInput;
-    if (this.#snapshotAdvanced()) return TURN_OPENING.observation;
+  #opening(): FlushDecision<TurnOpening> | undefined {
+    // A person's word is not a fact, so it has no producer: the opener's own count carries it, and every producer stays
+    // at zero for this decision instead of one of them being credited with a turn it did not cause.
+    if (this.#inputs.length > 0) return Object.freeze({ decision: TURN_OPENING.playerInput, producedBy: undefined });
     for (const fact of this.#ordinaryFacts()) {
-      if (isHeldFact(fact) || this.#isRestatement(fact)) continue;
-      return isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact;
+      if (!this.#owesTurn(fact) || this.#isRestatement(fact)) continue;
+      return Object.freeze({
+        decision: isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
     }
     return undefined;
   }
@@ -1392,17 +2460,55 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether the held snapshot is a revision she has not been shown.
+   * Whether a reading says something other than the one she was shown: the ONE comparison the block's header and the
+   * composition's cure are both derived from.
    *
-   * A reading with no DELIVERED predecessor is not one: the membership is "moved past the last one delivered", and the
-   * session's first picture is carried by the turn that attachment itself asks for (`host-service.ts` states it in the
-   * arrival fact and re-states it before every turn). Counting the first reading as an opening would turn every session's
-   * attach into a turn of its own, which is a session-start behaviour this gate has no business changing.
+   * <p>
+   * `undefined` is not a "no": before the first delivery there is nothing to compare against, and the two callers want
+   * different answers to that - a session's first picture is not a re-statement (attachment already carries it), while a
+   * block that HAS never been shown is news by definition. Keeping the third answer here is what stops either caller from
+   * inventing its own reading of "nothing delivered yet".
+   * </p>
    */
-  #snapshotAdvanced(): boolean {
-    const snapshot = this.#snapshot;
-    const delivered = this.#lastSnapshotDeliveredRevision;
-    return snapshot !== undefined && delivered !== undefined && snapshot.revision > delivered;
+  #readingIsNews(fact: WorldFact | undefined): boolean | undefined {
+    if (fact === undefined) return undefined;
+    const shown = this.#lastSnapshotDeliveredIdentity;
+    if (shown === undefined) return undefined;
+    return readingContentIdentity(fact) !== shown;
+  }
+
+  /**
+   * Whether this fact is one STEP of a programme: the fact's OWN provenance says so (`factExecutionOrigin`).
+   *
+   * Asked of the shape first, so a flush holding an ordinary fact - a settlement, a milestone, a person's word - never
+   * reads a provenance to decide whether it may open a turn.
+   */
+  #isInFlightProgress(fact: WorldFact): boolean {
+    return factTurnConsequence(fact) === "in_flight_progress" && factExecutionOrigin(fact)?.kind === "programme";
+  }
+
+  /**
+   * Whether this fact can open a turn: the classification's answer, with the fact's own provenance read where the step is.
+   *
+   * <p>
+   * `decision` opens, `progress` never does, and `in_flight_progress` opens only when the fact does NOT state that a
+   * programme owns the execution. What is NOT asked here is whether the fact is held latest-only: that is a property of
+   * the pending WINDOW (one slot per moving state), and it coincided with "opens no turn" only because every `progress`
+   * shape happened to be held. A settlement that succeeded is progress and is NOT held - it keeps its place in the window
+   * and is delivered whole by the next turn - so the coincidence is gone and the classification has to be asked directly.
+   * </p>
+   * <p>
+   * NOTHING HERE READS A CLOCK OR A LEDGER. `round62` filed such a receipt inside a ten-second window because the ledger
+   * that named its programme had just been told the programme stopped, and the window was the fix for that: a duration
+   * standing in for a fact. The provenance travels WITH the receipt (`protocol.ts#ExecutionOrigin`), so the same receipt
+   * is filed the same way whether its programme is running, stopped a second ago, or never read at all.
+   * </p>
+   */
+  #owesTurn(fact: WorldFact): boolean {
+    const consequence = factTurnConsequence(fact);
+    if (consequence === "decision") return true;
+    if (consequence === "in_flight_progress") return factExecutionOrigin(fact)?.kind !== "programme";
+    return false;
   }
 
   /** Every fact waiting in an ordinary window: the population the fact members of the closed list are read from. */
@@ -1419,21 +2525,59 @@ export class CompanionEventPump {
    * Which member a suppressed flush was answered by absence of.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
-   * skipped it for that reason); a snapshot waiting at exactly the revision she was shown is the observation member
-   * re-stated. `nothing_pending` is the rest - including a FIRST reading, which no turn opens for because nothing in it
-   * moved past what she was delivered.
+   * skipped it for that reason). A step of a programme is its own reason (`in_flight_progress`):
+   * the fact is not a re-statement - she has never seen it - and it still opens no turn, because the programme's
+   * settlement is what she has to decide on. A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which
+   * of the two members it is depends on the reading alone: a copy of the one the pump already held is
+   * `observation_restated` - the world's last statement, asked about again - and a reading that says something else is
+   * `observation_moved`, which is standing state she has not been handed rather than a wake (`TURN_OPENING`).
+   * `nothing_pending` is the rest.
    */
-  #suppressionReason(): TurnSuppression {
-    if (this.#ordinaryFacts().some((fact) => !isHeldFact(fact) && this.#isRestatement(fact)))
-      return TURN_SUPPRESSION.worldFactRestated;
-    if (this.#snapshot !== undefined && this.#snapshot.revision === this.#lastSnapshotDeliveredRevision)
-      return TURN_SUPPRESSION.observationRestated;
-    return TURN_SUPPRESSION.nothingPending;
+  #suppressionReason(): FlushDecision<TurnSuppression> {
+    const facts = this.#ordinaryFacts();
+    // The step first, because it is the answer `#opening` skipped the fact for (`#owesTurn`); the re-statement below is
+    // the older reason and means the same flush was already told this once.
+    for (const fact of facts) {
+      if (!this.#isInFlightProgress(fact)) continue;
+      return Object.freeze({
+        decision: TURN_SUPPRESSION.inFlightProgress,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    for (const fact of facts) {
+      if (isHeldFact(fact) || !this.#isRestatement(fact)) continue;
+      return Object.freeze({
+        decision: TURN_SUPPRESSION.worldFactRestated,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    // A fact the classification calls progress that she has NOT been shown: it keeps its place in the window and travels
+    // in the next turn that opens for a decision. Naming it here is what keeps that turn's absence COUNTED - without this
+    // loop a flush holding a successful settlement would be reported as `observation_restated`, because a reading is
+    // re-stated before every flush, and a rerun could not tell how many turns this rule removed from a reading that had
+    // nothing to do with it.
+    for (const fact of facts) {
+      if (factTurnConsequence(fact) !== "progress") continue;
+      return Object.freeze({
+        decision: TURN_SUPPRESSION.progress,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    if (this.#snapshot !== undefined)
+      return Object.freeze({
+        decision: this.#snapshotRestatesPrevious
+          ? TURN_SUPPRESSION.observationRestated
+          : TURN_SUPPRESSION.observationMoved,
+        producedBy: this.#snapshotProducedBy,
+      });
+    return Object.freeze({ decision: TURN_SUPPRESSION.nothingPending, producedBy: undefined });
   }
 
-  #suppress(reason: TurnSuppression): void {
-    this.#suppressedByReason[reason] += 1;
-    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason });
+  #suppress(suppression: FlushDecision<TurnSuppression>): void {
+    this.#suppressedByReason[suppression.decision] += 1;
+    if (suppression.producedBy !== undefined)
+      this.#suppressedByProducer[suppression.decision][suppression.producedBy] += 1;
+    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason: suppression.decision });
   }
 
   /**
@@ -1519,6 +2663,7 @@ export class CompanionEventPump {
       if (fact.kind !== "world_fact" || fact.semanticKind !== "time_milestone") continue;
       expiring.push(fact);
       this.#worldFacts.delete(key);
+      this.#producedBy.delete(key);
     }
     if (expiring.length === 0) return undefined;
 
@@ -1540,10 +2685,12 @@ export class CompanionEventPump {
       facts: Object.freeze(deliveredFacts),
       events: Object.freeze([]),
       // A steer states the world it is already carrying: the turn it joins has `<world-state>` from its own batch, and
-      // this one repeats the same reading rather than leaving the model with no state at all.
+      // this one repeats the same reading rather than leaving the model with no state at all - which is also why it
+      // brought no observation: it opened no turn, and the settlement that counts empty turns reads the batch that DID.
+      broughtObservation: false,
       text: composeFactBrief({
         inputs: [],
-        snapshot: this.#worldStateReading(false),
+        snapshot: this.#worldStateReading(),
         events: expiring,
         inFlight: this.#inFlight(),
         locale: DEFAULT_BRIEF_LOCALE,
@@ -1578,7 +2725,10 @@ export class CompanionEventPump {
   private takeBatch(): PendingBatch {
     const inputs = this.#inputs.splice(0);
     const snapshot = this.#snapshot;
+    const broughtObservation = this.#snapshotBringsObservation();
     this.#snapshot = undefined;
+    this.#snapshotRestatesPrevious = false;
+    this.#snapshotProducedBy = undefined;
     const receipts = [...this.#receipts.values()];
     this.#receipts.clear();
     const semanticEvents = [...this.#semanticEvents.values()];
@@ -1609,10 +2759,7 @@ export class CompanionEventPump {
     // Host re-states the last snapshot before every turn (`CompanionHostService.#restateWorldSnapshot`), so a batch
     // almost always carries one - and a block that called every re-statement `刚刚更新` would be claiming a freshness
     // nothing observed.
-    const broughtObservation =
-      snapshot !== undefined &&
-      (this.#lastSnapshotDeliveredRevision === undefined || snapshot.revision > this.#lastSnapshotDeliveredRevision);
-    const worldState = this.#worldStateReading(broughtObservation);
+    const worldState = this.#worldStateReading();
     const locale = batchInputs.at(-1)?.locale ?? DEFAULT_BRIEF_LOCALE;
     // Read ONCE for this batch, outside the byte-bound loop below: every pass states the same programme in the same
     // state, so the text the delivery carries is the text the retry would compose.
@@ -1667,13 +2814,13 @@ export class CompanionEventPump {
     let chosen = facts;
     let composed = compose(
       chosen,
-      chosen.filter((fact) => !isHeldFact(fact)),
+      chosen.filter((fact) => this.#owesTurn(fact)),
     );
     while (composed.text.length > MAX_BATCH_BYTES && chosen.length > 1) {
       chosen = chosen.slice(1);
       composed = compose(
         chosen,
-        chosen.filter((fact) => !isHeldFact(fact)),
+        chosen.filter((fact) => this.#owesTurn(fact)),
       );
     }
 
@@ -1682,13 +2829,17 @@ export class CompanionEventPump {
     // admission would evict a newer fact to make room for an older one.
     const dropped = facts.slice(0, facts.length - chosen.length);
     for (const fact of dropped) this.#readmit(fact);
+    this.#pruneProducedBy();
 
     // This batch was shown the observation, so the next one counts its age from here. Recorded at composition, not at
     // acceptance: a rejected batch is retried with this exact text ("刚刚更新"), and the only error this can make is
     // aging a reading too far - the safe direction for a block whose whole job is to not look fresher than it is.
-    if (broughtObservation && snapshot !== undefined) {
-      this.#lastSnapshotDeliveredRevision = snapshot.revision;
-      this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
+    // What this batch SHOWED her. The identity is the reading the block above rendered, written on every batch because
+    // every batch renders it; the AGE is written only for a batch that brought it, and it is the number of delivered turns
+    // this exact text has been re-stated - so the parenthetical beside a re-stated reading grows while the reading does not.
+    if (this.#lastSnapshot !== undefined) {
+      this.#lastSnapshotDeliveredIdentity = readingContentIdentity(this.#lastSnapshot);
+      if (broughtObservation) this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
     }
 
     // Remember what the model was just told by each held progress slot, and what the batch as a whole taught it, so the
@@ -1708,25 +2859,102 @@ export class CompanionEventPump {
       facts: composed.deliveredFacts,
       events: composed.events,
       text: composed.text,
+      broughtObservation,
     });
   }
 
   /**
-   * The world as `<world-state>` states it: the last reading, its own revision, and how many delivered turns old it is.
+   * The world as `<world-state>` states it: the last reading, the revision the Mod reported for it, and how many delivered
+   * turns old it is.
    *
-   * `broughtObservation` is the batch's fact, not this method's inference: a re-stated snapshot leaves the revision it
-   * already showed, and that is the difference between `刚刚更新` and `本轮无新观察`.
+   * THE FRESHNESS IS THE COMPARISON, not a caller's flag. `ageTurns === 0` is what `fact-brief.ts` renders as `刚刚更新`
+   * and anything else as `本轮无新观察`, so it is decided the same way the suppressor decides a flush: by asking whether this
+   * reading's own content is one she was shown. A caller that could pass the answer in could pass a different one from the
+   * text it composes, and measured `round53` that is exactly what happened - a block printed `11:30（上午）· 天气：雨天 ·
+   * 位置: 镇上 · 体力: 41` under a header saying `本轮无新观察`.
    */
-  #worldStateReading(broughtObservation: boolean): WorldStateReading | undefined {
+  #worldStateReading(): WorldStateReading | undefined {
     const fact = this.#lastSnapshot;
     if (fact === undefined) return undefined;
     const age = this.#deliveredBatches - this.#lastSnapshotDeliveredBatch;
     return Object.freeze({
       snapshot: fact.payload as unknown as Snapshot,
       revision: fact.revision,
-      ageTurns: broughtObservation ? 0 : Math.max(1, age),
+      ageTurns: this.#readingIsNews(fact) === false ? Math.max(1, age) : 0,
       ageMs: Math.max(0, Date.now() - this.#lastSnapshotArrivedAtMs),
     });
+  }
+
+  /**
+   * Whether the snapshot slot holds a reading she has not been shown: the freshness half of `#readingIsAged`.
+   *
+   * The batch's own `broughtObservation`, and the only expression that decides it - `takeBatch` reads it, so the flag the
+   * model was told `刚刚更新` by and the flag the cure is keyed on are one derivation rather than two that can disagree.
+   */
+  #snapshotBringsObservation(): boolean {
+    return this.#snapshot !== undefined && this.#readingIsNews(this.#snapshot) !== false;
+  }
+
+  /**
+   * THE ONE STALENESS CONDITION: whether the reading a turn states is one she already had.
+   *
+   * <p>
+   * Two questions ask it and neither may grow a test of its own, because they were the defect: the settlement asks it to
+   * NAME an empty turn (`#emptyTurnReason`), and the composition asks it to CURE the reading before the turn is built
+   * (`#agedReadingBeforeComposition`). Measured 2026-11-13 (`round50b`): the name was computed from this condition while
+   * the cure was computed from `worldStateStaleThreshold` (five turns, re-armed 5/20/35) AND from `worldChangesSinceReading`
+   * - so a turn two batches into a run was named `world_stale` while every probe the Host owns was still unspent, and she
+   * was handed `（这是 1 轮之前看到的，世界已经不一样了）` with nothing asked.
+   * </p>
+   *
+   * <p>
+   * WHICH BOUND WINS, and why. For the CURE it is this one - "the batch did not bring the observation" - which is age 1.
+   * For the NOTICE it stays `worldStateStaleThreshold`, which is age 5 and re-arms outwards. The two answer different
+   * questions and the difference is not a matter of taste: a refresh costs one pipe round-trip, replaces the reading in a
+   * turn that was being opened anyway, and is bounded per READING (`WORLD_STATE_REFRESH_ATTEMPTS`), while a notice costs
+   * a turn - it is a statement to the model - so it has to be spaced out. Waiting for the notice's bound before asking is
+   * how fifty turns were spent on one picture nobody refreshed.
+   * </p>
+   */
+  #readingIsAged(broughtObservation: boolean): boolean {
+    return this.#lastSnapshot !== undefined && !broughtObservation;
+  }
+
+  /**
+   * The aged reading this turn is about to be composed from, or `undefined` when there is nothing to cure.
+   *
+   * `undefined` has two causes and neither is a staleness statement: the batch brings an observation, or no reading has
+   * ever arrived (a session's first turns). Both compose exactly as they did before this method existed.
+   *
+   * IT IS ASKED FROM THE DECISION, NOT FROM THE OPENING (`flush`), because a flush that suppresses for this exact reason -
+   * the reading it is holding is one she has already read - was the one place the cure could never reach. Measured
+   * (`.tmp/audit/probe-refresh-loop.mjs`): nine clock-only suppressions, zero probes, and the only answer they ever got
+   * re-entered the same predicate, so no turn opened, nothing acted, and the reading could never move.
+   *
+   * The IDENTITY comes back with the reading because it is the probe budget's key (`#worldStateRefreshFor`): the question
+   * asked is "is there a reading other than this one", and only that reading's own content answers it.
+   */
+  #agedReadingBeforeComposition(): Readonly<{ reading: WorldStateReading; identity: string }> | undefined {
+    const fact = this.#lastSnapshot;
+    if (fact === undefined) return undefined;
+    if (!this.#readingIsAged(this.#snapshotBringsObservation())) return undefined;
+    const reading = this.#worldStateReading();
+    if (reading === undefined || reading.ageTurns === 0) return undefined;
+    return Object.freeze({ reading, identity: readingContentIdentity(fact) });
+  }
+
+  /**
+   * Take the remedy for the reading this turn is about to be handed, and say what it will cost to wait for.
+   *
+   * `undefined` is a turn with nothing to cure. Otherwise the ask is taken as far as it can go synchronously - a pump
+   * with no port, or a revision whose attempts are spent, answers now and the caller names the reason - so the only
+   * caller that waits on the world is the one holding a request that is actually out.
+   */
+  #beginAgedReadingAsk(): FreshObservationAsk | undefined {
+    const aged = this.#agedReadingBeforeComposition();
+    if (aged === undefined) return undefined;
+    this.#autoObserveAgedTurns += 1;
+    return this.#askForFreshObservation(aged.identity, aged.reading);
   }
 
   /**
@@ -1754,14 +2982,35 @@ export class CompanionEventPump {
    * </p>
    *
    * <p>
-   * TAKING IT ASKS. The fact tells her the picture is old; on the same call this asks the integration for a fresh
-   * observation (`#requestWorldStateRefresh`), because in a narration loop being told is exactly what she does not act
-   * on - measured `round45`: fifty turns on one frozen revision, 601 s of silence, two 02:00 pass-outs. The fact itself
-   * is unchanged, so she is still told the world is old even when the probe is refused.
+   * NOTHING IS ASKED HERE ANY MORE, and that is the unit's whole point. The ask lives where the reading is about to be
+   * composed into a turn (`#beginAgedReadingAsk`, called by `flush`), keyed on the SAME condition that names an empty
+   * turn `world_stale` rather than on this notice's own threshold. Measured 2026-11-13 (`round50b`): the notice's
+   * threshold was five turns and its re-arm 5/20/35, while the classification called a one-turn-old reading
+   * `world_stale` - so this method's ask fired on a trigger almost no turn took, and two turns of the run were composed
+   * from an aged reading with all three probes unspent. What is left here is the NOTICE, and it now means something
+   * sharper than it did: it is due only for a reading that outlived `WORLD_STATE_STALE_TURNS` in a world that said it
+   * moved, and every one of those turns was already offered to the world and could not be cured - so `world_state_stale`
+   * is what the Host says when the refresh did not work, not what it says instead of refreshing.
+   * </p>
+   *
+   * <p>
+   * MEASURED 2026-11-13 (`round47`): 22 of 41 talk-only turns were handed `world_state_stale:...`, and the cheapest thing
+   * she could do with such a turn was describe the world she had been told she could not see. The refresh was already
+   * installed and already fired; what it could not do was replace the turn it was meant to save. Her own debrief says
+   * why being TOLD was not enough: she read the in-flight block's 「还没结算，就等于一步都还没做成」 as "no action is
+   * issuable", and the one fact that names "narrated but did not work" (`narration_without_work`) reached her once in 64
+   * turns and read as a reminder rather than a verdict. A stale world must therefore not have to be narrated at all:
+   * the Host fetches it and says nothing. (The in-flight sentence is a separate defect and is not fixed here.)
+   * </p>
+   *
+   * <p>
+   * WHEN THE CURE COULD NOT FIRE the fact IS minted, so the stale notice still reaches her and the turn still opens; the
+   * account says which condition it was (`autoObserve.unavailable`, one member of
+   * `AUTO_OBSERVE_UNAVAILABLE_REASONS`). A refresh is never silent and never assumed.
    * </p>
    */
   public takeWorldStateStaleFact(): WorldFact | undefined {
-    const reading = this.#worldStateReading(false);
+    const reading = this.#worldStateReading();
     if (reading === undefined || !this.#worldStateStaleDue(reading)) return undefined;
     this.#worldStateStalePublished += 1;
     const code = worldStateStaleCode(reading);
@@ -1786,9 +3035,6 @@ export class CompanionEventPump {
         staleFactsSoFar: this.#worldStateStalePublished,
       }),
     });
-    // The fact says the reading is old; this makes something ACT on it. Ordered after the mint so the statement cannot
-    // be lost to a probe that throws, and bounded by the same revision key (see `#requestWorldStateRefresh`).
-    this.#requestWorldStateRefresh(reading.revision);
     return fact;
   }
 
@@ -1811,47 +3057,95 @@ export class CompanionEventPump {
   }
 
   /**
-   * Ask the integration for a fresh observation of the crossed reading, once per revision, `WORLD_STATE_REFRESH_ATTEMPTS`
-   * times at most.
+   * Ask the integration for a fresh observation of the aged reading, or say why the world cannot be asked.
    *
-   * Fire and forget on purpose: the answer arrives as an ordinary snapshot fact and the Host admits it on its own path,
-   * so nothing waits on this and no turn is opened by it. What the pump does owe the caller is the FAILURE, which is
-   * minted as a fact (`#refuseWorldStateRefresh`) rather than swallowed - a probe the integration would not serve must
-   * be as visible as the stale reading it could not replace.
+   * <p>
+   * THE THREE BOUNDS that keep this from becoming a poll, because a failed refresh must not retry by itself:
+   * </p>
+   * <ol>
+   *   <li>`WORLD_STATE_REFRESH_ATTEMPTS` per reading: one reading she has already been shown is asked about three times and
+   *     then declined with `refresh_attempts_spent`. The re-arm keys are the reading's own CONTENT and the world's own
+   *     statement that it MOVED (`AUTO_OBSERVE_REARM`), so a world that never moves cannot turn the flush cadence into a
+   *     probe cadence, and a counter that moved without the world does not re-arm it.</li>
+   *   <li>An ask is made for every examined flush whose reading it did not bring (`flush` -> `#beginAgedReadingAsk`), before
+   *     the flush decides whether to open a turn - never from a timer or a publication: there is one trigger and it is the
+   *     staleness condition itself.</li>
+   *   <li>The episode is re-armed by the READING moving or by the WORLD saying it moved, never by time and never by a flush,
+   *     and a refusal is published once per reading (`#refuseWorldStateRefresh`) - so a bridge that never answers produces
+   *     one statement, not a stream.</li>
+   * </ol>
+   *
+   * <p>
+   * THE SECOND RE-ARM KEY IS WHAT `round61` PROVED NECESSARY. The first one alone is self-defeating: the only producer of a
+   * different reading is this ask, so a snapshot channel that stopped publishing while the clock kept walking was a budget
+   * that could never come back - ten and a half minutes and thirteen `world_stale` turns on a bridge that was answering.
+   * The world's own statement is independent of the channel it is not arriving on, and it is asked for ONCE per statement:
+   * several movements between two flushes are one question ("read the world now"), and a statement already answered by an
+   * ask cannot earn a second one.
+   * </p>
+   *
+   * <p>
+   * THE ANSWER IS WAITED FOR when a caller can wait: the request travels the integration's own observation route
+   * (`StardewBridgeConnection.observe`) and its answer arrives as an ordinary snapshot fact through `enqueueFact`, so what
+   * the caller reads after the wait is the same state every other fact writes - not a second copy of the world held here.
+   * What this method owes the caller either way is the FAILURE: a rejection is published as a fact
+   * (`#refuseWorldStateRefresh`) rather than swallowed, because a probe the integration would not serve must be as
+   * visible as the stale reading it could not replace.
+   * </p>
    */
-  #requestWorldStateRefresh(revision: number): void {
+  #askForFreshObservation(identity: string, reading: WorldStateReading): FreshObservationAsk {
     const port = this.#worldStateRefreshPort;
-    if (port === undefined) return;
+    if (port === undefined) return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.noBridge });
     const episode = this.#worldStateRefreshFor;
-    const same = episode !== undefined && episode.revision === revision;
+    const same = episode !== undefined && episode.identity === identity;
     const probes = same ? episode.probes : 0;
-    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS) return;
+    // The world said it moved after the last ask: `#worldChangesSinceReading` is the SAME count `world_state_stale` names
+    // as its evidence, so "the world moved" has one spelling in this pump rather than two that can disagree.
+    const worldMoved = same && this.#worldChangesSinceReading > episode.worldChanges;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS && !worldMoved)
+      return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.attemptsSpent });
+    // Which signal earned this budget, counted where it is decided rather than inferred from two counters later.
+    if (episode !== undefined && episode.probes >= WORLD_STATE_REFRESH_ATTEMPTS) {
+      this.#autoObserveRearmed[same ? AUTO_OBSERVE_REARM.worldMoved : AUTO_OBSERVE_REARM.readingMoved] += 1;
+    }
     this.#worldStateRefreshFor = {
-      revision,
+      identity,
+      revision: reading.revision,
       probes: probes + 1,
       refusalPublished: same ? episode.refusalPublished : false,
+      worldChanges: this.#worldChangesSinceReading,
     };
     this.#worldStateRefreshProbes += 1;
-    void (async () => {
+    const inFlight = (async (): Promise<void> => {
       try {
         await port.observe();
       } catch (error: unknown) {
-        this.#refuseWorldStateRefresh(revision, error);
+        // Counted per ASK, not per reading: every flush the route refused is a flush decided on an old reading,
+        // which is what makes `agedReadings = refreshed + every unavailable reason` hold. The FACT the refusal publishes
+        // is still said once per reading (`#refuseWorldStateRefresh`) - a condition and a statement are different sums.
+        this.#autoObserveUnavailable[AUTO_OBSERVE_UNAVAILABLE.refused] += 1;
+        this.#refuseWorldStateRefresh(identity, reading.revision, error);
+        return;
       }
+      // Counted where the answer arrives rather than where the request left: an ask the route refused is not a refresh,
+      // and `worldStateRefresh.probes` is already the count of requests made.
+      this.#autoObserveRefreshed += 1;
+      this.#autoObserveLastAgeTurns = reading.ageTurns;
     })();
+    return Object.freeze({ inFlight });
   }
 
   /**
-   * Say that the probe for `revision` came back refused, once per crossed reading.
+   * Say that the probe for `revision` came back refused, once per reading.
    *
    * Once, not once per probe: the reason is the same statement until the reading moves, and three copies of "the bridge
    * is not answering" would be three turns spent re-reading one condition. `publish` is the Host's Host-minted-fact
    * route, so this fact wakes a turn exactly where the stale fact did and nowhere else.
    */
-  #refuseWorldStateRefresh(revision: number, error: unknown): void {
+  #refuseWorldStateRefresh(identity: string, revision: number, error: unknown): void {
     const port = this.#worldStateRefreshPort;
     const episode = this.#worldStateRefreshFor;
-    if (port === undefined || episode === undefined || episode.revision !== revision) return;
+    if (port === undefined || episode === undefined || episode.identity !== identity) return;
     if (episode.refusalPublished) return;
     episode.refusalPublished = true;
     try {
@@ -1914,7 +3208,7 @@ export class CompanionEventPump {
    * </p>
    */
   public get narrationWithoutWork(): NarrationWithoutWorkReading {
-    const reading = this.#worldStateReading(false);
+    const reading = this.#worldStateReading();
     const boundTurns = narrationWithoutWorkThreshold(this.#narrationWithoutWorkPublished);
     return Object.freeze({
       turns: this.#turnsWithoutWork,
@@ -1964,7 +3258,7 @@ export class CompanionEventPump {
   }
 
   /**
-   * Record what the turn that just settled DID, for `narrationWithoutWork`.
+   * Record what the turn that just settled DID, for `narrationWithoutWork` and for the empty-turn reading.
    *
    * <p>
    * A turn that produced work clears the run and dates it; a turn that spoke and ran no tool extends it; anything else
@@ -1977,19 +3271,83 @@ export class CompanionEventPump {
    * window, and that window is emptied by the batch the turn consumed - so a receipt that arrived DURING the turn for an
    * execution still running is seen, and a turn with her body mid-action is not narration.
    * </p>
+   * <p>
+   * THE SAME SETTLEMENT ANSWERS THE OTHER QUESTION: `turnProduction === spoke` is exactly "delivered speech, ran no
+   * tool", so the turn is counted under the shape its opener and its condition describe. It is a READING and not a
+   * refusal - nothing here changes what the turn was allowed to do - because the run's own account has to be able to say
+   * "41 of 64 turns were this shape" without anyone opening a session file.
+   * </p>
+   * <p>
+   * AND THE THIRD: a turn that produced work and delivered no speech is counted as `turn_settled_silent` - the other half
+   * of the same distinction, taken at the same moment and from the same production the loop published. Two properties keep
+   * it honest, and neither is a state the receipt window is in: WORK was produced (a turn that did nothing is not a
+   * companion who chose quiet), and no text was (the speaking members are the other counter's). The person's own opener is
+   * never silence, because a turn someone opened is owed an answer and its emptiness is a different defect than this one.
+   * </p>
+   * <p>
+   * A RECEIPT STILL IN FLIGHT IS A QUALIFIER, NOT AN EXCLUSION. MEASURED 2026-11-15 (`round59`): this counter printed `0`
+   * for 42 settled turns that all carried text, and the same tree answered `0` for a silent working turn whose own
+   * programme was running at settlement while answering `1` for the same turn with nothing in flight - 28 of 36 programme
+   * turns closed with her own receipt open, so the counter was structurally unable to say anything about the turns it
+   * exists to describe. The number is COUNTED instead (`settledWithExecutionInFlight`), so "she was quiet while her work ran"
+   * is a reading rather than an inference from logs.
+   * </p>
+   * <p>
+   * WHICH TURNS THE SILENT COUNTER INCLUDES IS THE LOOP'S OWN ANSWER, NOT A GUESS FROM `worked`. `turnProducedWork` and
+   * `turnProducedSpeech` are the two properties, asked once over the closed list: work without text is silence, and both
+   * speaking members are not. MEASURED 2026-11-15 (`round58`): 21 turns opened, 21 bubbles, and this counter printed `0`
+   * because the only member it read as silence was `said_nothing`, a state a completed turn can only reach when Pi reported
+   * no message at all. A turn that acted and chose not to speak had nowhere to land.
+   * </p>
    */
-  #observeTurnProduction(outcome: CompanionTurnOutcome | undefined): void {
+  #observeTurnProduction(
+    outcome: CompanionTurnOutcome | undefined,
+    opening: TurnOpening,
+    broughtObservation: boolean,
+  ): void {
     if (outcome !== "completed") {
       this.#turnsWithoutWork = 0;
       return;
     }
-    if (this.turnProduction === TURN_PRODUCTION.worked) {
+    const producedSpeech = turnProducedSpeech(this.turnProduction);
+    const producedWork = turnProducedWork(this.turnProduction);
+    const inFlight = this.hasExecutionInFlight;
+    if (inFlight) this.#settledWithExecutionInFlight += 1;
+    if (this.turnProduction === TURN_PRODUCTION.spoke && !inFlight) {
+      const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
+      this.#emptyTurns += 1;
+      this.#emptyTurnsByShape[shape] += 1;
+    }
+    if (producedWork && !producedSpeech && opening !== TURN_OPENING.playerInput) {
+      this.#silentSettledTurns += 1;
+      this.#silentSettledByOpener[opening] += 1;
+    }
+    if (producedWork) {
       this.#turnsWithoutWork = 0;
       this.#lastWorkTurnAtMs = Date.now();
       return;
     }
     this.#turnsWithoutWork =
-      this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight ? this.#turnsWithoutWork + 1 : 0;
+      this.turnProduction === TURN_PRODUCTION.spoke && !inFlight ? this.#turnsWithoutWork + 1 : 0;
+  }
+
+  /**
+   * Why a speaking turn with no action behind it closed, in the declared order of `TURN_WITHOUT_ACTION_REASON`.
+   *
+   * The snapshot is asked directly for the body half: `actionable` is the Mod's own admission gate, so "the engine is
+   * holding this actor" is its statement rather than this pump's inference. A session with no reading at all is neither
+   * stale nor held - it has nothing to act on - and falls to `nothing_pending`, where the absence is already visible in
+   * the world-state block's `尚未收到观察`.
+   */
+  #emptyTurnReason(broughtObservation: boolean): TurnWithoutActionReason {
+    if (this.#readingIsAged(broughtObservation)) return TURN_WITHOUT_ACTION_REASON.worldStale;
+    if (this.#bodyHeld()) return TURN_WITHOUT_ACTION_REASON.bodyHeld;
+    return TURN_WITHOUT_ACTION_REASON.nothingPending;
+  }
+
+  /** Whether the last reading says the actor cannot take a command (`Snapshot.actionable`). */
+  #bodyHeld(): boolean {
+    return (this.#lastSnapshot?.payload as { actionable?: unknown } | undefined)?.actionable === false;
   }
 
   /**
@@ -2078,6 +3436,213 @@ export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
   [NARRATION_WITHOUT_WORK_SEMANTIC_KIND]:
     "the Host reads wakeReason when a flush settles, and when it answers narration_without_work it mints the fact with takeNarrationWithoutWorkFact and hands it to acceptHostMintedFact, which enqueues it and flushes a turn",
 });
+
+/**
+ * Receipt states that say a STEP of a programme DID what it was told, when the receipt's own `origin` says a programme owns
+ * the execution.
+ *
+ * <p>
+ * THE STEP IS NOT THE OUTCOME. Measured 2026-11-15 (`round57`, `tools/_multiday_routine-round57-live-runner.log`):
+ * `turns opened 66 {player_input: 4, world_fact: 62 {adapter_ingress: 57, companion_arrival: 1, program_settlement: 4}}`.
+ * Fifty-seven of sixty-six turns were one adapter fact. The run's transcript says what they were: she submitted
+ * `builder.harvest_crop` for three cauliflowers, and every node that finished arrived as its own `succeeded` receipt
+ * and opened its own turn - five utterances for one micro-action (#68, #70, #72, #76, #78).
+ * </p>
+ * <p>
+ * ONLY THE STATES THAT MEAN "IT RAN AND WORKED". A `rejected`, `failed`, `cancelled`, `blocked` or `uncertain` step is
+ * the one thing mid-plan she can act on, and a refusal is a decision (`TURN_OPENING`), so those states stay ordinary
+ * facts. Nothing here is suppressed when the journal names NO programme: a lone action's terminal receipt is the only fact
+ * that will ever say it happened - the 816.5 s silence of 2026-11-07 was a terminal outcome nothing delivered.
+ * </p>
+ * <p>
+ * THE SETTLEMENT IS THE STATEMENT, AND IT DECIDES WHETHER THAT IS A TURN. `program_settled` states the plan's outcome per
+ * node in `<execution-result>`, so nothing is lost by moving where these receipts are delivered - they wait in the window
+ * and travel in the next turn's `<world-facts>`. Whether that turn exists is the settlement's own outcome
+ * (`SETTLED_PROGRAM_OUTCOMES`): a programme she was told to run and ran is progress, and one that refused something opens
+ * the turn its receipts arrive in.
+ * </p>
+ */
+export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({
+  succeeded:
+    "the programme's own settlement states this node in <execution-result>, and the next turn that opens carries the receipt in <world-facts>",
+  partially_succeeded:
+    "the programme's own settlement states this node in <execution-result> and opens a turn, because a node that did part of its work is a settlement this pump classifies as refused",
+});
+
+/**
+ * Semantic-event kinds that are the same STEP, stated a second way: the Mod publishes both a body trace and a receipt
+ * for one node finishing, and neither is news while the plan that owns it is settling.
+ *
+ * The settled FAILED/CANCELLED/INVALIDATED kinds are deliberately absent: those are refusals, and a refusal is a
+ * decision no settlement can soften.
+ */
+export const IN_FLIGHT_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  execution_settled_succeeded:
+    "the receipt for the same step and the programme's own settlement both state it, and the settlement's own outcome decides whether a turn opens",
+});
+
+/**
+ * What a SETTLEMENT states about the programme it closes, as the one classification its fact SHAPE is built from.
+ *
+ * <p>
+ * A settlement is the only fact that states a programme's outcome per node, and its outcome is what decides whether it
+ * can change what she does next. `succeeded` means every node did what it was told - work she dispatched, restated with
+ * its receipts, which belongs in the next turn's block and not in a turn of its own. `refused` covers everything else a
+ * node can end as, and the direction is deliberate: a refusal, a failure, a cancellation, a partial row and a row the
+ * journal could not be read for all say the same thing to her - the plan did NOT do what it was told - and folding those
+ * into "done" is the polite lie `settledSummary` exists to refuse.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-15 (`round59`): `turns opened 88 {player_input: 4, world_fact: 84 {adapter_ingress: 79,
+ * companion_arrival: 1, program_settlement: 4}}` against 72 submissions, and all 42 settled turns the audit read carried
+ * text. A programme that succeeds is followed by another programme, so the settlement opened a turn whose only content was
+ * "that worked" - one utterance per plan. The 4 settlement-opened turns that remain in that reading are the ones this
+ * table keeps: the ones something was refused in.
+ * </p>
+ * <p>
+ * THE READING IS THE DIGEST'S OWN, NOT A SECOND ONE. `counts` and `total` are what `program-settlement-digest.ts`
+ * publishes and what `settlementLine` renders, so the line she reads and the classification this pump makes cannot
+ * disagree about whether a plan worked.
+ * </p>
+ */
+export const SETTLED_PROGRAM_OUTCOMES = Object.freeze({
+  succeeded: Object.freeze({
+    consequence: "progress" as const,
+    why: "every node did what it was told: the settlement restates work she already dispatched, and the next turn that opens for a decision carries it in <execution-result>",
+  }),
+  refused: Object.freeze({
+    consequence: "decision" as const,
+    why: "at least one node was refused, failed, stopped, only partially done or unreadable - that is the one thing in a plan she can act on, so the settlement opens a turn",
+  }),
+});
+
+export type SettledProgramOutcome = keyof typeof SETTLED_PROGRAM_OUTCOMES;
+
+/**
+ * Which of the two a settlement fact states, read from the counts its producer published.
+ *
+ * <p>
+ * A payload it cannot read is `refused`, for the same reason a shape outside the classification table is a `decision`:
+ * the pump forwards facts verbatim, so an unreadable settlement must cost a turn rather than be filed as success.
+ * </p>
+ */
+export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
+  const total = fact.payload.total;
+  const counts = fact.payload.counts;
+  if (typeof total !== "number" || total <= 0 || typeof counts !== "object" || counts === null) return "refused";
+  return (counts as Readonly<Record<string, unknown>>).succeeded === total ? "succeeded" : "refused";
+}
+
+/**
+ * What one fact SHAPE owes her, as the one classification this pump and its gate read.
+ *
+ * <ul>
+ *   <li>`decision` - it can change what she does next, so it may open a turn.</li>
+ *   <li>`progress` - standing state inside work already answered: never a turn, always delivered by the next one.</li>
+ *   <li>`in_flight_progress` - a step of a programme, as the fact's OWN provenance states it: progress WHILE it runs or
+ *       while its programme is still settling (its settlement is the turn that carries it), and a decision when the fact
+ *       states no programme owns the execution, because a lone outcome is news nobody else will state.</li>
+ * </ul>
+ *
+ * <p>
+ * A SETTLEMENT IS SPLIT BY ITS OUTCOME, because that is the one thing about it she can act on: `settled:succeeded` is
+ * `progress` and `settled:refused` is a `decision` (`SETTLED_PROGRAM_OUTCOMES`). Every other world fact is one shape -
+ * `world_fact` - because the world speaking, a clock mark and a notice are all news nothing else will state.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, every settlement
+ * outcome the pump declares is classified as a settlement, and every kind the
+ * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`,
+ * `HOST_MINTED_WAKE_KINDS`) is classified as a semantic event. A state the protocol adds, an outcome or kind added to one
+ * of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also why the table is
+ * built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
+ * </p>
+ */
+function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence>> {
+  const table: Record<string, FactTurnConsequence> = {
+    // A reading is the `<world-state>` block every turn re-states: standing state, never news (`TURN_OPENING`).
+    snapshot: "progress",
+    // The world speaking, and the transport going away: nothing else will ever state either.
+    world_fact: "decision",
+    lifecycle: "decision",
+  };
+  for (const state of EXECUTION_STATES) table[`receipt:${state}`] = "decision";
+  for (const state of Object.keys(HELD_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "progress";
+  for (const state of Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "in_flight_progress";
+  for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
+  for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "in_flight_progress";
+  for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
+  for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
+    table[`settled:${outcome}`] = SETTLED_PROGRAM_OUTCOMES[outcome].consequence;
+  return Object.freeze(table);
+}
+
+export type FactTurnConsequence = "decision" | "progress" | "in_flight_progress";
+
+export const FACT_TURN_CONSEQUENCE: Readonly<Record<string, FactTurnConsequence>> = buildFactTurnConsequence();
+
+/** The table key one fact occupies: its kind, split by the state, the semantic kind or the settlement outcome that says
+ * what it means. */
+export function factTurnShape(fact: WorldFact): string {
+  if (fact.kind === "execution_receipt") return `receipt:${String(fact.payload.state)}`;
+  if (fact.kind === "semantic_event") return `semantic:${String(fact.payload.kind)}`;
+  if (fact.kind === "world_fact" && fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND)
+    return `settled:${settledProgramOutcome(fact)}`;
+  return fact.kind;
+}
+
+/**
+ * What a fact of this shape owes her - the ONE reading of the classification above.
+ *
+ * A shape outside the table is a `decision`, and that direction is deliberate: the pump forwards facts verbatim and the
+ * Mod's semantic vocabulary is open, so an unknown kind must cost a turn rather than a fact. The gate is what keeps
+ * this from being a silent default for the pump's OWN vocabulary - it derives the population from the tables and
+ * `EXECUTION_STATES`, so a member added there is classified here or fails by name.
+ */
+export function factTurnConsequence(fact: WorldFact): FactTurnConsequence {
+  return FACT_TURN_CONSEQUENCE[factTurnShape(fact)] ?? "decision";
+}
+
+/**
+ * Which programme the fact's execution belongs to, as the MOD's OWN JOURNAL stated it on the wire.
+ *
+ * <p>
+ * THE ONE READING OF A STEP'S CAUSE. Both statements of one step carry it - the `execution_receipt` itself and the body
+ * trace that restates it (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`) - and both come from one journal lookup in the Mod
+ * (`BridgeSession#OriginOf`), so they cannot disagree about which programme owns an execution.
+ * </p>
+ * <p>
+ * `undefined` means THIS FACT SAYS NOTHING ABOUT AN EXECUTION: a settlement, a milestone, the world speaking. A fact that
+ * DOES state an execution but carries no readable provenance is the other case, and it is the caller's to treat as
+ * `unattributed` - never as "no programme, so it is a lone outcome", because that reading is the guess this field exists
+ * to replace. An origin this reader cannot read is therefore NO statement: the fact owes a turn (the direction that
+ * cannot lose an outcome) and the account counts it in `unstated`.
+ * </p>
+ */
+export function factExecutionOrigin(fact: WorldFact): ExecutionOrigin | undefined {
+  if (fact.kind === "execution_receipt") return statedOrigin(fact.payload.origin);
+  if (fact.kind !== "semantic_event") return undefined;
+  const trace = fact.payload.bodyTrace;
+  if (trace === null || typeof trace !== "object") return undefined;
+  return statedOrigin((trace as { origin?: unknown }).origin);
+}
+
+/** `payload.origin` when it is one of the three statements `protocol.ts` declares, and nothing otherwise. */
+function statedOrigin(value: unknown): ExecutionOrigin | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const kind = (value as { kind?: unknown }).kind;
+  if (kind === "standalone" || kind === "unattributed") return value as ExecutionOrigin;
+  if (kind !== "programme") return undefined;
+  const named = value as { programId?: unknown; nodeId?: unknown };
+  // HALF A NAME IS NOT A NAME: a programme origin with one id is a broken frame, not a step of that programme.
+  return typeof named.programId === "string" &&
+    named.programId.length > 0 &&
+    typeof named.nodeId === "string" &&
+    named.nodeId.length > 0
+    ? (value as ExecutionOrigin)
+    : undefined;
+}
 
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
 function isMeaningfulProgressFact(fact: WorldFact): boolean {
@@ -2228,6 +3793,29 @@ export function factContentIdentity(fact: WorldFact): string {
     ...stable
   } = fact;
   return canonicalFactJson(stable);
+}
+
+/**
+ * What a READING says, as a comparable string: the snapshot's own payload, canonically ordered.
+ *
+ * <p>
+ * The reading's content is its PAYLOAD - the clock, the day, the weather, the location, the tile, the body, the
+ * neighbourhood and the target families, which is exactly what `fact-brief.ts` renders into the block. The envelope is
+ * not content: `observedTick` advances on every publish, `occurredAtMs` and the provenance ids are minted per frame, and
+ * `revision` is the Mod's action-echo counter (`farmhandexecutioncontroller.cs:1779`). `canonicalFactJson` already drops
+ * `revision` and `tick` at every depth, so a payload that was re-published under a new revision and a new tick has the
+ * same identity here - which is what makes "she has already read this" answerable without trusting either number.
+ * </p>
+ *
+ * <p>
+ * ONE spelling, used by the two questions that are really one: is the block's header allowed to say `本轮无新观察`
+ * (`#worldStateReading`), and has the probe budget for this reading been spent (`#worldStateRefreshFor`, beside the second
+ * key `AUTO_OBSERVE_REARM.worldMoved`). The third
+ * question this used to answer - does the reading open a turn - is gone with the opener: a reading is standing state.
+ * </p>
+ */
+export function readingContentIdentity(fact: WorldFact): string {
+  return canonicalFactJson(fact.payload);
 }
 
 /**

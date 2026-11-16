@@ -241,8 +241,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            // An unreadable map property falls back to the native `whichFarm` arm below
-            // rather than failing the action: that is the same arm the game takes.
         }
 
         int whichFarm = Game1.whichFarm;
@@ -380,8 +378,6 @@ internal sealed partial class ExecutionManager
         }
 
         int stackAfter = slot < player.Items.Count && player.Items[slot] is StardewValley.Object remaining ? remaining.Stack : 0;
-        // The branch's own immediate writes (:3499-3506) are the observable signature that
-        // the routine armed rather than merely returned true.
         bool routineArmed = !player.CanMove && player.temporarilyInvincible
             && player.temporaryInvincibilityTimer == -4000 && player.jitterStrength == 1f;
         string evidence =
@@ -413,8 +409,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", evidence);
     }
 
-    /// <summary>Which native totem arm the owned object takes, so a refusal says what it
-    /// actually holds rather than only that it is not a warp totem.</summary>
     private static string NativeTotemBranch(StardewValley.Object item) => item.QualifiedItemId switch
     {
         "(O)681" => "rain_totem",
@@ -436,9 +430,6 @@ internal sealed partial class ExecutionManager
         BridgePanSiteTarget? site = ReadLivePanSite(location);
         if (site is null)
             return Array.Empty<BridgePanSiteTarget>();
-        // The publish radius IS the execution radius (PanNativeReachTiles, the native accept window
-        // Pan.beginUsing enforces). A wider radius would advertise a site the same request then refuses
-        // with pan_site_out_of_range, which tells the Agent about a target it could never have used.
         if (!IsTileWithinChebyshevRadius(player, site.X, site.Y, PanNativeReachTiles))
             return Array.Empty<BridgePanSiteTarget>();
         return new[] { site };
@@ -461,13 +452,8 @@ internal sealed partial class ExecutionManager
 
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
-        // Ask before resolving the site: a pack that cannot satisfy the action's own `tool:pan` claim is refused now,
-        // and the pan the actor happens to be holding is not the question. The slot the caller named is recorded,
-        // never obeyed.
         if (ResolveDeclaredTool(player.Items, "pan_ore").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusal, slot));
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(player, "pan_ore", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusalCode, slot));
         ExecutionState state;
@@ -475,8 +461,6 @@ internal sealed partial class ExecutionManager
         string evidence;
         try
         {
-            // The native tool ingress drives the HELD tool, which is now this handler's own selection rather than the
-            // caller's request: `TrySelectDeclaredTool` dropped its reference check into the selection's postcondition.
             if (selection.Tool is not Pan pan)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             Point site = location.orePanPoint.Value;
@@ -515,10 +499,6 @@ internal sealed partial class ExecutionManager
             Point siteBefore = site;
             try
             {
-                // THE SEAM. Public, synchronous, no menu and no input edge: the pan's own
-                // `x,y` parameters are overwritten inside it, so the coordinates passed here
-                // are the native call's own convention (`use_raft` passes the same shape) and
-                // the site it acts on is the point re-resolved above.
                 pan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, player);
             }
             catch (Exception nativeException)
@@ -537,9 +517,6 @@ internal sealed partial class ExecutionManager
             int unitsAfter = CountInventoryUnits(player);
             bool siteMoved = !siteAfter.Equals(siteBefore);
             bool statAdvanced = timesPannedAfter == timesPannedBefore + 1;
-            // `addItemsByMenuIfNecessary` opens an ItemGrabMenu when the pack cannot take the
-            // whole result set; that overflow is the game's own disposition and is reported,
-            // not collected here.
             bool overflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;
             bool panned = siteMoved && statAdvanced;
             evidence =
@@ -549,8 +526,7 @@ internal sealed partial class ExecutionManager
                 + $"pan_output_overflow={overflowPending.ToString().ToLowerInvariant()};"
                 + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
                 + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
-            state = panned ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = panned ? "ore_panned" : "pan_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(panned, "ore_panned", "pan_postcondition_unavailable");
         }
         finally
         {
@@ -648,8 +624,6 @@ internal sealed partial class ExecutionManager
             {
                 if (!IsMailboxTile(location, x, y))
                     continue;
-                // No radius filter: a mailbox is a fixed landmark of this farm, so it is visible from
-                // every tile of the farm. A claim from outside `MailboxClaimReachTiles` walks in.
                 result.Add(new BridgeMailboxTarget(
                     BuildMailboxTargetId(location, x, y, pending, head),
                     location.NameOrUniqueName,
@@ -730,7 +704,6 @@ internal sealed partial class ExecutionManager
         MailboxTargetResolution resolution = ResolveMailboxTarget(location, targetX, targetY, expectedTargetId);
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
-        // Position-independent, so it does not wait for a walk: an empty mailbox is refused where the actor stands.
         if (resolution.PendingCount == 0)
             return this.RememberTerminal(
                 requestId,
@@ -739,9 +712,6 @@ internal sealed partial class ExecutionManager
                 "mailbox_empty",
                 $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};pending=0");
 
-        // Outside the native claim reach, walk in rather than refuse. The target identity and the pending
-        // count are re-checked by the execution body on arrival, which is where a letter taken during the
-        // walk is refused instead of the next one being opened.
         if (!IsTileWithinChebyshevRadius(player, targetX, targetY, MailboxClaimReachTiles))
         {
             return this.TryBeginToolApproach(
@@ -760,12 +730,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteClaimMailAttachment(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The claim body. Re-validates the published mailbox identity and the native reach
-    /// before anything is written, because an approach leg may have taken several ticks and
-    /// the queue -- which is half of that identity -- can have moved meanwhile. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteClaimMailAttachment(
         string executionId,
         string requestId,
@@ -808,8 +772,6 @@ internal sealed partial class ExecutionManager
         bool letterOpened;
         try
         {
-            // THE SEAM. It claims the letter (dequeue + mailReceived) and opens the
-            // letter it claimed; nothing about either half is re-implemented here.
             location.mailbox();
             letterOpened = Game1.activeClickableMenu is StardewValley.Menus.LetterViewerMenu;
             if (letterOpened && Game1.activeClickableMenu is StardewValley.Menus.LetterViewerMenu openedLetter)
@@ -846,8 +808,6 @@ internal sealed partial class ExecutionManager
         // actor until it is cleared. Clear it AFTER the delivery, so the attachment is not
         // what gets discarded.
         bool claimOverflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu
-            // Only the overflow ItemGrabMenu is this action's residual; a different queued menu is not ours
-            // to clear (lane 3 flagged the count check as too broad).
             || Game1.nextClickableMenu.Any(menu => menu is StardewValley.Menus.ItemGrabMenu);
         int salvagedToInventoryUnits = 0;
         int salvagedToDebrisUnits = 0;
@@ -882,12 +842,7 @@ internal sealed partial class ExecutionManager
             + $"mail_salvage_debris_units={salvagedToDebrisUnits.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(
-            requestId,
-            executionId,
-            claimed ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            claimed ? "mail_claimed" : "mail_claim_not_observed",
-            evidence);
+        return this.SettlePostcondition(requestId, executionId, claimed, "mail_claimed", "mail_claim_not_observed", evidence);
     }
 
     /// <summary>
@@ -916,13 +871,10 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            // A refusal or a receipt must not fail because the letter's content could not
-            // be read; the claim itself is decided from the queue, not from the text.
             return false;
         }
     }
 
-    /// <summary>Occupied inventory slots: how many slots hold something.</summary>
     private static int CountOccupiedInventorySlots(Farmer player)
     {
         int count = 0;
@@ -935,10 +887,6 @@ internal sealed partial class ExecutionManager
         return count;
     }
 
-    /// <summary>
-    /// Total units across the pack. The count of occupied slots cannot see a delivery
-    /// that merged into an existing stack, so the overflow-safe fact is the unit total.
-    /// </summary>
     private static int CountInventoryUnits(Farmer player)
     {
         int count = 0;

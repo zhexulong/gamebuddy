@@ -243,7 +243,7 @@ test("enter_exit warp action: a surface without enter_exit fails closed", async 
 test("enter_exit warp action: a non-isolated topology is rejected", async () => {
   await assert.rejects(
     run({}, fixtureConfig({ Portfolio: { Enable: true } })),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_enter_exit_action_policy_invalid",
   );
 });
 

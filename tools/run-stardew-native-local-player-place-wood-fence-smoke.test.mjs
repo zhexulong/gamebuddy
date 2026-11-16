@@ -142,7 +142,7 @@ test("wood-fence runner blocks on a non-isolated fixture topology", async () => 
   const { client, receipts } = createFake();
   const result = await runPlaceWoodFenceSmoke(client, receipts, fixtureConfig({ Portfolio: { Enable: true } }));
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_local_fixture_topology_not_isolated");
+  assert.equal(result.reasonCode, "native_local_place_wood_fence_action_policy_invalid");
 });
 
 test("wood-fence runner CLI owns config, connect, and teardown through the shared harness only", async () => {

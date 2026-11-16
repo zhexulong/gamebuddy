@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -60,8 +61,10 @@ internal abstract class AdmissionOutcome
     }
 
     /// <summary>
-    /// Held: the body is held by something that clears on its own inside the bounded window, so the request is parked
-    /// and dispatched when it frees. <see cref="Marker"/> is the acceptance the bridge reads as "still waiting".
+    /// Held: the body is held by something that clears on its own, so the request is parked and dispatched when it
+    /// frees - inside the retry window for a lock the engine releases, or until the deadline the request itself
+    /// declared for a condition that ends when the world says so (<see cref="BodyHoldWait"/>). <see cref="Marker"/> is
+    /// the acceptance the bridge reads as "still waiting".
     /// </summary>
     internal sealed class Held : AdmissionOutcome
     {
@@ -135,14 +138,22 @@ internal delegate void HeldRequestResolver(string requestId, LocalExecutionRecei
 
 /// <summary>
 /// One parked request: the action identity the request was dispatched with, the execution the admission minted for
-/// it, the hold it was parked for, and when the bounded wait started.
+/// it, the hold it was parked for, when the bounded wait started, and the instant that wait must end.
+///
+/// <para>
+/// <see cref="WaitUntilUnixMs"/> is the wait's OWN bound rather than one window for every park: the retry window for a
+/// lock the engine releases, the request's own deadline for a condition that ends when the world says so
+/// (<see cref="BodyHoldWait"/>). It is stored, not recomputed, because the two clocks that could disagree - the park's
+/// arrival and the pump's later tick - must not be able to move a deadline the caller declared.
+/// </para>
 /// </summary>
 internal sealed record HeldRequest(
     string ActionId,
     string ExecutionId,
     string HoldCode,
     string HoldEvidence,
-    long ParkedAtUnixMs);
+    long ParkedAtUnixMs,
+    long WaitUntilUnixMs);
 
 /// <summary>
 /// The one admission authority: the mechanical order an executing action shares (identity → actionability → deadline
@@ -172,9 +183,10 @@ internal sealed class ExecutionAdmission
     /// </summary>
     private readonly Dictionary<string, FarmhandExecutionAdmission> durableAdmissionsByRequestId = new(StringComparer.Ordinal);
 
-    // Requests whose admission found the actor TRANSIENTLY held, parked so the body can free inside the Mod
-    // instead of being refused back to the Agent for a model round-trip. Bounded by
-    // WorldModel.TransientRetryWindowMs; keyed by requestId, holding the request as the admission saw it.
+    // Requests whose admission found the body held by something that clears on its own, parked so it can free inside
+    // the Mod instead of being refused back to the Agent for a model round-trip. The bound is the HOLD's own:
+    // WorldModel.TransientRetryWindowMs for an engine lock, the request's declared deadline for a world condition
+    // (BodyHoldWait). Keyed by requestId, holding the request as the admission saw it.
     private readonly Dictionary<string, HeldRequest> heldRequestsByRequestId = new(StringComparer.Ordinal);
 
     private HeldRequestResolver? heldRequestResolver;
@@ -482,26 +494,38 @@ internal sealed class ExecutionAdmission
             // same request.
             (string holdCode, string holdEvidence) =
                 WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove);
-            // A Transient hold is the ONE hold that clears on its own inside a bounded window
-            // (WorldModel.TransientRetryWindowMs, the very number this evidence publishes as `retry_window_ms`
-            // and the number the body loop waits), so a request that meets one is PARKED here and dispatched
-            // the moment the body frees, instead of being paid for with a model round-trip whose median is
-            // 3.4 s and whose p90 is 25 s (measured 2026-10-19, run g99cross: four refusals in 62 dispatches,
-            // each on a follow-up that arrived 49-154 ms after the previous action settled, and each followed
-            // by the companion standing still). This is the gate that owns the refusal, so it is also the gate
-            // that decides to wait instead - and only while something can resolve the wait: with no bridge
-            // attached (a fixture, or the body-program re-entry) the same caller reads the same named refusal
-            // it always has. Every other hold - a menu, a cutscene, a faint, a day advance - does not clear
-            // inside any bounded window and keeps refusing right here, because parking an action behind one
-            // would be exactly the stale execution the revision rules exist to prevent.
-            if (disposition == LocalDispositionKind.Transient
+            // WHICH HOLDS ARE WAITED OUT IS CLASSIFIED ONCE (`ExecutionManager.HoldWait`), and the two kinds it
+            // names are two different world facts. A Transient hold is an engine lock that releases inside
+            // WorldModel.TransientRetryWindowMs - a tool swing, an eating pause, a warp fade - and it is right to park
+            // the request for exactly that window. An Event hold is ENGINE-OWNED: a running event advances itself or the
+            // player advances it, the engine raises `Game1.eventUp` for exactly as long as it runs, and the request it
+            // holds is the same request afterwards - so its bound is the deadline the request itself declared, which
+            // is the instant its admission can no longer be consumed at all.
+            //
+            // MEASURED, because this comment used to assert the opposite. `round56`, day 6 06:00, the furnace cutscene:
+            // the event began at 19:55:53, `equip_tool` was refused `cutscene_active` at 19:55:54.61, the rows were
+            // refused from 19:55:56.62, and the world was free again at 19:55:59 - 2.4 s after the last refusal and
+            // 4.4 s after the first. The window did not cover the event and the comment said no window ever could; both
+            // were wrong, and the request was spent on a condition that had ended before the companion could react.
+            //
+            // The other holds keep refusing right here, each for its own stated reason: a menu is cleared by an ACTION
+            // (the catalog's own modal-resolving family) or by the player and never by waiting; a pass-out is the day
+            // ending, which clears on its own but in minutes, so no deadline a request may declare can outlast it. This
+            // is the gate that owns the refusal, so it is also the gate that decides to wait instead - and only while
+            // something can resolve the wait: with no bridge attached (a fixture, or the body-program re-entry) the same
+            // caller reads the same named refusal it always has.
+            if (ExecutionManager.HoldWait(disposition) is { } wait
                 && this.heldRequestResolver is not null
-                // A request that already owns a durable journal admission cannot be waited out: its exact
-                // tuple is recorded WITHOUT a receipt, so a later dispatch of it would be read as a
-                // lost-receipt recovery rather than a first dispatch. Those are the candidate actions, which
-                // carry no actionability gate of their own and so never arrive here.
+                // A request whose admission tuple is journalled is never parked, because its exact tuple is recorded
+                // WITHOUT a receipt, so a later dispatch of it would be read as a lost-receipt recovery rather than a
+                // first dispatch. Those are the candidate actions, which carry no actionability gate of their own.
                 && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-                return new AdmissionOutcome.Held(this.ParkHeldRequest(requestId, executionId, holdCode, holdEvidence));
+                return new AdmissionOutcome.Held(this.ParkHeldRequest(
+                    requestId,
+                    executionId,
+                    holdCode,
+                    holdEvidence,
+                    WaitUntil(wait, requestedDeadlineMs)));
             return new AdmissionOutcome.Refused(this.commit.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence));
         }
 
@@ -589,7 +613,12 @@ internal sealed class ExecutionAdmission
             // A durable admission is never waited out: its tuple is journalled WITHOUT a receipt, so re-dispatching it
             // later would read as a lost-receipt recovery rather than a first dispatch.
             && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-            return new AdmissionOutcome.Held(this.ParkHeldRequest(requestId, executionId, WaitingForBodyHold(owner.ReasonCode), owner.Evidence));
+            return new AdmissionOutcome.Held(this.ParkHeldRequest(
+                requestId,
+                executionId,
+                WaitingForBodyHold(owner.ReasonCode),
+                owner.Evidence,
+                WaitUntil(BodyHoldWait.RetryWindow, requestedDeadlineMs: null)));
         return new AdmissionOutcome.Refused(this.commit.RememberTerminal(requestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence));
     }
 
@@ -604,7 +633,8 @@ internal sealed class ExecutionAdmission
         string requestId,
         string executionId,
         string holdCode,
-        string holdEvidence)
+        string holdEvidence,
+        long waitUntilUnixMs)
     {
         string actionId = this.store.TryGetActionId(requestId, out string boundAction) ? boundAction : requestId;
         // The FIRST park owns the request's answer and its window: a caller that retries while the body is
@@ -615,23 +645,36 @@ internal sealed class ExecutionAdmission
                 executionId,
                 holdCode,
                 holdEvidence,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                waitUntilUnixMs);
         return new LocalExecutionReceipt(executionId, requestId, ExecutionState.Accepted, ExecutionManager.HeldRequestMarker, this.commit.CurrentRevision, holdEvidence, ActionId: actionId);
     }
+
+    /// <summary>
+    /// When a park of <paramref name="wait"/> must end. One reading of <see cref="BodyHoldWait"/>, here, because the
+    /// bound is a property of the hold and not of the call site that met it.
+    /// </summary>
+    private static long WaitUntil(BodyHoldWait wait, long? requestedDeadlineMs) => wait switch
+    {
+        BodyHoldWait.RetryWindow => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + WorldModel.TransientRetryWindowMs,
+        BodyHoldWait.RequestDeadline => requestedDeadlineMs
+            ?? throw new ArgumentNullException(nameof(requestedDeadlineMs), "a request-deadline wait is bounded by the request's own deadline"),
+        _ => throw new ArgumentOutOfRangeException(nameof(wait), wait, "a hold with no declared wait cannot be parked"),
+    };
 
     /// <summary>
     /// Re-attempts every parked request, once per game tick. The body is re-read through the same authority the
     /// admission reads, so the wait's two ends cannot disagree with the gate that parked the request: the moment it is
     /// free the request goes back to the bridge, which dispatches it through the path it arrived on - every revision,
     /// deadline, profile and ownership check runs again at THAT moment, because this is a wait and not a replay. Past
-    /// <see cref="WorldModel.TransientRetryWindowMs"/> the wait ends in the named hold the admission captured on
-    /// arrival.
+    /// the wait's own bound (<see cref="HeldRequest.WaitUntilUnixMs"/>) the wait ends in the named hold the admission
+    /// captured on arrival.
     ///
     /// <para>
-    /// That window is enforced whether or not a bridge is left to take the answer. A park exists only while a bridge
+    /// That bound is enforced whether or not a bridge is left to take the answer. A park exists only while a bridge
     /// does, so a missing resolver means the bridge that parked it went away mid-wait - and the park must still end,
-    /// in the same window every other park ends in. It is not a second, shorter deadline: the one branch that mints
-    /// <see cref="ExecutionManager.HeldRequestNeverAnsweredPrefix"/> differs in the CODE it names, never in the window.
+    /// in the same bound every other park ends in. It is not a second, shorter deadline: the one branch that mints
+    /// <see cref="ExecutionManager.HeldRequestNeverAnsweredPrefix"/> differs in the CODE it names, never in the bound.
     /// </para>
     /// </summary>
     internal void PumpHeld()
@@ -650,7 +693,7 @@ internal sealed class ExecutionAdmission
                 resolver(requestId, null);
                 continue;
             }
-            if (nowMs - held.ParkedAtUnixMs <= WorldModel.TransientRetryWindowMs)
+            if (nowMs <= held.WaitUntilUnixMs)
                 continue;
             // The wait ended in a hold that is still in force. While it is the parked hold, the code and
             // evidence are the pair the admission captured on arrival - byte for byte the refusal the Agent

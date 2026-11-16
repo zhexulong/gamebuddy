@@ -20,35 +20,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const int MaximumFixedInteractionPoints = 64;
 
-    /// <summary>The longest engine word <c>fixedInteractionPoints[].actionWord</c> may quote.</summary>
     private const int MaximumFixedInteractionPointActionWordLength = 64;
 
-    /// <summary>
-    /// The map's OWN fixed interaction points, whole-map: every tile the engine itself dispatches an
-    /// interaction on, wherever it stands.
-    ///
-    /// <para>
-    /// This family exists because reachability and topology are different facts. Every other discovery
-    /// function here bounds its scan by <see cref="ExecutionManager.TargetDiscoveryRadius"/>, which is right
-    /// for an entity - a watering can reaches one tile, so a crop six tiles away is a plan, not a target.
-    /// It is wrong for a fixed point: a mine level's ladder-up is a Buildings-layer TILE INDEX, not an
-    /// entity and not a <c>warp</c>, so no radius ever reaches it from anywhere, and no walk brings it
-    /// inside one. Measured 2026-11-04: a companion in a mine level was published <c>warps: 0</c>,
-    /// <c>doorTargets: 0</c> and no ladder it could name, and stayed until it passed out.
-    /// </para>
-    ///
-    /// <para>
-    /// Read-only: it names what the map offers, and no action is added beside it. A caller that wants one
-    /// of these points still walks there and uses the action that already owns the tile.
-    /// </para>
-    ///
-    /// <para>
-    /// Order is the map's own row-major order, not nearest-first, because this list is topology rather
-    /// than a walking order: a nearest-first list would reshuffle on every step and re-spend the reader's
-    /// attention on a set that did not change. <paramref name="omitted"/> counts the points the cap left
-    /// out, so a truncated list says so instead of reading as the whole map.
-    /// </para>
-    /// </summary>
     internal static IReadOnlyList<BridgeFixedInteractionPoint> DiscoverFixedInteractionPoints(Farmer player, out int omitted)
     {
         omitted = 0;
@@ -86,8 +59,6 @@ internal sealed partial class ExecutionManager
     {
         kind = string.Empty;
         actionWord = null;
-        // The ladder index first: a mine level's ladder tile carries no tile property at all, so the
-        // property reads below would report nothing for the one tile that matters most.
         string? mineKind = FixedInteractionPointKinds.ForMineShaftTileIndex(
             location.getTileIndexAt(x, y, "Buildings", MineShaftTileSheetId));
         if (mineKind is not null)
@@ -115,16 +86,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>
-    /// The engine's own first word of a tile-property value (<c>MinecartTransport</c> out of
-    /// <c>MinecartTransport Default</c>), or null when there is no publishable word.
-    ///
-    /// <para>
-    /// A word longer than the wire's bound is published as null rather than truncated to a corrupt
-    /// token: the point's coordinate and kind are what an action addresses, and the word is the hint
-    /// beside them. It is never a reason to refuse the whole snapshot.
-    /// </para>
-    /// </summary>
     private static string? PublishedActionWord(string propertyValue)
     {
         string? word = propertyValue.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();

@@ -116,7 +116,7 @@ public sealed class ModalFamilyReceiptEquivalenceTests
         ["answer/not_a_question"] = new Published("Rejected", "modal_not_answerable", "modal_type=DialogueBox;question=false", "<null>", "<null>", 1, false),
         ["answer/blank_key"] = new Published("Rejected", "invalid_response_key", "key_length=0;blank=true;max_length=128", "<null>", "<null>", 1, false),
         ["answer/key_not_offered"] = new Published("Rejected", "response_key_not_offered", "modal_type=DialogueBox;question=true;response_key=是;offered_keys=Yes,No", "offered_keys=Yes,No", "<null>", 1, false),
-        ["answer/sleep_prompt"] = new Published("Rejected", "native_sleep_prompt_owned_by_advance_day", "modal_type=DialogueBox;question=true;response_key=Yes;question_key=Sleep;owning_action=sleep", "Answering Yes here ends the day. Dispatch `sleep` instead - it crosses the night with a receipt.", "<null>", 1, false),
+        ["answer/sleep_prompt"] = new Published("Rejected", "native_sleep_prompt_owned_by_sleep", "modal_type=DialogueBox;question=true;response_key=Yes;question_key=Sleep;owning_action=sleep", "Answering Yes here ends the day. Dispatch `sleep` instead - it answers this prompt and crosses the night with a receipt.", "<null>", 1, false),
         ["answer/actor_not_actionable"] = new Published("Rejected", "player_not_actionable", "actor=bound;location=none", "<null>", "<null>", 1, false),
         ["levelup/no_level_up_menu"] = new Published("Rejected", "modal_not_level_up", "modal_type=none", "<null>", "<null>", 1, false),
         ["levelup/expected_pair_missing"] = new Published("Rejected", "level_up_expected_pair_mismatch", "expected_pair=missing", "<null>", "<null>", 1, false),

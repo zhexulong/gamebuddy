@@ -4,6 +4,7 @@ import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fail } from "./lib/gate-preamble.mjs";
 import { enumerateNativeInteractionMechanisms } from "./lib/stardew-native-interaction-mechanisms.mjs";
 
 const ASSEMBLY_NAME = "Stardew Valley.dll";
@@ -12,12 +13,6 @@ const EXPECTED_SHA256 = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0c
 const OPTIONS = ["--disable-updatecheck", "-p", "--nested-directories"];
 const execFileAsync = promisify(execFile);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 function parseArgs(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -27,7 +22,7 @@ function parseArgs(argv) {
     if (!value || value.startsWith("--")) fail("invalid_argument", `Missing value for ${option}.`);
     result[option.slice(2)] = value;
   }
-  if (!result["game-path"] || !result.out)
+  if (!(result["game-path"] && result.out))
     fail("arguments_required", "Usage: --game-path <installed-game-path> --out <report-path>");
   return result;
 }

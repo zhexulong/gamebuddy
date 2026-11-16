@@ -328,6 +328,35 @@ public sealed class OpenBodyProgramJournalAuthority
         return new(programId, BodyProgramQueryCode.Found, Array.AsReadOnly(events), events.LastOrDefault()?.Cursor ?? cursor, this.state.EventHighWater);
     }
 
+    /// <summary>
+    /// Which programme node owns this execution, as the durable journal binds it.
+    ///
+    /// <para>
+    /// The binding is written at the admission boundary and kept on the node through its whole life
+    /// (<see cref="TryConsumeHostGrant"/> mints it, <see cref="TryComplete"/> carries it over), so a receipt that arrives
+    /// after the node settled - the LAST node's receipt, which is the one `round62` measured - still finds its own plan
+    /// here. That is the fact the Host's turn decision was missing.
+    /// </para>
+    /// <para>
+    /// ABSENCE OF EVIDENCE IS NOT EVIDENCE OF NONE. A journal this build could not read, or one that set an older
+    /// document aside, cannot say that NO node owns an execution - its miss means "nothing is known", which is a
+    /// different statement from <see cref="BodyProgramExecutionOrigin.Standalone"/> and the only one a reader may act on.
+    /// So those two conditions answer <see cref="BodyProgramExecutionOrigin.Unattributed"/> and the caller names the
+    /// defect instead of guessing.
+    /// </para>
+    /// </summary>
+    public BodyProgramExecutionOrigin AttributeExecution(string? executionId)
+    {
+        bool canSayNothingIsKnown = this.Superseded is null
+            && this.OpenStatus is not (BodyProgramJournalOpenStatus.Corrupt or BodyProgramJournalOpenStatus.PersistenceReadFailed);
+        if (!canSayNothingIsKnown || string.IsNullOrEmpty(executionId)) return BodyProgramExecutionOrigin.Unattributed;
+        foreach (BodyProgramJournalProgram program in this.state.Programs)
+            foreach (BodyProgramJournalNode node in program.Nodes)
+                if (node.ExecutionBinding is { } binding && string.Equals(binding.ExecutionId, executionId, StringComparison.Ordinal))
+                    return BodyProgramExecutionOrigin.OfNode(program.Program.ProgramId, node.NodeId);
+        return BodyProgramExecutionOrigin.Standalone;
+    }
+
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
     {
         if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
@@ -491,7 +520,12 @@ public sealed class OpenBodyProgramJournalAuthority
     /// graph, or supply a replacement state. A successful first transition
     /// atomically records the rejection and skips every still-pending dependent.
     /// </summary>
-    public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code)
+    /// <param name="refusalDetail">
+    /// What the rejection is a statement ABOUT, when the code alone cannot say it - the hold a node waited on for its
+    /// whole watchdog, for instance. The code is a closed vocabulary and a detail is the sentence beside it, the same
+    /// division a failed node's `FailureCode` and `RefusalDetail` already make.
+    /// </param>
+    public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code, string? refusalDetail = null)
     {
         if (!IsMutable || challenge is null || !BodyProgramValidation.IsValidRejectionCode(code))
             return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
@@ -522,6 +556,7 @@ public sealed class OpenBodyProgramJournalAuthority
             RecoveryDiagnostic = null,
             RejectionCode = code,
             FailureCode = null,
+            RefusalDetail = BodyProgramValidation.IsValidRefusalDetail(refusalDetail) ? refusalDetail : null,
         };
         HashSet<string> descendants = new(StringComparer.Ordinal);
         bool changed;
@@ -607,7 +642,7 @@ public sealed class OpenBodyProgramJournalAuthority
     public BodyProgramControllerResult<BodyProgramTerminalResult> TryComplete(HostAdmissionGrant grant, BodyProgramTerminalResult result)
     {
         if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.RecoveryRequired);
-        if (result is null || !Enum.IsDefined(typeof(BodyProgramNodeOutcome), result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+        if (result is null || !Enum.IsDefined<BodyProgramNodeOutcome>(result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure);
         if (grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(result.Execution, grant.ExecutionBinding)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
@@ -651,9 +686,9 @@ public sealed class OpenBodyProgramJournalAuthority
             // reason, not a payload, and a control character would let it forge a line of its own.
             || (result.RefusalDetail is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidRefusalDetail(result.RefusalDetail)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         // The two statements are decided ONCE, here: an outcome that proves an effect carries the proof, and one that
-        // names a shortfall carries the reason. `PartiallySucceeded` is in both sets - that is the whole point of it.
-        bool provesEffect = result.Outcome is BodyProgramNodeOutcome.Succeeded or BodyProgramNodeOutcome.PartiallySucceeded;
-        bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
+        // names a shortfall carries the reason. `PartiallySucceeded` is in both sets - that is the whole point of it. WHICH
+        // outcome proves an effect is asked of `BodyProgramValidation.MayCarryProof`, the same declaration the wire
+        // validator refuses a frame by, so a node this stores proof on is exactly a node the wire will carry it for.
         BodyProgramNodeState nodeState = result.Outcome switch
         {
             BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded,
@@ -662,6 +697,8 @@ public sealed class OpenBodyProgramJournalAuthority
             BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled,
             _ => BodyProgramNodeState.RecoveryRequired,
         };
+        bool provesEffect = BodyProgramValidation.MayCarryProof(nodeState);
+        bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
         IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;

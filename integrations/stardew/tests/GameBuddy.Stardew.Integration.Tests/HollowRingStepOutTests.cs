@@ -77,21 +77,42 @@ public sealed class HollowRingStepOutTests
 
         foreach ((string action, string request) in SingleTileToolFamilies)
         {
-            string body = MethodBody(source, request);
+            string body = RequestHalf(source, request);
 
-            // The body tile joins the reach gate the file already has: both facts answer "is a swing from
-            // here going to land on the target", and a swing is what comes next, so neither can be added
-            // downstream of this branch.
-            int reach = body.IndexOf("IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)", StringComparison.Ordinal);
+            // The body tile joins the reach gate the file already has: both facts answer "is a swing from here going
+            // to land on the target", and a swing is what comes next. Two spellings are legitimate and this reads
+            // both: a family that HANDS the seam its reach hands the tool reach, which is that pair named once; a
+            // family that still begins its own leg spells the pair inline, and the ring must still precede the walk.
+            bool handsTheToolReach = body.Contains("inReach: IsTileWithinToolReach", StringComparison.Ordinal);
             int underfoot = body.IndexOf(HollowRingClause, StringComparison.Ordinal);
             int approach = body.IndexOf("TryBeginToolApproach(", StringComparison.Ordinal);
 
-            reach.Should().BeGreaterThanOrEqualTo(0, $"{action} keeps the native Chebyshev-1 reach gate");
-            underfoot.Should().BeGreaterThanOrEqualTo(0, $"{action} must decide the hollow ring before it swings");
-            approach.Should().BeGreaterThanOrEqualTo(0, $"{action} approaches instead of refusing");
-            underfoot.Should().BeLessThan(approach, $"{action} must decide where to stand before committing the walk");
-            reach.Should().BeLessThan(approach, $"{action} keeps reach on the same side of the branch");
+            (handsTheToolReach || underfoot >= 0).Should().BeTrue(
+                $"{action} must decide the hollow ring before it swings");
+            body.Should().NotContain("inReach: IsTileWithinNativeReach",
+                $"{action} would admit the tile under its own feet by handing the seam the bare radius");
+            if (!handsTheToolReach)
+            {
+                approach.Should().BeGreaterThanOrEqualTo(0, $"{action} approaches instead of refusing");
+                underfoot.Should().BeLessThan(approach, $"{action} must decide where to stand before committing the walk");
+            }
         }
+    }
+
+    /// <summary>
+    /// The one predicate the tool families hand the seam. It must be the native radius AND the body tile, because the
+    /// seam acts on whatever it is handed: a reach that dropped either half would admit a swing from six tiles away or
+    /// from the actor's own feet, and neither would fail anywhere else.
+    /// </summary>
+    [Fact]
+    public void TheToolReachIsTheNativeRadiusAndNeverTheBodyTile()
+    {
+        string rule = ExpressionBody(Read(ResourceToolActions), "private static bool IsTileWithinToolReach(");
+
+        rule.Should().Contain("IsTileWithinChebyshevRadius(player, targetX, targetY, 1)",
+            "the native interaction radius is the half the game itself enforces (Game1.cs:11509)");
+        rule.Should().Contain("!IsToolTargetUnderActor(player, targetX, targetY)",
+            "the hollow ring is the other half; a target under the actor is walked out of, never swung at");
     }
 
     [Fact]
@@ -325,6 +346,57 @@ public sealed class HollowRingStepOutTests
             else if (source[cursor] == '}' && --depth == 0) return source[opening..(cursor + 1)];
         }
         throw new InvalidOperationException($"unbalanced body for {signature}");
+    }
+
+    /// <summary>
+    /// A request half's whole body, whichever shape it has: a statement body is a brace-balanced block, and an expression
+    /// body runs to its own semicolon. The parameter list is skipped by its own parentheses first, because an
+    /// expression-bodied request half has no brace of its own while the lambdas it hands the seam do.
+    /// </summary>
+    private static string RequestHalf(string source, string signature)
+    {
+        int index = source.IndexOf(signature, StringComparison.Ordinal);
+        index.Should().BeGreaterThanOrEqualTo(0, $"{signature} must exist");
+        int open = index + signature.Length - 1;
+        int depth = 0;
+        int close = open;
+        for (; close < source.Length; close++)
+        {
+            if (source[close] == '(') depth++;
+            else if (source[close] == ')' && --depth == 0) break;
+        }
+
+        int cursor = close + 1;
+        while (cursor < source.Length && source[cursor] is ' ' or '\n' or '\r' or '\t') cursor++;
+        if (source[cursor] == '{') return MethodBodyAt(source, cursor);
+
+        int parentheses = 0;
+        int braces = 0;
+        for (int at = cursor; at < source.Length; at++)
+        {
+            switch (source[at])
+            {
+                case '(': parentheses++; break;
+                case ')': parentheses--; break;
+                case '{': braces++; break;
+                case '}': braces--; break;
+                case ';' when parentheses == 0 && braces == 0: return source[cursor..(at + 1)];
+            }
+        }
+
+        throw new InvalidOperationException($"unterminated request half {signature}");
+    }
+
+    private static string MethodBodyAt(string source, int opening)
+    {
+        int depth = 0;
+        for (int cursor = opening; cursor < source.Length; cursor++)
+        {
+            if (source[cursor] == '{') depth++;
+            else if (source[cursor] == '}' && --depth == 0) return source[opening..(cursor + 1)];
+        }
+
+        throw new InvalidOperationException("unbalanced body");
     }
 
     /// <summary>

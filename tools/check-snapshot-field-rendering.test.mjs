@@ -34,26 +34,20 @@ const SOURCES = {
   protocol: "host/src/protocol.ts",
   factBrief: "host/src/fact-brief.ts",
   vocabulary: "host/src/game-world-vocabulary.ts",
-  unreadHud: "host/src/unread-hud.ts",
+  hud: "host/src/snapshot-hud.ts",
+  playerDisposition: "host/src/player-disposition.ts",
   playerHud: "host/src/player-hud.ts",
 };
 
 /** A renderer that reaches the PLAYER's own surface: the audience this tree has none of, declared here for the proofs. */
 const PLAYER_HUD_RENDERER = Object.freeze({ path: SOURCES.playerHud, audience: "player" });
-
-/**
- * A renderer whose text reaches NOBODY: the audience `host/src/snapshot-hud.ts` held before it was deleted.
- *
- * Declared here rather than imported from the tree because the tree has no such module any more, and the property it
- * proves - a field printed into text no reader receives clears nothing - has to stay checkable.
- */
-const UNREAD_HUD_RENDERER = Object.freeze({ path: SOURCES.unreadHud, audience: "unread" });
-const UNREAD_HUD = [
+/** A second player-audience renderer, for the proofs that need a field the companion does NOT render. */
+const PLAYER_DISPOSITION_RENDERER = Object.freeze({ path: SOURCES.playerDisposition, audience: "player" });
+const PLAYER_DISPOSITION = [
   'import type { Snapshot } from "./protocol.js";',
   "",
-  "export function formatUnreadHud(snapshot: Snapshot): string {",
-  "  const ripe = Array.isArray(snapshot.harvestWhereabouts) ? snapshot.harvestWhereabouts.length : 0;",
-  "  return `ripe ${String(ripe)}`;",
+  "export function formatPlayerDisposition(snapshot: Snapshot): string {",
+  '  return `held ${String(snapshot.actorDispositionDetail ?? "none")}`;',
   "}",
   "",
 ].join("\n");
@@ -90,11 +84,20 @@ function tree({ protocol, factBrief, vocabulary } = {}) {
     [SOURCES.protocol]: protocol ?? readReal(SOURCES.protocol),
     [SOURCES.factBrief]: factBrief ?? readReal(SOURCES.factBrief),
     [SOURCES.vocabulary]: vocabulary ?? readReal(SOURCES.vocabulary),
+    // The `[State HUD: …]` module was retired with the audience split; a fixture stands where it was, so a renderer that
+    // reaches nobody is still expressible and `unread` still proves it clears nothing.
+    [SOURCES.hud]: hud ?? "export {};\n",
   };
 }
 
 /** The tree as it would be if a player-facing surface existed: the fixture renderer that prints two wire fields. */
 const treeWithAPlayerSurface = (specs = {}) => ({ ...tree(specs), [SOURCES.playerHud]: PLAYER_HUD });
+
+/** The same, for the field the companion deliberately does not print: a player panel that states what holds the body. */
+const treeWithAPlayerDispositionSurface = (specs = {}) => ({
+  ...tree(specs),
+  [SOURCES.playerDisposition]: PLAYER_DISPOSITION,
+});
 
 /** The prose as it read before the water line existed: the call, and the function that produced it, gone. */
 function withoutWaterLine(source) {
@@ -147,18 +150,28 @@ test("every wire field is in her view or carries an owner, and the reading state
     assert.ok(typeof entry.owedBy === "string" && entry.owedBy.trim() !== "", `${field}: an exemption needs an owner`);
     assert.ok(typeof entry.reason === "string" && entry.reason.trim() !== "", `${field}: an exemption needs a reason`);
   }
-  // THE TWO AUDIENCES THAT CLEAR NOTHING. `harvestWhereabouts` is in neither the text she reads nor any text at all -
-  // the report says so per field, which is what the exemption's prose used to claim without a check. Nothing in the tree
-  // prints a wire key on the player's own surface (`dialogue-web`'s Game panel reads `game_browser_api/v1` -
-  // connection, instance, compatibility, capabilities, outcome - not a `Snapshot`), and nothing composes a snapshot field
-  // into text no reader receives: the module that did was deleted. Both zeros are measured and reported rather than
-  // assumed, so the day a surface does either, this line changes.
+  // THE AUDIENCE SPLIT THIS UNIT COMPLETED. The three facts the retired `[State HUD: …]` block was the only printer of
+  // are in the paragraph she reads, so nothing is left printed into a string with no reader.
   const ripe = dispositionOf(reading, "harvestWhereabouts");
-  assert.equal(ripe?.renderedBy, null, "harvestWhereabouts is not in the text she reads");
-  assert.equal(ripe?.renderedTo, "neither", "and the report does not pretend a module that writes it is her audience");
+  assert.equal(ripe?.renderedBy, SOURCES.vocabulary, "the whole-map ripe-crop count is in the paragraph she reads");
+  assert.equal(ripe?.renderedTo, "model", "and it reaches her, not a block beside her");
+  const held = dispositionOf(reading, "actorDispositionKind");
+  assert.equal(
+    held?.renderedBy,
+    SOURCES.vocabulary,
+    "what holds her body is stated every turn, not only after a refusal",
+  );
+  assert.equal(held?.renderedTo, "model", "and the report says the audience is hers");
+  const canAct = dispositionOf(reading, "actionable");
+  assert.equal(canAct?.renderedBy, SOURCES.vocabulary, "so is whether a new command can take the body");
+  // Nothing in the tree prints a wire key on the player's own surface: `dialogue-web`'s Game panel reads
+  // `game_browser_api/v1` (connection, instance, compatibility, capabilities, outcome), not a `Snapshot`. The zero is
+  // measured and reported rather than assumed, so the day a player surface prints one, this line changes.
   assert.equal(reading.printedToThePlayer, 0, "no player-audience renderer prints a wire field today");
-  assert.equal(reading.printedToNoReader, 0, "no renderer composes a wire field for nobody today");
-  assert.equal(reading.printedOutsideHerView, 0, "so nothing is printed outside her view at all");
+  assert.ok(
+    reading.printedToNoReader === 0,
+    `printed into text with no reader ${String(reading.printedToNoReader)}, but no such renderer is left in the tree`,
+  );
   process.stdout.write(
     `snapshot_field_rendering examined ${String(reading.examined)} · in her view ${String(reading.rendered)} · ` +
       `exempt ${String(reading.exempt)} · for the player ${String(reading.printedToThePlayer)} · ` +
@@ -193,17 +206,19 @@ test("a fact printed only for the player is named, because the player's surface 
 });
 
 test("a player_only declaration must say why, and the player surface must really print the field", async () => {
+  // `actorDispositionDetail` is the fixture because it is exempt and NOT rendered by the companion's paragraph: a
+  // declaration that "the player has it" can be tested there without a stale-rendering check masking the answer.
   const declared = { reason: "the player's panel shows it", owedBy: "host/src/fact-brief.ts", player_only: " " };
-  const blank = await withFixtureRoot(treeWithAPlayerSurface(), (root) =>
+  const blank = await withFixtureRoot(treeWithAPlayerDispositionSurface(), (root) =>
     auditSnapshotRendering({
       root,
-      renderers: [...RENDERER_SOURCES, PLAYER_HUD_RENDERER],
-      exemptions: { ...RENDERING_EXEMPTIONS, harvestWhereabouts: declared },
+      renderers: [...RENDERER_SOURCES, PLAYER_DISPOSITION_RENDERER],
+      exemptions: { ...RENDERING_EXEMPTIONS, actorDispositionDetail: declared },
     }),
   );
   assert.deepEqual(
     codes(blank.violations),
-    ["player_only_without_reason:harvestWhereabouts"],
+    ["player_only_without_reason:actorDispositionDetail"],
     "a declaration with no reason is the defect it was meant to document",
   );
 
@@ -212,28 +227,27 @@ test("a player_only declaration must say why, and the player surface must really
       root,
       exemptions: {
         ...RENDERING_EXEMPTIONS,
-        harvestWhereabouts: { ...declared, player_only: "the player's panel counts the ripe crops; she walks to them" },
+        actorDispositionDetail: { ...declared, player_only: "the player's panel states what holds the body" },
       },
     }),
   );
   assert.deepEqual(
     codes(unbacked.violations),
-    ["player_only_without_a_player_renderer:harvestWhereabouts"],
+    ["player_only_without_a_player_renderer:actorDispositionDetail"],
     "no player-audience renderer prints it, so 'the player has it' is a claim nothing holds",
   );
 
   // The declaration holds only where BOTH are true: a written reason, and a player surface that prints the field.
-  const backed = await withFixtureRoot(treeWithAPlayerSurface(), (root) =>
+  const backed = await withFixtureRoot(treeWithAPlayerDispositionSurface(), (root) =>
     auditSnapshotRendering({
       root,
-      renderers: [...RENDERER_SOURCES, PLAYER_HUD_RENDERER],
+      renderers: [...RENDERER_SOURCES, PLAYER_DISPOSITION_RENDERER],
       exemptions: {
         ...RENDERING_EXEMPTIONS,
-        harvestWhereabouts: {
+        actorDispositionDetail: {
           ...declared,
           player_only:
-            "the player's panel counts the ripe crops in words; she walks to them, so the number she needs is the one " +
-            "beside the tiles she can reach",
+            "the player's panel states what holds the body; she learns it from the paragraph's own line instead",
         },
       },
     }),
@@ -241,20 +255,32 @@ test("a player_only declaration must say why, and the player surface must really
   assert.deepEqual(codes(backed.violations), [], "a reason and a real player rendering make the declaration hold");
 });
 
-test("a renderer that reaches nobody is named per field, and clears nothing she does not read", async () => {
-  // The audience the deleted module held is still part of the gate: a member declared `unread` must be named per field,
-  // reported as reaching nobody, and must NOT clear an exemption - the defect that let `health` sit "handled" by a block
-  // nobody received.
-  const reading = await withFixtureRoot({ ...tree(), [SOURCES.unreadHud]: UNREAD_HUD }, (root) =>
-    auditSnapshotRendering({ root, renderers: [...RENDERER_SOURCES, UNREAD_HUD_RENDERER] }),
+test("a renderer that reaches nobody clears nothing, whenever one reappears", async () => {
+  // The rule `unread` exists for is a rule about AUDIENCES, not about one module: a string nobody reads is not a
+  // surface. The `[State HUD: …]` block was that module and is gone; the proof keeps working by declaring an unread
+  // renderer in the fixture, so the next one cannot clear an exemption either.
+  const reading = await withFixtureRoot(
+    tree({
+      hud: [
+        'import type { Snapshot } from "./protocol.js";',
+        "",
+        "export function formatHud(snapshot: Snapshot): string {",
+        '  return `held ${String(snapshot.actorDispositionDetail ?? "none")}`;',
+        "}",
+        "",
+      ].join("\n"),
+    }),
+    (root) =>
+      auditSnapshotRendering({
+        root,
+        renderers: [...RENDERER_SOURCES, { path: SOURCES.hud, audience: "unread" }],
+      }),
   );
-  const ripe = dispositionOf(reading, "harvestWhereabouts");
-  assert.equal(ripe?.renderedTo, "neither");
-  assert.equal(ripe?.renderedBy, null, "a module that writes it is not the companion reading it");
-  assert.equal(ripe?.printedBy, SOURCES.unreadHud, "it names the module that prints it");
-  assert.equal(ripe?.printedTo, "unread", "and says where that module's text goes");
-  assert.ok(reading.printedToNoReader >= 1, `printed into text with no reader ${String(reading.printedToNoReader)}`);
-  assert.deepEqual(codes(reading.violations), [], "and the exemption is what holds the field, not a rendering claim");
+  const held = dispositionOf(reading, "actorDispositionDetail");
+  assert.equal(held?.renderedTo, "neither", "text delivered to nobody is not text she read");
+  assert.equal(held?.printedBy, SOURCES.hud, "the report still names the module that printed it");
+  assert.equal(held?.printedTo, "unread", "and where that module's text goes");
+  assert.deepEqual(codes(reading.violations), [], "the exemption is what holds the field, not a rendering claim");
 });
 
 test("a field the wire grows is named on the day it arrives, with no edit here", async () => {
@@ -270,7 +296,7 @@ test("an exemption expires both ways: rendered now, or no longer published", asy
   const rendered = await withFixtureRoot(tree(), (root) =>
     auditSnapshotRendering({
       root,
-      exemptions: { ...RENDERING_EXEMPTIONS, stamina: RENDERING_EXEMPTIONS.harvestWhereabouts },
+      exemptions: { ...RENDERING_EXEMPTIONS, stamina: RENDERING_EXEMPTIONS.actorDispositionDetail },
     }),
   );
   assert.deepEqual(
@@ -281,7 +307,7 @@ test("an exemption expires both ways: rendered now, or no longer published", asy
   const gone = await withFixtureRoot(tree(), (root) =>
     auditSnapshotRendering({
       root,
-      exemptions: { ...RENDERING_EXEMPTIONS, retiredField: RENDERING_EXEMPTIONS.harvestWhereabouts },
+      exemptions: { ...RENDERING_EXEMPTIONS, retiredField: RENDERING_EXEMPTIONS.actorDispositionDetail },
     }),
   );
   assert.deepEqual(

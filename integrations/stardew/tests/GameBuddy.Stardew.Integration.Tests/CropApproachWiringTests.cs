@@ -23,7 +23,6 @@ public sealed class CropApproachWiringTests
     private const string Controller = "integrations/stardew/farmhandexecutioncontroller.cs";
 
     [Theory]
-    [InlineData(Machines, "machine_inspect", "IsMachineTargetInRange", "InspectMachine")]
     [InlineData(Machines, "feed_animal", "IsFeedTroughTargetInRange", "FeedAnimal")]
     public void AnOutOfRangeMachineOrAnimalActionWalksInInsteadOfRefusing(string file, string actionId, string rangePredicate, string bodyName)
     {
@@ -47,13 +46,14 @@ public sealed class CropApproachWiringTests
     /// stays per action, because a request half naming another action's predicate would advertise a reach it does not have.
     /// </summary>
     [Theory]
-    [InlineData("water_crop", "IsCropTargetInRange")]
-    [InlineData("plant_seed", "IsCropTargetInRange")]
-    [InlineData("fertilize_tile", "IsCropTargetInRange")]
-    [InlineData("harvest_crop", "IsCropTargetInRange")]
-    public void ACropRequestNamesTheRangePredicateItsNativeCallNeeds(string actionId, string rangePredicate)
+    [InlineData(Relative, "water_crop", "IsCropTargetInRange", "WaterCrop")]
+    [InlineData(Relative, "plant_seed", "IsCropTargetInRange", "PlantSeed")]
+    [InlineData(Relative, "fertilize_tile", "IsCropTargetInRange", "FertilizeTile")]
+    [InlineData(Relative, "harvest_crop", "IsCropTargetInRange", "HarvestCrop")]
+    [InlineData(Machines, "machine_inspect", "IsMachineTargetInRange", "InspectMachine")]
+    public void ACropRequestNamesTheRangePredicateItsNativeCallNeeds(string file, string actionId, string rangePredicate, string bodyName)
     {
-        string request = MethodBody(Source(), $"public LocalExecutionReceipt RequestLocal{ActionMethodName(actionId)}(");
+        string request = MethodBody(System.IO.File.ReadAllText(RepositoryFile(file)), $"public LocalExecutionReceipt RequestLocal{bodyName}(");
 
         request.Should().Contain($"inReach: {rangePredicate},", $"{actionId} must hand the seam the radius its native call needs");
         request.Should().NotContain("TryBeginToolApproach", $"{actionId}'s walk belongs to the seam");

@@ -1,0 +1,167 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "sweep_scythe",
+  "fixtureScenario": "native_cut_weeds_v1",
+  "resolvedRunner": "run-stardew-native-local-player-sweep-scythe-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/live-captures/sweep_scythe.log",
+    "durable": false,
+    "note": "The runner prints its result object to stdout and writes nothing durable. This bundle is that object, verbatim, captured from the stdout of one disposable native-local run driven by tools/run-stardew-native-local-player-move-fixture.ps1 (-Action sweep_scythe -WindowMode hidden -TimeoutSeconds 180) from template GameBuddyFixtureStable2_453048112; the capture path is gitignored and will not survive."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "scythe_sweep_cut",
+    "named": {
+      "x": 2,
+      "y": 9,
+      "targetId": "weed_e589a43dbd5cea95",
+      "health": 0
+    },
+    "actor": {
+      "x": 3,
+      "y": 9
+    },
+    "facing": "left",
+    "arc": {
+      "tiles": 14,
+      "sweepable": 2,
+      "clear": 11,
+      "facing": "left",
+      "measured": 14,
+      "facingWindow": {
+        "min": 12,
+        "max": 16
+      },
+      "declaredBand": {
+        "min": 10,
+        "max": 16
+      }
+    },
+    "changed": [
+      {
+        "x": 2,
+        "y": 9,
+        "kind": "weed"
+      },
+      {
+        "x": 4,
+        "y": 10,
+        "kind": "weed"
+      }
+    ],
+    "destructiveArm": "not_measured:sweep_scythe:no_destructive_object_in_the_arc",
+    "destructiveInEnvelope": [],
+    "cropGuard": {
+      "cropsMoved": 0,
+      "declaredKinds": [
+        "weed"
+      ]
+    },
+    "lostBehindTheArc": [],
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "scythe_sweep_cut",
+      "revision": 1,
+      "hasEvidence": true
+    },
+    "evidence": {
+      "location": "Farm",
+      "target": "2,9",
+      "before_occupant": "weed",
+      "after_occupant": "none",
+      "named_moved": "true",
+      "arc_tiles": "14",
+      "arc_sweepable": "2",
+      "arc_clear": "11",
+      "changed": "2:9:weed|4:10:weed",
+      "tiles_changed": "2",
+      "tool_selected": "scythe",
+      "slot": "4",
+      "tool_before": "axe",
+      "slot_before": "0",
+      "stamina_before": "270",
+      "stamina_after": "270",
+      "stamina_delta": "0",
+      "expected_stamina_cost": "0",
+      "tool_restored": "axe"
+    },
+    "trace": [
+      {
+        "phase": "stance_planned",
+        "plan": {
+          "named": {
+            "x": 2,
+            "y": 9,
+            "targetId": "weed_e589a43dbd5cea95",
+            "health": 0
+          },
+          "stance": {
+            "x": 3,
+            "y": 9
+          },
+          "facing": "left",
+          "destructiveInEnvelope": [],
+          "cropsInEnvelope": [],
+          "distance": 0
+        }
+      },
+      {
+        "action": "sweep_scythe",
+        "named": {
+          "x": 2,
+          "y": 9,
+          "targetId": "weed_e589a43dbd5cea95",
+          "health": 0
+        },
+        "actor": {
+          "x": 3,
+          "y": 9
+        },
+        "facing": "left",
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "scythe_sweep_cut",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      }
+    ],
+    "durationMs": 485
+  },
+  "engineFigures": {
+    "note": "The numbers the Mod's own source records for MeleeSweepArc.Sampled over this target version, beside what this stance measured. The receipt's arc_tiles is a MEASUREMENT of this swing's rectangles, not a shape a schema publishes.",
+    "measuredPerFacing": {
+      "up": 10,
+      "right": 13,
+      "down": 13,
+      "left": 14
+    },
+    "declaredBand": {
+      "min": 10,
+      "max": 16
+    },
+    "pixelSlack": 2,
+    "thisRun": {
+      "facing": "left",
+      "arcTiles": 14,
+      "arcSweepable": 2,
+      "arcClear": 11
+    }
+  },
+  "whatThisProves": [
+    "The Mod really ran one scythe swing over the engine's own arc from Farm stance (3,9) facing left: the receipt is succeeded/scythe_sweep_cut, correlated to the exact request/execution pair by the runner.",
+    "The arc is the size the engine's geometry promises for that stance. arc_tiles=14 matches the 14 tiles MeleeSweepArc.Sampled measures facing left (window 12-16 for the actor's pixel position, declared band 10-16), and arc_clear+arc_sweepable <= arc_tiles because the arc also samples tiles holding what a scythe does not cut.",
+    "The NAMED tile moved: target (2,9) went from occupant `weed` to `none`, and the fresh observation no longer publishes that weed - the completion condition, read from the world rather than from the receipt.",
+    "The arc reached BEHIND the actor and this is the measured proof of it: the named tile is (2,9) with the actor at (3,9) facing left, and `changed` names a second weed at (4,10) - a tile neither named nor in front. The swing's footprint is a footprint, not a direction.",
+    "Nothing destructive paid for the swing without the receipt saying so: every entry of `changed` is a weed (weed), no crop moved, and no grass or crop row the observation placed inside the arc envelope vanished unreported (lostBehindTheArc=[]).",
+    "The swing was free and the actor's hand is back: stamina 270 -> 270 against expected_stamina_cost=0, and tool_selected=scythe (slot 4) was restored to the axe the actor was holding (tool_before=axe, tool_restored=axe)."
+  ],
+  "whatThisDoesNotProve": [
+    "The destructive-guard arm is NOT MEASURED by this run: not_measured:sweep_scythe:no_destructive_object_in_the_arc. The stance was chosen so that no grass tuft or crop stands inside the arc envelope, which makes the sweep's evidence unambiguous and leaves the \"the swing IS for the tuft\" allowance unproven live. That arm needs a stance with a tuft inside the arc, on a save where one can be armed.",
+    "One stance, one facing: the left-facing arc at 14 tiles. Up/right/down were not swung in this run, and their counts are the Mod's recorded measurements rather than this run's receipts.",
+    "One weed class only. The named weed left the layer entirely (after_occupant=none); a weed robust enough to keep standing at reduced health - the `changed`-by-counter branch - is not what this run observed.",
+    "No `sweep_needs_cardinal_stance`, `sweep_arc_misses_target`, `sweep_would_destroy:*` or `sweep_nothing_to_cut` refusal was exercised: every precondition was satisfied on the first stance.",
+    "No cancellation, deadline, replay or recovery coverage; no shared-world (Farmhand) coverage; no save/reopen closure."
+  ]
+}

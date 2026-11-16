@@ -63,7 +63,7 @@ const composedGame = {
     companionName: null,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available: false, count: 0 },
+    capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" },
     latestOutcome: "none",
   },
 };

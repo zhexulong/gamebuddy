@@ -11,6 +11,14 @@
  *                    `stardew receipt attribution gate: 2 finding(s)`, exit 1; the unmodified tree prints `0 finding(s)`,
  *                    exit 0 (tools/check-stardew-receipt-attribution.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-receipt-attribution",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

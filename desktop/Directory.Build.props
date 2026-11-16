@@ -1,0 +1,39 @@
+<Project>
+
+  <!--
+    One language version for every project under desktop/, set here and nowhere else.
+
+    Measured on 2026-11-16 before this file existed: none of the seven csproj named LangVersion, so
+    each compiled at whatever the SDK defaults to for its target framework and nothing in the
+    tree said which version that was. This file makes the number explicit in one place; a project
+    added tomorrow inherits it instead of silently compiling at a different default.
+
+    WHY 12.0, AND IT IS A REQUIREMENT RATHER THAN A PREFERENCE. The desktop already uses C# 12:
+    `GameBuddy.Desktop/ChildStderrCapture.cs:100` declares `private sealed class
+    BoundedBuffer(int capacity)` - a primary constructor - and
+    `CurrentUserRootLayout.cs`/`DeploymentIdentity.cs` build collection expressions. So this line
+    does not merely pin a default: without it the tree would depend on the net8.0 default
+    (C# 12) to compile at all, which is why `dotnet publish -p:LangVersion=10.0` fails with
+    `error CS8936: feature 'primary constructor' is not available in C# 10.0`. The dependency
+    was real and undeclared; this file declares it.
+
+    WHY NOT 13.0. The ceiling is the pinned compiler, not a preference. global.json pins SDK
+    8.0.424 (rollForward latestPatch -> 8.0.425), whose Roslyn accepts up to C# 12; asking for
+    13.0 fails every project in this tree with `error CS1617: invalid option "13.0" for
+    /langversion`. A language version the installed compiler rejects is a build break, so this
+    line is verified by building, not by reading. Raise it only after global.json selects a newer
+    SDK.
+
+    WHY NO POLYSHARP. The only C# 13 feature that needs a runtime type is `params` collections
+    (`System.Runtime.CompilerServices.ParamCollectionAttribute`), and no project here declares
+    one. A package that backfills an unused feature is a dependency that buys nothing; it gets
+    re-evaluated together with the SDK pin, which is the same line that would unlock 13.0.
+
+    NOT SET HERE: TargetFramework. Each desktop project owns its own, and
+    `tools/check-dotnet-target-and-language.mjs` is what keeps them honest.
+  -->
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+  </PropertyGroup>
+
+</Project>

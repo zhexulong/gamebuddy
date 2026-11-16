@@ -30,9 +30,14 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+import {
+  describeGateRouteProblems,
+  namedRunner,
+  resolveStardewActionGateRoutes,
+} from "./lib/stardew-action-gate-route.mjs";
 import { configureNativeLocalPlayer, fixtureActions } from "./lib/stardew-native-local-player-fixture.mjs";
 import { readExperimentalStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import {
@@ -77,13 +82,12 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // - but they are still runners whose config contract must be checked, which is what this list is for.
   "run-stardew-native-local-player-body-owner-hold-smoke.mjs": "body_owner_hold",
   // The pond runner drives the action whose fixture it uses, so this table names that action: the fixture
-  // library keys the scenario on it.
-  "run-stardew-native-local-player-clear-fish-pond-smoke.mjs": "clear_fish_pond",
+  // library keys the scenario on it. Retired to the contract route (2026-11-14): `clear_fish_pond`'s gate is
+  // `contracts/smoke/clear_fish_pond.json` now, so there is no runner here to check a config against.
   "run-stardew-native-local-player-build-farm-building-smoke.mjs": "build_farm_building",
   // A synchronous name write with no target id: the subject is the actor's own horse, so the
   // fixture scenario is keyed on the action alone.
   "run-stardew-native-local-player-name-entity-smoke.mjs": "name_entity",
-  "run-stardew-native-local-player-accept-daily-quest-smoke.mjs": "accept_daily_quest",
   "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
   "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
   // A synchronous public-call-sequence write with no target id: the subject is the actor's own ticket
@@ -108,7 +112,6 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // 2026-10-06: the two facility/transport actions wired this session. Same rule as the wave
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
-  "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
   // 2026-10-07 item/tile lane. Same rule as the wave above -- keyed on the action the runner
   // exercises.
   "run-stardew-native-local-player-use-warp-item-smoke.mjs": "use_warp_item",
@@ -233,8 +236,11 @@ function runnerCases() {
   );
   const cases = new Map();
   for (const gate of STARDEW_PUBLISHED_ACTION_GATES) {
-    if (!onDisk.has(gate.runner)) continue; // covered by the completeness assertion below
-    cases.set(gate.runner, gate.actionId);
+    // A contract-route row names no runner at all; a runner row whose file is gone is the route check's finding, not
+    // this one's - nothing here can import a runner that is not on disk.
+    const runner = namedRunner(gate);
+    if (runner === null || !onDisk.has(runner)) continue;
+    cases.set(runner, gate.actionId);
   }
   for (const [runner, actionId] of Object.entries(CONFIG_DRIVER_ACTION)) {
     if (onDisk.has(runner)) cases.set(runner, actionId);
@@ -353,12 +359,14 @@ test("the gate table and the declared non-gate runners cover every runner on dis
   );
 });
 
-test("the gate table names only runners that exist", () => {
-  const { onDisk } = runnerCases();
-  const missing = STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => !onDisk.has(gate.runner)).map(
-    (gate) => `${gate.actionId}: ${gate.runner}`,
-  );
-  assert.deepEqual(missing, [], "gate table entries without a runner file");
+test("every gate row resolves to a gate artifact that exists", () => {
+  // The row's route decides which artifact IS the action's live gate - a runner file, or
+  // `contracts/smoke/<actionId>.json` - so a row whose runner was retired in favour of a contract is complete, and a
+  // row whose route is missing is named. This used to accept only a runner file, which made every runner permanent.
+  const routes = resolveStardewActionGateRoutes(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => gate.actionId));
+  const problems = describeGateRouteProblems(routes);
+  assert.deepEqual(problems, [], `gate rows whose live gate does not resolve:\n${problems.join("\n")}`);
+  assert.equal(routes.length, STARDEW_PUBLISHED_ACTION_GATES.length, "the resolver dropped rows");
 });
 
 test("every native-local runner accepts the policy block the fixture writes", async () => {

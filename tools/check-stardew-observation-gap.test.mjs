@@ -160,3 +160,218 @@ test("a measured run carries the summary the analyzer printed, and every step's 
     ],
   );
 });
+
+/**
+ * Falsifiers for `check-stardew-instance-property-coverage.mjs`, which is the verdict at the level where the drops
+ * happen. The claim it protects: a `published` verdict says a row CARRIES a property, and each of the three places that
+ * claim can be false is red with the member named. Every case below is driven against the real
+ * `protocol/bridge-v1.schema.json` and the real Mod sources - the wire and the builder are the authority, so a fixture
+ * would only prove the fixture agrees with itself.
+ *
+ * red-proof: inject with `cropTargets.isRaised` published for `Crop.raisedSeeds` (the same-spelling coincidence the crop data
+ *   carries), `verdict_field_without_witness` named it and pointed at `data?.IsRaised` - the expression the builder
+ *   actually passes, which reads the crop DATA and not the instance flag.
+ * red-proof: history before the record was resolved by its own field set, `chests.items` was
+ *   `verdict_field_not_on_the_mod_record` against `BridgeChest`, `BridgeChestItem` and `BridgeChestsSummary`; the
+ *   reading is the record whose fields ARE the wire's fields.
+ */
+import { readFileSync } from "node:fs";
+
+import { publishedRowFields } from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
+import {
+  builderArguments,
+  buildChecks,
+  instanceCase,
+  judgeAbsentVerdict,
+  judgePublishedVerdict,
+  judgeVerdicts,
+  judgeWitness,
+  modRecords,
+  modSources,
+  recordFor,
+} from "./check-stardew-instance-property-coverage.mjs";
+
+const schema = JSON.parse(readFileSync(new URL("../protocol/bridge-v1.schema.json", import.meta.url), "utf8"));
+const ROWS = publishedRowFields(schema);
+const SOURCES = modSources();
+const RECORDS = modRecords(SOURCES.filter((text) => /\brecord\s+Bridge[A-Z]/u.test(text)));
+
+const published = (property, field, witness, entity) => ({
+  property: { key: property, entity },
+  entry: { verdict: "published", field, witness },
+});
+
+test("a published verdict that holds passes all three readers: the wire, the Mod record and the builder", () => {
+  const findings = judgePublishedVerdict({
+    ...published("Tree.hasMoss", "treeChopSourceTargets.moss", "tree.hasMoss.Value", "Tree"),
+    rows: ROWS,
+    records: RECORDS,
+    declaredEntities: new Map([["Tree", ["treeChopSourceTargets"]]]),
+    builders: SOURCES,
+  });
+  assert.deepEqual(findings, [], "the row declares moss, the record declares Moss and the builder passes tree.hasMoss");
+  const record = recordFor(
+    RECORDS,
+    ROWS.get("treeChopSourceTargets").definition,
+    ROWS.get("treeChopSourceTargets").fields,
+  );
+  assert.ok(
+    [...new Set(builderArguments({ sources: SOURCES, record, field: "moss" }).map((found) => found.argument))].includes(
+      "tree.hasMoss.Value",
+    ),
+    "the witness is the builder's own expression, read out of the Mod's source",
+  );
+});
+
+test("a name coincidence is not a crossing: `cropTargets.isRaised` is filled from the crop DATA, not the instance flag", () => {
+  const record = recordFor(RECORDS, ROWS.get("cropTargets").definition, ROWS.get("cropTargets").fields);
+  const argumentsFound = builderArguments({ sources: SOURCES, record, field: "isRaised" });
+  assert.ok(
+    argumentsFound.some((found) => found.argument.includes("data?.IsRaised")),
+    "the field is filled from the crop's Data entry",
+  );
+  const findings = judgeWitness({
+    ...published("Crop.raisedSeeds", "cropTargets.isRaised", "crop.raisedSeeds.Value", "Crop"),
+    name: "isRaised",
+    record,
+    builders: SOURCES,
+  });
+  assert.deepEqual(
+    findings.map((finding) => finding.code),
+    ["verdict_field_without_witness"],
+    "and no construction passes the instance flag there, so the claim is red",
+  );
+  assert.match(findings[0].detail, /data\?\.IsRaised/u, "the failure shows what the builder does pass");
+});
+
+test("a published verdict naming a field the row does not carry is red, with the row's fields named", () => {
+  const findings = judgePublishedVerdict({
+    ...published("Bush.size", "bushTargets.size", "size", "Bush"),
+    rows: ROWS,
+    records: RECORDS,
+    declaredEntities: new Map([["Bush", ["bushTargets"]]]),
+    builders: SOURCES,
+  });
+  assert.deepEqual(
+    findings.map((finding) => finding.code),
+    ["verdict_field_not_on_the_wire"],
+  );
+  assert.match(findings[0].detail, /targetId, location, x, y/u, "the reader sees what the bush row actually carries");
+});
+
+test("a field on another entity's row is not this property's row", () => {
+  const findings = judgePublishedVerdict({
+    ...published("Tree.health", "weedTargets.health", "health", "Tree"),
+    rows: ROWS,
+    records: RECORDS,
+    declaredEntities: new Map([["Tree", ["treeChopSourceTargets"]]]),
+    builders: SOURCES,
+  });
+  assert.ok(
+    findings.some((finding) => finding.code === "verdict_field_outside_entity_rows"),
+    "weedTargets is a grass row, so a tree's health on it is red even though the field exists",
+  );
+});
+
+test("an absence expires: a row that now carries the field, and a property the engine no longer declares", () => {
+  const expired = judgeAbsentVerdict({
+    property: { key: "Grass.grassType" },
+    entry: { verdict: "deliberately_absent", reason: "r", expires: "row_field:grassTargets.grassType" },
+    rows: ROWS,
+  });
+  assert.deepEqual(
+    expired.map((finding) => finding.code),
+    ["absent_entry_expired"],
+    "grassTargets carries grassType, so the excuse is over",
+  );
+  const unexplained = judgeAbsentVerdict({
+    property: { key: "Grass.grassSourceOffset" },
+    entry: { verdict: "deliberately_absent", expires: "row_field:grassTargets.grassSourceOffset" },
+    rows: ROWS,
+  });
+  assert.deepEqual(
+    unexplained.map((finding) => finding.code),
+    ["absent_entry_unexplained"],
+  );
+  const noExpiry = judgeAbsentVerdict({
+    property: { key: "Grass.grassSourceOffset" },
+    entry: { verdict: "deliberately_absent", reason: "r", expires: "someday" },
+    rows: ROWS,
+  });
+  assert.deepEqual(
+    noExpiry.map((finding) => finding.code),
+    ["absent_entry_without_expiry"],
+    "an expiry this gate does not evaluate is not an expiry",
+  );
+  const staleTable = judgeVerdicts({
+    population: new Map(),
+    table: {
+      entities: [{ entity: "Grass", families: ["grassTargets"] }],
+      verdicts: [{ property: "Grass.retired", verdict: "not_measured" }],
+    },
+    rows: ROWS,
+    records: RECORDS,
+    builders: SOURCES,
+  });
+  assert.deepEqual(
+    staleTable.findings.map((finding) => finding.code),
+    ["verdict_for_absent_property"],
+    "a verdict for a property the engine stopped declaring expires too",
+  );
+});
+
+test("not_measured is a finding that names an instance case, from run data or from the engine's closed values", () => {
+  const property = {
+    key: "Furniture.furniture_type",
+    entity: "Furniture",
+    declaringType: "Furniture",
+    member: "furniture_type",
+    declared: "NetInt",
+    discriminator: [
+      { label: "0", name: "chair" },
+      { label: "15", name: "bed" },
+    ],
+  };
+  const table = {
+    entities: [{ entity: "Furniture", families: ["worldObjectTargets"] }],
+    verdicts: [{ property: "Furniture.furniture_type", verdict: "not_measured" }],
+  };
+  const judged = judgeVerdicts({
+    population: new Map([[property.key, property]]),
+    table,
+    rows: ROWS,
+    records: RECORDS,
+    builders: SOURCES,
+    witnesses: {
+      families: new Map([["Furniture", ["worldObjectTargets"]]]),
+      tiles: new Map([["worldObjectTargets", { x: 6, y: 6 }]]),
+    },
+  });
+  assert.deepEqual(
+    judged.findings.map((finding) => finding.code),
+    ["property_not_published"],
+  );
+  assert.equal(
+    judged.findings[0].detail,
+    "the Furniture at (6,6) has no row carrying furniture_type",
+    "with run data the finding names the bed's tile, not a line number",
+  );
+  assert.equal(
+    instanceCase(property),
+    "a Furniture whose furniture_type is chair (Furniture.chair = 0)",
+    "and without run data it names an instance the engine's own closed value set defines",
+  );
+});
+
+test("an empty population is blocked rather than green", () => {
+  const checks = buildChecks({
+    properties: new Map(),
+    typesExamined: 0,
+    basesExamined: 0,
+    undeclaredTypes: [],
+    counts: { published: 0, deliberately_absent: 0, not_measured: 0 },
+    findings: [],
+  });
+  assert.equal(checks[0].id, "population_derived");
+  assert.equal(checks[0].status, "blocked", "zero properties is a measurement that did not happen");
+});

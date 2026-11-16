@@ -8,52 +8,40 @@ using GameBuddy.Stardew.Core;
 
 namespace GameBuddy.Stardew;
 
-// Native handler bodies remain action/family-owned. All parts share the one
-// FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
-        // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
-        if (ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot));
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        // MOSS IS NOT A REFUSAL. `Tree.performToolAction` strips it on the way through - it drops the moss item, sets
-        // `hasMoss = false` and keeps going into the axe branch in the SAME swing (Tree.cs:1087-1120) - so a mossy tree
-        // is a tree the axe fells. Refusing it here was a second, narrower answer than the engine's.
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.tapped.Value || tree.health.Value <= 0f
-            || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
-        // 5.2: outside the native interaction radius (Chebyshev-1), the action
-        // begins an approach leg instead of rejecting. The native click path
-        // requires the same radius (Game1.cs:11509 checkAction gate; GetToolLocation
-        // hits the tile in front when the click is farther), so walking is the
-        // player-equivalent behaviour, not a Mod convenience. The tool and target
-        // are validated above (position-independent), the world is re-validated
-        // after the approach settles (inside the closure), and the walk uses the
-        // arrival predicate.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chop_tree",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChopTreeSource(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    private static bool IsTileWithinToolReach(Farmer player, int targetX, int targetY) =>
+        IsTileWithinChebyshevRadius(player, targetX, targetY, 1) && !IsToolTargetUnderActor(player, targetX, targetY);
 
-        return this.ExecuteChopTreeSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chop_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot));
+                return DescribeTreeChopSourceRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteChopTree(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
+
+    /// <summary>
+    /// MOSS IS NOT A REFUSAL. `Tree.performToolAction` strips it on the way through - it drops the moss item, sets
+    /// `hasMoss = false` and keeps going into the axe branch in the SAME swing (Tree.cs:1087-1120) - so a mossy tree is a
+    /// tree the axe fells. Refusing it here was a second, narrower answer than the engine's.
+    /// </summary>
+    private static TileTargetRefusal? DescribeTreeChopSourceRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is StardewValley.TerrainFeatures.Tree tree
+            && !tree.stump.Value
+            && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
+            && !tree.tapped.Value
+            && tree.health.Value > 0f
+            && string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("tree_chop_target_changed", $"target={targetX},{targetY}");
 
     /// <summary>
     /// Executes chop_tree_source against the current world, re-validating the tool
@@ -71,10 +59,8 @@ internal sealed partial class ExecutionManager
     /// owns the second one.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteChopTree(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "chop_tree", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusalCode, slot));
         ExecutionState state;
@@ -119,16 +105,6 @@ internal sealed partial class ExecutionManager
             float lastHealth = before;
             string? stoppedBy = null;
             string stopEvidence = string.Empty;
-            // THE STOP FENCE RUNS BETWEEN SWINGS, NEVER INSIDE ONE.
-            //
-            // `UseNativeToolOnTile` is one atomic native effect, and every decision here is taken before the next one
-            // starts: nothing may inspect or interrupt a `DoFunction` call once it is underway. The fence reads the live
-            // world rather than a counter, in the order the engine can make each fact true: the target still being the
-            // SAME tree at this tile, then its felled marker (the success terminal), then the axe still being in hand,
-            // then the actor's own pass-out floor, and last the source not moving at all - a swing that takes nothing
-            // from the tree is a tool that no longer satisfies it, and never a reason to keep swinging. A Host STOP
-            // remains a receipt-boundary decision for the same reason: bridge dispatch is serialized on this game
-            // thread, so it cannot arrive between two C# statements; what can end the loop early are these world facts.
             while (swingCount < swingCap)
             {
                 if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? standing) || !ReferenceEquals(standing, tree))
@@ -174,14 +150,10 @@ internal sealed partial class ExecutionManager
             bool stumpAfter = sameTree && tree.stump.Value;
             bool felled = !stumpBefore && stumpAfter;
             string healthAfterText = float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing";
-            // The receipt keeps ONE identity (`tree_source_chopped`) and adds the three facts the model would otherwise
-            // have to observe again: the health pair the swings moved between and how many swings it took. The Host
-            // pins this exact key set, so the stop facts below are appended on the failure path only.
             evidence = $"target={expectedTargetId};tool=axe;tree={treeType};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={felled.ToString().ToLowerInvariant()};swings={swingCount.ToString(CultureInfo.InvariantCulture)};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={(perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture)}";
             if (stoppedBy is not null)
                 evidence += $";stopped_by={stoppedBy};{stopEvidence}";
-            state = felled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = felled ? "tree_source_chopped" : stoppedBy ?? "tree_source_chop_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(felled, "tree_source_chopped", stoppedBy ?? "tree_source_chop_postcondition_unavailable");
         }
         finally
         {
@@ -191,42 +163,28 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
-        // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "break_rock",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteBreakRockSource(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "break_rock", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, $"slot={slot}");
+                return DescribeRockSourceRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteBreakRock(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
 
-        return this.ExecuteBreakRockSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    private static TileTargetRefusal? DescribeRockSourceRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? rock)
+            && NativeItemPredicates.IsBreakableStone(rock)
+            && string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("rock_target_changed", $"target={targetX},{targetY}");
 
-    /// <summary>
-    /// Executes break_rock_source against the current world, re-validating the target because an approach leg may have
-    /// taken several ticks. The tool is not the caller's to name: the action's own registration claims `tool:pickaxe`,
-    /// so this selects the best owned pickaxe it needs and restores the actor's own selection afterwards. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
-    private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteBreakRock(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         if (!TrySelectDeclaredTool(Game1.player, "break_rock", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
@@ -274,8 +232,7 @@ internal sealed partial class ExecutionManager
             // tree path carried (1786682c), and it is repaired the same way - one dispatch is one swing, and the plan
             // decides whether to swing again.
             bool succeeded = RockSourceSwing.MadeProgress(before, after);
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? (removed ? "rock_source_broken" : "rock_source_damaged") : "rock_source_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, removed ? "rock_source_broken" : "rock_source_damaged", "rock_source_postcondition_unavailable");
         }
         finally
         {
@@ -293,10 +250,6 @@ internal sealed partial class ExecutionManager
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "dig_artifact_spot").RefusalCode is { } toolRefusal)
@@ -308,8 +261,6 @@ internal sealed partial class ExecutionManager
             || !NativeItemPredicates.IsArtifactSpot(probeSpot)
             || !string.Equals(BuildArtifactSpotTargetId(location, targetX, targetY, probeSpot.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
-        // Position-independent checks are done; the target is re-validated after the
-        // walk inside the closure, because the world can change while walking.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
@@ -328,15 +279,8 @@ internal sealed partial class ExecutionManager
         return this.ExecuteDigArtifactSpot(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes dig_artifact_spot against the current world, re-validating the tool and
-    /// the target because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteDigArtifactSpot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "dig_artifact_spot", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "dig_artifact_spot", toolRefusalCode, slot));
         ExecutionState state;
@@ -378,8 +322,7 @@ internal sealed partial class ExecutionManager
                 this.artifactSpotResultDay = Game1.Date.TotalDays;
             }
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "artifact_spot_dug", "artifact_spot_postcondition_unavailable");
         }
         finally
         {
@@ -389,43 +332,31 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (ResolveDeclaredTool(Game1.player.Items, "clear_hoedirt").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusal, slot));
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
-        // Position-independent checks are done; the target is re-validated after the walk.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "clear_hoedirt",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearHoeDirt(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "clear_hoedirt", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "clear_hoedirt").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusal, slot));
+                return DescribeClearHoeDirtRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteClearHoedirt(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
 
-        return this.ExecuteClearHoeDirt(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    private static TileTargetRefusal? DescribeClearHoeDirtRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is StardewValley.TerrainFeatures.HoeDirt dirt
+            && dirt.crop is null
+            && !(location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
+            && string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("clear_hoedirt_target_changed", $"target={targetX},{targetY}");
 
-    /// <summary>
-    /// Executes clear_hoedirt against the current world, re-validating the tool and the
-    /// target because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
-    private LocalExecutionReceipt ExecuteClearHoeDirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteClearHoedirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "clear_hoedirt", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusalCode, slot));
         ExecutionState state;
@@ -448,8 +379,7 @@ internal sealed partial class ExecutionManager
             bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
             bool removed = !hoeDirtPresentAfter;
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed, "hoedirt_cleared", "clear_hoedirt_postcondition_unavailable");
         }
         finally
         {
@@ -462,12 +392,6 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
@@ -482,17 +406,10 @@ internal sealed partial class ExecutionManager
         // Physical: tilling drives the Hoe.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
             return admissionRefusal;
-        // The hoe is the action's own declared tool, not the caller's hand: a pack that cannot satisfy the claim is
-        // refused before any walk, exactly as the other declared-tool actions do. This action takes no `slot` argument.
         if (ResolveDeclaredTool(Game1.player.Items, "till_soil").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusal));
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
-            // THE SOIL FIRST, and it is the same question at any distance. This branch used to answer a far tile that
-            // cannot be hoed with `target_out_of_range;target=x,y;distance=<n>`, so the one fact that could not help
-            // was the only one published: measured 2026-11-09, three such refusals in a run where the companion was
-            // saying the ground was dead hard. `distance` is deliberately absent from this refusal - a tile whose
-            // ground the map itself refuses is dead beside her and dead nine tiles away.
             StardewValley.GameLocation distantLocation = Game1.player.currentLocation;
             if (DescribeSoilRefusal(distantLocation, targetX, targetY) is { } soilRefusal)
             {
@@ -504,9 +421,6 @@ internal sealed partial class ExecutionManager
                     $"target={targetX},{targetY}{DescribeSoilGuidance(distantLocation, targetX, targetY)}");
             }
 
-            // Farmable ground: the only question left is where the actor must stand, and the approach leg answers it
-            // with the one selector every tool family uses. The action names its own answer here rather than
-            // translating the leg's refusal afterwards - the leg owns the geometry, the action owns what it calls it.
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
@@ -524,11 +438,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, charge, requestedDeadlineMs);
     }
 
-    /// <summary>
-    /// Executes till_soil against the current world, re-validating the tool and the
-    /// tile because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteTillSoil(string executionId, string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
     {
         Vector2 tile = new(targetX, targetY);
@@ -542,8 +451,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY};before={before}");
         if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}{DescribeSoilGuidance(location, targetX, targetY)}");
-        // The selection half is written into the detail from the same four facts the other tool family states, and
-        // `tool_restored` is added after `RestoreToolSelection` has run.
         if (!TrySelectDeclaredTool(Game1.player, "till_soil", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusalCode));
         ExecutionState state;
@@ -553,7 +460,6 @@ internal sealed partial class ExecutionManager
         {
             if (selection.Tool is not Hoe hoe)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
-            // The charge is refused BEFORE the tool is charged, so a refusal can never leave `toolPower` written.
             if (RefuseToolCharge(charge, hoe, Game1.player, targetX, targetY) is { } chargeRefusal)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(hoe)}");
             // THE RECTANGLE IS NOT CENTRED ON THE NAMED TILE, so the tiles it reaches are asked BEFORE the swing. A gold hoe
@@ -570,8 +476,6 @@ internal sealed partial class ExecutionManager
                 List<(Vector2 Tile, string Kind)> undeclared = ChargedFootprint.Undeclared(location, footprint, tile);
                 if (undeclared.Count > 0)
                 {
-                    // `,` is outside the reason-code alphabet (`FarmhandExecutionJournal.IsValidReasonCode`), so the tile
-                    // travels as `x:y` - the spelling a receipt detail already uses for one tile.
                     return this.RememberTerminal(
                         requestId,
                         executionId,
@@ -591,8 +495,6 @@ internal sealed partial class ExecutionManager
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
             float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-            // The same read again, on the same tile: `after` is what the swing left behind, and the pair is two
-            // measurements of one fact rather than a measurement and a word.
             StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
             string after = DescribeSoilFeature(dirtAfter);
             bool tilled = dirtAfter is not null;
@@ -605,16 +507,12 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            // The charge the caller asked for and the one the swing was given are the same integer BY CONSTRUCTION: a
-            // charge above the held hoe's ceiling is refused rather than clamped. The pair is therefore the receipt's
-            // own proof that no silent downgrade happened, and the Host asserts the two are equal.
             evidence["charge_requested"] = charge.ToString(CultureInfo.InvariantCulture);
             evidence["charge_applied"] = charge.ToString(CultureInfo.InvariantCulture);
             evidence["window"] = AreaToolFootprint.Window(targetX, targetY);
             evidence["tiles_changed"] = changed.Count.ToString(CultureInfo.InvariantCulture);
             evidence["changed"] = AreaToolFootprint.Format(changed);
-            state = tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = tilled ? "soil_tilled" : "soil_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(tilled, "soil_tilled", "soil_postcondition_unavailable");
         }
         finally
         {
@@ -645,20 +543,11 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity -> actionability -> deadline -> body exclusivity). The three
-        // separate guards this replaces (`player_menu_open` / `player_event_active` / `player_cannot_move`)
-        // were the same fork with its own reason codes; the refusal is now the authority's NAMED hold.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
         if (requestedTool is null || !FarmhandActionCatalog.ToolEnum.Contains(requestedTool, StringComparer.Ordinal))
@@ -671,8 +560,6 @@ internal sealed partial class ExecutionManager
         if (selectedTool is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_found", $"tool={requestedTool};slot={slot.Value}");
 
-        // already_equipped is a deterministic success when the resolved best
-        // item is already the held tool: no further switch is required.
         if (ReferenceEquals(Game1.player.CurrentTool, selectedTool))
         {
             string? heldToolName = DescribeTool(Game1.player.CurrentTool);
@@ -689,12 +576,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}");
     }
 
-    /// <summary>
-    /// Deterministic game-thread selection of the best owned item for one
-    /// canonical tool category. Regular tools and scythe pick the highest
-    /// UpgradeLevel (ties to the smallest slot); weapons pick the highest
-    /// MeleeWeapon.getItemLevel(). Returns null when no item matches.
-    /// </summary>
     private static int? SelectToolSlot(Farmer player, string tool)
     {
         int bestSlot = -1;
@@ -743,7 +624,6 @@ internal sealed partial class ExecutionManager
         _ => null,
     };
 
-    /// <summary>Whether a tool satisfies a `tool:&lt;category&gt;` claim, asked of the one category mapping.</summary>
     private static bool MatchesToolCategory(Tool item, string tool) =>
         string.Equals(ToolCategory(item), tool, StringComparison.Ordinal);
 
@@ -864,8 +744,6 @@ internal sealed partial class ExecutionManager
             if (items[slot] is not Tool tool || !satisfies(tool))
                 continue;
             ownedLevel = Math.Max(ownedLevel, tool.UpgradeLevel);
-            // The declared tier decides which owned tool satisfies it; among those, the best one wins and ties go to the
-            // smallest slot, which is the same ranking equip_tool resolves a category with.
             if (tool.UpgradeLevel < minimum || tool.UpgradeLevel > maximum)
                 continue;
             if (tool.UpgradeLevel > bestLevel || (tool.UpgradeLevel == bestLevel && (bestSlot < 0 || slot < bestSlot)))
@@ -877,13 +755,49 @@ internal sealed partial class ExecutionManager
         if (bestSlot >= 0)
             return new DeclaredToolResolution(word, bestSlot, null, ownedLevel);
         if (ownedLevel < 0)
-            return new DeclaredToolResolution(word, -1, $"tool_not_owned:{word}", ownedLevel);
-        // Owned, but not at a level the declaration permits: `need` is its own floor and `have` the best owned one.
+            return new DeclaredToolResolution(word, -1, PendingToolUpgradeRefusal(satisfies, word) ?? $"tool_not_owned:{word}", ownedLevel);
         return new DeclaredToolResolution(
             word,
             -1,
             $"tool_upgrade_insufficient:{word}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}",
             ownedLevel);
+    }
+
+    /// <summary>
+    /// The reason the pack answers nothing, when the tool that would have answered is at Clint's:
+    /// <c>tool_being_upgraded:&lt;category&gt;:&lt;daysLeft&gt;</c>, or
+    /// <c>tool_being_upgraded:&lt;category&gt;:ready_at_clint</c> once the counter has run out. Null when nothing is being
+    /// upgraded, or the tool at the blacksmith's is not one this claim would have taken.
+    ///
+    /// <para>
+    /// <c>tool_not_owned</c> is the resolver's one word for "the pack cannot answer", and while an upgrade is in flight it
+    /// is false in the expensive direction: the player owns the tool, cannot buy a second one, and the only repair is to
+    /// wait - which is cheap the moment it is told. The engine keeps the fact in two fields (<c>Farmer.cs:628-632</c>):
+    /// <c>toolBeingUpgraded</c> holds the tool itself and <c>daysLeftForToolUpgrade</c> the counter, which
+    /// <c>Tool.cs:889-890</c> sets to two days on purchase and <c>Farmer.cs:3535-3538</c> decrements at day start. The
+    /// tool is handed back when the actor talks to Clint (<c>GameLocation.cs:10961-10966</c>), not on a timer, which is
+    /// why the state is READ here and published nowhere: the actor that started the upgrade remembers it, and this is a
+    /// reason for the moment of refusal rather than a fact republished every turn.
+    /// </para>
+    /// <para>
+    /// <paramref name="satisfies"/> is the claim's own question, so a tool at the blacksmith's that this action would
+    /// never have looked for cannot account for its refusal. A counter at zero names no number: the engine's own reading
+    /// splits at <c>&lt;= 0</c> and the tool is then ready but uncollected (<c>GameLocation.cs:10961</c>), so
+    /// <c>tool_being_upgraded:hoe:0</c> would read as "done" about the request it is refusing, while
+    /// <c>ready_at_clint</c> says what to do instead. Whether the actor can take it is the counter's own answer
+    /// (<c>GameLocation.cs:10963</c>, <c>Clint_NoInventorySpace</c>), not this refusal's.
+    /// </para>
+    /// </summary>
+    private static string? PendingToolUpgradeRefusal(Func<Tool, bool> satisfies, string word)
+    {
+        Tool? upgrading = Game1.player?.toolBeingUpgraded?.Value;
+        if (upgrading is null || !satisfies(upgrading))
+            return null;
+        int daysLeft = Game1.player!.daysLeftForToolUpgrade?.Value ?? 0;
+        string category = ToolCategory(upgrading) ?? word;
+        return daysLeft > 0
+            ? $"tool_being_upgraded:{category}:{daysLeft.ToString(CultureInfo.InvariantCulture)}"
+            : $"tool_being_upgraded:{category}:ready_at_clint";
     }
 
     /// <summary>
@@ -937,12 +851,6 @@ internal sealed partial class ExecutionManager
         return SelectResolvedTool(farmer, resolution, out selection, out refusalCode);
     }
 
-    /// <summary>
-    /// Takes the tool that satisfies a requirement resolved from the TARGET rather than from the action row - the
-    /// `break_resource_clump` case, where the family and the upgrade floor come from the clump's own native switch.
-    /// Selection, postcondition and restore are the ones every declared-tool action already runs, and the resolution
-    /// travels back with the selection so a caller's refusal can report `need`/`have` without resolving twice.
-    /// </summary>
     private static bool TrySelectRequiredTool(
         Farmer farmer,
         string category,
@@ -962,10 +870,6 @@ internal sealed partial class ExecutionManager
         return SelectResolvedTool(farmer, resolution, out selection, out refusalCode);
     }
 
-    /// <summary>
-    /// The selection half shared by both entry points: hold the resolved slot, prove the engine agrees, and report what
-    /// was displaced. It spends no stamina, advances no time and mutates no world state.
-    /// </summary>
     private static bool SelectResolvedTool(
         Farmer farmer,
         DeclaredToolResolution resolution,
@@ -978,7 +882,6 @@ internal sealed partial class ExecutionManager
         int previousSlot = farmer.CurrentToolIndex;
         Tool? previousTool = previousSlot >= 0 && previousSlot < farmer.Items.Count ? farmer.Items[previousSlot] as Tool : null;
         farmer.CurrentToolIndex = resolution.Slot;
-        // The switch's own postcondition: a handler must never swing whatever the switch left in hand.
         if (!ReferenceEquals(farmer.CurrentTool, tool))
         {
             farmer.CurrentToolIndex = previousSlot;
@@ -989,15 +892,9 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    /// <summary>Puts the actor's own tool selection back: every exit after a selection restores it exactly once.</summary>
     private static void RestoreToolSelection(Farmer farmer, DeclaredToolSelection selection) =>
         farmer.CurrentToolIndex = selection.PreviousSlot;
 
-    /// <summary>
-    /// The selection half of a receipt detail, read AFTER <see cref="RestoreToolSelection"/> has run: the four facts
-    /// <see cref="ToolActionEvidence.SelectionFacts"/> states plus the tool the actor holds again. The handlers whose
-    /// evidence is one composed string append this rather than restating the keys, so the vocabulary has one spelling.
-    /// </summary>
     private static string SelectionSuffix(DeclaredToolSelection selection) =>
         ToolActionEvidence.SelectionSuffix(selection, DescribeToolCategory(Game1.player.CurrentTool));
 
@@ -1008,19 +905,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal static string DescribeToolCategory(Tool? tool) => ToolCategory(tool) ?? "none";
 
-    /// <summary>
-    /// The evidence one refused declared-tool request carries, read from the action's OWN claim: the slot the caller
-    /// named (when it named one), the claim's refusal word, and the layer half of the same fact in the shared field the
-    /// model branches on.
-    ///
-    /// <para>
-    /// `tool_refusal` says why within the layer and `blocked_by` says which layer, both from one resolution, so the two
-    /// cannot name different tools. The pair matters now that every tool action selects its own tool: the old
-    /// `*_not_equipped_in_requested_slot` told a caller the actor was holding something else, which is never the reason
-    /// once the handler equips - `tool_not_owned:&lt;category&gt;` is, and it says the pack cannot be repaired by a
-    /// different request.
-    /// </para>
-    /// </summary>
     private static string DescribeDeclaredToolRefusal(IList<Item?> items, string actionId, string refusalCode, int? requestedSlot = null)
     {
         DeclaredToolResolution resolution = ResolveDeclaredTool(items, actionId);
@@ -1038,49 +922,30 @@ internal sealed partial class ExecutionManager
     /// Axe.DoFunction swing settles the action; a missing/unchanged stump is a
     /// fresh postcondition failure, never a claimed success.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalChopStump(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
-        // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
-        if (ResolveDeclaredTool(Game1.player.Items, "chop_stump").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusal, slot));
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || !tree.stump.Value
-            || !string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
-        // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chop_stump",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChopStump(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalChopStump(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chop_stump", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "chop_stump").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusal, slot));
+                return DescribeTreeStumpRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteChopStump(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
 
-        return this.ExecuteChopStump(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    private static TileTargetRefusal? DescribeTreeStumpRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is StardewValley.TerrainFeatures.Tree tree
+            && tree.stump.Value
+            && string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("stump_target_changed", $"target={targetX},{targetY}");
 
-    /// <summary>
-    /// Executes chop_stump against the current world, re-validating the tool and the
-    /// target because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteChopStump(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "chop_stump", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusalCode, slot));
         ExecutionState state;
@@ -1099,14 +964,6 @@ internal sealed partial class ExecutionManager
             float before = tree.health.Value;
             string treeType = tree.treeType.Value;
             int axeLevel = axe.UpgradeLevel;
-            // A stump carries 5 health and a basic axe deals 1 damage per
-            // native swing (Tree.performToolAction upgradeLevel 0 => 1f). One
-            // DoFunction call is never enough; keep swinging the same equipped
-            // axe on the same tile until the stump falls (health <= 0 triggers
-            // native performTreeFall, which marks -100 and drops wood) or the
-            // bounded safety cap stops us. This mirrors the repeated native
-            // seam a holding player executes; no menu, no direct world write,
-            // and every swing runs the native damage/debris path.
             const int maximumSwingCount = 12;
             // The stamina floor, checked BEFORE the first swing.
             //
@@ -1137,10 +994,6 @@ internal sealed partial class ExecutionManager
             float staminaDelta = staminaAfter - staminaBefore;
             float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
             float expectedStaminaCost = perSwingStaminaCost * swingCount;
-            // native Tree.performTreeFall() on a stump sets health = -100 (the
-            // destroyed marker) and the terrainFeature is then removed by the
-            // native tick (destroy.Value). Accept either the immediate -100
-            // marker or a removed terrainFeature as the fresh postcondition.
             bool removed = tree.health.Value <= -100f;
             bool terrainGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
                 || !ReferenceEquals(afterFeature, tree);
@@ -1149,8 +1002,7 @@ internal sealed partial class ExecutionManager
                     ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
                     : "missing";
             evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = removed || terrainGone ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed || terrainGone ? "stump_cleared" : "stump_clear_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed || terrainGone, "stump_cleared", "stump_clear_postcondition_unavailable");
         }
         finally
         {
@@ -1168,38 +1020,26 @@ internal sealed partial class ExecutionManager
     /// other litter class is touched (stones stay in break_rock_source, debris
     /// clumps in clear_debris).
     /// </summary>
-    public LocalExecutionReceipt RequestLocalCutWeeds(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        // Ask before walking: a pack that cannot satisfy the action's claim is refused now rather than after an approach
-        // leg the action could never finish.
-        if (ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? probeWeed) || !probeWeed.IsWeeds()
-            || !string.Equals(BuildWeedTargetId(location, targetX, targetY, probeWeed), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
-        // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "cut_weeds",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCutWeeds(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalCutWeeds(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "cut_weeds", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, $"slot={slot}");
+                return DescribeWeedRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteCutWeeds(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
 
-        return this.ExecuteCutWeeds(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    private static TileTargetRefusal? DescribeWeedRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? probeWeed)
+            && probeWeed.IsWeeds()
+            && string.Equals(BuildWeedTargetId(location, targetX, targetY, probeWeed), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("weed_target_changed", $"target={targetX},{targetY}");
 
     /// <summary>
     /// Cut one grass tuft (the TerrainFeature `Grass`, not the Object-layer weeds)
@@ -1213,41 +1053,27 @@ internal sealed partial class ExecutionManager
     /// grass and the scythe must be the current tool; a removed tuft is the only
     /// success postcondition. No other TerrainFeature class is touched.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalCutGrass(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (ResolveDeclaredTool(Game1.player.Items, "cut_grass").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? probeFeature) || probeFeature is not StardewValley.TerrainFeatures.Grass probeGrass
-            || !string.Equals(BuildGrassTargetId(location, targetX, targetY, probeGrass), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "cut_grass",
-                location,
-                targetX,
-                targetY,
-                expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCutGrass(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalCutGrass(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "cut_grass", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: location =>
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "cut_grass").RefusalCode is { } toolRefusal)
+                    return new TileTargetRefusal(toolRefusal, $"slot={slot}");
+                return DescribeGrassRefusal(location, targetX, targetY, expectedTargetId);
+            },
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteCutGrass(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
 
-        return this.ExecuteCutGrass(executionId, requestId, slot, targetX, targetY, expectedTargetId);
-    }
+    private static TileTargetRefusal? DescribeGrassRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
+        location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? probeFeature)
+            && probeFeature is StardewValley.TerrainFeatures.Grass probeGrass
+            && string.Equals(BuildGrassTargetId(location, targetX, targetY, probeGrass), expectedTargetId, StringComparison.Ordinal)
+                ? null
+                : new TileTargetRefusal("grass_target_changed", $"target={targetX},{targetY}");
 
-    /// <summary>
-    /// Executes cut_grass against the current world, re-validating the target because an approach leg may have taken
-    /// several ticks. The tool is not the caller's to name: the action's own registration claims `tool:scythe`, so this
-    /// selects the scythe it needs and restores the actor's own selection afterwards. Shared by the in-range path and
-    /// the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteCutGrass(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         if (!TrySelectDeclaredTool(Game1.player, "cut_grass", out DeclaredToolSelection selection, out string toolRefusalCode))
@@ -1268,12 +1094,6 @@ internal sealed partial class ExecutionManager
             int weedsBefore = grass.numberOfWeeds.Value;
             int grassType = grass.grassType.Value;
             float staminaBefore = Game1.player.Stamina;
-            // A grass tuft usually holds 4 weeds; each native swing deducts 1 (basic
-            // scythe (W)47), 2 ((W)53) or 4 ((W)66), and only the final swing that
-            // crosses zero runs TryDropItemsOnCut and returns true. Keep swinging the
-            // same equipped scythe on the same tuft until it is removed, the bounded
-            // safety cap is reached, or the tuft leaves an unhandled state. Every swing
-            // runs the native grass path (sound, shake, sprites, deductions).
             const int maximumSwingCount = 8;
             ToolStaminaVerdict grassStamina = ToolStaminaGuard.Check(
                 Game1.player.Stamina,
@@ -1336,8 +1156,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed ? "grass_cut" : "grass_cut_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(removed, "grass_cut", "grass_cut_postcondition_unavailable");
         }
         finally
         {
@@ -1365,43 +1184,32 @@ internal sealed partial class ExecutionManager
     /// `scythe_crop` already let her, on one tile she can foresee.
     /// </para>
     /// <para>
+    /// THE NAMED TILE MUST BE ONE THIS SWING CAN MOVE. Completion is the NAMED tile moving, so a tile holding an occupant
+    /// the scythe family never declared (`twig`, `stone`, a tree, a placed machine, or nothing at all) is refused before
+    /// the swing as `sweep_target_not_scythe_work:&lt;occupant&gt;`, with the occupant, its tile and the published action
+    /// that clears it (`clears_with`). Measured `round63`: the admitted alternative was a swing that cut an unnamed weed
+    /// and answered `scythe_sweep_partial`, which is a side effect the caller never asked for instead of the fact it
+    /// needed.
+    /// </para>
+    /// <para>
     /// THE RECEIPT IS TWO READS ON EITHER SIDE OF THE ONE CALL, and it claims no combat: `DoDamage` also damages
     /// monsters and destroys projectiles, and six evaluations are not vanilla's seven, so nothing about hits or kills is
     /// reported. `PartiallySucceeded` is the honest state when the arc held more work than the swing did - the named
     /// tile is the completion condition and the rest of the arc is the footprint.
     /// </para>
     /// </summary>
-    public LocalExecutionReceipt RequestLocalSweepScythe(string requestId, int targetX, int targetY, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        // Ask before walking, exactly as the three per-tile scythe actions do: a pack that cannot satisfy the action's
-        // own `tool:scythe` claim is refused now rather than after an approach leg it could never finish.
-        if (ResolveDeclaredTool(Game1.player.Items, "sweep_scythe").RefusalCode is { } toolRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusal));
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "sweep_scythe",
-                Game1.player.currentLocation,
-                targetX,
-                targetY,
-                $"sweep_scythe_{targetX}_{targetY}",
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteSweepScythe(arrivalExecutionId, arrivalRequestId, targetX, targetY),
-                nowMs,
-                requestedDeadlineMs);
-        }
+    public LocalExecutionReceipt RequestLocalSweepScythe(string requestId, int targetX, int targetY, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "sweep_scythe", requestId, targetX, targetY, $"sweep_scythe_{targetX}_{targetY}", requestedDeadlineMs,
+            AdmissionActionabilityProfile.Physical,
+            authorize: null,
+            gate: _ =>
+                ResolveDeclaredTool(Game1.player.Items, "sweep_scythe").RefusalCode is { } toolRefusal
+                    ? new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusal))
+                    : null,
+            inReach: IsTileWithinToolReach,
+            execute: (executionId, admittedRequestId) => this.ExecuteSweepScythe(executionId, admittedRequestId, targetX, targetY));
 
-        return this.ExecuteSweepScythe(executionId, requestId, targetX, targetY);
-    }
-
-    /// <summary>
-    /// Executes sweep_scythe against the current world, re-validating the tool, the stance and the arc because an
-    /// approach leg may have taken several ticks and left the actor facing or standing somewhere else. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteSweepScythe(string executionId, string requestId, int targetX, int targetY)
     {
         if (!TrySelectDeclaredTool(Game1.player, "sweep_scythe", out DeclaredToolSelection selection, out string toolRefusalCode))
@@ -1423,7 +1231,6 @@ internal sealed partial class ExecutionManager
             GameLocation location = Game1.player.currentLocation;
             int actorX = (int)Game1.player.Tile.X;
             int actorY = (int)Game1.player.Tile.Y;
-            // The engine rotates the whole arc by the facing, so a stance that cannot name one does not get a swing.
             if (SwingFacing.For((actorX, actorY), (targetX, targetY)) is not { } facing)
             {
                 return this.RememberTerminal(
@@ -1434,7 +1241,6 @@ internal sealed partial class ExecutionManager
                     $"target={targetX},{targetY};actor={actorX},{actorY};facing={Game1.player.FacingDirection.ToString(CultureInfo.InvariantCulture)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "stance").Format()}");
             }
 
-            // ONE SET OF FACTS: the arc the swing will use, asked of the engine with the swing's own inputs.
             IReadOnlyList<Vector2> arc = MeleeSweepArc.Sampled(weapon, Game1.player, targetX, targetY, facing);
             Vector2 named = new(targetX, targetY);
             if (!arc.Contains(named))
@@ -1451,6 +1257,21 @@ internal sealed partial class ExecutionManager
             Dictionary<Vector2, MeleeSweepTile> before = new();
             foreach (Vector2 tile in arc)
                 before[tile] = MeleeSweepOccupancy.Read(location, world, tile);
+            // THE TILE SHE NAMED IS THE COMPLETION CONDITION, so a tile this swing does not clear is a request that can
+            // only come back partial - after a swing the engine's arc aims behind her as well as in front. The occupant
+            // and the published action that DOES remove it are named, in that order, inside the Host's model share.
+            MeleeSweepTile namedTile = before[named];
+            if (!MeleeSweepOccupancy.Sweepable.Contains(namedTile.Occupant))
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"{MeleeSweepOccupancy.TargetNotScytheWork}:{namedTile.Occupant}",
+                    MeleeSweepOccupancy.DescribeTargetNotScytheWork(namedTile.Occupant, named)
+                        + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Terrain, namedTile.Occupant).Format()}");
+            }
+
             List<(Vector2 Tile, string Kind)> wouldDestroy = MeleeSweepOccupancy.Undeclared(arc, tile => before[tile], named);
             if (wouldDestroy.Count > 0)
             {
@@ -1463,29 +1284,16 @@ internal sealed partial class ExecutionManager
             }
 
             int sweepable = arc.Count(tile => MeleeSweepOccupancy.Sweepable.Contains(before[tile].Occupant));
-            if (sweepable == 0)
-            {
-                return this.RememberTerminal(
-                    requestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "sweep_nothing_to_cut",
-                    $"target={targetX},{targetY};arc_tiles={arc.Count.ToString(CultureInfo.InvariantCulture)};sweepable=0");
-            }
 
             float staminaBefore = Game1.player.Stamina;
             UseNativeMeleeSweep(weapon, location, targetX, targetY, Game1.player, staminaBefore, facing);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            // The scythe is a MeleeWeapon: no native path deducts stamina for a melee swing, so the expected embodied
-            // cost is exactly zero, same as cut_grass and cut_weeds.
             float expectedStaminaCost = 0f;
             Dictionary<Vector2, MeleeSweepTile> after = new();
             foreach (Vector2 tile in arc)
                 after[tile] = MeleeSweepOccupancy.Read(location, world, tile);
             List<(Vector2 Tile, string Kind)> changed = MeleeSweepOccupancy.Changes(arc, before, after);
-            // The named tile's transition is the completion condition, exactly as till_soil's is the tile it hoes; the
-            // rest of the arc is a measured consequence and never the reason the action claims success.
             bool namedMoved = MeleeSweepOccupancy.Changed(before[named], after[named]);
             bool everySweepableMoved = arc
                 .Where(tile => MeleeSweepOccupancy.Sweepable.Contains(before[tile].Occupant))
@@ -1493,8 +1301,6 @@ internal sealed partial class ExecutionManager
             evidence["target"] = $"{targetX},{targetY}";
             evidence["before_occupant"] = before[named].Occupant;
             evidence["after_occupant"] = after[named].Occupant;
-            // The completion condition as a fact, so the Host can check the claim instead of inferring it from two
-            // occupancy words: a weed that lost one point of health still reads `weed` on both sides.
             evidence["named_moved"] = namedMoved.ToString().ToLowerInvariant();
             evidence["arc_tiles"] = arc.Count.ToString(CultureInfo.InvariantCulture);
             evidence["arc_sweepable"] = sweepable.ToString(CultureInfo.InvariantCulture);
@@ -1519,8 +1325,6 @@ internal sealed partial class ExecutionManager
             }
             else
             {
-                // The arc held more work than the swing did - the named tile among it or not. `changed` names what
-                // moved, so the caller can see exactly which tile the swing reached and which it did not.
                 state = ExecutionState.PartiallySucceeded;
                 reasonCode = "scythe_sweep_partial";
             }
@@ -1533,12 +1337,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.SweepScythe, evidence));
     }
 
-    /// <summary>
-    /// Executes cut_weeds against the current world, re-validating the target because an approach leg may have taken
-    /// several ticks. The tool is not the caller's to name: the action's own registration claims `tool:scythe`, so this
-    /// selects the scythe it needs and restores the actor's own selection afterwards. Shared by the in-range path and
-    /// the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteCutWeeds(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         if (!TrySelectDeclaredTool(Game1.player, "cut_weeds", out DeclaredToolSelection selection, out string toolRefusalCode))
@@ -1566,9 +1364,6 @@ internal sealed partial class ExecutionManager
             // bounded safety cap is reached, or the weed leaves an unhandled
             // state. Every swing runs the native damage/debris path.
             const int maximumSwingCount = 8;
-            // Scythe work is free (`PerSwingCharge` returns 0 for a scythe-like tool only when efficient), but the
-            // guard is still asked: a future tool change that starts charging must not silently skip the floor, and
-            // the answer costs nothing when the charge is zero.
             ToolStaminaVerdict weedStamina = ToolStaminaGuard.Check(
                 Game1.player.Stamina,
                 ToolStaminaGuard.PerSwingCharge(Game1.player.FarmingLevel, weapon.IsEfficient) * maximumSwingCount);
@@ -1630,8 +1425,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            state = handled && removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = handled && removed ? "weeds_cut" : "weed_cut_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(handled && removed, "weeds_cut", "weed_cut_postcondition_unavailable");
         }
         finally
         {
@@ -1710,42 +1504,15 @@ internal sealed partial class ExecutionManager
         string? noStandingTileCodePrefix = null)
     {
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
-        // WHERE the actor stands is decided BEFORE the walk is committed.
-        //
-        // This used to hand the target tile itself to the native finder with
-        // `adjacentArrival`, i.e. ask it to discover one of the eight neighbours for us: a
-        // four-way search, hard-capped at 10 000 expansions, that on a large farm exhausts
-        // and answers `no_native_path` for a target whose free approach was two steps away.
-        // Measured 2026-10-25: five such refusals in one run, one of them followed by a
-        // 57-second gap between the refusal and the next executable action.
-        //
-        // The two predicates are separate because they answer different questions: "is this tile
-        // free" and "is it in the actor's own walkable component".
         Func<(int X, int Y), bool> isStandable = tile =>
-            // OBJECT occupancy, not walkability. `IsWalkableTile` asks whether an actor may cross a tile, and a rock is an
-            // object on a walkable tile - so it answered yes for the rock's own tile and the approach walk stood ON the target.
-            // Measured 2026-10-26: 28 of 28 approach receipts read `tile === target`.
-            //
-            // A warp tile is not standable EITHER, and that is the one place design §3.1.1 forbids it: crossing one
-            // is legal and `enter_exit` targeting one is legal, but an actor who buffers here is warped the moment
-            // its box reaches the tile - so a step-out that chose one would teleport the companion instead of
-            // moving it half a step. Excluding it from THIS predicate keeps the rule in one place: every walk this
-            // seam dispatches stops somewhere a body may actually stop.
             StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
             && !IsWarpBufferTile(location, tile);
         (int X, int Y) actor = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
-        // The hollow ring: the actor is standing ON the target, so there is no tile to swing at - the swing would
-        // land on the body's own tile. A step-out is the correction, and its destination is chosen by the same
-        // selector as any other approach. Single-tile targets only: a multi-tile footprint needs "the actor stands on
-        // ANY occupied tile", which is a separate change with its own acceptance.
         bool actorOnTarget = footprint.Count == 1 && actor == footprint[0];
         (int X, int Y)? standingTile = SelectToolApproachTile(
             footprint,
             actor,
             isStandable,
-            // An undecided component (the flood exceeded its budget) must not be read as
-            // "nothing is reachable": that would refuse a walk the planner would have made.
-            // Undecided keeps the geometry deciding and lets the finder answer.
             StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } component
                 ? tile => component(new Vector2(tile.X, tile.Y))
                 : _ => true);
@@ -1753,34 +1520,21 @@ internal sealed partial class ExecutionManager
         {
             if (actorOnTarget)
             {
-                // Acceptance (b): nowhere to step out. Every ring tile is occupied or is a warp buffer, so the honest
-                // answer is a refusal that names the HOLLOW RING. It must not be `no_reachable_approach` (which would
-                // tell the agent the target is unreachable while it is in fact underfoot) and it must not be a forced
-                // move onto an occupied or warping tile.
                 return this.RememberTerminal(
                     requestId,
                     executionId,
                     ExecutionState.Rejected,
                     "hollow_ring_no_step_out",
-                    // The world this refusal is about: the same location and actor whose standability produced it, so the
-                    // rim of her own component is read from the body the caller asked about.
                     DescribeNoReachableApproach(anchor, actor, isStandable, footprint, location: location, player: Game1.player).Evidence
                         + ";hollow_ring=true;step_out=none"
                         + DescribeApproachRange(footprint[0].X, footprint[0].Y));
             }
 
-            // Nothing is dispatched: no walk is committed for a placement the actor cannot
-            // reach, so the refusal arrives before the engine spends its search budget. The hint travels with it: the
-            // node keeps that line and not the evidence, so a refusal without one is a verdict the model can only answer
-            // by aiming again.
             (string refusalCode, string refusalEvidence, string refusalHint) = DescribeNoReachableApproach(
                 anchor, actor, isStandable, footprint, noStandingTileCodePrefix, location, Game1.player);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y, standingTileAsked: noStandingTileCodePrefix is not null), hint: refusalHint);
         }
         (int X, int Y) goal = standingTile.Value;
-        // The tile the arrival must be measured against: for a single-tile target the target itself, so every existing
-        // caller dispatches exactly the coordinate it always did. See SelectReachTile for why a multi-tile target's
-        // anchor is the wrong measurement.
         (int X, int Y) reach = footprint.Count == 1 ? footprint[0] : SelectReachTile(footprint, goal);
         int targetX = reach.X;
         int targetY = reach.Y;
@@ -1788,10 +1542,6 @@ internal sealed partial class ExecutionManager
             executionId,
             requestId,
             new Vector2(goal.X, goal.Y),
-            // Exact arrival on the chosen tile, not adjacency to it: the tile is standable and
-            // reachable by construction, so a plan to it exists, and finishing anywhere in its
-            // ring could leave the actor Chebyshev-2 from the target — outside the native
-            // interaction radius this walk exists to satisfy.
             false,
             this.revision,
             this.tick + deadlineTicks,
@@ -1812,11 +1562,6 @@ internal sealed partial class ExecutionManager
         {
             this.slots.Active.Clear();
             this.slots.ToolApproach.Clear();
-            // A target the native planner cannot even approach keeps the same
-            // honest refusal the in-range path would produce: the tile exists but
-            // the actor cannot get to it. `target_out_of_reach` is already the
-            // vocabulary the tool family uses for "reachable in principle, too far
-            // right now", and a failed route is exactly that fact.
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -1826,19 +1571,12 @@ internal sealed partial class ExecutionManager
         }
 
         string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture);
-        // `tile` is the footprint tile the arrival is measured against, which for a multi-tile target is not the
-        // anchor the caller named. Say so here rather than leaving a reader to wonder why the two differ; the
-        // anchor inside `target` is the opaque clump identity's own business.
         string reached = footprint.Count == 1
             ? string.Empty
             : $";anchor={anchor.X},{anchor.Y};reached=footprint";
-        // A step-out is advertised as one. Both ends are named, so a reader can tell a correction from a walk that
-        // happened to begin beside the target - and so the L1 fixture can assert the actor actually moved.
         string steppedOut = actorOnTarget
             ? $";stepped_out_from={actor.X},{actor.Y};stepped_out_to={goal.X},{goal.Y}"
             : string.Empty;
-        // `stand_at` is `goal` - the tile above, chosen once and dispatched to. A second selection here could publish a
-        // coordinate the walk does not use, and a caller told to stand somewhere it is not is worse than one told nothing.
         return this.RememberTerminal(
             requestId,
             executionId,
@@ -1847,10 +1585,6 @@ internal sealed partial class ExecutionManager
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;stand_at={goal.X},{goal.Y}{reached}{steppedOut}");
     }
 
-    /// <summary>
-    /// The one-tile form every other family calls: the target is its own footprint. Written after the multi-tile body
-    /// so the body the approach tests locate by its own signature stays the first match in this file.
-    /// </summary>
     private LocalExecutionReceipt TryBeginToolApproach(
         string requestId,
         string executionId,
@@ -1876,44 +1610,14 @@ internal sealed partial class ExecutionManager
             requestedDeadlineMs,
             noStandingTileCodePrefix);
 
-    /// <summary>
-    /// The layer an approach-leg refusal carries on `blocked_by`: `range`, with the detail the geometry decided.
-    ///
-    /// <para>
-    /// The leg exists because the actor is outside the native interaction radius, so the usual answer is
-    /// `range:reach:&lt;n&gt;` - the distance to the interaction tile. The other answer is `range:standability`, for the two
-    /// cases where no distance explains the refusal: the actor is ALREADY inside the radius (or standing on the target)
-    /// and no ring tile can be stood on, which `hollow_ring_no_step_out` states as a reason code; or the caller asked the
-    /// STANDING question itself (`standingTileAsked`), so the placement is settled and the ring is what refused.
-    /// </para>
-    /// <para>
-    /// The radius is not restated here: it is the one <c>IsTileWithinChebyshevRadius</c> already takes, and the distance
-    /// is the same Chebyshev the receipts publish as `reach=1` and `distance=`. Two readers of one geometry.
-    /// </para>
-    /// </summary>
     private static string DescribeApproachRange(int targetX, int targetY, bool standingTileAsked = false)
     {
-        // `standingTileAsked` is the caller saying its placement question is already answered, so the only thing that
-        // can still refuse is the tile to stand on. Reporting `reach:<n>` there would be the same
-        // distance-answer-instead-of-cause this refusal exists to replace.
         string detail = standingTileAsked || IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)
             ? "standability"
             : $"reach:{ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture)}";
         return $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, detail).Format()}";
     }
 
-    /// <summary>
-    /// Completes a tool-family approach: re-validates the world and then runs the
-    /// kind-specific native call.
-    ///
-    /// Called from the Update pass only once the body is free
-    /// (<c>this.active is null &amp;&amp; !controller.HasActiveExecution</c>). Every
-    /// kind performs the same three steps: re-check that the actor is actually in
-    /// range (the walk may have been interrupted), re-validate the target identity
-    /// (it may have been removed or replaced), then execute. A target that no
-    /// longer matches settles as the kind's own `*_target_changed` refusal rather
-    /// than silently doing nothing.
-    /// </summary>
     private void CompleteToolApproach(LocalApproachSpec specification)
     {
         this.slots.ToolApproach.Clear();
@@ -1943,10 +1647,6 @@ internal sealed partial class ExecutionManager
             return;
         }
 
-        // The hollow ring again, now that the walk is over. Reach alone cannot answer this: distance ZERO is
-        // inside the native radius, so a step-out that did not move - a blocked ring resolved by a superseded
-        // walk, an actor shoved back onto the target by a passing NPC - would be admitted and swing at its own
-        // feet. The step-out either moved the body or this refuses by the name of that failure.
         if (IsToolTargetUnderActor(Game1.player, specification.TargetX, specification.TargetY))
         {
             this.revision++;
@@ -1958,9 +1658,6 @@ internal sealed partial class ExecutionManager
             return;
         }
 
-        // The action's own terminal step. It re-validates its tool and target and
-        // mints the receipt, so the post-approach path and the in-range path share
-        // one execution body per action.
         _ = specification.Execute(specification.ExecutionId, specification.RequestId);
     }
 
@@ -2003,10 +1700,6 @@ internal readonly record struct DeclaredToolSelection(Tool Tool, string Category
 /// </summary>
 internal static class RockSourceSwing
 {
-    /// <summary>
-    /// Whether one swing advanced this rock. <paramref name="durabilityAfter"/> is null when the rock left the object
-    /// layer, which is the terminal case of the same progress.
-    /// </summary>
     internal static bool MadeProgress(int durabilityBefore, int? durabilityAfter) =>
         durabilityAfter is null || durabilityAfter.Value < durabilityBefore;
 }
@@ -2101,11 +1794,6 @@ internal static class ToolActionEvidence
         ["slot_before"] = selection.PreviousSlot.ToString(CultureInfo.InvariantCulture),
     };
 
-    /// <summary>
-    /// The same four facts as one fragment, plus the tool the actor holds again, for the handlers whose evidence is a
-    /// composed string. <paramref name="restoredCategory"/> is read after the restore has run, so the fragment reports
-    /// the actor's own selection rather than a claim that the restore happened.
-    /// </summary>
     internal static string SelectionSuffix(DeclaredToolSelection selection, string restoredCategory) =>
         string.Join(";", SelectionFacts(selection).Select(fact => $"{fact.Key}={fact.Value}"))
         + $";tool_restored={restoredCategory}";

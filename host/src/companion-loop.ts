@@ -5,13 +5,14 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
-  TURN_PRODUCTION,
   TURN_SUPPRESSION,
   turnAccountLine,
+  turnProductionOf,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
 } from "./event-pump.js";
+import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_DELIVERY_UNIT,
@@ -134,6 +135,17 @@ export class CompanionLoop {
     private readonly voiceSink?: import("./voice.js").ChatVoiceSpeechPublisher,
     private readonly volatileContext?: CompanionTurnVolatileContext,
     private readonly reloadModelSelection?: CompanionTurnModelReload,
+    /**
+     * This run's span recorder, for the two steps of a turn that are not the model's own call.
+     *
+     * <p>
+     * `delivery` is the batch reaching Pi - model reload, world-book bind, send, queue admission - and it is where a
+     * message that landed 56 s after the previous answer sat unexplained (round62, 15:12:11 -> 15:13:07). `turn.tail`
+     * is the turn's own ending after its last words. Neither is a model round trip, and before this the wall clock had
+     * no record of either.
+     * </p>
+     */
+    private readonly runTrace?: RunTrace,
   ) {
     this.#turnObserver = turnObserver;
   }
@@ -390,6 +402,26 @@ export class CompanionLoop {
       if (this.#activity.current === "speaking") return;
       this.#activity.transition("speaking");
     };
+    /**
+     * The batch reaching Pi, and the turn's own ending, as two spans on the run clock.
+     *
+     * <p>
+     * The delivery span opens here - the model reload, the world-book bind, `sendUserMessage` and Pi's own queue
+     * admission are all inside it - and closes at `message_start`, the event that proves Pi consumed THIS batch. A
+     * batch handed over during a turn Pi is still finishing waits in that queue, and that wait is not inside any
+     * model round trip: round62 sat 56 s in exactly this gap. The tail span opens after each assistant message and
+     * closes when Pi settles the turn, so "the last words are out, the turn is not over" is a measured step.
+     * </p>
+     */
+    const batchSpanAttributes = Object.freeze({
+      disposition,
+      ...(batchId === undefined ? {} : { batchId }),
+    });
+    const deliverySpan: RunTraceSpanHandle | undefined = this.runTrace?.begin(
+      RUN_SPAN_NAMES.delivery,
+      batchSpanAttributes,
+    );
+    let tailSpan: RunTraceSpanHandle | undefined;
     // TURN CREATED. A batch became a turn, so she is thinking about it from this moment - published before anything
     // below can fail, because a turn that dies in the next statement is exactly the silence the player has to be able
     // to read as an ending rather than as a crash.
@@ -467,6 +499,15 @@ export class CompanionLoop {
         }
         if (assistantFacts.hasToolCall) producedToolCall = true;
         if (assistantFacts.failed) assistantFailed = true;
+        // THE UNIT OF SILENCE IS THIS RECORD. The pump's counters are keyed by the DELIVERED BATCH, so a batch that said
+        // a line and then worked without one is `worked` and its silence disappears - a batch carrying any text can never
+        // be tool-only (`round60`: 169 assistant turns, 36 of them silent, every counter `0`). A message is a turn in
+        // Pi's own record, so it is counted the moment it lands, in the same member vocabulary the batch uses.
+        this.#pump.noteAssistantTurn(assistantFacts);
+        if (this.runTrace !== undefined) {
+          tailSpan?.end();
+          tailSpan = this.runTrace.begin(RUN_SPAN_NAMES.turnTail, batchSpanAttributes);
+        }
       };
       /**
        * Open this turn's presentation lineage and its listeners, at the moment Pi consumed the exact batch.
@@ -592,6 +633,8 @@ export class CompanionLoop {
        */
       const settleTurn = (aborted: boolean): void => {
         settled = true;
+        tailSpan?.end(aborted ? { aborted: true } : undefined);
+        tailSpan = undefined;
         // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
         // that never produced a final message left no recorded outcome, and the tail of this method
         // returned `completed` for a run the player had cancelled. The content observer's own
@@ -619,6 +662,7 @@ export class CompanionLoop {
         if (event.type === "message_end") noteAssistantMessage(event.message);
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
           accepted = true;
+          deliverySpan?.end({ accepted: true });
           if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
           openTurnPresentation();
           if (sourceEventId !== undefined && batchId !== undefined)
@@ -744,14 +788,17 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
-      // What this turn DID, in the three states the pump acts on separately: `worked` clears the narration run, `spoke`
-      // extends it, `said_nothing` ends it. `producedText` and not `producedToolCall` is the second half, because a
-      // message that ASKED for a tool and ran none did not narrate.
-      this.pump.turnProduction = producedWork
-        ? TURN_PRODUCTION.worked
-        : producedText
-          ? TURN_PRODUCTION.spoke
-          : TURN_PRODUCTION.saidNothing;
+      // Both spans close on every ending, including the paths that never reached Pi's settlement, so a turn that was
+      // cancelled or refused leaves a measured ending instead of an open span that reads like a frozen stage.
+      deliverySpan?.end();
+      tailSpan?.end();
+      // What this turn DID, in the four states the pump acts on separately: a turn that worked clears the narration run,
+      // a turn that only spoke extends it, and the two silent members end it - of which `workedSilently` is the one that
+      // makes an acting-and-quiet turn landable, because `worked` alone collapsed "did the work and said what it did"
+      // with "did the work and said nothing about it". `producedText` and not `presentedTextPieces` is the second half: a
+      // part the surface withheld is a delivery gap with its own accounting (`delivery_mismatch`, `suppressed{...}`), and
+      // reading it as her silence would name a defect in the pipeline as a choice she made.
+      this.pump.turnProduction = turnProductionOf(producedWork, producedText);
       // One line per turn that had text to deliver: THREE populations, each counted where it was measured - the parts Pi's
       // stream produced, the parts the projection reported as presented, and the parts it named as withheld with a reason.
       // The record carries no residual: a stored difference reads like a fourth measurement and, summed across turns with
@@ -783,14 +830,17 @@ export class CompanionLoop {
           process.stderr.write(
             `delivery_mismatch:produced=${String(assistantTextParts)};presented=${String(presentedTextParts)};suppressed=${String(suppressedParts)};missing=${String(missingParts)}\n`,
           );
-        // The bubble's ceiling, when it cut the turn's speech. Named with the turn's own identity because it is a
-        // CADENCE fact: more than one bubble's worth was said inside one turn, and the answer to that is fewer, shorter
-        // turns - not a bigger bubble (`identity-profile.ts` states this same ceiling to the model). A non-zero count of
-        // characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
-        // landed inside a sentence.
-        if (turnBubble !== null && turnBubble.truncatedChars > 0)
+        // The bubble's ceiling cut the turn's speech, and the tail had nowhere to go: one bubble per turn is the whole
+        // contract, `onFinalText` is this surface's only channel, and nothing can be retracted. The conduct therefore
+        // states that anything past the ceiling is deleted (`game-surface-prompt-floor.ts` `one_bubble_of_size`, the
+        // same number `GAME_DELIVERY_PACING` gives the delivery), and this line is the turn it happened on - the record
+        // and the statement share the ceiling and the vocabulary. It is a CADENCE fact as well: more than one bubble's
+        // worth was said inside one turn, and the answer to that is fewer, shorter turns rather than a bigger bubble.
+        // A non-zero count of characters with ZERO sentences dropped is the one shape where no complete sentence fitted
+        // at all, so the cut landed inside a sentence.
+        if (turnBubble !== null && (turnBubble.truncatedChars > 0 || turnBubble.sentencesDropped > 0))
           process.stderr.write(
-            `bubble_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
+            `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
           );
       }
       if (batchId !== undefined) {

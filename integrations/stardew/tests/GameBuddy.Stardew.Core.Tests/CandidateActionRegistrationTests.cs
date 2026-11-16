@@ -359,6 +359,7 @@ public sealed class CandidateActionRegistrationTests
             "emote_started",
             1,
             new Dictionary<string, string> { ["test"] = "evidence" },
+            new BridgeExecutionOrigin("standalone"),
             observation
         );
 

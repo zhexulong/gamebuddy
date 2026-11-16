@@ -12,36 +12,66 @@
  * turns, 90 of them standalone speech with no tool call in the same message, one bubble every 16 seconds. Every review
  * of that file was green, because nothing asked which kind each rule was.
  *
+ * THE PAIRING USED TO BE POSITIONAL AND THIS GATE READ ITS RESULT (measured 2026-11-15). The floor carried its rules as
+ * one array and their classes as another, joined only by array index, and this gate paired each module's rules with that
+ * module's table by position. Swapping the markdown/delivery rule with the observation-honesty rule - two rules of
+ * different classes - moved the class onto its neighbour's rule and left the report reading `status: passed`,
+ * `examined 19`, `FLOOR 10`, `CHANNEL 9`, exit 0: the observation contract was recorded as a delivery rule and the
+ * delivery rule as observation honesty. A gate that reads the result of a pairing cannot see the pairing move, so the
+ * pairing itself had to become structural: the class now lives inside the rule's own entry, and an element of the
+ * composed prompt is a REFERENCE to a declared rule, never a copy of its text.
+ *
  * THE POPULATION IS THE CONDUCT LIST ITSELF - the elements of `GAME_SURFACE_INTERACTION_CONDUCT` in
  * `host/src/game-surface-prompt-floor.ts`, read by name from the source so a rule added tomorrow joins this gate
  * without an edit here. A hand-written list of rules to check is a test: it can only catch what its author remembered.
+ * An element is one of:
+ *   - `GAME_SURFACE_CONDUCT_RULES.<id>.text` - a rule the floor owns, declared with its class in
+ *     `GAME_SURFACE_CONDUCT_RULES` (a record keyed by the rule's id);
+ *   - an IDENTIFIER (`LIVE_STATE_GROUNDING`, ...) - a rule a game module exports, classified by that module's own
+ *     `..._CONDUCT_CLASSES` table and joined to it BY THE RULE'S NAME, never by position: the id of such a rule is its
+ *     declaration name lowercased, and a table entry naming nothing is a finding;
+ *   - a STRING LITERAL - a rule spelled into the prompt instead of declared: `conduct_rule_without_a_class`, because a
+ *     rule written there carries no entry for its class to live in.
  *
- * THE FLOOR HAS TWO OWNERS, so one table is not enough. A rule written inline in the floor module belongs to it; an
- * element that is an IDENTIFIER (`LIVE_STATE_GROUNDING`, ...) belongs to the module that declares it, today
- * `games/stardew/prompt/stardew-game-conduct.ts` - the rules that are true of this save format rather than of a game
- * surface. Each module carries its own `..._CONDUCT_CLASSES` table beside the rules it owns, positionally: entry `n`
- * classifies that module's rule `n`, in the order the floor's one list reads them.
- *
- * THE PROPERTY. Every rule is one of exactly three kinds, and its module's table says which:
+ * THE PROPERTY. Every rule is one of exactly three kinds, and its own declaration says which:
  *   - FLOOR   - what she must never do (break character, speak out of world or as a helper, violate a contract rule);
  *   - CHANNEL - how to operate the surface (the mounted tool that moves her body, the machine vocabulary a receipt has
  *               to be translated out of, what to do when an action is refused, what the delivery carries);
  *   - FORM    - how long a turn is, how many beats it carries, what shape the prose takes. THE CARD OWNS THIS, so a
  *               FORM rule in the floor is a finding rather than a classification:
  *               `floor_governs_form:<id>:<module>`.
- * The two populations of a module are positional and must have equal length: a rule at an index its table does not
- * reach is `conduct_rule_without_a_class:<index>:<first words>`, and a table entry with no rule behind it is
- * `stale_conduct_class:<id>` - removing a rule must remove its class, or the table becomes a list nobody reads. An
- * identifier the floor composes but no module declares is `conduct_rule_unowned:<index>:<name>`.
+ * A class is stated ONCE, inside the rule's own entry. The floor's `GAME_SURFACE_CONDUCT_CLASSES` is a projection of
+ * those entries, so a class written back into it is `conduct_class_restated:<id>` - the second spelling that can
+ * disagree with the entry it names. A composed rule no module declares is `conduct_rule_unowned:<index>:<name>`; a
+ * declared rule no composed element reaches is `stale_conduct_class:<id>`, because removing a rule must remove its
+ * class, or the table becomes a list nobody reads.
  *
  * Classifying a rule is a judgment, so every entry carries one line of `reason` saying why: an entry with no reason is
  * `conduct_class_without_reason:<id>`, and a value outside the three kinds is `conduct_class_unknown:<id>` rather than
  * silently not-FORM.
  *
- * READING IS BY DECLARATION NAME, NOT BY PARSING TYPESCRIPT. The floor's rules are one element per line - the file's own
- * doc says so - and a table is read as brace-delimited entries, so neither the formatter nor a comment can move what
- * this reads. A list whose elements are no longer one per line makes the reader throw, and that is reported as blocked:
- * a gate that mis-parsed the floor and then passed would be worse than no gate.
+ * THE SECOND PROPERTY IS THAT EVERY RULE NAMES ITS EXIT - `floor_rule_has_no_exit:<id>`. A rule in this floor is not
+ * "the wrong layer": it is a debt with a named owner, the surface change that would delete it. So each entry (and each
+ * row of a game module's table) carries an `exit` string that opens with one of exactly three kinds:
+ *   - `surface: <change>`   - the change to the delivery, the renderer or the tool surface that would delete the rule;
+ *   - `authority: <owner>`  - another authority already owns the claim, so the rule is its duplicate;
+ *   - `permanent: <reason>` - no mechanism can enforce it, and the reason says why.
+ * A missing exit, a kind outside those three, and a kind with nothing after it are all the same finding, because all
+ * three name no exit, and the detail says which shape the entry spelled. The default run prints
+ * `rules examined N · with an exit E · surface S · authority A · permanent P · unowned U`; U is the rules whose exit
+ * names nothing. THIS IS WHAT MAKES THE COUNT MONOTONE: a rule cannot be added without saying how it dies, so the list
+ * cannot grow back one undated legend at a time.
+ *
+ * THE END STATE AT ZERO RULES IS DELETION, AND THIS GATE SEES IT. An empty composed list makes `conductRules` throw, so
+ * the reading is `blocked` (exit 2) with the message "declares no rule: the Game floor is empty ... delete the floor and
+ * its tables": zero is a resting state only for a module that still classifies rules a surface change has not yet
+ * removed, and a floor with nothing to classify is dead code. A `passed` on a population of zero is the one reading this
+ * gate never gives.
+ *
+ * READING IS BY DECLARATION NAME, NOT BY PARSING TYPESCRIPT. The composed list's elements are one per line - the file's
+ * own doc says so - and an entry or table row is read as the lines between its own braces, so the formatter may break a
+ * reason across lines without moving what this sees. A shape this cannot read makes the reader throw, and that is
+ * reported as blocked: a gate that mis-parsed the floor and then passed would be worse than no gate.
  *
  * THE DEFAULT RUN PRINTS THE REPORT, ONE `checks[]` ENTRY PER RULE IT CAN GO RED ON, so
  * `tools/lib/harness-conformance.mjs` reads what this gate judges instead of trusting its prose - the same report shape
@@ -53,38 +83,75 @@
  *   node tools/check-game-surface-conduct-classes.mjs --json          # every rule's class, machine-readable
  *   node tools/check-game-surface-conduct-classes.mjs --root <dir>    # the gate's own fixture (a copied tree)
  *
- * red-proof: inject  restoring the deleted "Speak before you act" rule to the floor's list AND classifying it FORM ->
- *            exit 1, `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`, and that rule's
- *            `checks[]` entry reads failed (tools/check-game-surface-conduct-classes.test.mjs).
+ * red-proof: inject  a second, hand-written class table beside the floor's entries with one entry's class flipped ->
+ *            exit 1, `conduct_class_restated:<id>`, naming the class it states and the one the rule's own entry
+ *            declares (tools/check-game-surface-conduct-classes.test.mjs). Also injected there, each seen red once: a
+ *            rule's text spelled into the composed list instead of a reference to its entry, an entry classified FORM,
+ *            a Stardew rule removed from the floor while its class stays behind, a class outside the three kinds, a
+ *            class with no reason, a composed name no module declares, a renamed declaration (blocked, exit 2 - never
+ *            green), a list whose elements are no longer one per line (blocked), and an empty composed list (blocked,
+ *            with the message that says to delete the module).
+ *
+ *            The EXIT rule's own red was the whole tree first: before any entry carried one, this gate printed
+ *            `rules examined 8 · with an exit 0 · unowned 8 · status failed` and named all eight rules. Its injected
+ *            cases are a classed entry with its `exit` removed, a game module's table row with its `exit` removed, an
+ *            exit whose kind is outside the three (`later: ...`), and an exit that names a kind and says nothing after
+ *            it (`permanent: `).
  */
+
+export const gateDeclaration = {
+  id: "check-game-surface-conduct-classes",
+  domain: "product",
+  tier: "l1",
+  kind: "contract",
+};
+
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The floor's own module: the composed list, and the class table of the rules it writes itself. */
+/** The floor's own module: the classed rules, the composed list, and the projection of those entries as a table. */
 export const CONDUCT_SOURCE = "host/src/game-surface-prompt-floor.ts";
 
 /**
- * Every module that owns rules the floor composes, with the name of the table that classifies its rules.
+ * Every module that owns rules the floor composes, with the declaration that classifies its rules.
  *
  * <p>
  * This is a list of OWNERS, not of rules: the rules are the composed list's elements, and each one is attributed to the
  * module that declares it. Adding a game means adding its module here - and a module that declares a rule the floor
  * composes but never appears here is `conduct_rule_unowned`, so a missing owner is a finding rather than an omission.
+ * A `classedRules` owner declares each rule and its class in one entry; the others declare rule texts and classify them
+ * in a table keyed by the rule's declaration name.
  * </p>
  */
 export const CONDUCT_OWNERS = Object.freeze([
-  { module: CONDUCT_SOURCE, table: "GAME_SURFACE_CONDUCT_CLASSES" },
+  {
+    module: CONDUCT_SOURCE,
+    classedRules: "const GAME_SURFACE_CONDUCT_RULES = {",
+    table: "GAME_SURFACE_CONDUCT_CLASSES",
+  },
   { module: "host/src/games/stardew/prompt/stardew-game-conduct.ts", table: "STARDEW_GAME_CONDUCT_CLASSES" },
 ]);
 
-const RULES_DECLARATION = "const GAME_SURFACE_INTERACTION_CONDUCT = [";
+/** The composed list's own declaration: the anchor this gate and its suite both read the floor by. */
+export const COMPOSED_DECLARATION = "const GAME_SURFACE_INTERACTION_CONDUCT = [";
 const RULE_DECLARATION = /^export const ([A-Z][A-Z0-9_]*) =\s*$/u;
 
 /** The three kinds the doctrine names. A class outside this set is a finding, not a fourth kind. */
 export const CONDUCT_CLASSES = Object.freeze(["FLOOR", "CHANNEL", "FORM"]);
+
+/**
+ * The three ways a floor rule dies. A rule's `exit` is a string that opens with one of these and a colon; a fourth word is
+ * a finding, because a rule whose death nobody can name is the debt this gate exists to make visible.
+ *
+ *   - `surface: <change>`   - the change to the delivery, the renderer or the tool surface that would delete the rule;
+ *   - `authority: <owner>`  - a different authority already owns the claim, so the rule is its duplicate;
+ *   - `permanent: <reason>` - no mechanism can enforce it, and the reason says why.
+ */
+export const EXIT_KINDS = Object.freeze(["surface", "authority", "permanent"]);
 
 /**
  * Every rule this gate can go red on: `code` is the finding code (and the `checks[]` id), `protects` the property it
@@ -98,12 +165,22 @@ const CONDUCT_RULES = Object.freeze({
   },
   classless: {
     code: "conduct_rule_without_a_class",
-    protects: "every composed rule is classified by the table of the module that owns it",
+    protects: "every composed rule is an entry that carries its own class, never a text spelled into the prompt",
+  },
+  restated: {
+    code: "conduct_class_restated",
+    protects: "a rule's class is stated once, inside its own entry, and never again in a table beside it",
   },
   stale: { code: "stale_conduct_class", protects: "no class entry outlives the rule it classifies" },
   unknown: { code: "conduct_class_unknown", protects: "every class is one of FLOOR / CHANNEL / FORM" },
   unreasoned: { code: "conduct_class_without_reason", protects: "every class carries the line of argument for it" },
   form: { code: "floor_governs_form", protects: "no rule in the floor governs the turn's form - the card owns that" },
+  unexited: {
+    code: "floor_rule_has_no_exit",
+    protects:
+      "every rule names its exit - the surface change that deletes it, the authority that owns the claim, or `permanent` " +
+      "with the reason no mechanism can enforce it",
+  },
 });
 
 /** One code per rule, in the order the report lists them. */
@@ -124,7 +201,7 @@ function declarationBody(source, declaration, module) {
   throw new Error(`${declaration} in ${module} is never closed by a line starting with "]"`);
 }
 
-/** One composed element's own text: `literal` for a string written here, `identifier` for a name declared elsewhere. */
+/** One composed element: a reference to a classed rule, the name of a rule a game module exports, or a bare literal. */
 function elementOf(line, index) {
   const body = line.endsWith(",") ? line.slice(0, -1) : null;
   if (body === null)
@@ -134,9 +211,11 @@ function elementOf(line, index) {
   const open = body.slice(0, 1);
   const close = body.slice(-1);
   if (open === close && ["'", '"', "`"].includes(open)) return { kind: "literal", text: body.slice(1, -1) };
+  const classed = /^([A-Z][A-Z0-9_]*)\.([a-z][a-z0-9_]*)\.text$/u.exec(body);
+  if (classed !== null) return { kind: "classed", declaration: classed[1], id: classed[2] };
   if (/^[A-Z][A-Z0-9_]*$/u.test(body)) return { kind: "identifier", name: body };
   throw new Error(
-    `conduct element ${String(index)} is neither a string literal nor a rule name: ${line.slice(0, 60)}...`,
+    `conduct element ${String(index)} is neither a string literal, a rule reference nor a rule name: ${line.slice(0, 60)}...`,
   );
 }
 
@@ -158,8 +237,57 @@ function declaredRules(source) {
   return declared;
 }
 
+/** A quoted string as written in the source, unescaped just enough to compare and to print. */
+const unquote = (literal) => literal.slice(1, -1).replace(/\\"/gu, '"');
+
 /**
- * Every classified entry in one module's table, in declaration order.
+ * The rules a module declares and classes in one entry: a record keyed by the rule's id, each entry carrying the text,
+ * the class and the line of argument. Read as the lines between an entry's own braces, so a reason may wrap and a rule
+ * text may contain anything at all - including the `${...}` of a template - without moving what this sees.
+ */
+function classedRules(source, declaration, module) {
+  const at = source.indexOf(declaration);
+  if (at < 0) throw new Error(`${declaration} is not declared in ${module}: this gate reads it by name`);
+  const lines = source.slice(source.indexOf("\n", at) + 1).split("\n");
+  const entries = new Map();
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (/^\}\s*(?:as\s+const|;)/u.test(line)) return entries;
+    const key = /^(\s+)([a-z][a-z0-9_]*): \{\s*$/u.exec(line);
+    if (key === null) {
+      if (line.trim() !== "")
+        throw new Error(`${declaration} in ${module} has a line this reader cannot place: ${line}`);
+      index += 1;
+      continue;
+    }
+    const indent = key[1].length;
+    const id = key[2];
+    const body = [];
+    index += 1;
+    for (; index < lines.length; index += 1) {
+      const inner = lines[index];
+      if (inner.trim() === "}," && inner.length - inner.trimStart().length === indent) break;
+      body.push(inner);
+    }
+    if (index >= lines.length) throw new Error(`${declaration} in ${module} never closes the entry ${id}`);
+    const block = body.join("\n");
+    const klass = /\bclass:\s*"([^"]*)"/u.exec(block)?.[1];
+    const reason = /\breason:\s*("(?:[^"\\]|\\.)*")/su.exec(block)?.[1];
+    if (klass === undefined || reason === undefined)
+      throw new Error(`${declaration} entry ${id} in ${module} is not { class, reason, text }: ${block.slice(0, 60)}`);
+    if (entries.has(id)) throw new Error(`${declaration} in ${module} declares ${id} twice, so its class is ambiguous`);
+    // An entry with no `exit` is READ, not refused: the rule has no exit, which is the finding below rather than a shape
+    // this reader cannot place. A shape it cannot place is blocked, and a blocked rule is not a named one.
+    const exit = /\bexit:\s*("(?:[^"\\]|\\.)*")/su.exec(block)?.[1] ?? null;
+    entries.set(id, { id, class: klass, reason: unquote(reason), exit: exit === null ? null : unquote(exit), module });
+    index += 1;
+  }
+  throw new Error(`${declaration} in ${module} is never closed by a line starting with "}"`);
+}
+
+/**
+ * Every classified row in one module's table, in declaration order.
  *
  * Read as brace-delimited blocks rather than lines, so the formatter may break an entry across lines without moving what
  * this sees. An entry missing `id` or `class` is a shape the gate refuses rather than a rule it silently skips.
@@ -173,12 +301,73 @@ function tableEntries(source, table, module) {
     const reason = /\breason:\s*"([^"]*)"/u.exec(block)?.[1] ?? "";
     if (id === undefined || klass === undefined)
       throw new Error(`${table} entry ${String(index)} is not { id, class, reason }: ${block.slice(0, 60)}...`);
-    return { id, class: klass, reason };
+    // Read, never refused: an entry with no exit is a rule with no exit, which is named below.
+    const exit = /\bexit:\s*"((?:[^"\\]|\\.)*)"/u.exec(block)?.[1] ?? null;
+    return { id, class: klass, reason, exit };
+  });
+}
+
+/** The text of a declaration, from its own name to the next top-level declaration in that file. */
+function declarationText(source, declaration, module) {
+  const at = source.indexOf(declaration);
+  if (at < 0) throw new Error(`${declaration} is not declared in ${module}: this gate reads it by name`);
+  const next = /\n(?:export )?(?:const|function) /u.exec(source.slice(at + 1));
+  return next === null ? source.slice(at) : source.slice(at, at + 1 + next.index);
+}
+
+/**
+ * The class literals a module's table states rather than projects.
+ *
+ * A table derived from the rules' own entries states no class at all, and that is what makes it unable to disagree with
+ * the entry it names. Anything stated here is the second spelling this unit removed - the one that can drift.
+ */
+function restatedClasses(source, table, module) {
+  const text = declarationText(source, `export const ${table}`, module);
+  return [...text.matchAll(/class:\s*"(FLOOR|CHANNEL|FORM)"/gu)].map((match) => {
+    const before = text.slice(Math.max(0, match.index - 400), match.index);
+    return {
+      id: /\bid:\s*"([^"]*)"/u.exec(before.slice(before.lastIndexOf("{")))?.[1] ?? null,
+      class: match[1],
+    };
   });
 }
 
 /**
- * Every rule in the floor, in the order the model reads it, attributed to the module that declares it.
+ * Every rule a module declares with a class, in one population keyed by the rule's id.
+ *
+ * A `classedRules` owner states the class inside the rule's entry. A game module declares its rules as exported texts
+ * and classifies them in a table; the two are joined BY NAME - the id of such a rule is its declaration name lowercased
+ * - so reordering either side moves nothing. A table row naming no declared rule is returned as an orphan rather than
+ * dropped: a class nobody's rule carries is a finding.
+ */
+function declaredPopulation(sources) {
+  const declared = new Map();
+  const orphans = [];
+  const restated = [];
+  for (const owner of CONDUCT_OWNERS) {
+    const source = sources.get(owner.module);
+    if (owner.classedRules !== undefined) {
+      for (const [id, entry] of classedRules(source, owner.classedRules, owner.module)) declared.set(id, entry);
+      restated.push(
+        ...restatedClasses(source, owner.table, owner.module).map((row) => ({ ...row, module: owner.module })),
+      );
+      continue;
+    }
+    const texts = declaredRules(source);
+    for (const entry of tableEntries(source, owner.table, owner.module)) {
+      const name = [...texts.keys()].find((candidate) => candidate.toLowerCase() === entry.id);
+      if (name === undefined) {
+        orphans.push({ ...entry, module: owner.module });
+        continue;
+      }
+      declared.set(entry.id, { ...entry, text: texts.get(name), module: owner.module });
+    }
+  }
+  return { declared, orphans, restated };
+}
+
+/**
+ * Every rule in the floor, in the order the model reads it, with the class its own declaration gives it.
  *
  * Throws rather than returning an empty list when the shape is not what this reads: a gate that silently examined
  * nothing agrees with itself, and the caller turns the throw into `blocked`.
@@ -186,22 +375,71 @@ function tableEntries(source, table, module) {
 export function conductRules(sources) {
   const floor = sources.get(CONDUCT_SOURCE);
   if (floor === undefined) throw new Error(`${CONDUCT_SOURCE} is not in the population this gate reads`);
-  const declared = new Map();
-  for (const [module, source] of sources)
-    for (const [name, text] of declaredRules(source)) declared.set(name, { text, module });
+  const { declared, orphans, restated } = declaredPopulation(sources);
+  for (const rule of declared.values()) rule.composed = false;
 
-  const rules = declarationBody(floor, RULES_DECLARATION, CONDUCT_SOURCE)
+  const rules = declarationBody(floor, COMPOSED_DECLARATION, CONDUCT_SOURCE)
     .filter((line) => line !== "" && !line.startsWith("//") && !line.startsWith("*") && !line.startsWith("/*"))
     .map((line, index) => {
       const element = elementOf(line, index);
-      if (element.kind === "literal") return { index, module: CONDUCT_SOURCE, text: element.text, name: null };
-      const owner = declared.get(element.name);
-      if (owner === undefined) return { index, module: null, text: element.name, name: element.name, unowned: true };
-      return { index, module: owner.module, text: owner.text, name: element.name };
+      if (element.kind === "literal") return { index, module: null, text: element.text, name: null, classless: true };
+      const id = element.kind === "classed" ? element.id : element.name.toLowerCase();
+      const entry = declared.get(id);
+      if (entry === undefined)
+        return element.kind === "classed"
+          ? { index, module: null, id, text: id, name: id, classless: true }
+          : { index, module: null, id, text: element.name, name: element.name, unowned: true };
+      entry.composed = true;
+      return {
+        index,
+        module: entry.module,
+        id: entry.id,
+        text: entry.text ?? entry.id,
+        name: element.name ?? entry.id,
+        class: entry.class,
+        reason: entry.reason,
+        exit: entry.exit ?? null,
+      };
     });
   if (rules.length === 0)
-    throw new Error(`${RULES_DECLARATION} declares no rule: the Game floor is empty, which is not a classification`);
-  return rules;
+    throw new Error(
+      `${COMPOSED_DECLARATION} declares no rule: the Game floor is empty, which is not a classification. Zero rules is ` +
+        "not a resting state for this module - a floor with nothing to classify is dead code - so delete the floor and its " +
+        "tables rather than making this gate green with an empty list",
+    );
+  return { rules, declared, orphans, restated };
+}
+
+/**
+ * A rule's `exit` read as its kind and what follows it.
+ *
+ * `null` when the rule names no exit at all - the debt with no owner. A string that names no kind comes back with its own
+ * text as the kind, so the finding says what the entry spelled instead of failing to parse it.
+ */
+function readExit(raw) {
+  if (typeof raw !== "string") return null;
+  const match = /^([a-z]+):\s*([\s\S]*)$/u.exec(raw.trim());
+  if (match === null) return { kind: raw.trim(), reason: "" };
+  return { kind: match[1], reason: match[2].trim() };
+}
+
+/** The finding for a rule that names no exit, naming the shape the entry spelled rather than only the rule. */
+function exitDetail(id, exit) {
+  if (exit === null)
+    return (
+      `${id} names no exit, so nothing says how the rule dies: give its own entry an \`exit\` - \`surface: <the change to ` +
+      "the delivery, renderer or tool surface that would delete it>\`, `authority: <the authority that already owns the " +
+      "claim>`, or `permanent: <why no mechanism can enforce it>`"
+    );
+  if (!EXIT_KINDS.includes(exit.kind))
+    return (
+      `${id} names the exit kind "${exit.kind}", which is not one of ${EXIT_KINDS.join(" / ")}: a kind outside the ` +
+      "three ways a floor rule dies names no exit at all"
+    );
+  return (
+    `${id} names "${exit.kind}" and says nothing after it: an exit with no change, no owner and no reason is a label, ` +
+    "not an exit"
+  );
 }
 
 /** The first few words of a rule, for a finding that names the rule rather than an index. */
@@ -240,12 +478,9 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
   if (unreadable.length > 0)
     return { status: "blocked", examined: 0, rules: [], classes: {}, violations: [], unreadable };
 
-  let rules;
-  const tables = new Map();
+  let reading;
   try {
-    rules = conductRules(sources);
-    for (const owner of CONDUCT_OWNERS)
-      tables.set(owner.module, tableEntries(sources.get(owner.module), owner.table, owner.module));
+    reading = conductRules(sources);
   } catch (error) {
     return {
       status: "blocked",
@@ -260,7 +495,9 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
   const violations = [];
   const rows = [];
   const counts = { FLOOR: 0, CHANNEL: 0, FORM: 0 };
-  for (const rule of rules) {
+  const exits = { surface: 0, authority: 0, permanent: 0 };
+  let unowned = 0;
+  for (const rule of reading.rules) {
     if (rule.unowned) {
       violations.push({
         code: `${CONDUCT_RULES.unowned.code}:${String(rule.index)}:${rule.name}`,
@@ -268,65 +505,84 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
           "the floor composes this rule but no module in CONDUCT_OWNERS declares it: name the module that owns it, " +
           "and give it an entry in that module's table",
       });
+      continue;
     }
+    if (rule.classless) {
+      violations.push({
+        code: `${CONDUCT_RULES.classless.code}:${String(rule.index)}:${firstWords(rule.text)}`,
+        detail:
+          "this rule reaches the prompt without a declaration that carries its class: write it as an entry of " +
+          "GAME_SURFACE_CONDUCT_RULES (text, class, reason) and compose it as a reference to that entry, or declare " +
+          "it in the game module that owns it and classify it in that module's table",
+      });
+      continue;
+    }
+    rows.push({ index: rule.index, module: rule.module, class: rule.class, id: rule.id, exit: rule.exit ?? null });
+    if (!CONDUCT_CLASSES.includes(rule.class)) {
+      violations.push({
+        code: `${CONDUCT_RULES.unknown.code}:${rule.id}`,
+        detail: `"${rule.class}" is not one of ${CONDUCT_CLASSES.join(" / ")}: a class outside the doctrine is not a class`,
+      });
+      continue;
+    }
+    counts[rule.class] += 1;
+    const exit = readExit(rule.exit);
+    if (exit === null || !EXIT_KINDS.includes(exit.kind) || exit.reason === "") {
+      unowned += 1;
+      violations.push({ code: `${CONDUCT_RULES.unexited.code}:${rule.id}`, detail: exitDetail(rule.id, exit) });
+    } else exits[exit.kind] += 1;
+    if (rule.reason.trim() === "")
+      violations.push({
+        code: `${CONDUCT_RULES.unreasoned.code}:${rule.id}`,
+        detail: "a class with no reason is a label nobody argued for, which is how a form rule gets called floor",
+      });
+    if (rule.class === "FORM")
+      violations.push({
+        code: `${CONDUCT_RULES.form.code}:${rule.id}:${rule.module}`,
+        detail:
+          "this rule governs the turn's form, and the card owns that: delete the rule rather than classifying it. " +
+          "The floor may bound a monologue; it may not decide how long a turn is or how many beats it carries",
+      });
   }
 
-  // One module at a time: its rules in the order the floor reads them, paired positionally with its own table.
-  for (const owner of CONDUCT_OWNERS) {
-    const mine = rules.filter((rule) => rule.module === owner.module);
-    const table = tables.get(owner.module) ?? [];
-    const total = Math.max(mine.length, table.length);
-    for (let position = 0; position < total; position += 1) {
-      const rule = mine[position];
-      const entry = table[position];
-      if (entry === undefined) {
-        violations.push({
-          code: `${CONDUCT_RULES.classless.code}:${String(rule.index)}:${firstWords(rule.text)}`,
-          detail:
-            `this rule of ${owner.module} carries no class in ${owner.table}: classify it FLOOR, CHANNEL or FORM ` +
-            "(and if it is FORM, delete it - the card governs form)",
-        });
-        continue;
-      }
-      if (rule === undefined) {
-        violations.push({
-          code: `${CONDUCT_RULES.stale.code}:${entry.id}`,
-          detail:
-            `${owner.table} classifies ${String(table.length)} rule(s) and ${owner.module} carries ${String(mine.length)}: ` +
-            "removing a rule must remove its class entry, or the table stops describing the floor. The pairing is " +
-            "positional, so a rule removed from the middle also shifts every entry after it - start from the first " +
-            "mismatch between the two lists",
-        });
-        continue;
-      }
-      rows.push({ index: rule.index, module: rule.module, class: entry.class, id: entry.id });
-      if (!CONDUCT_CLASSES.includes(entry.class)) {
-        violations.push({
-          code: `${CONDUCT_RULES.unknown.code}:${entry.id}`,
-          detail: `"${entry.class}" is not one of ${CONDUCT_CLASSES.join(" / ")}: a class outside the doctrine is not a class`,
-        });
-        continue;
-      }
-      counts[entry.class] += 1;
-      if (entry.reason.trim() === "")
-        violations.push({
-          code: `${CONDUCT_RULES.unreasoned.code}:${entry.id}`,
-          detail: "a class with no reason is a label nobody argued for, which is how a form rule gets called floor",
-        });
-      if (entry.class === "FORM")
-        violations.push({
-          code: `${CONDUCT_RULES.form.code}:${entry.id}:${owner.module}`,
-          detail:
-            "this rule governs the turn's form, and the card owns that: delete the rule rather than classifying it. " +
-            "The floor may bound a monologue; it may not decide how long a turn is or how many beats it carries",
-        });
-    }
+  for (const entry of reading.declared.values()) {
+    if (entry.composed) continue;
+    violations.push({
+      code: `${CONDUCT_RULES.stale.code}:${entry.id}`,
+      detail:
+        `${entry.id} is declared by ${entry.module} and the floor's composed list never reaches it: removing a rule ` +
+        "must remove its class entry, or the table stops describing the floor",
+    });
+  }
+  for (const entry of reading.orphans) {
+    violations.push({
+      code: `${CONDUCT_RULES.stale.code}:${entry.id}`,
+      detail:
+        `${entry.module}'s table classifies ${entry.id}, and no rule in that module is declared by that name: the id ` +
+        "of a rule is its declaration name lowercased, so a class for a rule that no longer exists is a list nobody reads",
+    });
+  }
+  for (const row of reading.restated) {
+    const entry = reading.declared.get(row.id ?? "");
+    violations.push({
+      code: `${CONDUCT_RULES.restated.code}:${row.id ?? row.module}`,
+      detail:
+        `${row.module}'s table states the class "${row.class}"` +
+        (entry === undefined
+          ? " instead of projecting it: a class is declared inside the rule's own entry, so a table that states one is " +
+            "a second spelling that can drift from it"
+          : `, and that rule's own entry declares "${entry.class}". A class is declared once, inside the rule's own ` +
+            "entry, and a table beside it is the second spelling that let a reordering go unseen: delete the entry " +
+            "from the table and let it project"),
+    });
   }
 
   return {
     status: violations.length === 0 ? "passed" : "failed",
-    examined: rules.length,
+    examined: reading.rules.length,
     classes: counts,
+    exits,
+    unowned,
     rules: rows,
     violations,
     unreadable: [],
@@ -368,6 +624,7 @@ export function conductReport(reading) {
     }),
   ];
   const blocks = reading.classes;
+  const exits = reading.exits ?? { surface: 0, authority: 0, permanent: 0 };
   return {
     gate: "game-surface-conduct-classes",
     status: reading.status,
@@ -375,14 +632,17 @@ export function conductReport(reading) {
     FLOOR: blocks.FLOOR ?? 0,
     CHANNEL: blocks.CHANNEL ?? 0,
     FORM: blocks.FORM ?? 0,
+    withAnExit: reading.examined - (reading.unowned ?? 0),
+    surface: exits.surface,
+    authority: exits.authority,
+    permanent: exits.permanent,
+    unowned: reading.unowned ?? 0,
     checks,
   };
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const json = argv.includes("--json");
   const reading = auditConductClasses({ root });
   const report = conductReport(reading);
@@ -391,7 +651,9 @@ function main(argv) {
   } else {
     process.stdout.write(
       `conduct rules examined ${String(report.examined)} · FLOOR ${String(report.FLOOR)} · ` +
-        `CHANNEL ${String(report.CHANNEL)} · FORM ${String(report.FORM)} · status ${report.status}\n`,
+        `CHANNEL ${String(report.CHANNEL)} · FORM ${String(report.FORM)} · with an exit ${String(report.withAnExit)} · ` +
+        `surface ${String(report.surface)} · authority ${String(report.authority)} · ` +
+        `permanent ${String(report.permanent)} · unowned ${String(report.unowned)} · status ${report.status}\n`,
     );
     for (const owner of CONDUCT_OWNERS) {
       const owned = reading.rules.filter((rule) => rule.module === owner.module).length;
@@ -403,8 +665,8 @@ function main(argv) {
   }
   if (reading.status === "blocked") {
     process.stderr.write(
-      "game_surface_conduct_classes: the conduct or a table could not be read, so nothing was judged; a green run " +
-        "reads examined>=1\n",
+      "game_surface_conduct_classes: the conduct or a declaration could not be read, so nothing was judged; a green " +
+        "run reads examined>=1\n",
     );
     process.exitCode = 2;
     return;

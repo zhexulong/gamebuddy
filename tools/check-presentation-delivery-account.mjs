@@ -17,6 +17,14 @@
  *                    exits 1 on it, and the reconciling cases beside it (a piece no record names, parts that do not add
  *                    up, an absent account) live in tools/lib/presentation-delivery-account.test.mjs
  */
+
+export const gateDeclaration = {
+  id: "check-presentation-delivery-account",
+  domain: "data",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

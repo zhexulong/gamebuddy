@@ -47,6 +47,14 @@
  * *                    `error_identity_classification_failed findings=1` naming that file:2, exit 1
  * *                    (tools/check-error-identity-classification.mjs, the rule this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-error-identity-classification",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";

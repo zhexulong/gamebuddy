@@ -4,6 +4,7 @@ import { resolveCompanionLocale, type CompanionLocale } from "../settings/player
 import {
   compilePlanScript,
   legalPlanActionIds,
+  MAX_PLAN_NODES,
   PLAN_FORM_ACTION_IDS,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
@@ -35,7 +36,6 @@ import {
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
-import { companionArrivalAlreadySaid } from "../companion-arrival-fact.js";
 import type { CompanionInterruption } from "../companion-interruption.js";
 import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
@@ -71,6 +71,7 @@ import {
   RUN_SPAN_NAMES,
   RUN_TRACE_FILE_NAME,
   startRunTraceFile,
+  tracedStep,
   type RunTrace,
 } from "../run-trace.js";
 import {
@@ -110,7 +111,7 @@ import {
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
 import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
-import type { WorldFact } from "../event-pump.js";
+import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -387,7 +388,6 @@ function createBodyProgramTools(
               droppedTruncated: compiled.droppedCount > compiled.dropped.length,
               acceptedSteps: compiled.acceptedSteps,
               acceptedStepsCount: compiled.acceptedStepsCount,
-              ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
               ...(compiled.noStepNeededCount === 0
                 ? {}
                 : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
@@ -872,7 +872,6 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
           // reading over the run's node outcomes can join on it without matching a node-id prefix.
           insertedNodeIds: compiled.insertedNodeIds,
         }),
-    ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
     ...(compiled.noStepNeededCount === 0
       ? {}
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
@@ -967,7 +966,7 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live: a plan holds at most ${String(MAX_PLAN_NODES)} nodes; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
       /**
        * Declared here because the tool already reads it: a parameter the implementation honours but the schema hides is
@@ -1464,6 +1463,8 @@ export type GameCompanionLoopInput = Readonly<{
   connection: GameConnection;
   /** Where a fact this pump minted goes: the Host's Host-minted-fact route. */
   publish: (fact: WorldFact) => void;
+  /** This run's span recorder: the loop's delivery and turn-tail spans land in it. */
+  runTrace?: RunTrace;
 }>;
 
 /**
@@ -1491,14 +1492,20 @@ export function createGameCompanionLoop(input: GameCompanionLoopInput): Companio
     input.liveSourceAttester,
     input.voiceSink,
     input.volatileContext,
+    undefined,
+    input.runTrace,
   );
   loop.pump.attachWorldStateRefresh(
     Object.freeze({
       observe: () => {
         const observe = (input.connection as StardewBridgeConnection).observe;
-        return observe === undefined
-          ? Promise.reject(new Error("world_state_observation_route_unavailable"))
-          : observe.call(input.connection);
+        // The round trip of the refresh the pump asks for when the reading it holds has gone stale: this is exactly the
+        // wait the product had no name for (a 34-minute run saw five snapshots and 64 stalled polls).
+        return tracedStep(input.runTrace, RUN_SPAN_NAMES.snapshotObserve, { surface: "game" }, () =>
+          observe === undefined
+            ? Promise.reject(new Error("world_state_observation_route_unavailable"))
+            : observe.call(input.connection),
+        );
       },
       publish: (fact) => input.publish(fact),
     }),
@@ -1517,17 +1524,23 @@ export function createHostGameRuntimeMaterializer(
         const mountedPolicy = execution.connection.module.parsePolicy(execution.connection.module.defaultPolicy);
         const retainedPolicyIdentity = readBodyProgramPolicyIdentity(execution.connection);
         const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
-        const recoveryJournal = await StardewLogicalActionRecoveryJournal.open(
-          Object.freeze({
-            directory: join(
-              execution.runtimeRoot,
-              "stardew-recovery",
-              recoveryIdentity.continuityId,
-              recoveryIdentity.saveId,
-              recoveryIdentity.worldId,
+        const recoveryJournal = await tracedStep(
+          runTrace,
+          RUN_SPAN_NAMES.journalRead,
+          { journal: "recovery", at: "mount" },
+          () =>
+            StardewLogicalActionRecoveryJournal.open(
+              Object.freeze({
+                directory: join(
+                  execution.runtimeRoot,
+                  "stardew-recovery",
+                  recoveryIdentity.continuityId,
+                  recoveryIdentity.saveId,
+                  recoveryIdentity.worldId,
+                ),
+                scope: recoveryIdentity,
+              }),
             ),
-            scope: recoveryIdentity,
-          }),
         );
         const bodyProgramAdmission = new HostNodeAdmissionService(
           recoveryJournal,
@@ -1575,7 +1588,7 @@ export function createHostGameRuntimeMaterializer(
         // moment the Host service exists - the tools and the pump's port are built first and cannot see it - and a fact
         // that arrives before then (it cannot: nothing has been submitted and no turn has been opened) is dropped by the
         // no-op rather than queued somewhere else.
-        let announceHostFact: (fact: WorldFact) => void = () => {};
+        let announceHostFact: (fact: WorldFact, producedBy: FactProducer) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1584,10 +1597,12 @@ export function createHostGameRuntimeMaterializer(
               retainedPolicyIdentity,
               () => revealProgramReaders(),
               runTrace,
-              (fact) => announceHostFact(fact),
+              (fact) => announceHostFact(fact, FACT_PRODUCER.programSettlement),
             )
           : Object.freeze([]);
-        const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        const recovery = tracedStep(runTrace, RUN_SPAN_NAMES.journalRead, { journal: "recovery", at: "binding" }, () =>
+          readStardewRecoveryBindingContext(recoveryContext),
+        );
         // Resolved once, because two things need the SAME answer: the runtime's presentation profile and the locale of
         // the Host's own status lines. Two reads could disagree after a Settings change between them.
         const companionLocale = options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot));
@@ -1656,9 +1671,10 @@ export function createHostGameRuntimeMaterializer(
           voiceSink: gameVoicePayload?.streamingSink,
           volatileContext: constructed.volatileAuthoredContext,
           connection: execution.connection,
+          runTrace,
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
-          publish: (fact) => announceHostFact(fact),
+          publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),
         });
         const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
         const host = new CompanionHostService(
@@ -1695,11 +1711,6 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           liveSourceAttester,
-          // The durable half of "she greets once": this Game session's own Pi transcript already holds
-          // the batch that carried the arrival fact if a previous mount delivered it.
-          Object.freeze({
-            alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager),
-          }),
           // The last mile of "the player speaks and the work stops". The Mod has been able to cancel a program since
           // the journal was written, but nothing on this side ever asked: a STOP sealed the model and left the body
           // walking, because a submitted program is immutable and the Mod only refuses NEW intents.
@@ -1716,10 +1727,11 @@ export function createHostGameRuntimeMaterializer(
                     `body_program_stop_refused:${String(error instanceof Error ? error.message : error)}`,
                   );
                 }),
+          runTrace,
         );
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
-        announceHostFact = (fact) => host.acceptHostMintedFact(fact);
+        announceHostFact = (fact, producedBy) => host.acceptHostMintedFact(fact, producedBy);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined
@@ -1966,13 +1978,15 @@ async function createMaterializedGameRuntime(
   // live-run script) supplying it. Missing files keep the default profile and
   // an empty Book; system assembly never fabricates content and never writes
   // (only the runtime core creates the default profile when absent).
-  const context = await assembleGameRuntimeContext({
-    identity,
-    runtimeRoot,
-    ...(identityProfile === undefined ? {} : { identityProfile }),
-    ...(worldBook === undefined ? {} : { worldBook }),
-    ...(companionLocale === undefined ? {} : { locale: companionLocale }),
-  });
+  const context = await tracedStep(runTrace, RUN_SPAN_NAMES.promptContext, { surface: "game" }, () =>
+    assembleGameRuntimeContext({
+      identity,
+      runtimeRoot,
+      ...(identityProfile === undefined ? {} : { identityProfile }),
+      ...(worldBook === undefined ? {} : { worldBook }),
+      ...(companionLocale === undefined ? {} : { locale: companionLocale }),
+    }),
+  );
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
   const assembledScenario = context.scenario;
@@ -2104,7 +2118,9 @@ async function createMaterializedGameRuntime(
           },
           volatileAuthoredContext: Object.freeze({
             bind: (turnId: string, deliveredBatch: string): void => {
-              authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection));
+              tracedStep(runTrace, RUN_SPAN_NAMES.promptBlocks, { turn: turnId }, () =>
+                authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection)),
+              );
             },
             clear: (turnId: string): void => {
               authoredContext.clearVolatileForTurn(turnId);

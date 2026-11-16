@@ -44,6 +44,14 @@
  *                    ratio outside [2, 13]; restoring the emitted file returns `perf_scaling_ok`
  *                    (tools/check-perf-scaling.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-perf-scaling",
+  domain: "data",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { execFileSync } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

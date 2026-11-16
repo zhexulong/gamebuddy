@@ -41,7 +41,6 @@ namespace GameBuddy.Stardew;
 // that; it only reports its own before/after `waterSpots` observation.
 internal sealed partial class ExecutionManager
 {
-    /// <summary>The fixed interior column the native Slime Hutch watering gate accepts.</summary>
     private const int SlimeHutchTroughColumn = 16;
     private const int SlimeHutchTroughFirstRow = 6;
     private const int SlimeHutchTroughLastRow = 9;
@@ -51,9 +50,6 @@ internal sealed partial class ExecutionManager
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        // Ask before walking: the can is the action's own declared tool, so a pack that cannot satisfy the
-        // `tool:watering_can` claim is refused now rather than after an approach leg the action could never finish,
-        // and a can with nothing to spend is refused for the same reason.
         DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "water_slime_hutch_trough");
         if (can.RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "water_slime_hutch_trough", toolRefusal));
@@ -66,20 +62,10 @@ internal sealed partial class ExecutionManager
 
         if (ResolveSlimeHutchTrough(targetX, targetY) is not { } hutch)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_not_current_location", $"location={Game1.player.currentLocation?.NameOrUniqueName};target={targetX},{targetY}");
-        // Split from the location rejection on purpose: a wrong location and a stale
-        // plan are different Agent decisions (re-plan the route vs re-derive the
-        // target), so they must not share one reasonCode. This mirrors ship_item's
-        // `farm_required` / `shipping_bin_target_changed` split.
         if (!string.Equals(BuildSlimeHutchTroughTargetId(hutch, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_target_changed", $"target={targetX},{targetY};expected={expectedTargetId}");
-        // The spot is read live after the native call too, so the postcondition is
-        // this execution's own before/after observation rather than a Mod-authored
-        // claim.
         if (hutch.waterSpots[targetY - SlimeHutchTroughFirstRow])
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "slime_hutch_trough_already_watered", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. The can, the hutch
-        // and the spot are validated above; all are re-checked after the walk inside the
-        // closure, because the walk takes several ticks.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -98,17 +84,8 @@ internal sealed partial class ExecutionManager
         return this.ExecuteWaterSlimeHutchTrough(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes water_slime_hutch_trough against the current world, re-validating the
-    /// can, the hutch and the spot because an approach leg may have taken several ticks.
-    /// The can is not the caller's to name: the action's own registration claims
-    /// `tool:watering_can`, so this selects the best owned can it needs and restores the
-    /// actor's own selection afterwards. Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteWaterSlimeHutchTrough(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "water_slime_hutch_trough", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "water_slime_hutch_trough", toolRefusalCode));
         ExecutionState state;
@@ -131,7 +108,6 @@ internal sealed partial class ExecutionManager
 
             bool beforeWatered = hutch.waterSpots[targetY - SlimeHutchTroughFirstRow];
             int beforeWater = wateringCan.WaterLeft;
-            // Observed, not asserted: the native watering path must not mount a menu.
             bool menuBefore = Game1.activeClickableMenu is not null;
             float staminaBefore = Game1.player.Stamina;
             UseNativeToolOnTile(wateringCan, hutch, targetX, targetY, Game1.player, staminaBefore);
@@ -155,16 +131,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    /// <summary>
-    /// The current Slime Hutch when this exact tile is one the native gate
-    /// accepts, or null.
-    ///
-    /// Why this is a literal coordinate comparison: `SlimeHutch.performToolAction`
-    /// tests `tileX == 16 &amp;&amp; tileY &gt;= 6 &amp;&amp; tileY &lt;= 9` against the
-    /// interior map coordinates. There is no BuildingData tile-property or
-    /// relative-offset lookup in that gate, so asking the building for properties
-    /// (the Pet Bowl approach) would be measuring a different seam.
-    /// </summary>
     private static StardewValley.SlimeHutch? ResolveSlimeHutchTrough(int x, int y) =>
         Game1.player.currentLocation is StardewValley.SlimeHutch hutch
             && IsSlimeHutchTroughTile(x, y)

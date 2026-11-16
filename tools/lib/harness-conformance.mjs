@@ -28,7 +28,7 @@
  * `checks` answers a different question - a comment satisfies either one - which is why neither is matched here.
  *
  * THE POPULATION IS NOT THIS FILE'S (measured 2026-11-20): this suite used to scan `tools/check-*.mjs` for its own
- * count of gates (106) while `tools/audit-gate-red-proofs.mjs` derived its own (330), so "how many gates are there, and
+ * count of gates (106) while `gates/meta/audit-gate-red-proofs.mjs` derived its own (330), so "how many gates are there, and
  * how many have been seen red" had two answers and 203 gates without a red case were invisible here. Both tools now
  * read `tools/lib/gate-population.mjs`, this suite judges the members it can execute, and the census prints the bucket
  * it excluded, the reason, and the two numbers that make a pass honest: gates nobody declared, and gates whose report
@@ -53,7 +53,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import { auditGateRedProofs, describeGateCensus, evaluate, readBaseline } from "../audit-gate-red-proofs.mjs";
+import {
+  auditGateRedProofs,
+  describeGateCensus,
+  evaluate,
+  readBaseline,
+} from "../../gates/meta/audit-gate-red-proofs.mjs";
 import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
@@ -67,6 +72,39 @@ import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 
 const finding = (code, detail) => ({ code, detail });
+
+/**
+ * The key a gate is CLASSIFIED under: its declaration's name, which is its file's own name with no directory.
+ *
+ * A gate is run from a path relative to `tools/` (`gates/meta/check-diff.mjs`) and declares itself by a name
+ * (`check-diff.mjs`), because a gate keeps its name when its domain files it in a directory. Comparing the path
+ * against the ledger read every sorted gate as undeclared - measured on the `meta` pilot, all 14 at once, while the
+ * ledger held all 14 entries.
+ *
+ * It is the declaration that names the gate, not the path: `gates/registry.mjs` refuses an `id` that is not the
+ * file's slug and refuses two files claiming one `id`, so the declaration's name is an identity rather than a suffix a
+ * reader chose. The name is still DERIVED from the path here - the registry is what keeps the two equal - which is why
+ * `declarationKeyCollisions` exists: a derived key that maps two files to one row is a relation, and the second file would
+ * be judged by the first file's classification with neither named.
+ */
+const declaredNameOf = (path) => String(path).replace(/^.*\//u, "");
+
+/**
+ * The keys two or more gate files claim for themselves.
+ *
+ * The incident: a domain move whose copy is committed before the original is deleted, or a rebase that resurrects the
+ * old path, leaves `check-diff.mjs` and `gates/meta/check-diff.mjs` in one population. Both derive one key, so the
+ * ledger row for `check-diff.mjs` classifies both, `unlisted` stays empty, and the file the row was not written for is
+ * never judged - a population that silently collapsed from two gates to one answer. Reported rather than absorbed.
+ */
+export function declarationKeyCollisions(gateNames) {
+  const byKey = new Map();
+  for (const path of gateNames) {
+    const key = declaredNameOf(path);
+    byKey.set(key, [...(byKey.get(key) ?? []), path]);
+  }
+  return [...byKey].filter(([, paths]) => paths.length > 1);
+}
 
 /** Actions whose scenario/runner wiring decides whether a harness run can start at all. */
 const HARNESS_ACTIONS = Object.freeze([
@@ -359,7 +397,7 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints `gates examined N · with a population line M · without K · unreadable R` plus a `checks[]` verdict whose last
   // entry is the baseline ratchet, so its default run is the report this suite reads - and its `examined` is judged by
   // `tools/lib/assert-non-vacuous.mjs`, the same rule it applies to every other gate, which is how the answer to "would
-  // this gate catch itself" is a measurement. Its falsifier is tools/check-gate-populations.test.mjs: the pre-fix publint
+  // this gate catch itself" is a measurement. Its falsifier is gates/meta/check-gate-populations.test.mjs: the pre-fix publint
   // source is `gate_without_population`, the pre-fix soil-itm suite is `gate_skip_can_pass`, the wire parity gate's
   // pre-fix verdict is `gate_pairs_a_subset_and_passes`, each fixed shape is clean, a subset word inside a string is not
   // a count, and the CLI over a throwaway root goes blocked (no baseline) -> `--update` -> green -> red for a new silent
@@ -424,17 +462,21 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-fail-closed-forward-path.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
-  // Prints `conduct rules examined N · FLOOR … · CHANNEL … · FORM …` plus a `checks[]` verdict carrying one entry per
-  // rule it can go red on (the population, a composed rule no module owns, a rule its owner's table does not reach, a
-  // class that outlived its rule, a class outside the three kinds, a class with no reason, a FORM rule in the floor), so
-  // its default run is the report this suite reads. Its falsifier is tools/check-game-surface-conduct-classes.test.mjs:
+  // Prints `conduct rules examined N · FLOOR … · CHANNEL … · FORM … · with an exit E · surface … · authority … ·
+  // permanent … · unowned U` plus a `checks[]` verdict carrying one entry per rule it can go red on (the population, a
+  // composed rule no module owns, a rule its owner's table does not reach, a class that outlived its rule, a class
+  // outside the three kinds, a class with no reason, a FORM rule in the floor, and a rule that names no exit), so its
+  // default run is the report this suite reads. Its falsifier is tools/check-game-surface-conduct-classes.test.mjs:
   // the deleted "Speak before you act" rule put back and classified FORM is
   // `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts` with that `checks[]` entry failed, a
   // rule appended with no class names its position and first words, a Stardew rule taken out of the floor while its
   // class stays is `stale_conduct_class:content_ids_in_words`, a class outside the three kinds is a finding rather than
   // a fourth kind, a class with no reason is named, a composed name no module declares is `conduct_rule_unowned`,
-  // a renamed declaration is blocked (exit 2, never green) and a list no longer written one rule per line is blocked
-  // because a reader that mis-parsed the floor and passed would be worse than no gate.
+  // an entry whose `exit` is removed and a table row whose `exit` is removed are
+  // `floor_rule_has_no_exit:<id>`, an exit kind outside the three and an exit with nothing after the kind are that same
+  // finding rather than a parse failure, an empty composed list blocks (exit 2) with the message that says to delete the
+  // module, a renamed declaration is blocked (exit 2, never green) and a list no longer written one rule per line is
+  // blocked because a reader that mis-parsed the floor and passed would be worse than no gate.
   "check-game-surface-conduct-classes.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
@@ -571,7 +613,7 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints `gate populations: invoked N · ci-coverage scripts N · corpus names N · census scripts N · gate files N ·
   // prelive members N · census gates N · register members N` and a one-line `{"gate":"gate_population_agreement/v1",
   // "population":N,"checks":[...]}` report whose four entries are the four ways a member can fail to be accounted for,
-  // so its default run is the report this suite reads. Its falsifier is tools/check-gate-population-agreement.test.mjs:
+  // so its default run is the report this suite reads. Its falsifier is gates/meta/check-gate-population-agreement.test.mjs:
   // a falsifier inside a consumer's population, a gate file no consumer reads, an invoked script no consumer reads, a
   // register naming a member that is not a gate, an untracked gate published rather than named, and the real tree
   // agreeing - and its own red proof is the reading that preceded its fix (one mutation driver in prelive's 143).
@@ -591,6 +633,82 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // `gate_measured_nothing` when it finds no receipt builder or no transition field, so its default run is the report
   // this suite reads. It joined the judged set on 2026-11-13 with the `(check|audit)-*.mjs` widening.
   "audit-stardew-receipt-transition-fields.mjs",
+  // Prints `presets examined N · declare a surface M · declare none K`, the findings, a verdict line and
+  // `{"gate":"live_run_preset_surface/v1","status":"passed","population":N,"checks":[...]}`, whose entries are the
+  // six rules it can report red - so its default run is the report this suite reads, and a zero population is BLOCKED
+  // rather than passed. Its falsifier is tools/live-run/core/persona.test.mjs: the shipped literal binding
+  // `amber-deepseek-v4.1.json` (a model-named preset, refused by name), a bound preset declaring the other surface, two
+  // presets claiming one surface, a directory declaring the run's surface nowhere, one preset that declares two, a bound
+  // world book that is not a preset at all, and a directory with no presets (blocked, exit 2).
+  "check-live-run-preset-surface.mjs",
+  // Prints `browser projection fields examined N · derived D · constant C · declared K · status …` plus a `checks[]`
+  // verdict enumerating its two rules (the contract's field population, and no field is a literal), so its default run is
+  // the report this suite reads. Its falsifier is tools/check-browser-state-projection-fields.test.mjs: `capabilitySummary`
+  // restored to a frozen literal in a copied tree is `published_field_is_a_constant:capabilitySummary` - the shape that
+  // answered "no capability published" whatever the live surface said - a derived field that answers 0 when its source is
+  // absent is still red, an exemption for a field that now follows a live fact is `stale_constant_field_reason`, a reason
+  // with nothing written in it is refused, a declared constant is excused only while it is a constant, both directions of
+  // the contract are policed (`projection_field_unproduced`, `projection_field_not_in_contract`), and a contract with no
+  // `game` projection is blocked rather than green.
+  "check-browser-state-projection-fields.mjs",
+  // Prints `row families examined N · row fields N · read by the renderer M · dropped K · placeable families P/N · status …`
+  // plus a `checks[]` verdict with one entry per rule, so its default run is the report this suite reads. Its falsifier is
+  // tools/check-inventory-row-field-rendering.test.mjs: the renderer as `round62` ran it drops the door and the finding
+  // names `sourceX`/`sourceY` (the family whose rows were silently `continue`d), one composer dropping the pack slot is red
+  // while its sibling still prints it and both dropping it names both, a tile spelling the wire grows is demanded with no
+  // edit here, a spelling the renderer starts reading makes its exemption expire, a declared colour is checked rather than
+  // believed, a module that starts reading the pack family must be declared and one that stopped expires, and a crossing, a
+  // composer or a row renderer the gate cannot find is blocked rather than a pass over nothing.
+  "check-inventory-row-field-rendering.mjs",
+  // Prints `files N · code C · comment M · blank B · total T · ceiling (code) X · delta …` plus a `checks[]` verdict whose
+  // entries are its four rules (population, code exceeded, ceiling stale, baseline member missing), so its default run is
+  // the report this suite reads. Its falsifier is tools/check-stardew-family-size.test.mjs: one code line appended to a
+  // family file is `family_code_exceeded`, one code line deleted is `family_ceiling_stale`, deleting a COMMENT line or a
+  // BLANK line moves neither ceiling - the unit that made the first version green while the family went 31,257 -> 27,388
+  // total and 18,457 code lines unchanged - a ceiling recorded in total lines is stale, a baseline naming a file the family
+  // no longer has is a finding, a raise is refused without a reason and records the three deltas with one, and an empty or
+  // absent directory is blocked rather than green.
+  "check-stardew-family-size.mjs",
+  // Prints `files examined F · declarations D · entity-touching N · thread hops H · off-loop closure C` and
+  // `methods examined N · provably on the loop M · dispatched D · undeclared U` plus a `checks[]` verdict whose three
+  // entries are the entity-touching finding, the unresolved call site and a stale declaration, so its default run is the
+  // report this suite reads. Its falsifier is tools/check-stardew-game-thread-affinity.test.mjs: an entity read in a
+  // helper the pipe worker reaches is `game_entity_touched_off_the_game_thread`, the same tree without that line is
+  // clean, a `new Timer` hop reaches its callback, an undecidable call with an entity-touching candidate is
+  // `game_thread_unresolved_call` until declared and `game_thread_declaration_stale` once its site is gone, and a tree
+  // with no hop at all is blocked rather than green.
+  "check-stardew-game-thread-affinity.mjs",
+  // Prints `handlers examined N · clean C · allocating A · recorded R` plus a `checks[]` verdict whose three entries are
+  // the unrecorded allocation, the stale baseline entry and an unresolved subscription, so its default run is the report
+  // this suite reads. Its falsifier is tools/check-stardew-tick-handler-allocation.test.mjs: a `new List` in a registered
+  // handler is `tick_handler_allocates`, recording it is clean, deleting the record is the same red, a locally declared
+  // handler is resolved from its registration rather than its name, a `-=` subscription adds no member, text
+  // concatenated in a loop is named while the same `+` on numbers is not, and a tree registering no handler is blocked.
+  "check-stardew-tick-handler-allocation.mjs",
+  // Prints `files examined N · cards C · examples M · covered K · claim fields F · behaviours B · findings D`, one line
+  // per behaviour with its example count and the file the permitting sentence was found in, then
+  // `{"gate":"persona_example_behaviour_claim/v1","status","examined":M,...,"checks":[...]}`, so its default run is
+  // the report read here and `examined` is the example turns it parsed - a run that could not measure prints
+  // `examined 0` with its reason instead of a pass. Its falsifier is
+  // tools/check-persona-example-behaviours.test.mjs: at 6107a8dd - the card that shipped before the permission was
+  // written - the examples demonstrating `这泥巴比水泥还黏靴子` and `震得我手腕生疼` are
+  // `example_demonstrates_a_behaviour_no_claim_permits` against the sentence that did not exist yet, and
+  // `comforts_with_her_own_scar` is `behaviour_claim_unmatched`; deleting that clause from a copy of the shipped presets
+  // reds all five anchored demonstrations and writing the bytes back is green; a `{{char}}` turn appended to a copied
+  // `mes_example` is `example_unclassified` because the population is derived from the card rather than listed; a row
+  // with no shipped sample and no surviving sentence is `behaviour_claim_stale`; and a card with no example turn, an
+  // empty vocabulary or an empty corpus is blocked (exit 2) rather than green.
+  "check-persona-example-behaviours.mjs",
+  // Prints `{"gate":"cross_language_value_reads/v1","status","population":<cross-language source sites>,"values",
+  // "checks":[the value finding, the baseline staleness]}`, so its default run is the report read here and `population`
+  // is the sites it judged rather than the files it opened. Its falsifiers are the two `red-proof:` markers in the gate's
+  // own file, both pointing at tools/check-cross-language-value-reads.test.mjs: `history` - the commit before `e34023f2`
+  // reads `host/src/fact-brief.ts` in `SweepTargetRefusalNamingTests.cs` and the gate names
+  // `value_read_from_another_languages_source:SweepTargetRefusalNamingTests.cs:evidence`, while the same file at HEAD
+  // reads `host/src/model-field-budget.published.json` and leaves the population - and `inject` - a baselined site whose
+  // pattern changed is `value_read_baseline_stale` naming the entry, while the unrecorded site of the same value stays a
+  // `value_read_from_another_languages_source` finding.
+  "check-cross-language-value-reads.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -619,7 +737,7 @@ function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_
  *
  * `population` is the report judged by `tools/lib/assert-non-vacuous.mjs`, the ONE rule for a gate that measured
  * nothing: a gate whose report states how many objects it examined has that number read here, so `passed` beside a
- * zero is not accepted as a measurement. The judge is shared with `tools/check-ci-coverage.mjs` rather than restated,
+ * zero is not accepted as a measurement. The judge is shared with `gates/meta/check-ci-coverage.mjs` rather than restated,
  * and a gate that already handles its empty population keeps its own answer - a stated `allowEmpty` reason stays
  * `not_measured`, and a report that names no population at all stays unjudged.
  */
@@ -661,7 +779,7 @@ function describeRun(result) {
 
 /**
  * The sixteen `tools/audit-*.mjs` gates half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s
- * gate-file rule became `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so the 17
+ * gate-file rule became `(check|audit)-*.mjs` - the rule `gates/meta/check-prelive-gate-registry.mjs` already used, so the 17
  * `audit-*.mjs` gates that were in nobody's census became members of this one. Each prints what it found as lines, not as
  * the `{gate, checks[]}` report `checkGateFalsifiers` reads, so each is declared with one reason rather than run.
  * `audit-stardew-receipt-transition-fields.mjs` is the exception and lives in `GATES_WITH_FALSIFIER`: its default run
@@ -688,7 +806,7 @@ const AUDIT_WITHOUT_SELF_REPORT = Object.freeze([
 const AUDIT_WITHOUT_SELF_REPORT_REASON =
   "an audit: its default run prints what it found as lines rather than a `{gate, checks[]}` self-verification report, " +
   "so this suite does not execute it; its falsifier is the `red-proof:` marker the gate's own file carries, which " +
-  "tools/audit-gate-red-proofs.mjs reads and counts as proven (and fails on when it is unreadable)";
+  "gates/meta/audit-gate-red-proofs.mjs reads and counts as proven (and fails on when it is unreadable)";
 
 /**
  * Gates that do NOT print a self-verification report in their default run. Each names why; a gate whose falsifier
@@ -705,7 +823,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-ci-coverage.mjs",
     reason:
       "compares two inventories (gate scripts vs workflow invocation). Its falsifier exists - " +
-      "tools/check-ci-coverage.test.mjs, 21 cases that drive real subprocess gates in a temporary workspace and " +
+      "gates/meta/check-ci-coverage.test.mjs, 21 cases that drive real subprocess gates in a temporary workspace and " +
       "carry four red-proof markers - so the earlier 'needs synthetic inventories, real work not done yet' reason " +
       "had stopped being true and was replaced by this one rather than kept as a comfortable excuse",
   },
@@ -757,7 +875,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-workflow-expressions.mjs",
     reason:
       "reads every workflow's `${{ }}` expressions against the contexts GitHub allows in that position; its " +
-      "falsifier is tools/check-workflow-expressions.test.mjs, whose case 'a key re-exporting itself through " +
+      "falsifier is gates/meta/check-workflow-expressions.test.mjs, whose case 'a key re-exporting itself through " +
       "the env context is blocking, because it can only be empty' plants the always-empty shape and requires " +
       "it to be reported, alongside a clean workflow that must report nothing - so neither the blocking nor " +
       "the silent branch is untested",
@@ -766,7 +884,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-ci-dead-conditions.mjs",
     reason:
       "reads every workflow's `if:` expressions against every writer of the variables they name; its falsifier is " +
-      "tools/check-ci-dead-conditions.test.mjs, which plants a `if: env.NEVER_SET != ''` in a throwaway workflow and " +
+      "gates/meta/check-ci-dead-conditions.test.mjs, which plants a `if: env.NEVER_SET != ''` in a throwaway workflow and " +
       "then proves the five sanctioned writer shapes silence it",
   },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
@@ -781,12 +899,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-action-surface-parity.mjs",
     reason:
-      "static source gate: the catalog crossed with the six surfaces that must carry each action, read from each " +
-      "surface's own declaration - no install, no build, no run. Its default run prints the population line and one " +
-      "line per finding rather than a JSON report, so this suite reads its own falsifier instead: " +
-      "tools/check-action-surface-parity.test.mjs replays two real commits (pre-0d4ce1b2 and pre-8c53105e) out of " +
-      "this repository into a copy under the OS temp directory, and injects a dropped argument, a dropped wire key, a " +
-      "dropped Mod arm, an extra grammar skip, an unenumerable `toArgs` and an empty tree",
+      "static source gate: the catalog crossed with the six argument surfaces that must carry each action, plus the " +
+      "Host's own action tables (adapters, tool names, descriptor-derived, expression-only) crossed with the same " +
+      "catalog - each read from its own declaration, no install, no build, no run. Its default run prints the " +
+      "population line and one line per finding rather than a JSON report, so this suite reads its own falsifier " +
+      "instead: tools/check-action-surface-parity.test.mjs replays two real commits (pre-0d4ce1b2 and pre-8c53105e) " +
+      "out of this repository into a copy under the OS temp directory, and injects a dropped argument, a dropped wire " +
+      "key, a dropped Mod arm, an extra grammar skip, an unenumerable `toArgs`, an empty tree, and a Host-published " +
+      "action id the Mod never declared in each of the three tables that names one",
   },
   {
     gate: "check-live-run-isolation.mjs",
@@ -861,7 +981,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-spec-reachability.mjs",
     reason:
-      "static wiring gate; its falsifier (tools/check-spec-reachability.test.mjs) drives a synthetic checkout through a\n" +
+      "static wiring gate; its falsifier (gates/meta/check-spec-reachability.test.mjs) drives a synthetic checkout through a\n" +
       "       suite no reachable command names, a spec the config's testIgnore excludes, a deleted mounted step and a missing\n" +
       "       config, and requires each to be named",
   },
@@ -996,7 +1116,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-prelive-gate-registry.mjs",
     reason:
-      "the register itself; its falsifier is tools/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
+      "the register itself; its falsifier is gates/meta/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
       "stale exemption, a dangling runsIn and a wired-but-absent gate and asserts each is named by file, and which " +
       "also builds a throwaway repository whose worktree package.json has lost a script its commit declares, so a " +
       "script only HEAD has is not reported as unknown (measured 2026-11-09: exempt_runs_in_unknown_script on a gate " +
@@ -1019,6 +1139,18 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "drives three analyzer CLIs over the decompiled tree; its falsifier is " +
       "tools/check-stardew-observation-gap.test.mjs, which forces the skip, the failing step, a chain that exits 0 " +
       "without the observation summary, and asserts the --fail-on-ungranted arming itself",
+  },
+  {
+    gate: "check-stardew-instance-property-coverage.mjs",
+    reason:
+      "its falsifier is tools/check-stardew-observation-gap.test.mjs too, which drives the verdict's own judges against " +
+      "the real protocol/bridge-v1.schema.json and the real Mod sources: a published verdict that holds passes the wire, " +
+      "the Mod record and the builder; the same-spelling coincidence (`cropTargets.isRaised` is filled from the crop DATA, " +
+      "so `Crop.raisedSeeds` has no witness) is red naming what the builder does pass; a field the row does not carry is " +
+      "red with the row's fields named; a field on another entity's row is red; an absence expires when a row carries the " +
+      "field or the engine stops declaring the property; a `not_measured` verdict names an instance case, from run data " +
+      "(`the Furniture at (6,6)`) or from the engine's closed values; and a zero population is blocked rather than green. " +
+      "Its default run prints the population line, one line per finding and a `{gate, population, checks[]}` report",
   },
   {
     gate: "check-stardew-crop-row-derivation.mjs",
@@ -1074,24 +1206,161 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "a tests root holding no spec at all blocked rather than green",
   },
   // The sixteen audits half B began scanning on 2026-11-13, when `tools/lib/gate-population.mjs`'s gate-file rule became
-  // `(check|audit)-*.mjs` - the rule `tools/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
+  // `(check|audit)-*.mjs` - the rule `gates/meta/check-prelive-gate-registry.mjs` already used, so 17 `tools/audit-*.mjs`
   // gates that were in nobody's census became members of this one. Each prints what it found as lines, not as a
   // `{gate, checks[]}` report this suite can read, so each is declared with the same reason rather than run; the
-  // falsifier is the `red-proof:` marker in the gate's own file, which `tools/audit-gate-red-proofs.mjs` reads and
+  // falsifier is the `red-proof:` marker in the gate's own file, which `gates/meta/audit-gate-red-proofs.mjs` reads and
   // reports as proven. `tools/audit-stardew-receipt-transition-fields.mjs` is the exception and lives in
   // `GATES_WITH_FALSIFIER` instead: its default run prints `{gate, population: 443, status}`.
+  {
+    gate: "check-rederivation-parity.mjs",
+    reason:
+      "static gate over a declared registry and the C#/TS it points at: no install, no build, no run. Its default run " +
+      "prints the population line, one line per finding and the verdict, rather than the `{gate, checks[]}` report this " +
+      "suite parses, so its falsifier is tools/check-rederivation-parity.test.mjs (run by test:rederivation-parity, in " +
+      "the derived corpus): the footprint entry's `parityTest` deleted names " +
+      "`rederivation_without_parity:Tool.tilesAffected:host/src/body-program-packing.ts`, a parity test whose CALL is " +
+      "renamed while the prose keeps the member name is still red, a product file cannot be its own parity test, and the " +
+      "pre-fix reader replayed from e882b765 is named at `integrations/stardew/FishingCatchableQuery.cs:190` while the " +
+      "same file with a per-row argument is clean. The gate is red at HEAD on three declared entries with no parity " +
+      "test; the `red-proof:` markers in its own file are what this suite audits it by",
+  },
+  // The nine gates nothing classified when the meta domain moved (measured 2026-11-15, at `819c44e7`): the census
+  // printed `unlisted 9` and this suite's own `census.unlisted` assertion was red, so "a gate in neither table" was a
+  // fact the ledger published without anyone owning it. Each was RUN before it was written down here, and each prints
+  // its reading as lines - or as a `{gate, status, examined}` summary with no per-rule `checks[]` - so this suite can
+  // read no verdict off it. Two of them are the `meta` gates the move filed in `gates/meta/`.
+  {
+    gate: "check-assertion-hooks.mjs",
+    reason:
+      "prints `hooks examined N · test files N · findings N` and one line per finding, not a `{gate, checks[]}` report; " +
+      "its falsifier is tools/check-assertion-hooks.test.mjs, which drives throwaway directories through a hook that " +
+      "imports, a dynamic import, one that awaits without saying so, one taking two parameters or none, one answering a " +
+      "non-list, one throwing on a world it cannot know, a second exported function, a hook with no declared clause, and a " +
+      "directory with no hook in it (blocked, never green)",
+  },
+  {
+    gate: "check-baseline-paths.mjs",
+    reason:
+      "prints `baselines examined 25 · path references 366 · dangling 0`, so the reading is a census and not a report; " +
+      "its falsifier is tools/check-baseline-paths.test.mjs: the commit that retired the runners replayed from its own " +
+      "index, a fabricated path in a baseline named as exactly one finding, a file on disk git does not track, and a root " +
+      "with no baseline or an unparseable one blocked rather than green",
+  },
+  {
+    gate: "check-native-local-runner-scaffold.mjs",
+    reason:
+      "prints `runners examined 122 · on the template 12 · hand-written 110 · baselined 110`, so the reading is a census; " +
+      "its falsifier is tools/check-native-local-runner-scaffold.test.mjs: the pre-migration sweep-scythe runner replayed, " +
+      "a runner that imports the template and still starts its own process, a definition the import never provides, a " +
+      "deleted runner that must leave the baseline, an entry with no reason, two entries for one runner, and an empty " +
+      "population blocked rather than green",
+  },
+  {
+    gate: "check-stardew-lifecycle-pins.mjs",
+    reason:
+      "prints a `{gate, status, examined, pins, declared, unrecorded}` summary but no per-rule `checks[]`, so a `passed` " +
+      "in it names no rule this suite can read; its falsifier is tools/check-stardew-lifecycle-pins.test.mjs: a literal " +
+      "pin of one action's rung, the deriving form that pin becomes, a pin three lines above a declaration, an unreasoned " +
+      "declaration, a pin the reader cannot attribute, the ratchet in both directions, a baseline keyed by content so a " +
+      "pin moved down a file is the same pin, and a run over no test file blocked rather than green",
+  },
+  {
+    gate: "check-stardew-live-runner-coverage.mjs",
+    reason:
+      "prints `actions examined 103 · with a live gate 101 · runner 92 · contract 9 · without 2 · read-only excluded 3` " +
+      "and the two uncovered actions by name, so its verdict is lines and not a `{gate, checks[]}` report; its falsifier " +
+      "is tools/check-stardew-live-runner-coverage.test.mjs: a catalog action with no route, an action deleted from the " +
+      "resolver's tables, a resolved runner the index does not carry, the pre-fcc2c1b7 sweep_scythe reading replayed " +
+      "from history, an unreadable catalog and a shrunken population blocked",
+  },
+  {
+    gate: "check-stardew-shop-purchase-pays-for-goods.mjs",
+    reason:
+      "prints `purchases examined 5 · spent without goods 0 · judged 5 · unjudged 0` and one line per loss; its " +
+      "falsifier is tools/check-stardew-shop-purchase-pays-for-goods.test.mjs: the loss named with its purse and " +
+      "scenario, a tool upgrade whose goods are the farmer's field, a `tool_upgraded` the Mod does not spell, a purchase " +
+      "that paid nothing, a receipt that states no purse (unjudged and printed, never silently passed), a renamed money " +
+      "field as a hole in the population, and an absent corpus blocked",
+  },
+  {
+    gate: "check-viewport-population.mjs",
+    reason:
+      "prints `{gate, status, examined, examinedFiles, findings[]}` with no per-rule `checks[]`, and a line per spec cell " +
+      "it read; its falsifier is tools/check-viewport-population.test.mjs: a spec spelling a partial list of the declared " +
+      "sizes, a newly declared cell that a hand-written spec owes, a config leaving the inherited cell to the device, an " +
+      "exemption that matches no site, and a reading over no spec blocked rather than passed",
+  },
+  {
+    gate: "check-gate-premises.mjs",
+    reason:
+      "prints `gate_premises: gates examined N · inputs checked N · missing N` and one line per finding, so its reading " +
+      "is lines; its falsifier is gates/meta/check-gate-premises.test.mjs: the deletion commit's own gate text " +
+      "replayed from git (both gates named), a declared path that is not on disk, a gate that declares no input, a gate " +
+      "that is gone, a glob matching nothing, and an empty registry blocked",
+  },
+  {
+    gate: "check-red-proof-markers.mjs",
+    reason:
+      "prints `red_proof_markers: examined 121 file(s) · corrupted 0 marker line(s) …` and one line per offending marker, " +
+      "so its reading is a census; its falsifier is gates/meta/check-red-proof-markers.test.mjs: a marker position " +
+      "reported where a multiplication is not, the population as every file carrying either glyph, a baseline entry that " +
+      "excuses its own line, a repaired entry that is stale, the same tree read from its commit still firing, and a tree " +
+      "holding neither glyph blocked rather than passed",
+  },
+  // Added 2026-11-16. Both print their reading as lines - a census, a list and a verdict - rather than the
+  // `{gate, checks[]}` report this suite parses, so neither can be run here; each names its own falsifier instead of
+  // sharing one reason, because the reason is the only thing that says what the gate catches.
+  {
+    gate: "check-refusal-action-names.mjs",
+    reason:
+      "prints `refusal action names: N files · codes examined M · name an action A · exists E · missing K · unmeasured U` " +
+      "and one line per refusal, so its reading is lines and not a `{gate, checks[]}` report; its falsifier is " +
+      "tools/check-refusal-action-names.test.mjs: the pre-fix blobs of 9c539da8 are red and both missing names resolve to " +
+      "the one action the catalog renamed (`advance_day` where the catalog says `sleep`), a hold kind spelled like an " +
+      "action reds the gate by name, an advice field naming a non-action reds it, the hold-kind vocabulary is read from " +
+      "the Mod's own `BodyOwnedBy*` declarations rather than a list in the test, and a scope that cannot be measured " +
+      "exits 2 instead of passing over nothing",
+  },
+  {
+    gate: "audit-stardew-clearing-vocabulary.mjs",
+    reason:
+      "prints `stardew_clearing_vocabulary: kinds published N · cleared by >=1 action M · unclearable K`, the cleared " +
+      "and unclearable vocabularies, and one line per finding, so its reading is lines and not a `{gate, checks[]}` " +
+      "report; its falsifier is tools/audit-stardew-clearing-vocabulary.test.mjs: a published word no declaration answers " +
+      "is `published_kind_no_action_clears` (the `object` that `round58` refused 11 times), a `Clears` entry for a word " +
+      "the classifier never returns is `cleared_kind_not_published`, a declaration about a word nothing carries is " +
+      "`unclearable_kind_not_published`, one word declared both ways is `declared_kind_both_ways`, `not clearable` with " +
+      "no reason is `unclearable_kind_without_reason`, a vocabulary and a classifier disagreeing are reported in both " +
+      "directions, a word the classifier starts publishing tomorrow is red until a declaration answers it, and a scan " +
+      "that read no word is blocked rather than green. Its own red proof is the `red-proof: history` marker in the gate " +
+      "file: the same code reading `0dce992a` named `object`, `resource_clump` and `terrain` and exited 1",
+  },
+  {
+    gate: "check-stardew-task-gap-reasons.mjs",
+    reason:
+      "prints `gaps examined N · mechanical M · prose P · expired E` and `claims checked N · prose P · blocked B · " +
+      "findings F` plus one line per expired claim, so its reading is lines and not a `{gate, checks[]}` report; its " +
+      "falsifier suite is tools/check-stardew-task-gap-reasons.test.mjs, run by `test:stardew-task-gap-reasons`, and its " +
+      "two `red-proof:` markers are the falsifiers: `history` - the real tree on 2026-11-16 printed `gaps examined 10 · " +
+      "expired 1` and `gap_reason_no_longer_holds:mine_ladder_to_depth:action_use_mine_ladder_lifecycle`, exit 1, " +
+      "because the entry cited `FarmhandActionLifecycle.Experimental` for an action the surface had promoted and the line " +
+      "it cited had moved on - and `inject` - an `absent_evidence_field` claim naming a field the action's receipt " +
+      "carries, and an `action_lifecycle` claim naming a lifecycle the catalog does not declare, both " +
+      "`gap_reason_no_longer_holds:<task>:<claim>` naming the task and the measured value",
+  },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
 
-/** Every gate file this suite enumerates: the `tools/check-*.mjs` members the index carries, by file name. */
-export function harnessGateNames(toolsDir) {
-  return gateFileNames(indexedGatePopulation({ root: dirname(toolsDir) }));
+/** Every gate file this suite enumerates: the `check-*.mjs` / `audit-*.mjs` members the index carries, from the root. */
+export function harnessGateNames(root) {
+  return gateFileNames(indexedGatePopulation({ root }));
 }
 
 /**
  * The red-proof ledger, read ONCE per run: what the other half of this population has declared about itself.
  *
- * `tools/audit-gate-red-proofs.mjs` owns that question - has this gate been seen red on a real injected violation - and
+ * `gates/meta/audit-gate-red-proofs.mjs` owns that question - has this gate been seen red on a real injected violation - and
  * answers it with a proof marker or a recorded gap. This suite does not restate the reading: it consumes it, so both
  * tools publish the same `gates examined N` and `with a red proof M`, and `undeclared` here is exactly the set the audit
  * reports as a new gap (no proof, and no baseline record saying one is owed).
@@ -1160,7 +1429,7 @@ export function checkGateFalsifiers({
   undeclared = [],
   staleDeclarations = [],
   externalWithoutRunner = [],
-  toolsDir,
+  root,
   run = runGateDefault,
   // The gates whose own report says it could not measure, collected for the census line rather than for a verdict: a
   // gate whose prerequisite is absent is `not_measured`, which is neither a finding here nor a pass anywhere.
@@ -1168,18 +1437,34 @@ export function checkGateFalsifiers({
 } = {}) {
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
   const withSet = new Set(withFalsifier);
+  /**
+   * The name a DECLARATION is filed under: the gate file's own name, with no directory.
+   *
+   * `gateNames` are paths from the repository root, because a gate may live in `tools/` or in a domain directory
+   * (`gates/meta/check-diff.mjs`), while the declaration table is keyed by name because a gate keeps its name when its
+   * domain files it in a directory.
+   */
+  const declaredName = declaredNameOf;
   const findings = [];
   if (gateNames.length === 0)
-    findings.push(finding("gate_population_empty", "no tools/check-*.mjs gate was enumerated, so no report was read"));
+    findings.push(finding("gate_population_empty", "no gate file was enumerated, so no report was read"));
+  for (const [key, paths] of declarationKeyCollisions(gateNames))
+    findings.push(
+      finding(
+        "gate_key_collision",
+        `${key}: ${paths.join(" and ")} derive one classification key, so one ledger row judges both and ` +
+          "neither is named",
+      ),
+    );
   for (const name of gateNames) {
-    const selfReports = withSet.has(name);
-    const declaredExcept = declared.has(name);
+    const selfReports = withSet.has(declaredName(name));
+    const declaredExcept = declared.has(declaredName(name));
     if (selfReports && declaredExcept) {
       findings.push(finding("gate_classified_twice", name));
       continue;
     }
     if (selfReports) {
-      const result = run(join(toolsDir, name));
+      const result = run(join(root, name));
       const report = selfVerificationReport(result.stdout);
       if (report === null) {
         findings.push(
@@ -1196,7 +1481,17 @@ export function checkGateFalsifiers({
         notMeasured.push({ gate: name, detail: report.population.detail });
       continue;
     }
-    if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));
+    // The finding names the row that is missing, not just the file: a gate lands in the population the moment it is
+    // committed, and "in neither table" is only actionable next to which table answers what.
+    if (!declaredExcept)
+      findings.push(
+        finding(
+          "gate_without_falsifier",
+          `${name}: a gate in the population that neither table classifies, so nothing here reads it - add it to ` +
+            "`GATES_WITH_FALSIFIER` if its own default run prints a `{gate, checks[]}` report, or, if it prints its " +
+            "reading as lines, to `GATES_WITHOUT_FALSIFIER` with the falsifier it names",
+        ),
+      );
   }
   for (const entry of undeclared) findings.push(finding("gate_undeclared", `${entry.gate}: ${entry.detail}`));
   for (const entry of staleDeclarations)
@@ -1297,7 +1592,7 @@ export function describeGateFalsifierCensus(census) {
       untrackedNotCounted: census.untrackedNotCounted,
     }),
     `judged here ${census.judged} (with a self-report ${census.withReport} · declared without a report ${census.without}) · ` +
-      `excluded ${census.excluded.length} (a package.json gate script whose entry is not a tools/check-*.mjs gate file, ` +
+      `excluded ${census.excluded.length} (a package.json gate script whose entry is not a gate file, ` +
       `so this suite has no default run to read): ` +
       `${census.excluded.length - census.excludedUndeclared.length} proven, external or recorded in the red-proof ledger` +
       (census.excludedUndeclared.length === 0
@@ -1330,18 +1625,21 @@ export function checkGateRegistry({
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
 } = {}) {
-  const present = new Set(gateNames);
+  const present = new Set(gateNames.map(declaredNameOf));
   const findings = [];
   for (const name of withFalsifier) {
     if (!present.has(name))
       findings.push(
-        finding("falsifier_entry_stale", `${name}: declared to print a report, but no such gate is in tools/`),
+        finding("falsifier_entry_stale", `${name}: declared to print a report, but no such gate file is in the tree`),
       );
   }
   for (const entry of withoutFalsifier) {
     if (!present.has(entry.gate))
       findings.push(
-        finding("falsifier_entry_stale", `${entry.gate}: declared without a report, but no such gate is in tools/`),
+        finding(
+          "falsifier_entry_stale",
+          `${entry.gate}: declared without a report, but no such gate file is in the tree`,
+        ),
       );
   }
   return findings;
@@ -1387,7 +1685,7 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
   const gateFalsifierFindings = [
     ...checkGateFalsifiers({
       gateNames,
-      toolsDir,
+      root: repoRoot,
       zeroPopulation: ledger.zeroPopulationPass,
       undeclared: ledger.undeclared,
       staleDeclarations: ledger.stale,

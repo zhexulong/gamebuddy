@@ -60,6 +60,14 @@
  *   `examined 0 receipt frames in 1 artifact(s), so no terminal was compared`, exit 1 - the empty reading
  *   this gate used to skip green (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-execution-terminal-uniqueness",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

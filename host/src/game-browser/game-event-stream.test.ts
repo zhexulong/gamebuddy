@@ -8,7 +8,7 @@ const attachmentPatch = (generation: number) =>
     game: {
       attachment: { status: "attached" as const, generation },
       connectionStatus: "connected_idle" as const,
-      capabilitySummary: { available: true, count: 7 },
+      capabilitySummary: { status: "published" as const, count: 7 },
     },
   }) satisfies Parameters<ReturnType<typeof createGameEventStream>["publish"]>[0];
 

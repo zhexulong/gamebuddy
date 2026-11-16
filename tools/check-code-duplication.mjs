@@ -79,10 +79,137 @@
  * `--write-baseline` stays refused, which is why the ratchet reads `new 5` rather than `new 0` - the baseline is not
  * allowed to record them, and recording them would be recording the residue of a refactor as debt.
  *
+ * THE UNIT: THE FLOOR OF THE LANGUAGE IS NOT DEBT, AND COUNTING IT WAS THE DEFECT. Measured 2026-11-15 at `0dce992a`:
+ * `clone groups 291 · duplication 286 · new 47 · grown 4` sat red for hours and every lane answered it with "predates
+ * this lane", which the gate accepted because the finding named no owner. The unit was wrong underneath that: the
+ * group that grew was `import path from "node:path"` at 4 sites, and it grew because a lane ADDED A GATE FILE that
+ * imports `node:path` - so the metric counted correct engineering as debt, and 286 "duplications" was not 286
+ * problems. The same reading held `reasonCode: String(error instanceof Error ? ...)` (4 sites) and `evidence,` (4
+ * sites), both the shape every runner's terminal is written in.
+ *
+ * So the population is SPLIT, and only one half can fail. The classification is derived from the matched text itself -
+ * never from a list of paths - by one question: does the match contain a BLOCK OF STATEMENTS?
+ *
+ *   - SYNTAX FLOOR - no. A module preamble (`import ... from`), a parameter or property list, a literal's members,
+ *     brace and paren closers, one single-line statement, an error shaped by one line. Every file of a kind carries
+ *     this text because the language gives it no other spelling. Counted, printed, never a finding, never recorded.
+ *   - STRUCTURAL - yes. A function body, a handler body, a multi-statement block: text that a reader can fold behind
+ *     one seam and that a third copy of is real debt. This is the population the ratchet governs.
+ *   - FACADE - the existing declaration reading, above, which still wins: a catalogue envelope is neither of these.
+ *
+ * `hasStatementBlock` is the whole rule: literals and comments are blanked (a brace inside a message is not a block),
+ * then every `;` inside a brace marks that brace as a statement block when the text since the previous separator does
+ * work rather than naming a member - `return x;` and `const y = f();` mark it, `messageId: string;` and `int slot,`
+ * do not. A brace still open at the window's end counts too: jscpd's window ends where the match ends, and a window
+ * that opens a body and is cut off has still matched that body's statements.
+ *
+ * Measured on this tree at `0dce992a` over the 291 counted groups: syntax floor 131 groups / 578 sites, structural
+ * 155 groups / 714 sites, facade 5. The 4 `clone_group_grew` findings and 30 of the 47 `new` ones were floor; the
+ * structural residue is the runner family the debt line already names plus the guard-first controller preambles the
+ * paragraph above already owes.
+ *
+ * ATTRIBUTION, so "predates this lane" is a hash a reader can check. Every finding names the last commit that touched
+ * the file holding its most recent site (`git log -1 --format=... -- <file>`, cached per file), and `--residuals` names
+ * it for every structural group the ratchet carries. It is a FILE-LEVEL reading and says so: `git blame` on this tree
+ * costs 0.2-0.7s a call, which a gate that runs on every commit cannot pay per site. A file no commit holds reads
+ * `unrecorded`, which is the fact a lane's in-flight work shows and a committed one does not.
+ *
+ * THE CEILING THAT ONLY FALLS IS NOT IN THIS UNIT, AND THE RED IT WOULD HIDE IS NAMED HERE INSTEAD. The split makes most
+ * of the red disappear by classifying it; the structural residue that predates the split is real debt no lane in flight
+ * owns, and this change does NOT record it. So the tree reads `new 33 · grown 3` after `--record-shrinks` and the gate
+ * stays red on exactly those 36 groups, each with the commit behind it - which is the honest reading, and the next unit
+ * is the one that records a ceiling per group and only ever lowers it. Recording them here would have meant a write that
+ * may ADD to a ratchet, which is the power this file spends a section refusing.
+ * THE RESIDUAL AT `38629989`, ENUMERATED: THIRTY-SIX GROUPS, FOUR CAUSES, AND THE OWNER OF EACH. The paragraph above says
+ * the 36 are real and owed; this table says WHICH 36 and who owes each, so the next lane does not re-derive it. It is a
+ * dated snapshot - the live reading is `--residuals`, which recomputes the newest site and its commit on every run - and
+ * the group ids are `groupHash` values a reader can match against `--residuals` output byte for byte. Sites and tokens are
+ * this run's; the commit is the one that last touched the file holding the group's most recent site.
+ *
+ *   C  controller partials (`integrations/stardew/farmhandexecutioncontroller.*.cs`) - 6 groups. One cause: the per-action
+ *      method body re-spells the admission preamble and its own postcondition verdict. The fix is the guard-first seam the
+ *      header already owes, in partials the receipt-store extraction owns; no lane outside that one may edit them.
+ *   R  the native-local runner family (`tools/run-stardew-native-local-player-*-smoke.mjs`) - 22 groups. One cause: each
+ *      runner still hand-writes the tail the L1 extraction is retiring (evidence parsing, the fixture-config refusal, the
+ *      `if (import.meta.main)` block). The owning primitive is `tools/lib/native-local-runner-*`, which another lane owns.
+ *   T  `tools/` itself - 7 groups, and these are this file's own neighbourhood: the `fail` helper five gates re-spell, a
+ *      `readSource` helper, the argv-root preamble, the C# declaration-body locator, the migrator's three phases and the
+ *      JSONL reader the A/B live runner and the cost reader both carry. Extractable here; see the declarations file.
+ *   H  `host/src/` - 1 group. `};` closing the same three-store shape; the Host lane owns it.
+ *
+ *   0804dfdde884   4 sites  40 tokens  integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:69  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   18082b2d8aae   3 sites 109 tokens  integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:685  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   5745550f7028   3 sites  79 tokens  integrations/stardew/farmhandexecutioncontroller.modalactions.cs:71  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   72fc77528444   5 sites 128 tokens  integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:685  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   b0f8d2962c80   5 sites  48 tokens  integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:996  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   ebd20901d6dd   3 sites  94 tokens  integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:685  a3096aca 2026-11-15  refactor(stardew): 3,869 comment lines the code a...
+ *   0ba836ed5f28   6 sites  72 tokens  tools/run-stardew-native-local-player-fertilize-tile-smoke.mjs:311  fc303394 2026-11-15  L1 batch 3: the tile predicates and the slot rule...
+ *   26572fedd8b4   6 sites  43 tokens  tools/run-stardew-native-local-player-fish-here-smoke.mjs:579  33764015 2026-11-15  L1 batch 2: the evidence parser, deleted from the...
+ *   2ed6e2789074   3 sites 156 tokens  tools/run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs:618  fc303394 2026-11-15  L1 batch 3: the tile predicates and the slot rule...
+ *   36fc0ca1faad   5 sites  44 tokens  tools/run-stardew-native-local-player-chest-retrieve-smoke.mjs:119  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   41b6a9a0ee14  12 sites  52 tokens  tools/run-stardew-native-local-player-break-container-source-smoke.mjs:316  c5e79ad1 2026-11-15  L1 batch 1: the slab the template was extracted f...
+ *   4979a64a0bf7  11 sites  42 tokens  tools/run-stardew-native-local-player-advance-day-smoke.mjs:115  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   51337c58ae5e   4 sites  53 tokens  tools/run-stardew-native-local-player-chop-tree-source-smoke.mjs:33  f633e28f 2026-11-15  refactor(stardew): six more runners stop spelling...
+ *   54032cab30fd   4 sites  77 tokens  tools/run-stardew-native-local-player-fertilize-tile-smoke.mjs:125  fc303394 2026-11-15  L1 batch 3: the tile predicates and the slot rule...  [GREW]
+ *   54f5045b81ca   3 sites  86 tokens  tools/run-stardew-native-local-player-claim-mail-attachment-smoke.mjs:202  33764015 2026-11-15  L1 batch 2: the evidence parser, deleted from the...
+ *   5e82f92b30fd  11 sites  50 tokens  tools/run-stardew-native-local-player-break-container-source-smoke.mjs:43  c5e79ad1 2026-11-15  L1 batch 1: the slab the template was extracted f...
+ *   667e632dbd8e   5 sites 168 tokens  tools/run-stardew-native-local-player-chop-stump-smoke.mjs:84  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   866bce1db3c2   3 sites 102 tokens  tools/run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs:357  f633e28f 2026-11-15  refactor(stardew): six more runners stop spelling...
+ *   8d7cbc002d5b   3 sites  42 tokens  tools/run-stardew-native-local-player-break-resource-clump-smoke.mjs:243  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   98fca398edd9   3 sites  73 tokens  tools/run-stardew-native-local-player-wia-answer-question-smoke.mjs:52  f633e28f 2026-11-15  refactor(stardew): six more runners stop spelling...
+ *   a573ecdd12e1  79 sites  49 tokens  tools/run-stardew-native-local-player-advance-day-smoke.mjs:122  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   abb765138e86   3 sites  69 tokens  tools/run-stardew-native-local-player-enter-mine-smoke.mjs:72  9942bf38 2026-11-14  Revert "contracts(stardew): three runners retire ...
+ *   b8f3ebe8b8c8   8 sites  83 tokens  tools/run-stardew-native-local-player-enter-exit-smoke.mjs:610  0b875a3f 2026-11-15  refactor(stardew): eight runners stop spelling th...
+ *   bd38a6981159   5 sites  43 tokens  tools/run-stardew-native-local-player-chop-tree-source-smoke.mjs:39  f633e28f 2026-11-15  refactor(stardew): six more runners stop spelling...
+ *   c865fd79ddcb   4 sites  67 tokens  tools/run-stardew-native-local-player-claim-mail-attachment-smoke.mjs:155  33764015 2026-11-15  L1 batch 2: the evidence parser, deleted from the...  [GREW]
+ *   dbfd66005ada   3 sites  43 tokens  tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs:348  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   f5abe50285a4   4 sites  47 tokens  tools/run-stardew-native-local-player-clear-cask-smoke.mjs:108  8386f1ac 2026-11-15  L1 batch 4: the aliases - `parseStrictEvidence` h...
+ *   fa794682dc27   3 sites 791 tokens  tools/run-stardew-native-local-player-wia-answer-question-smoke.mjs:183  f633e28f 2026-11-15  refactor(stardew): six more runners stop spelling...
+ *   0d289c187367   3 sites  88 tokens  tools/audit-stardew-clearing-vocabulary.mjs:100  1228653d 2026-11-15  chore(tools): the clearing-vocabulary gate satisf...
+ *   302a3e0fd799   5 sites  51 tokens  tools/check-browser-state-projection-fields.mjs:370  cb649f6d 2026-11-15  feat(game-browser): the capability summary is the...  [GREW]
+ *   37d30948c28c   5 sites  40 tokens  tools/check-engine-affordance-census.mjs:252  302af903 2026-11-14  feat(tools): 145 gate files declare their domain,...
+ *   6f12b0c52e35   3 sites  48 tokens  tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs:1313  b9064533 2026-11-15  the night watch wakes on the world's statements, ...
+ *   8048817a816d   3 sites  44 tokens  tools/check-browser-state-projection-fields.mjs:108  cb649f6d 2026-11-15  feat(game-browser): the capability summary is the...
+ *   b4a64ebbcbf0   3 sites  46 tokens  tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs:1520  b9064533 2026-11-15  the night watch wakes on the world's statements, ...
+ *   d34e7372ee12   3 sites  73 tokens  tools/migrate-runner-to-template.mjs:147  0b875a3f 2026-11-15  refactor(stardew): eight runners stop spelling th...
+ *   6b4320dbe568   3 sites  62 tokens  host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts:1340  9e209214 2026-11-15  the pump's fact producers are a declared set, and...
+ *
+ * THE DECLARATION DOOR, AND WHY IT IS NOT THE BASELINE WEARING A SECOND NAME. The paragraph above says the residue is
+ * owed and that recording it in the baseline would be banking another lane's refactor as debt. The residue is still
+ * unowned by any READER, though: `new 29` names a hash and a commit and leaves the question "is anyone going to fix
+ * this?" to whoever is holding the tree. So `tools/duplicate-code-declarations.json` records the groups whose fix is
+ * owned by a lane this one may not edit, and it records them with three facts the baseline cannot hold - an OWNER, a
+ * REASON, and an EXPIRY. What it is not:
+ *
+ *   - not a reclassification. A declared group stays STRUCTURAL, stays in `duplication`, stays in its sites total and is
+ *     printed one line per run (`declared:<hash>: ... · <owner> · <reason> :: <first line>`). The census reads
+ *     `duplication 165 (741 sites) · declared 29`, so the door can never hide what walked through it;
+ *   - not a ratchet entry. Nothing writes this file but a hand: `--write-baseline` records the UNDECLARED population and
+ *     says how many declared groups it left out, and `--record-shrinks` does not read it at all. A lane that wants its
+ *     own new duplication accepted has nowhere to put it, because the file is not a write target;
+ *   - not a growth licence. An entry declares a SITE COUNT, and a declared group that gains a site is `clone_group_grew`
+ *     like any other - the one thing a declaration may never do is buy the copy that arrives tomorrow;
+ *   - not permanent. A group that SHRANK, or that left the duplication population (fixed, or now read as the floor or a
+ *     facade), turns its entry into `stale_clone_declaration`, which fails the gate and names the entry to delete. An
+ *     exemption that outlives its cause is the defect this whole family of gates exists for, so the expiry is a finding
+ *     and not a comment.
+ *
+ * The reason is the load-bearing field, and the gate can only check that it is a sentence. An entry that says "historical"
+ * or "predates this lane" is refused by review and by the note in the file itself; what an entry may say is which text
+ * the copies share, which lane owns folding them, and why that lane is not this one. Measured 2026-11-15 at `38629989`:
+ * 29 entries - 6 controller partials the receipt-store extraction holds, 22 native-local runners the L1 extraction holds,
+ * 1 Host store shape - and the 7 `tools/` groups in that same reading are NOT declared, because this lane can extract
+ * them and a declaration there would be a fix it declined to make.
+ *
+ *   6. a group DECLARED in `tools/duplicate-code-declarations.json` at the same site count passes and is printed with its
+ *      owner and reason; one that gained a site is `clone_group_grew`, one that lost a site or left the population is
+ *      `stale_clone_declaration` (THE DECLARATION DOOR, above).
+ *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
- *   1. a DUPLICATION group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site and the
- *      group's first line of code, so the reader recognises the block without opening the report;
+ *   1. a STRUCTURAL group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site, the
+ *      group's first line of code, and the commit that last touched its most recent site, so the reader recognises the
+ *      block and checks the owner without opening the report;
  *   2. a group recorded in `tools/duplicate-code-baseline.json` at the same or a smaller size passes, because that
  *      duplication already existed when the baseline was written;
  *   3. a baselined group that gained a SITE is a finding (`clone_group_grew`), and one that lost one is a finding too
@@ -91,7 +218,10 @@
  *   4. a FACADE group is counted and printed (`facade-only:<hash>: ...`) and is not a finding, because there is no
  *      change a reader could make in response; a baseline entry that records one is `facade_only_clone_baselined`,
  *      which is a different fact from `stale_clone_baseline` and says so - an entry for a group the tree still has,
- *      under a name that no longer claims it is duplication.
+ *      under a name that no longer claims it is duplication;
+ *   5. a SYNTAX FLOOR group is counted and printed in the census with its groups and sites and is not a finding, for
+ *      the same reason; a baseline entry that records one is `syntax_floor_clone_baselined`, and `--record-shrinks`
+ *      deletes it, because the record claims debt the split does not agree is debt.
  *
  * THE TOKEN COUNT IS PUBLISHED, NOT RATCHETED, BECAUSE IT CANNOT HOLD STILL. A group's identity is `groupHash` of
  * `fragment`, which is the FIRST site's source slice from the match's start line to its end line; the `tokens` jscpd
@@ -120,9 +250,42 @@
  * has no index to be outside of, so that reading is `blocked` with `git_index_unreadable:<root>` instead of being
  * widened to whatever is on disk - this gate's own fixtures are `git init`ed for the same reason.
  *
- * THE POPULATION IS PRINTED BOTH WAYS, so neither fact can hide inside the other: `clone groups N · of which
- * facade-only M · duplication K`. K is what the ratchet governs and what `--write-baseline` records; a new or grown
- * duplication group still fails, which is the hard failure this file always had.
+ * THE POPULATION IS PRINTED THREE WAYS, so none of the facts can hide inside another: `clone groups N · of which
+ * facade-only M · syntax-floor A (B sites) · duplication K (L sites)`. K is the structural population the ratchet
+ * governs and what `--write-baseline` records, L is its sites; a new or grown structural group still fails, which is
+ * the hard failure this file always had. A is printed with its site count and decides nothing - a reader can see how
+ * much of the match population the split classified as the floor and disagree with the rule in one place.
+ *
+ * THE DEBT IS PRINTED IN ITS OWN UNIT, because `duplication 289` was read as 289 groups, 289 sites and 289 lines by
+ * three readers of one line, and only one of those readings is right. One line follows the census:
+ *
+ *   debt: <baselined groups> groups · <baselined sites> sites · of which runners <M> groups / <N> sites
+ *
+ * The groups are the duplication groups the baseline records AND the tree still has - the debt the ratchet carries,
+ * which `--record-shrinks` can only lower - and the count beside them is those groups' SITES, which is the unit of the
+ * thing being duplicated: the number falls by one when one copy of a group is deleted, and by that group's whole site
+ * count when it drops below the rule and leaves the population, so a reader can subtract what they removed instead of
+ * guessing what a group weighs. Measured 2026-11-15 at `eaa5f5a6` over the 283 recorded entries:
+ * `250 groups · 1041 sites · of which runners 107 groups / 467 sites` - nearly half of the recorded debt is one family,
+ * the `run-stardew-native-local-*` smoke runners the L1 extraction is already retiring, and the bare `duplication 289`
+ * could not say so. That family is why this line exists: a red number nobody can place in the tree is read as weather.
+ *
+ * WHAT COUNTS AS A RUNNER IS NOT A LIST KEPT HERE. It is `RUNNER_FILE` - the family `check-native-local-runner-scaffold.mjs`
+ * owns, scans and ratchets - tested against a site's basename under `tools/`, so the runner written tomorrow is counted
+ * the moment it exists and a family member renamed out of the rule stops being counted instead of being remembered. A
+ * group is a runner group when ANY of its sites is a runner, because that copy is one of the copies that has to go before
+ * the group can leave the population; the site count beside it is the runner sites alone, so `467 of 1041` is a share of
+ * one unit and not a group count smuggled into a site count.
+ *
+ * A BLOCKED READING HAS NO DEBT, and says so (`debt: not measured · <reason>`) rather than printing `0 groups`, which
+ * would be the same defect this line exists to end: a zero that means "nothing to do" beside a zero that means "nothing
+ * was measured". The line is a REPORT and changes no verdict: `new` and `grown` still fail, `--write-baseline` still
+ * refuses, `--record-shrinks` still only lowers.
+ *
+ * THE CLI TAKES `--root <dir>` so the two writes above can be proved against a throwaway tree by this file's own suite -
+ * the same fixture door `check-cognitive-complexity.mjs` has. It moves where the baseline and `jscpd.json` are read from
+ * and written to, never what the rule is; `jscpd` itself still resolves from THIS file, so a fixture is measured by the
+ * repository's own scanner.
  *
  * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST, AND ITS TWO WRITES HAVE DIFFERENT POWERS. `--write-baseline` may ADD a
  * group - that is how the tree is first written down - but only while the file does not exist or nothing is new or grew,
@@ -132,14 +295,14 @@
  * or raise one, which is what makes it safe to run on a tree that also carries somebody else's bad news. The second
  * power exists because a lane that removes a duplicate produces good news on a tree that almost always holds bad news
  * too, and a ratchet that can only be written when there is no bad news drifts from the tree until the next reader's
- * only satisfying move is deleting and re-creating the file. Measured 2026-11-12 on this tree, which read `new 14 ·
- * grown 1 · stale 46`: `--record-shrinks` removed 39 entries and lowered 7, and the same reading afterwards was `stale 0
- * · new 14 · grown 1 · duplication 314` - nothing banked in either direction. DELETING a shrunken-but-extant entry
- * instead of lowering it would turn that group into a `clone_group` finding, which banks the loss of a record as new
- * duplication; lowering is the only honest spelling of "this duplicate now has 3 sites", and deleting is only for a
- * group the tree no longer has. Line numbers in the baseline are documentation; the comparisons are the site COUNT and,
- * for growth, nothing else - a line inserted above a site must not turn the gate red, and the token count is published
- * rather than compared (above).
+ * only satisfying move is deleting and re-creating the file. Measured
+ * 2026-11-12 on this tree, which read `new 14 · grown 1 · stale 46`: `--record-shrinks` removed 39 entries and lowered
+ * 7, and the same reading afterwards was `stale 0 · new 14 · grown 1 · duplication 314` - nothing banked in either
+ * direction. DELETING a shrunken-but-extant entry instead of lowering it would turn that group into a `clone_group`
+ * finding, which banks the loss of a record as new duplication; lowering is the only honest spelling of "this duplicate
+ * now has 3 sites", and deleting is only for a group the tree no longer has. Line numbers in the baseline are
+ * documentation; the comparisons are the site COUNT and, for growth, nothing else - a line inserted above a site must
+ * not turn the gate red, and the token count is published rather than compared (above).
  *
  * THE POPULATION is this file's `SOURCE_TREES`, and `jscpd.json` must declare the same paths, formats, ignore list and
  * thresholds or `jscpd_config_disagrees:<field>` fails: two spellings of "what is examined" drift apart the first time
@@ -155,10 +318,41 @@
  * make two structurally identical bodies one group. What it refuses is the specific thing that shipped: the same
  * block copied a third time.
  *
+ * red-proof: inject  a tree whose baseline records one group and whose fourth copy has landed ->
+ *                    `node tools/check-code-duplication.mjs --root <fixture> --write-baseline` prints
+ *                    `baseline_write_refused: 1 group(s) are new or grew - the baseline may only record a shrink`, exits 1
+ *                    and leaves the baseline file byte-identical; the same fixture with its baseline deleted creates one
+ *                    (`baseline_created`), and one whose tree shrank writes (`baseline_written`) - so the refusal is a
+ *                    condition on the tree and not a refusal to write at all.
+ * red-proof: inject  one recorded group at three runner sites beside a host file's own recorded group ->
+ *                    `debt: 2 groups · 4 sites · of which runners 1 groups / 3 sites`
+ *
+ * red-proof: inject  a structural group at three sites with a matching declaration -> the census reads `declared 1` and
+ *                    `new 0`, status `passed`, and `declared:<hash>: 3 sites at 50 tokens · <owner> · <reason> :: <first
+ *                    line>` is printed; a fourth copy of the same text -> `clone_group_grew:<hash>: now 4 sites at 50
+ *                    tokens, tools/duplicate-code-declarations.json declared 3 sites (<owner>)`; the same text at two
+ *                    sites -> `stale_clone_declaration:<hash>`; an entry whose hash the tree does not have ->
+ *                    `stale_clone_declaration:<hash>`; an entry with no `reason` ->
+ *                    `duplicate_code_declarations_malformed:reason:<hash>`; and `--write-baseline` records the undeclared
+ *                    population only, saying how many it left out.
+ *
  * USAGE:
- *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale group
+ *   node tools/check-code-duplication.mjs                   # the verdict; exit 1 on a new/grown/stale structural group
  *   node tools/check-code-duplication.mjs --record-shrinks   # delete and lower entries only; adds nothing
  *   node tools/check-code-duplication.mjs --write-baseline   # write the tree down; refuses while a group is new or grew
+ *   node tools/check-code-duplication.mjs --residuals        # every structural group with the commit behind its newest site
+ *   node tools/check-code-duplication.mjs --root <dir>       # read and write the baseline of another tree (fixtures)
+ *
+ * red-proof: inject  a shared module preamble (`import path from "node:path"`) at three sites, no baseline ->
+ *                    `clone groups 1 · of which facade-only 0 · syntax-floor 1 (3 sites) · duplication 0 (0 sites)`,
+ *                    status `passed`; the same three files with one function body copied between them ->
+ *                    `syntax-floor 0 · duplication 1 (3 sites)` and `clone_group:...tokens:3sites:` naming every site,
+ *                    status `failed` - so the ratchet is red on a body and green on the floor (the falsifier).
+ * red-proof: inject  a baseline that records a floor group -> `syntax_floor_clone_baselined:<hash>`, status `failed`,
+ *                    and `--record-shrinks` deletes that entry (`removed 1`) while adding nothing.
+ * red-proof: inject  a tree whose three copies are committed -> the finding carries `attribution.commit`,
+ *                    `attribution.date` and the commit subject beside its `detail`; the same tree with no commit ->
+ *                    `unrecorded (no commit holds <file>)` and the verdict is unchanged.
  *
  * red-proof: inject  a fourth copy of the admission pipeline body into a `farmhandexecutioncontroller.*.cs` partial
  *                    while that group's baseline entry stays at its recorded site count ->
@@ -184,6 +378,14 @@
  * Every direction above is red on jscpd's own report, in tools/check-code-duplication.test.mjs, whose throwaway trees
  * are copied from the real body.
  */
+
+export const gateDeclaration = {
+  id: "check-code-duplication",
+  domain: "arch",
+  tier: "l2",
+  kind: "ratchet",
+};
+
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -193,8 +395,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { RUNNER_FILE } from "./check-native-local-runner-scaffold.mjs";
+import { GATE_TREE_ROOTS } from "../gates/directories.mjs";
+
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "tools/duplicate-code-baseline.json";
+const DECLARATIONS = "tools/duplicate-code-declarations.json";
 const JSCPD_CONFIG = "jscpd.json";
 const JSCPD_ENTRY = "jscpd/run-jscpd.js";
 
@@ -209,7 +415,7 @@ export const SOURCE_TREES = Object.freeze([
   "host/scripts",
   "dialogue-web/src",
   "packages",
-  "tools",
+  ...GATE_TREE_ROOTS,
   "integrations/stardew",
   "desktop",
 ]);
@@ -239,6 +445,15 @@ export function normaliseSitePath(name, root = REPO) {
   const absolute = name.replace(/^\\\\\?\\/u, "");
   const relative = path.isAbsolute(absolute) ? path.relative(root, absolute) : absolute;
   return relative.replaceAll("\\", "/");
+}
+
+/**
+ * Is this site one of the native-local smoke runners - the family whose L1 extraction is the reason the debt line names
+ * it? The predicate is the family's own (`RUNNER_FILE`, from the gate that owns, scans and ratchets those files), read
+ * against the site's basename under `tools/`, so a runner added or renamed tomorrow is attributed without an edit here.
+ */
+export function isRunnerSite(file) {
+  return file.startsWith("tools/") && RUNNER_FILE.test(path.basename(file));
 }
 
 /** The identity of a clone group: the text jscpd matched, hashed so a baseline line stays readable. */
@@ -322,6 +537,77 @@ export function isFacadeOnly(fragment) {
     .every((unit) => isDelegation(unit.text) || isPassThroughRead(unit.text));
 }
 
+const LITERAL_TEXT = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//gu;
+
+/**
+ * The matched text with its string, template and comment literals blanked, so a brace or a semicolon inside a message is
+ * not read as a block. This is not a tokeniser: it removes the two constructs whose contents must not be parsed, and the
+ * rule below reads punctuation only.
+ */
+export function withoutLiterals(fragment) {
+  return fragment.replace(LITERAL_TEXT, "");
+}
+
+/** The text a `;` has to follow to be a statement's end rather than a member of a type or a literal. */
+const STATEMENT_TEXT =
+  /^(?:return|throw|if|for|foreach|while|switch|const|let|var|await|yield|break|continue|new|delete|using|lock|fixed|checked|unchecked|goto|do|else|case)\b|[=(.[]/u;
+
+/**
+ * What stands before a `{` that opens a LITERAL - an object, a type, an argument - rather than a block. A literal is not a
+ * statement boundary, so `return { a: 1 };` stays one statement ending where its `;` is, and the brace around it is not
+ * credited with a body it does not have.
+ */
+const LITERAL_INTRODUCER = /[=([,:]|\b(?:return|yield|new|case|else)\s*$/u;
+
+/**
+ * Does the matched text contain a BLOCK OF STATEMENTS - a body - or only the floor the language forces on every file of
+ * its kind? THIS IS THE UNIT (see the file's header). A `;` inside braces marks them a statement block when what it ends
+ * does work; `messageId: string;`, `int slot,` and `evidence,` name members and end nothing. A brace still open where
+ * the window ends counts too: jscpd ends a window at the match's last token, and a window that opens a body and is cut
+ * off has matched that body's statements.
+ */
+export function hasStatementBlock(fragment) {
+  const text = withoutLiterals(fragment);
+  const braces = [];
+  // Where the current statement began: after the last `;` or the last openening brace. A closing brace does NOT move it,
+  // because `return { a: 1 };` is one statement whose `;` lands after the literal it returned.
+  let since = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "{") {
+      braces.push({ statement: false });
+      if (!LITERAL_INTRODUCER.test(text.slice(0, index))) since = index + 1;
+      continue;
+    }
+    if (character === "}") {
+      if (braces.pop()?.statement === true) return true;
+      continue;
+    }
+    if (character !== ";") continue;
+    const top = braces.at(-1);
+    const piece = text.slice(since, index).trim();
+    if (top !== undefined && piece !== "" && STATEMENT_TEXT.test(piece)) top.statement = true;
+    since = index + 1;
+  }
+  return braces.some((brace) => brace.statement === true);
+}
+
+/** The three populations a match belongs to: `facade` and `floor` decide nothing, `duplication` is what the ratchet holds. */
+export const FACADE = "facade";
+export const SYNTAX_FLOOR = "floor";
+export const STRUCTURAL = "duplication";
+
+/** One decision per matched text, in precedence order: a declaration envelope, then a body, then the floor. */
+export function groupKind(fragment) {
+  if (isFacadeOnly(fragment)) return FACADE;
+  return hasStatementBlock(fragment) ? STRUCTURAL : SYNTAX_FLOOR;
+}
+
+/** A group whose text is a module preamble, a member list, a one-liner or punctuation: counted, never a finding. */
+export function isSyntaxFloor(fragment) {
+  return groupKind(fragment) === SYNTAX_FLOOR;
+}
+
 /** The group's first line of code, which is what makes a hash recognisable to a reader. */
 export function firstLineOf(fragment) {
   const line = fragment.split("\n").find((entry) => entry.trim() !== "") ?? "";
@@ -330,8 +616,8 @@ export function firstLineOf(fragment) {
 
 /**
  * jscpd's pairwise report, folded into groups: one entry per repeated text, holding every site it was reported at.
- * A pair's two files are both sites, and a site reported by several pairs is counted once. Each group carries the kind
- * of fact it is (`duplication` or `facade`), decided once from the text that is its identity.
+ * A pair's two files are both sites, and a site reported by several pairs is counted once. Each group carries the
+ * population it belongs to (`facade`, `floor` or `duplication`), decided once from the text that is its identity.
  */
 export function groupClones(duplicates, root = REPO) {
   const groups = new Map();
@@ -343,7 +629,7 @@ export function groupClones(duplicates, root = REPO) {
         hash,
         tokens: duplicate.tokens,
         fragment: duplicate.fragment,
-        kind: isFacadeOnly(duplicate.fragment) ? "facade" : "duplication",
+        kind: groupKind(duplicate.fragment),
         sites: new Map(),
       };
       groups.set(hash, group);
@@ -371,29 +657,74 @@ function violation(code, prefix, group) {
 }
 
 /**
- * The rule, as one reading of one report: which groups are duplication and break it, which of those the baseline
- * already recorded, whether the baseline still describes the tree, and which groups the rule read as a facade instead.
- * `groups` is `groupClones(...)`; `baseline.groups` is the file.
+ * The debt, in the two units a reader needs and one share: the groups the baseline records and the tree still has, the
+ * sites those groups occupy, and how much of each is the native-local smoke-runner family.
  *
- * Growth and staleness are decided by the SITE COUNT. The token count is published as `tokenCountUnstable` instead: at a
- * hash the baseline already records, the fragment is the same bytes by construction, so a different `tokens` there says
- * how far the run matched within that slice, not that more text was copied (THE TOKEN COUNT IS PUBLISHED, above).
+ * `groups` is the same population `evaluateGroups` reports as `baselined` - this function is where that number is
+ * COUNTED, and `evaluateGroups` reads it back as `.groups`, so the two cannot drift into two spellings of one fact.
  */
-export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
+function debtCensus(groups) {
+  const sites = groups.flatMap((group) => group.sites);
+  return {
+    groups: groups.length,
+    sites: sites.length,
+    runnerGroups: groups.filter((group) => group.sites.some((site) => isRunnerSite(site.file))).length,
+    runnerSites: sites.filter((site) => isRunnerSite(site.file)).length,
+  };
+}
+
+/**
+ * The rule, as one reading of one report: which groups are structural and break it, which of those the baseline
+ * already recorded, whether the baseline still describes the tree, and which groups the split read as the floor or as a
+ * facade instead. `groups` is `groupClones(...)`; `baseline.groups` is the file.
+ *
+ * `duplication` is the STRUCTURAL population - the only one a finding can come from - and `syntaxFloor` is the half the
+ * split counts and prints and never fails (THE UNIT, above). Growth and staleness are decided by the SITE COUNT. The
+ * token count is published as `tokenCountUnstable` instead: at a hash the baseline already records, the fragment is the
+ * same bytes by construction, so a different `tokens` there says how far the run matched within that slice, not that more
+ * text was copied (THE TOKEN COUNT IS PUBLISHED, above).
+ */
+export function evaluateGroups({ groups, baseline, declarations = [], minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
   const counted = groups.filter((group) => group.tokens >= minTokens && group.sites.length >= minSites);
-  const facade = counted.filter((group) => group.kind === "facade");
-  const duplication = counted.filter((group) => group.kind !== "facade");
+  const facade = counted.filter((group) => group.kind === FACADE);
+  const syntaxFloor = counted.filter((group) => group.kind === SYNTAX_FLOOR);
+  const duplication = counted.filter((group) => group.kind === STRUCTURAL);
   const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
+  const declared = new Map(declarations.map((entry) => [entry.hash, entry]));
   const findings = [];
   const tokenCountUnstable = [];
-  let baselined = 0;
+  const debtGroups = [];
+  const declaredGroups = [];
   for (const group of duplication) {
+    const declaration = declared.get(group.hash);
+    if (declaration !== undefined) {
+      declaredGroups.push(group);
+      if (group.sites.length > declaration.sites)
+        findings.push(
+          violation(
+            "clone_group_grew",
+            `clone_group_grew:${group.hash}: now ${group.sites.length} sites at ${group.tokens} tokens, ${DECLARATIONS} ` +
+              `declared ${declaration.sites} sites (${declaration.owner})`,
+            group,
+          ),
+        );
+      else if (group.sites.length < declaration.sites)
+        findings.push({
+          code: "stale_clone_declaration",
+          hash: group.hash,
+          detail:
+            `stale_clone_declaration:${group.hash}: ${DECLARATIONS} declares ${declaration.sites} sites and the tree has ` +
+            `${group.sites.length} (${describeSites(group.sites)}) - delete the entry, because a declaration may not outlive ` +
+            "the copies it names",
+        });
+      continue;
+    }
     const entry = recorded.get(group.hash);
     if (entry === undefined) {
       findings.push(violation("clone_group", `clone_group:${group.tokens}tokens:${group.sites.length}sites`, group));
       continue;
     }
-    baselined += 1;
+    debtGroups.push(group);
     if (group.sites.length > entry.sites.length) {
       findings.push(
         violation(
@@ -427,6 +758,18 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
   }
   const live = new Set(duplication.map((group) => group.hash));
   const facades = new Set(facade.map((group) => group.hash));
+  const floors = new Set(syntaxFloor.map((group) => group.hash));
+  for (const declaration of declared.values()) {
+    if (live.has(declaration.hash)) continue;
+    findings.push({
+      code: "stale_clone_declaration",
+      hash: declaration.hash,
+      detail:
+        `stale_clone_declaration:${declaration.hash}: ${DECLARATIONS} declares ${declaration.sites} sites for a group ` +
+        `(${declaration.owner}) the tree no longer has as duplication - delete the entry, because a declaration may not ` +
+        "outlive the copies it names",
+    });
+  }
   for (const entry of recorded.values()) {
     if (live.has(entry.hash)) continue;
     if (facades.has(entry.hash)) {
@@ -437,6 +780,18 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
           `facade_only_clone_baselined:${entry.hash}: the baseline records ${entry.sites.length} sites at ` +
           `${entry.tokens} tokens (${entry.sites.join(", ")}), and this gate reads that group as a facade - a ` +
           "declaration, not an implementation - so the entry claims duplication the tree does not have: delete it",
+      });
+      continue;
+    }
+    if (floors.has(entry.hash)) {
+      findings.push({
+        code: "syntax_floor_clone_baselined",
+        hash: entry.hash,
+        detail:
+          `syntax_floor_clone_baselined:${entry.hash}: the baseline records ${entry.sites.length} sites at ` +
+          `${entry.tokens} tokens (${entry.sites.join(", ")}), and the split reads that group as the syntax floor - a ` +
+          "module preamble, a member list or a one-liner, not a body - so the entry banks the floor of the language as " +
+          "debt: delete it with --record-shrinks",
       });
       continue;
     }
@@ -452,12 +807,19 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
     examinedGroups: groups.length,
     counted,
     facade,
+    syntaxFloor,
     duplication,
-    baselined,
+    debt: debtCensus(debtGroups),
+    declared: declaredGroups,
+    declarations,
+    undeclared: duplication.filter((group) => !declared.has(group.hash)),
+    baselined: debtGroups.length,
     newGroups: findings.filter((entry) => entry.code === "clone_group").length,
     grown: findings.filter((entry) => entry.code === "clone_group_grew").length,
     stale: findings.filter((entry) => entry.code === "stale_clone_baseline").length,
     reclassified: findings.filter((entry) => entry.code === "facade_only_clone_baselined").length,
+    floorBaselined: findings.filter((entry) => entry.code === "syntax_floor_clone_baselined").length,
+    staleDeclarations: findings.filter((entry) => entry.code === "stale_clone_declaration").length,
     tokenCountUnstable,
     findings,
   };
@@ -579,6 +941,32 @@ export function readBaseline({ root = REPO } = {}) {
 }
 
 /**
+ * The declaration file: groups whose fix is owned by a lane this one may not edit. It is READ, never written - nothing in
+ * this gate adds a declaration, exactly as nothing in it adds a baseline entry (THE DECLARATION DOOR, in the header). A
+ * missing file is "nothing is declared", and a malformed one is an error rather than a reading: an entry with no reason
+ * is the thing the door exists to refuse.
+ */
+export function readDeclarations({ root = REPO } = {}) {
+  const file = path.join(root, DECLARATIONS);
+  if (!fs.existsSync(file)) return [];
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!Array.isArray(parsed.declarations)) throw new Error("duplicate_code_declarations_malformed:declarations");
+  const seen = new Set();
+  for (const entry of parsed.declarations) {
+    if (typeof entry.hash !== "string" || !/^[0-9a-f]{12}$/u.test(entry.hash))
+      throw new Error(`duplicate_code_declarations_malformed:hash:${JSON.stringify(entry.hash)}`);
+    if (seen.has(entry.hash)) throw new Error(`duplicate_code_declarations_malformed:duplicate_hash:${entry.hash}`);
+    seen.add(entry.hash);
+    if (!Number.isInteger(entry.sites) || entry.sites < MIN_SITES)
+      throw new Error(`duplicate_code_declarations_malformed:sites:${entry.hash}`);
+    for (const field of ["owner", "reason"])
+      if (typeof entry[field] !== "string" || entry[field].trim() === "")
+        throw new Error(`duplicate_code_declarations_malformed:${field}:${entry.hash}`);
+  }
+  return parsed.declarations;
+}
+
+/**
  * The files under `trees` that are in the worktree but not in the index: the complement of the population
  * (THE POPULATION IS THE INDEX, above).
  *
@@ -604,6 +992,46 @@ export function untrackedSources({ root = REPO, trees = SOURCE_TREES, spawn = sp
   };
 }
 
+/**
+ * The last commit that touched a file: `{ commit, date, subject }`, or `{ unrecorded: <reason> }` when no commit holds
+ * it. This is the attribution unit, and it is a FILE-LEVEL reading that says so in its own words (ATTRIBUTION, above):
+ * `git blame` costs 0.2-0.7s a call on this tree, which a gate that runs on every commit cannot pay per site.
+ */
+export function lastTouchedBy(file, { root = REPO, spawn = spawnSync, cache = new Map() } = {}) {
+  if (cache.has(file)) return cache.get(file);
+  const outcome = spawn("git", ["log", "-1", "--format=%h%x09%as%x09%s", "--", file], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const [commit, date, subject] = String(outcome.stdout ?? "")
+    .trim()
+    .split("\t");
+  const reading =
+    outcome.status === 0 && commit
+      ? { commit, date, subject: subject ?? "" }
+      : { unrecorded: `no commit holds ${file}` };
+  cache.set(file, reading);
+  return reading;
+}
+
+/**
+ * The commit behind each group's most recent site, one reading per group: the site whose file was touched last, named
+ * with the commit that touched it. A group with no reading at all carries the reason instead of a hash.
+ */
+export function attributeGroups(groups, { root = REPO, spawn = spawnSync } = {}) {
+  const cache = new Map();
+  return groups.map((group) => {
+    const touched = group.sites.map((site) => ({ site, reading: lastTouchedBy(site.file, { root, spawn, cache }) }));
+    const recorded = touched
+      .filter((entry) => entry.reading.commit !== undefined)
+      .sort((left, right) => right.reading.date.localeCompare(left.reading.date));
+    if (recorded.length === 0) return { hash: group.hash, unrecorded: touched[0]?.reading.unrecorded };
+    const { site, reading } = recorded[0];
+    return { hash: group.hash, site, commit: reading.commit, date: reading.date, subject: reading.subject };
+  });
+}
+
 /** The whole reading, for the CLI and for the test: population, rule, findings, verdict. */
 export function checkCodeDuplication({
   root = REPO,
@@ -611,6 +1039,7 @@ export function checkCodeDuplication({
   formats = FORMATS,
   ignores = IGNORES,
   baseline = readBaseline({ root }),
+  declarations = readDeclarations({ root }),
   spawn = spawnSync,
   config,
 } = {}) {
@@ -633,7 +1062,7 @@ export function checkCodeDuplication({
   for (const duplicate of run.report.duplicates ?? []) {
     const first = normaliseSitePath(duplicate.firstFile.name, root);
     const second = normaliseSitePath(duplicate.secondFile.name, root);
-    if (!untracked.files.has(first) && !untracked.files.has(second)) {
+    if (!(untracked.files.has(first) || untracked.files.has(second))) {
       pairs.push(duplicate);
       continue;
     }
@@ -660,14 +1089,15 @@ export function checkCodeDuplication({
       disagreements,
       examined,
     };
-  const reading = evaluateGroups({ groups, baseline });
-  const findings = [
+  const reading = evaluateGroups({ groups, baseline, declarations });
+  const ruleFindings = [
     ...disagreements.map((entry) => ({
       code: "jscpd_config_disagrees",
       detail: `jscpd_config_disagrees:${entry.field}: the config declares ${entry.config || "(nothing)"}, this gate ${entry.ours}`,
     })),
     ...reading.findings,
   ];
+  const findings = attachAttribution(ruleFindings, { groups: reading.counted, root, spawn });
   return {
     status: findings.length === 0 ? "passed" : "failed",
     examined,
@@ -676,6 +1106,26 @@ export function checkCodeDuplication({
     untrackedNotCounted: outsideIndex.size,
     findings,
   };
+}
+
+/**
+ * The commit behind each finding, on the finding rather than inside `detail` - `detail` is the rule's reading of the text
+ * and a test asserts it byte for byte, while the attribution is a fact about the file that can move without the rule
+ * moving. A finding for a group the tree no longer has (a stale entry) carries the group's sites nowhere, so it carries
+ * no attribution: there is no site to attribute.
+ */
+export function attachAttribution(findings, { groups, root = REPO, spawn = spawnSync } = {}) {
+  const byHash = new Map(groups.map((group) => [group.hash, group]));
+  const targets = findings.filter((finding) => byHash.has(finding.hash));
+  const attributed = new Map(
+    attributeGroups(
+      targets.map((finding) => byHash.get(finding.hash)),
+      { root, spawn },
+    ).map((entry) => [entry.hash, entry]),
+  );
+  return findings.map((finding) =>
+    attributed.has(finding.hash) ? { ...finding, attribution: attributed.get(finding.hash) } : finding,
+  );
 }
 
 /** The report line `tools/check-harness-conformance.mjs` reads: the gate's own id, verdict and population. */
@@ -697,7 +1147,9 @@ function reportLine(reading) {
       : {
           cloneGroups: reading.counted.length,
           facadeOnly: reading.facade.length,
+          syntaxFloor: reading.syntaxFloor.length,
           duplication: reading.duplication.length,
+          declared: reading.declared.length,
         }),
     checks,
   });
@@ -719,17 +1171,60 @@ export function tokenCountLine(entry) {
   );
 }
 
+/** One declared group, printed every run: the door is only honest while a reader can see who walked through it. */
+export function declaredLine(group, declaration) {
+  return (
+    `  declared:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens · ${declaration.owner} · ` +
+    `${declaration.reason} :: ${firstLineOf(group.fragment)}`
+  );
+}
+
+/**
+ * The debt as ONE line a reader can act on: how many recorded groups, how many sites, and how much of it is the runner
+ * family. A blocked reading says `not measured` and its reason, because `0 groups` beside a reading that examined nothing
+ * is the ambiguity this line exists to remove.
+ */
+export function debtLine(reading) {
+  if (reading.debt === undefined)
+    return `debt: not measured · ${reading.reason ?? "the reading carries no population"}`;
+  const { groups, sites, runnerGroups, runnerSites } = reading.debt;
+  return `debt: ${groups} groups · ${sites} sites · of which runners ${runnerGroups} groups / ${runnerSites} sites`;
+}
+
+/**
+ * The report of a reading a WRITE has just produced: `evaluateGroups` returns a population without a verdict, and a
+ * report that omits `status` is the ambiguity this file exists to remove - so the verdict is derived from the findings
+ * the recorded payload produces, not from the run that preceded the write.
+ */
+function writtenReport(reading) {
+  return reportLine({ ...reading, status: (reading.findings ?? []).length === 0 ? "passed" : "failed" });
+}
+
 export function censusLine(reading) {
   if (reading.status === "blocked")
     return `files examined ${reading.examined} · clone groups 0 · BLOCKED ${reading.reason}`;
+  const sitesOf = (groups) => groups.reduce((total, group) => total + group.sites.length, 0);
   return (
     `files examined ${reading.examined} · clone groups ${reading.counted.length} · of which facade-only ` +
-    `${reading.facade.length} · duplication ${reading.duplication.length} · new ${reading.newGroups} · ` +
+    `${reading.facade.length} · syntax-floor ${reading.syntaxFloor.length} (${sitesOf(reading.syntaxFloor)} sites) · ` +
+    `duplication ${reading.duplication.length} (${sitesOf(reading.duplication)} sites) · ` +
+    `${(reading.declared ?? []).length === 0 ? "" : `declared ${reading.declared.length} · `}` +
+    `new ${reading.newGroups} · ` +
     `grown ${reading.grown} · baselined ${reading.baselined}` +
     `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}` +
     `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}` +
+    `${(reading.staleDeclarations ?? 0) === 0 ? "" : ` · stale_declarations ${reading.staleDeclarations}`}` +
+    `${(reading.floorBaselined ?? 0) === 0 ? "" : ` · syntax_floor_baselined ${reading.floorBaselined}`}` +
     `${reading.tokenCountUnstable === undefined || reading.tokenCountUnstable.length === 0 ? "" : ` · token_count_unstable ${reading.tokenCountUnstable.length}`}` +
     `${reading.untrackedNotCounted === undefined || reading.untrackedNotCounted === 0 ? "" : ` · untracked_not_counted ${reading.untrackedNotCounted}`}`
+  );
+}
+
+/** One structural group, baselined or not, with the commit behind it: the residual list `--residuals` prints. */
+export function residualLine(group, attribution) {
+  return (
+    `  residual:${group.hash}: ${group.sites.length} sites at ${group.tokens} tokens · last touched ` +
+    `${attributionLine(attribution)} :: ${firstLineOf(group.fragment)}`
   );
 }
 
@@ -778,27 +1273,67 @@ export function recordShrinks({ reading, baseline }) {
     groups.push(entry);
   }
   const payload = { groups };
-  return { payload, removed, lowered, after: evaluateGroups({ groups: reading.counted, baseline: payload }) };
+  return {
+    payload,
+    removed,
+    lowered,
+    after: evaluateGroups({ groups: reading.counted, baseline: payload, declarations: reading.declarations ?? [] }),
+  };
+}
+
+/** One recorded group's attribution, as the line a reader checks: the commit, its date and its subject. */
+export function attributionLine(attribution) {
+  if (attribution?.commit === undefined)
+    return `unrecorded (${attribution?.unrecorded ?? "no commit holds this group"})`;
+  return `${attribution.commit} ${attribution.date} ${attribution.subject} (${attribution.site.file}:${attribution.site.line})`;
 }
 
 function main(argv) {
   const writeBaseline = argv.includes("--write-baseline");
   const recordingShrinks = argv.includes("--record-shrinks");
+  const showingResiduals = argv.includes("--residuals");
+  // `--root <dir>`: which tree's baseline (and `jscpd.json`) is read and written. Fixtures use it; the rule is the same.
+  const root = argv.includes("--root") ? argv[argv.indexOf("--root") + 1] : REPO;
   let reading;
   let baseline;
   try {
-    baseline = readBaseline({ root: REPO });
-    reading = checkCodeDuplication({ baseline });
+    baseline = readBaseline({ root });
+    reading = checkCodeDuplication({ root, baseline });
   } catch (error) {
     process.stdout.write(`code_duplication_blocked: ${String(error?.message ?? error)}\n`);
     process.stdout.write(`${reportLine({ status: "blocked", examined: 0 })}\n`);
     process.exitCode = 2;
     return;
   }
-  const lines = [censusLine(reading)];
+  const lines = [censusLine(reading), debtLine(reading)];
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
+  const declarations = new Map((readDeclarations({ root }) ?? []).map((entry) => [entry.hash, entry]));
+  for (const group of reading.declared ?? []) lines.push(declaredLine(group, declarations.get(group.hash)));
   for (const entry of reading.tokenCountUnstable ?? []) lines.push(tokenCountLine(entry));
-  for (const entry of reading.findings ?? []) lines.push(`  ${entry.detail}`);
+  for (const entry of reading.findings ?? [])
+    lines.push(
+      `  ${entry.detail}` +
+        `${entry.attribution === undefined ? "" : ` · last touched ${attributionLine(entry.attribution)}`}`,
+    );
+  // THE RESIDUALS: every structural group the ratchet carries, with the commit behind its most recent site, so "predates
+  // this lane" is a hash a reader checks. It costs one `git log` per distinct file, which is why it is asked for rather
+  // than printed on every run - the default run attributes its findings only, and a green run attributes nothing.
+  if (showingResiduals) {
+    const groups = reading.duplication ?? [];
+    const attributed = attributeGroups(groups, { root });
+    const byHash = new Map(attributed.map((entry) => [entry.hash, entry]));
+    const commits = new Set(attributed.map((entry) => entry.commit ?? entry.unrecorded));
+    lines.push(
+      `residuals: ${groups.length} groups · ${groups.reduce((total, group) => total + group.sites.length, 0)} sites · ` +
+        `${commits.size} commit(s)`,
+    );
+    for (const group of [...groups].sort(
+      (left, right) =>
+        (byHash.get(right.hash)?.date ?? "").localeCompare(byHash.get(left.hash)?.date ?? "") ||
+        left.hash.localeCompare(right.hash),
+    ))
+      lines.push(residualLine(group, byHash.get(group.hash)));
+  }
   if (recordingShrinks) {
     const outcome = recordShrinks({ reading, baseline });
     if (outcome.refused !== undefined) {
@@ -809,7 +1344,7 @@ function main(argv) {
       return;
     }
     if (outcome.removed.length + outcome.lowered.length > 0)
-      fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(outcome.payload), "utf8");
+      fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(outcome.payload), "utf8");
     lines.push(
       `shrinks recorded: ${outcome.removed.length + outcome.lowered.length} · removed ${outcome.removed.length} · ` +
         "nothing added",
@@ -820,7 +1355,7 @@ function main(argv) {
           "remove or lower an entry, so these stay findings for --write-baseline",
       );
     process.stdout.write(`${lines.join("\n")}\n`);
-    process.stdout.write(`${reportLine(outcome.after)}\n`);
+    process.stdout.write(`${writtenReport(outcome.after)}\n`);
     return;
   }
   if (writeBaseline) {
@@ -842,10 +1377,11 @@ function main(argv) {
       process.exitCode = 1;
       return;
     }
-    const payload = baselinePayload(reading.duplication);
-    fs.writeFileSync(path.join(REPO, BASELINE), serialiseBaseline(payload), "utf8");
+    const payload = baselinePayload(reading.undeclared ?? reading.duplication);
+    fs.writeFileSync(path.join(root, BASELINE), serialiseBaseline(payload), "utf8");
     lines.push(
-      `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}`,
+      `${creating ? "baseline_created" : "baseline_written"}: ${payload.groups.length} group(s) -> ${BASELINE}` +
+        `${(reading.declared ?? []).length === 0 ? "" : ` · ${reading.declared.length} declared group(s) are not recorded here`}`,
     );
     process.stdout.write(`${lines.join("\n")}\n`);
     process.stdout.write(`${reportLine({ ...reading, status: "passed" })}\n`);

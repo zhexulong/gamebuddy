@@ -79,7 +79,7 @@ test("ordinary close does not retry or terminate the Player Host", async () => {
   });
 });
 
-test("Stage B failure transitions to failed, durably quarantines, and never spawns", async () => {
+test("Stage B failure transitions to activation_failed, durably quarantines, and never spawns", async () => {
   const fixture = await createFixture({ failStaging: true });
   try {
     await assert.rejects(
@@ -91,7 +91,7 @@ test("Stage B failure transitions to failed, durably quarantines, and never spaw
       requestId: "request-1",
       authorityGeneration: 1,
       revision: 3,
-      state: "failed",
+      state: "activation_failed",
     });
     assert.deepEqual(fixture.spawnCalls, []);
     assert.deepEqual(fixture.playerSpawnCalls, []);

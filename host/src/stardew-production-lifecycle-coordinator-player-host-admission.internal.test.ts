@@ -31,7 +31,7 @@ test("signed Player Host advertisement is consumed privately with exact generati
           }),
         );
       const result = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
-      assert.equal(result.state, "awaiting_player_host_attestation");
+      assert.equal(result.state, "player_host_attested");
       assert.deepEqual(Object.keys(result).sort(), [
         "authorityGeneration",
         "requestId",
@@ -40,7 +40,7 @@ test("signed Player Host advertisement is consumed privately with exact generati
         "state",
       ]);
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
-        state: "awaiting_attestation",
+        state: "attested",
         ownership: "gamebuddy_direct_spawn",
       });
       const serialized = JSON.stringify(result);
@@ -71,15 +71,22 @@ test("missing Player Host advertisement remains privately retryable before owner
           }),
         );
       const result = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
-      assert.equal(result.state, "awaiting_player_host_attestation");
+      assert.equal(
+        result.state,
+        "awaiting_player_host_attestation",
+        "a launch whose advertisement has not been published is a live launch, not a failure",
+      );
       await publishSignedPlayerHostSession(fixture.runtimeRoot);
+      // The read is the retry: it is the only place a late advertisement can be observed, so it
+      // is the transition into the attested state - one state, one place it moves.
       assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
-        state: "awaiting_attestation",
+        state: "attested",
         ownership: "gamebuddy_direct_spawn",
       });
       assert.equal(
         fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state,
-        "awaiting_player_host_attestation",
+        "player_host_attested",
+        "and the coordinator's own state is the same fact the facade slot now reads from",
       );
     } finally {
       await fixture.coordinator.close();
@@ -114,7 +121,7 @@ test("missing Player Host advertisement becomes terminal after the retained owne
           ),
         /stardew_player_host_launch_failed/,
       );
-      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "launch_quarantined");
       assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
     } finally {
       await fixture.coordinator.close();
@@ -144,7 +151,7 @@ test("Player Host advertisement generation mismatch fails closed and quarantines
           ),
         /stardew_player_host_launch_failed/,
       );
-      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "launch_quarantined");
       assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
       await assert.rejects(
         fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), {
@@ -253,7 +260,7 @@ test("staged Player Host reparse admission failure is pre-launch, restores stage
 });
 
 for (const failure of ["spawn", "probe"] as const) {
-  test(`staged Player Host ${failure} failure quarantines and permanently rejects retry`, async () => {
+  test(`staged Player Host ${failure} failure quarantines, and the quarantined state has no egress yet`, async () => {
     await withWindowsPlatform(async () => {
       const fixture = await createFixture({
         playerSpawnFailure: failure === "spawn",
@@ -276,7 +283,26 @@ for (const failure of ["spawn", "probe"] as const) {
             ),
           /stardew_player_host_launch_failed/,
         );
+        assert.equal(
+          fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state,
+          "launch_quarantined",
+          "the failed launch IS its own lifecycle state, not a boolean beside the state",
+        );
         assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+        // The refusal is derived from that state, and it is the honest answer: the exit from a
+        // quarantined attempt is a `never_spawned` proof (no runtime was ever created for this
+        // owner), which does not exist, so a later launch cannot be honest about one.
+        // `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` in
+        // `stardew-game-lifecycle-state.internal.ts` is where that is declared, and the
+        // reachability gate fails if a state arrives with no egress and no declaration.
+        await assert.rejects(
+          fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+            apiVersion: 1,
+            idempotencyKey: "CDEiM0RVZneImaq7zN3u_w",
+            expectedInstanceGeneration: 1,
+          }),
+          /stardew_player_host_launch_quarantined/,
+        );
         await assert.rejects(
           fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), {
             apiVersion: 1,

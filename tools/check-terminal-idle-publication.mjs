@@ -72,6 +72,14 @@
  *                    converted site would inherit is named at the one place it would come from)
  * red-proof: inject  an exemption for a member whose site announces the idle now -> `stale_terminal_idle_exemption`
  */
+
+export const gateDeclaration = {
+  id: "check-terminal-idle-publication",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

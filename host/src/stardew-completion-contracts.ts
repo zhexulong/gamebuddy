@@ -746,8 +746,8 @@ function hasScytheSweepArcEvidence(evidence: Readonly<Record<string, string>>): 
   const arcClear = integerEvidenceValue(evidence.arc_clear);
   const tilesChanged = integerEvidenceValue(evidence.tiles_changed);
   if (arcTiles === null || arcSweepable === null || arcClear === null || tilesChanged === null) return false;
-  // A swing that happened sampled a real arc, and the Mod refuses an arc with nothing cuttable on it BEFORE swinging
-  // (`sweep_nothing_to_cut`), so a success reporting either is describing a different swing.
+  // A swing that happened sampled a real arc, and the Mod refuses a request whose NAMED tile carries nothing the scythe
+  // clears BEFORE swinging (`sweep_target_not_scythe_work`), so a success reporting either is describing a different swing.
   if (!(arcTiles > 0) || !(arcSweepable > 0)) return false;
   // The arc's counts partition it: a tile is sweepable, clear, or holding something a scythe does not cut.
   if (arcSweepable + arcClear > arcTiles) return false;
@@ -1858,6 +1858,85 @@ const MACHINE_WINDOW_UNAVAILABLE = "unavailable_in_machine_data";
 /** Stardew multiplayer IDs can exceed JavaScript's safe integer range. */
 function hasDecimalOwnerIdEvidenceValue(value: string | undefined): value is string {
   return typeof value === "string" && /^(?:0|[1-9][0-9]{0,19})$/.test(value);
+}
+
+/**
+ * The shop the engine's own tool-upgrade branch answers to (`Tool.cs:875`), opened by
+ * `Utility.TryOpenShopMenu("ClintUpgrade", "Clint")` from the blacksmith's Upgrade answer (`GameLocation.cs:12342`).
+ */
+const TOOL_UPGRADE_SHOP_ID = "ClintUpgrade";
+
+/**
+ * `shop_purchase`'s SECOND terminal: the same action, the same route through `ShopMenu`, and the opposite shape.
+ *
+ * <para>
+ * A tool upgrade's goods never arrive. The engine charges the purse, `Tool.actionWhenPurchased` puts the upgraded tool
+ * into `Farmer.toolBeingUpgraded` with `daysLeftForToolUpgrade = 2` and removes the pack item the upgrade consumes
+ * (`Tool.cs:875-895`), and the entry it charged for is discarded rather than carried (`ShopMenu.cs:1369-1378`). So this
+ * rule must NOT restate `gained > 0` - that is the clause which made a finished upgrade unreadable - and it must refuse
+ * this terminal for any shop that is not the upgrade counter, because the terminal names a fact only that shop's branch
+ * produces.
+ * </para>
+ * <para>
+ * Evidence literal: farmhandexecutioncontroller.shopactions.cs `ShopToolUpgradeEvidence` - the ordinary detail plus
+ * tool_upgraded;days_left;required_tool;required_before;required_after;purchase_dialogue.
+ * </para>
+ */
+function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(
+    detail,
+    [
+      "shop",
+      "owner",
+      "entry",
+      "item",
+      "requested",
+      "purchased",
+      "unit_price",
+      "money_before",
+      "money_after",
+      "owned_before",
+      "owned_after",
+      "gained",
+      "stock_before",
+      "stock_after",
+      "owner_tile",
+      "menu_closed",
+      "clicks",
+      "drops",
+      "tool_upgraded",
+      "days_left",
+      "required_tool",
+      "required_before",
+      "required_after",
+      "purchase_dialogue",
+    ],
+    (e) =>
+      e.shop === TOOL_UPGRADE_SHOP_ID &&
+      (e.entry === "tile_action" || e.entry === "npc_owner") &&
+      hasOpaqueEvidenceValue(e.owner) &&
+      hasOpaqueEvidenceValue(e.item) &&
+      // The engine recorded THIS entry, not some other tool already at the blacksmith's (`Tool.cs:875`).
+      e.tool_upgraded === e.item &&
+      (integerEvidenceValue(e.days_left) ?? 0) >= 1 &&
+      hasOpaqueEvidenceValue(e.required_tool) &&
+      e.required_tool !== e.item &&
+      // The half a discarded entry hides: the tool the upgrade consumes LEFT the pack.
+      (integerEvidenceValue(e.required_before) ?? 0) - (integerEvidenceValue(e.required_after) ?? 0) === 1 &&
+      integerEvidenceValue(e.money_after) !== null &&
+      integerEvidenceValue(e.money_before) !== null &&
+      (integerEvidenceValue(e.money_after) ?? 0) < (integerEvidenceValue(e.money_before) ?? 0) &&
+      // Three spellings of one count: the pack did not gain the entry, and the rule states that agreement rather than
+      // pinning `gained = 0` as a fourth number.
+      integerEvidenceValue(e.owned_before) !== null &&
+      integerEvidenceValue(e.owned_after) !== null &&
+      integerEvidenceValue(e.gained) !== null &&
+      (integerEvidenceValue(e.owned_after) ?? 0) - (integerEvidenceValue(e.owned_before) ?? 0) ===
+        (integerEvidenceValue(e.gained) ?? 1) &&
+      e.menu_closed === "true" &&
+      (e.purchase_dialogue === "closed" || e.purchase_dialogue === "none") &&
+      hasTileEvidenceValue(e.owner_tile),
+  );
 }
 
 /**
@@ -4147,6 +4226,10 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     );
   },
   shop_purchase: (claim) => {
+    // The action's SECOND terminal. A tool upgrade is bought through this same route and never enters the pack, so it
+    // is judged by the engine's own upgrade fields and refused for any shop that is not the upgrade counter.
+    if (claim.reasonCode === "tool_upgrade_purchased") return hasShopToolUpgradeCompletionEvidence(claim.detail);
+
     // Evidence literal: farmhandexecutioncontroller.shopactions.cs - the terminal is minted only when the trade
     // moved BOTH sides (`moneyAfter < moneyBefore && gained > 0`), and the receipt carries:
     // shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;

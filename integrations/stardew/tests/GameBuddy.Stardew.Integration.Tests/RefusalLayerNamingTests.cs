@@ -103,8 +103,15 @@ public sealed class RefusalLayerNamingTests
     /// is two and not four: a diagonal stance is the actor's own standing position (`range:stance`) and an arc that would
     /// destroy a planted tuft or a crop is the thing on the tile (`terrain:<occupant>`).
     /// </para>
+    /// <para>
+    /// FELL FROM 555 TO 554 by `round63`'s `sweep_target_not_scythe_work`. `sweep_nothing_to_cut` is GONE rather than
+    /// re-worded: once the named tile must hold an occupant the scythe clears, an arc with nothing sweepable on it cannot
+    /// exist (the named tile is inside the arc and is itself sweepable), so that branch was dead code and the budget may
+    /// only fall. Its replacement names a layer - the occupant standing on the named tile (`terrain:twig`) - so it is
+    /// covered rather than bare.
+    /// </para>
     /// </summary>
-    private const int RecordedBare = 555;
+    private const int RecordedBare = 554;
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()
     {

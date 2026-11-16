@@ -3,8 +3,21 @@ import test from "node:test";
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
-import { playerNoteLines } from "./player-note.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
+import {
+  ASSISTANT_TURNS_EXAMINED,
+  ASSISTANT_TURNS_TOOL_ONLY,
+  ASSISTANT_TURNS_WITH_TEXT,
+  assistantTurnsToolOnly,
+  assistantTurnsWithText,
+  FACT_PRODUCER,
+  PER_DELIVERED_BATCH,
+  TURN_OPENING,
+  TURN_PRODUCTION,
+  TURN_SETTLED_SILENT,
+  TURN_SUPPRESSION,
+  turnAccountLine,
+} from "./event-pump.js";
 
 /**
  * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
@@ -64,13 +77,16 @@ test("CompanionLoop explicitly steers player input and includes the latest snaps
       received.push({ text, deliverAs: options?.deliverAs });
     }) as never,
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    correlationId: "snapshot_01",
-    revision: 3,
-    payload: { location: "Farm" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      correlationId: "snapshot_01",
+      revision: 3,
+      payload: { location: "Farm" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   loop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "input_01",
@@ -83,11 +99,14 @@ test("CompanionLoop explicitly steers player input and includes the latest snaps
   assert.equal(received.length, 1);
   assert.equal(received[0]?.deliverAs, "steer");
   const text = received[0]?.text ?? "";
-  // The message is the composed prose, not an envelope: the player's own words are a block of their own, and the
-  // reading rides beside it. The note's wording (his words under the label `player-note.ts` gives them) belongs to that
-  // module's own test; what this one owns is that the loop delivers the input through it.
-  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1] ?? "";
-  assert.equal(note, playerNoteLines(["我们去哪里？"]).join("\n"));
+  // The message is the composed prose, not an envelope: it OPENS with the player's own words, unlabelled, and the
+  // reading follows as a block. What this test owns is that the loop delivers the input as speech rather than as a
+  // labelled section of the machine's report - the first content of the turn is the person speaking.
+  assert.ok(
+    text.startsWith("我们去哪里？"),
+    `the turn must open with the words the player typed: ${JSON.stringify(text.slice(0, 60))}`,
+  );
+  assert.equal(text.split("我们去哪里？").length - 1, 1, `the words appear once: ${text}`);
   assert.match(text, /<world-state>\n世界（revision 3，刚刚更新）/u);
 });
 
@@ -120,16 +139,19 @@ test("CompanionLoop chooses the deterministic final player trigger as presentati
     locale: "en-US",
     timestampMs: 1,
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "world_later",
-    sourceEventId: "world_later",
-    correlationId: "world",
-    revision: 1,
-    occurredAtMs: 3,
-    payload: { kind: "warped" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "world_later",
+      sourceEventId: "world_later",
+      correlationId: "world",
+      revision: 1,
+      occurredAtMs: 3,
+      payload: { kind: "warped" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(observed, ["begin:player_late", "end"]);
 });
@@ -788,45 +810,57 @@ test("CompanionLoop chooses an authenticated world source for fact-only follow-u
       observed.push("end");
     },
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    eventId: "snapshot",
-    sourceEventId: "snapshot_source",
-    correlationId: "snapshot",
-    revision: 1,
-    occurredAtMs: 1,
-    payload: {},
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    eventId: "progress",
-    sourceEventId: "progress_source",
-    correlationId: "progress",
-    revision: 1,
-    occurredAtMs: 2,
-    payload: { state: "meaningful_progress" },
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "fallback_event",
-    correlationId: "first",
-    revision: 1,
-    occurredAtMs: 3,
-    payload: {},
-  });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "lifecycle",
-    eventId: "lifecycle_event",
-    sourceEventId: "world_canonical",
-    correlationId: "last",
-    revision: 1,
-    occurredAtMs: 4,
-    payload: {},
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      eventId: "snapshot",
+      sourceEventId: "snapshot_source",
+      correlationId: "snapshot",
+      revision: 1,
+      occurredAtMs: 1,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "progress",
+      sourceEventId: "progress_source",
+      correlationId: "progress",
+      revision: 1,
+      occurredAtMs: 2,
+      payload: { state: "meaningful_progress" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "fallback_event",
+      correlationId: "first",
+      revision: 1,
+      occurredAtMs: 3,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "lifecycle",
+      eventId: "lifecycle_event",
+      sourceEventId: "world_canonical",
+      correlationId: "last",
+      revision: 1,
+      occurredAtMs: 4,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   // Non-salient world-trigger batches deliberately cannot mint a native
   // player-chat presentation lineage; only Pi-consumed authenticated player
@@ -853,18 +887,21 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without mintin
       },
     },
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "npc_dialogue_pierre_3",
-    sourceEventId: "npc_dialogue_pierre_3",
-    correlationId: "npc_dialogue_pierre_3",
-    revision: 1,
-    occurredAtMs: 1,
-    observedTick: 900,
-    semanticKind: "npc_dialogue_presented",
-    payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "npc_dialogue_pierre_3",
+      sourceEventId: "npc_dialogue_pierre_3",
+      correlationId: "npc_dialogue_pierre_3",
+      revision: 1,
+      occurredAtMs: 1,
+      observedTick: 900,
+      semanticKind: "npc_dialogue_presented",
+      payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact
   // context with its readable payload. But `npc_dialogue_presented` is
@@ -945,17 +982,20 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
       },
     },
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "day_started_day_3",
-    sourceEventId: "day_started_day_3",
-    correlationId: "day_started_day_3",
-    revision: 2,
-    occurredAtMs: 1,
-    semanticKind: "day_started",
-    payload: { day: 3 },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "day_started_day_3",
+      sourceEventId: "day_started_day_3",
+      correlationId: "day_started_day_3",
+      revision: 2,
+      occurredAtMs: 1,
+      semanticKind: "day_started",
+      payload: { day: 3 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(lifecycle, ["begin", "end"]);
   assert.deepEqual(presented, [{ sourceEventId: "day_started_day_3", text: "早安!今天也要加油。" }]);
@@ -1461,13 +1501,16 @@ test("CompanionLoop explicitly follows up an ordinary fact-only batch", async ()
       received.push({ deliverAs: options?.deliverAs });
     }) as never,
   );
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    correlationId: "warp",
-    revision: 1,
-    payload: { kind: "warped" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: "warp",
+      revision: 1,
+      payload: { kind: "warped" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   await loop.flush();
   assert.deepEqual(received, [{ deliverAs: "followUp" }]);
 });
@@ -1896,6 +1939,119 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
   });
   // The three populations add up, so the turn states no mismatch: 2 presented + 1 withheld is 3 produced.
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
+  // And this bubble fitted, so no speech was deleted: the notice is a fact about a cut, never a line printed per turn.
+  assert.doesNotMatch(printed, /speech_truncated:/u);
+});
+
+test("a turn the bubble cuts prints the loss it could not deliver", async () => {
+  // MEASURED 2026-11-16 (`round62`, one session, 90 turns that carried text): 18 turns were cut and 533 characters were
+  // deleted before the player saw them. The loss was counted (`bubble.truncatedChars`) and reported on stderr as
+  // `bubble_truncated:`, a name that says the container was short rather than that her words were removed. The conduct
+  // now states that anything past the ceiling is deleted (`game-surface-prompt-floor.ts`), and this line is the turn it
+  // happened on - so the record and the statement share one vocabulary and one ceiling.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const toolCall = { type: "toolCall", id: "tool_1", name: "action", arguments: {} };
+  const said = Object.freeze([
+    "三格宽二十格长，种子还差五十八颗——先去把地方看明白，再盘算钱够不够跑一趟镇上。",
+    "先从屋里出去，站到门口才能量出那条长垄的边。",
+    "门前这片草和石头还横着呢，等脚踩上去才知道要从哪头下手。",
+  ]);
+  const presented: { text: string }[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        said.forEach((value, index) => {
+          const snapshot = { id: `assistant_${String(index)}`, role: "assistant", content: [], stopReason: "pending" };
+          emit({ type: "message_start", message: snapshot });
+          emit({
+            type: "message_update",
+            message: snapshot,
+            assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+          });
+          emit({
+            type: "message_update",
+            message: snapshot,
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: value, partial: snapshot },
+          });
+          const last = index === said.length - 1;
+          emit({
+            type: "message_end",
+            message: {
+              id: `assistant_${String(index)}`,
+              role: "assistant",
+              content: [...[{ type: "text", text: value }], ...(last ? [] : [toolCall])],
+              stopReason: last ? "stop" : "toolUse",
+            },
+          });
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { text: string });
+      },
+    },
+  );
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_truncation",
+      eventId: "player_source_truncation",
+      text: "去把菜收了",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const account =
+    printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY ")) ??
+    assert.fail(`no account; ${printed}`);
+  const bubble = (
+    JSON.parse(account.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)) as {
+      bubble: { chars: number; truncatedChars: number; sentencesDropped: number };
+    }
+  ).bubble;
+  // The loss is real before anything is asserted about the notice: her speech does not fit, the player got less.
+  assert.ok(bubble.truncatedChars > 0, `this case must actually truncate; it dropped ${String(bubble.truncatedChars)}`);
+  assert.ok(
+    presented[0]!.text.length < said.join(" ").length,
+    "the delivered bubble is shorter than what she said, which is the loss this notice is about",
+  );
+
+  const line = printed.split("\n").find((entry) => entry.startsWith("speech_truncated:"));
+  assert.notEqual(line, undefined, `a cut turn printed no truncation notice; stderr was: ${printed}`);
+  const [code, turn, chars, sentences] = line!.split(":");
+  assert.equal(code, "speech_truncated");
+  assert.equal(turn, "player_source_truncation", "the notice names the turn the player was short of speech on");
+  // One authority for the numbers: the delivery account and the notice are the same measurement, so neither can drift.
+  assert.equal(Number(chars), bubble.truncatedChars);
+  assert.equal(Number(sentences), bubble.sentencesDropped);
+  assert.ok(bubble.sentencesDropped > 0, "whole sentences were dropped, and the notice says how many");
 });
 
 test("a turn with no presentation source accounts for its text instead of leaving it in the remainder", async () => {
@@ -1973,16 +2129,19 @@ test("a turn with no presentation source accounts for its text instead of leavin
     return true;
   }) as typeof process.stderr.write;
   try {
-    loop.pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "execution_receipt",
-      eventId: "receipt_harvest",
-      sourceEventId: "receipt_harvest",
-      correlationId: "receipt_harvest",
-      revision: 7,
-      executionId: "execution_harvest",
-      payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
-    });
+    loop.pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "execution_receipt",
+        eventId: "receipt_harvest",
+        sourceEventId: "receipt_harvest",
+        correlationId: "receipt_harvest",
+        revision: 7,
+        executionId: "execution_harvest",
+        payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     assert.equal(await loop.flush(), "completed");
   } finally {
     process.stderr.write = stderrWrite;
@@ -2157,7 +2316,7 @@ async function turnAccount(run: () => Promise<unknown>): Promise<Record<string, 
 }
 
 /** The settled digest for one program, minted by the module that owns it rather than spelled here. */
-function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
+function settledDigest(programId: string, nodeState: "succeeded" | "failed" | "rejected") {
   const digest = programSettledDigest({
     programId,
     settledAtMs: 4_242,
@@ -2186,11 +2345,15 @@ function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
 }
 
 test("a settled program opens a presentation lease, because an outcome nobody was told about does not exist", async () => {
-  // The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
-  // `program_settled` is deliberately not held). The presentation lease disagreed, so the companion was
-  // asked to answer an outcome and the answer was counted as text nobody was shown - the exact shape
-  // round40 lost 40 of its 79 parts to. The presenter below is the only thing that can report delivery,
-  // so the lease and the delivery are two separate facts and both are asserted.
+  // WHY THIS FIXTURE IS `rejected`. A settlement whose every node SUCCEEDED is `progress` and opens no turn at all - its
+  // outcome travels in the next turn's block (`event-pump.ts`, `SETTLED_PROGRAM_OUTCOMES`). The settlement that opens a turn
+  // is one something was refused in, so that is the one whose batch this test can inspect - and the lease is the subject
+  // here, not the success.
+  //
+  // The lesson this test was written for still holds: a settlement batch must be granted a presentation lease rather than
+  // the companion answering an outcome whose answer is counted as text nobody was shown - the shape round40 lost 40 of its
+  // 79 parts to. That `program_settled` is in the lease allowlist is what the assertion below proves; that a SUCCESSFUL
+  // settlement still reaches the player is the next test.
   const text = "程序跑完了，井也修好了。";
   const presented: { sourceEventId: string; text: string }[] = [];
   const loop = new CompanionLoop(sessionSaying(text) as never, {
@@ -2200,8 +2363,8 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
       presented.push(content as { sourceEventId: string; text: string });
     },
   });
-  const digest = settledDigest("plan_41", "succeeded");
-  loop.pump.enqueueFact(digest);
+  const digest = settledDigest("plan_41", "rejected");
+  loop.pump.enqueueFact(digest, FACT_PRODUCER.adapterIngress);
   const account = await turnAccount(() => loop.flush());
 
   assert.deepEqual(
@@ -2222,6 +2385,57 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
   });
 });
 
+test("a succeeded settlement opens no turn, and the NEXT turn still delivers and presents it", async () => {
+  // THE OTHER HALF OF THE RETARGET ABOVE, and the property the brief is named for: do not lose the information. A
+  // programme that did what it was told is progress and opens no turn of its own; what that must NOT mean is that its
+  // outcome is dropped. It keeps its place in the window and arrives in the next turn that opens for a decision, with the
+  // lease that turn already has - so the retarget of the lease test cannot hide a regression in this one.
+  const text = "都浇完了，回头再看一眼。";
+  const presented: { sourceEventId: string; text: string }[] = [];
+  const batches: string[] = [];
+  const session = sessionSaying(text);
+  const loop = new CompanionLoop(
+    {
+      ...session,
+      async sendUserMessage(batch: string) {
+        batches.push(batch);
+        await session.sendUserMessage(batch);
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { sourceEventId: string; text: string });
+      },
+    },
+  );
+  loop.pump.enqueueFact(settledDigest("plan_42", "succeeded"), FACT_PRODUCER.adapterIngress);
+  await loop.flush();
+
+  assert.equal(loop.pump.turnAccount.opened, 0, "a programme that did its work opens no turn of its own");
+  assert.equal(
+    loop.pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+    1,
+    `the flush is counted as progress rather than as nothing: ${turnAccountLine(loop.pump.turnAccount)}`,
+  );
+  assert.deepEqual(batches, [], "and nothing was asked of Pi yet");
+
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_1",
+    text: "好了吗？",
+    locale: "zh-CN",
+    timestampMs: 1_000,
+  });
+  await loop.flush();
+
+  assert.equal(batches.length, 1, "the next turn that opens for a decision is the one it arrives in");
+  assert.match(batches[0]!, /<execution-result>\n/u, "carrying the settlement's outcome, not a summary of it");
+  assert.match(batches[0]!, /1\/1 步做成了/u, "in the producer's own counts");
+  assert.equal(presented.length, 1, "and the answer reaches the player under that turn's lease");
+});
+
 test("an ordinary execution outcome still opens no lease, so volume cannot creep", async () => {
   // The one kind added is the settlement. Every other outcome keeps today's silence: the account names
   // it, and nothing is presented - a lease granted to `execution_settled_succeeded` would put a bubble
@@ -2234,16 +2448,19 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
       presented.push(content);
     },
   });
-  loop.pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    eventId: "execution_settled_1",
-    sourceEventId: "execution_settled_1",
-    correlationId: "execution_settled_1",
-    revision: 9,
-    occurredAtMs: 5,
-    payload: { kind: "execution_settled_succeeded", executionId: "execution_1" },
-  });
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "execution_settled_1",
+      sourceEventId: "execution_settled_1",
+      correlationId: "execution_settled_1",
+      revision: 9,
+      occurredAtMs: 5,
+      payload: { kind: "execution_settled_succeeded", executionId: "execution_1" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   const account = await turnAccount(() => loop.flush());
 
   assert.deepEqual(presented, []);
@@ -2311,16 +2528,19 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     async presentNativeAssistantContent() {},
   });
   const account = await turnAccount(async () => {
-    loop.pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "semantic_event",
-      eventId: "execution_settled_account",
-      sourceEventId: "execution_settled_account",
-      correlationId: "execution_settled_account",
-      revision: 11,
-      occurredAtMs: 5,
-      payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
-    });
+    loop.pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "semantic_event",
+        eventId: "execution_settled_account",
+        sourceEventId: "execution_settled_account",
+        correlationId: "execution_settled_account",
+        revision: 11,
+        occurredAtMs: 5,
+        payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     await loop.flush();
   });
   assert.deepEqual(account, {
@@ -2330,4 +2550,318 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     bubbles: 0,
     messages: { count: 1, ids: ["assistant_settlement"] },
   });
+});
+
+/**
+ * A Pi turn that DOES something and says nothing: the tool call fires, the message asks for it, and no atom of text.
+ *
+ * <p>
+ * The shape is the one `round58` produced 21 of, one per opened turn: `NATIVE_COMPANION_TURN_DELIVERY {"textParts":1,
+ * "presented":1,"bubbles":1}` on every one of them, so the run had no way to tell a turn spent working from a turn spent
+ * talking. Nothing in the loop refuses this shape - `PROVIDER_EMPTY_COMPLETION` excludes a message that asked for a tool -
+ * so what this fixture pins is only what the turn is COUNTED as.
+ * </p>
+ */
+function sessionActingWithoutSpeech() {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const snapshot = { id: "assistant_silent_work", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: snapshot });
+      emit({ type: "tool_execution_start", toolCallId: "call_silent", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_silent", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_silent_work",
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_silent", name: "stardew_plan_work", arguments: {} }],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+test("acting_turn_settled_silent_is_unreachable: a turn that acted and said nothing settles as silence, not as a bubble", async () => {
+  // MEASURED 2026-11-15 (`round58`): 21 turns opened, 21 bubbles, 145 flushes, `turn_closed_without_action` 0 and
+  // `turn_settled_silent` 0 - every turn both acted and spoke, and the account had one counter for the speak-without-act
+  // shape and none for the act-without-speaking shape. A turn that acts and chooses not to narrate it landed nowhere: it
+  // was not an empty turn (`worked` outranks `spoke` in the loop's own publication), not a silent one (that counter read
+  // `said_nothing`, a state no completed turn can reach), and not a suppression.
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(sessionActingWithoutSpeech() as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content);
+    },
+  });
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    // A REFUSED settlement, because this test is about the TURN and not about success: a settlement whose every node
+    // succeeded is progress and opens no turn (`event-pump.ts`, `SETTLED_PROGRAM_OUTCOMES`), so it could not host a turn
+    // that acts and says nothing. The refused one is a decision and does open one.
+    loop.pump.enqueueFact(settledDigest("plan_58", "rejected"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  assert.deepEqual(presented, [], "she said nothing, so the player is shown nothing: silence is not a bubble");
+  assert.equal(
+    printed.includes("NATIVE_COMPANION_TURN_DELIVERY"),
+    false,
+    `a turn with no speech has no delivery to account for: ${printed}`,
+  );
+  const account = loop.pump.turnAccount;
+  assert.equal(account.opened, 1, "the settlement opened a turn, so the silence happened inside one");
+  assert.equal(account.emptyTurns.total, 0, "she acted: this is not the turn she spent on speech");
+  assert.equal(
+    account.silentSettled.total,
+    1,
+    `the acting-and-silent turn is counted as silence: ${turnAccountLine(account)}`,
+  );
+  assert.equal(account.silentSettled.byOpener[TURN_OPENING.worldFact], 1, "and under the opener that owed the turn");
+  assert.ok(
+    turnAccountLine(account).includes(`· ${TURN_SETTLED_SILENT} 1 {world_fact: 1,`),
+    `the run's own account line can say it: ${turnAccountLine(account)}`,
+  );
+});
+
+/**
+ * A batch carrying TWO assistant records: it says one line, then runs a tool and says nothing about it.
+ *
+ * This is `round60`'s 85 `tool_use` records in miniature: 49 of them carried a line and 36 did not, and the batch that
+ * held them was `worked` either way. The record order is Pi's own - a message ends, its tool runs, the next message follows
+ * - so the silence is the SECOND record, inside a turn that spoke earlier.
+ */
+function sessionSpeakingThenWorkingSilently(text: string) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const spoken = { id: "assistant_said_a_line", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: spoken });
+      emit({
+        type: "message_update",
+        message: spoken,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: spoken },
+      });
+      emit({
+        type: "message_update",
+        message: spoken,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: spoken },
+      });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_said_a_line",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          stopReason: "stop",
+        },
+      });
+      emit({ type: "tool_execution_start", toolCallId: "call_after_the_line", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_after_the_line", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_worked_silently",
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_after_the_line", name: "stardew_plan_work", arguments: {} }],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+/**
+ * THE DEFECT THIS UNIT EXISTS FOR, end to end through the real loop: one batch, two assistant records, one silence.
+ *
+ * <p>
+ * MEASURED 2026-11-15 (`round60`): 169 assistant turns, 133 with text, 36 tool-only - and the account printed
+ * `turn_settled_silent 0`, because the pump re-segmented the same run into 86 delivered batches and every one of those 36
+ * sat inside a batch that also carried a line. Through the BATCH this fixture is `worked` (any text in it speaks for all
+ * of it), which is the reading that made the silence invisible; per assistant record it is one `spoke` and one
+ * `worked_silently`.
+ * </p>
+ */
+test("assistant turns: a batch that speaks and then works silently reads as with text 1 · tool-only 1", async () => {
+  const text = "先把这片浇了。";
+  const loop = new CompanionLoop(sessionSpeakingThenWorkingSilently(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  });
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    // A refused settlement, for the same reason as the pair above: a success-only settlement is progress and opens no
+    // turn, and this fixture is about what a TURN's two records are.
+    loop.pump.enqueueFact(settledDigest("plan_60_two_records", "rejected"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const account = loop.pump.turnAccount;
+  assert.equal(account.opened, 1, "the premise: ONE delivered batch carried both records");
+  assert.equal(
+    loop.pump.turnProduction,
+    TURN_PRODUCTION.worked,
+    "and in the batch's unit it is `worked` - it said something, so no batch-shaped counter can call it silence",
+  );
+  assert.deepEqual(
+    account.assistantTurns.byProduction,
+    {
+      [TURN_PRODUCTION.worked]: 0,
+      [TURN_PRODUCTION.workedSilently]: 1,
+      [TURN_PRODUCTION.spoke]: 1,
+      [TURN_PRODUCTION.saidNothing]: 0,
+    },
+    `each assistant record is one turn: ${turnAccountLine(account)}`,
+  );
+  assert.equal(account.assistantTurns.examined, 2, "two records, one batch: the two numbers are not the same fact");
+  assert.equal(assistantTurnsWithText(account.assistantTurns), 1);
+  assert.equal(assistantTurnsToolOnly(account.assistantTurns), 1);
+  assert.equal(
+    account.silentSettled.total,
+    0,
+    "and the batch counter still reads 0 - which is why it could never have answered this question",
+  );
+  assert.ok(
+    printed.includes(
+      `${ASSISTANT_TURNS_EXAMINED} 2 {worked: 0, worked_silently: 1, spoke: 1, said_nothing: 0} · ${ASSISTANT_TURNS_WITH_TEXT} 1 · ${ASSISTANT_TURNS_TOOL_ONLY} 1`,
+    ),
+    `the run's own account line states it, in its own unit: ${printed}`,
+  );
+  assert.ok(
+    printed.includes(`${PER_DELIVERED_BATCH} turns opened 1 {`),
+    `and the batch group that follows is named as batches: ${printed}`,
+  );
+});
+
+/**
+ * The same turn with one word in it: the act stays, the silence goes. It exists to make the gate above falsifiable - a
+ * counter that fired on every acting turn would pass there and fail here.
+ */
+function sessionActingAndSpeaking(text: string) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const snapshot = { id: "assistant_spoken_work", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: snapshot });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+      });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: snapshot },
+      });
+      emit({ type: "tool_execution_start", toolCallId: "call_spoken", toolName: "stardew_plan_work" });
+      emit({ type: "tool_execution_end", toolCallId: "call_spoken", toolName: "stardew_plan_work" });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_spoken_work",
+          role: "assistant",
+          content: [
+            { type: "text", text },
+            { type: "toolCall", id: "call_spoken", name: "stardew_plan_work", arguments: {} },
+          ],
+          stopReason: "toolUse",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+test("acting_turn_settled_silent_is_unreachable: the same act WITH a word is not silence, and it is not a different turn", async () => {
+  // THE FALSIFIER for the gate above, on the same fixture with exactly one thing changed: she says a line while she works.
+  // If the counter fired on acting turns rather than on silent ones, the assertion in the gate would be the one that broke;
+  // if the loop published `workedSilently` for a turn that carried text, this is the case that says so.
+  const presented: { text: string }[] = [];
+  const text = "先把这片浇了。";
+  const loop = new CompanionLoop(sessionActingAndSpeaking(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content as { text: string });
+    },
+  });
+  const account = await turnAccount(async () => {
+    // A REFUSED settlement, for the same reason as its gate above: a success-only settlement is progress and opens no turn,
+    // and this pair is about what a TURN settles as.
+    loop.pump.enqueueFact(settledDigest("plan_58_spoken", "rejected"), FACT_PRODUCER.adapterIngress);
+    await loop.flush();
+  });
+
+  assert.equal(account.bubbles, 1, "one turn, one bubble - the shape round58 measured 21 of");
+  assert.equal(presented.length, 1, "and the player saw the line she said while working");
+  assert.equal(
+    loop.pump.turnAccount.silentSettled.total,
+    0,
+    `a turn that acted AND spoke is not silence: ${turnAccountLine(loop.pump.turnAccount)}`,
+  );
+  assert.equal(loop.pump.turnAccount.emptyTurns.total, 0, "and it is not a turn spent on speech instead of work");
+  assert.equal(
+    loop.pump.turnAccount.assistantTurns.byProduction[TURN_PRODUCTION.worked],
+    1,
+    "the per-assistant-turn tally agrees with the batch counter exactly where the batch COULD see the turn",
+  );
 });

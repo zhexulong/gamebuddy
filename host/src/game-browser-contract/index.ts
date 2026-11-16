@@ -279,10 +279,18 @@ const GameAttachmentStateV1Schema = strictObject({
   generation: NonNegativeGeneration,
 });
 
-const GameCapabilitySummaryV1Schema = strictObject({
-  available: Type.Boolean(),
-  count: Type.Integer({ minimum: 0, maximum: 512 }),
-});
+/**
+ * What the live capability surface published, or why this layer could not read it at all.
+ *
+ * THREE ZEROS STAY APART. `published` with `count: 0` is a runtime that answered and published no capability - a
+ * measurement. `not_measured` is a projection that could not see the surface, and it carries NO count at all: the shape
+ * this replaces (`{available: false, count: 0}`) said "nothing is published" whether the runtime had published nothing
+ * or the Host had never looked, and the browser rendered both as the same sentence.
+ */
+const GameCapabilitySummaryV1Schema = Type.Union([
+  strictObject({ status: Type.Literal("published"), count: Type.Integer({ minimum: 0, maximum: 512 }) }),
+  strictObject({ status: Type.Literal("not_measured"), reason: Type.String({ minLength: 1, maxLength: 64 }) }),
+]);
 
 /**
  * The Game surface's own push checkpoint: which process epoch its stream is in, and where that stream has
@@ -741,9 +749,10 @@ const StardewActionFamilyV1Schema = strictObject({
  *
  * `appliesToRunningGame` is the honest per-field answer to "did that just change
  * anything?", and it is the reason the surface can promise anything at all:
- *  - the action policy is re-read from `config.json` on a 120-tick throttle
- *    (`FarmhandPolicyRefreshThrottle`), so a change reaches a RUNNING game in about
- *    two seconds and this flag is true;
+ *  - the action policy is pushed to a RUNNING Mod as a `farmhand_action_policy_request`
+ *    frame on the authenticated bridge, and the Mod replays its capability as a
+ *    `catalog_update`, so a change reaches a running game within a turn of the pipe
+ *    rather than on a timer;
  *  - the co-op night floor is read once at embodiment initialisation
  *    (`ConfigureLifecycleMinimumFarmers`), so a change takes effect the next time the
  *    world loads and its own sentence says so.
@@ -1090,7 +1099,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
         companionName: null,
         selectedWorld: null,
         selectedSave: null,
-        capabilitySummary: { available: false, count: 0 },
+        capabilitySummary: { status: "not_measured" as const, reason: "no_attached_runtime" },
         latestOutcome: "none" as const,
       },
     }),
@@ -1111,7 +1120,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
         companionName: "Farmhand",
         selectedWorld: "Pelican Town",
         selectedSave: "Spring Year 2",
-        capabilitySummary: { available: true, count: 3 },
+        capabilitySummary: { status: "published" as const, count: 3 },
         latestOutcome: "succeeded" as const,
       },
     }),

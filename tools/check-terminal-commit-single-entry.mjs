@@ -59,6 +59,14 @@
  *                    (tools/check-terminal-commit-single-entry.test.mjs)
  * red-proof: inject  an exemption for a member that calls the seam -> `stale_terminal_seam_exemption:<file>:<line>`
  */
+
+export const gateDeclaration = {
+  id: "check-terminal-commit-single-entry",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

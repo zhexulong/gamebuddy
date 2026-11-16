@@ -13,6 +13,7 @@ function batch(disposition: "steer" | "follow_up", text: string): PendingBatch {
     facts: Object.freeze([]),
     events: Object.freeze([]),
     text,
+    broughtObservation: false,
   });
 }
 

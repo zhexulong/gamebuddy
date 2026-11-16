@@ -12,10 +12,6 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
-    /// <summary>
-    /// The modal family's decisions, as one instance: which menus this channel may close, what the refusal says when it
-    /// may not, and the settlement commit it has already driven (<see cref="ModalFamily"/>).
-    /// </summary>
     private readonly ModalFamily modalFamily = new();
 
     /// <summary>
@@ -80,34 +76,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.revision++;
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // The Modal profile is this family's admission (it refuses unless the disposition IS Modal and
-        // no cutscene absorbed the actor), so the mounted modal is the precondition here rather than an
-        // obstacle. Before this call the profile had no production caller at all and this body
-        // re-derived the ruling - which is what the file header used to claim the shared admission did.
         if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.Modal) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         IClickableMenu? modal = Game1.activeClickableMenu;
         if (modal is null)
-            // The no-op terminal: nothing was dismissed, and the receipt says exactly that. `modal=none` is the evidence
-            // a success owes ADR-006, and it is the whole of the claim - no native call ran, so no `cleared_modal=` or
-            // `close_effect=` may appear beside it.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "nothing_to_dismiss", "modal=none");
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
-            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
-            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
-            // the failure-mode collapse the review flagged.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        // The settlement flag outlives the receipt, not the menu: the first dismissal that finds another menu mounted
-        // is the observation that the one it recorded has unloaded (ShippingMenu.update -> exitThisMenu, :361-366).
         this.modalFamily.ObserveMountedMenu(modal);
 
-        // WHICH CLOSE THIS CHANNEL MAY PERFORM, as one verdict from the family. The ladder of booleans this replaced
-        // answered "may I close this" by POSITION - a shop passed the close-path audit and still had to be refused,
-        // because its counter belongs to `shop_purchase` - and a decision whose answer depends on where a caller stops
-        // reading is the shape a caller gets wrong at 3 a.m.
         ModalFamily.Dismissal dismissal = ModalFamily.DecideDismissal(modal, actor);
         if (dismissal is ModalFamily.Dismissal.Unavailable refusal)
         {
@@ -168,9 +148,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // burns its save budget and moves to `AwaitingDayStart`, and the world is left with an advanced
                 // calendar, the actor still held as `body_owned_by_day_advance`, and every later request refused.
                 if (this.modalFamily.SettlementCommitInProgress(shippingMenu))
-                    // The commit is under way and this menu survives it for several frames, so the caller's second
-                    // request asks for a state that already holds. Answering it from the engine again would re-arm
-                    // the outro fade; answering it honestly costs no native call at all.
                     return this.RememberTerminal(
                         request.RequestId,
                         executionId,
@@ -188,13 +165,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                         ExecutionState.Rejected,
                         "modal_commit_path_unavailable",
                         $"modal_type={modalType};engine_method=okClicked;available=false");
-                // Latched BEFORE the native call, because the call is not atomic: `okClicked` has already armed the
-                // fade by the time anything after the two field writes can throw, and a second entry would re-arm it.
                 this.modalFamily.RecordSettlementCommit(shippingMenu);
                 commit.Invoke(shippingMenu, null);
-                // The engine completes the close in its own timeline (the outro), so the postcondition here is the
-                // commit having run - not the menu already being gone. Reporting the truth is what lets the night
-                // lifecycle observe `Saved` and `DayStarted` instead of waiting for a save nothing ever started.
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
@@ -279,10 +251,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.revision++;
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        // The Modal profile is this family's admission (it refuses unless the disposition IS Modal and
-        // no cutscene absorbed the actor), so the mounted modal is the precondition here rather than an
-        // obstacle. Before this call the profile had no production caller at all and this body
-        // re-derived the ruling - which is what the file header used to claim the shared admission did.
         if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.Modal) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -304,11 +272,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"key_length={requestedKey?.Length ?? 0};blank={(string.IsNullOrWhiteSpace(requestedKey) ? "true" : "false")};max_length=128");
 
         Response[] offeredResponses = ModalFamily.OfferedResponses(dialogue);
-        // THE ENGINE'S OWN SPELLING WINS. A caller that sends `yes` answers the box that offers `Yes`, because the key
-        // names a line on screen rather than an entry in a dictionary, and a case-sensitive compare turned the one
-        // obvious spelling into `response_key_not_offered` (round41: `yes`, then `是`, `next`, `1`, and `Yes` accepted
-        // 27 minutes later). Nothing else is forgiven - `是` must still be refused against a box offering `Yes,No` - and
-        // that refusal now LISTS what the box does offer, in the hinted field the companion can actually read.
         int offeredIndex = Array.FindIndex(
             offeredResponses,
             offered => string.Equals(
@@ -328,13 +291,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 hint: OfferedResponseHint(offeredResponses, promptText));
         }
 
-        // THE DAY THIS QUESTION ENDS BELONGS TO `advance_day`, WHICH RECEIPTS IT.
+        // THE DAY THIS QUESTION ENDS BELONGS TO THE ACTION THAT CROSSES IT (`FarmhandActionCatalog.DayCrossingActionId`),
+        // WHICH RECEIPTS IT.
         //
         // `Yes` on the engine's bed prompt runs `Sleep_Yes` -> `startSleep` -> `NewDay` (`GameLocation.cs:3763-3765`):
         // a calendar crossing with no execution behind it. Measured 2026-11-09 (`round41`): such an answer crossed a
         // day, the still-pending `sleep` intent crossed a second one 9 s later, and neither the run's tally nor the
         // Agent could tell the two apart. `No` stays answerable - declining crosses nothing - because refusing the
         // whole prompt would leave it holding the actor with no forward action at all.
+        //
+        // ONE OWNER, NAMED BY THE CATALOG. The refusal used to be spelled `..._owned_by_advance_day`, after an action id
+        // this catalog does not have: the day-crossing action is `sleep`, and a code that names a missing action sends
+        // the next reader (and the next lane) looking for a request that cannot be made (round60).
         if (offeredIndex >= 0
             && NativeSleepPrompt.IsStanding(dialogue)
             && string.Equals(
@@ -346,10 +314,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
-                "native_sleep_prompt_owned_by_advance_day",
+                "native_sleep_prompt_owned_by_sleep",
                 $"modal_type=DialogueBox;question=true;response_key={offeredResponses[offeredIndex].responseKey}"
-                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action=sleep",
-                hint: "Answering Yes here ends the day. Dispatch `sleep` instead - it crosses the night with a receipt.");
+                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action={FarmhandActionCatalog.DayCrossingActionId}",
+                hint: $"Answering Yes here ends the day. Dispatch `{FarmhandActionCatalog.DayCrossingActionId}` instead - it answers this prompt and crosses the night with a receipt.");
         }
 
         // The offered response ITSELF, key and text together: it is the object the native click path answers with
@@ -527,7 +495,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "level_up_expected_pair_mismatch",
                 "expected_pair=missing");
 
-        // Reading 1: the menu's own private pair.
         if (ReadLevelUpMenuPair(menu) is not { } menuPair)
             return this.RememberTerminal(
                 request.RequestId,
@@ -536,7 +503,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "level_up_menu_pair_unreadable",
                 "modal_type=LevelUpMenu;pair_readable=false");
 
-        // Reading 2: the entry the engine pushed this menu from. Two readings, and they must agree.
         Point? pendingHead = actor.newLevels.Count > 0 ? actor.newLevels[0] : null;
         if (pendingHead is not Point head || head.X != menuPair.Skill || head.Y != menuPair.Level)
             return this.RememberTerminal(
@@ -609,7 +575,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
             else
             {
-                // The engine's own ordinary settlement: `getLevelPerk` then `RemoveLevelFromLevelList`.
                 menu.okButtonClicked();
             }
         }

@@ -20,19 +20,25 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { createGameCompanionLoop } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import {
+  FACT_PRODUCER,
   type CompanionEventPump,
   WORLD_STATE_REFRESH_ATTEMPTS,
   WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
   type WorldFact,
 } from "./event-pump.js";
-import { createGameCompanionLoop } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { worldStateStaleThreshold } from "./fact-brief.js";
 import type { GameConnection } from "./game-connection.js";
 import type { Snapshot } from "./protocol.js";
 
-/** The world as the Mod admitted it, at `revision`: one frozen reading is the population every crossing is crossed on. */
+/**
+ * The world as the Mod admitted it, at `revision`, with the clock following that number.
+ *
+ * The clock is not decoration: a reading is identified by its CONTENT (`readingContentIdentity`), and a revision is the
+ * Mod's action echo - so two readings that differ only in that number are ONE reading, and a crossing built on them would
+ * spend one budget while the test believed it had three. A later observation of a later world is a later clock.
+ */
 function reading(revision: number): Snapshot {
   return {
     revision,
@@ -46,7 +52,7 @@ function reading(revision: number): Snapshot {
     enabledActionIds: [],
     presentationLocale: "zh-CN",
     exhausted: false,
-    timeOfDay: 600,
+    timeOfDay: 600 + (revision % 600),
     dayOfMonth: 6,
     seasonIndex: 0,
     year: 1,
@@ -71,27 +77,43 @@ function snapshotFact(revision: number): WorldFact {
   });
 }
 
-/** A fact the world really published: the clock moving is what says the held reading is no longer the world. */
-function movedFact(revision: number, index: number): WorldFact {
-  const kind = "time_milestone";
+/**
+ * A fact the world published that says nothing about where the world IS: a modal opening.
+ *
+ * The population a spent refresh budget must NOT be earned back by: a turn the world opened without moving, which is what
+ * separates "the bound is per world statement" from "the bound is per flush" (`AUTO_OBSERVE_REARM`).
+ */
+function silentFact(index: number): WorldFact {
   return Object.freeze({
     source: "stardew_mod",
-    kind: "world_fact" as const,
-    eventId: `${kind}_${String(revision)}_${String(index)}`,
-    correlationId: `${kind}_${String(revision)}_${String(index)}`,
-    revision: revision + 500,
+    kind: "semantic_event" as const,
+    eventId: `modal_presented_${String(index)}`,
+    correlationId: `modal_presented_${String(index)}`,
+    revision: 500,
     observedTick: index,
-    gameTime: "1200",
-    semanticKind: kind,
-    payload: Object.freeze({ kind, revision: revision + 500 }) as Readonly<Record<string, unknown>>,
+    payload: Object.freeze({ kind: "modal_presented", index }),
   });
 }
 
-/** One delivered turn: the fact, then whatever the pump minted for it, in the batch the delivery carries. */
-async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<void> {
-  pump.enqueueFact(fact);
+/**
+ * One delivered turn, admitted the way the Host admits it: the fact, then whatever the pump minted for it.
+ *
+ * `say` is the person's own words, and it is what makes the first turn DELIVER: a snapshot alone opens nothing
+ * (`TURN_OPENING`: a reading is standing state), so a fixture that never speaks ages nothing and would prove nothing about
+ * the cure.
+ */
+async function deliverTurn(pump: CompanionEventPump, fact: WorldFact, say = false): Promise<void> {
+  pump.enqueueFact(fact, FACT_PRODUCER.worldStateRefreshRefused);
+  if (say)
+    pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: `player_input_attach_${String(fact.revision)}`,
+      text: "我到了。",
+      locale: "zh-CN",
+      timestampMs: 1_790_000_000_000,
+    });
   const stale = pump.takeWorldStateStaleFact();
-  if (stale !== undefined) pump.enqueueFact(stale);
+  if (stale !== undefined) pump.enqueueFact(stale, FACT_PRODUCER.worldStateRefreshRefused);
   await pump.flush({
     async deliver() {
       return undefined;
@@ -100,8 +122,8 @@ async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<v
 }
 
 /**
- * The turn on which a held reading first outlives its bound, and the turn that reaches the last of the
- * `WORLD_STATE_REFRESH_ATTEMPTS` thresholds.
+ * How many turns of one held reading the fixtures drive: enough to reach its first stale notice, and enough to reach the
+ * last of the `WORLD_STATE_REFRESH_ATTEMPTS` budgets.
  *
  * Both derived from the thresholds the block itself uses (`worldStateStaleThreshold`), so a bound that gains or loses a
  * probe does not have to be found here. The `+ 1` is the turn in which the age is read: a delivery's `ageTurns` counts the
@@ -138,15 +160,20 @@ test("the pump the composition builds reports its stale-refresh port attached, a
   assert.equal(
     loop.pump.worldStateRefresh.probes,
     0,
-    "attaching asks nothing: the first question belongs to a reading that outlived its bound",
+    "attaching asks nothing: the first question belongs to a turn about to be composed from an aged reading",
   );
 
-  // One crossed reading, read at its first stale turn: the held observation, then the clock walking past its bound.
-  await deliverTurn(loop.pump, snapshotFact(352));
-  for (let turn = 1; turn <= FIRST_STALE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
+  // One aged reading, read from its first aged turn: the held observation, then turns the world did not move in.
+  await deliverTurn(loop.pump, snapshotFact(352), true);
+  for (let turn = 1; turn <= FIRST_STALE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(turn));
   await drained();
 
-  assert.equal(asked.length, 1, "one crossing is one question, however many turns it lasts");
+  assert.equal(
+    asked.length,
+    WORLD_STATE_REFRESH_ATTEMPTS,
+    `the aged turns of one reading ask the integration, at most ${String(WORLD_STATE_REFRESH_ATTEMPTS)} times: ` +
+      `${String(asked.length)} call(s) observed`,
+  );
   assert.equal(
     asked[0],
     connection,
@@ -166,8 +193,8 @@ test("a connection with no observation route is refused by name rather than answ
       published.push(fact);
     },
   });
-  await deliverTurn(loop.pump, snapshotFact(352));
-  for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, movedFact(352, turn));
+  await deliverTurn(loop.pump, snapshotFact(352), true);
+  for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(turn));
   await drained();
 
   assert.equal(published.length, 1, "one crossing, one statement");
@@ -181,8 +208,9 @@ test("a connection with no observation route is refused by name rather than answ
 
 test("one crossed reading spends its bounded probes and is refused once; the next crossing re-arms", async () => {
   // The bound the run depends on. A bridge that refuses every observation cannot be turned into a spin by a world that
-  // never moves: the probe is re-armed by the READING, so each crossing spends `WORLD_STATE_REFRESH_ATTEMPTS` and says one
-  // refusal naming the revision it could not replace.
+  // does not move: the probe is re-armed by the READING, so each crossing spends `WORLD_STATE_REFRESH_ATTEMPTS` and says one
+  // refusal naming the revision it could not replace. Every turn here is one the world opened without moving, so the second
+  // re-arm signal (`AUTO_OBSERVE_REARM.worldMoved`) is never present and the reading's own budget is the whole allowance.
   const refusals: WorldFact[] = [];
   const loop = createGameCompanionLoop({
     session: {} as never,
@@ -197,9 +225,8 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
   });
   const readings = [352, 400, 448];
   for (const [index, revision] of readings.entries()) {
-    await deliverTurn(loop.pump, snapshotFact(revision));
-    for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1)
-      await deliverTurn(loop.pump, movedFact(revision, index * 100 + turn));
+    await deliverTurn(loop.pump, snapshotFact(revision), index === 0);
+    for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(index * 100 + turn));
     await drained();
   }
 
@@ -224,7 +251,7 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
     loop.pump.worldStateRefresh.probes,
     readings.length * WORLD_STATE_REFRESH_ATTEMPTS,
     `each crossed reading spends its own ${String(WORLD_STATE_REFRESH_ATTEMPTS)} probes: the bound re-arms on the ` +
-      "revision, not on the turn",
+      "reading, not on the turn",
   );
   assert.equal(
     loop.pump.worldStateRefresh.refusals,

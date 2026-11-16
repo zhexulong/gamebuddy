@@ -1,0 +1,19 @@
+{
+  "allocations": [
+    {
+      "file": "integrations/stardew/ModEntry.Fixtures.WiaAnimalProduct.cs",
+      "handler": "OnTick",
+      "pattern": "linq"
+    },
+    {
+      "file": "integrations/stardew/ModEntry.Fixtures.cs",
+      "handler": "OnTick",
+      "pattern": "array"
+    },
+    {
+      "file": "integrations/stardew/ModEntry.cs",
+      "handler": "OnUpdateTicked",
+      "pattern": "format"
+    }
+  ]
+}

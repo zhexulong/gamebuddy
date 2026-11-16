@@ -15,6 +15,7 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
 {
     private const string ModAssemblyName = "GameBuddy.Stardew";
     private const string CoreAssemblyName = "GameBuddy.Stardew.Core";
+    private const string ModHelperType = "StardewModdingAPI.IModHelper";
     private const string PublicationType = "GameBuddy.Stardew.Core.Policy.FarmhandCapabilityPublication";
     private const string CapabilitySetType = "GameBuddy.Stardew.Core.Policy.FarmhandCapabilitySet";
     private const string OperationKindType = "GameBuddy.Stardew.Core.Policy.FarmhandOperationKind";
@@ -108,28 +109,89 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
         if (providerClosures == 0)
             Fail("ModEntry capability consumers are not backed by a closure that reads ScreenEmbodimentState.CapabilityPublication.");
 
-        MethodDefinitionHandle refresh = mod.RequireMethod(modEntry, "RefreshFarmhandCapabilityPublication");
-        IReadOnlyList<Instruction> refreshInstructions = mod.ReadInstructions(refresh);
-        IReadOnlyList<MethodTarget> refreshCalls = mod.MethodTargets(refreshInstructions);
+        MethodDefinitionHandle apply = mod.RequireMethod(modEntry, "ApplyFarmhandActionPolicy");
+        IReadOnlyList<Instruction> applyInstructions = mod.ReadInstructions(apply);
+        IReadOnlyList<MethodTarget> applyCalls = mod.MethodTargets(applyInstructions);
         RequireOrdered(
-            refreshCalls,
+            applyCalls,
             ("GameBuddy.Stardew.ModConfig", "get_HasValidActionPolicy"),
             ("GameBuddy.Stardew.ModConfig", "get_EnabledActionSet"),
             (PublicationType, "WithEnabledActions"),
             ("GameBuddy.Stardew.BridgeSession", "TryCreateCatalogUpdate"),
             ("GameBuddy.Stardew.LocalPipeBridge", "TryEnqueueOutbound"),
-            "capability refresh must validate policy, derive a successor, and publish only through the existing bridge");
+            "policy application must validate policy, derive a successor, and publish only through the existing bridge");
         RequireAbsent(
-            refreshCalls,
+            applyCalls,
             new[]
             {
                 (PublicationType, "Initial"),
                 (CapabilitySetType, "FromPolicyEnabledOperations"),
             },
-            "capability refresh must not mint an independent initial/set authority");
-        if (!refreshInstructions.Any(instruction => instruction.OpCode == OpCodes.Ceq))
-            Fail("refresh does not compare the derived publication with the current immutable publication.");
-        AssertFailClosedPolicyGuard(refreshInstructions, refreshCalls);
+            "policy application must not mint an independent initial/set authority");
+        // The live path may not consult the durable document: a policy that arrived as a message is applied
+        // from the message, and a read here is the disk poll this path replaced.
+        RequireAbsent(
+            applyCalls,
+            new[] { (ModHelperType, "ReadConfig") },
+            "policy application must apply the pushed policy, not re-read config.json");
+        AssertUnchangedSuccessorSkipsThePublish(applyInstructions, applyCalls);
+        AssertFailClosedPolicyGuard(applyInstructions, applyCalls);
+
+        MethodDefinitionHandle handler = mod.RequireMethod(modEntry, "HandleFarmhandActionPolicy");
+        IReadOnlyList<MethodTarget> handlerCalls = mod.MethodTargets(mod.ReadInstructions(handler));
+        RequireOrdered(
+            handlerCalls,
+            ("GameBuddy.Stardew.Core.Policy.FarmhandActionPolicy", "get_DeniedActions"),
+            ("GameBuddy.Stardew.Core.Policy.FarmhandActionPolicy", "get_DeniedActionFamilies"),
+            ("GameBuddy.Stardew.ModConfig", "set_DeniedActionFamilies"),
+            ("GameBuddy.Stardew.ModEntry", "ApplyFarmhandActionPolicy"),
+            "the pushed policy must be the policy applied: both denial keys arrive in the frame and become the policy the publication is derived from");
+        RequireAbsent(
+            handlerCalls,
+            new[] { (ModHelperType, "ReadConfig") },
+            "the policy frame handler must not read config.json to learn what arrived in the frame");
+
+        AssertTheOnlyConfigReadIsTheStartupLoad(mod);
+    }
+
+    /// <summary>
+    /// config.json has exactly ONE compiled reader: the startup load in <c>Entry</c>.
+    ///
+    /// <para>
+    /// WHY THIS IS A GATE AND NOT A TEST OF TODAY'S CODE. The live action-policy path used to be a
+    /// 120-tick <c>Helper.ReadConfig</c> poll, and its own test pinned the interval - a guard that
+    /// agreed with the implementation and would have stayed green through any number of added reads.
+    /// The property that matters is "a running world never reads the durable document", so the
+    /// population here is the assembly's own method table: a poll added anywhere in the Mod - a new
+    /// class, a retry inside the frame handler, a "fall back to the file when no frame arrived"
+    /// branch - turns this red and names the member that added it. <c>Entry</c> is the one admitted
+    /// site because a policy the player set while the game was closed cannot arrive as a message:
+    /// there was no pipe to deliver it on.
+    /// </para>
+    /// </summary>
+    private static void AssertTheOnlyConfigReadIsTheStartupLoad(ArtifactMetadata mod)
+    {
+        const string startupLoad = "GameBuddy.Stardew.ModEntry+Entry";
+        List<string> readers = new();
+        foreach (MethodDefinitionHandle method in mod.AllMethods())
+        {
+            if (!mod.HasBody(method))
+                continue;
+            foreach (MethodTarget target in mod.MethodTargets(mod.ReadInstructions(method)))
+            {
+                if (target.Owner == ModHelperType && target.Name == "ReadConfig")
+                    readers.Add(mod.DescribeMethod(method));
+            }
+        }
+
+        if (readers.Count == 0)
+            Fail("no compiled method reads config.json: the startup load in Entry is missing, so a policy set before the world started could never reach the Mod.");
+        string[] laterReads = readers.Where(reader => reader != startupLoad).ToArray();
+        if (laterReads.Length > 0)
+            Fail(
+                $"config.json is read outside the startup load by {string.Join(", ", laterReads)}. A RUNNING world learns an "
+                + "action-policy change from the farmhand_action_policy_request frame; a read here is a poll of the durable "
+                + "document, and the poll is what the frame replaced.");
     }
 
     private static ConstructionSite RequireProviderConstruction(
@@ -577,6 +639,37 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
         ? $"({string.Join(", ", value.ParameterTypes)}) -> {value.ReturnType}"
         : "<unresolved>";
 
+    /// <summary>
+    /// A derived publication that IS the current one must skip the publish entirely: the comparison has to
+    /// sit between the successor derivation and the catalogue update and branch past that update.
+    ///
+    /// WHY NOT <c>ceq</c>. This assertion used to look for the <c>ceq</c> opcode, and it measured RED against
+    /// the Mod it was written for: Roslyn lowers <c>ReferenceEquals</c> and <c>long != 0</c> to
+    /// <c>bne.un</c>, so the opcode never appears and the check failed on a correct method (reproduced
+    /// 2026-11-16 against <c>HEAD</c>'s own build: "refresh does not compare the derived publication with
+    /// the current immutable publication"). A check that is red on the code it approves is not a guard; the
+    /// property it was reaching for - an unchanged successor never reaches the catalogue update - is what
+    /// this reads instead, and it does not depend on how the compiler lowers the comparison.
+    /// </summary>
+    private static void AssertUnchangedSuccessorSkipsThePublish(
+        IReadOnlyList<Instruction> instructions,
+        IReadOnlyList<MethodTarget> calls)
+    {
+        int derivationIndex = IndexOfCall(instructions, calls, PublicationType, "WithEnabledActions");
+        int publishIndex = IndexOfCall(instructions, calls, "GameBuddy.Stardew.BridgeSession", "TryCreateCatalogUpdate");
+        int publishOffset = instructions[publishIndex].Offset;
+        bool unchangedSuccessorSkipsPublish = instructions
+            .Skip(derivationIndex + 1)
+            .Take(publishIndex - derivationIndex - 1)
+            .Any(instruction => instruction.OpCode.FlowControl == FlowControl.Cond_Branch
+                && instruction.BranchTargetOffset is int target
+                && target > publishOffset);
+        if (!unchangedSuccessorSkipsPublish)
+            Fail(
+                "policy application publishes a catalogue update even when the derived publication is the current one: "
+                + "there is no branch from the successor derivation past the catalogue update.");
+    }
+
     private static void AssertFailClosedPolicyGuard(
         IReadOnlyList<Instruction> instructions,
         IReadOnlyList<MethodTarget> calls)
@@ -598,11 +691,9 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
         bool rejectedPathExits = instructions
             .Skip(policyIndex + 1)
             .Take(successorIndex - policyIndex - 1)
-            .Any(instruction => instruction.OpCode.FlowControl == FlowControl.Branch
-                && instruction.BranchTargetOffset is int target
-                && target > instructions[successorIndex].Offset);
+            .Any(instruction => instruction.OpCode == OpCodes.Ret);
         if (!rejectedPathExits)
-            Fail("invalid capability policy has no fail-closed branch out of the successor path.");
+            Fail("invalid capability policy does not terminate the method before the successor path.");
     }
 
     private static void AssertCoreComposition(ArtifactMetadata core)
@@ -926,6 +1017,14 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
 
         internal IReadOnlyList<MethodDefinitionHandle> AllMethods() => this.methodOwners.Keys.ToList();
 
+        /// <summary>False for a declaration with no IL body, which there is nothing to scan in.</summary>
+        internal bool HasBody(MethodDefinitionHandle method) =>
+            this.reader.GetMethodDefinition(method).RelativeVirtualAddress != 0;
+
+        /// <summary><c>Namespace.Type+Method</c>, the name a failure message can point at.</summary>
+        internal string DescribeMethod(MethodDefinitionHandle method) =>
+            $"{GetTypeName(this.methodOwners[method])}+{this.reader.GetString(this.reader.GetMethodDefinition(method).Name)}";
+
         internal FieldDefinitionHandle RequireField(TypeDefinition type, string name) => throw new NotSupportedException();
 
         internal FieldDefinitionHandle RequireField(TypeDefinitionHandle type, string name)
@@ -1035,6 +1134,15 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
                     instructionOffset,
                     opCode,
                     definition.DecodeSignature(new TypeNameProvider(), null));
+            }
+            if (handle.Kind == HandleKind.MethodSpecification)
+            {
+                // A generic instantiation is not a second callee: `Helper.ReadConfig<ModConfig>()` and
+                // `Helper.ReadConfig<X>()` are the one `IModHelper.ReadConfig` method. Without this branch
+                // EVERY generic call is invisible to this contract - including exactly the call the poll this
+                // contract guards used - so a `call` through a MethodSpec read as "no call at all".
+                MethodSpecification specification = this.reader.GetMethodSpecification((MethodSpecificationHandle)handle);
+                return this.TryResolveMethodTarget(MetadataTokens.GetToken(specification.Method), instructionOffset, opCode);
             }
             if (handle.Kind == HandleKind.MemberReference)
             {

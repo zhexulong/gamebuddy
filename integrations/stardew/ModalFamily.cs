@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GameBuddy.Stardew.Core.BodyPrograms;
+using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Sensory;
 using StardewValley;
 using StardewValley.Menus;
@@ -229,11 +230,19 @@ internal sealed class ModalFamily
             // The same two facts ride the HINT as well, because the evidence never reaches the companion: a failed
             // node carries no evidence (ADR-006) and only its bounded hint survives, so `response_keys` alone left
             // the caller reading `{failureCode, actionId}` and guessing at the box (round41, 27 minutes).
+            //
+            // AND THE ANSWER IS NOT ALWAYS `answer_dialogue`: the engine's bed prompt is the night's own precondition,
+            // so `answer_dialogue` is refused for it by the handler that owns the crossing, and naming it here sent a
+            // caller down a route the same box closes (round60). The owner is the catalog's to name
+            // (`FarmhandActionCatalog.DayCrossingActionId`), never a word repeated here.
             Response[] offeredResponses = OfferedResponses(dialogue);
             string? questionText = NpcDialoguePager.CurrentTextOrNull(dialogue);
+            string ownerAction = NativeSleepPrompt.IsStanding(dialogue)
+                ? FarmhandActionCatalog.DayCrossingActionId
+                : "answer_dialogue";
             return new Dismissal.Unavailable(
                 "modal_not_dismissible",
-                "modal_type=DialogueBox;question=true;answer_it=answer_dialogue"
+                "modal_type=DialogueBox;question=true;answer_it=" + ownerAction
                     + ";response_keys=" + OfferedResponseKeys(offeredResponses)
                     + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)),
                 OfferedResponseHint(offeredResponses, questionText));

@@ -34,6 +34,7 @@ import {
 // production generation can predate the current protocol, which the Mod then
 // rejects as invalid_hello_ack.
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "ride_minecart"];
 
@@ -46,7 +47,7 @@ export async function runRideMinecartSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "ride_minecart" });
   try {
     let snapshot = await observeMinecartActionable(client);
     assertRequiredCapabilities(snapshot, EXPECTED_CAPABILITIES);
@@ -231,17 +232,6 @@ function adjacent(left, right) {
     Math.abs(left.x - right.x) <= 1 &&
     Math.abs(left.y - right.y) <= 1
   );
-}
-
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
 }
 
 function rideSnapshotSummary(snapshot) {

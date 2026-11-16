@@ -196,6 +196,30 @@ export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 
+/**
+ * Which programme an execution belongs to, as the MOD's OWN JOURNAL states it.
+ *
+ * <p>
+ * WHY THIS IS ON THE WIRE. A receipt used to carry an `executionId` and nothing about the plan that asked for it, so a
+ * consumer that had to know whether a `succeeded` receipt was a STEP of a programme or a LONE outcome had to infer it
+ * from what happened to be running - and inference of that shape is what produced `turns opened 66 {adapter_ingress: 57}`
+ * (`round57`), `88 {adapter_ingress: 79}` (`round59`) and `82 {adapter_ingress: 82}` (`round62`) against 224 programme
+ * dispatches. The Mod's journal already binds every execution to the exact node that started it
+ * (`NodeExecutionBinding`, minted at the admission boundary), so the fact can say it instead of being guessed at.
+ * </p>
+ * <p>
+ * THREE MEMBERS, AND THE THIRD IS THE POINT. `standalone` says "no programme owns this execution" and `programme` says
+ * which one does; both are COMPLETE statements the journal can make. `unattributed` says the journal could not answer -
+ * a journal this build could not read, or one that set an older document aside - and it exists so that condition is
+ * NAMED (`unattributed_execution:<id>`) rather than spelled as an absent field the reader resolves for itself, by time or
+ * by whatever is in flight. Every guess this repository made about a receipt came from exactly that absence.
+ * </p>
+ */
+export type ExecutionOrigin =
+  | Readonly<{ kind: "programme"; programId: string; nodeId: string }>
+  | Readonly<{ kind: "standalone" }>
+  | Readonly<{ kind: "unattributed" }>;
+
 type ActiveExecution = Readonly<{
   executionId: string;
   requestId: string;
@@ -225,6 +249,19 @@ export type Snapshot = Readonly<{
   stamina: number;
   health: number;
   actionable: boolean;
+  /**
+   * Whether the LOCATION half of the night's own eligibility admits where the actor stands.
+   *
+   * `SleepAndAdvanceDayLifecycle.HomeOf` is the executor's one declaration of it: the same test `TryEnterEligibility`
+   * refuses `not_home` from, and the same one `WalkToBed` asks for the bed spot. The projection's Sleep line states
+   * where the day can end from this field, because the rule cannot be read off `location` on this side: the executor
+   * admits the FarmHouse TYPE (which the Farmhand's Cabin also is), while `location` is the map's own name.
+   *
+   * Only the location half: a paused clock, an open menu, a running event, a pass-out and the co-op minimum are
+   * separate and transient, so `true` does not promise `sleep` succeeds now. Absent when no world is ready; older Mod
+   * snapshots omit it.
+   */
+  sleepAdmitsHere?: boolean | null;
   capabilities: readonly string[];
   catalogRevision: number;
   enabledActionIds: readonly string[];
@@ -623,7 +660,10 @@ export type Snapshot = Readonly<{
     ownerId: string;
     baitStack: number;
   }>[];
-  /** Nearby native ResourceClump targets paired with a usable tool slot. */
+  /** Nearby native ResourceClump targets paired with a usable tool slot. `w`/`h` are the clump's own
+   * `ResourceClump.width`/`height` - the tiles it spans - with `x`/`y` as the LEFT-TOP origin. They are
+   * omitted by a Mod older than the projection and then mean one tile, which is what an entity published
+   * as a bare coordinate always meant. */
   debrisTargets?: readonly Readonly<{
     targetId: string;
     slot: number;
@@ -633,6 +673,8 @@ export type Snapshot = Readonly<{
     toolKind: string;
     requiredUpgradeLevel: number;
     health: number;
+    w?: number;
+    h?: number;
   }>[];
   /**
    * Nearby ordinary breakable stone sources for the bounded native Pickaxe path. `health` is the rock's remaining
@@ -1127,6 +1169,11 @@ export type Snapshot = Readonly<{
      * is a legal rotation and a sentinel that reads as a value gets compared as one. */
     rotation: number | null;
     rotations: number | null;
+    /** The footprint in tiles, `x`/`y` being its LEFT-TOP origin. A piece of furniture answers with its
+     * own sprite-derived `Furniture.getTilesWide()`/`getTilesHigh()` - a bed is 2x3 - and every other kind
+     * with the 1x1 tile it occupies. Absent means one tile, which is the only other thing a row can mean. */
+    w?: number;
+    h?: number;
   }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
@@ -1146,6 +1193,11 @@ export type Snapshot = Readonly<{
     buildDays: number;
     buildingId: string;
     daysOfConstructionLeft: number;
+    /** The footprint the structure occupies in tiles, `x`/`y` being its LEFT-TOP origin: a `built` row's own
+     * `Building.tilesWide`/`tilesHigh`, a `build_site` row's declared `Data/Buildings` size. Absent means one
+     * tile, which is the reading every row carried before the field existed. */
+    w?: number;
+    h?: number;
   }>[];
   /** The day's posted help-wanted quests the actor can name, and whether today's has already been
    * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
@@ -1432,12 +1484,18 @@ export type TileAreaRequest = Readonly<{ x: number; y: number; w: number; h: num
  * `tillable` is the Hoe's own admission predicate, `passable` the planner's own step test, and `occupant` the engine's
  * stored thing on the tile (`none` when free). There is no `fixture` field: a fixture plants real engine entities, so
  * the occupant and soil facts already carry it.
+ *
+ * TWO OCCUPANT FIELDS, TWO VOCABULARIES: `occupant` names the engine's runtime TYPE, and `occupantKind` names what
+ * stands there in the words a `for_each` `where: [{ occupant: ... }]` filter uses (`TileOccupancy.Of`, the function the
+ * pass's own row reads). A weed is `object` in the first and `weed` in the second; a crop tile is `none` in the first
+ * and `crop` in the second, so a filter written against `occupant` claims nothing.
  */
 export type TileAreaRow = Readonly<{
   x: number;
   y: number;
   tillable: boolean;
   occupant: string;
+  occupantKind: string;
   hoed: boolean;
   watered: boolean;
   crop: boolean;
@@ -1612,6 +1670,16 @@ export type ExecutionReceipt = Readonly<{
   requestId: string;
   /** Exact Mod-authored action lineage; Host must never infer it from tool context. */
   actionId: string;
+  /**
+   * The programme this execution belongs to, as the Mod's journal states it - never inferred by the Host.
+   *
+   * REQUIRED ON THE WIRE AND OPTIONAL IN THIS TYPE, on purpose: `validateReceipt` refuses a frame that does not carry it,
+   * so every receipt that reaches this type through the bridge has one - while a test or a tool that READS a receipt for
+   * another purpose (`execution-correlation-ledger.test.ts`'s cancel sender) does not have to invent a statement it is not
+   * making. The pump treats an absent one as NO STATEMENT (`factExecutionOrigin`), which owes a turn rather than being
+   * filed as somebody's step.
+   */
+  origin?: ExecutionOrigin;
   state: ExecutionState;
   reasonCode: string;
   revision: number;
@@ -1684,6 +1752,14 @@ type BodyTrace = Readonly<{
   requestId: string;
   tick: number;
   revision: number;
+  /**
+   * The same provenance a receipt for this execution carries, from the same journal lookup.
+   *
+   * A body trace is the SAME STEP stated a second way (`event-pump.ts#IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`), so a producer
+   * that stated the programme on the receipt and not here would leave half the turn-opening facts guessing. Required on the
+   * wire (`validateBodyTrace`), optional in this reading type for the same reason as `ExecutionReceipt.origin`.
+   */
+  origin?: ExecutionOrigin;
   location?: string;
   tile?: Readonly<{ x: number; y: number }>;
 }>;
@@ -1970,6 +2046,31 @@ export const MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = 512;
 
 /** The Mod's own bound on a recovery diagnostic (`BodyProgramValidation.MaximumRecoveryDiagnosticLength`). */
 export const MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH = 4096;
+
+/**
+ * The states a node may carry `evidence` / `postconditionVerification` on: the ones where it PROVED an effect.
+ *
+ * The wire half of one rule the Mod already states once - `OpenBodyProgramJournalAuthority.TryComplete`'s
+ * `provesEffect = outcome is Succeeded or PartiallySucceeded`, which decides both the validation and the assignment
+ * (`Evidence = provesEffect ? result.Evidence : null`). `partially_succeeded` is in the set because a `for_each` pass that
+ * did forty-five of sixty rows proved those forty-five; `failed`/`cancelled`/`rejected`/`recovery_required` prove nothing and
+ * carry the reason instead (ADR-006). A state this set names and the journal forbids, or one it omits and the journal
+ * writes, is a frame one side sends and the other refuses.
+ */
+export const BODY_PROGRAM_PROOF_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set([
+  "succeeded",
+  "partially_succeeded",
+]);
+
+/**
+ * The Mod's own bound on one proof field, verbatim.
+ *
+ * `BodyProgramValidation.IsOpaqueTerminalProof` is 1..4096 and control-character free, and it is not a number chosen for
+ * this wire: the aggregate a `for_each` pass writes into `Evidence` is built to the same 4096
+ * (`RouteReenteringBodyProgramExecutor.MaximumAggregateChars`) and counts the rows it could not fit. A smaller ceiling
+ * here would truncate a table that is already whole, which is the drop this field exists to stop.
+ */
+export const MAX_BODY_PROGRAM_PROOF_LENGTH = 4096;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 type BodyProgramDiagnostic = Readonly<{
   severity: string;
@@ -2021,6 +2122,23 @@ type BodyProgramNodeStatus = Readonly<{
    * that then has to say "no reason" would be saying something it already knew to be false.
    */
   recoveryDiagnostic?: string | null;
+  /**
+   * The pass's own row table - the Mod's `BodyProgramJournalNode.Evidence`, verbatim.
+   *
+   * One `for_each` node settles sixty tiles, and this is the sixty rows: which tile, which action, which state, which
+   * reason, and what was on it. A node that proved an effect carries it and no other state may; `round63`'s
+   * `plan_239_2793c52c60b8cadf` node `n02` settled `succeeded` and its own bundle kept `{nodeId, actionId, state}` and
+   * none of the table.
+   */
+  evidence?: string | null;
+  /**
+   * The pass's own verdict line - the Mod's `BodyProgramJournalNode.PostconditionVerification`, verbatim:
+   * `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`.
+   *
+   * The only field that says how many of the rows in `evidence` did the thing, and the only place a `partially_succeeded`
+   * batch says so on the row itself.
+   */
+  postconditionVerification?: string | null;
   /**
    * The action this node runs, from the journal's own compiled descriptor.
    *
@@ -2112,6 +2230,23 @@ export type BodyProgramEventsResult = Readonly<{
   highWater: number;
 }>;
 
+/**
+ * The player's action policy, pushed to a RUNNING Mod.
+ *
+ * The SAME two denial keys `config.json` carries, holding the same values that `writeStardewModActionPolicyIntoConfig`
+ * merges into the document - one shape, two carriers: the file for the next world load, this frame for the world that is
+ * already running. The Mod reads them into the `FarmhandActionPolicy` record its own config document binds to, through the
+ * bridge's one camelCase codec, so neither side keeps a second schema for the same policy.
+ *
+ * Only the denial half travels. Consent is deny-by-exception on the Mod's own registration catalog, so a frame can only
+ * ever narrow the published action surface - and a push the Mod refuses is answered with an `error` naming the policy,
+ * never by silently applying part of it.
+ */
+export type FarmhandActionPolicyRequest = Readonly<{
+  deniedActions: readonly string[];
+  deniedActionFamilies: readonly string[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<
@@ -2157,6 +2292,7 @@ export type BridgeMessage =
   | Envelope<"cancel_request", CancelRequestPayload>
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
+  | Envelope<"farmhand_action_policy_request", FarmhandActionPolicyRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
   | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
@@ -2196,6 +2332,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "cancel_request",
   "companion_presentation_request",
   "system_notice_request",
+  "farmhand_action_policy_request",
   "system_notice_receipt",
   "companion_presentation_receipt",
   "player_control_receipt",
@@ -2233,6 +2370,7 @@ export const SNAPSHOT_KEYS = [
   "currentToolSlotItem",
   "inventorySlots",
   "actionable",
+  "sleepAdmitsHere",
   "capabilities",
   "catalogRevision",
   "pendingLevelUps",
@@ -2549,6 +2687,15 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isBcp47Locale(payload.locale)
         ? null
         : "invalid_system_notice_request";
+    case "farmhand_action_policy_request":
+      // Two keys, and the same two the config document carries. Each list is identifier-shaped and may be empty (the
+      // catalogue's default consent set). No length is imposed beyond the frame's own byte bound: the population is the
+      // Mod's registration catalog, which grows, and a second cap here would be a number no code derives from.
+      return hasExactKeys(payload, ["deniedActions", "deniedActionFamilies"]) &&
+        isOpaqueIdList(payload.deniedActions) &&
+        isOpaqueIdList(payload.deniedActionFamilies)
+        ? null
+        : "invalid_farmhand_action_policy_request";
     case "system_notice_receipt":
       return hasExactKeys(payload, ["noticeId", "revision"]) &&
         isOpaqueId(payload.noticeId) &&
@@ -3132,11 +3279,12 @@ function validateTileAreaResult(value: Record<string, unknown>): string | null {
 function isTileAreaRow(value: unknown): value is TileAreaRow {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["x", "y", "tillable", "occupant", "hoed", "watered", "crop", "passable"]) &&
+    hasExactKeys(value, ["x", "y", "tillable", "occupant", "occupantKind", "hoed", "watered", "crop", "passable"]) &&
     Number.isSafeInteger(value.x) &&
     Number.isSafeInteger(value.y) &&
     typeof value.tillable === "boolean" &&
     isBoundedNonEmptyString(value.occupant, 64) &&
+    isBoundedNonEmptyString(value.occupantKind, 64) &&
     typeof value.hoed === "boolean" &&
     typeof value.watered === "boolean" &&
     typeof value.crop === "boolean" &&
@@ -4617,6 +4765,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   }
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
+  // The night's location verdict, which the projection's Sleep line reads: a number here would be read as a verdict by
+  // a `=== true` test and silently refuse a night the executor admits.
+  if (
+    value.sleepAdmitsHere !== undefined &&
+    value.sleepAdmitsHere !== null &&
+    typeof value.sleepAdmitsHere !== "boolean"
+  )
+    return "invalid_snapshot:sleepAdmitsHere";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
   // Time context: bounded non-negative integers, so no consumer can be handed a
   // nonsense clock. Zero is the "unknown" value the Mod uses when the world is
@@ -4750,6 +4906,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.actorDispositionActionOwned === undefined || typeof value.actorDispositionActionOwned === "boolean") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
+    (value.sleepAdmitsHere === undefined ||
+      value.sleepAdmitsHere === null ||
+      typeof value.sleepAdmitsHere === "boolean") &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     // The tool slot and the item occupying it, the pair `currentTool` is answered with: a slot is a non-negative
     // integer and the occupant is a qualified id or absent. Both were named only by the diagnostic.
@@ -4846,7 +5005,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence", "origin"];
   if ("observation" in value) allowedKeys.push("observation");
   if ("piggybackedScene" in value) allowedKeys.push("piggybackedScene");
   if ("nativeNotices" in value) allowedKeys.push("nativeNotices");
@@ -4858,6 +5017,7 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
+    validateExecutionOrigin(value.origin) === null &&
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
     (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
@@ -4888,6 +5048,26 @@ function isNativeNotices(value: unknown): value is readonly string[] {
         item.trim().length > 0,
     )
   );
+}
+
+/**
+ * One execution's provenance, as the tagged union it is: the id pair is present exactly when a programme owns the
+ * execution, and nothing else is.
+ *
+ * A `programme` with no `nodeId`, a `standalone` that names one, an unknown member and a bare string are all refused -
+ * so "which programme" cannot be half-stated, and the Host never has to choose which half to believe.
+ */
+export function validateExecutionOrigin(value: unknown): string | null {
+  if (!isRecord(value)) return "invalid_execution_origin";
+  if (value.kind === "programme")
+    return hasExactKeys(value, ["kind", "programId", "nodeId"]) &&
+      isOpaqueId(value.programId) &&
+      isOpaqueId(value.nodeId)
+      ? null
+      : "invalid_execution_origin";
+  if (value.kind === "standalone" || value.kind === "unattributed")
+    return hasExactKeys(value, ["kind"]) ? null : "invalid_execution_origin";
+  return "invalid_execution_origin";
 }
 
 export function validateLocalObservation(value: unknown): string | null {
@@ -5262,7 +5442,17 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     hasExactKeysOrOptional(
       value,
       ["nodeId", "state", "nodeAttempt", "admissionAttempt", "actionId"],
-      ["rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "x", "y"],
+      [
+        "rejectionCode",
+        "failureCode",
+        "hint",
+        "refusalDetail",
+        "recoveryDiagnostic",
+        "evidence",
+        "postconditionVerification",
+        "x",
+        "y",
+      ],
     ) &&
     isOpaqueId(value.nodeId) &&
     isOpaqueId(value.actionId) &&
@@ -5287,6 +5477,19 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     (value.recoveryDiagnostic === undefined ||
       value.recoveryDiagnostic === null ||
       value.state === "recovery_required") &&
+    // The two PROOF fields a batch node carries, on the same footing: the Mod's own bound and the Mod's own state rule
+    // (`BODY_PROGRAM_PROOF_NODE_STATES`). Admitting the keys without the rule would let a `rejected` node present a row
+    // table it never produced - the one reading ADR-006 forbids - and refusing the keys is what made this field
+    // unreachable in the first place (`hasExactKeysOrOptional` refuses an unlisted key, and
+    // `local-stardew-bridge.ts` answers that refusal by closing the transport).
+    isOptionalBoundedReason(value.evidence, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.evidence === undefined ||
+      value.evidence === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+    isOptionalBoundedReason(value.postconditionVerification, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.postconditionVerification === undefined ||
+      value.postconditionVerification === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
@@ -5402,10 +5605,20 @@ function isBodyTraceCategory(value: unknown): value is BodyTrace["category"] {
 }
 
 function validateBodyTrace(value: Record<string, unknown>): string | null {
-  return hasOnlyKeys(value, ["category", "executionId", "requestId", "tick", "revision", "location", "tile"]) &&
+  return hasOnlyKeys(value, [
+    "category",
+    "executionId",
+    "requestId",
+    "tick",
+    "revision",
+    "origin",
+    "location",
+    "tile",
+  ]) &&
     isBodyTraceCategory(value.category) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
+    validateExecutionOrigin(value.origin) === null &&
     typeof value.tick === "number" &&
     Number.isSafeInteger(value.tick) &&
     value.tick >= 0 &&
@@ -5758,6 +5971,16 @@ function isNonNegativeInt32(value: unknown): value is number {
 }
 function isUniqueOpaqueIdArray(value: unknown): value is readonly string[] {
   return isStringArray(value) && value.every(isOpaqueId) && new Set(value).size === value.length;
+}
+/**
+ * Identifier-shaped list that may repeat a member.
+ *
+ * The action-policy frame carries the two denial lists verbatim from the player's record, and a record that names one
+ * family twice would be refused by a uniqueness rule the Mod itself does not impose (its own reader collapses the list
+ * into a set). Refusing here would make one of the two carriers stricter than the other for the same payload.
+ */
+function isOpaqueIdList(value: unknown): value is readonly string[] {
+  return isStringArray(value) && value.every(isOpaqueId);
 }
 function isValidRuntimeAttestation(role: unknown, generation: unknown): boolean {
   return role === "farmhand_client"

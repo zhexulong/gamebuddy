@@ -2,10 +2,10 @@
 // bundle must refuse to be written when it cannot describe its own run honestly.
 //
 // red-proof: inject  the `repro_command_missing` obligation dropped from `validateEvidenceBundle` ->
-//                    `× a failed run without its snapshot or its replay is not evidence`, exit 1; the unmodified
+//                    `✖ a failed run without its snapshot or its replay is not evidence`, exit 1; the unmodified
 //                    bundle prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
 // red-proof: history  the shipped 2026-11-10 `fixtures/stardew/evidence-bundle/manifest.json` (no `hostMemory`, a
-//                    completed reclamation over no steps) -> `× the documented bundle publishes what its producers
+//                    completed reclamation over no steps) -> `✖ the documented bundle publishes what its producers
 //                    derive`, exit 1; the corrected fixture prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

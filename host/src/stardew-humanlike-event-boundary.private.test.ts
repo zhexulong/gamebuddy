@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, type PendingBatch } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch } from "./event-pump.js";
 import {
   type BridgeMessage,
   type Envelope,
@@ -233,27 +233,33 @@ test("event pump keeps one world fact per stable eventId even when the transport
   const eventId = "time_milestone_day_1_0600";
 
   // First transport frame carries correlationId from the old pipe generation.
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId,
-    sourceEventId: eventId,
-    correlationId: "transport_a",
-    observedTick: 100,
-    revision: 1,
-    payload: { milestone: "0600" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId,
+      sourceEventId: eventId,
+      correlationId: "transport_a",
+      observedTick: 100,
+      revision: 1,
+      payload: { milestone: "0600" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   // Reconnect rewrites the transport correlationId, but the Mod eventId is the stable identity.
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId,
-    sourceEventId: eventId,
-    correlationId: "transport_b",
-    observedTick: 100,
-    revision: 2,
-    payload: { milestone: "0600", updated: true },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId,
+      sourceEventId: eventId,
+      correlationId: "transport_b",
+      observedTick: 100,
+      revision: 2,
+      payload: { milestone: "0600", updated: true },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 1);
 
   const delivered: PendingBatch[] = [];
@@ -277,42 +283,51 @@ test("event pump preserves stable event ID across repeated frames and reconnects
   const eventId = "time_milestone_day_1_0600";
 
   // Initial delivery
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId,
-    sourceEventId: eventId,
-    correlationId: eventId,
-    observedTick: 100,
-    revision: 1,
-    payload: { milestone: "0600" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      observedTick: 100,
+      revision: 1,
+      payload: { milestone: "0600" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 1);
 
   // Redelivery after reconnect with same correlationId & revision
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId,
-    sourceEventId: eventId,
-    correlationId: eventId,
-    observedTick: 100,
-    revision: 1,
-    payload: { milestone: "0600" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      observedTick: 100,
+      revision: 1,
+      payload: { milestone: "0600" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 1);
 
   // Redelivery with higher revision replaces pending fact
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId,
-    sourceEventId: eventId,
-    correlationId: eventId,
-    observedTick: 100,
-    revision: 2,
-    payload: { milestone: "0600", updated: true },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      observedTick: 100,
+      revision: 2,
+      payload: { milestone: "0600", updated: true },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 1);
 });
 
@@ -321,42 +336,51 @@ test("event pump keeps the world-fact window bounded by shedding the oldest obse
 
   // Enqueue 32 distinct world facts
   for (let i = 0; i < 32; i++) {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "world_fact",
-      eventId: `fact_${i}`,
-      correlationId: `fact_${i}`,
-      observedTick: i * 10,
-      revision: 1,
-      payload: { index: i },
-    });
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "world_fact",
+        eventId: `fact_${i}`,
+        correlationId: `fact_${i}`,
+        observedTick: i * 10,
+        revision: 1,
+        payload: { index: i },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
   }
   assert.equal(pump.pendingCount, 32);
 
   // Enqueueing an existing correlationId does not overflow
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_0",
-    correlationId: "fact_0",
-    observedTick: 0,
-    revision: 2,
-    payload: { index: 0, replaced: true },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_0",
+      correlationId: "fact_0",
+      observedTick: 0,
+      revision: 2,
+      payload: { index: 0, replaced: true },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 32);
 
   // A 33rd distinct fact does NOT close the bridge: none of the held facts is supersedable, so the
   // OLDEST is shed instead and the loss is counted. A turn that thinks for 60+ s reaches this window
   // in ordinary play; throwing here destroyed the pipe, every held fact and the session.
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_32",
-    correlationId: "fact_32",
-    observedTick: 320,
-    revision: 1,
-    payload: { index: 32 },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_32",
+      correlationId: "fact_32",
+      observedTick: 320,
+      revision: 1,
+      payload: { index: 32 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 32);
   assert.equal(pump.droppedFacts, 1);
 });
@@ -365,66 +389,84 @@ test("event pump sorts world facts deterministically by observedTick -> revision
   const pump = new CompanionEventPump();
 
   // Enqueue out of order with respect to observedTick, and give misleading occurredAtMs (wall clock)
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_c",
-    correlationId: "c",
-    observedTick: 300,
-    revision: 1,
-    occurredAtMs: 100, // Earlier transport time, but later tick
-    payload: { name: "c" },
-  });
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_a",
-    correlationId: "a",
-    observedTick: 100,
-    revision: 1,
-    occurredAtMs: 500, // Later transport time, but earlier tick
-    payload: { name: "a" },
-  });
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_b_rev2",
-    correlationId: "b2",
-    observedTick: 200,
-    revision: 2,
-    occurredAtMs: 300,
-    payload: { name: "b_rev2" },
-  });
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_b_rev1",
-    correlationId: "b1",
-    observedTick: 200,
-    revision: 1,
-    occurredAtMs: 300,
-    payload: { name: "b_rev1" },
-  });
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_d_2",
-    correlationId: "d2",
-    observedTick: 400,
-    revision: 1,
-    occurredAtMs: 400,
-    payload: { name: "d2" },
-  });
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "fact_d_1",
-    correlationId: "d1",
-    observedTick: 400,
-    revision: 1,
-    occurredAtMs: 400,
-    payload: { name: "d1" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_c",
+      correlationId: "c",
+      observedTick: 300,
+      revision: 1,
+      occurredAtMs: 100, // Earlier transport time, but later tick
+      payload: { name: "c" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_a",
+      correlationId: "a",
+      observedTick: 100,
+      revision: 1,
+      occurredAtMs: 500, // Later transport time, but earlier tick
+      payload: { name: "a" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_b_rev2",
+      correlationId: "b2",
+      observedTick: 200,
+      revision: 2,
+      occurredAtMs: 300,
+      payload: { name: "b_rev2" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_b_rev1",
+      correlationId: "b1",
+      observedTick: 200,
+      revision: 1,
+      occurredAtMs: 300,
+      payload: { name: "b_rev1" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_d_2",
+      correlationId: "d2",
+      observedTick: 400,
+      revision: 1,
+      occurredAtMs: 400,
+      payload: { name: "d2" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "fact_d_1",
+      correlationId: "d1",
+      observedTick: 400,
+      revision: 1,
+      occurredAtMs: 400,
+      payload: { name: "d1" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   const delivered: PendingBatch[] = [];
   await pump.flush({
@@ -461,22 +503,28 @@ test("world-only fact triggers follow_up disposition and held snapshot/progress 
   const pump = new CompanionEventPump();
 
   // Snapshot is held
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    correlationId: "snap_1",
-    revision: 10,
-    payload: { location: "Farm" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      correlationId: "snap_1",
+      revision: 10,
+      payload: { location: "Farm" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   // Meaningful progress receipt is held
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "execution_receipt",
-    correlationId: "exec_1",
-    revision: 1,
-    payload: { state: "meaningful_progress" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      correlationId: "exec_1",
+      revision: 1,
+      payload: { state: "meaningful_progress" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   // Verify that held facts alone do not trigger delivery
   let flushed = false;
@@ -489,15 +537,18 @@ test("world-only fact triggers follow_up disposition and held snapshot/progress 
   assert.equal(pump.hasPendingDelivery, false);
 
   // Now enqueue a world fact: it is an active trigger
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "day_started_day_1",
-    correlationId: "day_started_day_1",
-    observedTick: 1,
-    revision: 1,
-    payload: { day: 1 },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "day_started_day_1",
+      correlationId: "day_started_day_1",
+      observedTick: 1,
+      revision: 1,
+      payload: { day: 1 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.hasPendingDelivery, true);
 
   const deliveries: PendingBatch[] = [];
@@ -523,15 +574,18 @@ test("world-only fact triggers follow_up disposition and held snapshot/progress 
 test("player input elevates batch disposition to steer with world facts present", async () => {
   const pump = new CompanionEventPump();
 
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "day_started_day_2",
-    correlationId: "day_started_day_2",
-    observedTick: 10,
-    revision: 1,
-    payload: { day: 2 },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "day_started_day_2",
+      correlationId: "day_started_day_2",
+      observedTick: 10,
+      revision: 1,
+      payload: { day: 2 },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   pump.enqueuePlayerInput({
     source: "player_text",
@@ -554,15 +608,18 @@ test("player input elevates batch disposition to steer with world facts present"
 
 test("pump clear flushes all pending world facts", () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    eventId: "wf_1",
-    correlationId: "wf_1",
-    observedTick: 1,
-    revision: 1,
-    payload: {},
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "wf_1",
+      correlationId: "wf_1",
+      observedTick: 1,
+      revision: 1,
+      payload: {},
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   assert.equal(pump.pendingCount, 1);
   assert.equal(pump.hasPendingDelivery, true);
 

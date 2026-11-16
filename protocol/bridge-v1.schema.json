@@ -52,6 +52,7 @@
         "cancel_request",
         "companion_presentation_request",
         "system_notice_request",
+        "farmhand_action_policy_request",
         "system_notice_receipt",
         "companion_presentation_receipt",
         "player_control_receipt",
@@ -399,6 +400,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/systemNoticeRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "farmhand_action_policy_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/farmhandActionPolicyRequest"
           }
         }
       }
@@ -1977,6 +1994,18 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100
+        },
+        "w": {
+          "description": "The clump's own `ResourceClump.width`, in tiles, with `x` the LEFT-TOP origin. Absent means one tile, which is what a bare coordinate meant before this field existed.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "h": {
+          "description": "The clump's own `ResourceClump.height`, in tiles, with `y` the LEFT-TOP origin. Absent means one tile.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
         }
       }
     },
@@ -2674,6 +2703,12 @@
         },
         "actionable": {
           "type": "boolean"
+        },
+        "sleepAdmitsHere": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -5903,6 +5938,7 @@
         "y",
         "tillable",
         "occupant",
+        "occupantKind",
         "hoed",
         "watered",
         "crop",
@@ -5920,7 +5956,13 @@
           "type": "boolean"
         },
         "occupant": {
-          "description": "The engine's stored thing on this tile, named by its own runtime type: `none` when the tile is free, `unspecified` when the type name does not survive the trip. HoeDirt is not an occupant - it is the tile's soil and travels as `hoed`/`watered`/`crop`.",
+          "description": "The engine's stored thing on this tile, named by its own runtime type: `none` when the tile is free, `unspecified` when the type name does not survive the trip. HoeDirt is not an occupant - it is the tile's soil and travels as `hoed`/`watered`/`crop`. This is NOT the vocabulary a `for_each` filter speaks; `occupantKind` is.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "occupantKind": {
+          "description": "What stands on this tile in the words a `for_each` `where: [{ occupant: ... }]` filter and an action's `Clears` declaration use - `TileOccupancy.Of`, the same function the pass's own row reads: weed, stone, crop, grass, tree, tree_stump, a resource clump's own name, object, terrain, or `none`.",
           "type": "string",
           "minLength": 1,
           "maxLength": 64
@@ -7406,6 +7448,33 @@
         "uncertain"
       ]
     },
+    "executionOrigin": {
+      "description": "Which programme the execution belongs to, as the MOD's own journal states it: 'programme' names the exact node that started it, 'standalone' says no node owns it (a COMPLETE statement - the journal was read), and 'unattributed' says the journal could not answer, which the reader names as unattributed_execution:<id> instead of resolving it by time or by what happens to be in flight.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "programId", "nodeId"],
+          "properties": {
+            "kind": { "enum": ["programme"] },
+            "programId": { "$ref": "#/$defs/opaqueId" },
+            "nodeId": { "$ref": "#/$defs/opaqueId" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["standalone"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["unattributed"] } }
+        }
+      ]
+    },
     "receipt": {
       "type": "object",
       "additionalProperties": false,
@@ -7416,9 +7485,13 @@
         "state",
         "reasonCode",
         "revision",
-        "evidence"
+        "evidence",
+        "origin"
       ],
       "properties": {
+        "origin": {
+          "$ref": "#/$defs/executionOrigin"
+        },
         "executionId": {
           "$ref": "#/$defs/opaqueId"
         },
@@ -7507,6 +7580,28 @@
         "presentationEpoch": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "farmhandActionPolicyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deniedActions",
+        "deniedActionFamilies"
+      ],
+      "properties": {
+        "deniedActions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          }
+        },
+        "deniedActionFamilies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          }
         }
       }
     },
@@ -7599,9 +7694,13 @@
         "executionId",
         "requestId",
         "tick",
-        "revision"
+        "revision",
+        "origin"
       ],
       "properties": {
+        "origin": {
+          "$ref": "#/$defs/executionOrigin"
+        },
         "category": {
           "enum": [
             "execution_started",
@@ -8529,6 +8628,18 @@
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 4
+        },
+        "w": {
+          "description": "The footprint's width in tiles, with `x` the LEFT-TOP origin. A piece of furniture answers with the engine's own sprite-derived `Furniture.getTilesWide()`, so a bed is 2 wide while a chair is 1; every other kind occupies the single tile it names. Absent means one tile.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "h": {
+          "description": "The footprint's height in tiles, with `y` the LEFT-TOP origin. `Furniture.getTilesHigh()` for a piece of furniture, one tile for every other kind. Absent means one tile.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
         }
       },
       "allOf": [
@@ -9011,6 +9122,18 @@
         "daysOfConstructionLeft": {
           "type": "integer",
           "minimum": -1
+        },
+        "w": {
+          "description": "The footprint's width in tiles, with `x` the LEFT-TOP origin: a `built` row's own `Building.tilesWide`, a `build_site` row's declared `Data/Buildings` size. Absent means one tile.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "h": {
+          "description": "The footprint's height in tiles, with `y` the LEFT-TOP origin. Absent means one tile.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
         }
       }
     },

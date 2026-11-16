@@ -35,6 +35,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "rotate_furniture";
 /** The action's own success word: `ExecuteRotateFurniture` mints it only when turned && standing && holdsTheTurn. */
@@ -397,20 +398,6 @@ function integerEvidence(evidence, key) {
   if (raw === undefined || raw === "" || !Number.isSafeInteger(value))
     throw new Error(`rotate_furniture_evidence_${key}_not_an_integer:${raw ?? "missing"}`);
   return value;
-}
-
-function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
 }
 
 function validateConfig(value) {

@@ -20,8 +20,9 @@ public sealed class ClearableKindTests
     [Theory]
     [InlineData("resourceClump", "axe", "stump")]
     [InlineData("resourceClump", "pickaxe", "rock")]
-    [InlineData("object", "stone", "rock")]
-    [InlineData("object", "weed", "weed")]
+    [InlineData("object", TileOccupantKind.Stone, "rock")]
+    [InlineData("object", TileOccupantKind.Weed, "weed")]
+    [InlineData("object", TileOccupantKind.Twig, "twig")]
     [InlineData("terrain", "grass", "grass")]
     [InlineData("terrain", "crop", "crop")]
     public void EachOccupantMapsToItsClearKind(string container, string detail, string expected)
@@ -30,7 +31,7 @@ public sealed class ClearableKindTests
     }
 
     [Theory]
-    [InlineData("object", "furniture")]
+    [InlineData("object", TileOccupantKind.OtherObject)]
     [InlineData("object", "building")]
     [InlineData("terrain", "water")]
     [InlineData("terrain", "flooring")]
@@ -40,12 +41,24 @@ public sealed class ClearableKindTests
     }
 
     [Fact]
-    public void OnlyTheFiveKindsTheCostTablePricesAreKnown()
+    public void TheDeclaredUnclearableKindsPriceNothing()
+    {
+        // The declaration half of the vocabulary: a kind `TileOccupantKind.Unclearable` names is a kind the search may
+        // not bill, so the two answers cannot disagree about one word.
+        foreach ((string kind, string reason) in TileOccupantKind.Unclearable)
+        {
+            reason.Should().NotBeNullOrWhiteSpace($"{kind} is declared unclearable and has to say why");
+            ClearableKind.Map("object", kind).Should().BeNull($"{kind} is declared unclearable");
+        }
+    }
+
+    [Fact]
+    public void OnlyTheKindsTheCostTablePricesAreKnown()
     {
         foreach (string kind in ClearCostTable.Kinds)
             ClearCostTable.Cost(kind, toolPower: 1, skillLevel: 0, efficient: false)
                 .Should().NotBeNull($"{kind} is in the table, so it must have a price");
 
-        ClearCostTable.Kinds.Should().BeEquivalentTo(new[] { "rock", "stump", "weed", "grass", "crop" });
+        ClearCostTable.Kinds.Should().BeEquivalentTo(new[] { "rock", "stump", "weed", "twig", "grass", "crop" });
     }
 }

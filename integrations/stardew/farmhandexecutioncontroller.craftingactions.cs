@@ -59,12 +59,6 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         Dictionary<string, string>? craftingTable = CraftingRecipe.craftingRecipes;
-        // wire_identity=recipe_key_or_unique_space_alias: the Host/Mod opaque-arg
-        // alphabet carries no spaces, but many vanilla crafting keys have them
-        // ("Wood Fence"). Accept the exact key first, then the key with spaces
-        // replaced by underscores only when it resolves to exactly one live
-        // recipe; an ambiguous alias fails closed instead of crafting a
-        // different item. Shared with cook_recipe so the rule cannot drift.
         if (craftingTable is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_unknown", $"recipe={expectedRecipeId}");
         if (!TryResolveRecipeIdentity(craftingTable.Keys, expectedRecipeId, out string recipeId, out string recipeReason))
@@ -73,8 +67,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_not_learned", $"recipe={recipeId}");
 
         CraftingRecipe recipe = new(recipeId, isCookingRecipe: false);
-        // The native constructor silently falls back to "Torch" for an unknown
-        // key; never let that fallback produce an unattributable recipe.
         if (!string.Equals(recipe.name, recipeId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "craft_recipe_unknown", $"recipe={recipeId}");
         if (!recipe.doesFarmerHaveIngredientsInInventory())
@@ -88,23 +80,13 @@ internal sealed partial class ExecutionManager
         int producedStack = crafted.Stack;
         int craftCountBefore = Game1.player.craftingRecipes[recipeId];
         int debrisBefore = CountCraftOutputDebris(location, crafted.QualifiedItemId);
-        // Every ingredient measurement is taken from the live backpack with the
-        // native CraftingRecipe.ItemMatchesForCrafting rule, so category numbers
-        // and the wild-seed special rule count exactly as the native code does.
         Dictionary<string, int> ingredientsBefore = recipe.recipeList.Keys
             .ToDictionary(key => key, key => CountCraftingIngredient(Game1.player, key), StringComparer.Ordinal);
-        // Recorded, never a gate: rejecting on a full inventory would make the
-        // required ground-drop path unreachable, and consuming the ingredients may
-        // free the very slot the product needs.
         bool inventoryAcceptingBefore = Game1.player.couldInventoryAcceptThisItem(crafted);
         Game1.player.GetItemReceiveBehavior(crafted, out bool needsInventorySpace, out _);
         bool menuBefore = Game1.activeClickableMenu is not null;
 
         recipe.consumeIngredients(null);
-        // Measured after the native consumption and before the product is added.
-        // A recipe may list its own product as an ingredient (the wild-seed
-        // recipes do), and the product may also match an ingredient key through
-        // the category/special rules; both make a post-add count ambiguous.
         Dictionary<string, int> ingredientsAfter = recipe.recipeList.Keys
             .ToDictionary(key => key, key => CountCraftingIngredient(Game1.player, key), StringComparer.Ordinal);
         int producedCountBeforeAdd = CountCraftingIngredient(Game1.player, crafted.QualifiedItemId);
@@ -144,23 +126,9 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "crafted_item_postcondition_unavailable", evidence);
         if (remainingStack == 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "crafted_item_created", evidence);
-        // The craft happened and the product exists (backpack and/or ground), but
-        // part or all of it did not enter the backpack: never report a full success.
         return this.RememberTerminal(requestId, executionId, ExecutionState.PartiallySucceeded, "crafted_item_created", evidence);
     }
 
-    /// <summary>
-    /// Every learned crafting recipe, published under a sendable identity, so the
-    /// Agent can name a recipe instead of guessing keys from model memory. Only
-    /// learned recipes appear: an unlearned key is not an admissible target and
-    /// publishing it would only lead the Agent into craft_recipe_not_learned.
-    ///
-    /// <para>
-    /// IngredientsAvailable is a pure fact measured with the same backpack gate
-    /// the handler applies (CraftingRecipe.doesFarmerHaveIngredientsInInventory),
-    /// and does not pre-empt the handler's own learned/ingredient admission.
-    /// </para>
-    /// </summary>
     private static IReadOnlyList<BridgeRecipeTarget> DiscoverCraftingRecipeTargets(Farmer player)
     {
         Dictionary<string, string>? table = CraftingRecipe.craftingRecipes;
@@ -168,26 +136,18 @@ internal sealed partial class ExecutionManager
         List<BridgeRecipeTarget> result = new();
         foreach (string recipeKey in player.craftingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
         {
-            // A learned key with no live recipe (content removed by a mod) is not
-            // a target: the handler would reject it as craft_recipe_unknown.
             if (!table.ContainsKey(recipeKey)) continue;
             if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
             CraftingRecipe recipe = new(recipeKey, isCookingRecipe: false);
-            // The native constructor silently falls back to "Torch" for an unknown
-            // key; that fallback must never supply a recipe's facts here either.
             if (!string.Equals(recipe.name, recipeKey, StringComparison.Ordinal)) continue;
             result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory()));
         }
-        // Bounded like every other snapshot target list. Craftable-now recipes are
-        // ranked first (the sort is stable, so ordinal order survives inside a
-        // rank) because those are the ones the Agent can act on immediately.
         return result
             .OrderByDescending(target => target.IngredientsAvailable)
             .Take(64)
             .ToArray();
     }
 
-    /// <summary>Native ingredient matching parity for one recipe key (item id, category number, or wild-seed rule).</summary>
     private static int CountCraftingIngredient(Farmer player, string ingredientKey)
     {
         int total = 0;

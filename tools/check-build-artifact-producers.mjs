@@ -27,6 +27,14 @@
  *                    no producing build script -> `build_artifact_unproduced:` names that path and the
  *                    file, while the control with the producer added is silent (tools/check-build-artifact-producers.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-build-artifact-producers",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

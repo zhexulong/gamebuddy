@@ -7,12 +7,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import {
-  buildChatCompanionSystemPrompt,
-  CARD_VOICE_BOUND,
-  renderIdentityProfile,
-  validateIdentityProfile,
-} from "./identity-profile.js";
+import { validateIdentityProfile } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
 import {
   candidateToIdentityProfile,
   decodeStCard,
@@ -1985,8 +1981,8 @@ test("a card directive that tries to cancel a floor rule still renders the floor
     "the provenance line that makes the section the author's own must precede the card's directive",
   );
   assert.ok(
-    prompt.trimEnd().endsWith(CARD_VOICE_BOUND),
-    "the bound must still hold the last word after the card's directive",
+    prompt.indexOf("CARD DIRECTIVES>>>") > prompt.indexOf(malicious),
+    "the section's closing marker follows the card's directive, so the card is never the last text in it",
   );
 });
 

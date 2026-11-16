@@ -84,6 +84,14 @@
  *   real `isBodyProgramNodeStatus` key list -> `wire_field_unaccepted:program_status_result:<field>:<C# type>`
  *   (tools/check-cross-language-wire-parity.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-cross-language-wire-parity",
+  domain: "product",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";

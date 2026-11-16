@@ -12,6 +12,14 @@
  *
  *   node tools/check-stardew-fixture-action-coverage.mjs
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-fixture-action-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

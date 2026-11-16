@@ -161,8 +161,7 @@ public sealed class PetBowlWateringActionTests
     public void PetBowlTargeting_AsksTheBuildingForItsWaterableTile_NotFootprintArithmetic()
     {
         string actionSource = File.ReadAllText(NativeActionSourcePath());
-        string discoverySource = File.ReadAllText(RepositorySourcePath(
-            Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string discoverySource = ControllerPartials.Declaring("DiscoverPetBowlTargets");
 
         // The shared helper is the single owner of "which tiles accept watering",
         // and it asks the building's own predicate.

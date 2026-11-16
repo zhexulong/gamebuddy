@@ -301,7 +301,9 @@ export interface ProgramProgressObserver {
    * Every programme this observer has read and the journal still calls `active`, with nothing settled left out.
    *
    * A READING, not a poll: it never reads the journal, never mints a fact and never starts a turn. The pump asks it when
-   * it composes a batch, which is the only moment the answer is model-visible.
+   * it composes a batch, which is the only moment the answer is model-visible - and NOT when it decides whether a receipt
+   * is a step or a lone outcome, because the receipt states that itself
+   * (`event-pump.ts#factExecutionOrigin`).
    */
   inFlight(nowMs?: number): InFlightProgrammeReading;
 }
@@ -342,11 +344,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another
       // plan's work as this one's.
       if (plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE)
-        programs.set(key, {
-          programId: plan.programId,
-          lastSeen: nowMs,
-          nodes: anchors,
-        });
+        programs.set(key, { programId: plan.programId, lastSeen: nowMs, nodes: anchors });
       else programs.delete(key);
       pruneObservations(programs, nowMs);
       const remaining = plan.nodes.length - settled;
@@ -392,7 +390,10 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // two batches composed from the same ledger render the same bytes.
       live.sort((left, right) => left.readAgeMs - right.readAgeMs || left.programId.localeCompare(right.programId));
       const shown = live.slice(0, MAX_IN_FLIGHT_PROGRAMMES);
-      return Object.freeze({ programmes: Object.freeze(shown), omittedProgrammes: live.length - shown.length });
+      return Object.freeze({
+        programmes: Object.freeze(shown),
+        omittedProgrammes: live.length - shown.length,
+      });
     },
   });
 }
@@ -521,6 +522,42 @@ interface PlanNodeAnswer {
    * running) names nothing rather than guessing one.
    */
   readonly skippedBecause?: readonly Readonly<{ nodeId: string; reasonCode: string }>[];
+  /**
+   * The pass's own ROW TABLE, verbatim - what a batch node proved it did, one row per row.
+   *
+   * <p>
+   * A `for_each` node settles ONE node for sixty tiles, and the Mod writes the whole pass into its
+   * `BodyProgramJournalNode.Evidence` (`RouteReenteringBodyProgramExecutor.Aggregate`: `{"state":…,"succeeded":N,…,
+   * "rows":[{"x":67,"y":19,"action":"till_soil","state":"refused","reasonCode":…,"detail":…}]}`). Until this field
+   * existed the projection kept the node's state and dropped the table, so a pass that had fifteen blocked tiles and
+   * forty-five good ones reached a caller as `succeeded` - and `round63` is the reading: `plan_239_2793c52c60b8cadf`
+   * node `n02` settled `succeeded` with fifteen `soil_tilled` receipts, and the run's own bundle carries
+   * `{"nodeId":"n02","actionId":"for_each","state":"succeeded"}` and no row of it. **A count is not this field**:
+   * which tile was refused, and what was on it, is the fact that makes the next plan different from this one.
+   * </p>
+   *
+   * <p>
+   * CARRIED, NEVER RENDERED. The Mod's own bytes, under the Mod's own name, bounded by the Mod's own
+   * `BodyProgramValidation.IsOpaqueTerminalProof` (1..4096) - the aggregate is built to that same ceiling
+   * (`MaximumAggregateChars`) and counts what it could not fit (`rowsOmitted`), so a table that arrives short says so
+   * itself rather than being cut here. Absent on every node that proved no effect, which is `rejected`, `failed`,
+   * `cancelled`, `recovery_required` and every state short of a terminal one (ADR-006: a node claiming no effect must
+   * not present proof of one).
+   * </p>
+   */
+  readonly evidence?: string;
+  /**
+   * The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`, or the
+   * `partially_succeeded` spelling with `failed`/`refused` beside them.
+   *
+   * <p>
+   * The Mod's `BodyProgramJournalNode.PostconditionVerification`. It is the one sentence that says HOW MANY of the rows
+   * the table lists did the thing, and `partially_succeeded` lives only here - a batch node carries no other field that
+   * distinguishes "all sixty" from "forty-five of sixty". Carried for the same reason `evidence` is: it is the
+   * producer's own words, and re-deriving the counts here would be a second author of a fact the Mod observed.
+   * </p>
+   */
+  readonly postconditionVerification?: string;
 }
 
 /** A plan's per-node answer, and the batch statement that goes with it. */
@@ -605,6 +642,8 @@ export function planBatchAnswer(
       ...(tile === undefined ? {} : { tile }),
       ...(clock === undefined ? {} : { elapsedMs: clock }),
       ...(skippedBecause.length === 0 ? {} : { skippedBecause }),
+      ...(row?.evidence == null ? {} : { evidence: row.evidence }),
+      ...(row?.postconditionVerification == null ? {} : { postconditionVerification: row.postconditionVerification }),
     });
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
@@ -695,6 +734,8 @@ type PlanJournalNode = Readonly<{
   hint?: string | null;
   refusalDetail?: string | null;
   recoveryDiagnostic?: string | null;
+  evidence?: string | null;
+  postconditionVerification?: string | null;
 }>;
 
 /**
@@ -719,6 +760,11 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
         hint: typeof entry.hint === "string" ? entry.hint : null,
         refusalDetail: typeof entry.refusalDetail === "string" ? entry.refusalDetail : null,
         recoveryDiagnostic: typeof entry.recoveryDiagnostic === "string" ? entry.recoveryDiagnostic : null,
+        // The two proof fields a batch node carries. Read here rather than at a call site because this is the ONE reader
+        // of a status frame, and a field it does not read is a field no plan answer can ever carry.
+        evidence: typeof entry.evidence === "string" ? entry.evidence : null,
+        postconditionVerification:
+          typeof entry.postconditionVerification === "string" ? entry.postconditionVerification : null,
       }),
     );
   }

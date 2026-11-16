@@ -41,6 +41,14 @@
  *                    `task_requires_absent_family:tend_the_animals:animals_pets` and exit 1
  *                    (tools/lib/multiday-task-families.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-multiday-task-families",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

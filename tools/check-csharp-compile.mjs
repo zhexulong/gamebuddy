@@ -47,6 +47,14 @@
  *                    exit 1, and the project named rather than counted
  *                    (tools/check-csharp-compile.test.mjs, "the gate reports an uncompilable project by name")
  */
+
+export const gateDeclaration = {
+  id: "check-csharp-compile",
+  domain: "stardew",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

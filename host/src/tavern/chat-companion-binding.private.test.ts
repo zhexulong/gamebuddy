@@ -36,7 +36,8 @@ import {
 import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import { prepareExactChatRuntimeConstruction } from "../continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { buildChatCompanionSystemPrompt, identityProfileMetadata } from "../identity-profile.js";
+import { identityProfileMetadata } from "../identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";

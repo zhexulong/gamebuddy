@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type CompanionArrivalHistory, companionArrivalFact } from "./companion-arrival-fact.js";
+import { companionArrivalFact } from "./companion-arrival-fact.js";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import {
@@ -9,7 +9,7 @@ import {
   type NativeGameContentPresenter,
   PROVIDER_EMPTY_COMPLETION,
 } from "./companion-loop.js";
-import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
+import { type CompanionTurnOutcome, FACT_PRODUCER, type FactProducer, type WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
 import type {
@@ -23,6 +23,8 @@ import {
   classifyProviderFailure,
   type ProviderFailureClass,
 } from "./provider-failure-classification.js";
+import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
+import type { RunTrace, RunTraceSpanHandle } from "./run-trace.js";
 import {
   resolveProviderFailureSystemNotice,
   resolveProviderWaitSystemNotice,
@@ -431,10 +433,7 @@ export class CompanionHostService {
   #integrationAdmissionOpen = true;
   /** Set by the one call that completes attach: only an attached session may greet on arrival. */
   #attached = false;
-  /**
-   * The live half of the arrival's once-only rule; the durable half is the Game session's own
-   * transcript (see `companion-arrival-fact.ts`).
-   */
+  /** The arrival's once-only rule: one mounted session opens one arrival turn (`companion-arrival-fact.ts`). */
   #arrivalSaid = false;
   /** The notice identities this session has already delivered (see `native-notice-fact.ts`). */
   readonly #nativeNotices = new NativeNoticeLedger();
@@ -442,8 +441,8 @@ export class CompanionHostService {
    * The session's latest world snapshot fact, re-stated into every turn (see `#restateWorldSnapshot`).
    *
    * The pump holds a snapshot as latest state and hands it out with the batch that follows its arrival, so a
-   * turn with no new observation would carry no state at all. That is the defect the re-statement removes: a model
-   * told where the ladder was four turns ago either guesses or re-observes.
+   * turn with no new observation would carry no state at all. That is the defect the per-turn `<world-state>`
+   * paragraph removes: a model told where the ladder was four turns ago either guesses or re-observes.
    */
   #latestSnapshotFact: WorldFact | undefined;
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
@@ -485,6 +484,18 @@ export class CompanionHostService {
     Readonly<{ sourceEventId: string; epoch: number; revision: number }>
   >();
   readonly #stopSettledListeners = new Set<(payload: StopSettledPayload) => void>();
+  /**
+   * The two silences the Host can name itself: nothing was owed, and a stale reading with no fresh snapshot.
+   *
+   * <p>
+   * Both are opened and closed only at transitions the service already decides - a flush that leaves nothing to do,
+   * the pump minting a stale fact, a snapshot arriving, `close()` - so they add no state to the turn machinery. They
+   * exist because a run's largest unattributed block was one of them: 165.8 s of round62 in which the pump was empty
+   * and the world published nothing, which no artifact could name (AUDIT.md §4A).
+   * </p>
+   */
+  #idleSpan: RunTraceSpanHandle | undefined;
+  #staleSnapshotSpan: RunTraceSpanHandle | undefined;
 
   public constructor(
     private readonly loop: CompanionLoop,
@@ -496,7 +507,6 @@ export class CompanionHostService {
     private readonly turnTracker = new GameTurnLineageTracker(),
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
-    private readonly arrivalHistory?: CompanionArrivalHistory,
     /**
      * Cancel the Body Program the companion is currently running, fenced by the STOP epoch.
      *
@@ -506,6 +516,8 @@ export class CompanionHostService {
      * refuses NEW intents and nothing cancelled the old one.
      */
     private readonly stopBodyProgram?: (stopEpoch: number, reasonCode: string) => Promise<unknown>,
+    /** This run's span recorder: the Host's own idle and stale-snapshot waits land in it. */
+    private readonly runTrace?: RunTrace,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -529,6 +541,10 @@ export class CompanionHostService {
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
     this.#disarmStallWatch();
+    // A closed session owes nothing and its reading is no longer waited on: ending both here is what keeps the export
+    // free of spans that look like a stage the run never left.
+    this.#endIdle();
+    this.#endStaleSnapshotWait();
     this.#stopSettledListeners.clear();
   }
 
@@ -878,19 +894,22 @@ export class CompanionHostService {
     const ageMs = Date.now() - note.atMs;
     if (ageMs > 120_000) return; // stale note is not a fact for this turn
     try {
-      this.loop.pump.enqueueFact({
-        source: "voice",
-        kind: "semantic_event",
-        eventId: `voice_interruption_${note.speechJobId ?? "unknown"}`,
-        occurredAtMs: note.atMs,
-        correlationId: randomUUID(),
-        revision: 0,
-        payload: Object.freeze({ kind: "speech_interrupted", speechJobId: note.speechJobId ?? null }),
-        contextProjection: Object.freeze({
-          kind: "speech_interrupted",
-          text: "上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。",
-        }),
-      });
+      this.loop.pump.enqueueFact(
+        {
+          source: "voice",
+          kind: "semantic_event",
+          eventId: `voice_interruption_${note.speechJobId ?? "unknown"}`,
+          occurredAtMs: note.atMs,
+          correlationId: randomUUID(),
+          revision: 0,
+          payload: Object.freeze({ kind: "speech_interrupted", speechJobId: note.speechJobId ?? null }),
+          contextProjection: Object.freeze({
+            kind: "speech_interrupted",
+            text: "上一句语音在播放中被玩家打断（玩家后来开口说话），玩家没有听到那句话的结尾。",
+          }),
+        },
+        FACT_PRODUCER.voiceInterruption,
+      );
     } catch {
       this.#voiceInterruptionNote = note; // retry on the next player input
     }
@@ -910,14 +929,20 @@ export class CompanionHostService {
   /**
    * A fact the Host itself mints about the companion's own work, onto the same pump every other fact uses.
    *
-   * The one producer today is the settled-plan digest (`program-settlement-digest.ts`): the per-node terminal ledger of
-   * a plan the Mod's journal has stopped. It travels here rather than through `acceptIntegrationFact` because that route
-   * is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity, none of which is a
-   * question about a fact the Host observed by reading the journal itself.
+   * <p>
+   * The producers are the settled-plan digest (`program-settlement-digest.ts`), the stall watch, the aged reading, the
+   * narration run and a refused stale-reading refresh. They travel here rather than through `acceptIntegrationFact`
+   * because that route is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity,
+   * none of which is a question about a fact the Host observed by reading the journal itself.
+   * </p>
+   * <p>
+   * `producedBy` is the caller's own name from `FACT_PRODUCER`: five producers share this one route, so the route cannot
+   * name itself.
+   * </p>
    */
-  public acceptHostMintedFact(fact: WorldFact): void {
+  public acceptHostMintedFact(fact: WorldFact, producedBy: FactProducer): void {
     if (this.#closed) return;
-    this.loop.pump.enqueueFact(fact);
+    this.loop.pump.enqueueFact(fact, producedBy);
     this.#armStallWatch();
     // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
     // whatever else is queued and starts no turn of its own.
@@ -1001,6 +1026,8 @@ export class CompanionHostService {
       if (fact.kind === "snapshot") {
         this.#nativeNotices.observeSnapshot(fact.payload);
         this.#latestSnapshotFact = fact;
+        // The reading this session waited on has been replaced: whatever the stale notice was waiting for is here.
+        this.#endStaleSnapshotWait();
       }
       // The attach's own snapshot is the world clock's first live reading for this session, so the
       // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
@@ -1009,7 +1036,7 @@ export class CompanionHostService {
       // A native notice is its own fact, admitted whatever the execution that carried it is doing: a
       // companion waiting between plans has nothing outstanding, which is exactly when the clock matters.
       if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
-      this.loop.pump.enqueueFact(fact);
+      this.loop.pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
       this.#publishWorldStateStaleFact();
       // The one call that re-arms (or clears) the stall watch: this fact is the freshest thing the pump has been told
       // about its execution, so it is also what moves that execution's next stall threshold.
@@ -1023,28 +1050,24 @@ export class CompanionHostService {
   }
 
   /**
-   * Says "the companion has just arrived, and the world clock has ticked" at most once per Game
-   * session. `companion-arrival-fact.ts` owns the fact and the why; this owns the two once-only
-   * decisions and the delivery, which is the same pump every other fact uses.
+   * Says "the companion has arrived, and the world clock has ticked" at most once per mounted session.
+   * `companion-arrival-fact.ts` owns the fact and the why; this owns the once-only decision and the
+   * delivery, which is the same pump every other fact uses.
    */
   #sayArrivalOnce(snapshot: Readonly<Record<string, unknown>>): void {
     if (this.#arrivalSaid) return;
-    if (this.arrivalHistory?.alreadySaid() === true) {
-      this.#arrivalSaid = true;
-      return;
-    }
     const arrival = companionArrivalFact(snapshot);
     // No usable clock yet: attach alone says nothing, and the once-only switch stays unmade so the
     // first real reading may still speak.
     if (arrival === undefined) return;
     this.#arrivalSaid = true;
-    this.loop.pump.enqueueFact(arrival);
+    this.loop.pump.enqueueFact(arrival, FACT_PRODUCER.companionArrival);
   }
 
   /** Admits this receipt's unseen native notices onto the same session-level pump as every other fact. */
   #admitNativeNotices(fact: WorldFact): void {
     const notices = this.#nativeNotices.admit(fact.payload as ExecutionReceipt, fact.occurredAtMs ?? Date.now());
-    for (const notice of notices) this.loop.pump.enqueueFact(notice);
+    for (const notice of notices) this.loop.pump.enqueueFact(notice, FACT_PRODUCER.nativeNotice);
   }
 
   #publishStopObservationIfExact(stopId: string): void {
@@ -1122,13 +1145,16 @@ export class CompanionHostService {
     // must happen before invoking external code: a synchronous reentrant
     // callback must observe either the queued terminal event or a sealed pump.
     try {
-      this.loop.pump.enqueueFact({
-        source: "host_local_transport",
-        kind: "lifecycle",
-        correlationId: `transport_${event.state}`,
-        revision: 0,
-        payload: event,
-      });
+      this.loop.pump.enqueueFact(
+        {
+          source: "host_local_transport",
+          kind: "lifecycle",
+          correlationId: `transport_${event.state}`,
+          revision: 0,
+          payload: event,
+        },
+        FACT_PRODUCER.transportLifecycle,
+      );
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
       this.#containIntegrationOverflow();
@@ -1202,11 +1228,13 @@ export class CompanionHostService {
    */
   #restateWorldSnapshot(): void {
     const snapshot = this.#latestSnapshotFact;
-    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot);
+    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot, FACT_PRODUCER.snapshotRestate);
   }
 
   private async flushSoon(): Promise<void> {
     if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
+    // A flush is about to run, so whatever the Host was waiting for has arrived; the wait is measured up to here.
+    this.#endIdle();
     // A steer runs exactly when a flush cannot: it injects into the turn that is ALREADY running, so
     // `#flushScheduled` being true is the condition it wants, not the condition it must wait out.
     //
@@ -1287,6 +1315,10 @@ export class CompanionHostService {
           this.#publishNarrationWithoutWorkFact();
         }
       }
+      // NOTHING IS OWED. The pump is empty and no decision above woke a turn, so from here the Host is waiting for the
+      // world to publish something - the silence round62 spent 165.8 s in. It is opened here rather than in the loop's
+      // own idle transition because this is the layer that knows a retry is not already scheduled.
+      if (this.#retryTimer === undefined && this.wakeReason === undefined) this.#beginIdle();
     }
   }
 
@@ -1443,7 +1475,7 @@ export class CompanionHostService {
     // Named where an operator and a bundle reader can both date it: what was watched, what the bound evicted, and what
     // is stuck - including the ownership that would release it, when the Mod said.
     process.stderr.write(`EXECUTION_STALL ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
-    this.acceptHostMintedFact(fact);
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.stallWatch);
   }
 
   /**
@@ -1461,7 +1493,39 @@ export class CompanionHostService {
     const fact = this.loop.pump.takeWorldStateStaleFact?.();
     if (fact === undefined) return;
     process.stderr.write(`WORLD_STATE_STALE ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
-    this.acceptHostMintedFact(fact);
+    this.#beginStaleSnapshotWait();
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.worldStateStale);
+  }
+
+  /**
+   * The wait a stale reading opens: a fact was owed, the Host asked the world for a fresh picture, and none has arrived.
+   *
+   * <p>
+   * Distinct from `wait.idle`, which means nothing was owed at all. Round62's own bundle says the Host never declared a
+   * reading stale (`presentation.worldStateStale.notMeasured: host_published_no_world_state_stale_fact`) while the
+   * harness saw 64 stalled clock polls - so this span would have been empty in that run, and an empty family is a
+   * reading this budget names rather than a zero it prints.
+   * </p>
+   */
+  #beginStaleSnapshotWait(): void {
+    if (this.runTrace === undefined || this.#staleSnapshotSpan !== undefined || this.#closed) return;
+    this.#staleSnapshotSpan = this.runTrace.begin(RUN_WAIT_NAMES.snapshot, { trigger: "world_state_stale" });
+  }
+
+  #endStaleSnapshotWait(): void {
+    this.#staleSnapshotSpan?.end();
+    this.#staleSnapshotSpan = undefined;
+  }
+
+  /** The idle wait: the pump was empty and the next turn needs a fact the world has not published yet. */
+  #beginIdle(): void {
+    if (this.runTrace === undefined || this.#idleSpan !== undefined || this.#closed) return;
+    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { reason: "nothing_owed" });
+  }
+
+  #endIdle(): void {
+    this.#idleSpan?.end();
+    this.#idleSpan = undefined;
   }
 
   /**
@@ -1480,7 +1544,7 @@ export class CompanionHostService {
     process.stderr.write(
       `NARRATION_WITHOUT_WORK ${JSON.stringify({ atMs: Date.now(), reason: HOST_WAKE_REASON.narrationWithoutWork, ...fact.payload })}\n`,
     );
-    this.acceptHostMintedFact(fact);
+    this.acceptHostMintedFact(fact, FACT_PRODUCER.narrationWithoutWork);
   }
 
   private scheduleRetry(): void {

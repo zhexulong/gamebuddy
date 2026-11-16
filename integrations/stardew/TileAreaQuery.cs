@@ -19,8 +19,9 @@ namespace GameBuddy.Stardew;
 /// It is a QUERY, not an action: no receipt, no postcondition, no program node, and no capability gate - the answer is a
 /// reading of the world the actor is already standing in. Every fact in a row is owned by exactly one function, named
 /// once in <see cref="PublishedFacts"/>: <c>tillable</c> is the predicate the soil discovery itself calls,
-/// <c>passable</c> is the wrapper over the pathfinder's own step test, and the rest are the engine's stored state for the
-/// tile. A fact this class computed a second way would be a second answer to a question the game already answers.
+/// <c>passable</c> is the wrapper over the pathfinder's own step test, <c>occupantKind</c> is the classifier an action's
+/// `Clears` declaration is read against, and the rest are the engine's stored state for the tile. A fact this class
+/// computed a second way would be a second answer to a question the game already answers.
 /// </para>
 /// </summary>
 internal static class TileAreaQuery
@@ -43,7 +44,9 @@ internal static class TileAreaQuery
     /// added to the row without an owner here is a finding, and an owner that no longer exists is a finding. The
     /// <c>SharedWith</c> column names the OTHER publication that must be computed from the same owner - the soil
     /// discovery calls <see cref="ExecutionManager.IsTillableTile"/> for the same tiles this query calls it for, so
-    /// "tillable here" and "soil there" cannot become two different questions.
+    /// "tillable here" and "soil there" cannot become two different questions, and the `for_each` pass reads
+    /// <c>occupantKind</c> from the classifier this row publishes it from, so a filter written against the rectangle
+    /// claims the rows the pass's own `where: [{ occupant: ... }]` claims.
     /// </para>
     /// </summary>
     internal static readonly (string Fact, string Owner, string? SharedWith)[] PublishedFacts =
@@ -52,6 +55,7 @@ internal static class TileAreaQuery
         ("y", "TileAreaQuery.DescribeTile", null),
         ("tillable", "ExecutionManager.IsTillableTile", "ExecutionManager.DiscoverSoilTiles"),
         ("occupant", "ExecutionManager.DescribeTileOccupant", null),
+        ("occupantKind", "TileOccupancy.Of", "FarmhandForEachFarmWorld.ReadRow"),
         ("hoed", "TileAreaQuery.DescribeTile", null),
         ("watered", "TileAreaQuery.DescribeTile", null),
         ("crop", "TileAreaQuery.DescribeTile", null),
@@ -115,6 +119,7 @@ internal static class TileAreaQuery
             Y: y,
             Tillable: ExecutionManager.IsTillableTile(location, x, y),
             Occupant: ExecutionManager.DescribeTileOccupant(location, x, y),
+            OccupantKind: TileOccupancy.Of(location, x, y),
             Hoed: soil is not null,
             Watered: soil is not null && soil.state.Value == HoeDirt.watered,
             Crop: soil?.crop is not null,

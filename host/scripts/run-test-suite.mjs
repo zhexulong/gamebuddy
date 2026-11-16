@@ -184,7 +184,9 @@ function testPhases({ env, failFast }) {
           // Use the internal implementation: the public build:test wrapper acquires
           // this same lock for standalone callers and would otherwise self-deadlock.
           await import("./build-test-artifact-locked.mjs");
-          await runCompiledTests({ keepGoing: !failFast });
+          // The reading is RETURNED rather than only printed: the phase runner is the only layer that can publish one
+          // total for the whole suite, and it cannot add up what it never received.
+          return await runCompiledTests({ keepGoing: !failFast });
         }),
     },
     // Script-level tests include lock protocol tests that intentionally invoke
@@ -204,6 +206,38 @@ function phasesSummaryLine({ phasesTotal, notRun, failedPhases, wallMs }) {
 }
 
 /**
+ * THE ONE TOTAL for the whole run: every suite's own test counts, added up and published as one line.
+ *
+ * `<p>`
+ * WHY. The suite published `452 files, 46 batches, 18 failing files` and nothing that said how many TESTS failed, because
+ * only three of its 46 batch summaries printed a count - so every report from that day wrote `tests: not measured`, and
+ * "18 files failed" cannot tell one failing assertion from four hundred. Each file's own counts are read where the child
+ * prints them (the batch runner), and this is the layer that adds the two suites together, because a phase is not the
+ * run.
+ * `</p>`
+ * `<p>`
+ * `suites_read` is in the line because a total built from one of two suites would otherwise read like a total: a phase
+ * that threw before it batched anything hands back no reading at all, and that is missing coverage rather than zero
+ * tests.
+ * `</p>`
+ */
+export function testSuiteTotalsLine({ readings, phasesTotal, phasesWithoutReading }) {
+  const sum = (key) => readings.reduce((total, reading) => total + (reading[key] ?? 0), 0);
+  const parts = [
+    `host_test_suite_total:files ${sum("files")}`,
+    `tests ${sum("tests")}`,
+    `pass ${sum("pass")}`,
+    `fail ${sum("fail")}`,
+    `skipped ${sum("skipped")}`,
+    `batches_without_a_summary: ${sum("batchesWithoutSummary")}`,
+    `suites_read ${readings.length} of ${phasesTotal}`,
+  ];
+  if (phasesWithoutReading > 0) parts.push(`suites_without_a_reading: ${phasesWithoutReading}`);
+  if (sum("tests") === 0) parts.push("zero_tests_blocked");
+  return parts.join(" · ");
+}
+
+/**
  * Run every phase and publish what ran.
  *
  * Every phase runs by default; `--fail-fast` is the interactive exception. The old default stopped at the
@@ -214,12 +248,20 @@ export async function runTestPhases(phases, { failFast = false, now = Date.now }
   const startedAtMs = now();
   const failures = [];
   const notRun = [];
+  const readings = [];
+  const phasesWithoutReading = [];
   for (const [index, phase] of phases.entries()) {
     try {
-      await phase.run();
+      const reading = await phase.run();
+      if (reading !== undefined) readings.push({ suite: phase.suite, ...reading });
+      else phasesWithoutReading.push(phase.suite);
       console.error(`host_test_phase_ok:suite=${phase.suite}`);
     } catch (error) {
       failures.push({ suite: phase.suite, error });
+      // A suite that failed still counted every test it ran: the reading travels on the failure, so the total for the
+      // run is not silently missing the phase that went red.
+      if (error?.reading !== undefined) readings.push({ suite: phase.suite, ...error.reading });
+      else phasesWithoutReading.push(phase.suite);
       if (failFast) {
         for (let rest = index + 1; rest < phases.length; rest += 1) notRun.push({ suite: phases[rest].suite, reason: "fail_fast" });
         break;
@@ -229,8 +271,30 @@ export async function runTestPhases(phases, { failFast = false, now = Date.now }
   const summary = phasesSummaryLine({ phasesTotal: phases.length, notRun, failedPhases: failures.length, wallMs: now() - startedAtMs });
   const notRunLines = notRun.map((entry) => `host_test_suite_phase_not_run:suite=${entry.suite}:reason=${entry.reason}`);
   for (const line of notRunLines) console.error(line);
+  // The total is published before anything can throw: a red suite is exactly the run whose test count someone needs.
+  const reportedTests = readings.reduce((total, reading) => total + (reading.tests ?? 0), 0);
+  const totals = testSuiteTotalsLine({ readings, phasesTotal: phases.length, phasesWithoutReading: phasesWithoutReading.length });
+  console.error(totals);
   console.error(summary);
-  if (failures.length === 0 && notRun.length === 0) return;
+  // THE TWO ZEROES THAT ARE NOT A PASS: a suite whose children reported no counts at all (a phase that threw before it
+  // batched anything), and a run whose counted tests are zero. Both used to read exactly like a green suite.
+  if (readings.length < phases.length - notRun.length) {
+    const message = [
+      `test_suite_reading_missing:${phasesWithoutReading.join(", ")}`,
+      "a phase published no test count at all, so the run's total is missing that suite",
+      totals,
+      summary,
+    ].join("\n");
+    if (failures.length === 0) throw new Error(message);
+  }
+  if (reportedTests === 0 && failures.length === 0) {
+    throw new Error([
+      "test_suite_totals_blocked:no test was counted in this run, which is not a green suite",
+      totals,
+      summary,
+    ].join("\n"));
+  }
+  if (failures.length === 0 && notRun.length === 0) return readings;
   // Each phase's own message already names its files, and the per-batch lines above carry each file's own
   // reason; this aggregate is what says which phases produced them.
   throw new Error(
@@ -238,6 +302,7 @@ export async function runTestPhases(phases, { failFast = false, now = Date.now }
       `test_suite_failed:${failures.length} phase(s): ${failures.map((entry) => entry.suite).join(", ")}`,
       ...failures.map((entry) => `${entry.suite}: ${entry.error instanceof Error ? entry.error.message : String(entry.error)}`),
       ...notRunLines,
+      totals,
       summary,
     ].join("\n"),
   );

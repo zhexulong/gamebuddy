@@ -97,9 +97,15 @@ public static class FarmhandForEachArguments
     /// <summary>Why a `do` chain with no steps in it is refused: `do: null` is the spelling for a deliberate path.</summary>
     private const string EmptyChain = "for_each_do_empty";
 
-    private const string RulesFault = "for_each_invalid:then";
-
-    private static readonly string[] LoopKeys = { "source", "where", "do", "then" };
+    /// <summary>
+    /// The keys one loop document may carry, read from the grammar's own declaration.
+    ///
+    /// ONE LIST ON BOTH SIDES OF THE BOUNDARY. Any other key is answered <c>for_each_unknown_key:&lt;key&gt;</c> here and by the
+    /// compiler before submission, so a key the grammar withdrew (`then`, authored <c>0 of 37</c> loop scripts) is refused
+    /// by NAME on the game thread rather than read as a field nobody honours. `body-program-for-each.test.ts` reads this
+    /// array and asserts it equals the Host's <c>PLAN_FOR_EACH_LOOP_KEYS</c>, so the two cannot drift apart again.
+    /// </summary>
+    private static readonly string[] LoopKeys = { "source", "where", "do" };
 
     /// <summary>
     /// Reads one `{ type: "loop", ... }` wire value as the canonical string an argument declares.
@@ -219,11 +225,8 @@ public static class FarmhandForEachArguments
                 return false;
             }
             if (!TryReadEffect(doElement, out effect, out reasonCode)) return false;
-            IReadOnlyList<FarmhandForEachRule>? then = null;
-            if (root.TryGetProperty("then", out JsonElement thenElement) && !TryReadRules(thenElement, out then, out reasonCode))
-                return false;
 
-            var candidate = new FarmhandForEachLoop(source!, where, effect, then);
+            var candidate = new FarmhandForEachLoop(source!, where, effect);
             if (candidate.IsValid)
             {
                 loop = candidate;
@@ -233,8 +236,7 @@ public static class FarmhandForEachArguments
             // The model is the acceptance gate, and it names WHICH part failed rather than a bare "invalid".
             reasonCode = !source!.IsValid ? SourceFault
                 : where is not null && where.Any(predicate => !predicate.IsValid) ? WhereFault
-                : effect is not null && !effect.IsValid ? EffectFault
-                : RulesFault;
+                : EffectFault;
             return false;
         }
     }
@@ -292,7 +294,7 @@ public static class FarmhandForEachArguments
     {
         predicates = null;
         reasonCode = WhereFault;
-        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > FarmhandForEachRule.MaximumPredicates) return false;
+        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > FarmhandForEachLoop.MaximumPredicates) return false;
         var read = new List<FarmhandForEachPredicate>(element.GetArrayLength());
         foreach (JsonElement entry in element.EnumerateArray())
         {
@@ -327,20 +329,6 @@ public static class FarmhandForEachArguments
 
         string selector = selectors[0];
         string? beside = names.FirstOrDefault(name => !string.Equals(name, selector, StringComparison.Ordinal));
-        if (selector is FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator)
-        {
-            // A position guard is ONE axis: two axes, or an axis beside anything else, is two predicates and the caller
-            // should write two - folding them would hide the second from the refusal that names it.
-            if (beside is not null) return Unrecognised(beside, FarmhandForEachPredicate.Selectors, out reasonCode);
-            if (!TryReadStride(element.GetProperty(selector), selector, out FarmhandForEachStride? stride, out reasonCode)) return false;
-            predicate = new FarmhandForEachPredicate(null, FarmhandForEachComparison.In, Array.Empty<FarmhandForEachValue>())
-            {
-                Axis = selector,
-                Stride = stride,
-            };
-            reasonCode = "accepted";
-            return true;
-        }
 
         if (string.Equals(selector, FarmhandForEachPredicate.OccupantOperator, StringComparison.Ordinal))
         {
@@ -356,7 +344,7 @@ public static class FarmhandForEachArguments
                 reasonCode = $"{WhereFault}:{selector}";
                 return false;
             }
-            predicate = new FarmhandForEachPredicate(FarmhandForEachHealing.OccupantField, FarmhandForEachComparison.Eq, new[] { occupant! });
+            predicate = new FarmhandForEachPredicate(FarmhandForEachHealing.OccupantField, new[] { occupant! });
             if (!predicate.IsValid)
             {
                 predicate = null;
@@ -366,50 +354,38 @@ public static class FarmhandForEachArguments
             return true;
         }
 
-        // A FIELD TEST: the field's name plus exactly one comparison word, both read from the declarations.
+        // A FIELD TEST: the field's name plus the one comparison this form has, both read from the declarations.
         if (!element.TryGetProperty(FarmhandForEachPredicate.FieldOperator, out JsonElement fieldElement)
             || fieldElement.ValueKind != JsonValueKind.String)
             return Unrecognised(FarmhandForEachPredicate.FieldOperator, FarmhandForEachPredicate.Selectors, out reasonCode);
-        FarmhandForEachComparison? comparison = null;
+        string? comparison = null;
         foreach (string name in names)
         {
             if (string.Equals(name, FarmhandForEachPredicate.FieldOperator, StringComparison.Ordinal)) continue;
-            FarmhandForEachComparison? kind = ComparisonOf(name);
             // A word beside `field` that is not a comparison: the alternatives are the comparison words, printed from the
-            // declaration the reader accepts them against.
-            if (kind is null) return Unrecognised(name, ComparisonWords(), out reasonCode);
-            // Two comparison words on one field is a predicate nobody can read: which one ordered the value?
+            // declaration the reader accepts them against. The six ordering words this used to accept were authored
+            // `0 of 2,871` raw calls and now answer here with the one word that is left.
+            if (Array.IndexOf(FarmhandForEachPredicate.Comparisons, name) < 0)
+                return Unrecognised(name, FarmhandForEachPredicate.Comparisons, out reasonCode);
+            // One comparison per field: a second word is a predicate nobody can read.
             if (comparison is not null)
             {
-                reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", ComparisonWords())}";
+                reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", FarmhandForEachPredicate.Comparisons)}";
                 return false;
             }
-            comparison = kind;
+            comparison = name;
         }
         if (comparison is null)
         {
-            reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", ComparisonWords())}";
+            reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", FarmhandForEachPredicate.Comparisons)}";
             return false;
         }
-        string word = names.First(name => ComparisonOf(name) == comparison);
-        if (comparison == FarmhandForEachComparison.In)
+        if (!TryReadValues(element.GetProperty(comparison), out IReadOnlyList<FarmhandForEachValue>? values))
         {
-            if (!TryReadValues(element.GetProperty(word), out IReadOnlyList<FarmhandForEachValue>? values))
-            {
-                reasonCode = $"{WhereFault}:{fieldElement.GetString()}:{word}";
-                return false;
-            }
-            predicate = new FarmhandForEachPredicate(fieldElement.GetString(), comparison.Value, values!);
+            reasonCode = $"{WhereFault}:{fieldElement.GetString()}:{comparison}";
+            return false;
         }
-        else
-        {
-            if (!TryReadValue(element.GetProperty(word), out FarmhandForEachValue? value))
-            {
-                reasonCode = WhereFault;
-                return false;
-            }
-            predicate = new FarmhandForEachPredicate(fieldElement.GetString(), comparison.Value, new[] { value! });
-        }
+        predicate = new FarmhandForEachPredicate(fieldElement.GetString()!, values!);
         if (!predicate.IsValid)
         {
             predicate = null;
@@ -443,56 +419,6 @@ public static class FarmhandForEachArguments
     {
         reasonCode = string.Create(CultureInfo.InvariantCulture, $"{SourceUnrecognised}:{given};allowed={string.Join(",", FarmhandForEachSource.Kinds)}");
         return false;
-    }
-
-    /// <summary>The comparison a word spells, or null when the model declares no such word.</summary>
-    private static FarmhandForEachComparison? ComparisonOf(string word)
-    {
-        foreach ((string candidate, FarmhandForEachComparison kind) in FarmhandForEachPredicate.Comparisons)
-            if (string.Equals(candidate, word, StringComparison.Ordinal)) return kind;
-        return null;
-    }
-
-    private static string[] ComparisonWords() =>
-        FarmhandForEachPredicate.Comparisons.Select(entry => entry.Word).ToArray();
-
-    private static bool TryReadStride(JsonElement element, string axis, out FarmhandForEachStride? stride, out string reasonCode)
-    {
-        stride = null;
-        reasonCode = $"{WhereFault}:{axis}:expected:{string.Join(",", FarmhandForEachStride.Operators)}";
-        if (element.ValueKind != JsonValueKind.Object) return false;
-        int? every = null;
-        int? offset = null;
-        foreach (JsonProperty property in element.EnumerateObject())
-        {
-            int? read = TryReadInteger(property.Value);
-            switch (property.Name)
-            {
-                case FarmhandForEachStride.EveryOperator when every is null && read is not null: every = read; break;
-                case FarmhandForEachStride.OffsetOperator when offset is null && read is not null: offset = read; break;
-                // An undeclared member is answered with the stride's own two operators; a repeated one, or an operand that is
-                // not a whole number, is the shape rather than the spelling and keeps the structural fault.
-                default:
-                    return property.Name is FarmhandForEachStride.EveryOperator or FarmhandForEachStride.OffsetOperator
-                        ? false
-                        : Unrecognised(property.Name, FarmhandForEachStride.Operators, out reasonCode);
-            }
-        }
-        if (every is null || offset is null)
-        {
-            // `every: n, offset: k` is one statement; half of it claims nothing.
-            return false;
-        }
-        var candidate = new FarmhandForEachStride(every.Value, offset.Value);
-        if (!candidate.IsValid)
-        {
-            // An offset at or past the stride claims no index at all, so the rule could never match: refused, not run dead.
-            reasonCode = WhereFault;
-            return false;
-        }
-        stride = candidate;
-        reasonCode = "accepted";
-        return true;
     }
 
     private static bool TryReadEffect(JsonElement element, out FarmhandForEachEffect? effect, out string reasonCode)
@@ -591,43 +517,6 @@ public static class FarmhandForEachArguments
         var candidate = new FarmhandForEachStep(action, arguments is null ? null : new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(arguments));
         if (!candidate.IsValid) return false;
         step = candidate;
-        reasonCode = "accepted";
-        return true;
-    }
-
-    private static bool TryReadRules(JsonElement element, out IReadOnlyList<FarmhandForEachRule>? rules, out string reasonCode)
-    {
-        rules = null;
-        reasonCode = RulesFault;
-        if (element.ValueKind != JsonValueKind.Array) return false;
-        // The loop's own rule is one of them, which is why the count is checked against the total rather than the array.
-        int total = element.GetArrayLength() + 1;
-        if (total > FarmhandForEachLoop.MaximumRules)
-        {
-            reasonCode = $"for_each_too_many_rules:{total}";
-            return false;
-        }
-        var read = new List<FarmhandForEachRule>(element.GetArrayLength());
-        foreach (JsonElement entry in element.EnumerateArray())
-        {
-            if (entry.ValueKind != JsonValueKind.Object) return false;
-            foreach (JsonProperty property in entry.EnumerateObject())
-                if (property.Name is not ("where" or "do"))
-                {
-                    reasonCode = $"for_each_unknown_key:{property.Name}";
-                    return false;
-                }
-            // A rule that names no effect at all is not a path: only an explicit null is.
-            if (!entry.TryGetProperty("do", out JsonElement doElement)) return false;
-            IReadOnlyList<FarmhandForEachPredicate>? where = null;
-            if (entry.TryGetProperty("where", out JsonElement whereElement) && !TryReadPredicates(whereElement, out where, out reasonCode))
-                return false;
-            if (!TryReadEffect(doElement, out FarmhandForEachEffect? effect, out reasonCode)) return false;
-            var rule = new FarmhandForEachRule(where, effect);
-            if (!rule.IsValid) return false;
-            read.Add(rule);
-        }
-        rules = read.AsReadOnly();
         reasonCode = "accepted";
         return true;
     }

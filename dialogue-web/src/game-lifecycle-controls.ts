@@ -145,12 +145,23 @@ export type GameSessionPhase =
   /** No attachment while a Player Host runs: the game owes this browser a session. */
   | "running_without_attachment"
   /**
-   * No attachment and the launch failed for good: the coordinator quarantined the
-   * owner (`launchTerminal` in `stardew-production-lifecycle-coordinator.internal.ts`)
-   * and answers every further launch with
-   * `stardew_player_host_launch_quarantined` for the life of this Host process,
-   * so no control on this page can carry the player out. The step is a fresh
-   * GameBuddy, and the surface's job is to name it.
+   * No attachment and the launch failed for good: the coordinator is in `launch_quarantined`
+   * (`stardew-game-lifecycle-state.internal.ts`) and answers every further launch with
+   * `stardew_player_host_launch_quarantined`, so no control on this page can carry the player out.
+   *
+   * A restart does NOT help, and the surface must not say it does: the failed attempt leaves an
+   * owner record in the terminal `quarantined` state, and that record holds the installation
+   * registration the next launch has to reserve, so a fresh process arrives at the same refusal.
+   * Settlement cannot release it: a launch that never reached the contained runtime has no runtime
+   * to contain, and where one did, the settlement's first durable transition (`arm`) needs the
+   * `reserved` predecessor the quarantine consumed. Nothing mints a settlement proof for a
+   * quarantined revision either, and one would free the registration for a process whose
+   * containment was never observed. The exit is a `never_spawned` proof - that no runtime was ever
+   * created - which belongs to the next unit and not to this page. That gap is declared, with its
+   * reason, in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
+   *
+   * So the phase names the honest step (`restart_gamebuddy`, kept because it is the only thing
+   * this page can even name) and the sentence says it is not the cure.
    */
   | "launch_failed"
   /**
@@ -454,7 +465,7 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       companionName: null,
       selectedWorld: null,
       selectedSave: null,
-      capabilitySummary: Object.freeze({ available: false, count: 0 }),
+      capabilitySummary: Object.freeze({ status: "not_measured", reason: "no_attached_runtime" }),
       latestOutcome: "none" as const,
     });
     const game = (overrides: Partial<GameBrowserStateV1["game"]>): GameBrowserStateV1 =>

@@ -14,6 +14,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel"];
 
@@ -26,7 +27,7 @@ export async function runTravelSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "travel" });
   try {
     let snapshot = await observeTravelActionable(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -179,17 +180,6 @@ function adjacent(left, right) {
     Math.abs(left.x - right.x) <= 1 &&
     Math.abs(left.y - right.y) <= 1
   );
-}
-
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
 }
 
 function travelSummary(snapshot) {

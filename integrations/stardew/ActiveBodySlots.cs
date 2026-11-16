@@ -148,7 +148,7 @@ internal sealed class ActiveBodySlots : IActiveBodyOwnership
                 executionId => this.DayAdvance.Peek() is { } night && string.Equals(night.ExecutionId, executionId, StringComparison.Ordinal),
                 Settled: true,
                 HoldsIdle: false,
-                Code: ExecutionManager.BodyOwnedByDayAdvance,
+                Code: ExecutionManager.BodyOwnedByNight,
                 Owner: this.PeekDayAdvanceOwner),
             new SlotRow(
                 nameof(this.Pet),

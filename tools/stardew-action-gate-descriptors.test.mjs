@@ -1,11 +1,18 @@
 // red-proof: inject  the `travel` gate row deleted from STARDEW_PUBLISHED_ACTION_GATES
-//  -> `✖ published action descriptors are complete, unique, and point to declared runner contracts` with a deep-equal listing `- travel`, exit 1
+//  -> `✖ published action gate rows are complete, unique, and each resolves to a gate artifact` with a deep-equal listing `- travel`, exit 1
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { access, readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
+import {
+  describeGateRouteProblems,
+  resolveStardewActionGateRoutes,
+  SLICE_DRIVER,
+  SMOKE_CONTRACT_DIRECTORY,
+  smokeContractPath,
+} from "./lib/stardew-action-gate-route.mjs";
 import {
   GATE_EXEMPT_PUBLISHED_ACTIONS,
   readAllPublishedExecutionStardewActionIds,
@@ -15,7 +22,7 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptor
 
 const ROOT = resolve(import.meta.dirname, "..");
 
-test("published action descriptors are complete, unique, and point to declared runner contracts", async () => {
+test("published action gate rows are complete, unique, and each resolves to a gate artifact", async () => {
   const gates = STARDEW_PUBLISHED_ACTION_GATES;
   const publishedActionIds = await readPublishedStardewActionIds();
   const gateActionIds = gates.map((gate) => gate.actionId);
@@ -23,14 +30,41 @@ test("published action descriptors are complete, unique, and point to declared r
   assert.equal(new Set(publishedActionIds).size, publishedActionIds.length);
   assert.deepEqual(new Set(gateActionIds), new Set(publishedActionIds));
 
-  for (const gate of gates) {
+  // One resolution for the whole table, so a row that resolves to nothing reports EVERY such action rather than
+  // stopping the run at the first ENOENT.
+  const routes = resolveStardewActionGateRoutes(gateActionIds);
+  assert.equal(routes.length, gates.length, "the resolver dropped rows, which would narrow every check below");
+  const unresolved = describeGateRouteProblems(routes);
+  assert.deepEqual(
+    unresolved,
+    [],
+    `these gate rows do not resolve to a gate artifact that exists:\n${unresolved.join("\n")}`,
+  );
+
+  for (const [index, gate] of gates.entries()) {
+    const route = routes[index];
+    assert.equal(route.action, gate.actionId, "the resolver answered for a different action");
     assert.match(gate.actionId, /^[a-z][a-z0-9_]{1,127}$/);
     assert.match(gate.terminalReasonCode, /^[a-z][a-z0-9_]{1,127}$/);
-    assert.match(gate.runner, /^run-stardew-[a-z0-9-]+\.mjs$/);
     if (gate.fixtureScenario !== null) assert.match(gate.fixtureScenario, /^native_[a-z0-9_]+_v\d+$/);
 
-    const runnerPath = resolve(ROOT, "tools", gate.runner);
-    await access(runnerPath, constants.R_OK);
+    // The route decides which artifact is the gate; the row decides what the gate must prove. Both routes carry the
+    // same evidence record, so these three facts cannot differ by route.
+    if (route.route === "runner") {
+      assert.match(gate.runner, /^run-stardew-[a-z0-9-]+\.mjs$/);
+      assert.equal(route.gate, `tools/${gate.runner}`);
+      assert.equal(route.executes, route.gate);
+    } else {
+      assert.equal(route.route, "contract", `${gate.actionId}: a row must resolve to a runner or a contract`);
+      assert.equal(gate.runner, null, `${gate.actionId}: a contract row names no runner`);
+      assert.equal(route.gate, smokeContractPath(gate.actionId));
+      assert.equal(route.executes, SLICE_DRIVER);
+    }
+    assert.equal(route.evidence.action, gate.actionId);
+    assert.equal(route.evidence.scenario, gate.fixtureScenario);
+    assert.equal(route.evidence.terminalReasonCode, gate.terminalReasonCode);
+
+    await access(resolve(ROOT, route.gate), constants.R_OK);
   }
 });
 
@@ -72,131 +106,12 @@ test("every published execution action is either gated or an explicitly declared
   }
 });
 
-test("descriptor runner identity names the native-local shared-harness runner for every published gate", async () => {
-  // Golden mapping: each published ordinary Farmhand action resolves to the
-  // actual native-local route (run-stardew-native-local-player-*), which is
-  // the shared-harness runner. Any parallel/legacy runner ID is stale.
-  const expectedRunners = Object.freeze({
-    send_multiplayer_chat: "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
-    collect_building_chest_output: "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
-    load_building_chest: "run-stardew-native-local-player-load-building-chest-smoke.mjs",
-    color_placed_object: "run-stardew-native-local-player-color-placed-object-smoke.mjs",
-    dye_clothing_with_item: "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
-    tailor_clothing: "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
-    redeem_prize_ticket: "run-stardew-native-local-player-prize-ticket-smoke.mjs",
-    claim_museum_reward: "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
-    accept_special_order: "run-stardew-native-local-player-accept-special-order-smoke.mjs",
-    accept_daily_quest: "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
-    name_entity: "run-stardew-native-local-player-name-entity-smoke.mjs",
-    build_farm_building: "run-stardew-native-local-player-build-farm-building-smoke.mjs",
-    toggle_animal_door: "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
-    claim_mail_attachment: "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
-    pan_ore: "run-stardew-native-local-player-pan-ore-smoke.mjs",
-    use_warp_item: "run-stardew-native-local-player-use-warp-item-smoke.mjs",
-    dismount_transport: "run-stardew-native-local-player-dismount-transport-smoke.mjs",
-    unequip_wearable: "run-stardew-native-local-player-unequip-wearable-smoke.mjs",
-    equip_wearable: "run-stardew-native-local-player-equip-wearable-smoke.mjs",
-    break_container: "run-stardew-native-local-player-break-container-source-smoke.mjs",
-    remove_placed_item: "run-stardew-native-local-player-remove-placed-item-smoke.mjs",
-    place_owned_object: "run-stardew-native-local-player-place-owned-object-smoke.mjs",
-    use_obelisk: "run-stardew-native-local-player-use-obelisk-smoke.mjs",
-    withdraw_silo_hay: "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
-    move_to_tile: "run-stardew-native-local-player-move-smoke.mjs",
-    // Promoted 2026-10-12 with its native-local live gate.
-    clear_fish_pond: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
-    equip_tool: "run-stardew-native-local-player-equip-tool-smoke.mjs",
-    travel: "run-stardew-native-local-player-travel-smoke.mjs",
-    enter_exit: "run-stardew-native-local-player-enter-exit-smoke.mjs",
-    till_soil: "run-stardew-native-local-player-till-soil-smoke.mjs",
-    pickup_forage: "run-stardew-native-local-player-pickup-forage-smoke.mjs",
-    pickup_item: "run-stardew-native-local-player-pickup-item-smoke.mjs",
-    water_crop: "run-stardew-native-local-player-water-crop-smoke.mjs",
-    plant_seed: "run-stardew-native-local-player-plant-seed-smoke.mjs",
-    fertilize_tile: "run-stardew-native-local-player-fertilize-tile-smoke.mjs",
-    machine_inspect: "run-stardew-native-local-player-machine-inspect-smoke.mjs",
-    machine_load: "run-stardew-native-local-player-machine-load-smoke.mjs",
-    machine_collect_output: "run-stardew-native-local-player-machine-collect-output-smoke.mjs",
-    collect_animal_product: "run-stardew-native-local-player-collect-animal-product-smoke.mjs",
-    feed_animal: "run-stardew-native-local-player-feed-animal-smoke.mjs",
-    use_item: "run-stardew-native-local-player-use-item-smoke.mjs",
-    harvest_crop: "run-stardew-native-local-player-harvest-crop-smoke.mjs",
-    refill_watering_can: "run-stardew-native-local-player-refill-watering-can-smoke.mjs",
-    break_rock: "run-stardew-native-local-player-break-rock-source-smoke.mjs",
-    clear_hoedirt: "run-stardew-native-local-player-clear-hoedirt-smoke.mjs",
-    dig_artifact_spot: "run-stardew-native-local-player-dig-artifact-spot-smoke.mjs",
-    chop_tree: "run-stardew-native-local-player-chop-tree-source-smoke.mjs",
-    place_wood_fence: "run-stardew-native-local-player-place-wood-fence-smoke.mjs",
-    place_crab_pot: "run-stardew-native-local-player-place-crab-pot-smoke.mjs",
-    bait_crab_pot: "run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
-    // Promoted to live_verified by a real native-local run: express_emote and
-    // face_direction share one runner because one fixture turn proves both
-    // actor-expression mutations in the same revision chain.
-    express_emote: "run-stardew-native-local-player-expression-smoke.mjs",
-    // Promoted to live_verified: a real shared-world run proved each one on its
-    // required topology (pet_animal: Host LAN + AI Farmhand, pet_completed;
-    // interact_npc_with_item: native-local quest_item_delivered; advance_day:
-    // co-op day_advanced, ready 2/2).
-    pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
-    interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
-    sleep: "run-stardew-native-local-player-advance-day-smoke.mjs",
-    face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
-    // Promoted to live_verified in the same ladder: every remaining experimental
-    // action has now passed its own native-local run, so each names the
-    // shared-harness route that produced it.
-    clear_debris: "run-stardew-native-local-player-clear-debris-smoke.mjs",
-    npc_relationship: "run-stardew-native-local-player-npc-relationship-smoke.mjs",
-    water_pet_bowl: "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
-    water_slime_hutch_trough: "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
-    chest_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
-    chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
-    chop_stump: "run-stardew-native-local-player-chop-stump-smoke.mjs",
-    plant_sapling: "run-stardew-native-local-player-plant-sapling-smoke.mjs",
-    cut_weeds: "run-stardew-native-local-player-cut-weeds-smoke.mjs",
-    scythe_crop: "run-stardew-native-local-player-scythe-crop-smoke.mjs",
-    craft_item: "run-stardew-native-local-player-craft-item-smoke.mjs",
-    cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
-    collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
-    ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
-    // Transport family promoted by the parallel lane work: minecart and bus both
-    // passed their own native-local runs (minecart_ride_completed / bus_arrived).
-    ride_minecart: "run-stardew-native-local-player-ride-minecart-smoke.mjs",
-    ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
-    // NOTE: adding a gate above is only half the change. This map and the fixture-backed
-    // list further down are INDEPENDENT frozen copies, and a promotion that updates the gate
-    // list alone leaves this test red while `check-stardew-action-promotion.mjs` still passes.
-    // That is exactly what happened to the two rows below, which went missing in fcc749d4 and
-    // e28dd26. Both lists must be updated together.
-    shop_purchase: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
-    select_mine_elevator_floor: "run-stardew-native-local-player-mine-elevator-smoke.mjs",
-    // Loop-closure wave (2026-10-04): live_verified after each action produced its
-    // own native-local receipt on the recorded fixture scenario.
-    cut_grass: "run-stardew-native-local-player-cut-grass-smoke.mjs",
-    harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
-    harvest_fruit_tree: "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
-    shake_tree: "run-stardew-native-local-player-shake-tree-smoke.mjs",
-    take_pedestal_item: "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-    toggle_fence_gate: "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
-    clear_cask: "run-stardew-native-local-player-clear-cask-smoke.mjs",
-    dress_mannequin: "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
-    set_sign_display: "run-stardew-native-local-player-set-sign-display-smoke.mjs",
-    deposit_silo_hay: "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
-    toggle_tool_light: "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
-    use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
-    mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
-    enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
-    dismiss_modal: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
-    answer_dialogue: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
-    talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
-    // The level-up family, alongside the modal one: the menu is pushed at the same call site as the settlement
-    // menu, so its proof drives one night and then settles what the rollover raised.
-    respond_level_up: "run-stardew-native-local-player-respond-level-up-smoke.mjs",
-    use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
-    move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
-    pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
-    // Published before its live run, so that a run CAN dispatch it at all: an Experimental action
-    // is off the agent surface and no evidence for it can ever exist.
-    fish_here: "run-stardew-native-local-player-fish-here-smoke.mjs",
-  });
+test("every published gate resolves to the native-local artifact for its route kind, never a retired route", async () => {
+  // A gate row used to carry one fact - a runner filename - and this test froze all 103 of them into a golden map, so
+  // retiring a runner meant editing a 103-line list before the gate could open at all: the file's existence, not the
+  // action's evidence, was what made the gate real. What that map was standing in for is a PROPERTY: whichever route a
+  // row takes, the artifact it names is the shared native-local one for that kind of route.
+  //
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
     "run-stardew-move-probe.mjs",
@@ -226,22 +141,55 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     "run-stardew-water-crop-smoke.mjs",
   ]);
 
-  assert.deepEqual(
-    Object.fromEntries(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => [gate.actionId, gate.runner])),
-    expectedRunners,
-  );
-  const toolEntries = await readdir(resolve(ROOT, "tools"));
-  for (const gate of STARDEW_PUBLISHED_ACTION_GATES) {
-    assert.match(gate.runner, /^run-stardew-native-local-player-[a-z0-9-]+\.mjs$/);
-    assert.equal(forbiddenRouteIds.includes(gate.runner), false, `${gate.runner} is an obsolete route ID`);
-    const runnerSource = await readFile(resolve(ROOT, "tools", gate.runner), "utf8");
-    assert.match(
-      runnerSource,
-      /from "\.\/lib\/stardew-native-smoke-harness-v1\.mjs"/,
-      `${gate.runner} must be a shared-harness runner`,
-    );
-    assert.doesNotMatch(runnerSource, /host-production-module/, `${gate.runner} must not use the legacy host route`);
+  const gates = STARDEW_PUBLISHED_ACTION_GATES;
+  const routes = resolveStardewActionGateRoutes(gates.map((gate) => gate.actionId));
+  const contractGate = new RegExp(`^${SMOKE_CONTRACT_DIRECTORY}/[a-z0-9_]+\\.json$`, "u");
+  const examined = { runner: 0, contract: 0 };
+  const problems = [];
+
+  for (const route of routes) {
+    if (route.problem !== null) {
+      problems.push(`${route.action}: ${route.problem.code} ${route.problem.detail ?? ""}`.trim());
+      continue;
+    }
+    examined[route.route] += 1;
+    if (forbiddenRouteIds.includes(route.gate.replace(/^tools\//u, "")))
+      problems.push(`${route.action}: ${route.gate} is an obsolete route ID`);
+    if (route.route === "runner") {
+      if (!/^tools\/run-stardew-native-local-player-[a-z0-9-]+\.mjs$/u.test(route.gate)) {
+        problems.push(`${route.action}: ${route.gate} is not a native-local player runner`);
+        continue;
+      }
+      const runnerSource = await readFile(resolve(ROOT, route.gate), "utf8");
+      if (!/from "\.\/lib\/stardew-native-smoke-harness-v1\.mjs"/u.test(runnerSource))
+        problems.push(`${route.action}: ${route.gate} must be a shared-harness runner`);
+      if (/host-production-module/u.test(runnerSource))
+        problems.push(`${route.action}: ${route.gate} must not use the legacy host route`);
+    } else {
+      if (!contractGate.test(route.gate))
+        problems.push(`${route.action}: ${route.gate} is not a contract under ${SMOKE_CONTRACT_DIRECTORY}/`);
+      else if (route.contract?.action !== route.action)
+        problems.push(`${route.action}: ${route.gate} does not declare ${route.action}`);
+      if (route.executes !== SLICE_DRIVER)
+        problems.push(`${route.action}: a contract route is run by ${SLICE_DRIVER}, not ${String(route.executes)}`);
+    }
   }
+
+  assert.deepEqual(
+    problems,
+    [],
+    `gate routes that do not resolve to the native-local artifact for their route kind:\n${problems.join("\n")}`,
+  );
+  // A population of zero agrees with itself, so state what was examined - and keep the runner half honest, because a
+  // table that drifted to all contracts would leave the runner rules above with nothing left to check.
+  assert.equal(
+    examined.runner + examined.contract,
+    gates.length,
+    `examined ${examined.runner} runner(s) and ${examined.contract} contract(s), the gate table has ${gates.length} rows`,
+  );
+  assert.ok(examined.runner > 0, "no runner route was examined, so the runner half of this gate is decorative");
+
+  const toolEntries = await readdir(resolve(ROOT, "tools"));
   for (const route of forbiddenRouteIds)
     assert.equal(toolEntries.includes(route), false, `${route} must be deleted rather than merely de-selected`);
 });
@@ -340,6 +288,11 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "use_mine_ladder",
       "pet_farm_animal",
       "fish_here",
+      "break_resource_clump",
+      "rotate_furniture",
+      "remove_fence",
+      "open_geode",
+      "sweep_scythe",
     ],
   );
   assert.deepEqual(

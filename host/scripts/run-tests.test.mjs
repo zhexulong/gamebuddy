@@ -17,12 +17,14 @@ import {
   machineDefaultConcurrency,
   outputSilenceThresholdMs,
   preflightTestArtifact,
+  readTestSummary,
   runCompiledTests,
   runDiscoveredTests,
   runTestBatches,
   ungroupedPlayerHostLifecycleFiles,
 } from "./run-tests.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
+import { runBoundedChild } from "./child-process-tool.mjs";
 
 // A real file path, under the Host root, shaped like the ones `discoverTestFiles` hands the
 // runner - so the message under test carries the same `dist-test/...` spelling production does.
@@ -806,6 +808,9 @@ test("keeps the batch-start line and per-file heartbeat CI parses", async () => 
     // The population line belongs to this contract for the same reason: CI parses these lines, and a run
     // that never printed how much it examined is the reading this suite could not produce before.
     "host_test_suite_population:suite=fixture · batches examined 1 of 1 · failed 0 · files 1 · wall_ms 0 · max_silent_gap_ms 0 · output_silence_threshold_ms 120000",
+    // ... and the totals line, which is how many TESTS ran and failed. This fixture's child returns no text at all, so
+    // the batch says it read no summary rather than printing `tests 0` as if the file had held no tests.
+    "host_test_suite_totals:files 0 · tests 0 · pass 0 · fail 0 · skipped 0 · batches_without_a_summary: 1 · files_without_a_summary: 1",
   ]);
 });
 
@@ -1312,4 +1317,144 @@ test("a suite with no files publishes a blocked population instead of a green on
   assert.deepEqual(lines, [
     "host_test_suite_population:suite=fixture · batches examined 0 of 0 · failed 0 · files 0 · wall_ms 0 · zero_population_blocked",
   ]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The tests a run held, read from each child's own summary.
+//
+// MEASURED (the run this unit answers): `pnpm --dir host test` finished 452 files in 21m07s and published "18 failing
+// files" - never a test count, because only 3 of its 46 batch summaries printed one. "18 files failed" cannot tell one
+// failing assertion from four hundred, so the number every lane needed did not exist as a reading.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A child's own spec-reporter summary, in the shape Node 24 prints for one file. */
+const summaryText = (tests, pass, fail, skipped = 0, todo = 0, cancelled = 0) =>
+  [
+    "✔ a test that passed (0.1ms)",
+    `ℹ tests ${String(tests)}`,
+    "ℹ suites 0",
+    `ℹ pass ${String(pass)}`,
+    `ℹ fail ${String(fail)}`,
+    `ℹ cancelled ${String(cancelled)}`,
+    `ℹ skipped ${String(skipped)}`,
+    `ℹ todo ${String(todo)}`,
+    "ℹ duration_ms 12.5",
+  ].join("\n");
+
+test("a child's own summary is the count, and it must close", () => {
+  assert.deepEqual(readTestSummary(summaryText(9, 8, 1)), {
+    tests: 9,
+    pass: 8,
+    fail: 1,
+    skipped: 0,
+    todo: 0,
+    cancelled: 0,
+  });
+  // A summary whose parts do not add up is NOT read as a smaller number: it is a shape this parser does not know, and
+  // the run has to say so rather than publish a total that quietly lost tests.
+  assert.equal(readTestSummary("ℹ tests 9\nℹ pass 8\nℹ fail 0"), undefined, "three of six labels is not a summary");
+  assert.equal(
+    readTestSummary(["ℹ tests 9", "ℹ pass 4", "ℹ fail 4", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0"].join("\n")),
+    undefined,
+    "nine tests cannot be four passing and four failing",
+  );
+  assert.equal(readTestSummary(""), undefined);
+  assert.equal(readTestSummary(undefined), undefined);
+});
+
+test("the totals line is the run's tests, and a file that printed none fails the run by name", async () => {
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  let error;
+  try {
+    await runTestBatches(["green.test.js", "red.test.js"], {
+      suite: "fixture",
+      timeoutMs: 5_000,
+      now: () => 0,
+      run: async ([path]) => {
+        if (path === "green.test.js") return { output: summaryText(7, 7, 0) };
+        throw new Error(`test_runner_failed:code=1:signal=none\n${summaryText(3, 1, 2)}`);
+      },
+    }).catch((thrown) => {
+      error = thrown;
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const totals = lines.find((line) => line.startsWith("host_test_suite_totals:"));
+  assert.equal(
+    totals,
+    "host_test_suite_totals:files 2 · tests 10 · pass 8 · fail 2 · skipped 0 · batches_without_a_summary: 0",
+    "ten tests ran across the two files and two of them failed - the reading that did not exist before",
+  );
+  assert.match(
+    error.message,
+    /test_suite_failed:1 file\(s\): red\.test\.js/u,
+    "the failing file is still named with its own reason",
+  );
+  assert.ok(error.message.includes(totals), "the failure carries the total too: a red run is when someone needs it");
+
+  // The other side: a file that PASSED and printed nothing readable is a hole in the total, not a file with no tests.
+  const silent = [];
+  console.error = (line) => silent.push(line);
+  let silentError;
+  try {
+    await runTestBatches(["quiet.test.js"], {
+      suite: "fixture",
+      timeoutMs: 5_000,
+      now: () => 0,
+      run: async () => ({ output: "✔ a test that passed (0.1ms)\n" }),
+    }).catch((thrown) => {
+      silentError = thrown;
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.match(
+    silentError.message,
+    /test_suite_totals_incomplete:fixture:1 file\(s\) printed no readable test summary: quiet\.test\.js/u,
+    "a passed file with no summary must not shrink the total silently",
+  );
+  assert.equal(silentError.reading.tests, 0, "and the reading says what it could not count");
+});
+
+test("the production seam hands the summary through: a real child's counts are read, not re-derived", async () => {
+  // The gate has to be driven from the side that really runs a file, or a runner that stopped capturing the child's text
+  // would look exactly like a suite whose tests were never counted. One tiny real child: 2 tests, one skipped.
+  //
+  // WHY THE CHILD'S ENVIRONMENT IS CLEANED. This test runs INSIDE `node --test`, which sets `NODE_TEST_CONTEXT` for the
+  // file it is running; a grandchild that inherits it reports to the runner that spawned it instead of printing its own
+  // summary, which is a fact about this test's own nesting and not about the runner. The production suite is not a test
+  // child, so the sanitizing is the fixture's and is stated here rather than hidden in the runner.
+  const childEnvironment = { ...process.env };
+  for (const key of Object.keys(childEnvironment)) if (key.startsWith("NODE_TEST_CONTEXT")) delete childEnvironment[key];
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-summary-seam-"));
+  try {
+    const file = join(root, "seam.test.mjs");
+    await writeFile(
+      file,
+      [
+        'import test from "node:test";',
+        'test("passes", () => {});',
+        'test("is skipped", { skip: "on purpose" }, () => {});',
+      ].join("\n"),
+    );
+    const result = await runDiscoveredTests([file], {
+      timeoutMs: 120_000,
+      runChild: (options) => runBoundedChild({ ...options, spawnOptions: { env: childEnvironment } }),
+    });
+    assert.equal(typeof result.output, "string", "the supervisor returns the child's own text");
+    assert.deepEqual(readTestSummary(result.output), {
+      tests: 2,
+      pass: 1,
+      fail: 0,
+      skipped: 1,
+      todo: 0,
+      cancelled: 0,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

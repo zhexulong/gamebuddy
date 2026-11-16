@@ -39,6 +39,14 @@
  * red-proof: inject  a run timeline naming a published action that is only ever rejected ->
  * *                    `action coverage 1% is below the floor of 20%`, exit 1 (tools/check-action-coverage.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-action-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 

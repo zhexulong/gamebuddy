@@ -20,126 +20,60 @@ public sealed record FarmhandForEachValue(string? Text = null, double? Number = 
 }
 
 /// <summary>
-/// The two operators a repeating position guard offers: `every: n, offset: k` claims local index k, k+n, k+2n...
+/// One `where` predicate over a row: `{ occupant: "weed" }` or `{ field: "tillable", in: [true] }`.
 ///
-/// This is the operator the whole form exists for. Trellis crops (green bean, hops, grape) grow into impassable tiles, so
-/// a real farm leaves a walkable column between trellis columns and plants a filler crop between trellis rows - hops
-/// with coffee is a standard summer layout. Every one of those decisions depends on POSITION, not on what the tile
-/// currently contains, so a dispatch keyed on the row's kind cannot represent them.
-/// </summary>
-public sealed record FarmhandForEachStride(int Every, int Offset)
-{
-    public const string EveryOperator = "every";
-
-    public const string OffsetOperator = "offset";
-
-    /// <summary>The two keys a stride is written with, in the order a refusal names them.</summary>
-    public static readonly string[] Operators = { EveryOperator, OffsetOperator };
-
-    /// <summary>
-    /// An offset at or past the stride claims no index at all, and a rule that can never match is indistinguishable from
-    /// a tile nobody thought about - so it is refused rather than silently dead.
-    /// </summary>
-    public bool IsValid => this.Every >= 1 && this.Offset >= 0 && this.Offset < this.Every;
-
-    public bool Claims(int localIndex) => localIndex >= 0 && localIndex % this.Every == this.Offset;
-}
-
-public enum FarmhandForEachComparison
-{
-    Eq = 1,
-    Ne = 2,
-    Lt = 3,
-    Lte = 4,
-    Gt = 5,
-    Gte = 6,
-    In = 7,
-}
-
-/// <summary>
-/// One `where` predicate over a row: `{ field: "health", gt: 0 }`, `{ field: "kind", in: ["rock","stump"] }`,
-/// `{ occupant: "weed" }`, or a position guard `{ col: { every: 3, offset: 1 } }`.
-///
-/// ONE SPELLING PER TEST, declared in <see cref="Selectors"/> and <see cref="Comparisons"/> and nowhere else: the reader
-/// accepts what those declare and its refusal prints them, so "a word this form does not have" is answered with the words
-/// it does have instead of with the caller's own word back.
-///
+/// <para>
+/// TWO SPELLINGS, declared in <see cref="Selectors"/> and nowhere else: the reader accepts what that declares and its
+/// refusal prints it, so "a word this form does not have" is answered with the words it does have instead of with the
+/// caller's own word back. The field test has ONE comparison (<see cref="Comparisons"/>), a membership list, because that
+/// is the one the corpus ever wrote: measured 2026-11-14 over every plan script a run captured (2,871 raw calls), `field`
+/// was written 7 times and every one of them with `in`. `eq`, `ne`, `lt`, `lte`, `gt` and `gte` were authored
+/// <c>0 of 2,871</c> each and are withdrawn; the position guards <c>col</c>/<c>row</c> measured the same zero.
+/// </para>
+/// <para>
 /// `occupant` IS NOT A SECOND VOCABULARY. It is the ONE field test on <see cref="FarmhandForEachHealing.OccupantField"/> -
 /// the field the clearing join reads, whose words are the engine's own (`ExecutionManager.DescribeTileOccupant`) and the
 /// same words `FarmhandActionDescriptor.Clears` is declared in - so `{ occupant: "weed" }` and
-/// `{ field: "occupant", eq: "weed" }` are one test with one meaning.
+/// `{ field: "occupant", in: ["weed"] }` are one test with one meaning.
+/// </para>
+/// <para>
+/// A LOOP'S <c>Where</c> IS A CONJUNCTION: every predicate must hold for the row, and each predicate is ONE test. The pair
+/// the corpus writes twice, <c>[{ occupant: "none" }, { field: "tillable", in: [true] }]</c>, only means anything as AND -
+/// whether a tile is empty AND tillable - and its failure mode if read as OR is an effect rather than a refusal: a
+/// `till_soil` pass that took either half would till the grass.
+/// </para>
 /// </summary>
-public sealed record FarmhandForEachPredicate(
-    string? Field,
-    FarmhandForEachComparison Comparison,
-    IReadOnlyList<FarmhandForEachValue> Values)
+public sealed record FarmhandForEachPredicate(string Field, IReadOnlyList<FarmhandForEachValue> Values)
 {
     public const string FieldOperator = "field";
-
-    public const string ColOperator = "col";
-
-    public const string RowOperator = "row";
 
     /// <summary>The named test of what STANDS on the tile, in the words the clearing join is written in.</summary>
     public const string OccupantOperator = "occupant";
 
-    // The wire words of the field comparisons this pass accepts. They belong here, beside the type they name, so the
-    // reader that accepts a declaration and the model that decides a row cannot disagree about how one is spelled.
-    public const string EqOperator = "eq";
-
-    public const string NeOperator = "ne";
-
-    public const string LtOperator = "lt";
-
-    public const string LteOperator = "lte";
-
-    public const string GtOperator = "gt";
-
-    public const string GteOperator = "gte";
-
-    /// <summary>The one comparison that takes a LIST of values: `kind in ["rock","stump"]`.</summary>
+    /// <summary>The one comparison a field test offers: a membership list, `<c>in</c>`.</summary>
     public const string InOperator = "in";
 
     /// <summary>The keys that say WHAT one predicate tests, in the order a refusal names them.</summary>
-    public static readonly string[] Selectors = { FieldOperator, ColOperator, RowOperator, OccupantOperator };
+    public static readonly string[] Selectors = { FieldOperator, OccupantOperator };
 
     /// <summary>
-    /// Every comparison word, with the comparison it spells: the ONE declaration the reader accepts a field test against
-    /// and the one a refusal prints. A word added here is a word the reader must read, and the test beside this file
-    /// asserts that for every member rather than for the three that were written by hand.
+    /// Every comparison word this pass accepts, in the order a refusal names them: the ONE declaration the reader accepts
+    /// a field test against and the one a refusal prints. The six ordering/equality words that used to sit beside `in`
+    /// measured `0 of 2,871` raw calls and are gone; a word added here is a word the reader must read, and the test beside
+    /// this file asserts that for every member rather than for the ones that were written by hand.
     /// </summary>
-    public static readonly (string Word, FarmhandForEachComparison Kind)[] Comparisons =
-    {
-        (EqOperator, FarmhandForEachComparison.Eq),
-        (NeOperator, FarmhandForEachComparison.Ne),
-        (LtOperator, FarmhandForEachComparison.Lt),
-        (LteOperator, FarmhandForEachComparison.Lte),
-        (GtOperator, FarmhandForEachComparison.Gt),
-        (GteOperator, FarmhandForEachComparison.Gte),
-        (InOperator, FarmhandForEachComparison.In),
-    };
+    public static readonly string[] Comparisons = { InOperator };
 
     /// <summary>
     /// How many values one `in` list may carry.
     ///
     /// The bound lives here rather than in the reader because it is a fact about the PREDICATE: a conjunction of eight
     /// predicates over lists of eight values is a rule a person can still read. Mirrors `MAX_FOR_EACH_VALUES`
-    /// (`host/src/body-program-for-each.ts:144`), which is the compiler's half of the same bound.
+    /// (`host/src/body-program-for-each.ts`), which is the compiler's half of the same bound.
     /// </summary>
     public const int MaximumValues = 8;
 
-    /// <summary>The axis a position predicate claims (`col` / `row`), or null for a field predicate.</summary>
-    public string? Axis { get; init; }
-
-    /// <summary>The repeating guard a position predicate carries, or null when it is a field predicate.</summary>
-    public FarmhandForEachStride? Stride { get; init; }
-
-    /// <summary>A predicate with no field is a position guard, carried by <see cref="Stride"/> instead.</summary>
-    public bool IsPositionGuard => this.Axis is not null;
-
-    public bool IsValid => this.Field is null
-        ? this.Axis is ColOperator or RowOperator && this.Stride is not null && this.Stride.IsValid
-        : this.Field.Length is >= 1 and <= 64 && this.Values.Count is >= 1 and <= MaximumValues;
+    public bool IsValid => this.Field.Length is >= 1 and <= 64 && this.Values.Count is >= 1 and <= MaximumValues;
 }
 
 /// <summary>
@@ -155,7 +89,7 @@ public sealed record FarmhandForEachPredicate(
 /// </para>
 /// <para>
 /// "EVERY DRY CROP IN THIS PATCH" IS NOT A LOST SPELLING: it is the field test on an area's rows
-/// (<c>{ field: "kind", eq: "crop" }</c>), which this form already reads live.
+/// (<c>{ field: "kind", in: ["crop"] }</c>), which this form already reads live.
 /// </para>
 /// </summary>
 public sealed record FarmhandForEachSource(int X = 0, int Y = 0, int Width = 0, int Height = 0)
@@ -241,73 +175,39 @@ public sealed record FarmhandForEachEffect(params FarmhandForEachStep[] Steps)
 }
 
 /// <summary>
-/// One more rule of the same pass: an optional conjunction of predicates and what a matching row gets.
+/// One loop intent: a source, an optional conjunction of predicates, and what to do with a matching row.
 ///
-/// WHY A PASS HAS MORE THAN ONE RULE. A 3x20 intercropped patch is ONE intent and not three: hops on columns 0, 3, 6...,
-/// coffee on 1, 4, 7..., and column 2, 5, 8... deliberately a path. Three separate passes would report every tile a pass
-/// did not claim as `no_rule_matched` twice over, and a tile two rules claim would be worked twice; one pass with ordered
-/// rules decides each row exactly once, by the FIRST rule that claims it.
-/// </summary>
-public sealed record FarmhandForEachRule(
-    IReadOnlyList<FarmhandForEachPredicate>? Where,
-    FarmhandForEachEffect? Do)
-{
-    /// <summary>
-    /// How many predicates one rule's conjunction may carry: long enough to be a rule, short enough to be read.
-    ///
-    /// Mirrors `MAX_FOR_EACH_PREDICATES` (`host/src/body-program-for-each.ts:116`).
-    /// </summary>
-    public const int MaximumPredicates = 8;
-
-    public bool IsValid =>
-        (this.Where is null || (this.Where.Count <= MaximumPredicates
-            && this.Where.All(predicate => predicate is not null && predicate.IsValid)))
-        && (this.Do is null || this.Do.IsValid);
-}
-
-/// <summary>
-/// One loop intent: a source, an optional conjunction of predicates, what to do with a matching row, and the further
-/// rules of the same pass.
-///
-/// `Do: null` is a STATEMENT - "this column is a path" - and the pass counts it separately so a reader can tell a
-/// deliberate path from a tile the predicates forgot.
+/// <para>
+/// ONE CALL, ONE RULE. A loop used to carry further rules under <c>then</c>, which is what made one pass able to claim two
+/// kinds of row; measured over every plan she ever wrote it was authored <c>0 of 37</c> <c>for_each</c> scripts, and the
+/// only thing that ever wrote it was the Host's own fold of two calls over one rectangle into one pass. Both are withdrawn
+/// here and in the grammar at the same time: two kinds of row in one rectangle are two <c>for_each</c> calls, each its own
+/// node, each reporting the rows it did not claim.
+/// </para>
+/// <para>
+/// <c>Do: null</c> is a STATEMENT - "every row this rule claims is a path" - and the pass counts it separately so a reader
+/// can tell a deliberate path from a tile the predicate forgot.
+/// </para>
 /// </summary>
 public sealed record FarmhandForEachLoop(
     FarmhandForEachSource Source,
     IReadOnlyList<FarmhandForEachPredicate>? Where,
-    FarmhandForEachEffect? Do,
-    IReadOnlyList<FarmhandForEachRule>? Then = null)
+    FarmhandForEachEffect? Do)
 {
-    /// <summary>How many rules one pass may carry, this loop's own included.</summary>
-    public const int MaximumRules = 8;
-
     /// <summary>
-    /// The ordered rules of one pass: this loop's own predicate and effect first, then <see cref="Then"/> in order.
+    /// How many predicates one loop's conjunction may carry: long enough to be a rule, short enough to be read.
     ///
-    /// FIRST MATCH WINS, and this is the ONE spelling of "what a pass tries": the compiler that composes several
-    /// `for_each` calls over one source and the expansion that runs them enumerate the rules through it, so the two
-    /// cannot disagree about the order or about how many there are.
+    /// Mirrors `MAX_FOR_EACH_PREDICATES` (`host/src/body-program-for-each.ts`), which is the compiler's half of the same
+    /// bound.
     /// </summary>
-    public IReadOnlyList<FarmhandForEachRule> Rules
-    {
-        get
-        {
-            var rules = new List<FarmhandForEachRule>(1 + (this.Then?.Count ?? 0))
-            {
-                new FarmhandForEachRule(this.Where, this.Do),
-            };
-            if (this.Then is not null) rules.AddRange(this.Then);
-            return rules.AsReadOnly();
-        }
-    }
+    public const int MaximumPredicates = 8;
 
     public bool IsValid =>
         this.Source is not null
         && this.Source.IsValid
-        && (this.Where is null || this.Where.All(predicate => predicate is not null && predicate.IsValid))
-        && (this.Do is null || this.Do.IsValid)
-        && (this.Then is null
-            || (this.Then.Count + 1 <= MaximumRules && this.Then.All(rule => rule is not null && rule.IsValid)));
+        && (this.Where is null || (this.Where.Count <= MaximumPredicates
+            && this.Where.All(predicate => predicate is not null && predicate.IsValid)))
+        && (this.Do is null || this.Do.IsValid);
 }
 
 /// <summary>One row the loop considered, and what it decided.</summary>
@@ -341,69 +241,24 @@ public sealed record FarmhandForEachRowDecision(
 public static class FarmhandForEachRules
 {
     /// <summary>
-    /// Whether every predicate holds for this row.
+    /// Whether every predicate holds for this row - the loop's conjunction, AND rather than OR.
     ///
     /// `Where` absent means every row, which is why an absent predicate list is not an error: the caller may genuinely
     /// mean "every row of this source".
     /// </summary>
-    public static bool Matches(
-        FarmhandForEachLoop loop,
-        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
-        int localColumn,
-        int localRow)
+    public static bool Matches(FarmhandForEachLoop loop, IReadOnlyDictionary<string, FarmhandForEachValue> fields)
     {
         ArgumentNullException.ThrowIfNull(loop);
-        return MatchesRule(loop.Where, fields, localColumn, localRow);
-    }
-
-    /// <summary>
-    /// Whether every predicate of ONE rule holds for this row.
-    ///
-    /// A pass with several rules asks this once per rule and takes the first that answers yes, so the rule grammar and
-    /// the loop grammar cannot drift: <see cref="Matches(FarmhandForEachLoop, IReadOnlyDictionary{string, FarmhandForEachValue}, int, int)"/>
-    /// is this method with the loop's own predicate list.
-    /// </summary>
-    public static bool MatchesRule(
-        IReadOnlyList<FarmhandForEachPredicate>? where,
-        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
-        int localColumn,
-        int localRow)
-    {
         ArgumentNullException.ThrowIfNull(fields);
         // An absent predicate list means every row, which is why it is not an error: the caller may genuinely mean
         // "every row of this source".
-        if (where is null) return true;
-        foreach (FarmhandForEachPredicate predicate in where)
+        if (loop.Where is null) return true;
+        foreach (FarmhandForEachPredicate predicate in loop.Where)
         {
-            if (predicate.IsPositionGuard)
-            {
-                FarmhandForEachStride stride = predicate.Stride!;
-                int localIndex = predicate.Axis == FarmhandForEachPredicate.ColOperator ? localColumn : localRow;
-                if (!stride.Claims(localIndex)) return false;
-                continue;
-            }
-            if (!fields.TryGetValue(predicate.Field!, out FarmhandForEachValue? value) || value is null) return false;
+            if (!fields.TryGetValue(predicate.Field, out FarmhandForEachValue? value) || value is null) return false;
             if (!Holds(predicate, value)) return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// What a pass decides for one row: the FIRST rule that claims it, and whether any rule did.
-    ///
-    /// The two are returned together because "no rule claimed this row" is an outcome the caller must report and not an
-    /// absence it can skip - a skipped row reads as a cleared patch.
-    /// </summary>
-    public static (bool Matched, FarmhandForEachEffect? Effect) DecideByRules(
-        FarmhandForEachLoop loop,
-        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
-        int localColumn,
-        int localRow)
-    {
-        ArgumentNullException.ThrowIfNull(loop);
-        foreach (FarmhandForEachRule rule in loop.Rules)
-            if (MatchesRule(rule.Where, fields, localColumn, localRow)) return (true, rule.Do);
-        return (false, null);
     }
 
     /// <summary>The decision for one row, given the fields the live world reports for it.</summary>
@@ -416,7 +271,7 @@ public static class FarmhandForEachRules
         IReadOnlyDictionary<string, FarmhandForEachValue> fields)
     {
         ArgumentNullException.ThrowIfNull(loop);
-        if (!Matches(loop, fields, localColumn, localRow))
+        if (!Matches(loop, fields))
             return new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.NotMatched, null);
         return loop.Do is null
             ? new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.LeftAlone, null)
@@ -433,9 +288,9 @@ public static class FarmhandForEachRules
     /// all of its time on (2,235 ms of 2,232 ms), and it is paid whenever the model is not thinking.
     /// </para>
     /// <para>
-    /// WHAT THE ORDER CANNOT MOVE. Each row keeps its own <c>LocalColumn</c>/<c>LocalRow</c>, which is what a position
-    /// guard tests and what a row's dispatch identity is minted from; the tile set, the per-row decision and every reason
-    /// code are the same in either order; and the answer's table is sorted by position before it is written
+    /// WHAT THE ORDER CANNOT MOVE. Each row keeps its own <c>LocalColumn</c>/<c>LocalRow</c>, which a row's dispatch
+    /// identity is minted from; the tile set, the per-row decision and every reason code are the same in either order; and
+    /// the answer's table is sorted by position before it is written
     /// (<c>RouteReenteringBodyProgramExecutor.Aggregate</c>), so no caller reads the walk.
     /// </para>
     /// </summary>
@@ -501,56 +356,25 @@ public static class FarmhandForEachRules
         string.Join("_and_", where.Select(SpellingOf));
 
     /// <summary>
-    /// One predicate's own word: `<field>_<comparison>_<value>`, or `<axis>_every<n>_offset<m>` for a position guard.
+    /// One predicate's own word: `<field>_<comparison>_<value>`, as `<field>_in_<value>` or `occupant_in_<word>`.
     ///
-    /// Every part comes from the predicate's own declarations (<see cref="FarmhandForEachPredicate.Comparisons"/>,
-    /// <see cref="FarmhandForEachStride.Operators"/>), so the sentence a caller reads is built from the grammar it wrote
-    /// in rather than from a table beside it.
+    /// Every part comes from the predicate's own declarations (<see cref="FarmhandForEachPredicate.Comparisons"/>), so the
+    /// sentence a caller reads is built from the grammar it wrote in rather than from a table beside it.
     /// </summary>
-    private static string SpellingOf(FarmhandForEachPredicate predicate)
-    {
-        if (predicate.IsPositionGuard)
-            return string.Join(
-                "_",
-                predicate.Axis,
-                FarmhandForEachStride.EveryOperator,
-                IntegerText(predicate.Stride!.Every),
-                FarmhandForEachStride.OffsetOperator,
-                IntegerText(predicate.Stride.Offset));
-        string word = FarmhandForEachPredicate.Comparisons
-            .First(comparison => comparison.Kind == predicate.Comparison)
-            .Word;
-        return string.Join("_", new[] { predicate.Field!, word }.Concat(predicate.Values.Select(ValueText)));
-    }
+    private static string SpellingOf(FarmhandForEachPredicate predicate) =>
+        string.Join(
+            "_",
+            new[] { predicate.Field, FarmhandForEachPredicate.InOperator }.Concat(predicate.Values.Select(ValueText)));
 
     private static string ValueText(FarmhandForEachValue value) =>
         value.Text
         ?? value.Number?.ToString(CultureInfo.InvariantCulture)
         ?? (value.Flag is true ? "true" : "false");
 
-    private static string IntegerText(int value) => value.ToString(CultureInfo.InvariantCulture);
-
-    private static bool Holds(FarmhandForEachPredicate predicate, FarmhandForEachValue value)
-    {
-        switch (predicate.Comparison)
-        {
-            case FarmhandForEachComparison.In:
-                return predicate.Values.Any(candidate => Equals(candidate, value));
-            case FarmhandForEachComparison.Eq:
-                return Equals(predicate.Values[0], value);
-            case FarmhandForEachComparison.Ne:
-                return !Equals(predicate.Values[0], value);
-        }
-        // The ordered comparisons are about numbers; a text or flag field under `gt` is a caller mistake the loop
-        // refuses rather than ordering behind their back.
-        if (value.Number is not { } number || predicate.Values[0].Number is not { } bound) return false;
-        return predicate.Comparison switch
-        {
-            FarmhandForEachComparison.Lt => number < bound,
-            FarmhandForEachComparison.Lte => number <= bound,
-            FarmhandForEachComparison.Gt => number > bound,
-            FarmhandForEachComparison.Gte => number >= bound,
-            _ => false,
-        };
-    }
+    /// <summary>
+    /// Whether the row's own value is one of the values the predicate names: every predicate left is a membership test,
+    /// because `in` is the one comparison this form has.
+    /// </summary>
+    private static bool Holds(FarmhandForEachPredicate predicate, FarmhandForEachValue value) =>
+        predicate.Values.Any(candidate => Equals(candidate, value));
 }

@@ -102,8 +102,44 @@ public sealed class BodyProgramNodeStateWireTests
         // legal in - which is the whole difference between this state and the two it sits between.
         projected.Nodes[0].FailureCode.Should().Be("row_target_absent:cut_weeds:weedtargets");
         projected.Nodes[0].RefusalDetail.Should().NotBeNull();
+        // AND THE PROOF ITSELF. A pass settles six tiles as ONE node, so the row table and the `for_each_pass:` line are
+        // the node's answer: without them the wire says `partially_succeeded` and which tiles - the fact a reader came
+        // for - is on the other side of the bridge. Measured `round63`: `plan_239_2793c52c60b8cadf` node `n02` settled
+        // `succeeded` with fifteen `soil_tilled` receipts, and the projection published `{nodeId, actionId, state}`.
+        projected.Nodes[0].Evidence.Should().Be("{\"state\":\"partially_succeeded\",\"succeeded\":5,\"refused\":1}");
+        projected.Nodes[0].PostconditionVerification.Should()
+            .Be("for_each_pass:partially_succeeded:decided=6:succeeded=5:failed=0:refused=1");
         BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", projected), out _, out _).Should().BeTrue(
             "the frame a partial node arrives on is one the wire validator accepts");
+    }
+
+    /// <summary>
+    /// A NODE THAT PROVED NOTHING MAY NOT CARRY A ROW TABLE, AND THE WIRE IS WHERE THAT IS ENFORCED.
+    ///
+    /// <para>
+    /// ADR-006's split: a node that claims no effect carries the REASON, and one that proved an effect carries the PROOF.
+    /// Admitting `evidence`/`postconditionVerification` on every state would have made the wire the one place both
+    /// statements could be made about one tuple; the state rule is asked of `BodyProgramValidation.MayCarryProof`, the
+    /// same declaration the journal's own `provesEffect` reads.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARowTableOnANodeThatProvedNoEffectIsRefusedByTheWire()
+    {
+        var snapshot = Snapshot(new BodyProgramJournalNode(
+            "n01",
+            BodyProgramNodeState.Failed,
+            1,
+            1,
+            null,
+            Binding("n01"),
+            Evidence: "{\"state\":\"failed\",\"rows\":[]}",
+            PostconditionVerification: "for_each_pass:partially_succeeded:decided=6:succeeded=0:failed=6:refused=0"));
+
+        BridgeBodyProgramStatusSnapshot projected = BridgeSession.ToBridgeSnapshot(snapshot)!;
+
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", projected), out _, out _).Should().BeFalse(
+            "a failed node proves no effect, so its frame may not carry proof of one");
     }
 
     [Fact]
@@ -149,7 +185,9 @@ public void TheSessionProjectionAndTheProtocolProjectionAnswerTheSameNode()
                 FailureCode: "shop_counter_out_of_reach", Hint: "closest=4,19", RefusalDetail: "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1"),
             new BodyProgramJournalNode("n02", BodyProgramNodeState.Rejected, 3, 4, null, null, RejectionCode: "policy_denied"),
             new BodyProgramJournalNode("n03", BodyProgramNodeState.RecoveryRequired, 3, 4, null, null, RecoveryDiagnostic: "execution_uncertain"),
-            new BodyProgramJournalNode("n04", BodyProgramNodeState.Succeeded, 3, 4, null, null),
+            new BodyProgramJournalNode("n04", BodyProgramNodeState.Succeeded, 3, 4, null, null,
+                Evidence: "{\"state\":\"succeeded\",\"succeeded\":2,\"rows\":[]}",
+                PostconditionVerification: "for_each_pass:decided=2:succeeded=2:left_alone=0:omitted=0"),
         },
         new[]
         {
@@ -168,5 +206,10 @@ public void TheSessionProjectionAndTheProtocolProjectionAnswerTheSameNode()
     protocol.Nodes.Select(node => node.RefusalDetail).Should().Equal(
         "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1", null, null, null);
     protocol.Nodes.Select(node => node.RecoveryDiagnostic).Should().Equal(null, null, "execution_uncertain", null);
+    // The proof fields are in the population for the same reason the reason fields are: a projection that carried one of
+    // them and not the other would make the batch's row table depend on which caller asked for the answer.
+    protocol.Nodes.Select(node => node.Evidence).Should().Equal(null, null, null, "{\"state\":\"succeeded\",\"succeeded\":2,\"rows\":[]}");
+    protocol.Nodes.Select(node => node.PostconditionVerification).Should()
+        .Equal(null, null, null, "for_each_pass:decided=2:succeeded=2:left_alone=0:omitted=0");
     }
 }

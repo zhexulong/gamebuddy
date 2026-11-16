@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 
 /**
  * A held PROGRESS fact that has not changed says nothing the model does not already have.
@@ -115,10 +115,10 @@ test("an unchanged held progress fact is delivered once, not in every later batc
   for (let batch = 0; batch < 40; batch++) {
     // The SAME state, re-observed forty times: the tile never moves, the body never leaves, and every
     // fresh observation carries its own tick and revision because the Mod mints them per publish.
-    pump.enqueueFact(executionStarted("exec_one", batch));
-    pump.enqueueFact(routeProgress("exec_one", TILE, batch));
-    pump.enqueueFact(bodyIdle(batch));
-    pump.enqueueFact(ordinaryTick(batch));
+    pump.enqueueFact(executionStarted("exec_one", batch), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(routeProgress("exec_one", TILE, batch), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(bodyIdle(batch), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(ordinaryTick(batch), FACT_PRODUCER.adapterIngress);
     delivered.push(...(await collect(pump)));
   }
 
@@ -140,23 +140,23 @@ test("a held progress fact whose state changes is delivered again, and then held
   const pump = new CompanionEventPump();
   const delivered: DeliveredBatch[] = [];
 
-  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 0));
-  pump.enqueueFact(ordinaryTick(0));
+  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(0), FACT_PRODUCER.adapterIngress);
   delivered.push(...(await collect(pump)));
 
   // Nothing changed: same tile, new counters.
-  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 1));
-  pump.enqueueFact(ordinaryTick(1));
+  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 1), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(1), FACT_PRODUCER.adapterIngress);
   delivered.push(...(await collect(pump)));
 
   // The actor stepped onto a new tile. That IS new information.
-  pump.enqueueFact(routeProgress("exec_one", { x: 65, y: 15 }, 2));
-  pump.enqueueFact(ordinaryTick(2));
+  pump.enqueueFact(routeProgress("exec_one", { x: 65, y: 15 }, 2), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(2), FACT_PRODUCER.adapterIngress);
   delivered.push(...(await collect(pump)));
 
   // Same new tile again: held again.
-  pump.enqueueFact(routeProgress("exec_one", { x: 65, y: 15 }, 3));
-  pump.enqueueFact(ordinaryTick(3));
+  pump.enqueueFact(routeProgress("exec_one", { x: 65, y: 15 }, 3), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(3), FACT_PRODUCER.adapterIngress);
   delivered.push(...(await collect(pump)));
 
   assert.deepEqual(
@@ -181,14 +181,14 @@ test("a nonterminal progress receipt is held until its state changes", async () 
   });
 
   for (let tick = 0; tick < 3; tick++) {
-    pump.enqueueFact(receipt("running", tick));
-    pump.enqueueFact(ordinaryTick(tick));
+    pump.enqueueFact(receipt("running", tick), FACT_PRODUCER.adapterIngress);
+    pump.enqueueFact(ordinaryTick(tick), FACT_PRODUCER.adapterIngress);
     delivered.push(...(await collect(pump)));
   }
 
   // The receipt advanced to a new state: that is a change, so it is delivered.
-  pump.enqueueFact(receipt("meaningful_progress", 3));
-  pump.enqueueFact(ordinaryTick(3));
+  pump.enqueueFact(receipt("meaningful_progress", 3), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(3), FACT_PRODUCER.adapterIngress);
   delivered.push(...(await collect(pump)));
 
   assert.deepEqual(
@@ -204,14 +204,17 @@ test("the snapshot keeps riding every batch: only PROGRESS facts are held once",
   const pump = new CompanionEventPump();
   const delivered: DeliveredBatch[] = [];
   for (let index = 0; index < 3; index++) {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "snapshot",
-      correlationId: "snapshot",
-      revision: index + 1,
-      payload: { location: "Farm", revision: index + 1 },
-    });
-    pump.enqueueFact(ordinaryTick(index));
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "snapshot",
+        correlationId: "snapshot",
+        revision: index + 1,
+        payload: { location: "Farm", revision: index + 1 },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
+    pump.enqueueFact(ordinaryTick(index), FACT_PRODUCER.adapterIngress);
     delivered.push(...(await collect(pump)));
   }
   assert.deepEqual(
@@ -222,15 +225,15 @@ test("the snapshot keeps riding every batch: only PROGRESS facts are held once",
 
 test("clear forgets what was delivered, so a new session's first observation speaks again", async () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 0));
-  pump.enqueueFact(ordinaryTick(0));
+  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 0), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(0), FACT_PRODUCER.adapterIngress);
   const first = await collect(pump);
   assert.equal(progressFactsOf(first[0]!).length, 1);
 
   pump.clear();
 
-  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 1));
-  pump.enqueueFact(ordinaryTick(1));
+  pump.enqueueFact(routeProgress("exec_one", { x: 64, y: 15 }, 1), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ordinaryTick(1), FACT_PRODUCER.adapterIngress);
   const second = await collect(pump);
   assert.equal(
     progressFactsOf(second[0]!).length,

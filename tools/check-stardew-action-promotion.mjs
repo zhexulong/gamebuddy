@@ -1,8 +1,16 @@
+export const gateDeclaration = {
+  id: "check-stardew-action-promotion",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
+import { namedRunner } from "./lib/stardew-action-gate-route.mjs";
 import { TARGET_FIELD as STARDEW_SNAPSHOT_TARGET_FIELD } from "./audit-stardew-discovery-channels.mjs";
 import {
   handlerDispatch,
@@ -820,10 +828,13 @@ async function main() {
     writePostconditionEngineFacts: writePostconditionEngineFacts(),
   });
   result.failures.push(...evidence.problems);
-  for (const gate of STARDEW_PUBLISHED_ACTION_GATES)
-    await access(resolve(ROOT, "tools", gate.runner), constants.R_OK).catch(() =>
-      result.failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`),
+  for (const gate of STARDEW_PUBLISHED_ACTION_GATES) {
+    const runner = namedRunner(gate);
+    if (runner === null) continue;
+    await access(resolve(ROOT, "tools", runner), constants.R_OK).catch(() =>
+      result.failures.push(`gate_runner_missing:${gate.actionId}:${runner}`),
     );
+  }
   const counts = result.writePostconditions;
   process.stdout.write(
     `write postconditions: checked ${counts.checked} of ${counts.total} write actions` +

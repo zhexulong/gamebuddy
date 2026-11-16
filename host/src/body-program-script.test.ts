@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { EXPRESSION_ONLY_ACTION_IDS } from "./action-registry.js";
 import {
   BODY_YIELDING_PLAN_ACTION_IDS,
   type CompiledPlan,
@@ -11,6 +12,7 @@ import {
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_WORK_DESCRIPTION_BUDGET_CHARS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -164,14 +166,13 @@ function rejectionsOf(result: CompiledPlan): readonly Readonly<{
 /**
  * What became of every call the script wrote, on either answer.
  *
- * The four lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
+ * The three lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
  * builder calls the script made. That is the invariant `tools/check-plan-legal-fixpoint.mjs` asserts over the published
  * vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
  */
 function accountOf(result: CompiledPlan) {
   return {
     acceptedSteps: result.acceptedSteps,
-    merged: result.merged,
     noStepNeeded: result.noStepNeeded,
     dropped: result.dropped,
   };
@@ -1485,8 +1486,21 @@ test("a builder method is generated for exactly the lifecycles the Mod's Body Pr
   // `live_verified` is an admission, not a draft: the action really ran on the target game version and produced a
   // native receipt, so the Mod accepts it as a node. A Host gate that dropped it refused plans the Mod accepts, and
   // the companion then had no way to name those actions except one flat tool call per step.
-  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc", "express_emote"])
+  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc"])
     assert.ok(generated.includes(actionId), `${actionId} is live-verified and must be callable from a plan`);
+  // The one lifecycle-admitted action that is NOT here, and the reason is its kind rather than its rung: the registry
+  // declares `express_emote` (and `face_direction`) expression-only, so a gesture reaches the actor through its own
+  // mounted tool and this vocabulary excludes it - one route per action, never two (`action-route-gate.test.ts`).
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    assert.ok(
+      !generated.includes(actionId),
+      `${actionId} is declared expression-only, so it must not also be a plan step the model can write`,
+    );
+    assert.ok(
+      SURFACE.some((action) => action.actionId === actionId),
+      `${actionId} is declared expression-only but the Mod publishes no such action, so the exception exempts nothing`,
+    );
+  }
   // Every generated method's argument list is the surface's own declaration, name for name.
   const declared = new Map(
     SURFACE.map((action) => [action.actionId, Object.keys(action.argumentSchema ?? {})] as const),
@@ -2342,17 +2356,43 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
 const CATALOG_ACTIONS = planActionsFromRegistrations(CATALOG_REGISTRATIONS);
 
 /**
- * The vocabulary block read back out of the description: `family: action, action` per line, in the order it prints.
- * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
- * example - both of which end a sentence and then a colon - can be mistaken for one.
+ * One row of the vocabulary block: the action id and the argument names printed beside it, or `undefined` when the row
+ * carries no argument list at all.
  */
-function describedVocabulary(description: string): ReadonlyMap<string, readonly string[]> {
-  const vocabulary = new Map<string, readonly string[]>();
+type DescribedRow = Readonly<{ actionId: string; arguments: readonly string[] | undefined }>;
+
+/**
+ * The vocabulary block read back out of the description: `family: id(args), id(args)` per line, in the order it prints.
+ *
+ * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
+ * example - both of which end a sentence and then a colon - can be mistaken for one. A row WITHOUT parentheses is parsed
+ * rather than skipped: that shape is the defect the argument gate is written for, and a parser that demanded parentheses
+ * would report it as a missing action instead of a row that says nothing about what it takes.
+ */
+function describedVocabulary(description: string): ReadonlyMap<string, readonly DescribedRow[]> {
+  const vocabulary = new Map<string, readonly DescribedRow[]>();
   for (const line of description.split("\n")) {
     const match = /^([a-z][a-z0-9_]*): (.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     assert.equal(vocabulary.has(match[1]), false, `the description lists the family ${match[1]} twice`);
-    vocabulary.set(match[1], match[2].split(/,\s*/u));
+    const rows: DescribedRow[] = [];
+    for (const row of match[2].matchAll(/([a-z][a-z0-9_]*)(?:\(([^)]*)\))?/gu))
+      rows.push(
+        Object.freeze({
+          actionId: row[1]!,
+          arguments: row[2] === undefined ? undefined : Object.freeze(row[2] === "" ? [] : row[2].split(",")),
+        }),
+      );
+    // A row this reader cannot put back together is a row it would silently stop covering, so the whole line must be the
+    // list of calls it was read as - the same `id(a,b), id2()` the renderer prints.
+    assert.equal(
+      rows
+        .map((row) => (row.arguments === undefined ? row.actionId : `${row.actionId}(${row.arguments.join(",")})`))
+        .join(", "),
+      match[2],
+      `${match[1]}'s vocabulary line is not the list of builder calls this gate reads`,
+    );
+    vocabulary.set(match[1], Object.freeze(rows));
   }
   return vocabulary;
 }
@@ -2363,7 +2403,7 @@ test("the plan description names every action this session publishes, under the 
   assert.ok(described.size > 0, "the description carries the action vocabulary at all");
 
   const published = new Set(CATALOG_ACTIONS.map((action) => action.actionId));
-  const describedIds = new Set([...described.values()].flat());
+  const describedIds = new Set([...described.values()].flat().map((row) => row.actionId));
 
   // Direction 1: a published action the description never names. This is the `advance_day` defect - the companion held
   // a description that claimed the whole surface and could not read a single name out of it.
@@ -2388,12 +2428,194 @@ test("the plan description names every action this session publishes, under the 
   );
   for (const [familyId, members] of described)
     assert.deepEqual(
-      [...members].sort(),
+      members.map((row) => row.actionId).sort(),
       CATALOG_ACTIONS.filter((action) => action.familyId === familyId)
         .map((action) => action.actionId)
         .sort(),
       `${familyId} lists exactly its own actions`,
     );
+});
+
+/**
+ * Why one vocabulary row does not say what its action takes: `[]` when it does.
+ *
+ * THE POPULATION IS THE DECLARATION and the reading is the RENDERED TEXT, which is what makes this a gate rather than a
+ * registration step: `planActionVocabularyText` and `stardew_plan_shape` answer from the same `PublishedPlanAction`, so a
+ * row that prints fewer arguments than its action declares means the two routes to one fact have drifted apart - and the
+ * companion spends a turn on `plan_shape` to find out what the row did not say.
+ *
+ * Measured `round54`: her own thinking held "Sleep action is world_lifecycle builder.sleep - args? Probably x,y? ... that
+ * costs a turn ... Simpler: speak", and twelve turns of speech plus a 02:00 pass-out followed. Earlier rounds did sleep
+ * when they asked (`round41` executed `sleep` 43 times, `pass_out 0`), so the fact was in the declaration all along and
+ * only the turn was missing.
+ */
+function vocabularyRowsMissingArguments(
+  rendered: readonly PublishedPlanAction[],
+  declaration: readonly PublishedPlanAction[],
+): readonly string[] {
+  const described = describedVocabulary(planWorkDescription(rendered));
+  const rows = new Map([...described.values()].flat().map((row) => [row.actionId, row] as const));
+  const findings: string[] = [];
+  for (const action of declaration) {
+    const row = rows.get(action.actionId);
+    const declared = action.arguments.map((argument) => argument.name);
+    if (row === undefined) {
+      findings.push(`action_row_missing:${action.actionId}`);
+      continue;
+    }
+    // An action that takes nothing still prints empty parentheses, so a bare id is a row that never said so.
+    if (row.arguments === undefined) {
+      findings.push(`action_row_omits_argument_list:${action.actionId}`);
+      continue;
+    }
+    for (const argument of declared)
+      if (!row.arguments.includes(argument))
+        findings.push(`action_row_omits_declared_arguments:${action.actionId}:${argument}`);
+    for (const argument of row.arguments)
+      if (!declared.includes(argument))
+        findings.push(`action_row_names_undeclared_argument:${action.actionId}:${argument}`);
+    if (
+      row.arguments.some((argument, index) => argument !== declared[index]) &&
+      row.arguments.length === declared.length
+    )
+      findings.push(
+        `action_row_reorders_declared_arguments:${action.actionId}:declared=[${declared.join(",")}]:row=[${row.arguments.join(",")}]`,
+      );
+  }
+  return findings;
+}
+
+test("every vocabulary row carries the arguments its own declaration gives it", () => {
+  const described = describedVocabulary(planWorkDescription(CATALOG_ACTIONS));
+  const rows = [...described.values()].flat();
+  const withArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length > 0);
+  const withoutArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length === 0);
+  // Zero population is BLOCKED rather than green: both shapes have to be in the population, or a renderer that printed
+  // `()` for everything would pass this gate by agreeing with an empty set.
+  assert.ok(rows.length > 0, "blocked: the description carries no vocabulary row, so this gate examined nothing");
+  assert.ok(
+    withArguments.length > 0,
+    "blocked: no plannable action declares an argument, so a row that omits one could not be named here",
+  );
+  assert.ok(
+    withoutArguments.length > 0,
+    "blocked: no plannable action takes nothing, so the empty-parentheses case is not in this population",
+  );
+  assert.deepEqual(
+    vocabularyRowsMissingArguments(CATALOG_ACTIONS, CATALOG_ACTIONS),
+    [],
+    `these rows do not print the arguments their declaration carries (${String(rows.length)} rows examined, ` +
+      `${String(withArguments.length)} actions with arguments, ${String(withoutArguments.length)} with none)`,
+  );
+});
+
+/**
+ * A DECLARATION THAT DECLARES AN ARGUMENT THE ROW DOES NOT PRINT is what this gate exists to name - so the falsifier feeds
+ * it one: a synthetic action is added to the declaration carrying an argument, and its row is rendered from a vocabulary
+ * whose copy of that action lost the argument. The gate must name that action and that argument, and nothing else.
+ */
+test("the argument-row gate names a declaration whose row drops the argument it declares", () => {
+  const patched: PublishedPlanAction = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_soil",
+    arguments: Object.freeze([{ name: "patchWidth", type: "integer", required: true as const }]),
+  });
+  const declared = Object.freeze([...CATALOG_ACTIONS, patched]);
+  const lossy = declared.map((action) =>
+    action.actionId === "patch_soil" ? Object.freeze({ ...action, arguments: Object.freeze([]) }) : action,
+  );
+  const findings = vocabularyRowsMissingArguments(lossy, declared);
+  assert.deepEqual(
+    findings,
+    ["action_row_omits_declared_arguments:patch_soil:patchWidth"],
+    "the gate reads the DECLARATION's arguments against the RENDERED row, so an argument only the declaration carries is named",
+  );
+});
+
+/**
+ * The fields `stardew_plan_shape`'s answer carries, and what a caller can DO with each.
+ *
+ * THE POPULATION IS THE ANSWER, NOT THIS TABLE: the gate below enumerates the keys of the actions `planShape` really
+ * returns, so a field added anywhere in `PublishedPlanAction` reaches it without an edit - and lands here as
+ * `agent_visible_field_is_our_bookkeeping:<field>` unless this table says what she can do with it. The reasons are the only
+ * place a field may be kept, and every entry expires: a reason naming a field the answer no longer carries is red, so this
+ * cannot become a list of excuses that outlived their fields.
+ *
+ * WHY THIS IS A GATE AND NOT A STYLE NOTE. `lifecycle` rode along in every shape answer until it was removed: the Mod's
+ * release maturity (`published`, `live_verified`, `experimental`) printed per action, which decides nothing she can act on -
+ * the vocabulary she is handed already contains exactly the plannable actions, and the Mod refuses the rest by name. A field
+ * of ours in an answer she reads costs her a guess about what to do with it, and it is invisible in any test that only
+ * asserts the answer's size.
+ */
+const PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON: Readonly<Record<string, string>> = Object.freeze({
+  actionId: "the name the script writes",
+  familyId: "the family `stardew_plan_shape` and the vocabulary grouping select by",
+  arguments: "the arguments the call must pass",
+  outputFacts: "the facts a later node can bind from this one",
+  resourceClaims: "the claims an admission refusal names",
+  toolRequirement: "the tool, upgrade level and range a step needs before it can run",
+  approachRequirement: "where the actor must stand first",
+  targetFamily: "the snapshot family whose rows carry this action's targets",
+});
+
+/**
+ * The fields of a shape answer that are our bookkeeping: `agent_visible_field_is_our_bookkeeping:<field>`.
+ *
+ * The answer is asked for every action in the vocabulary, so the population is the whole answer rather than one sampled
+ * action: a field carried by one family and not another is still a field she meets.
+ */
+function bookkeepingFieldsInPlanShape(actions: readonly PublishedPlanAction[]): readonly string[] {
+  const answer = planShape(actions, { actionIds: actions.map((action) => action.actionId) });
+  if (!answer.ok) return Object.freeze([`plan_shape_answer_refused:${answer.reasonCode}`]);
+  return Object.freeze(
+    [...new Set(answer.actions.flatMap((action) => Object.keys(action)))]
+      .filter((field) => PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON[field] === undefined)
+      .sort()
+      .map((field) => `agent_visible_field_is_our_bookkeeping:${field}`),
+  );
+}
+
+test("every field the shape answer carries is one a caller can act on", () => {
+  assert.ok(CATALOG_ACTIONS.length > 0, "blocked: the vocabulary is empty, so a shape answer could not carry a field");
+  const answer = planShape(CATALOG_ACTIONS, { actionIds: CATALOG_ACTIONS.map((action) => action.actionId) });
+  assert.equal(answer.ok, true, "blocked: the shape answer refused the vocabulary it was handed");
+  const carried = new Set(answer.ok ? answer.actions.flatMap((action) => Object.keys(action)) : []);
+  // An exemption must expire: a reason for a field the answer no longer carries is a rule nobody reads, and it would let a
+  // future field of the same name be silently excused.
+  assert.deepEqual(
+    Object.keys(PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON)
+      .filter((field) => !carried.has(field))
+      .sort(),
+    [],
+    "the reasons table names a field the shape answer does not carry, so its exemption outlived its field",
+  );
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(CATALOG_ACTIONS),
+    [],
+    `the shape answer carries fields she can do nothing with (${String(carried.size)} fields examined: ` +
+      `${[...carried].sort().join(", ")})`,
+  );
+});
+
+/**
+ * The falsifier: the field this gate removed is put back, and the gate must name it.
+ *
+ * It is the shape a future change takes - a field of ours rides along because it was convenient in the code that builds the
+ * answer - so the gate is driven through the SAME reading the test above uses, not through a second one.
+ */
+test("the shape-answer gate names our bookkeeping when it rides along again", () => {
+  // A distinct id on purpose: `planShape` answers one row per id, so a field added to an action whose id the vocabulary
+  // already carries would never reach the answer and this falsifier would pass by looking at the wrong row.
+  const withLifecycle = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_scythe",
+    lifecycle: "published",
+  }) as unknown as PublishedPlanAction;
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(Object.freeze([...CATALOG_ACTIONS, withLifecycle])),
+    ["agent_visible_field_is_our_bookkeeping:lifecycle"],
+    "a field that is our release maturity rather than a fact she can act on is named, once, by its own name",
+  );
 });
 
 test("the description's example uses a published action and that action's own declared argument names", () => {
@@ -2406,6 +2628,56 @@ test("the description's example uses a published action and that action's own de
     [...(call[2] as string).matchAll(/([A-Za-z0-9_]+):/gu)].map((match) => match[1]),
     Object.keys(action.argumentSchema ?? {}),
     "the example's argument names are that action's declared ones, in order",
+  );
+});
+
+/**
+ * The one reading of the description budget, so the gate and its falsifier take the same predicate.
+ *
+ * The budget is `PLAN_WORK_DESCRIPTION_BUDGET_CHARS` - a declared constant in the product, not a number written here - and
+ * the answer names the size and the budget because that is the whole correction a later prose change needs.
+ */
+function descriptionOverBudget(actions: readonly PublishedPlanAction[]): string | undefined {
+  const description = planWorkDescription(actions);
+  return description.length <= PLAN_WORK_DESCRIPTION_BUDGET_CHARS
+    ? undefined
+    : `plan_description_exceeds_budget:${String(description.length)}:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}`;
+}
+
+test("the plan description fits the budget its own constant declares", () => {
+  assert.ok(PLAN_WORK_DESCRIPTION_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
+  assert.equal(
+    descriptionOverBudget(CATALOG_ACTIONS),
+    undefined,
+    "every Game turn hands this description to the model, so a description over budget spends the context a plan is written in",
+  );
+});
+
+/**
+ * A vocabulary whose rows are longer must be refused by the SAME predicate - otherwise the budget only measures today's
+ * catalog and stops meaning anything the first time an action declares a long argument.
+ */
+test("the budget gate turns red when a vocabulary outgrows the declared budget", () => {
+  // The population is sized so that even a vocabulary printing bare ids would exceed the budget: the falsifier must be red
+  // for the CONSTANT, not for whatever the renderer happens to print today.
+  const args = Object.freeze(
+    Array.from({ length: 40 }, (_, index) => `veryLongArgumentName${String(index)}`).map((name) =>
+      Object.freeze({ name, type: "integer", required: true as const }),
+    ),
+  );
+  const heavy = Object.freeze(
+    Array.from({ length: 160 }, (_, index) =>
+      Object.freeze({
+        ...CATALOG_ACTIONS[0]!,
+        actionId: `heavy_action_${String(index)}`,
+        arguments: args,
+      }),
+    ),
+  );
+  assert.match(
+    descriptionOverBudget(heavy) ?? "",
+    new RegExp(`^plan_description_exceeds_budget:\\d+:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}$`, "u"),
+    "a description over the declared budget is refused by name, with its size and the budget it met",
   );
 });
 
@@ -2460,11 +2732,11 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
     /each step's receipt arrives later as a new message/u,
     "naming the fact that wakes the companion instead of a tool it would have to call",
   );
-  assert.match(
-    planWork,
-    /end your turn; speak to the player when there is something to coordinate or share, or keep focused on the work/u,
-    "so the turn it should take is stated too without forcing chatter on every turn",
-  );
+  assert.match(planWork, /so end your turn\b/u, "so the turn it should take is stated too");
+  // Whether she says anything with that turn is the preset's (`说清就停`), not the tool's: a description says how to
+  // call the tool. Removed 2026-11-15 - "...so end your turn and speak to the player" made every settled plan owe a
+  // bubble, and `conversational-stance-gate.test.ts` is what keeps it out.
+  assert.doesNotMatch(planWork, /speak to the player/u, "and the description leaves speaking to the preset");
   assert.match(
     planWork,
     /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,
@@ -2715,7 +2987,7 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   assert.deepEqual(accountOf(result).acceptedSteps, ["n01", "n03", "n04", "n05", "n06"]);
   assert.equal(result.acceptedStepsCount, 5);
   assert.equal(result.droppedCount, 1);
-  assert.equal(result.mergedCount + result.noStepNeededCount, 0, "every call is in exactly one of the four lists");
+  assert.equal(result.noStepNeededCount, 0, "every call is in exactly one of the lists");
 });
 
 /**
@@ -2781,7 +3053,7 @@ builder.move_to_tile({ x: 10 });
  * vocabulary itself - never a list written here - and a zero population FAILS, because a check that examined nothing
  * agrees with itself.
  *
- * A call in NONE of the four lists is the defect the whole account exists for (an `ok` answer carrying a step that was
+ * A call in NONE of the lists is the defect the whole account exists for (an `ok` answer carrying a step that was
  * quietly thrown away); a call in TWO of them is a bookkeeping bug that would hide the first. Both are named with the
  * entry that broke, so the next reader knows which action and which list.
  */
@@ -2794,11 +3066,10 @@ test("every authored call is accounted for exactly once, across the whole publis
     examined += 1;
     const lists = {
       acceptedSteps: result.acceptedSteps,
-      merged: result.merged,
       noStepNeeded: result.noStepNeeded,
       dropped: result.dropped,
     };
-    const counted = result.acceptedStepsCount + result.mergedCount + result.noStepNeededCount + result.droppedCount;
+    const counted = result.acceptedStepsCount + result.noStepNeededCount + result.droppedCount;
     if (counted !== calls)
       faults.push(
         `${label}: ${calls} call(s) written, ${counted} accounted for (${JSON.stringify(lists)}) examined ${examined}`,

@@ -68,6 +68,7 @@ import {
   withoutComments,
 } from "./stardew-mod-csharp-source.mjs";
 import { TARGET_FIELD } from "../../../../../tools/audit-stardew-discovery-channels.mjs";
+import { perTurnFamilies } from "../../../../../tools/check-snapshot-field-rendering.mjs";
 import { resolveStardewDecompileRoot } from "../../../../../tools/lib/stardew-decompile-root.mjs";
 
 // ---------------------------------------------------------------------------
@@ -1329,8 +1330,8 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
  *                        from `record BridgeSnapshot(...)`, and "who needs that family" from the same
  *                        `TARGET_FIELD` table C uses. A family whose enabling set omits an action that
  *                        targets it cannot be seen by that action, ever - the silence reinforces itself.
- *   F consumption        for each published family, whether anything in the Host reads it at all: a line of the per-turn
- *                        line, one of the Host's projections, or a tool description. `family_without_
+ *   F consumption        for each published family, whether anything in the Host reads it at all: the
+ *                        per-turn text, one of the Host's projections, or a tool description. `family_without_
  *                        consumer` is ADVISORY and listed with everything else, because on-demand
  *                        delivery by a solicited `stardew_observe` is the documented delivery policy;
  *                        what is red is an unconsumed family an action also targets, and a family the
@@ -2118,8 +2119,8 @@ export function publicationGateCoverage({ gates, targetField = TARGET_FIELD }) {
  *    `WITHHELD_SNAPSHOT_KEYS` with a reason. This report does not re-litigate that policy and a
  *    family delivered only on demand is CORRECT.
  *
- * 2. THE ADVISORY COUNT IS NOT A TO-DO LIST. `family_without_consumer` names families no per-turn line,
- *    no projection reader and no tool description mentions. That is a description of where a fact
+ * 2. THE ADVISORY COUNT IS NOT A TO-DO LIST. `family_without_consumer` names families no projection
+ *    and no tool description mentions. That is a description of where a fact
  *    reaches the model as raw observation JSON and nowhere else. It going up is not by itself a
  *    regression, and a reader who treats it as a backlog will re-derive the 64-family "red" this
  *    section was written to avoid.
@@ -2137,49 +2138,21 @@ export function publicationGateCoverage({ gates, targetField = TARGET_FIELD }) {
  * `UNPROJECTED_OBSERVED_FAMILIES`, `REQUIRED_PROJECTED_KEYS` and `WITHHELD_SCALAR_KEYS` are read out
  * of `host/src/snapshot-projection-coverage.ts` as text, because this tool is `.mjs` and cannot
  * import a `.ts` module; the projection files those tables name are then read directly. The per-turn
- * nearby-target line is read through its own family table (`TARGET_FAMILY_LABELS`, the table
- * `nearbyTargetFamilies` iterates into `<world-state>`), and a tool-description mention is read from
- * `host/src/game-tools.ts`. Nothing here restates the inventory: a rename in that module makes the
- * tables unreadable, which is reported as `consumption_inventory_unreadable` instead of silently
- * classifying nothing.
- *
- * The per-turn channel used to be `SNAPSHOT_HUD_LINES[].fields` in `host/src/snapshot-hud.ts`. That block was
- * composed into `WorldFact.contextProjection.hud` and read by nobody, so every family this section called
- * "consumed" through it was credited to text no reader received. The module was deleted; the table below is the
- * line that is really re-sent with every turn.
+ * text is the Host's own declaration rather than a second list here: `perTurnFamilies` in
+ * `tools/check-snapshot-field-rendering.mjs` derives the names `<world-state>` carries from the renderer
+ * modules and the row table their composer iterates, and a tool-description mention
+ * is read from `host/src/game-tools.ts`. Nothing here restates the inventory: a rename in that
+ * module makes the tables unreadable, which is reported as `consumption_inventory_unreadable`
+ * instead of silently classifying nothing.
  */
 
 export const CONSUMPTION_INVENTORY_PATH = "host/src/snapshot-projection-coverage.ts";
 export const GAME_TOOLS_PATH = "host/src/game-tools.ts";
-export const PER_TURN_LINE_PATH = "host/src/game-world-vocabulary.ts";
 
 /** The quoted strings of one `NAME = Object.freeze([...])` table, or null when the table is gone. */
 function inventoryList(inventory, name) {
   const block = new RegExp(`${name}\\s*=\\s*Object\\.freeze\\(\\[([\\s\\S]*?)\\]\\)`, "u").exec(inventory);
   return block === null ? null : [...block[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
-}
-
-/**
- * The families the per-turn nearby-target line prints, read from the line's own label table.
- *
- * `nearbyTargetFamilies` iterates `TARGET_FAMILY_LABELS` and prints six tiles per family into `<world-state>` - the
- * text the model actually reads every turn - so a family named there is a consumer for this section. Read from the
- * declaration rather than listed here, and `null` when the table cannot be found, so a rename upstream is reported
- * by the caller instead of silently emptying the channel.
- */
-export function perTurnLineFamilies(source) {
-  if (typeof source !== "string") return null;
-  const code = withoutComments(source);
-  const declaration = code.indexOf("export const TARGET_FAMILY_LABELS");
-  if (declaration < 0) return null;
-  const open = code.indexOf("{", declaration);
-  if (open < 0) return null;
-  // The table's own close, so `NON_ROW_FAMILIES` below it is not read as part of it: those families are the ones the
-  // line deliberately does NOT print as rows.
-  const close = code.indexOf("\n});", open);
-  if (close < 0) return null;
-  const keys = [...code.slice(open, close).matchAll(/^\s+([A-Za-z][A-Za-z0-9]*):/gmu)].map((match) => match[1]);
-  return keys.length === 0 ? null : new Set(keys);
 }
 
 /** The keys of the `WITHHELD_SCALAR_KEYS` record, or null when the record is gone. */
@@ -2208,15 +2181,16 @@ function projectionReads(source, key) {
 /**
  * Where each published family is consumed, and which of those questions are red.
  *
- * `families` are the snapshot's own family parameters (from `record BridgeSnapshot(...)`), the per-turn
- * families are its declared ones, and `targetField` is the discovery audit's table - so "an action
- * targets a row from this family" has one authority, the same one sections C and E use.
+ * `families` are the snapshot's own family parameters (from `record BridgeSnapshot(...)`),
+ * `perTurnFields` are the names the per-turn text carries, and `targetField` is the discovery audit's
+ * table - so "an action targets a row from this family" has one authority, the same one sections C and
+ * E use.
  */
 export function consumptionCoverage({
   families = [],
   inventory,
   tools,
-  perTurnLine,
+  perTurnFields = new Set(),
   projectionSources = new Map(),
   targetField = TARGET_FIELD,
 }) {
@@ -2235,14 +2209,6 @@ export function consumptionCoverage({
         id: null,
         detail: `${CONSUMPTION_INVENTORY_PATH} no longer declares ${table} in a form this reader can follow; the consumer classification would silently empty, so it is reported instead`,
       });
-  const perTurnFamilies = perTurnLineFamilies(perTurnLine);
-  if (perTurnFamilies === null)
-    findings.push({
-      code: `consumption_inventory_unreadable:TARGET_FAMILY_LABELS`,
-      kind: "consumption",
-      id: null,
-      detail: `${PER_TURN_LINE_PATH} no longer declares TARGET_FAMILY_LABELS in a form this reader can follow; the per-turn consumer channel would silently empty, so it is reported instead`,
-    });
   const unclassified = [];
   for (const path of projectionSources.keys())
     if (listed.PROJECTION_SOURCES !== null && !listed.PROJECTION_SOURCES.includes(path))
@@ -2258,7 +2224,6 @@ export function consumptionCoverage({
     ...(listed.WITHHELD_SCALAR_KEYS ?? []),
   ]);
   const requiredProjected = new Set(listed.REQUIRED_PROJECTED_KEYS ?? []);
-  const perTurnKeys = perTurnFamilies ?? new Set();
   const toolText = withoutComments(tools);
   const sources = [...projectionSources].map(([path, text]) => ({ path, text }));
   const targeted = new Set(Object.values(targetField).filter((family) => typeof family === "string"));
@@ -2269,7 +2234,7 @@ export function consumptionCoverage({
     const row = {
       family,
       targeted: targeted.has(family),
-      perTurnLine: perTurnKeys.has(key),
+      perTurn: perTurnFields.has(key),
       projections: reads,
       toolDescription: new RegExp(`\\b${key}\\b`, "u").test(toolText),
       declared: (listed.UNPROJECTED_OBSERVED_FAMILIES ?? []).includes(key)
@@ -2280,7 +2245,7 @@ export function consumptionCoverage({
             ? "REQUIRED_PROJECTED_KEYS"
             : null,
     };
-    row.consumed = row.perTurnLine || reads.length > 0 || row.toolDescription;
+    row.consumed = row.perTurn || reads.length > 0 || row.toolDescription;
     // The Host's own rule, in its own terms: read by one of its projections, or declared withheld.
     row.classified = row.declared !== null || [...projectionSources].some(([, text]) => projectionReads(text, key));
     if (!row.classified) unclassified.push(family);
@@ -2300,7 +2265,7 @@ export function consumptionCoverage({
         code: `family_without_consumer_and_targeted:${row.family}`,
         kind: "consumption",
         id: null,
-        detail: `${row.family} is published, no per-turn line, projection or tool description reads it, and an action targets a row from it: the model must spend an observe on a family it also acts through`,
+        detail: `${row.family} is published, neither the per-turn text nor a projection nor a tool description names it, and an action targets a row from it: the model must spend an observe on a family it also acts through`,
       });
   }
   return { rows, findings, unclassified };
@@ -2310,14 +2275,14 @@ export function consumptionCoverage({
 export function loadConsumptionSources({
   inventory = readFileSync(path.join(REPOSITORY_ROOT, CONSUMPTION_INVENTORY_PATH), "utf8"),
   tools = readFileSync(path.join(REPOSITORY_ROOT, GAME_TOOLS_PATH), "utf8"),
-  perTurnLine = readFileSync(path.join(REPOSITORY_ROOT, PER_TURN_LINE_PATH), "utf8"),
+  perTurnFields = new Set(perTurnFamilies().families),
   projectionSources = null,
 } = {}) {
   const paths = inventoryList(inventory, "PROJECTION_SOURCES") ?? [];
   return {
     inventory,
     tools,
-    perTurnLine,
+    perTurnFields,
     projectionSources:
       projectionSources ??
       new Map(paths.map((relative) => [relative, readFileSync(path.join(REPOSITORY_ROOT, relative), "utf8")])),
@@ -2360,7 +2325,7 @@ export function loadConsumptionSources({
  * THE RED RULE is the quadrant error itself: `map_fixed` AND an action targets a row from it AND no line of
  * the per-turn block reads it. That is a family the model must spend an observe on, about a fact that does not
  * move, to act on something it also has to act through. It is a ratchet like D, with the same two rules: a red
- * that is not in the baseline fails, and an entry whose family now has a per-turn line - or is no longer
+ * that is not in the baseline fails, and an entry whose family is now printed per turn - or is no longer
  * map_fixed and targeted - fails as stale rather than excusing the next one.
  *
  * WHAT EACH ROW CARRIES, and why the evidence is printed: every classification names the discovery that
@@ -2520,8 +2485,8 @@ function discoveryQuadrantEvidence(body, bodies) {
   return { radius, mapFixed, location };
 }
 
-/** One published family's quadrant, its evidence, and whether the per-turn line and an action reach it. */
-export function quadrantRow({ family, row, discoveries, bodies, perTurnFamilies, targetField = TARGET_FIELD }) {
+/** One published family's quadrant, its evidence, and whether the per-turn text and an action reach it. */
+export function quadrantRow({ family, row, discoveries, bodies, perTurnFields, targetField = TARGET_FIELD }) {
   const owned = discoveries.filter((discovery) => discovery.row === row);
   const evidence = owned.map((discovery) => ({
     discovery: discovery.name,
@@ -2560,7 +2525,7 @@ export function quadrantRow({ family, row, discoveries, bodies, perTurnFamilies,
     quadrant,
     declared: declared !== undefined,
     targeted: Object.values(targetField).includes(family),
-    perTurnLine: perTurnFamilies.has(key),
+    perTurn: perTurnFields.has(key),
     discoveries: owned.map((discovery) => discovery.name),
     evidence: evidenceLines,
   };
@@ -2570,35 +2535,28 @@ export function quadrantRow({ family, row, discoveries, bodies, perTurnFamilies,
  * Every published family's quadrant, plus the one red this section can raise.
  *
  * `families` are the snapshot's own parameters (name and row type), `discoveries` the parsed `Discover*`
- * bodies, `bodies` the Mod's method table for the call closure, and the per-turn families come from the
- * nearby-target line's own table - so "is it read every turn" has one authority and a rename upstream
- * empties nothing silently.
+ * bodies, `bodies` the Mod's method table for the call closure, and the per-turn names come from the
+ * renderer declaration - so "is it read every turn" has one authority and a rename upstream empties
+ * nothing silently.
  */
 export function observationQuadrants({
   families = [],
   discoveries = [],
   bodies = new Map(),
-  perTurnFamilies = new Set(),
+  perTurnFields = new Set(),
   targetField = TARGET_FIELD,
 }) {
   const rows = families.map((family) =>
-    quadrantRow({
-      family: family.name,
-      row: family.row,
-      discoveries,
-      bodies,
-      perTurnFamilies: perTurnFamilies ?? new Set(),
-      targetField,
-    }),
+    quadrantRow({ family: family.name, row: family.row, discoveries, bodies, perTurnFields, targetField }),
   );
   const findings = [];
   for (const row of rows) {
-    if (row.quadrant !== "map_fixed" || !row.targeted || row.perTurnLine) continue;
+    if (row.quadrant !== "map_fixed" || !row.targeted || row.perTurn) continue;
     findings.push({
-      code: `map_fixed_family_not_in_a_per_turn_line:${row.family}`,
+      code: `map_fixed_family_not_per_turn:${row.family}`,
       kind: "quadrant",
       id: row.family,
-      detail: `${row.family} is map-fixed (${row.evidence.join(" | ")}), an action targets a row from it, and no family of ${PER_TURN_LINE_PATH} prints it: the model must spend an observe on a fact that does not move, about a family it also acts through`,
+      detail: `${row.family} is map-fixed (${row.evidence.join(" | ")}), an action targets a row from it, and the per-turn text does not name it: the model must spend an observe on a fact that does not move, about a family it also acts through`,
     });
   }
   const counts = {
@@ -3122,7 +3080,7 @@ export function observeActionGaps({
     families: publishedParameters,
     discoveries: parseDiscoveries(sources),
     bodies: modMethodBodies(sources),
-    perTurnFamilies: perTurnLineFamilies(consumption.perTurnLine),
+    perTurnFields: consumption.perTurnFields,
     targetField,
   });
   for (const finding of quadrantScan.findings) if (!excused("quadrant", finding.id)) findings.push(finding);
@@ -3133,7 +3091,7 @@ export function observeActionGaps({
     const family = id.slice("quadrant:".length);
     const row = quadrantRows.get(family);
     if (row === undefined) continue;
-    if (row.quadrant === "map_fixed" && row.targeted && !row.perTurnLine) {
+    if (row.quadrant === "map_fixed" && row.targeted && !row.perTurn) {
       quadrantBaselined += 1;
       continue;
     }
@@ -3141,8 +3099,8 @@ export function observeActionGaps({
       code: `stale_baseline_entry:quadrant:${family}`,
       kind: "quadrant",
       id: family,
-      detail: row.perTurnLine
-        ? `${family} is printed by a family of ${PER_TURN_LINE_PATH} now; delete its baseline entry`
+      detail: row.perTurn
+        ? `${family} is named by the per-turn text now; delete its baseline entry`
         : `${family} is ${row.quadrant}${row.targeted ? "" : " and untargeted"} now, so it is not a quadrant error; delete its baseline entry`,
     });
   }
@@ -3377,7 +3335,7 @@ export function writeObservationSummary(observation, write = (text) => process.s
   );
   const consumption = observation.consumption;
   write(
-    `  F consumption       ${consumption.population} published families: ${consumption.rows.filter((row) => row.projections.length > 0).length} read by a projection, ${consumption.rows.filter((row) => row.perTurnLine).length} by the per-turn line, ${consumption.rows.filter((row) => row.toolDescription).length} named in a tool description; ${consumption.withoutConsumer.length} with no consumer${consumption.withoutConsumer.length > 0 ? ` (${consumption.withoutConsumer.join(", ")})` : ""}, ${consumption.unclassified.length} unclassified by ${CONSUMPTION_INVENTORY_PATH}\n`,
+    `  F consumption       ${consumption.population} published families: ${consumption.rows.filter((row) => row.projections.length > 0).length} read by a projection, ${consumption.rows.filter((row) => row.perTurn).length} named in the per-turn text, ${consumption.rows.filter((row) => row.toolDescription).length} named in a tool description; ${consumption.withoutConsumer.length} with no consumer${consumption.withoutConsumer.length > 0 ? ` (${consumption.withoutConsumer.join(", ")})` : ""}, ${consumption.unclassified.length} unclassified by ${CONSUMPTION_INVENTORY_PATH}\n`,
   );
   write(
     "    on-demand delivery is not a gap: the per-turn projection cap and the 'projected or explained' inventory are the delivery-policy authority, so the advisory count is not a to-do list and rising is not a regression by itself\n",
@@ -3392,7 +3350,7 @@ export function writeObservationSummary(observation, write = (text) => process.s
     }: ${quadrant.red} map-fixed family/action pair(s) with no per-turn line, ${quadrant.baselined} baselined with a reason, ${quadrant.ungranted} ungranted\n`,
   );
   write(
-    "    a map-fixed family an action targets and no per-turn line prints is a quadrant error: the model spends an observe on a fact that does not move, in the one place a line could have said it\n",
+    "    a map-fixed family an action targets that the per-turn text does not name is a quadrant error: the model spends an observe on a fact that does not move, in the one place a line could have said it\n",
   );
   const fields = observation.fieldLevel;
   write(

@@ -25,6 +25,7 @@ import {
   type FarmhandPolicyIdentity,
   type ExecutionReceiptQuery,
   type ExecutionRequest,
+  type FarmhandActionPolicyRequest,
   type NavigationReadRequest,
   type NavigationReadResult,
   type ObserveSceneRequest,
@@ -575,6 +576,28 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       throw new Error("unexpected_companion_presentation_response");
   }
 
+  /**
+   * Push the player's action policy to a RUNNING Mod.
+   *
+   * One-way on purpose, and the answer is not a receipt frame: the Mod applies the policy and republishes its
+   * capability through the `catalog_update` it already emits for every policy change, which this client already
+   * validates (`#enabledActionIds`) and treats as the authoritative enabled set. Awaiting a second, correlated receipt
+   * for the same fact would be two spellings of one answer.
+   *
+   * Returns false - it never throws for a disconnected pipe - when there is no running world to tell. That is a state
+   * rather than a failure: the durable record was already committed and the next world load reads it from
+   * `config.json`, which is the half of this payload that a pipe cannot deliver.
+   */
+  public pushActionPolicy(policy: FarmhandActionPolicyRequest): boolean {
+    if (!this.transport.connected || !this.#authenticated) return false;
+    try {
+      this.transport.send(newEnvelope("farmhand_action_policy_request", this.scope, policy, randomUUID()));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Fixed Host-owned system copy; it is never a Pi/model presentation. */
   public async presentSystemNotice(request: SystemNoticeRequest): Promise<void> {
     this.requireAuthenticated();
@@ -868,6 +891,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       message.type === "cancel_request" ||
       message.type === "companion_presentation_request" ||
       message.type === "system_notice_request" ||
+      message.type === "farmhand_action_policy_request" ||
       message.type === "program_submit" ||
       message.type === "program_status" ||
       message.type === "program_events" ||

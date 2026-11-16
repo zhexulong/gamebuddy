@@ -29,6 +29,14 @@
  *                    its line cannot be read -> `declaration_dependency` / `declaration_not_found`, each
  *                    saying no comparison was made (tools/lib/parser-agreement.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-parser-agreement",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { auditParserAgreement, formatFinding, MAX_PRINTED_FINDINGS } from "./lib/parser-agreement.mjs";
 
 const { readings, findings } = auditParserAgreement();

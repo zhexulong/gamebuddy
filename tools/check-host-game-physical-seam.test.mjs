@@ -1,11 +1,11 @@
-// red-proof: inject  removing containment from the game-free generic layer set -> `× reports exact generic-to-game and
+// red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
 //   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
 // red-proof: history the tree before this rule's own unit, where
 //   `host/src/containment/runtime/contract/game-runtime.ts` declared
 //   `FarmhandBridgeConnectionNotAvailableError` -> `generic_runtime_names_game` naming that
 //   file, its line and the identifier, token `farmhand` (re-run of the checker on that tree)
 // red-proof: inject  `tsPreCompilationDeps: true` written into .dependency-cruiser.host-production.cjs ->
-//   `× the module graph declares the type-only edges it cannot see` names the option and the 29
+//   `✖ the module graph declares the type-only edges it cannot see` names the option and the 29
 //   circular violations turning it on costs (tools/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

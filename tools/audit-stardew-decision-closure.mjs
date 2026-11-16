@@ -40,6 +40,14 @@
 // gate exists to catch -- the Mod promises a fact the Agent cannot read back -- and
 // the reverse (a registered fact nobody declares) is the same drift seen from the
 // other side.
+
+export const gateDeclaration = {
+  id: "audit-stardew-decision-closure",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

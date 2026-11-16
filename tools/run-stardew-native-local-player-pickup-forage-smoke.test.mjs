@@ -447,7 +447,7 @@ test("pickup-forage runner rejects a non-isolated topology", async () => {
   const client = createFake();
   await assert.rejects(
     runPickupForageSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_pickup_forage_action_policy_invalid",
   );
 });
 
@@ -455,6 +455,6 @@ test("pickup-forage runner rejects a disabled fixture", async () => {
   const client = createFake();
   await assert.rejects(
     runPickupForageSmoke(client, [], {}),
-    (error) => error?.message === "native_local_fixture_not_enabled",
+    (error) => error?.message === "native_local_pickup_forage_fixture_config_invalid",
   );
 });

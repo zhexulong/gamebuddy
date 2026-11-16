@@ -4,6 +4,7 @@ import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
 import * as pumpModule from "./event-pump.js";
 import {
+  FACT_PRODUCER,
   CompanionEventPump,
   EXECUTION_STALL_BOUND_MS,
   HOST_MINTED_WAKE_KINDS,
@@ -189,7 +190,7 @@ test("narration_turns_reach_no_decider: every pump-minted kind and every declare
   quiet.service.close();
 
   const pending = harness();
-  pending.loop.pump.enqueueFact(milestone(0));
+  pending.loop.pump.enqueueFact(milestone(0), FACT_PRODUCER.narrationWithoutWork);
   const pendingReason = pending.service.wakeReason;
   assert.equal(pendingReason, HOST_WAKE_REASON.pendingDelivery, "a held fact is the ordinary reason, unchanged");
   produced.set(pendingReason, "a fact the pump is holding has not reached a turn yet");
@@ -292,15 +293,18 @@ test("a turn that carried no assistant text is not narration, and neither is a t
   for (let index = 0; index < 3; index += 1) await deliverTurn(pump, TURN_PRODUCTION.spoke, 10 + index);
   assert.equal(pump.narrationWithoutWork.turns, 3);
   pump.turnProduction = TURN_PRODUCTION.spoke;
-  pump.enqueueFact({
-    source: "arcade_adapter",
-    kind: "lifecycle",
-    eventId: "lifecycle_aborted",
-    occurredAtMs: Date.now(),
-    correlationId: "lifecycle_aborted",
-    revision: 99,
-    payload: { state: "connected" },
-  });
+  pump.enqueueFact(
+    {
+      source: "arcade_adapter",
+      kind: "lifecycle",
+      eventId: "lifecycle_aborted",
+      occurredAtMs: Date.now(),
+      correlationId: "lifecycle_aborted",
+      revision: 99,
+      payload: { state: "connected" },
+    },
+    FACT_PRODUCER.narrationWithoutWork,
+  );
   await pump.flush({ deliver: async (): Promise<CompanionTurnOutcome> => "aborted" });
   assert.equal(pump.narrationWithoutWork.turns, 0, "an aborted turn is the player's or the provider's own decision");
 });
@@ -342,11 +346,11 @@ test("the fact says what happened, in the one token a run reader already reads",
 
 test("a frozen world outranks her silence, so the world's own fact is the one published", async () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(snapshot(352));
+  pump.enqueueFact(snapshot(352), FACT_PRODUCER.narrationWithoutWork);
   // Six delivered turns: the first carries the snapshot, so the reading is five turns old - the stale bound.
   for (let index = 0; index < 6; index += 1) await deliverTurn(pump, TURN_PRODUCTION.spoke, index);
   // The world says it moved while her picture of it did not.
-  pump.enqueueFact(milestone(0));
+  pump.enqueueFact(milestone(0), FACT_PRODUCER.narrationWithoutWork);
 
   assert.equal(pump.narrationWithoutWork.turns >= NARRATION_WITHOUT_WORK_TURNS, true, "the narration run is real");
   assert.equal(

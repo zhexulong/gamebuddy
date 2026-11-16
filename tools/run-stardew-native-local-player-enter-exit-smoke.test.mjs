@@ -285,7 +285,7 @@ test("enter-exit runner rejects a non-isolated topology", async () => {
   const client = createFake();
   await assert.rejects(
     runEnterExitSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_enter_exit_action_policy_invalid",
   );
 });
 
@@ -503,7 +503,7 @@ test("enter-exit warp mode still requires the isolated fixture topology and the 
   const client = createWarpFake();
   await assert.rejects(
     runEnterExitSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } }), { mode: "warp" }),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_enter_exit_action_policy_invalid",
   );
   // The warp slice has its own observation path, so it needs its own proof that the capability gate still runs: a
   // surface without `enter_exit` must fail closed before any request, not after a refused receipt.

@@ -20,8 +20,9 @@ namespace GameBuddy.Stardew.Core.Tests;
 ///
 /// So the argument list is asserted ONCE, against the catalog's own declaration, and the literal
 /// shape is pinned beside it as the readable form a reviewer can check against the handler's
-/// signature. The lifecycle is asserted as Experimental on purpose: nothing in this lane ran a live
-/// game, so a Published/LiveVerified claim here would be a promotion the evidence does not support.
+/// signature. The rung is NOT restated: whether this action reaches the Agent is
+/// `ActionPolicyEngine.ComputeEnabledActions`'s answer, and a promotion or a demotion is measured there
+/// without a second copy of the fact landing in this file.
 /// </summary>
 public sealed class OpenGeodeWireContractTests
 {
@@ -31,7 +32,7 @@ public sealed class OpenGeodeWireContractTests
         FarmhandActionCatalog.Registrations.Should().ContainSingle(entry => entry.ActionId == ActionId).Subject;
 
     [Fact]
-    public void OpenGeodeIsRegisteredAsAnExperimentalBackpackAction()
+    public void OpenGeodeIsRegisteredAsAnEnabledBackpackAction()
     {
         FarmhandActionRegistration registration = Registration();
 
@@ -39,9 +40,10 @@ public sealed class OpenGeodeWireContractTests
         registration.HandlerGroup.Should().Be(
             FarmhandActionHandlerGroup.ResourceTools,
             "the geode is the actor's own carried item, the same handler group the sewing-machine pair uses");
-        registration.Lifecycle.Should().Be(
-            FarmhandActionLifecycle.Experimental,
-            "no live game was run for this action, so it must not claim a live-verified or published surface");
+        // Not a restated rung: `ComputeEnabledActions` is the one place that decides which rungs reach the Agent
+        // (`ModConfig.EnabledActionSet`), so a demotion fails here without a second copy of the promotion fact.
+        ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions())
+            .Should().Contain(ActionId, "a promoted action is on the Agent surface with no opt-in");
         registration.Descriptor.Should().NotBeNull();
 
         FarmhandActionDescriptor descriptor = registration.Descriptor!;

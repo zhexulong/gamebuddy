@@ -683,7 +683,7 @@ public sealed class MagnetPickupItemTests
     public void TheSnapshotPublishesThroughTheRecordingDiscovery()
     {
         string controller = Read("farmhandexecutioncontroller.cs");
-        string discovery = MethodBody(controller, "private IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverItemTargets"), "private IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(");
 
         controller.Should().Contain(
             "advertisedCapabilities.Contains(\"pickup_item\", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null",

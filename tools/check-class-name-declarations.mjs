@@ -17,6 +17,14 @@
  *                    labels and declared nowhere -> `undeclared_class:...:929` and `:947`
  *                    (tools/check-class-name-declarations.test.mjs, "the pre-fix tree is reported")
  */
+
+export const gateDeclaration = {
+  id: "check-class-name-declarations",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkClassNameDeclarations, formatFinding, verdict } from "./lib/class-name-declarations.mjs";

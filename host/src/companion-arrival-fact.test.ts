@@ -6,10 +6,10 @@ import {
   COMPANION_ARRIVAL_EVENT_ID,
   COMPANION_ARRIVAL_SEMANTIC_KIND,
   COMPANION_ARRIVAL_SOURCE,
-  companionArrivalAlreadySaid,
   companionArrivalFact,
 } from "./companion-arrival-fact.js";
-import type { WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, type WorldFact } from "./event-pump.js";
+import { composeFactBrief } from "./fact-brief.js";
 import { CompanionHostService } from "./host-service.js";
 
 /** The attach boundary and the pump, reduced to what the arrival decision reads. */
@@ -48,7 +48,7 @@ function attachHarness() {
 /** A real Mod snapshot payload, read off the wire contract (see `protocol.ts`'s `Snapshot`). */
 const SNAPSHOT_PAYLOAD = Object.freeze({
   revision: 1,
-  presentationLocale: "en-US",
+  presentationLocale: "zh-CN",
   timeOfDay: 610,
   dayOfMonth: 4,
   seasonIndex: 0,
@@ -85,7 +85,7 @@ function recordingSession(delivered: string[]) {
   };
 }
 
-test("attach plus the first clock reading says she has arrived exactly once, with the day's own weather and time", () => {
+test("attach plus the first clock reading opens the arrival turn, and the fact carries no message of its own", () => {
   const harness = attachHarness();
   const service = new CompanionHostService(harness.loop as never, harness.events as never);
   try {
@@ -95,22 +95,15 @@ test("attach plus the first clock reading says she has arrived exactly once, wit
     const arrivals = arrivalsIn(harness.facts);
     assert.equal(arrivals.length, 1, "attach plus one usable clock reading mints exactly one arrival fact");
     const arrival = arrivals[0]!;
-    const projection = arrival.contextProjection as Readonly<Record<string, unknown>>;
-    assert.equal(
-      arrival.payload.timeOfDay,
-      SNAPSHOT_PAYLOAD.timeOfDay,
-      `the arrival carries the snapshot's own clock reading, rendered as "${String(projection.time)}"`,
+    assert.equal(arrival.contextProjection, undefined, "the arrival hands the model no prose of its own");
+    assert.deepEqual(
+      arrival.payload,
+      { kind: COMPANION_ARRIVAL_SEMANTIC_KIND },
+      "the fact carries the EVENT: the clock, the date, the weather and the place are the snapshot's, and " +
+        "<world-state> in the same batch prints them",
     );
-    assert.equal(
-      arrival.payload.weather,
-      SNAPSHOT_PAYLOAD.weather,
-      `the arrival carries the day's own weather, rendered as "${String(projection.weather)}"`,
-    );
-    assert.equal(projection.time, "6:10 AM");
-    assert.equal(projection.weather, "weather: sunny");
-    assert.equal(projection.date, "Year 1, Day 4 of Spring");
-    assert.match(String(projection.text), /^You have just arrived on this farm /);
-    // The snapshot itself is not a turn: it follows the arrival, which is the fact that speaks.
+    assert.equal(arrival.semanticKind, COMPANION_ARRIVAL_SEMANTIC_KIND);
+    // The snapshot itself is not a turn: it follows the arrival, which is the fact that opens one.
     assert.deepEqual(
       harness.facts.map((fact) => fact.kind),
       ["world_fact", "snapshot"],
@@ -120,8 +113,7 @@ test("attach plus the first clock reading says she has arrived exactly once, wit
   }
 });
 
-test("a second tick in the same session says nothing, and a transcript that already carries it stays silent", async () => {
-  // The live switch: one mounted session cannot say it twice.
+test("a second tick in the same session opens no second arrival turn", () => {
   const harness = attachHarness();
   const service = new CompanionHostService(harness.loop as never, harness.events as never);
   try {
@@ -137,56 +129,6 @@ test("a second tick in the same session says nothing, and a transcript that alre
   } finally {
     service.close();
   }
-
-  // The durable half: the Game session's own transcript already holds this fact's batch.
-  const delivered: string[] = [];
-  const loop = new CompanionLoop(recordingSession(delivered) as never);
-  loop.pump.enqueueFact(companionArrivalFact(SNAPSHOT_PAYLOAD)!);
-  await loop.flush();
-  assert.equal(delivered.length, 1);
-  assert.equal(
-    companionArrivalAlreadySaid({
-      getBranch: () => [
-        { type: "message", message: { role: "user", content: [{ type: "text", text: delivered[0]! }] } },
-      ],
-    } as never),
-    true,
-    "the persisted arrival batch is what the transcript reports as already said",
-  );
-  assert.equal(
-    companionArrivalAlreadySaid({
-      getBranch: () => [
-        { type: "message", message: { role: "user", content: [{ type: "text", text: "not the arrival" }] } },
-      ],
-    } as never),
-    false,
-    "a transcript without the arrival batch does not suppress it",
-  );
-
-  const replayHarness = attachHarness();
-  const replay = new CompanionHostService(
-    replayHarness.loop as never,
-    replayHarness.events as never,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    { alreadySaid: () => true },
-  );
-  try {
-    replay.acceptInitialFacts([]);
-    replayHarness.emit(snapshotFact(1));
-    assert.equal(
-      arrivalsIn(replayHarness.facts).length,
-      0,
-      "a session whose transcript already carries the arrival mints nothing on a re-attach",
-    );
-  } finally {
-    replay.close();
-  }
 });
 
 test("a snapshot with no usable clock says nothing, and the first real reading still speaks", () => {
@@ -199,13 +141,11 @@ test("a snapshot with no usable clock says nothing, and the first real reading s
     assert.equal(arrivalsIn(harness.facts).length, 0, "attach alone says nothing while the clock has not ticked");
 
     harness.emit(snapshotFact(2));
-    const arrivals = arrivalsIn(harness.facts);
     assert.equal(
-      arrivals.length,
+      arrivalsIn(harness.facts).length,
       1,
-      "the first usable reading still speaks, because no greeting was made for the empty one",
+      "the first usable reading still speaks, because no arrival was made for the empty one",
     );
-    assert.equal(arrivals[0]!.payload.timeOfDay, SNAPSHOT_PAYLOAD.timeOfDay);
   } finally {
     service.close();
   }
@@ -227,7 +167,7 @@ test("the arrival rides world_fact with semanticKind companion_arrival, and the 
     },
     endBatch() {},
   });
-  loop.pump.enqueueFact(arrival!);
+  loop.pump.enqueueFact(arrival!, FACT_PRODUCER.companionArrival);
   await loop.flush();
   assert.equal(delivered.length, 1, "the arrival reaches Pi as one turn");
   assert.deepEqual(opened, [COMPANION_ARRIVAL_EVENT_ID], "the arrival opens its own presentation lease");
@@ -242,17 +182,136 @@ test("the arrival rides world_fact with semanticKind companion_arrival, and the 
     },
     endBatch() {},
   });
-  unlisted.pump.enqueueFact({
-    source: COMPANION_ARRIVAL_SOURCE,
-    kind: "world_fact",
-    eventId: "weather_changed_01",
-    sourceEventId: "weather_changed_01",
-    correlationId: "weather_changed_01",
-    revision: 0,
-    semanticKind: "weather_changed",
-    payload: Object.freeze({ kind: "weather_changed" }),
-  });
+  unlisted.pump.enqueueFact(
+    {
+      source: COMPANION_ARRIVAL_SOURCE,
+      kind: "world_fact",
+      eventId: "weather_changed_01",
+      sourceEventId: "weather_changed_01",
+      correlationId: "weather_changed_01",
+      revision: 0,
+      semanticKind: "weather_changed",
+      payload: Object.freeze({ kind: "weather_changed" }),
+    },
+    FACT_PRODUCER.companionArrival,
+  );
   await unlisted.flush();
   assert.equal(unlistedDelivered.length, 1);
   assert.deepEqual(unlistedOpened, [], "an unlisted world-fact kind does not open a turn");
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// `arrival_fact_states_a_fact_the_block_already_states:<field>`
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The arrival and `<world-state>` arrive in ONE batch, and the block already prints every field the arrival could
+ * state: `round63`'s own delivered text read `06:00（清晨）；1年第5天 春季；天气：晴天；位置: 农舍`.
+ *
+ * <p>
+ * So the property is not "the arrival states facts rather than tone" - it is that the arrival states NO snapshot field
+ * at all, because `<world-state>` states all of them for the same snapshot. Until 2026-11-22 the fact appended its own
+ * sentence over the same five values, and the two renderings disagreed (`此刻在Farm` beside `位置: 农场`): one claim
+ * with two writers, which `design/input-authority.md` § three makes a defect. The arrival owns the event; the block owns
+ * the state.
+ * </p>
+ *
+ * <p>
+ * POPULATION FROM THE AUTHORITY, NOT FROM A LIST. The population is every snapshot field `<world-state>` is actually
+ * sensitive to, derived by mutating one field of the delivered snapshot and asking whether the block changes. A field
+ * the block states is a field the arrival must not state again. The probe is its own instrument check: if the block
+ * side went silent the population would be empty and "no overlap" would be true of nothing, so an empty population
+ * fails here rather than passing, and the fields the block states are printed.
+ * </p>
+ *
+ * <p>
+ * THE ARRIVAL'S SIDE is the part of the same delivered batch that exists only because of the fact: the batch composed
+ * with it minus the batch composed without it. That is the text the model reads for this fact, and the only thing a
+ * `contextProjection` could add to it.
+ * </p>
+ *
+ * <p>
+ * RED ON REAL HISTORY, not on an injected fixture: run this file against HEAD's own `companion-arrival-fact.ts` and
+ * `fact-brief.ts` (`git show HEAD:host/src/...`) and the gate names `timeOfDay, dayOfMonth, seasonIndex, year, weather,
+ * location` while the batch carries the paragraph beside the block that states the same five values twice. No synthetic
+ * injection is shipped beside it: today's `fact-brief.ts` still forwards a `contextProjection.text` for this kind, so an
+ * injection would be a reading of that renderer, and the lane that owns the file is deleting it.
+ * </p>
+ */
+type StatedFields = Readonly<{
+  /** The fields of this snapshot `<world-state>` states, in payload order. */
+  population: readonly string[];
+  /** The fields of those the arrival states as well: the finding, each named `<field>`. */
+  overlaps: readonly string[];
+  /** The `<world-state>` block of the batch, verbatim. */
+  block: string;
+  /** The arrival's own contribution to the batch, verbatim. */
+  arrival: string;
+}>;
+
+/** The delivery locale the block and the fact are read in: the product's own default brief language. */
+const ARRIVAL_PROBE_LOCALE = "zh-CN";
+
+function deliveredBatch(
+  snapshot: Readonly<Record<string, unknown>>,
+  arrival: WorldFact | undefined,
+): Readonly<{ block: string; arrival: string }> {
+  const reading = { snapshot, revision: 1, ageTurns: 0, ageMs: 0 } as never;
+  const block = composeFactBrief({ inputs: [], snapshot: reading, events: [], locale: ARRIVAL_PROBE_LOCALE });
+  const whole = composeFactBrief({
+    inputs: [],
+    snapshot: reading,
+    events: arrival === undefined ? [] : [arrival],
+    locale: ARRIVAL_PROBE_LOCALE,
+  });
+  assert.ok(whole.startsWith(block), "the arrival's contribution is the tail of the batch after <world-state>");
+  return { block, arrival: whole.slice(block.length) };
+}
+
+function statedFields(
+  snapshot: Readonly<Record<string, unknown>>,
+  arrivalOf: (snapshot: Readonly<Record<string, unknown>>) => WorldFact | undefined,
+): StatedFields {
+  const base = deliveredBatch(snapshot, arrivalOf(snapshot));
+  const probed = Object.entries(snapshot).map(([field, value]) => {
+    // A numeric field moves by one, a string field by a suffix: both stay the same KIND of value, so a renderer
+    // that would reject the mutation outright cannot make a field look silent.
+    const muted = Object.freeze({
+      ...snapshot,
+      [field]: typeof value === "number" ? value + 1 : `${String(value)}_probe`,
+    });
+    const next = deliveredBatch(muted, arrivalOf(muted));
+    return { field, block: next.block !== base.block, arrival: next.arrival !== base.arrival };
+  });
+  return Object.freeze({
+    population: Object.freeze(probed.filter((entry) => entry.block).map((entry) => entry.field)),
+    overlaps: Object.freeze(probed.filter((entry) => entry.block && entry.arrival).map((entry) => entry.field)),
+    block: base.block,
+    arrival: base.arrival,
+  });
+}
+
+test("the arrival states no field the block already states in the same batch", () => {
+  const reading = statedFields(SNAPSHOT_PAYLOAD, (snapshot) => companionArrivalFact(snapshot));
+  process.stdout.write(
+    `\narrival_fact_states_a_fact_the_block_already_states: fields the block states ${reading.population.join(", ")} · ` +
+      `stated twice ${reading.overlaps.join(", ") === "" ? "none" : reading.overlaps.join(", ")}\n` +
+      `<batch>\n${reading.block}${reading.arrival}\n</batch>\n`,
+  );
+  assert.ok(
+    reading.population.length > 0,
+    "the probe found no snapshot field <world-state> states, so this check is about nothing: the block side of the " +
+      "instrument is dead, not the arrival clean",
+  );
+  assert.notEqual(
+    reading.arrival,
+    "",
+    "the arrival still contributes one <world-facts> line to the batch; an opener that composes to nothing opens no turn",
+  );
+  assert.deepEqual(
+    reading.overlaps,
+    [],
+    `the arrival restates ${reading.overlaps.join(", ")}, and <world-state> already states those in the same batch: ` +
+      "delete the sentence, do not rewrite it in another spelling",
+  );
 });

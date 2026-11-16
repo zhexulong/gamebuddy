@@ -8,14 +8,23 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 /// <para>
 /// The kinds are separate because the remedy differs by kind, and a hold that cannot name the remedy leaves the caller
 /// only one option: try the same request again. `dismiss_modal` closes a plain box and an audited operation menu;
-/// answering a question is `answer_dialogue`'s seam; a shop counter belongs to `shop_purchase`, which opens it and
-/// closes it itself; and an unaudited menu belongs to nobody the product can dispatch.
+/// answering a question is `answer_dialogue`'s seam; the engine's bed prompt is answered by the day-crossing action
+/// itself (<see cref="BodyProgramModalKind.SleepPrompt"/>); a shop counter belongs to `shop_purchase`, which opens it
+/// and closes it itself; and an unaudited menu belongs to nobody the product can dispatch.
 /// </para>
 /// </summary>
 public enum BodyProgramModalKind
 {
     None,
     Question,
+
+    /// <summary>
+    /// THE ENGINE'S OWN BED PROMPT: a question whose answer IS the calendar crossing (`GameLocation.cs:3763-3765`,
+    /// question key `Sleep`). It is its own kind because its remedy is its own action - see
+    /// <see cref="BodyProgramDispatchGate.HoldOf"/> - and a refusal that points a caller at `answer_dialogue` for it
+    /// points at a route the same box refuses.
+    /// </summary>
+    SleepPrompt,
     PlainDialogue,
     Shop,
     OperationMenu,
@@ -44,11 +53,12 @@ public readonly record struct BodyProgramModalFact(BodyProgramModalKind Kind, st
 /// <para>
 /// <see cref="Modal"/> is the half the pump's START gate reads: a modal hold is cleared by an ACTION (or by the player),
 /// never by waiting, so starting a node into it spends the node's one attempt on a refusal that says
-/// `player_not_actionable`. Every other hold (<see cref="BodyProgramModalKind.None"/>) is either a cutscene or a
-/// transient body lock, and the existing bounded deferral is the right answer for those.
+/// `player_not_actionable`. Every other hold (<see cref="BodyProgramModalKind.None"/>) clears on its own, which is why
+/// the pump waits for those instead of spending the node - but they do NOT clear inside one window, and
+/// <see cref="Wait"/> is where the two are told apart.
 /// </para>
 /// </summary>
-public readonly record struct BodyProgramHold(BodyProgramModalKind Modal, string Evidence)
+public readonly record struct BodyProgramHold(BodyProgramModalKind Modal, string Evidence, BodyHoldWait Wait = BodyHoldWait.RetryWindow)
 {
     public bool IsModal => this.Modal != BodyProgramModalKind.None;
 }
@@ -87,6 +97,21 @@ public static class BodyProgramDispatchGate
     /// <summary>The remedy for a question box: `answer_dialogue` is the only action that settles one.</summary>
     public const string AnswerDialogueRemedy = "answer_it=answer_dialogue";
 
+    /// <summary>
+    /// The remedy for the engine's bed prompt: the ONE action that answers it, derived from the catalog rather than
+    /// spelled again here.
+    ///
+    /// <para>
+    /// MEASURED (round60, 19:51). The pump held the `sleep` node with `answer_it=answer_dialogue`, `answer_dialogue`
+    /// refused the one answer - "answering Yes here ends the day, dispatch `sleep` instead" - and the retried `sleep`
+    /// was held again. Two routes, each naming the other, and no night. THE OWNER IS THE NIGHT'S OWN ACTION: the bed
+    /// prompt is `sleep`'s working precondition (`SleepAndAdvanceDayLifecycle.TryEnterEligibility` admits a paused clock
+    /// for it, `ExecutionAdmission` admits the request through the `Overnight` profile for it), so holding it is a
+    /// deadlock that calls itself a guard.
+    /// </para>
+    /// </summary>
+    public static string SleepPromptRemedy => "answer_it=" + FarmhandActionCatalog.DayCrossingActionId;
+
     /// <summary>The remedy for a plain box or an audited operation menu: their close is a pure cancel.</summary>
     public const string DismissModalRemedy = "dismiss_it=dismiss_modal";
 
@@ -103,13 +128,20 @@ public static class BodyProgramDispatchGate
         // A cutscene outranks a mounted modal: the flat admission refuses the modal family on the same fact
         // (`ExecutionManager.AdmitExecution`: the Modal profile's only refusal is Event / eventUp).
         if (cutsceneUp)
-            return new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end");
+            return new BodyProgramHold(BodyProgramModalKind.None, "held_by=cutscene_active;next_step=wait_for_event_to_end", BodyHoldWait.RequestDeadline);
+        // THE BED PROMPT'S OWNER ANSWERS IT. Every other action is held by it, and the hold names the owner - a hold
+        // whose owner is the thing it holds is the deadlock round60 measured, and a hold that names `answer_dialogue`
+        // for it names a route that refusal forbids.
+        if (modal.Kind == BodyProgramModalKind.SleepPrompt)
+            return string.Equals(actionId, FarmhandActionCatalog.DayCrossingActionId, StringComparison.Ordinal)
+                ? null
+                : new BodyProgramHold(modal.Kind, ModalHold(modal));
         // An open modal is the working precondition of the family that resolves it, and a hold against everything else.
         if (modal.IsMounted)
             return FarmhandActionCatalog.IsModalResolving(actionId) ? null : new BodyProgramHold(modal.Kind, ModalHold(modal));
         return actorCanMove
             ? null
-            : new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window");
+            : new BodyProgramHold(BodyProgramModalKind.None, "held_by=transient_busy;next_step=wait_for_retry_window", BodyHoldWait.RetryWindow);
     }
 
     /// <summary>Whether the action may run now. The one-word form of <see cref="HoldOf"/> for a caller that needs no name.</summary>
@@ -120,6 +152,9 @@ public static class BodyProgramDispatchGate
     private static string ModalHold(in BodyProgramModalFact modal) => modal.Kind switch
     {
         BodyProgramModalKind.Question => "held_by=dialogue_box;" + AnswerDialogueRemedy,
+        // The one kind whose remedy is an EXECUTION rather than a dismissal or an answer: the prompt is the night's own
+        // precondition, so the action that crosses the night is the action that clears it.
+        BodyProgramModalKind.SleepPrompt => "held_by=dialogue_box;" + SleepPromptRemedy,
         BodyProgramModalKind.PlainDialogue => "held_by=dialogue_box;" + DismissModalRemedy,
         // The counter is the purchase's own state: `shop_purchase` opens it with `Utility.TryOpenShopMenu` and closes
         // whatever is still mounted on its way out, so a dismissal here would close a shop the transaction is

@@ -1,113 +1,109 @@
-// Stardew-local build-farm-building smoke: production native client, bounded scope,
-// revision-bound requests, exact receipt identity, terminal wait and owned teardown all come
-// from the shared harness. Action-specific logic (which published site, what the receipt must
-// have observed, and the negative case) stays in this runner.
+// Stardew-local build_farm_building smoke: production native client, bounded scope, revision-bound requests, exact
+// receipt identity, terminal wait, the stale re-send and owned teardown all come from the shared template
+// (`tools/lib/native-local-runner-scaffold.mjs`). Action-specific logic - which published site, what the receipt must
+// have observed, and what "the world did not move" means for a site that now holds a building - stays in this runner.
+//
+// The receipt is not the proof. Five things are observed directly, and the first is the one
+// that makes the action worth having:
+//
+//   1. the site comes from the Mod's own `farmBuildingTargets` projection (`kind ===
+//      "build_site"`), never from this runner — the request names the tile and the opaque id
+//      discovery published for it;
+//   2. the world CHANGED: the same projection now publishes a `built` entry on exactly that
+//      tile carrying the requested building type and the id the receipt names. A `built`
+//      surface that is absent is `not_checked`, never a pass;
+//   3. the commission's SITE left discovery — a tile that now holds the building is not a
+//      place a building can go, so the published candidate must be gone;
+//   4. the receipt's own postcondition agrees with the world: money dropped by exactly the
+//      declared cost, each declared material left the inventory, and the construction days
+//      equal the building data's own `BuildDays`;
+//   5. RESUBMITTING THE SAME TARGET is refused by name and moves nothing. The tile now holds
+//      the building, so a second success there would be a second structure (or a silent
+//      no-op reported as success); the run fails rather than passing on a green receipt.
+//
+// The runner never chooses the site or the building type: both come from the projection.
 
-import {
-  assertRequiredCapabilities,
-  connectNativeLocalClient,
-  executeFresh,
-  observeFresh,
-  readNativeClientConfig,
-  summarizeReceipt,
-  waitForTerminal,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { defineSmokeScenario, runSmokeScenarioMain } from "./lib/native-local-runner-scaffold.mjs";
 
 const ACTION = "build_farm_building";
+/** The action's own success word (`ExecuteBuildFarmBuilding`: the structure is placed and commissioned). */
+const SUCCESS_CODE = "farm_building_built";
+/** The one `NativeLocalPlayerFixture.FixtureScenario` this gate arms (gate descriptor `native_build_farm_building_v1`). */
+const FIXTURE_SCENARIO = "native_build_farm_building_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
-/**
- * build_farm_building live contract.
- *
- * The receipt is not the proof. Five things are observed directly, and the first is the one
- * that makes the action worth having:
- *
- *   1. the site comes from the Mod's own `farmBuildingTargets` projection (`kind ===
- *      "build_site"`), never from this runner — the request names the tile and the opaque id
- *      discovery published for it;
- *   2. the world CHANGED: the same projection now publishes a `built` entry on exactly that
- *      tile carrying the requested building type and the id the receipt names. A `built`
- *      surface that is absent is `not_checked`, never a pass;
- *   3. the commission's SITE left discovery — a tile that now holds the building is not a
- *      place a building can go, so the published candidate must be gone;
- *   4. the receipt's own postcondition agrees with the world: money dropped by exactly the
- *      declared cost, each declared material left the inventory, and the construction days
- *      equal the building data's own `BuildDays`;
- *   5. RESUBMITTING THE SAME TARGET is refused by name and moves nothing. The tile now holds
- *      the building, so a second success there would be a second structure (or a silent
- *      no-op reported as success); the run fails rather than passing on a green receipt.
- *
- * The runner never chooses the site or the building type: both come from the projection.
- */
-export async function runBuildFarmBuildingSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
-  const trace = [];
-  const snapshot = await observeFresh(client, { actionable: true });
-  assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
-  const target = chooseBuildSite(snapshot);
+const scenario = defineSmokeScenario({
+  action: ACTION,
+  fixtureScenario: FIXTURE_SCENARIO,
+  successCode: SUCCESS_CODE,
+  refusesConfig: false,
+  requiredCapabilities: REQUIRED_CAPABILITIES,
+  projection: { collections: ["farmBuildingTargets"] },
 
-  const requestId = `native_local_build_farm_building_${Date.now()}`;
-  const args = { buildingType: target.buildingType, x: target.x, y: target.y, expectedTargetId: target.targetId };
-  const accepted = await executeFresh(client, {
-    requestId,
-    idempotencyKey: `${requestId}_idem`,
-    action: ACTION,
-    args,
-    snapshot,
-    timeoutMs: 30_000,
-  });
-  trace.push({
-    step: "build",
-    action: ACTION,
+  /** The commission site the fixture established, as discovery publishes it. */
+  prepare: ({ snapshot }) => ({ snapshot, plan: { target: chooseBuildSite(snapshot) } }),
+
+  describePlan: ({ target }) => ({
     target: target.targetId,
+    tile: `${target.x},${target.y}`,
     buildingType: target.buildingType,
-    receipt: summarizeReceipt(accepted),
-  });
-  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-  if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
-    throw new Error("build_farm_building terminal does not belong to this request");
-  if (terminal.state !== "succeeded" || terminal.reasonCode !== "farm_building_built")
-    throw new Error(
-      `build_farm_building did not place the structure: state=${terminal.state};reason=${terminal.reasonCode};evidence=${terminal.evidence ?? ""}`,
-    );
+    buildCost: target.buildCost,
+    buildDays: target.buildDays,
+  }),
 
-  const evidence = parseEvidence(terminal.evidence);
-  const after = await observeFresh(client, { actionable: true });
-  const sitesAfter = buildSites(after);
-  const builtAfter = builtBuildings(after);
+  request: ({ target }) => ({
+    args: { buildingType: target.buildingType, x: target.x, y: target.y, expectedTargetId: target.targetId },
+  }),
 
-  const checks = assertBuildFarmBuildingPostconditions({ target, evidence, sitesAfter, builtAfter });
-  trace.push({
-    step: "observed",
-    sites: sitesAfter.length,
-    built: builtAfter === null ? null : builtAfter.length,
-    evidence,
-    checks,
-  });
+  /**
+   * The negative case, declared to the template: the tile the build consumed is not a place a building can go any
+   * more, so the same target must be refused and the world it left behind must be the world the build left behind.
+   */
+  negative: {
+    args: ({ target }) => ({
+      buildingType: target.buildingType,
+      x: target.x,
+      y: target.y,
+      expectedTargetId: target.targetId,
+    }),
+    refusedCodes: ["build_farm_building_site_blocked"],
+    unchanged: ({ before, after }) => {
+      const sitesBefore = buildSites(before)
+        .map((entry) => entry.targetId)
+        .join(",");
+      const sitesAfter = buildSites(after)
+        .map((entry) => entry.targetId)
+        .join(",");
+      if (sitesBefore !== sitesAfter) return `sites:${sitesBefore}->${sitesAfter}`;
+      const builtBefore = (builtBuildings(before) ?? []).map((entry) => entry.buildingId).join(",");
+      const builtAfter = (builtBuildings(after) ?? []).map((entry) => entry.buildingId).join(",");
+      return builtBefore === builtAfter ? null : `built:${builtBefore}->${builtAfter}`;
+    },
+  },
 
-  // 5. the negative case: the stale target is refused by name and the world does not move.
-  const staleRequestId = `native_local_build_farm_building_stale_${Date.now()}`;
-  const stale = await executeFresh(client, {
-    requestId: staleRequestId,
-    idempotencyKey: `${staleRequestId}_idem`,
-    action: ACTION,
-    args,
-    snapshot: after,
-    timeoutMs: 30_000,
-  });
-  const staleTerminal = await waitForTerminal(receipts, stale, terminalTimeoutMs);
-  trace.push({ step: "stale_target", receipt: summarizeReceipt(staleTerminal) });
-  checks.staleTargetRefused =
-    staleTerminal.state === "rejected" && staleTerminal.reasonCode === "build_farm_building_site_blocked";
+  async assertPostcondition({ evidence, plan, after }) {
+    const { target } = plan;
+    const checks = assertBuildFarmBuildingPostconditions({
+      target,
+      evidence,
+      sitesAfter: buildSites(after),
+      builtAfter: builtBuildings(after),
+    });
+    const failures = Object.entries(checks)
+      .filter(([, ok]) => ok === false || ok === "not_checked")
+      .map(([name]) => name);
+    if (failures.length > 0)
+      throw new Error(
+        `build_farm_building live contract failed: ${failures.join(",")};checks=${JSON.stringify(checks)}`,
+      );
+    return { checks, target: target.targetId, buildingType: target.buildingType, evidence };
+  },
+});
 
-  const failures = Object.entries(checks)
-    .filter(([, ok]) => ok === false || ok === "not_checked")
-    .map(([name]) => name);
-  if (failures.length > 0)
-    throw new Error(`build_farm_building live contract failed: ${failures.join(",")};trace=${JSON.stringify(trace)}`);
+export const runBuildFarmBuildingSmoke = (client, receipts, config, options) =>
+  scenario.run(client, receipts, config, options);
 
-  return { state: "passed", reasonCode: "farm_building_built", trace, checks, evidence };
-}
+if (import.meta.main) await runSmokeScenarioMain(scenario);
 
 /**
  * The live contract's judgement, as a PURE function so it can be tested without a transport:
@@ -169,28 +165,4 @@ function buildSites(snapshot) {
 function builtBuildings(snapshot) {
   const targets = snapshot?.farmBuildingTargets;
   return Array.isArray(targets) ? targets.filter((entry) => entry?.kind === "built") : null;
-}
-
-/** `key=value;key=value` — the Mod's evidence shape. */
-function parseEvidence(evidence) {
-  const text = typeof evidence === "string" ? evidence : (evidence?.detail ?? "");
-  const values = {};
-  for (const field of String(text).split(";")) {
-    const at = field.indexOf("=");
-    if (at <= 0) continue;
-    values[field.slice(0, at)] = field.slice(at + 1);
-  }
-  return values;
-}
-
-if (import.meta.main) {
-  const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runBuildFarmBuildingSmoke(session.client, session.receipts, config);
-    console.log(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
-  }
 }

@@ -2,14 +2,15 @@
 //   `AssertionError: she declared locally ready: got companion_sleep_refused:requires_other_player` at
 //   tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs:2715
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { turnSettled } from "../../lib/turn-settled.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import {
@@ -22,7 +23,7 @@ import {
   parseReceiptEvidence,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
-import { decideDayWake, QUIET_BOUND_MS, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
+import { decideDayWake, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
@@ -47,12 +48,23 @@ import {
   summarizeCrossings,
 } from "./night-verdict.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+import { createGameClock } from "./game-clock.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
+import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
+import {
+  createLaunchPhaseLog,
+  LAUNCH_PHASE_PREFIX,
+  readLaunchPhaseHandover,
+  writeLaunchPhaseHandover,
+} from "../core/launch-phase.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+// The launch begins before the runner exists, so the steps the RUNNER cannot see (the save copy, the deploy, the game's
+// own start) are measured by the launcher and asserted here against ITS source, not the runner's.
+const LAUNCHER_SOURCE = await readFile(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
 /**
  * What the presentation evidence is in the fixtures below: nothing presented, and an account that says exactly that.
  *
@@ -1088,7 +1100,10 @@ test("a disposable root's identity belongs to its own run, so a lane can be run 
   // has to be derived from THAT fact, before the principal check reads it.
   const decision = RUNNER_SOURCE.indexOf("const usesConfiguredRuntimeRoot =");
   const identity = RUNNER_SOURCE.indexOf("const runContinuityId =");
-  const identityUsed = RUNNER_SOURCE.indexOf("const identity = Object.freeze({");
+  // The identity is declared with the run's record above the failure hooks and ASSIGNED where its inputs exist: a value
+  // derived from the Mod config cannot exist before that config is read, and the dump reads it. What this asserts is
+  // unchanged - the derivation still precedes the principal check that reads it.
+  const identityUsed = RUNNER_SOURCE.search(/^(?:const )?identity = Object\.freeze\(\{/mu);
   const principalCheck = RUNNER_SOURCE.indexOf("`runtime_root_principal_mismatch: the runtime root was provisioned");
   assert.ok(decision >= 0 && identity > decision, "the ownership decision must precede the identity");
   assert.ok(
@@ -1358,8 +1373,8 @@ test("the player prompt waits for a real admission, and the run reports startup 
   assert.match(RUNNER_SOURCE, /error: `player_input_refused:/);
   assert.match(RUNNER_SOURCE, /if \(admission\.accepted !== true\)/);
   // Startup phase timings answer "the live run is slow to start" with numbers.
-  for (const phase of ["bridgeConnectedMs", "covenantSeedDoneMs", "bindingReadyMs", "runtimeMaterializedMs"]) {
-    assert.match(RUNNER_SOURCE, new RegExp(`markPhase\\(\"${phase}\"\\)`), `missing phase mark ${phase}`);
+  for (const phase of ["bridge_connected", "covenant_seed_done", "binding_ready", "runtime_materialized"]) {
+    assert.ok(RUNNER_SOURCE.includes(`markPhase("${phase}"`), `missing phase mark ${phase}`);
   }
   assert.match(RUNNER_SOURCE, /phaseTimings: Object\.freeze\(\{/);
   // The seed is the dominant cold-start cost, so its own phases must reach the
@@ -1371,6 +1386,129 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // presentation.pieces = [] and presentedSummary = "".
   assert.match(RUNNER_SOURCE, /onCompanionTextPresented,\n/);
   assert.doesNotMatch(RUNNER_SOURCE, /SCENARIO === "npc_social_and_presence" \? \{ onCompanionTextPresented \}/);
+});
+
+// ── the launch sequence, on one clock, in one line shape ──────────────────────────────────────────────────────────────
+// "Why is startup slow" was unanswerable from the log: the runner's first line was its first bridge frame, so the save
+// copy, the deploy, the game's own load and the runner's imports arrived as one blank (round55: the log's first phase-ish
+// number was 25,750ms in, and nothing said which step cost it). The instrument that replaced the blank is one line per
+// phase, all on the launcher's clock, so a reader SUBTRACTS instead of guessing. These guards hold the instrument: the
+// line shape, the clock, and the fact that every step the launch performs actually emits one.
+const LAUNCHER_OWNED_PHASES = new Set([
+  "launcher_start",
+  "prompt_surface_checked",
+  "fixture_free",
+  "clean_done",
+  "save_template_copied",
+  "deploy_done",
+  "orchestrator_spawned",
+  "game_launched",
+]);
+const REQUIRED_LAUNCH_PHASES = Object.freeze([
+  ...LAUNCHER_OWNED_PHASES,
+  "runner_process_start",
+  "module_eval_start",
+  "environment_facts_done",
+  "bridge_connected",
+  "first_frame_dispatched",
+  "persona_mounted",
+  "provider_wait",
+  "first_model_response",
+]);
+
+test("every phase of the launch prints one line, and the line carries the clock a reader subtracts", () => {
+  const lines = [];
+  const clock = createLaunchPhaseLog({ startedAtMs: 1_000_000, emit: (line) => lines.push(line) });
+  const deployed = clock.mark("deploy_done", 1_001_200);
+  const launched = clock.mark("game_launched", 1_003_400);
+
+  assert.deepEqual(lines, [
+    `${LAUNCH_PHASE_PREFIX} {"phase":"deploy_done","elapsedMs":1200,"atMs":1001200}\n`,
+    `${LAUNCH_PHASE_PREFIX} {"phase":"game_launched","elapsedMs":3400,"atMs":1003400}\n`,
+  ]);
+  // A phase's duration is the difference of two elapsed values, and there is no second clock to reconcile.
+  assert.equal(deployed.elapsedMs, 1_200);
+  assert.equal(launched.elapsedMs - deployed.elapsedMs, 2_200);
+});
+
+test("a phase marked before the clock, or behind one already written, is refused and named", () => {
+  const clock = createLaunchPhaseLog({ startedAtMs: 1_000_000, emit: () => {} });
+  assert.throws(() => clock.mark("before_the_start", 999_999), /launch_phase_before_the_clock:before_the_start:1ms/u);
+  clock.mark("module_eval_start", 1_000_500);
+  assert.throws(() => clock.mark("bridge_connected", 1_000_400), /launch_phase_went_backwards:bridge_connected:100ms/u);
+});
+
+test("the launcher's marks reach the runner's log on the launcher's own clock", () => {
+  const root = mkdtempSync(join(tmpdir(), "launch-phase-"));
+  try {
+    const path = join(root, "run-launch-phases.json");
+    const launcher = createLaunchPhaseLog({ startedAtMs: 2_000_000, emit: () => {} });
+    launcher.mark("launcher_start", 2_000_000);
+    launcher.mark("save_template_copied", 2_012_000);
+    launcher.mark("game_launched", 2_018_000);
+    writeLaunchPhaseHandover({ path, startedAtMs: launcher.startedAtMs, records: launcher.records });
+
+    const handover = readLaunchPhaseHandover(path);
+    assert.equal(handover.startedAtMs, 2_000_000);
+    assert.deepEqual(
+      handover.records.map((record) => record.phase),
+      ["launcher_start", "save_template_copied", "game_launched"],
+    );
+
+    // The runner's own first marks continue the SAME clock: the game's load and the runner's imports are then a
+    // subtraction (runner_process_start - game_launched), not an inference.
+    const lines = [];
+    const runner = createLaunchPhaseLog({ startedAtMs: handover.startedAtMs, emit: (line) => lines.push(line) });
+    runner.adopt(handover.records);
+    const firstOwnMark = runner.mark("module_eval_start", 2_021_500);
+    assert.equal(firstOwnMark.elapsedMs, 21_500);
+    assert.equal(lines.length, 4);
+    assert.match(lines[3], /"phase":"module_eval_start","elapsedMs":21500/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a handover this module did not write is refused by name, never partly adopted", () => {
+  const root = mkdtempSync(join(tmpdir(), "launch-phase-unreadable-"));
+  try {
+    const path = join(root, "launch-phases.json");
+    assert.equal(readLaunchPhaseHandover(null), null);
+    assert.equal(readLaunchPhaseHandover(""), null);
+    writeFileSync(path, "{not json", "utf8");
+    assert.throws(() => readLaunchPhaseHandover(path), /invalid_launch_phase_handover:unreadable/u);
+    writeFileSync(
+      path,
+      JSON.stringify({ startedAtMs: 1, records: [{ phase: "deploy_done", elapsedMs: 1.5, atMs: 2 }] }),
+      "utf8",
+    );
+    assert.throws(
+      () => readLaunchPhaseHandover(path),
+      /invalid_launch_phase_handover:elapsed_not_a_duration:deploy_done/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every step the launch performs emits its phase, and the line shape is spelled in one place", () => {
+  for (const phase of REQUIRED_LAUNCH_PHASES) {
+    const source = LAUNCHER_OWNED_PHASES.has(phase) ? LAUNCHER_SOURCE : RUNNER_SOURCE;
+    assert.ok(source.includes(`markPhase("${phase}"`), `no launch phase marker for ${phase}`);
+  }
+  // The launcher measures what the runner cannot see, and hands those records over instead of letting the runner
+  // re-measure them (a second measurement of the save copy is a different number, not the same fact).
+  assert.match(LAUNCHER_SOURCE, /writeLaunchPhaseHandover\(\{/);
+  assert.match(LAUNCHER_SOURCE, /GAMEBUDDY_LAUNCH_PHASE_HANDOVER/);
+  assert.match(RUNNER_SOURCE, /readLaunchPhaseHandover\(process\.env\.GAMEBUDDY_LAUNCH_PHASE_HANDOVER\)/);
+  // One spelling of the line: neither caller may format a LAUNCH_PHASE line of its own.
+  for (const [name, source] of [
+    ["runner", RUNNER_SOURCE],
+    ["launcher", LAUNCHER_SOURCE],
+  ]) {
+    assert.doesNotMatch(source, /LAUNCH_PHASE_PREFIX\s*=/u, `${name} declares the line prefix a second time`);
+    assert.doesNotMatch(source, /`LAUNCH_PHASE \$\{/u, `${name} formats a launch phase line a second time`);
+  }
 });
 
 test("the capability audit keeps an execution's terminal failure and cannot read it as success", () => {
@@ -1433,7 +1571,7 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
   const [agentTurnFailureReason, readAgentTurnOutcome] = extractRunnerFunction(
     RUNNER_SOURCE,
     ["agentTurnFailureReason", "readAgentTurnOutcome"],
-    { readFileSync, redactLiveRunText: (value) => value },
+    { readFileSync, redactLiveRunText: (value) => value, sessionEntries },
   );
   const write = (entries) => {
     const file = join(tmpdir(), `gb-ladder-turn-${randomUUID()}.jsonl`);
@@ -1478,15 +1616,46 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
 });
 
 /**
+ * One module-scope `const NAME = <expr>;` declaration from the runner's own source.
+ *
+ * By NAME, not by position: the runner declares its tool-timing constants with the run's record above the failure
+ * hooks (`Cannot access 'TOOL_TIMING_LONGEST_LIMIT' before initialization` is what the dump used to throw for a run that
+ * died early), so a slice "from the first constant to the categorizer" no longer spans them and the extraction has to
+ * follow each declaration wherever it now lives.
+ */
+function extractRunnerConstant(source, name) {
+  const at = source.indexOf(`const ${name} =`);
+  assert.ok(at !== -1, `runner must declare ${name}`);
+  let depth = 0;
+  for (let index = at; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") depth -= 1;
+    else if (char === ";" && depth === 0) return source.slice(at, index + 1);
+  }
+  throw new Error(`unterminated declaration for ${name}`);
+}
+
+/**
  * The tool-timing block - its constants and the functions that read them - evaluated on its own, so a categorization
  * can be tested against a real session record instead of against a regex. The runner module never loads here, so the
  * Host's tool-name table is supplied as a global.
  */
 function loadToolTiming(source) {
-  const constantsAt = source.indexOf("const TOOL_TIMING_LONGEST_LIMIT");
-  const categorizerAt = source.indexOf("function toolTimingCategory", constantsAt);
-  assert.ok(constantsAt > 0 && categorizerAt > constantsAt, "the tool-timing block must exist");
-  const constants = source.slice(constantsAt, categorizerAt);
+  const constants = [
+    "TOOL_TIMING_LONGEST_LIMIT",
+    "TOOL_TIMING_INVARIANT_VIOLATED",
+    "TOOL_TIMING_CATEGORIES",
+    "DELEGATE_TOOL_NAME",
+    "PLAN_SHAPE_TOOL_NAMES",
+    "PLAN_COMPILE_TOOL_NAMES",
+    "PROGRAM_SUBMIT_TOOL_NAMES",
+    "PROGRAM_STATUS_TOOL_NAMES",
+    "ACTION_TOOL_NAMES",
+    "PLAN_TOOL_NAMES",
+  ]
+    .map((name) => extractRunnerConstant(source, name))
+    .join("\n");
   const functions = [
     "toolTimingCategory",
     "emptyCategoryTiming",
@@ -1499,8 +1668,9 @@ function loadToolTiming(source) {
   return new Function(
     "STARDEW_ACTION_TOOL_NAMES",
     "readFileSync",
+    "sessionEntries",
     `${constants}\n${functions}\nreturn { TOOL_TIMING_CATEGORIES, toolTimingCategory, toolTimingInvariant, readToolTiming };`,
-  )(STARDEW_ACTION_TOOL_NAMES, readFileSync);
+  )(STARDEW_ACTION_TOOL_NAMES, readFileSync, sessionEntries);
 }
 
 function writeSessionRecord(names) {
@@ -1943,7 +2113,7 @@ test("a second turn does not answer with the first turn's program", async () => 
     heartbeatSilentMs = declaredStallMs + 30_000;
     statusQueries.length = 0;
     const samplesBefore = heartbeatSamples;
-    const secondTurn = await runAgentTurn("second turn", {}, { reason: WAKE_REASON.continuation });
+    const secondTurn = await runAgentTurn("second turn", {}, { reason: WAKE_REASON.playerInput });
 
     assert.match(
       String(stall()),
@@ -2047,6 +2217,74 @@ test("the night watcher outlives the day turn it accompanies", () => {
   );
   // And the honest pair of outcomes still exists: a settled day with no advance_day is named at once.
   assert.match(RUNNER_SOURCE, /companion_did_not_sleep/u);
+});
+
+/**
+ * The night watch's cadence, read off the runner's own `watchRollover` call site.
+ *
+ * A string answer rather than a boolean, because a red gate has to say which of the two defects it found: the timer put
+ * back (`timer`), or the trigger gone so the loop falls back to its ceiling alone (`no_trigger`).
+ */
+function nightWatchCadence(source) {
+  const start = source.indexOf("watchRollover(world, {");
+  if (start < 0) return "no_watch_call_site";
+  const end = source.indexOf("}),", start);
+  const site = source.slice(start, end < 0 ? undefined : end);
+  if (/pollIntervalMs/u.test(site)) return "timer";
+  if (!/waitForLook: \(ceilingMs\) => worldFacts\.wait\(ceilingMs\)/u.test(site)) return "no_trigger";
+  return "world_facts";
+}
+
+test("the night watch waits on the world's statements instead of observing at 3.56 Hz", () => {
+  // Measured 2026-11-15 (`round56`): 742 observations inside ONE 208.6 s night window (period median 289 ms, the run's
+  // longest unbroken run 208.6 s), 618 of the run's 624 suppressed flushes carrying no fact at all - every one of those an
+  // ask the timer made on a world that had nothing to say, and each an entire snapshot rebuilt on the game thread. A
+  // rollover is an EVENT, so the watch waits on the Mod's own statements and the interval degrades to a ceiling.
+  assert.equal(
+    nightWatchCadence(RUNNER_SOURCE),
+    "world_facts",
+    "the watch's wait must be the facts the Mod publishes (`worldFactWake`), with `watchRollover`'s ceiling as the fallback",
+  );
+  // THE FALSIFIERS, both directions, on the same reader: the timer restored, and the trigger removed.
+  assert.equal(
+    nightWatchCadence(
+      RUNNER_SOURCE.replace(
+        "waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),",
+        "waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),\n        pollIntervalMs: 250,",
+      ),
+    ),
+    "timer",
+    "a `pollIntervalMs` inside this call site is the defect the reader exists to catch, and it must be named",
+  );
+  assert.equal(
+    nightWatchCadence(RUNNER_SOURCE.replace("waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),", "")),
+    "no_trigger",
+    "a watch with no trigger falls back to the ceiling alone, which is the timer under another name",
+  );
+
+  // The latch is ONE per run, and the fact listener is the only thing that publishes into it. Two spellings of the wake
+  // would be two clocks.
+  assert.equal(
+    (RUNNER_SOURCE.match(/worldFactWake\(\)/gu) ?? []).length,
+    1,
+    "exactly one wake latch, so every waiter shares one answer about whether the world spoke",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /if \(NIGHT_WAKE_WORLD_FACT_KINDS\.includes\(entry\.worldFactKind\)\) worldFacts\.factPublished\(\);/u,
+    "and the only publisher is the fact listener, keyed on the statements the watch can decide from",
+  );
+  // The kinds are what the watch actually decides on, so a bright line is drawn around them: her own progress
+  // (`tile_advanced`, `route_progress`) and the transport's bookkeeping must not wake it, or a walk to bed would be the
+  // 3.56 Hz poll again with a better excuse.
+  const kinds = /const NIGHT_WAKE_WORLD_FACT_KINDS = Object\.freeze\(\[([^\]]*)\]\);/u.exec(RUNNER_SOURCE)?.[1] ?? "";
+  assert.match(kinds, /"day_started"/u, "the day boundary is the crossing itself");
+  assert.match(
+    kinds,
+    /"night_ended_pass_out"/u,
+    "the engine's pass-out is how a night the companion did not sleep ends",
+  );
+  assert.doesNotMatch(kinds, /tile_advanced|route_progress|execution_receipt/u, "progress is not a rollover");
 });
 
 test("a pass-out mid-night is not the night's outcome: the watch runs on to the new day", async () => {
@@ -2416,6 +2654,9 @@ test("a night the Mod crossed through Body Program reaches the record with its o
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: nightTimeoutMs,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },
@@ -2627,6 +2868,9 @@ test("a night her own sleep ended, crossed by the calendar, carries her sleep on
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },
@@ -2802,6 +3046,9 @@ test("a night she slept through and the host player did not is not reported as h
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
         MULTIDAY_POLL_INTERVAL_MS: 5,
+        // The watch waits on the world's statements in the runner; this scripted night has no fact stream, so the stub
+        // spends the same 5 ms per look that the runner's own record poll spends.
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
         MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
         MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
       },
@@ -2943,6 +3190,18 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
     verdict: { state: "blocked", reasonCode: "multiday_routine_blocked", rubric: { broken: [], unmeasured: [] } },
     timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "smapi", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: 0 },
+    // The run trace is a DECLARATION the writer always publishes, not a reading a caller supplies:
+    // `writeEvidenceBundle` replaces it with the record it decides from the file it copies, so every manifest the
+    // product can write carries it - including the ones whose product wrote no trace, which publish
+    // `present: false` with the reason. A hand-built manifest that omits the field is therefore not a bundle this
+    // contract can describe, and the fixture below was the incomplete side, not the check.
+    runTrace: {
+      path: "run-trace.json",
+      present: false,
+      reason: "run_trace_not_declared",
+      sourcePath: null,
+      spans: null,
+    },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
     // The run's memory and its unwind: the two fields an auditor reads that `round40` published as nothing. Here they
     // are the honest EMPTY shapes - a run that took no turn sample and one whose unwind nobody has measured yet - which
@@ -2964,6 +3223,25 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
   };
   const codesFor = (bundle) => validateEvidenceBundle(bundle).violations.map((entry) => entry.code);
   assert.deepEqual(codesFor({ ...base, multiday: bundleCrossingRecord(record) }), [], "a judged record is writable");
+  // THE DECLARATION IS READ, NOT MERELY REQUIRED: both legal states of the run-trace record are writable, and a
+  // presence claim the file cannot back is refused by its own code. Without this, `run_trace_declaration_missing`
+  // would be indistinguishable from a check that insists every bundle contain a trace.
+  assert.deepEqual(
+    codesFor({
+      ...base,
+      runTrace: { path: "run-trace.json", present: true, reason: null, sourcePath: "run-trace.json", spans: 3 },
+    }),
+    [],
+    "a trace that was copied is writable",
+  );
+  assert.deepEqual(
+    codesFor({
+      ...base,
+      runTrace: { path: "run-trace.json", present: true, reason: null, sourcePath: "run-trace.json", spans: null },
+    }),
+    ["run_trace_spans_invalid"],
+    "a presence claim with no span count is refused by name",
+  );
   assert.ok(
     codesFor({
       ...base,
@@ -3961,6 +4239,20 @@ const instrumentGlobals = Object.freeze({
   }),
   summarizeHostMemory,
   RESULT_FILE: "/tmp/gb-runner-result.json",
+  // The input manifest. Its own suite drives the real builder against a real session record; here the call is recorded,
+  // because a test that assembles a result does not own the directory the manifest would be written to.
+  writeInputManifest: (call) =>
+    Object.freeze({ state: "written", reasonCode: null, path: call.resultPath, sections: 1, bytes: 1 }),
+  // The world's own clock, as the run sampled it, and the facts it recorded over that span. Both are read by
+  // `buildRunResult` on every path, so a test that assembles a result has to supply them: the sampler here is MEASURED
+  // (two readings, the clock between them), so a fixture that does not care about the clock is not blocked by it.
+  gameClock: (() => {
+    const clock = createGameClock({ now: () => 1_000 });
+    clock.observe(Object.freeze({ timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: 1 }));
+    clock.observe(Object.freeze({ timeOfDay: 660, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: 2 }));
+    return clock;
+  })(),
+  factLog: [],
 });
 
 /** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */
@@ -4080,6 +4372,102 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
   assert.equal(passed.state, "passed");
   assert.equal(passed.failure, null);
   assert.equal(passed.reasonCode, undefined, "a passed run publishes no reason at all");
+});
+
+/**
+ * A clock sampler fed the snapshots a bridge would admit: a NEW frozen object per read, which is how
+ * `local-stardew-bridge.ts` stores one (`this.#snapshot = Object.freeze({ ...snapshot, ... })`) and what makes two
+ * samples of one snapshot a single reading.
+ */
+const clockFrom = (...timesOfDay) => {
+  const clock = createGameClock({ now: () => 1_000 });
+  timesOfDay.forEach((timeOfDay, index) =>
+    clock.observe(Object.freeze({ timeOfDay, dayOfMonth: 1, seasonIndex: 0, year: 1, revision: index + 1 })),
+  );
+  return clock;
+};
+/** Every clause of the rung satisfied: what a run looks like when only the world's own clock is against it. */
+const ALL_CLAUSES_PASSED = ROUND38_CLAUSES.map((clause) => ({ ...clause, passed: true }));
+
+/**
+ * WHETHER THE WORLD MOVED IS A PRECONDITION OF THE VERDICT, NOT A CLAUSE BESIDE IT.
+ *
+ * Measured 2026-11-19 (`round50b`): ten real minutes, the game process alive with its update counter advancing
+ * (`stage=capability_publication;tick=37851`), `BRIDGE_FACT 0`, `time_milestone 0`, `day_started 0` - and the same
+ * scenario in `round49` produced `time_milestone` six times in nineteen minutes. A paused world (no `gameTimeInterval`)
+ * and a Mod that stopped publishing produce that same artifact, so the verdict "she stopped" cannot be read. The clock
+ * is therefore the FIRST clause the builder ANDs, and it fails closed in BOTH of its unmeasured shapes: one reading, or
+ * two readings of one clock.
+ */
+test("a run whose clock never advanced publishes a refused verdict, not a behavioural one", async () => {
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600, 600), factLog: [] }),
+  );
+  // A run that ALSO has something to say about the companion - a silent session - so the assertion is about PRECEDENCE:
+  // the refusal has to outrank the behavioural clause, or "she stopped" is published against a world that never moved.
+  const silentSession = ROUND38_CLAUSES.map((clause) =>
+    clause.id === "companion_interaction"
+      ? { ...clause, passed: false, reasonCode: "unobserved" }
+      : { ...clause, passed: true },
+  );
+  const result = await buildRunResult({ rungClauses: silentSession, settlement: null });
+  assert.equal(result.failedClause, "game_clock", "the clock is the clause that speaks first");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "world_clock_never_advanced:600:600:0");
+  assert.equal(result.failure.reasonCode, "world_clock_never_advanced:600:600:0", "and the dump agrees with it");
+  // The behavioural finding is not swallowed by the refusal: it is still named as a failed clause beside the reason.
+  assert.deepEqual(
+    result.failedClauses.map((clause) => clause.id),
+    ["game_clock", "companion_interaction"],
+    "a second, independent finding must not live only in the evidence",
+  );
+  assert.equal(result.gameClock.first, 600, "the reading travels with the refusal");
+  assert.equal(result.gameClock.last, 600);
+  assert.equal(result.gameClock.advancedMinutes, 0);
+  assert.equal(result.gameClock.snapshotsSeen, 2);
+});
+
+test("one reading is `not_measured:game_clock_read_once`, and the same clause list passes on a moving clock", async () => {
+  // The other unmeasured shape: `round50b` looked at the world once, so its span is unknown rather than zero. And the
+  // falsifier for the whole clause: with the clock advancing, the SAME clauses pass - a gate that reds everything is not
+  // a gate.
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600), factLog: [] }),
+  );
+  const single = await buildRunResult({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.equal(single.state, "blocked");
+  assert.equal(single.reasonCode, "not_measured:game_clock_read_once");
+  assert.equal(single.gameClock.advancedMinutes, null, "no second reading is not a zero span");
+
+  const [, movingBuilder] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({ gameClock: clockFrom(600, 660), factLog: [] }),
+  );
+  const moved = await movingBuilder({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.equal(moved.state, "passed");
+  assert.equal(moved.gameClock.advancedMinutes, 60);
+});
+
+test("the run reads the clock where it already reads the world, and once more before the verdict", () => {
+  // WIRED, not merely present: a module nobody feeds is a gate that agrees with itself. Three call sites, each at a point
+  // the run already passes: the sampler the world reads go through, the pre-dispatch read every executed action takes,
+  // and one SOLICITED read before the bridge closes - the read a run with no observations at all (round50b) needs.
+  const remember = extractRunnerFunction(RUNNER_SOURCE, "rememberObservation").source;
+  assert.match(remember, /gameClock\.observe\(/u, "every world read must reach the sampler");
+  const finalRead = RUNNER_SOURCE.indexOf('await readGameClockOnce({ source: "final_read" })');
+  assert.ok(finalRead > 0, "the run must solicit one reading of its own before it judges anything");
+  const lastJournalRead = RUNNER_SOURCE.indexOf("programOutcomesAtTeardown = await sampleProgramOutcomes();");
+  const verdict = RUNNER_SOURCE.indexOf("const result = await buildRunResult({\n    rungClauses,");
+  assert.ok(lastJournalRead > 0 && verdict > 0, "the boundary this reading sits in must still exist");
+  assert.ok(
+    finalRead > lastJournalRead && finalRead < verdict,
+    "the last reading has to happen while the bridge is still alive and before the verdict is written",
+  );
 });
 
 test("an unproven task is not a pass: the arm names the criterion it could not decide", async () => {
@@ -4408,7 +4796,7 @@ test("the day's shortage fact is composed once, on the first turn, and published
     "the fact is computed on the day's first turn and on no other turn",
   );
   assert.match(RUNNER_SOURCE, /taskId: taskForDay\(day\),\s*snapshot: client\.state\?\.snapshot \?\? null,/);
-  // And the first-turn prompt is the one that carries it: a fact appended to a continuation turn would repeat.
+  // And the first-turn prompt is the one that carries it: a fact appended to a later turn would repeat.
   assert.match(RUNNER_SOURCE, /turns === 1\s*\?\s*withDayFact\(promptForDay\(day\), dayFact\)/);
   // Published, so "she was handed the supply and did not go" is distinguishable from "nothing ever told her".
   assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
@@ -4555,8 +4943,16 @@ test("the day loop asks the wake decision before it prompts, so a settlement alo
     "a suppressed wake must wait for the next poll, not fall through to the prompt",
   );
   assert.ok(
-    loop.indexOf("promptForDayContinuation(") > gateAt,
-    "the carry-on prompt must be reachable only through the wake decision",
+    loop.indexOf("promptForStall(") > gateAt && loop.indexOf("promptForStaleWorld(") > gateAt,
+    "the two fact-answered prompts must be reachable only through the wake decision",
+  );
+  // AND THERE IS NO GENERIC CARRY-ON PROMPT LEFT. Measured 2026-11-13 (`round47`): 16 of the 30 idle gaps after turn 34 sat
+  // in a 19-22 s band, and every one of them ended in a prompt that asked her to carry on with a world that had published
+  // nothing. A turn that opens now answers a question the world asked, so the template that said "carry on" is gone and a
+  // test that let it come back by another name would be no guard at all.
+  assert.ok(
+    !loop.includes("promptForDayContinuation"),
+    "a generic carry-on prompt is the clock's arm still wearing a prompt's name",
   );
   assert.match(loop, /reason: wake\.reason/u, "the prompt must carry the decision's own reason");
 });
@@ -4567,7 +4963,6 @@ const IDLE_DAY = Object.freeze({
   objectiveMet: false,
   programRunning: false,
   admissionPending: false,
-  quietMs: QUIET_BOUND_MS * 2,
   lateDay: false,
   dayEndOffered: false,
   stalled: false,
@@ -4576,10 +4971,19 @@ const IDLE_DAY = Object.freeze({
 
 const WAKE_PRODUCERS = Object.freeze({
   day_start: () => decideDayWake({ ...IDLE_DAY, turnIndex: 0 }).reason,
-  continuation: () => decideDayWake(IDLE_DAY).reason,
   stall_wake: () => decideDayWake({ ...IDLE_DAY, stalled: true }).reason,
   stale_world: () => decideDayWake({ ...IDLE_DAY, worldStateStale: true }).reason,
   day_end_offer: () => decideDayWake({ ...IDLE_DAY, objectiveMet: true, lateDay: true }).reason,
+  // THE TWO MEASUREMENTS, not a timer: the day is called unfinishable when the objective's published reading has
+  // stood still for a whole measured turn, so this producer hands the decider exactly that - a still reading one
+  // span old - and `lateDay`, which it takes from the world clock.
+  objective_unreachable_for_today: () =>
+    decideDayWake({
+      ...IDLE_DAY,
+      lateDay: true,
+      objectiveProgressSinceMs: 80_000,
+      objectiveSpanMs: 40_000,
+    }).reason,
   // A session goal is a PLAYER turn, so its reason is declared at its own call site: this reads that site rather than
   // restating it, which is what makes "reachable" a fact about the runner instead of about this table.
   player_input: () => {
@@ -4602,11 +5006,645 @@ test("every declared wake reason is reachable from a test, and no reason is decl
   );
 });
 
+/**
+ * THE OTHER HALF OF REACHABILITY, on the runner's side of it.
+ *
+ * `objective_unreachable_for_today` is answered from `readObjectiveState`, which answers `advancing` whenever either
+ * the progress or the span is unmeasured - deliberately, so "we could not tell" can never licence the reason. The
+ * consequence for the RUN is not visible to any test of the decider: a day loop that hands `decideDayWake` an
+ * `objectiveMet` and nothing else can never reach the reason, however late its evening gets, and every producer table
+ * above would still pass. Measured on the tree this test was written against: the runner's one `decideDayWake` call
+ * passed neither `objectiveProgressSinceMs` nor `objectiveSpanMs`.
+ */
+test("the day loop measures the facts its objective branch reads, instead of handing the decider a branch that cannot fire", () => {
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const callAt = loop.indexOf("decideDayWake({");
+  assert.ok(callAt >= 0, "the day loop must ask the decider");
+  const call = loop.slice(callAt, loop.indexOf("});", callAt) + 3);
+  for (const fact of ["objectiveMet:", "objectiveProgressSinceMs:", "objectiveSpanMs:"]) {
+    assert.ok(
+      call.includes(fact),
+      `the day loop never hands the decider ${fact}: the objective branch that reads it cannot fire in any run`,
+    );
+  }
+  // AND FROM MEASUREMENTS RATHER THAN FROM NUMBERS: the progress is the age of the objective's own published reading,
+  // the span is this run's prompt-turn cadence. A constant here would be a timer wearing the reason's name.
+  assert.match(
+    call,
+    /objectiveProgressSinceMs:[\s\S]{0,120}?objectiveProgress/u,
+    "the progress handed to the decider must be the age of the objective's published reading",
+  );
+  assert.match(
+    call,
+    /objectiveSpanMs: medianPromptTurnIntervalMs\(/u,
+    "the span handed to the decider must be this run's own measured prompt-turn interval",
+  );
+});
+
+test("the run's prompt-turn span is measured from its own turns, and an unmeasured cadence is not a span", () => {
+  // "Nothing moved for a whole turn" is a statement about THIS run's turns, so the number comes from the turn starts
+  // the harness recorded. Fewer than two turns is no interval at all - `null`, which `readObjectiveState` refuses as
+  // unmeasured - rather than a zero that would read as a stall nobody observed.
+  const interval = extractRunnerFunction(RUNNER_SOURCE, "medianPromptTurnIntervalMs");
+  assert.equal(interval([]), null, "a run with no prompt turn has no cadence to measure");
+  assert.equal(interval([1_000]), null, "one turn is not an interval");
+  assert.equal(interval([1_000, 3_000]), 2_000, "two turns: the one interval between them");
+  assert.equal(interval([0, 10_000, 30_000]), 15_000, "two intervals: their mean, rounded");
+  assert.equal(interval([0, 10_000, 30_000, 100_000]), 20_000, "three intervals: the middle one");
+  // A cadence the world produced in zero milliseconds is `0`, and `readObjectiveState` refuses `spanMs <= 0` as an
+  // unmeasured span: the answer is `advancing`, not a stall. The reading does not silently become `1` here.
+  assert.equal(interval([5, 5]), 0);
+});
+
+test("the day's offer is closed by BOTH reasons that make it, and asked as the late-day question", () => {
+  // `decideWake` answers `already_offered` once `dayEndOffered` is true, for `day_end_offer` AND for
+  // `objective_unreachable_for_today`: they are the day's one question, asked once. The runner keeps one flag, so a
+  // flag closed on only one of them re-asks the same question on every poll until the night - the ping the flag
+  // exists to remove - and the second reason only became able to fire once the run measured the two facts above.
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const flagAt = loop.indexOf("dayEndOffered = true");
+  assert.ok(flagAt >= 0, "the day loop must remember that it offered the day");
+  // The STATEMENT, not the line: the condition names both reasons and may be laid out over several lines.
+  const statementAt = loop.lastIndexOf("if (", flagAt);
+  assert.ok(statementAt >= 0 && statementAt < flagAt, "the flag must be closed by a condition, not unconditionally");
+  const flagStatement = loop.slice(statementAt, loop.indexOf("\n", flagAt));
+  for (const reason of ["WAKE_REASON.dayEndOffer", "WAKE_REASON.objectiveUnreachableForToday"]) {
+    assert.ok(
+      flagStatement.includes(reason),
+      `the day's offer is not closed when ${reason} fires: it repeats every poll`,
+    );
+  }
+  // AND ASKED AS THE LATE-DAY QUESTION: this reason means the rest of the day is the decision, so the prompt states
+  // the clock and the one action that ends a day rather than saying "carry on".
+  const promptChoice = loop.slice(loop.indexOf("const prompt ="), loop.indexOf("const spokenBefore"));
+  assert.ok(promptChoice.length > 0, "the day loop must choose what it asks her");
+  assert.ok(
+    promptChoice.includes("WAKE_REASON.objectiveUnreachableForToday"),
+    "the reason's own question is not chosen: it would fall through to whichever prompt the clock happened to select",
+  );
+  assert.ok(
+    /objectiveUnreachableForToday[\s\S]{0,80}promptForLateDay/u.test(promptChoice),
+    "the still objective is asked the late-day question, not `carry on`",
+  );
+});
+
 test("the multi-day result publishes the wake account the verdict reads", () => {
-  // The three readings cannot be reconstructed from the session alone - a prompt that was never issued leaves no
-  // record there - so the runner has to publish them by name.
-  assert.match(RUNNER_SOURCE, /continuationPromptsIssued:/u);
-  assert.match(RUNNER_SOURCE, /continuationPromptsSuppressed:/u);
+  // The account cannot be reconstructed from the session alone - a prompt that was never issued leaves no record there -
+  // so the runner has to publish it by name.
+  assert.match(RUNNER_SOURCE, /dayEndOffers:/u);
+  assert.match(RUNNER_SOURCE, /stallWakes:/u);
   assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
-  assert.match(RUNNER_SOURCE, /quietBoundMs: QUIET_BOUND_MS/u);
+  assert.match(RUNNER_SOURCE, /suppressed: wakesSuppressed/u);
+  // THE SILENCE, PUBLISHED. A quiet bound no longer guarantees a prompt, so the run has to say how long nothing asked
+  // her anything and which decision did the leaving; without it a companion left alone for ten minutes is
+  // indistinguishable from one that was busy.
+  assert.match(RUNNER_SOURCE, /noWakeForMs: noWake\.forMs/u);
+  assert.match(RUNNER_SOURCE, /noWakeLastReason: noWake\.lastReason/u);
+  assert.match(RUNNER_SOURCE, /"MULTIDAY_NO_WAKE"/u);
+  assert.match(RUNNER_SOURCE, /no_wake_for_ms:\$\{String\(noWake\.forMs\)\}:\$\{String\(noWake\.lastReason/u);
+  // The span the objective branch read travels with them: a run that published `objective_unreachable_for_today: 1`
+  // must be readable against the number that licensed it, and that number exists nowhere else.
+  assert.match(RUNNER_SOURCE, /objectiveSpanMs/u);
+});
+
+/**
+ * THE PROMISE THAT WAS NEVER TAKEN, on the runner's own side of it.
+ *
+ * The reading itself is the baseline module's (`multiday-baseline.test.mjs` drives it, in both directions). What can only
+ * be checked here is that the runner JOINS the two halves the reading needs - what she said, per turn, and whether that
+ * turn submitted `sleep` - because `sessionTurns` is the only record where they meet.
+ *
+ * Measured 2026-11-13 (`round47`): nine delivered turns in the farmhouse with her saying 「就睡」/「躺平」/「这觉才算真睡下去」,
+ * and ZERO `sleep` submissions in fifty-nine turns. The night was reported as `pass_out` - its consequence - so the
+ * wiring below is what makes the cause visible at all.
+ */
+test("the runner records, per turn, whether that turn submitted a sleep", () => {
+  const sleepSubmittedSince = extractRunnerFunction(RUNNER_SOURCE, "sleepSubmittedSince");
+  const flat = (action) => ({ via: "flat", action, requestId: `req-${action}`, state: "succeeded" });
+  const program = (actionId, args = {}) => ({
+    programId: `plan_${actionId}`,
+    accepted: true,
+    nodes: [{ nodeId: "n01", actionId, arguments: args }],
+  });
+  // THE FLAT CHANNEL: the row is appended by the turn that dispatched it, and only rows AFTER the marker count.
+  const beforeTheTurn = [flat("harvest_crop")];
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: beforeTheTurn.length, submissionsFrom: 0 },
+      { trace: [...beforeTheTurn, flat("sleep")], submissions: [] },
+    ),
+    true,
+    "a flat `sleep` in this turn is the action that ends the night",
+  );
+  // THE PROGRAM CHANNEL: a node names the action, and there is no trace row for it at all.
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: 0, submissionsFrom: 0 },
+      { trace: [], submissions: [program("move_to_tile"), program("sleep")] },
+    ),
+    true,
+    "a `sleep` node inside a submitted program is the same night ended",
+  );
+  // AND THE OTHER DIRECTION, which is the run this reading exists for: a turn of ordinary farm work submits no sleep, and
+  // the thing that merely LOOKS like it - the emote named `sleep` - is not the action.
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: 0, submissionsFrom: 0 },
+      {
+        trace: [flat("move_to_tile"), flat("express_emote")],
+        submissions: [program("express_emote", { emote: "sleep" })],
+      },
+    ),
+    false,
+    "an emote named sleep is not the sleep action",
+  );
+  // A DISPATCH FROM AN EARLIER TURN IS NOT THIS TURN'S: the markers are the boundary, so a night she ended before this
+  // turn cannot answer for it.
+  const earlier = [flat("sleep")];
+  assert.equal(
+    sleepSubmittedSince(
+      { traceFrom: earlier.length, submissionsFrom: 1 },
+      {
+        trace: [...earlier, flat("harvest_crop")],
+        submissions: [program("sleep"), program("harvest_crop")],
+      },
+    ),
+    false,
+    "only what arrived after the marker belongs to this turn",
+  );
+  // AND THE WIRING, which no unit of the reading can check: the turn carries the answer, and the assessment is handed
+  // the reading instead of judging the night by its consequence alone.
+  assert.match(
+    RUNNER_SOURCE,
+    /sessionTurns\.push\(\s*Object\.freeze\(\{\s*goalIndex:[\s\S]{0,400}?sleepSubmitted,/u,
+    "the turn record must carry what the turn dispatched beside what it said",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const sleepPromises = sleepPromisesNotTaken\(\{ turns: sessionTurns \}\);/u,
+    "the reading is taken from the turn stream, with its population printed",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /assessMultiDayBaseline\(\{[\s\S]{0,1200}?sleepPromises: sleepPromises\.readings,/u,
+    "the assessment must be handed the promises, not asked to guess them from the pass-out",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /MULTIDAY_SLEEP_PROMISES[\s\S]{0,400}?examined: sleepPromises\.examined/u,
+    "the population the reading examined is printed beside the readings themselves",
+  );
+});
+
+// ---- THE DAY'S NOTE, ASSERTED AGAINST WHAT SHE WAS TOLD ------------------------------------------------
+//
+// round49 (multiday_routine, day 1) delivered exactly one player message and it was the stance gate's prompt: the day's
+// note (`clear_east_patch`) appeared nowhere in the run, she answered a question correctly, submitted nothing, and the
+// round was scored as a talk-only round it had never been given the task for. The three assertions below are that
+// finding, its order, and the hour the gate claimed - each read through the real prompt table and the real gate module.
+
+/** The prompt table and the note composition, evaluated from the runner's own source with the sweep prompts bound in. */
+function loadPromptScope() {
+  const build = new Function(
+    "sweepTaskPrompts",
+    `
+${extractRunnerConstant(RUNNER_SOURCE, "DAILY_TASK_PROMPT_ZH")}
+${extractRunnerConstant(RUNNER_SOURCE, "DAILY_TASK_PROMPT_EN")}
+${extractRunnerFunction(RUNNER_SOURCE, "dayNoteFragment").source}
+${extractRunnerConstant(RUNNER_SOURCE, "SCENARIO_PROMPTS")}
+return { DAILY_TASK_PROMPT_ZH, DAILY_TASK_PROMPT_EN, SCENARIO_PROMPTS, dayNoteFragment };
+`,
+  );
+  return build(sweepTaskPrompts);
+}
+
+const sessionLine = (text) =>
+  JSON.stringify({
+    type: "message",
+    timestamp: new Date().toISOString(),
+    message: { role: "user", content: [{ type: "text", text }] },
+  });
+
+test("the fragment the note assertion searches for is the note's own text, for every task the rotation can ask for", () => {
+  // A second hand-written copy of the note would pass this assertion on the day it was written and stop meaning anything
+  // the moment the note's wording changed. The population comes from the rotation, not from a list here.
+  const scope = loadPromptScope();
+  const drifted = [];
+  for (const task of DAILY_TASK_ROTATION) {
+    for (const locale of ["zh", "en"]) {
+      const fragment = scope.dayNoteFragment(task, locale);
+      const note = scope.SCENARIO_PROMPTS.multiday_routine[locale](1, task);
+      if (typeof fragment !== "string" || fragment.length === 0) drifted.push(`${locale}:${task}:no_fragment`);
+      else if (!note.includes(fragment)) drifted.push(`${locale}:${task}:not_in_the_note`);
+    }
+  }
+  assert.deepEqual(drifted, [], drifted.join("; "));
+  // A task the table cannot state is reported as a missing note text, never as an empty fragment that matches everything.
+  assert.equal(scope.dayNoteFragment("a_task_nobody_wrote", "zh"), null);
+});
+
+test("the session reader answers what she was told, and null when it could not read the record", () => {
+  // The reader is the instrument the whole assertion rests on: an admission the Host accepted and never delivered must be
+  // visible as absent, so the reading is taken from the session's own user messages.
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", {
+    readFileSync,
+    sessionEntries,
+  });
+  const dir = mkdtempSync(join(tmpdir(), "session-player-texts-"));
+  const path = join(dir, "session.jsonl");
+  writeFileSync(
+    path,
+    [
+      sessionLine("早上好"),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: "早上好。" }] },
+      }),
+      JSON.stringify({ type: "message", message: { role: "user", content: "a bare string" } }),
+      JSON.stringify({ type: "other", message: { role: "user", content: "not a message entry" } }),
+      "{ half-written",
+    ].join("\n"),
+    "utf8",
+  );
+  assert.deepEqual(readSessionPlayerTexts(path), ["早上好", "a bare string"]);
+  assert.equal(readSessionPlayerTexts(undefined), null, "no record is not an empty record");
+  assert.equal(readSessionPlayerTexts(join(dir, "absent.jsonl")), null);
+});
+
+test("round49's shape is three findings and a zero, and the same run with its note delivered is none", () => {
+  // Both cases from ONE population: the session record this run would have written. The note's text is composed by the
+  // runner's own scenario prompt, and the fragment is the table entry that note is built from.
+  const scope = loadPromptScope();
+  const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
+  const note = scope.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
+  const scheduled = [{ day: 1, task: "clear_east_patch", note: scope.dayNoteFragment("clear_east_patch", "zh") }];
+  const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SOURCE, "readSessionPlayerTexts", {
+    readFileSync,
+    sessionEntries,
+  });
+  const dir = mkdtempSync(join(tmpdir(), "day-note-"));
+  const round49Session = join(dir, "round49.jsonl");
+  const correctSession = join(dir, "correct.jsonl");
+  writeFileSync(round49Session, sessionLine(stance.prompt), "utf8");
+  writeFileSync(correctSession, [sessionLine(note), sessionLine(stance.prompt)].join("\n"), "utf8");
+
+  const lost = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled,
+    inputs: [
+      { day: 1, channel: "harness", text: note, admitted: true },
+      {
+        day: 1,
+        channel: "gate",
+        gateId: stance.id,
+        text: stance.prompt,
+        declaredGameTime: stance.trigger.atGameTime,
+        gameTime: 620,
+        admitted: true,
+      },
+    ],
+    sessionTexts: readSessionPlayerTexts(round49Session),
+  });
+  assert.equal(lost.reading, "days scheduled 1 · notes delivered 0");
+  assert.deepEqual(
+    lost.findings.map((finding) => finding.code),
+    [
+      "day_note_not_delivered:1:clear_east_patch",
+      "dialogue_gate_preempted_the_day_note:turn-initiative-split:1",
+      "dialogue_gate_fired_early:turn-initiative-split:1200:0620",
+    ],
+  );
+  assert.equal(lost.passed, false);
+
+  const correct = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled,
+    inputs: [
+      { day: 1, channel: "harness", text: note, admitted: true },
+      {
+        day: 1,
+        channel: "gate",
+        gateId: stance.id,
+        text: stance.prompt,
+        declaredGameTime: stance.trigger.atGameTime,
+        gameTime: 1205,
+        admitted: true,
+      },
+    ],
+    sessionTexts: readSessionPlayerTexts(correctSession),
+  });
+  assert.deepEqual(correct.findings, []);
+  assert.equal(correct.reading, "days scheduled 1 · notes delivered 1");
+  assert.equal(correct.passed, true);
+});
+
+test("the note assertion is wired to the session record, the planner's clock and the run's verdict", () => {
+  // A reading nobody calls is a document. These are the links that make it a measurement.
+  assert.match(RUNNER_SOURCE, /assessPlayerInputSchedule,/);
+  // 1. BOTH submission sites record what they sent, and where the note arrived from: the harness's own day turns and the
+  //    scheduled gates. One site recording is a note whose absence can only be guessed at.
+  assert.equal(
+    (RUNNER_SOURCE.match(/playerInputs\.push\(/gu) ?? []).length,
+    2,
+    "the day turns and the gates are the two places a player line is submitted",
+  );
+  // 2. The clock reaches the planner, read at the boundary that speaks - otherwise `atGameTime` is a comment.
+  assert.match(
+    RUNNER_SOURCE,
+    /const boundaryClock = readWorldClock\(\);\n\s+const gameTime = boundaryClock\.unknown === true \? null : boundaryClock\.timeOfDay;/u,
+    "the boundary reads the world clock it is about to be judged on",
+  );
+  assert.match(RUNNER_SOURCE, /planGateDeliveries\(SCHEDULED_DIALOGUE_GATES, \{\n\s+day,\n\s+gameTime,/u);
+  // 3. The reading is taken from THIS run's session record, and prints its population so a zero is visible as a zero.
+  assert.match(
+    RUNNER_SOURCE,
+    /sessionTexts: readSessionPlayerTexts\(sessionSearch\.path\),/u,
+    "the reading must read what arrived, not what was sent",
+  );
+  assert.match(RUNNER_SOURCE, /MULTIDAY_DAY_NOTES[\s\S]{0,200}dayNoteDelivery\.reading/u);
+  // 4. And it reaches the verdict: an arm of the session verdict (so `completed` is unreachable), a clause of its own,
+  //    and the reading itself in result.json.
+  assert.match(RUNNER_SOURCE, /dayNoteVerdict: dayNoteDelivery\.verdictCode,/u);
+  assert.match(RUNNER_SOURCE, /if \(dayNoteVerdict !== null\) return dayNoteVerdict;/u);
+  assert.match(RUNNER_SOURCE, /id: "day_note_delivery",/u);
+  assert.match(RUNNER_SOURCE, /^\s+dayNoteDelivery,$/mu, "the reading must reach result.json");
+});
+
+// A DAY'S FIRST TURN MUST NOT OPEN ON `世界：尚未收到观察`.
+//
+// Measured `round49` (day 1): the harness's very first delivery carried that world-state block, her first thinking was
+// "no observation yet", and her first action was `stardew_observe {}` - a whole turn spent looking at a world the
+// harness already held. THE PRODUCER WAS MISSING, NOT A DELAY: the launch handle observes the world and parks the
+// snapshot in `launch.initialFacts`, and only `runtime.connected.activateIngress()` hands those facts to the pump
+// (`host.acceptInitialFacts` -> `pump.enqueueFact`, which sets `#lastSnapshot` synchronously). Production calls it once
+// after the enter receipt commits and refuses every task prompt until it has. A bounded wait alone would have expired on
+// every run, because nothing in this harness ever asked the Host to hand the reading over.
+//
+// These tests hold both ends: the reading that NAMES a blind day, and the attach boundary that stops one happening.
+const ROUND49_FIRST_DELIVERY = ["…", "<world-state>", "世界：尚未收到观察", "</world-state>"].join("\n");
+const OBSERVED_FIRST_DELIVERY = [
+  "<world-state>",
+  "世界（revision 0，刚刚更新）06:20（清晨）；春季 1 日；位置: 农舍；种子: 2 花椰菜种子",
+  "</world-state>",
+].join("\n");
+const BLIND_MARKER = "世界：尚未收到观察";
+
+test("a day that opened without a world is a finding, named with its day and the wait in front of it", () => {
+  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SOURCE, [
+    "readDayFirstDelivery",
+    "assessDayStarts",
+  ]);
+  // RED, on round49's own delivery: the message that reached her carried no world.
+  const blind = readDayFirstDelivery({
+    day: 1,
+    texts: [ROUND49_FIRST_DELIVERY],
+    fromIndex: 0,
+    waitedMs: 15_000,
+    marker: BLIND_MARKER,
+  });
+  assert.equal(blind.measured, true);
+  assert.equal(blind.startedBlind, true, "round49's first delivery was handed a turn with no world in it");
+  const red = assessDayStarts({ scheduledDays: 1, readings: [blind] });
+  assert.deepEqual(
+    red.findings.map((finding) => finding.code),
+    ["day_started_blind:1"],
+  );
+  assert.equal(red.findings[0].waitedMs, 15_000, "the finding carries the wait that expired in front of it");
+  assert.equal(red.reading, "days started blind 1 of 1");
+  assert.equal(red.verdictCode, "day_started_blind:1");
+  assert.equal(red.blocked, null);
+
+  // GREEN, on the delivery the attach boundary produces: the world-state block is the reading itself, so a reader can
+  // check the judgement instead of trusting it.
+  const observed = readDayFirstDelivery({
+    day: 1,
+    texts: [OBSERVED_FIRST_DELIVERY],
+    fromIndex: 0,
+    waitedMs: 0,
+    marker: BLIND_MARKER,
+  });
+  assert.equal(observed.startedBlind, false);
+  assert.match(observed.worldState ?? "", /^<world-state>世界（revision 0/u);
+  const green = assessDayStarts({ scheduledDays: 1, readings: [observed] });
+  assert.deepEqual(green.findings, []);
+  assert.equal(green.reading, "days started blind 0 of 1");
+  assert.equal(green.verdictCode, null);
+});
+
+test("the reading is over the days the run scheduled, so zero days and an unread record cannot pass", () => {
+  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SOURCE, [
+    "readDayFirstDelivery",
+    "assessDayStarts",
+  ]);
+  // A run that scheduled no day has not been measured, and `0 of 0` would agree with itself.
+  const empty = assessDayStarts({ scheduledDays: 0, readings: [] });
+  assert.equal(empty.reading, "days started blind 0 of 0");
+  assert.equal(empty.blocked, "no_days_scheduled");
+  assert.equal(empty.verdictCode, "no_days_scheduled", "zero population is blocked, never green");
+
+  // The three gaps that are not "blind" and are not a pass either, each with its own owner.
+  const unread = readDayFirstDelivery({ day: 1, texts: null, fromIndex: 0, marker: BLIND_MARKER });
+  assert.equal(unread.measured, false);
+  assert.equal(unread.reason, "session_record_unreadable");
+  const blocked = assessDayStarts({ scheduledDays: 1, readings: [unread] });
+  assert.equal(blocked.findings[0].code, "day_start_reading_missing:1:session_record_unreadable");
+  assert.equal(blocked.verdictCode, "day_start_reading_missing:1:session_record_unreadable");
+  const appended = readDayFirstDelivery({ day: 2, texts: ["one message"], fromIndex: 1, marker: BLIND_MARKER });
+  assert.equal(appended.reason, "no_user_message_after_day_prompt");
+  const rotated = readDayFirstDelivery({
+    day: 1,
+    texts: [OBSERVED_FIRST_DELIVERY],
+    fromIndex: 0,
+    sourcePath: "before.jsonl",
+    readingPath: "after.jsonl",
+    marker: BLIND_MARKER,
+  });
+  assert.equal(rotated.reason, "session_record_changed_mid_turn");
+  // And a reading with no marker fails loudly: comparing against "" would call every delivery blind or every one sound.
+  assert.throws(
+    () => readDayFirstDelivery({ day: 1, texts: [OBSERVED_FIRST_DELIVERY], fromIndex: 0 }),
+    /day_start_marker_required/u,
+  );
+});
+
+test("the wait for the world is bounded in polls as well as in the clock, and its expiry is named", async () => {
+  const [awaitDayOpeningWorld, dayPromptWithoutObservation] = extractRunnerFunction(RUNNER_SOURCE, [
+    "awaitDayOpeningWorld",
+    "dayPromptWithoutObservation",
+  ]);
+  // The world arrives on the third poll: the wait reports HOW LONG, and the revision it saw.
+  let probes = 0;
+  const observed = await awaitDayOpeningWorld({
+    probe: () => {
+      probes += 1;
+      return { observed: probes >= 3, revision: probes >= 3 ? 0 : null };
+    },
+    timeoutMs: 10_000,
+    pollMs: 100,
+    now: () => 0,
+    pause: async () => {},
+  });
+  assert.equal(observed.observed, true);
+  assert.equal(observed.polls, 2);
+  assert.equal(observed.revision, 0);
+  assert.equal(observed.waitedMs, 0);
+
+  // It never arrives and the clock never moves: the POLL BOUND is what ends the wait, so "bounded" is a property of this
+  // function rather than a claim about the caller's clock.
+  let never = 0;
+  const expired = await awaitDayOpeningWorld({
+    probe: () => {
+      never += 1;
+      return { observed: false };
+    },
+    timeoutMs: 1000,
+    pollMs: 100,
+    now: () => 0,
+    pause: async () => {},
+  });
+  assert.equal(expired.observed, false);
+  assert.equal(expired.polls, 11);
+  assert.ok(never >= 12, "the probe is not asked after the bound is spent");
+
+  // The prompt keeps the day's own words and says what the harness could not hand over - a fact about the harness, not
+  // an instruction to go and look.
+  const dayPrompt = "第 1 天：去钓鱼。";
+  const expiredPrompt = dayPromptWithoutObservation(dayPrompt, { observed: false, waitedMs: 15_000 }, "zh");
+  assert.ok(expiredPrompt.startsWith(dayPrompt), "the day's prompt is not rewritten");
+  assert.match(expiredPrompt, /系统没有拿到世界的观察：等了 15 秒/u);
+  assert.doesNotMatch(
+    expiredPrompt,
+    /观察一下|先看看|observe first/u,
+    "the fix is the snapshot, not a sentence telling her to look",
+  );
+  assert.equal(dayPromptWithoutObservation(dayPrompt, { observed: true, waitedMs: 0 }, "zh"), dayPrompt);
+});
+
+test("the attach boundary is called before the first prompt, and both first turns wait for the world", () => {
+  const attachBoundaryGate = (source) => {
+    const at = source.indexOf("runtime.connected.activateIngress();");
+    const guard = source.indexOf(
+      'if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");',
+    );
+    return at > 0 && guard !== -1 && guard < at && at < source.indexOf("await runAgentTurn(");
+  };
+  assert.ok(
+    attachBoundaryGate(RUNNER_SOURCE),
+    "the harness must activate the ingress between the materialized-runtime check and the first turn: it is the only path that hands launch.initialFacts to the pump",
+  );
+  // FALSIFIER: the same gate on a source with that one line removed is red, so the guard reads the call and not the file.
+  assert.equal(attachBoundaryGate(RUNNER_SOURCE.replace("runtime.connected.activateIngress();", "")), false);
+  // Both ways a run reaches its first turn go through the wait, and neither can reach `runAgentTurn` with the raw prompt.
+  assert.match(RUNNER_SOURCE, /const opening = turns === 1 \? await dayOpeningFor\(day\) : null;/u);
+  assert.match(RUNNER_SOURCE, /const firstOpening = await dayOpeningFor\(1\);/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /opening !== null && opening\.observed !== true\n\s+\? dayPromptWithoutObservation\(prompt, opening, localeKey\)\n\s+: prompt;/u,
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const walked = await runAgentTurn\(deliveredPrompt, tools, \{ reason: wake\.reason \}\);/u,
+  );
+  assert.match(RUNNER_SOURCE, /const firstTurn = await runAgentTurn\(firstDeliveredPrompt, tools,/u);
+  // And the reading reaches the record and the verdict, printed so a zero is visible as a zero.
+  assert.match(RUNNER_SOURCE, /"DAY_STARTS",\n\s+dayStartAssessment\.reading,/u);
+  assert.match(RUNNER_SOURCE, /^\s+dayStarts: dayStartAssessment,$/mu, "the reading must reach result.json");
+  assert.match(RUNNER_SOURCE, /dayStartVerdict: dayStartAssessment\.verdictCode,/u);
+  assert.match(RUNNER_SOURCE, /if \(dayStartVerdict !== null\) return dayStartVerdict;/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /day_prompt_delivered_without_observation:\$\{String\(day\)\}:\$\{String\(opening\.waitedMs\)\}/u,
+  );
+});
+
+test("a blind day outranks her silence, and the attach's arrival is answered before it too", () => {
+  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SOURCE, ["taskPurposeVerdict", "deriveSessionVerdict"]);
+  const healthy = {
+    worldStallReason: null,
+    sessionTurns: [{}],
+    unsettledTurns: [],
+    turnFailureReason: undefined,
+    bridgeDisconnections: [],
+    sessionSpoken: true,
+    accomplishedActionIds: ["harvest_crop"],
+    taskPurposes: [],
+    multidayAssessment: null,
+  };
+  assert.equal(deriveSessionVerdict({ ...healthy, dayStartVerdict: "day_started_blind:1" }), "day_started_blind:1");
+  // The earlier fact wins: a day that was handed a turn before it was handed the world is blind first, note-less second.
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      dayStartVerdict: "day_started_blind:1",
+      dayNoteVerdict: "day_note_not_delivered:1",
+    }),
+    "day_started_blind:1",
+  );
+  // `silent` describes a companion who was asked and did not answer; the arrival was never delivered at all.
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      sessionSpoken: false,
+      companionArrivalVerdict: "companion_arrival_not_delivered",
+    }),
+    "companion_arrival_not_delivered",
+  );
+  assert.equal(
+    deriveSessionVerdict({ ...healthy, dayStartVerdict: null, dayNoteVerdict: null, companionArrivalVerdict: null }),
+    "completed",
+  );
+});
+
+test("the attach's arrival fact is said once per session, and a run that never attached is not charged for it", () => {
+  const [assessCompanionArrival] = extractRunnerFunction(RUNNER_SOURCE, ["assessCompanionArrival"]);
+  const arrivalDelivery = "<world-facts>\n- 她到了\n</world-facts>";
+  const once = assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY, arrivalDelivery] });
+  assert.equal(once.said, 1);
+  assert.equal(once.reading, "arrival said 1 of 1");
+  assert.equal(once.verdictCode, null);
+  // The same call that suppressed the world-state block suppressed this: a companion never told she arrived.
+  assert.equal(
+    assessCompanionArrival({ attached: true, texts: [OBSERVED_FIRST_DELIVERY] }).verdictCode,
+    "companion_arrival_not_delivered",
+  );
+  assert.equal(
+    assessCompanionArrival({
+      attached: true,
+      texts: [arrivalDelivery, `${OBSERVED_FIRST_DELIVERY}\n${arrivalDelivery}`],
+    }).verdictCode,
+    "companion_arrival_said_twice",
+  );
+  // A run that never materialized already names its own cause; the attach it never attempted is not a second charge.
+  const unattached = assessCompanionArrival({ attached: false, texts: null });
+  assert.equal(unattached.measured, false);
+  assert.equal(unattached.verdictCode, null);
+  // A record that cannot be read is a gap, and it is still not a pass.
+  assert.equal(assessCompanionArrival({ attached: true, texts: null }).verdictCode, "companion_arrival_unmeasured");
+});
+
+test("the runner reads the owner's own strings for both markers, so neither can drift in silence", () => {
+  // One authority per fact: both markers are declared in `host/src/fact-brief.ts`. Neither is exported, so they are
+  // compared against the owner's source instead of being restated here (a copy that agrees today is a disagreement
+  // scheduled for later).
+  const factBrief = readFileSync(new URL("../../../host/src/fact-brief.ts", import.meta.url), "utf8");
+  const ownerMarker = /const NOTHING_OBSERVED = "([^"]+)";/u.exec(factBrief)?.[1];
+  const runnerMarker = /const NOTHING_OBSERVED_WORLD = "([^"]+)";/u.exec(RUNNER_SOURCE)?.[1];
+  assert.ok(ownerMarker === undefined || ownerMarker.length > 0);
+  assert.ok(
+    (ownerMarker ?? "").length > 0,
+    "the owner must still declare NOTHING_OBSERVED; if it was renamed, update this reading",
+  );
+  assert.equal(runnerMarker, ownerMarker, "the blind marker must be the owner's wording, not a second copy of it");
+
+  const arrivalLineOwner = /companion_arrival: "([^"]+)",/u.exec(factBrief)?.[1];
+  const runnerArrivalLine = /const arrivalLine = "- ([^"]+)";/u.exec(RUNNER_SOURCE)?.[1];
+  assert.ok(
+    (arrivalLineOwner ?? "").length > 0,
+    "the owner must still name `companion_arrival` in WORLD_FACT_KIND_ZH; if it was renamed, update this reading",
+  );
+  assert.equal(
+    runnerArrivalLine,
+    arrivalLineOwner,
+    "the arrival marker must be the line the owner prints for that kind, not a second copy of it",
+  );
 });
