@@ -136,6 +136,48 @@ public sealed class CompanionSwitchTests
     }
 
     [Fact]
+    public async Task A_park_that_never_happened_does_not_block_her_from_ever_coming_back()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+        var bytesBefore = File.ReadAllBytes(database);
+
+        // The window step 3 opens and no later step closes: the index already names her park, and
+        // step 5 never moved her. Her authority is still in the active position and the identity
+        // record still names her, so the entry describes a park that did not happen - a claim the
+        // two facts the launcher owns refute, not a missing directory to shrug at.
+        CompanionSwitch.WriteParkedForTesting(
+            layout,
+            [new ParkedCompanion(first.CompanionId, first.ContinuityId, first.PlayerId, first.BootstrapOperationId, 1, "20260101T000000Z-companion-park")]);
+        Assert.False(Directory.Exists(CompanionSwitch.ParkedRootPath(layout, "20260101T000000Z-companion-park")));
+
+        // The player's next launch asks for the other companion, and then asks for her again.
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+        Assert.Equal(CompanionSwitchStatus.Switched, CompanionSwitch.ApplyPending(layout).Status);
+
+        // She was set aside for real this time, under a name of her own - and the index carries
+        // exactly one entry for her, whose directory is there.
+        var parked = CompanionSwitch.ReadParked(layout);
+        Assert.Equal(first.CompanionId, Assert.Single(parked).CompanionId);
+        Assert.True(Directory.Exists(CompanionSwitch.ParkedRootPath(layout, parked[0].DirectoryName)));
+
+        WriteRequest(layout, "companion-target", first.CompanionId, first.ContinuityId);
+        Assert.Equal(CompanionSwitchStatus.Switched, CompanionSwitch.ApplyPending(layout).Status);
+
+        // She is back with her authority byte-identical: the phantom entry that would have answered
+        // `companion_switch_unavailable` for her forever never got to.
+        Assert.Equal(first.CompanionId, DeploymentIdentity.ReadActive(layout).CompanionId);
+        Assert.Equal(bytesBefore, File.ReadAllBytes(database));
+        Assert.True(ProductionAuthority.IsComplete(layout));
+        Assert.Empty(CompanionSwitch.ReadParked(layout));
+    }
+
+    [Fact]
     public async Task A_request_written_against_another_active_companion_is_refused_as_stale_and_changes_nothing()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");

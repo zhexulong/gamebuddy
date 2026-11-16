@@ -343,7 +343,8 @@ internal static class CompanionSwitch
     }
 
     /// <summary>
-    /// Finishes or undoes a switch that died between two of its steps.
+    /// Finishes or undoes a switch that died between two of its steps, and removes the parks it
+    /// can prove never happened.
     ///
     /// One rule, derived from facts the launcher owns: **if the identity record names a
     /// companion whose authority root is set aside while the active position is empty, that
@@ -352,15 +353,42 @@ internal static class CompanionSwitch
     /// the record already naming the target this completes it. Both are the fail-closed answer,
     /// because in both the identity record - never a half-moved directory - is what says who
     /// plays.
+    ///
+    /// The repair is the other half of the same argument, and it is not a second rule about
+    /// missing directories. **An entry whose directory is absent, whose companion the identity
+    /// record names, while her authority root IS in the active position, describes a park that
+    /// did not hold**: step 3 writes the entry before the move it describes and step 5 makes
+    /// that move, so a crash between them leaves exactly this; and the restore above moves her
+    /// root back before it rewrites the index, so a crash between those two leaves it as well.
+    /// Dropping such an entry removes a claim her own identity record and her own root refute.
+    /// Keeping it is what makes the claim permanent: the index would keep naming a root that was
+    /// never set aside, and every later switch to her would answer <c>companion_switch_unavailable</c>
+    /// because <see cref="Switch"/> can only find the entry, not the directory.
+    ///
+    /// An entry whose directory is absent and whose companion is NOT the one in play is a
+    /// different fact - the parked authority is genuinely gone - and it is deliberately left
+    /// alone: dropping it would make the next switch to her mint a new baseline over data the
+    /// product promised to bring back, and that is the one wrong answer.
     /// </summary>
     internal static void Reconcile(CurrentUserRootLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         if (!File.Exists(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName))) return;
-        if (Directory.Exists(ProductionAuthority.DirectoryPath(layout))) return;
 
         var active = DeploymentIdentity.ReadActive(layout);
         var parked = ReadParked(layout);
+        var activeRoot = ProductionAuthority.DirectoryPath(layout);
+        if (Directory.Exists(activeRoot))
+        {
+            var neverParked = parked
+                .Where(entry => StringComparer.Ordinal.Equals(entry.CompanionId, active.CompanionId) &&
+                    !Directory.Exists(ParkedRootPath(layout, entry.DirectoryName)))
+                .ToArray();
+            if (neverParked.Length > 0)
+                WriteParkedIndex(layout, [.. parked.Where(entry => !neverParked.Contains(entry))]);
+            return;
+        }
+
         var mine = parked.FirstOrDefault(entry => StringComparer.Ordinal.Equals(entry.CompanionId, active.CompanionId));
         if (mine is null) return;
 
