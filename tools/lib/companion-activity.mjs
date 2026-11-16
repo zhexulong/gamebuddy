@@ -63,14 +63,44 @@ export function readActivityPoints(logText) {
  * forgotten, so no buffer there needs a drain. `omitted` is how many later points the bundle did not carry, and
  * `points.length + omitted` is the number the run actually published.
  * </p>
+ * <p>
+ * `omittedMs` is the wall clock those dropped points cover - from the last point the bundle kept to the last point the
+ * run published - and it exists because a count is not a duration. MEASURED (`round62`): the limit dropped five later
+ * points covering 55,995 ms of the run's final idle stretch, the bundle's own activity therefore read 166.1 s of idle
+ * against the raw log's 222.0 s, and the attribution charged the missing 55,995 ms to nothing at all. A reader that can
+ * see `omitted 5` still cannot see that, so the duration travels beside the count.
+ * </p>
  */
 export function summarizeActivity({ records, unparsable = 0, limit = ACTIVITY_POINT_LIMIT }) {
   const all = records ?? [];
   if (all.length === 0 && unparsable === 0) return "not_measured";
   const kept = all.slice(0, limit);
+  // The dropped tail is a span of the run, not a number of events: the first point the limit left out begins it and the
+  // run's last published point ends it. Clamped at zero because a channel that published out of order has no span to
+  // report, and a negative duration would read as time recovered.
+  const droppedMs = kept.length === all.length ? 0 : Math.max(0, all[all.length - 1].atMs - kept[kept.length - 1].atMs);
   return Object.freeze({
     points: Object.freeze(kept.map((point) => Object.freeze({ state: point.state, atMs: point.atMs }))),
     omitted: all.length - kept.length,
+    omittedMs: droppedMs,
     unreadable: unparsable,
   });
+}
+
+/**
+ * The activity reading as one line, printed beside the run's delivery account.
+ *
+ * A bound that drops points silently is indistinguishable from a run that published none of them, which is exactly how
+ * 55.9 s of one run's idle became a remainder with no owner. `dropped` and `droppedMs` are both in the line because the
+ * count alone does not say how much of the run the bundle cannot see.
+ */
+export function describeActivityPoints(activity) {
+  if (activity === "not_measured") return "not_measured";
+  const parts = [
+    `activity points kept ${activity.points.length}`,
+    `dropped ${activity.omitted}`,
+    `droppedMs ${activity.omittedMs}`,
+  ];
+  if (activity.unreadable > 0) parts.push(`unreadable ${activity.unreadable}`);
+  return parts.join(" · ");
 }

@@ -140,6 +140,13 @@ export function budgetFamilyOf(spanName: string): string | undefined {
  * `unmeasured` is the other half of that honesty: a family with NO span in the trace is not a measured
  * zero, and is named here rather than printed as `0` - the report `waitBudgetRows` then renders it as
  * `not_measured:<family>`.
+ *
+ * `omittedMs` is the third: run time the trace does not carry because a bounded producer dropped it (the
+ * activity stream's point limit is the one that produced this field). It is DECLARED by the caller from the
+ * producer's own reading, subtracted from `unexplainedMs` because the time is named rather than unknown, and
+ * added to `covered` because a span nobody wrote is still time the run had. A run whose dropped time is not
+ * declared does not disappear: it stays in `unexplainedMs`, which is what the ceiling in
+ * `run-trace-budget.live-shape.private.test.ts` reads.
  */
 export type WaitBudget = Readonly<{
   wallMs: number;
@@ -155,8 +162,10 @@ export type WaitBudget = Readonly<{
   actionMs: number;
   /** Union of every span the trace covers, clipped to the window: the one number that must close with the remainder. */
   accountedMs: number;
+  /** Run time a bounded producer declared it dropped: named, not measured, and not part of the remainder. */
+  omittedMs: number;
   unexplainedMs: number;
-  /** Share of the wall clock the spans account for, in [0, 1]. */
+  /** Share of the wall clock the spans plus the declared omission account for, in [0, 1]. */
   covered: number;
   /** Families with no closed span inside the window: absent, not measured as zero. */
   unmeasured: readonly string[];
@@ -208,11 +217,14 @@ function clip(interval: Interval, windowStartMs: number, windowEndMs: number): I
  */
 export function attributeWaitBudget(
   spans: readonly Readonly<{ name: string; startMs: number; endMs: number | null }>[],
-  options: Readonly<{ wallMs: number; wallStartMs?: number }>,
+  options: Readonly<{ wallMs: number; wallStartMs?: number; omittedMs?: number }>,
 ): WaitBudget {
   if (!Number.isFinite(options.wallMs) || options.wallMs <= 0) throw new Error("invalid_wait_budget_wall_ms");
   const windowStartMs = options.wallStartMs ?? 0;
   if (!Number.isFinite(windowStartMs)) throw new Error("invalid_wait_budget_wall_start_ms");
+  const omittedMs = options.omittedMs ?? 0;
+  if (!Number.isFinite(omittedMs) || omittedMs < 0 || omittedMs > options.wallMs)
+    throw new Error("invalid_wait_budget_omitted_ms");
   const windowEndMs = windowStartMs + options.wallMs;
 
   const closed = spans.filter((s): s is Readonly<{ name: string; startMs: number; endMs: number }> => s.endMs !== null);
@@ -235,7 +247,7 @@ export function attributeWaitBudget(
   const familyMs = (family: string): number => totalMs(perFamily.get(family) ?? []);
 
   const accountedMs = totalMs(clipped.map((entry) => entry.interval));
-  const unexplainedMs = Math.max(0, options.wallMs - accountedMs);
+  const unexplainedMs = Math.max(0, options.wallMs - accountedMs - omittedMs);
   const unmeasured = Object.freeze(
     RUN_BUDGET_FAMILIES.filter((entry) => !perFamily.has(entry.family)).map((entry) => entry.family),
   );
@@ -253,8 +265,9 @@ export function attributeWaitBudget(
     observationMs: familyMs("observation"),
     actionMs: familyMs("action"),
     accountedMs,
+    omittedMs,
     unexplainedMs,
-    covered: Math.min(1, accountedMs / options.wallMs),
+    covered: Math.min(1, (accountedMs + omittedMs) / options.wallMs),
     unmeasured,
     defaultedToAction,
   });
@@ -304,4 +317,26 @@ export function waitBudgetRows(
       .sort((a, b) => b.ms - a.ms || a.index - b.index)
       .map(({ name, ms, share, notMeasured }) => Object.freeze({ name, ms, share, notMeasured })),
   );
+}
+
+/**
+ * The attribution summary: the one line a run log can carry beside the rows the report renders.
+ *
+ * `omitted by the point limit: M ms` is in this line rather than left implicit because an omission is otherwise
+ * indistinguishable from a run that was busy throughout. MEASURED (`round62`): the bundle's 512-point activity limit
+ * dropped 55,995 ms of the run's final idle stretch, the budget charged that time to `unexplainedMs` - a remainder that
+ * still clears a six-percent ceiling - and a reader comparing the bundle's "idle 166.1 s" with the raw log's 222.0 s had
+ * nothing to compare against. The declaration is what gives the dropped time an owner: `accountedMs + omittedMs +
+ * unexplainedMs` is the wall clock, and a caller that drops points without declaring them cannot close that sum.
+ */
+export function waitBudgetReading(budget: WaitBudget): string {
+  const parts = [
+    `run wall ${String(budget.wallMs)} ms`,
+    `accounted ${String(budget.accountedMs)} ms`,
+    `omitted by the point limit: ${String(budget.omittedMs)} ms`,
+    `unexplained ${String(budget.unexplainedMs)} ms`,
+    `covered ${budget.covered.toFixed(4)}`,
+  ];
+  if (budget.unmeasured.length > 0) parts.push(`not measured: ${budget.unmeasured.join(", ")}`);
+  return parts.join(" · ");
 }

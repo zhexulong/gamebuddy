@@ -96,7 +96,7 @@ import {
   readWorldStateStaleFacts,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
-import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
+import { describeActivityPoints, readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
@@ -1936,6 +1936,10 @@ function summarizePresentationEvidence() {
   // `not_measured` rather than an empty array when the channel published nothing, so "nobody woke her" is never
   // spelled the same way as "the field is empty".
   const activity = summarizeActivity(readActivityPoints(hostLog));
+  // The bound's own reading, in the log and not only in the bundle: a run whose 512-point limit dropped the tail of the
+  // activity stream says how many points and how many milliseconds it dropped, so "idle 166.1 s" can be checked against
+  // the raw log's 222.0 s instead of being taken as the run's whole silence.
+  console.error("ACTIVITY_ACCOUNT", describeActivityPoints(activity));
   // Executions that stopped making progress, off the same log and in the same shape: the Host prints one stall fact per
   // arming (`host-service.ts` `#publishStallFact`), and until this field nothing in the bundle could say a body was
   // stuck. The parser owns the cap and the count of what it dropped. NOT read by `round-verdict.mjs` yet - the verdict

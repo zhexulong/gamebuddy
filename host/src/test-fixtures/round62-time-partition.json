@@ -6,7 +6,8 @@
   "spans": {
    "trace": "r62-run-trace.json traceEvents[] (ph X), converted to run-relative wall ms",
    "wait.model": "r62-session.jsonl assistant records [timestamp - message.durationMs, timestamp]. The Host emitted no `wait.model` span in this run, so this family is the run's own provider records - its seam is Pi's and is not re-derived here",
-   "wait.idle": "r62-result.json presentation.activity.points: each `idle` point to the next non-idle point. That is the condition CompanionLoop publishes as COMPANION_ACTIVITY idle and CompanionHostService opens wait.idle on, so this is the span the Host would have emitted"
+   "wait.idle": "r62-result.json presentation.activity.points: each `idle` point to the next non-idle point. That is the condition CompanionLoop publishes as COMPANION_ACTIVITY idle and CompanionHostService opens wait.idle on, so this is the span the Host would have emitted",
+   "droppedByPointLimit": "the raw log's own COMPANION_ACTIVITY lines past the 512-point limit the bundle kept. The DURATION is measured - the log's idle total 222064 ms against the bundle's 166069 - and the interval is the one whose duration matches it: the 55995 ms remainder window this fixture carried before the declaration existed (1914212..1970207, the run's final stretch). The bundle cannot carry it, so the attribution has to be told the duration; before that, its 55995 ms was charged to nothing at all"
   },
   "expected": "computed here by interval union over the wall clock (AUDIT.md §1 / partition.mjs's method), independently of attributeWaitBudget"
  },
@@ -4318,12 +4319,19 @@
    "endMs": 1022620
   }
  ],
+ "droppedByPointLimit": [
+  {
+   "name": "wait.idle",
+   "startMs": 1914212,
+   "endMs": 1970207
+  }
+ ],
  "expected": {
-  "accountedMs": 1961208,
-  "unexplainedMs": 104370,
+  "accountedMs": 2017203,
+  "unexplainedMs": 48375,
   "providerMs": 1707266,
   "environmentMs": 282661,
-  "idleMs": 166069,
+  "idleMs": 222064,
   "idleIntervals": 4,
   "providerTurns": 203,
   "traceSpans": 654,
@@ -4362,13 +4370,6 @@
     "ms": 978,
     "wallFrom": "2026-11-15T15:11:45.374Z",
     "wallTo": "2026-11-15T15:11:46.352Z"
-   },
-   {
-    "startMs": 1914212,
-    "endMs": 1970207,
-    "ms": 55995,
-    "wallFrom": "2026-11-15T15:12:11.470Z",
-    "wallTo": "2026-11-15T15:13:07.465Z"
    },
    {
     "startMs": 1981583,
