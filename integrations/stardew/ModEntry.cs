@@ -1840,6 +1840,10 @@ public sealed partial class ModEntry : Mod
         this.nativeLocalPlayerFixtureInitialized = false;
         this.nativeLocalPlayerFixtureTerminal = false;
         this.nativeLocalPlayerFixtureDeadlineUnixMs = 0;
+        // The locale wait is re-armed with the fixture, exactly as its load deadline is: a world
+        // that ends while the engine had not yet applied the configured language must not carry
+        // that attempt's spent deadline into the next one.
+        this.nativeLocalPlayerFixtureLocaleWait = null;
         this.nativeLocalPlayerFixtureLastReadinessLogUnixMs = 0;
         this.nativeLocalPlayerFixtureBootstrapInvoked = false;
         this.nativeLocalPlayerFixtureBootstrapTerminal = false;
