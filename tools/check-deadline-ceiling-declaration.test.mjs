@@ -28,6 +28,14 @@ import { parseJavaScript } from "./lib/javascript-ast.mjs";
  * `local-stardew-bridge.ts` chooses a STRING from an action id (a scene kind), which is not a deadline and must not be
  * reported as one.
  * </p>
+ *
+ * red-proof: inject  the classifier widened to call every per-action selector a window (`numericValue = () => true`) ->
+ *                   `a selector that chooses a STRING is not a deadline ceiling, and is counted apart` fails
+ *                   (`8 passed, 1 failed`, measured 2026-11-16).
+ * red-proof: inject  the classifier narrowed to call none of them one (`numericValue = () => false`) ->
+ *                   `the shape that shipped is a numeric selector over action ids, and the gate calls it a name list`
+ *                   and `the site counts add up, so no part of the population escapes a bucket` fail
+ *                   (`7 passed, 2 failed`, measured 2026-11-16).
  */
 
 const ACTION_IDS = new Set(["move_to_tile", "travel", "navigate_to_destination", "sleep"]);
