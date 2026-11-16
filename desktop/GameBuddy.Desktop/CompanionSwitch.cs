@@ -224,9 +224,11 @@ internal static class CompanionSwitch
         var request = ReadRequest(layout);
         if (request is null)
         {
-            // A request this launcher cannot read is not a switch: it is a malformed record,
-            // and leaving it in place would refuse every later launch with the same fact.
-            DiscardRequest(layout);
+            // A request this launcher cannot read is not a switch: it is a malformed record. It is
+            // spent here, and a record that could not be removed is answered the same way by every
+            // later launch until it can be - a refusal that repeats is still the honest answer, and
+            // it is the only one this launcher has.
+            TryDiscardRequest(layout);
             return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_record_unreadable", null, null);
         }
 
@@ -238,7 +240,7 @@ internal static class CompanionSwitch
         // tell the player the switch did not happen while she is already in play.
         if (StringComparer.Ordinal.Equals(active.CompanionId, wanted.TargetCompanionId))
         {
-            DiscardRequest(layout);
+            TryDiscardRequest(layout);
             return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, active.CompanionId, active.CompanionId);
         }
 
@@ -247,7 +249,7 @@ internal static class CompanionSwitch
         // who is no longer the one being replaced.
         if (!StringComparer.Ordinal.Equals(active.CompanionId, wanted.ExpectedActiveCompanionId))
         {
-            DiscardRequest(layout);
+            TryDiscardRequest(layout);
             return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, "companion_switch_request_stale", active.CompanionId, wanted.TargetCompanionId);
         }
 
@@ -368,8 +370,9 @@ internal static class CompanionSwitch
             }
 
             // 8. Last: the request is spent. Every launch before this point re-reads the same
-            //    facts and lands on the same outcome, which is what makes a crash survivable.
-            DiscardRequest(layout);
+            //    facts and lands on the same outcome, which is what makes a crash survivable -
+            //    including a launch that answered this request and could not remove it.
+            TryDiscardRequest(layout);
             return new CompanionSwitchOutcome(CompanionSwitchStatus.Switched, null, next.CompanionId, next.CompanionId);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException or NotSupportedException)
@@ -520,7 +523,7 @@ internal static class CompanionSwitch
     {
         // Nothing was moved and nothing was renamed, so the refuse is the whole effect: the
         // request is spent and the companion in play still is.
-        DiscardRequest(layout);
+        TryDiscardRequest(layout);
         return new CompanionSwitchOutcome(CompanionSwitchStatus.Refused, code, request.ExpectedActiveCompanionId, request.TargetCompanionId);
     }
 
@@ -530,16 +533,28 @@ internal static class CompanionSwitch
         if (!Directory.Exists(path)) Directory.CreateDirectory(path);
     }
 
-    private static void DiscardRequest(CurrentUserRootLayout layout)
+    /// <summary>
+    /// Spends the request and reports whether it is gone.
+    ///
+    /// `false` is a named outcome rather than a swallowed failure: the request outlives the pass
+    /// that answered it, and it stays the ONLY thing that does. Every answer this file gives is a
+    /// function of the identity record and the parked index, and neither is changed twice for the
+    /// same input - an applied request's answer IS the identity record already naming its target,
+    /// and a refused one's answer is the state that refused it - so the next launch re-reads the
+    /// same request, arrives at the same answer, and applies nothing a second time. A switch
+    /// therefore does not have to undo itself over a file it could not delete, and it must not
+    /// pretend the request was spent: the callers are the passes that did not spend it.
+    /// </summary>
+    private static bool TryDiscardRequest(CurrentUserRootLayout layout)
     {
         try
         {
             File.Delete(RequestPath(layout));
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // A request that cannot be removed is re-read next launch and answers the same
-            // way, because every step above is idempotent on the state it left behind.
+            return false;
         }
     }
 

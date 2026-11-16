@@ -218,6 +218,55 @@ public sealed class CompanionSwitchTests
     }
 
     [Fact]
+    public async Task A_request_that_cannot_be_removed_is_answered_the_same_way_next_launch_and_never_applied_twice()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
+        var first = MintedIdentity(layout);
+        TestProductionAuthority.CreateDirectory(layout);
+        var database = TestProductionAuthority.WriteDatabase(layout);
+        TestProductionAuthority.WriteCompletionMarker(layout);
+        var bytesBefore = File.ReadAllBytes(database);
+
+        // Spending the request is the switch's last step and it can fail. A read-only request is
+        // the reproducible stand-in for that (the real one is a sharing violation while something
+        // else has the file open), and it is what makes the launcher's silence about the failure a
+        // claim that has to hold rather than one that is assumed to.
+        WriteRequest(layout, first.CompanionId, "companion-target", "continuity-target");
+        File.SetAttributes(CompanionSwitch.RequestPath(layout), FileAttributes.ReadOnly);
+
+        var settled = CompanionSwitch.ApplyPending(layout);
+
+        // The switch happened: a request that outlived its own answer is not a second failure.
+        Assert.Equal(CompanionSwitchStatus.Switched, settled.Status);
+        Assert.True(CompanionSwitch.HasPendingRequest(layout));
+        Assert.Equal("companion-target", DeploymentIdentity.ReadActive(layout).CompanionId);
+
+        // The next launch re-reads the same request and lands on the same answer from the identity
+        // record, and it applies nothing twice - neither a second switch nor a second park - so a
+        // failed delete cannot turn one choice into two operations.
+        var recordAfter = File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName));
+        var parkedAfter = CompanionSwitch.ReadParked(layout);
+        var again = CompanionSwitch.ApplyPending(layout);
+
+        Assert.Equal(CompanionSwitchStatus.Switched, again.Status);
+        Assert.Equal("companion-target", again.ActiveCompanionId);
+        Assert.Equal(recordAfter, File.ReadAllBytes(Path.Combine(layout.DataRoot, DeploymentIdentity.RecordFileName)));
+        Assert.Equal(parkedAfter, CompanionSwitch.ReadParked(layout));
+        Assert.Equal(
+            bytesBefore,
+            File.ReadAllBytes(Path.Combine(
+                CompanionSwitch.ParkedRootPath(layout, Assert.Single(parkedAfter).DirectoryName),
+                TestProductionAuthority.DatabaseFileName)));
+        Assert.True(CompanionSwitch.HasPendingRequest(layout));
+
+        // The fixture deletes the tree it made, and a read-only file outlives that on Windows:
+        // the attribute this case set is put back so the cleanup is not the thing that fails.
+        File.SetAttributes(CompanionSwitch.RequestPath(layout), FileAttributes.Normal);
+    }
+
+    [Fact]
     public async Task A_host_that_still_holds_the_authority_refuses_the_switch_by_name_and_no_root_is_touched()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
