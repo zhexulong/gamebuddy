@@ -268,12 +268,51 @@ export function runCheck({ root = REPOSITORY_ROOT, behaviours = BEHAVIOURS } = {
     findings,
     rows,
     examples: turnList,
+    cards: cards.length,
+    covered,
+    claimFields: corpus.length,
+    behaviours: behaviours.length,
   };
 }
 
 export function parseArgs(argv) {
   const index = argv.indexOf("--root");
   return { root: index >= 0 && argv[index + 1] !== undefined ? resolve(argv[index + 1]) : REPOSITORY_ROOT };
+}
+
+/** The five rules the report enumerates, in the order the truth table above reads them. */
+const RULES = Object.freeze([
+  VIOLATION,
+  "behaviour_claim_unmatched",
+  "behaviour_claim_stale",
+  "example_unclassified",
+  "behaviour_declaration_invalid",
+]);
+
+/**
+ * The self-verification report, one line of JSON, because the harness suite reads a gate by running it: `examined` is
+ * the example turns this run read, so `passed` beside a zero cannot be mistaken for a measurement. A run that could
+ * not measure prints `examined 0` with the reason, which `tools/lib/assert-non-vacuous.mjs` reads as `not_measured`
+ * rather than as a pass.
+ */
+export function reportOf(result) {
+  const codes = result.findings.map((finding) => finding.split(":")[0]);
+  return {
+    gate: "persona_example_behaviour_claim/v1",
+    status: result.status,
+    examined: result.examples?.length ?? 0,
+    ...(result.status === "blocked" ? { allowEmpty: String(result.reason) } : {}),
+    cards: result.cards ?? 0,
+    covered: result.covered ?? 0,
+    claimFields: result.claimFields ?? 0,
+    behaviours: result.behaviours ?? 0,
+    findings: result.findings.length,
+    checks: RULES.map((rule) => ({
+      id: rule,
+      status: codes.includes(rule) ? "failed" : "passed",
+      detail: `${codes.filter((code) => code === rule).length} member(s)`,
+    })),
+  };
 }
 
 function main(argv) {
@@ -289,6 +328,7 @@ function main(argv) {
   for (const line of result.lines) console.log(line);
   if (result.status === "blocked") {
     console.log(result.reason);
+    console.log(JSON.stringify(reportOf(result)));
     process.exitCode = 2;
     return;
   }
@@ -296,10 +336,12 @@ function main(argv) {
     console.log(
       "persona_example_behaviour_uncovered: every behaviour a shipped example demonstrates needs a sentence in the persona corpus that permits or forbids it; re-tie the row in tools/lib/persona-behaviour-vocabulary.mjs to the sentence that survived, or restore the sentence.",
     );
+    console.log(JSON.stringify(reportOf(result)));
     process.exitCode = 1;
     return;
   }
   console.log("persona_example_behaviours_all_claimed");
+  console.log(JSON.stringify(reportOf(result)));
   process.exitCode = 0;
 }
 

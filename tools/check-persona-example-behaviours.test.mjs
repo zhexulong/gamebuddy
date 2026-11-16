@@ -93,7 +93,8 @@ test("the incident: deleting the permission reds every example that demonstrated
 
   const deleted = runGate(root);
   assert.equal(deleted.status, 1, deleted.stdout);
-  assert.match(deleted.lines.at(-1), /^persona_example_behaviour_uncovered: every behaviour/u);
+  assert.match(deleted.lines.at(-1) ?? "", /^\{"gate":"persona_example_behaviour_claim/u);
+  assert.ok(deleted.lines.some((line) => line.startsWith("persona_example_behaviour_uncovered:")));
 
   // The finding names the example fragment, the behaviour and the sentence that went missing - all three, because a
   // reader who sees only one of them has to go and find the other two.
@@ -115,7 +116,7 @@ test("the incident: deleting the permission reds every example that demonstrated
   writeFileSync(path, original);
   const restored = runGate(root);
   assert.equal(restored.status, 0, restored.stdout);
-  assert.equal(restored.lines.at(-1), "persona_example_behaviours_all_claimed");
+  assert.ok(restored.lines.includes("persona_example_behaviours_all_claimed"));
   assert.equal(censusOf(restored.stdout).split("findings ")[1], "0");
 });
 
@@ -257,4 +258,32 @@ test("red (history): the card that shipped before the permission wrote examples 
   assert.ok(result.lines.includes(`${VIOLATION}:震得我手腕生疼:complains_about_a_tool:${missing}`));
   // The second finding shape is reachable on real history too, so it is not a branch that only a fixture can enter.
   assert.ok(result.lines.some((line) => line.startsWith("behaviour_claim_unmatched:comforts_with_her_own_scar:")));
+});
+
+test("the default run prints a self-verification report whose population is the example turns", () => {
+  // `gates/meta/check-harness-conformance.mjs` reads a gate by running it, and `tools/lib/assert-non-vacuous.mjs` reads
+  // `examined` before it reads `passed`: a report whose population is zero without a reason is a gate that measured
+  // nothing. Both facts are asserted here rather than assumed from the printed lines.
+  const result = runGate(REPOSITORY_ROOT);
+  assert.equal(result.status, 0, result.stdout);
+  const report = JSON.parse(result.lines.at(-1));
+  assert.equal(report.gate, "persona_example_behaviour_claim/v1");
+  assert.equal(report.status, "passed");
+  assert.equal(report.examined, result.lines[0].split("examples ")[1].split(" ")[0] * 1);
+  assert.ok(report.examined > 0, "a report with no population reads exactly like a gate that measured nothing");
+  assert.equal(report.covered, report.examined);
+  assert.ok(
+    report.checks.every((check) => check.status === "passed"),
+    JSON.stringify(report.checks),
+  );
+  assert.deepEqual(
+    report.checks.map((check) => check.id),
+    [
+      VIOLATION,
+      "behaviour_claim_unmatched",
+      "behaviour_claim_stale",
+      "example_unclassified",
+      "behaviour_declaration_invalid",
+    ],
+  );
 });

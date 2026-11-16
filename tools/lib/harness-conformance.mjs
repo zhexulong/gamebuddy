@@ -658,6 +658,20 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // handler is resolved from its registration rather than its name, a `-=` subscription adds no member, text
   // concatenated in a loop is named while the same `+` on numbers is not, and a tree registering no handler is blocked.
   "check-stardew-tick-handler-allocation.mjs",
+  // Prints `files examined N · cards C · examples M · covered K · claim fields F · behaviours B · findings D`, one line
+  // per behaviour with its example count and the file the permitting sentence was found in, then
+  // `{"gate":"persona_example_behaviour_claim/v1","status","examined":M,...,"checks":[...]}`, so its default run is
+  // the report read here and `examined` is the example turns it parsed - a run that could not measure prints
+  // `examined 0` with its reason instead of a pass. Its falsifier is
+  // tools/check-persona-example-behaviours.test.mjs: at 6107a8dd - the card that shipped before the permission was
+  // written - the examples demonstrating `这泥巴比水泥还黏靴子` and `震得我手腕生疼` are
+  // `example_demonstrates_a_behaviour_no_claim_permits` against the sentence that did not exist yet, and
+  // `comforts_with_her_own_scar` is `behaviour_claim_unmatched`; deleting that clause from a copy of the shipped presets
+  // reds all five anchored demonstrations and writing the bytes back is green; a `{{char}}` turn appended to a copied
+  // `mes_example` is `example_unclassified` because the population is derived from the card rather than listed; a row
+  // with no shipped sample and no surviving sentence is `behaviour_claim_stale`; and a card with no example turn, an
+  // empty vocabulary or an empty corpus is blocked (exit 2) rather than green.
+  "check-persona-example-behaviours.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
