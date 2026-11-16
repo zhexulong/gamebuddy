@@ -451,8 +451,10 @@ function readToolDescriptions(
  *
  * <ul>
  *  <li>every production module that calls a fact door (`enqueueFact`, `acceptHostMintedFact`, `announceHostFact`);</li>
- *  <li>every production module that spells a `contextProjection` property - the one field `fact-brief.ts` reads a
- *    fact's own prose out of (`fact.contextProjection?.text`);</li>
+ *  <li>every production module that spells a `contextProjection` property - the one field a fact's own prose lives in;</li>
+ *  <li>every production module that READS one (`fact-brief.ts` renders it into the line the model reads,
+ *    `event-pump.ts` forwards it into a batch payload), because a sentence added there reaches the model exactly as the
+ *    arrival's did;</li>
  *  <li>and, to a fixed point, every production module that a `contextProjection` value resolves to, because a
  *    projection may be composed elsewhere (`contextProjection: projection` in
  *    `stardew-integration-launcher-body-program.internal.ts` names `projectGameSnapshotContext` in
@@ -475,12 +477,14 @@ function readToolDescriptions(
  *
  * <p>
  * THE CENSUS IT PRINTS, and what each number measures, because "0 violations" without a population says nothing. Read
- * 2026-11-22 BEFORE the fix: 11 declared producers · 3 modules spell a fact's own text (`companion-arrival-fact.ts`,
- * `native-notice-fact.ts`, and `host-service.ts`'s voice-interruption note) plus one that composes the snapshot's
- * (`snapshot-projection.ts`, reached through `stardew-integration-launcher-body-program.internal.ts`'s
- * `contextProjection: projection`) · 6 modules read · 549 literals, 64 of them prose · of the prose, 60 facts, 2 form
- * sentences and 2 speech mandates - all four of those in `companion-arrival-fact.ts`. Read the same way AFTER: 543
- * literals, 59 prose, 59 facts, 0 form, 0 mandates.
+ * 2026-11-22 of the PRE-FIX tree - the arrival paragraph restored from `7e82e53f^`, so this is the real history and not an
+ * injection - and over the FINAL population: 11 declared producers · 3 modules spell a fact's own text
+ * (`companion-arrival-fact.ts`, `native-notice-fact.ts`, and `host-service.ts`'s voice-interruption note) · 8 modules read
+ * (those three, the materializer and the launcher that hand facts to the pump, the snapshot projection that composes the
+ * launcher's, and `event-pump.ts` and `fact-brief.ts` that read a projection and render it) · 1004 literals, 188 of them
+ * prose · of the prose, 184 facts, **2 form sentences and 2 speech mandates** - all four in `companion-arrival-fact.ts`,
+ * at lines 163, 170 (the mandates) and 164, 171 (the form), and all four are FINDINGS: the mandate class and the form class
+ * are both asserted. Read the same way AFTER the fix: 998 literals, 183 prose, 183 facts, 0 form, 0 mandates.
  * </p>
  *
  * <p>
@@ -496,6 +500,14 @@ function readToolDescriptions(
 
 /** A call to one of the three doors a fact enters the pump by. The set is `event-pump.fact-producer.test.ts`'s. */
 const FACT_DOOR_CALL = /\.(?:enqueueFact|acceptHostMintedFact|announceHostFact)\(/u;
+
+/**
+ * The other end of the same fact: a module that READS a projection. `fact-brief.ts` is where a fact's own text becomes the
+ * line the model reads (`fact.contextProjection?.text`), and `event-pump.ts` forwards it into the payload a batch is
+ * composed from - so both compose what a block says, and a sentence added there reaches the model exactly as the
+ * arrival's did.
+ */
+const FACT_PROJECTION_READER = /\.contextProjection\b/u;
 
 /** A production module's exported names, so a projection value can be followed to the module that composes it. */
 const EXPORTED_SYMBOL = /^export (?:async )?(?:function|const|class) ([A-Za-z_$][\w$]*)/gmu;
@@ -546,10 +558,22 @@ function projectionReading(text: string): Readonly<{ spells: boolean; composes: 
 }
 
 /**
- * A READING AID, NOT A GATE: a sentence about how the delivery is SHAPED rather than about what happened. It is counted
- * so the census shows which sentences belong to the floor's CHANNEL or to the preset instead of to a fact block
- * (`design/input-authority.md` § three), and nothing asserts on the number - a phrase list is exactly what this gate
- * refuses to be.
+ * FORM IS A DEFECT IN A FACT BLOCK TOO, and this is the reading that says so.
+ *
+ * <p>
+ * A sentence about how the DELIVERY is shaped - "do not read the clock or the weather out as a status report" - is not a
+ * fact about the world and not a rule about her voice: it is the floor's CHANNEL (`machine_fields_translated`: "Tool
+ * results, receipts and status fields are written for machines ... say what they MEAN to a person instead of reading them
+ * out") or the card's own 不报进度. `design/input-authority.md` § two gives the per-turn block one job - the world's current
+ * state - so a form sentence there is a second location for a claim the channel owns, which is the class this whole file
+ * exists for. The shipped arrival paragraph carried one, beside its mandate.
+ * </p>
+ *
+ * <p>
+ * IT IS A COARSE READING AND SAYS SO: a phrase list of the words a form sentence uses, not a structural test. The census
+ * prints the population it was read over, so a zero is "nothing in these 59 prose literals", and a finding names the file
+ * and the line, so the sentence can be read rather than inferred from a count.
+ * </p>
  */
 const FORM_SHAPES = /\bstatus report\b|\bmarkdown\b|\bbubble\b|播报|报进度|报备|念成|字数|长度|气泡/iu;
 
@@ -583,6 +607,7 @@ type FactTextReading = Readonly<{
   fact: number;
   form: number;
   mandates: readonly ToolDescriptionFinding[];
+  formFindings: readonly ToolDescriptionFinding[];
   blocked: string | null;
 }>;
 
@@ -611,6 +636,7 @@ function readFactText(sources: ReadonlyMap<string, string> = productionSourceTex
     const projection = projectionReading(text);
     if (projection.spells) add(file, "spells a fact's own text");
     if (projection.composes.length > 0) add(file, "carries a projection composed elsewhere");
+    if (FACT_PROJECTION_READER.test(text)) add(file, "composes a fact's text into the block");
     composedBy.set(file, projection.composes);
   }
   // A projection composed elsewhere names the module that spells it; follow those to a fixed point.
@@ -630,7 +656,17 @@ function readFactText(sources: ReadonlyMap<string, string> = productionSourceTex
     .filter((entry) => entry.roles.includes("spells a fact's own text"))
     .map((entry) => entry.file);
   if (population.length === 0)
-    return { population, composed, strings: 0, prose: 0, fact: 0, form: 0, mandates: [], blocked: "zero_population" };
+    return {
+      population,
+      composed,
+      strings: 0,
+      prose: 0,
+      fact: 0,
+      form: 0,
+      mandates: [],
+      formFindings: [],
+      blocked: "zero_population",
+    };
   if (composed.length === 0)
     return {
       population,
@@ -640,28 +676,38 @@ function readFactText(sources: ReadonlyMap<string, string> = productionSourceTex
       fact: 0,
       form: 0,
       mandates: [],
+      formFindings: [],
       blocked: "no_module_spells_a_facts_text",
     };
 
   const mandates: ToolDescriptionFinding[] = [];
+  const formFindings: ToolDescriptionFinding[] = [];
   let strings = 0;
   let proseCount = 0;
-  let formCount = 0;
   for (const entry of population) {
     for (const literal of literalSegments(sources.get(entry.file) ?? "")) {
       strings += 1;
-      // The assertion runs over every literal; the census counts prose, so a key is not reported as a fact.
+      // The conditions run over every literal; the census counts prose, so a key is not reported as a fact.
       const isProse = PROSE.test(literal.text);
       if (isProse) proseCount += 1;
-      if (!SPEECH_MANDATED.pattern.test(literal.text)) {
-        if (isProse && FORM_SHAPES.test(literal.text)) formCount += 1;
+      if (SPEECH_MANDATED.pattern.test(literal.text)) {
+        mandates.push(
+          Object.freeze({
+            code: `fact_block_states_when_she_speaks:${entry.file}:${String(literal.line)}:${SPEECH_MANDATED.id}`,
+            sentence: literal.text,
+            protects: SPEECH_MANDATED.protects,
+          }),
+        );
         continue;
       }
-      mandates.push(
+      if (!isProse || !FORM_SHAPES.test(literal.text)) continue;
+      formFindings.push(
         Object.freeze({
-          code: `fact_block_states_when_she_speaks:${entry.file}:${String(literal.line)}:${SPEECH_MANDATED.id}`,
+          code: `fact_block_shapes_the_delivery:${entry.file}:${String(literal.line)}:form`,
           sentence: literal.text,
-          protects: SPEECH_MANDATED.protects,
+          protects:
+            "a sentence about how the delivery is shaped belongs to the floor's CHANNEL or to the preset; a fact block's one " +
+            "job is the world's current state",
         }),
       );
     }
@@ -671,9 +717,10 @@ function readFactText(sources: ReadonlyMap<string, string> = productionSourceTex
     composed,
     strings,
     prose: proseCount,
-    fact: proseCount - formCount - mandates.length,
-    form: formCount,
+    fact: proseCount - formFindings.length - mandates.length,
+    form: formFindings.length,
     mandates: Object.freeze(mandates),
+    formFindings: Object.freeze(formFindings),
     blocked: null,
   };
 }
@@ -847,6 +894,13 @@ test("no string a fact producer contributes tells her to speak", () => {
       "language, or as a description of the surface that leaves silence no room - belongs to the preset or to the floor's " +
       "CHANNEL, not here: delete it there and state it there",
   );
+  assert.deepEqual(
+    reading.formFindings.map((finding) => finding.code),
+    [],
+    "a fact block states the fact, and how the delivery is SHAPED is the floor's CHANNEL or the preset's sentence (" +
+      "`machine_fields_translated` says what to do with a status field: say what it MEANS instead of reading it out). A " +
+      "form rule here is a second location for a claim the channel owns, so delete it here",
+  );
 });
 
 /**
@@ -874,6 +928,27 @@ test("the fact-text reader names the paragraph that shipped, and passes the sent
     readFactText(sources).mandates.map((finding) => finding.code),
     ["fact_block_states_when_she_speaks:host/src/planted-fact.ts:3:speech_mandated"],
     "the shipped sentence, verbatim, in the language and the position it shipped in, must be named with its line",
+  );
+
+  // The other defect from the same paragraph: the form rule beside the mandate. It is a second class, so it gets its own
+  // finding, and the sentence is the one that shipped.
+  const formSources = new Map(productionSourceTexts());
+  formSources.set(
+    "host/src/planted-form.ts",
+    [
+      "export const PLANTED_FORM = Object.freeze({",
+      "  contextProjection: Object.freeze({",
+      '    text: "不要把时间和天气念成播报，也不要只说“我到了”。",',
+      "  }),",
+      "});",
+      "pump.enqueueFact(PLANTED_FORM, FACT_PRODUCER.companionArrival);",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    readFactText(formSources).formFindings.map((finding) => finding.code),
+    ["fact_block_shapes_the_delivery:host/src/planted-form.ts:3:form"],
+    "how the delivery is shaped belongs to the floor's CHANNEL or to the preset; the form sentence that shipped beside " +
+      "the mandate must be named with its line, or the census's `form` count is a number nothing reads",
   );
 
   const clean = new Map([
@@ -906,6 +981,12 @@ test("the fact-text reader names the paragraph that shipped, and passes the sent
     [],
     "the fact itself, the game's own notice, the cut-off voice note, dispatched-is-not-done and the stale parenthetical " +
       "are statements: a reader that reds on them would delete the facts it exists to protect",
+  );
+  assert.deepEqual(
+    passing.formFindings.map((finding) => finding.sentence),
+    [],
+    "none of those five states how the delivery is shaped, and a form reading that reds on them would push the world's " +
+      "own facts out of the block",
   );
   assert.ok(passing.prose > 0, "the clean tree must actually carry prose, or its silence proves nothing");
 });
