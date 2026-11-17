@@ -50,14 +50,36 @@
  *   <li>{@link GAME_CLOCK_READ}, at every read, with `atMs`, `source`, the game's four clock fields, and the GAME minutes
  *       since the first read - the log itself then shows whether the world was moving, and how far it had got at the last
  *       read before the silence;</li>
- *   <li>`GAME_CLOCK_STALLED`, from {@link createGameClock}.heartbeat, once per `heartbeatMs` of SNAPSHOT silence, so a
- *       quiet log says what the snapshot channel has stopped delivering and what clock the beat read when it asked. A
- *       sampler that no snapshot ever reached says so with `lastSnapshotReading: null`, which is that fact and not an
- *       omission.</li>
+ *   <li>`GAME_CLOCK_STALLED`, from {@link createGameClock}.heartbeat, once per `heartbeatMs` in which NO reading arrived
+ *       on any channel, so a quiet log says what the beat read when it asked and why the silence outlasted the ask. The
+ *       beat's own ask is a reading like any other: an ask that is answered ENDS the silence and prints no line, because
+ *       the `GAME_CLOCK_READ` that answer already printed is its record.</li>
  * </ul>
  * <p>
- * Both are bounded into the traffic that already exists: one line per admitted snapshot (never per poll - a second look at
- * a held snapshot is not a read) and one line per bound of silence. The END-OF-RUN VERDICT IS UNCHANGED by them.
+ * Both are bounded into the traffic that already exists: one line per admitted snapshot (never per poll - a second look
+ * at a held snapshot is not a read) and one line per bound of unsettled silence. The END-OF-RUN VERDICT IS UNCHANGED by
+ * them.
+ * </p>
+ *
+ * <h2>The age is the age of the last READING, on whichever channel it arrived</h2>
+ * <p>
+ * MEASURED 2026-11-21 (`round66` and `round67`): both runs reported `GAME_CLOCK_STALLED {sinceLastSnapshotMs: 199805,
+ * lastSnapshotReading: {source: "snapshot", timeOfDay: 640}, note: "no_snapshot_since_that_read"}` - 199.8 s of a
+ * 279 s run with "no snapshot" - and both reports were read as a world nobody could see. The world was read every
+ * thirty seconds: 9 `GAME_CLOCK_READ` lines walking 06:10 -> 08:10 while the stall number grew monotonically. The number
+ * was measuring the silence of ONE CALLER'S TAG. `source` is stamped by whoever read the admitted snapshot FIRST, the
+ * run's own sampling (`rememberObservation`, no timer, called only from turn paths) stops when the run stops opening
+ * turns, and the beat's answers are stamped `solicit` - so every reading after the first turn landed in the bucket the
+ * stall number does not measure. The bridge has ONE client and ONE admitted snapshot per observe
+ * (`local-stardew-bridge.ts`; the runner wraps the same client for the Host), so a reading is a reading whoever asked.
+ * </p>
+ * <p>
+ * So the age is `sinceLastReadingMs`, measured from the newest reading of ANY channel, and the channels are counted
+ * separately (`readingsByChannel`) so that "the beat is the only one reading" is a number a reader can see instead of a
+ * silence they have to infer. A tag whose caller goes quiet can no longer make a reading invisible. And the falsifier of
+ * record, because it is the shape that produced the wrong number: INVERTING ONLY THE READ ORDER over the same world (the
+ * sampler reads the admitted object before the beat does) used to yield zero stall lines where the other order yielded
+ * nine - the number described bookkeeping, not the world.
  * </p>
  *
  * <h2>The beat asks for its own reading</h2>
@@ -76,11 +98,9 @@
  * <ul>
  *   <li>ONE ask per `heartbeatMs`, not per tick. The beat runs on a timer, and the bound is re-checked here so a caller
  *       that beats from a waiting loop cannot turn the instrument into a poll;</li>
- *   <li>the two channels stay distinguishable: a solicited read prints `source: "solicit"`, a snapshot-delivered one
- *       `source: "snapshot"`, and `GAME_CLOCK_STALLED` keeps measuring the SNAPSHOT silence (`sinceLastSnapshotMs`, which
- *       keeps growing across solicited reads). The line carries the clock it just read, so a reader sees the clock move
- *       while the pushes are absent - the two facts are separate numbers, not one word;</li>
- *   <li>an ask that FAILED says so on the same line (`solicit_failed:<reason>`), and an ask the run could not make at all -
+ *   <li>an answer is a reading: `source: "solicit"` says WHO asked, never whether a snapshot arrived - the run's own
+ *       sampling and the beat read the same admitted frame, and the age is measured from whichever landed last;</li>
+ *   <li>an ask that FAILED says so on the line (`solicit_failed:<reason>`), and an ask the run could not make at all -
  *       the bridge is not attached yet, or it has closed - says `not_attempted:<reason>` rather than pretending the bridge
  *       answered. {@link createGameClock} returns `close`, which stops the asking once the bridge is gone.</li>
  * </ul>
@@ -173,6 +193,19 @@ export function createGameClock({
   let lastSolicitAtMs = null;
   let bridgeClosed = false;
 
+  /**
+   * HOW MANY READINGS EACH CALLER CONTRIBUTED, derived from the readings themselves.
+   *
+   * Grouped rather than counted per tag, so a new caller appears here by name without anyone editing a list - and so no
+   * channel can be the one the AGE depends on. This is the number that says "the beat is the only one reading", which
+   * `round66`/`round67` had to infer from a silence that was not there.
+   */
+  const readingsByChannel = () => {
+    const counts = Object.create(null);
+    for (const reading of readings) counts[reading.source] = (counts[reading.source] ?? 0) + 1;
+    return Object.freeze(counts);
+  };
+
   const observe = (snapshot, { source = "snapshot" } = {}) => {
     const clock = readSnapshotClock(snapshot);
     if (clock === null) {
@@ -243,6 +276,9 @@ export function createGameClock({
         // The reading itself, in the unit the question is asked in. `facts N · game minutes M · per game hour X`.
         reading: factsReading,
       }),
+      // WHO read the world, per channel: `snapshotsSeen` alone cannot say whether the run's own sampling is doing any
+      // reading at all, and a run where one caller is the only reader is a fact about the run.
+      readingsByChannel: readingsByChannel(),
       // One line, printed by the run: the span in the game's own values, then what was produced over it.
       line: describeClock({
         readings,
@@ -254,6 +290,7 @@ export function createGameClock({
         looks: samples,
         unreadable: misses.length,
         factsReading,
+        readingsByChannel: readingsByChannel(),
       }),
     });
   };
@@ -283,33 +320,41 @@ export function createGameClock({
   };
 
   /**
-   * A beat of the live instrument: ASK the world for a reading, then report the silence the SNAPSHOT channel left behind
-   * - or `line: null` while that silence is still inside the bound (the read lines are already that interval's record,
-   * and a beat per tick would bury them).
+   * A beat of the live instrument: ASK the world for a reading, then report a silence that survived the ask - or
+   * `line: null` when the world is not silent (the read lines are already that interval's record, and a beat per tick
+   * would bury them).
    *
-   * The silence is measured from the last snapshot-delivered reading, not from the last reading of any kind: once the
-   * beat reads the clock itself, "nothing has been read for 30 s" could never be true again, and the fact that no
-   * snapshot is arriving (the push path is silent while the world is not) would disappear from the log.
+   * THE SILENCE IS MEASURED FROM THE NEWEST READING OF ANY CHANNEL, and the ask comes first, because the ask is a reading
+   * too. `round66`/`round67` measured this from the last reading tagged `snapshot`, which is stamped by whoever read the
+   * admitted frame first: the run's own sampling goes quiet when the run stops opening turns, the beat's answers are
+   * tagged `solicit`, and the number grew to 199.8 s while the world was read every thirty seconds. A beat whose ask is
+   * ANSWERED therefore ends the silence and prints nothing - if it printed, every bound would spend a line on a world that
+   * answered every one of them, and the log would claim a stall it had just disproved.
    */
   const heartbeat = async ({ atMs = now() } = {}) => {
-    const lastSnapshotReading = lastReadingFrom(readings, "snapshot");
-    const sinceLastSnapshotMs = atMs - (lastSnapshotReading?.atMs ?? startedAtMs);
-    const stalled = sinceLastSnapshotMs >= heartbeatMs;
-    if (!stalled) return Object.freeze({ stalled: false, sinceLastSnapshotMs, solicit: null, line: null });
+    const lastReading = readings.at(-1) ?? null;
+    const sinceLastReadingMs = atMs - (lastReading?.atMs ?? startedAtMs);
+    if (sinceLastReadingMs < heartbeatMs)
+      return Object.freeze({ stalled: false, sinceLastReadingMs, solicit: null, line: null });
+    const readingsBefore = readings.length;
     const solicitToken = describeSolicit(await solicitOnce(atMs));
+    // The ask answered: the world was never silent, this caller was. The `GAME_CLOCK_READ` the answer printed is this
+    // beat's record, and printing a stall line beside it would report a silence the run had just ended.
+    if (readings.length > readingsBefore)
+      return Object.freeze({ stalled: false, sinceLastReadingMs: 0, solicit: solicitToken, line: null });
     const line = describeStall({
       atMs,
-      sinceLastSnapshotMs,
-      lastReading: readings.at(-1) ?? null,
-      lastSnapshotReading,
+      sinceLastReadingMs,
+      lastReading,
       first: readings[0] ?? null,
       solicit: solicitToken,
       heartbeatMs,
       readingsSeen: readings.length,
+      readingsByChannel: readingsByChannel(),
       pauseOnUnfocus,
     });
     print(line);
-    return Object.freeze({ stalled: true, sinceLastSnapshotMs, solicit: solicitToken, line });
+    return Object.freeze({ stalled: true, sinceLastReadingMs, solicit: solicitToken, line });
   };
 
   /** The bridge this clock reads through is gone: from here the beat says `not_attempted`, it does not go asking. */
@@ -318,16 +363,6 @@ export function createGameClock({
   };
 
   return Object.freeze({ observe, observeUnreadable, heartbeat, read, close });
-}
-
-/** The newest reading a CHANNEL produced: `snapshot` when the run's own sampling read the world, `solicit` when the beat
- * asked. Returns `null` when that channel has never produced one - which is not the same as "the last reading was
- * old". */
-function lastReadingFrom(readings, source) {
-  for (let index = readings.length - 1; index >= 0; index -= 1) {
-    if (readings[index].source === source) return readings[index];
-  }
-  return null;
 }
 
 /** A solicitation as one token a log tail can carry, in the same shape `pausedOnUnfocus` already uses (`state:detail`). */
@@ -373,6 +408,24 @@ function judgeSpan({ readings, spanMinutes, first, last }) {
   };
 }
 
+/** `facts N · game minutes M · per game hour X`, formatted once and used by the object and the printed line. */
+function describeFacts({ counted, gameMinutes, spanMinutes, perGameHour }) {
+  const facts = counted === null ? "not counted" : String(counted);
+  const minutes =
+    gameMinutes === null ? (spanMinutes === null ? "unmeasured" : String(spanMinutes)) : String(gameMinutes);
+  const rate = perGameHour === null ? "not measured" : String(perGameHour);
+  return `facts ${facts} · game minutes ${minutes} · per game hour ${rate}`;
+}
+
+/**
+ * WHICH CHANNEL READ THE WORLD, as one token a log tail can carry: `snapshot:7, solicit:9`. Empty when nothing was read,
+ * because that is the run that has no channel at all.
+ */
+function describeChannels(readingsByChannel) {
+  const entries = Object.entries(readingsByChannel);
+  return entries.length === 0 ? "none" : entries.map(([channel, count]) => `${channel}:${String(count)}`).join(", ");
+}
+
 /** What the facts the run recorded say, given whether the clock gave them a denominator at all. */
 function classifyFacts({ counted, verdict }) {
   if (counted === null) return "facts_not_counted";
@@ -385,20 +438,22 @@ function classifyFacts({ counted, verdict }) {
   return "span_not_measured";
 }
 
-/** `facts N · game minutes M · per game hour X`, formatted once and used by the object and the printed line. */
-function describeFacts({ counted, gameMinutes, spanMinutes, perGameHour }) {
-  const facts = counted === null ? "not counted" : String(counted);
-  const minutes =
-    gameMinutes === null ? (spanMinutes === null ? "unmeasured" : String(spanMinutes)) : String(gameMinutes);
-  const rate = perGameHour === null ? "not measured" : String(perGameHour);
-  return `facts ${facts} · game minutes ${minutes} · per game hour ${rate}`;
-}
-
 /** The one line the run prints, built from the same values the object publishes. */
-function describeClock({ readings, first, last, spanMinutes, verdict, reasonCode, looks, unreadable, factsReading }) {
+function describeClock({
+  readings,
+  first,
+  last,
+  spanMinutes,
+  verdict,
+  reasonCode,
+  looks,
+  unreadable,
+  factsReading,
+  readingsByChannel,
+}) {
   const clock = first === null ? "unread" : `${first.timeOfDay}->${last.timeOfDay}`;
   const span = spanMinutes === null ? "" : ` (${spanMinutes > 0 ? "+" : ""}${spanMinutes} min)`;
-  const looksText = `${readings.length} reading(s) of ${looks} snapshot read(s)`;
+  const looksText = `${readings.length} reading(s) of ${looks} snapshot read(s) by ${describeChannels(readingsByChannel)}`;
   const missed = unreadable === 0 ? "" : ` · ${unreadable} unreadable`;
   const answer = verdict === "advanced" ? "the world moved" : (reasonCode ?? verdict);
   return `game_clock ${clock}${span} · ${looksText}${missed} · ${answer} · ${factsReading}`;
@@ -425,42 +480,43 @@ function readingFields({ reading, first }) {
 
 /**
  * `GAME_CLOCK_READ {atMs, source, timeOfDay, day, season, year, minutesSinceFirst}` - one read of the world, printed as
- * it happens. `source` is what makes the two channels readable apart: `solicit` is the beat's own ask, `snapshot` is a
- * read the run's sampling took.
+ * it happens. `source` is WHO read it, never whether fresh data arrived: `solicit` is the beat's own ask and `snapshot`
+ * the run's sampling, and both read the same admitted frame through the same bridge client.
  */
 function describeRead({ reading, first }) {
   return `GAME_CLOCK_READ ${JSON.stringify(readingFields({ reading, first }))}`;
 }
 
 /**
- * `GAME_CLOCK_STALLED {...}` - the SILENCE of the snapshot channel, with the clock the beat just read.
+ * `GAME_CLOCK_STALLED {...}` - a silence of the world, on EVERY channel, with the clock the beat just read.
  *
- * Four things are kept apart rather than left to a `null`: `sinceLastSnapshotMs` is the silence of the push channel and
- * keeps growing across solicited reads; `solicit` says whether this beat asked and what came back; `lastReading` is the
- * newest reading of ANY channel (so a reader sees the clock move while the silence grows); and `lastSnapshotReading` is
- * the reading the silence is measured from - `null` says no snapshot was ever read, not that the sampler forgot.
+ * `sinceLastReadingMs` is the age of the newest reading of any channel and keeps growing only while nothing at all is
+ * read; `solicit` says whether this beat asked and what came back; `lastReading` is that newest reading (`null` says no
+ * reading was ever taken, not that the sampler forgot); and `readingsByChannel` says WHO has been reading, so "the beat is
+ * the only one" is a number rather than an inference from the size of the silence - the shape `round66`/`round67` read
+ * as a frozen world with nine fresh readings in the same log.
  */
 function describeStall({
   atMs,
-  sinceLastSnapshotMs,
+  sinceLastReadingMs,
   lastReading,
-  lastSnapshotReading,
   first,
   solicit,
   heartbeatMs,
   readingsSeen,
+  readingsByChannel,
   pauseOnUnfocus,
 }) {
   return `GAME_CLOCK_STALLED ${JSON.stringify({
     atMs,
-    sinceLastSnapshotMs,
+    sinceLastReadingMs,
     heartbeatMs,
     readingsSeen,
+    readingsByChannel,
     solicit,
     lastReading: readingFields({ reading: lastReading, first }),
-    lastSnapshotReading: readingFields({ reading: lastSnapshotReading, first }),
     pausedOnUnfocus: describePauseOnUnfocus(pauseOnUnfocus),
-    note: lastSnapshotReading === null ? "no_snapshot_read_since_run_start" : "no_snapshot_since_that_read",
+    note: lastReading === null ? "no_reading_since_run_start" : "no_reading_since_that_read",
   })}`;
 }
 
