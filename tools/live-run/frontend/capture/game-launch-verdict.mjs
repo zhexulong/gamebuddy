@@ -58,10 +58,13 @@ export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
  *
  *   `attach_needs_native_save` - the first attachment binds a farmhand that must be written into
  *     the save: the Mod answers `awaiting_save`/`binding_persist_pending`
- *     (`integrations/stardew/HostFarmhandProvisioner.cs:612-637`), stages the binding on the
+ *     (`integrations/stardew/HostFarmhandProvisioner.cs:639`), stages the binding on the
  *     engine's own `Saving` event (:180-186) and issues the manifest on `Saved` (:217-222). The only
- *     thing that drives that cycle is `HostAutomation.Enable` (:1394-1420 in `ModEntry.cs`, the
- *     `SaveGameMenu` trigger), which is a fixture switch the Host never writes into the Mod's config.
+ *     thing that drives that cycle is the HostAutomation fixture switch PAIR - `Enable` alone is not
+ *     enough, the trigger also needs `TriggerNativeSaveAfterAttachment`
+ *     (`integrations/stardew/ModEntry.Fixtures.cs:2088-2111`, the `SaveGameMenu` trigger) - which the
+ *     Host never writes into the Mod's config, and which `tools/README.md:266` requires a production
+ *     Host profile to keep off.
  *
  *   `cabin_offer_expires_before_any_ui_can_answer` - the cabin choice is offered with a deadline no page
  *     can answer inside: the Mod republishes the advertisement every second with a 3 s expiry
@@ -625,7 +628,7 @@ function awaitingSaveReading(response, confirmPressedAtMs) {
   if (stamp === null) return null;
   const reason =
     typeof response.reasonCode === "string" && response.reasonCode.length > 0 ? response.reasonCode : "no_reason_code";
-  return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is HostAutomation.Enable (ModEntry.cs, TryTriggerNativeAutomationSave), which production never writes into the Mod's config`;
+  return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is the HostAutomation fixture switch pair - Enable plus TriggerNativeSaveAfterAttachment (integrations/stardew/ModEntry.Fixtures.cs:2088-2111) - which production never writes into the Mod's config`;
 }
 
 /**
