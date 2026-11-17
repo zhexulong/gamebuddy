@@ -1,121 +1,121 @@
 import { dirname, join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
+import { Type } from "typebox";
 import {
-  compilePlanScript,
-  legalPlanActionIds,
-  MAX_PLAN_NODES,
-  PLAN_TOOL_SLOT_MEANING,
-  planActionsFromRegistrations,
-  planProgramId,
-  planSettlementNote,
-  planShape,
-  planWorkDescription,
-  type CompiledPlan,
-  type PlanScriptRequest,
-  type PublishedPlanAction,
-} from "../body-program-script.js";
+  type HostNodeAdmissionResult,
+  HostNodeAdmissionService,
+  type HostNodeAdmissionValidator,
+} from "../action-execution-coordinator.internal.js";
 import {
   type BodyProgramNodeCatalogue,
   bodyProgramNodeAdmissionRefusal,
   bodyProgramPreflightRefusal,
 } from "../body-program-preflight.js";
-import { Type } from "typebox";
+import {
+  type CompiledPlan,
+  compilePlanScript,
+  legalPlanActionIds,
+  MAX_PLAN_NODES,
+  PLAN_TOOL_SLOT_MEANING,
+  type PlanScriptRequest,
+  type PublishedPlanAction,
+  planActionsFromRegistrations,
+  planProgramId,
+  planSettlementNote,
+  planShape,
+  planWorkDescription,
+} from "../body-program-script.js";
+import type { CompanionInterruption } from "../companion-interruption.js";
+import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
+import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
   createStableGameRuntimeBindingIdentity,
   createStardewRecoveryBindingContext,
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import {
-  type HostNodeAdmissionResult,
-  type HostNodeAdmissionValidator,
-  HostNodeAdmissionService,
-} from "../action-execution-coordinator.internal.js";
-import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
-import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
-import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
-import type { CompanionInterruption } from "../companion-interruption.js";
-import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
+import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
   createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "../farmhand-companion-presentation.js";
-import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
-import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
-import {
-  CompanionHostService,
-  createGamePresentationAdmissionProvider,
-  GameTurnLineageTracker,
-} from "../host-service.js";
+import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
 import type {
   GameIntegrationAdapter,
   IntegrationActionPolicy,
   IntegrationActionRegistration,
   IntegrationStateView,
 } from "../game-integration-adapter.js";
-import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
-import type { ChatVoiceSpeechPublisher } from "../voice.js";
-import type { RuntimeSession } from "../runtime.js";
-import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
-import { identityProfileMetadata } from "../identity-profile.js";
-import { resolveRuntimePaths } from "../runtime-identity.js";
-import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
+import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
+import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
+import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
 import {
-  createRunTrace,
-  describeTraceFailure,
-  RUN_SPAN_NAMES,
-  RUN_TRACE_FILE_NAME,
-  startRunTraceFile,
-  tracedStep,
-  type RunTrace,
-} from "../run-trace.js";
-import {
-  validateBodyProgramCandidateRequest,
-  validateBodyProgramEventsResult,
-  validateBodyProgramStatusResult,
-  validateBodyProgramSubmitResult,
-  type BodyProgramStatusResult,
-  type BodyNodeAdmissionChallenge,
-  type BodyNodeAdmissionResult,
-  type BodyProgramCandidateRequest,
-  type BodyProgramEventsRequest,
-  type BodyProgramStatusRequest,
-  type ActionRegistration,
-  type FarmhandPolicyIdentity,
-  type Snapshot,
-} from "../protocol.js";
-import {
-  consumeGameVoicePresentationAttachment,
-  type GameVoicePresentationAttachment,
-} from "../voice-gateway-client.js";
-import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
-import {
-  isTerminalProgramStatus,
-  MAX_PROGRAM_STATUS_WAIT_MS,
-  planBatchAnswer,
-  programStatusProgress,
-  waitForTerminalProgramStatus,
-  type PlanAnswerNode,
-  type PlanBatchAnswer,
-  type ProgramStatusProgress,
-  type ProgramStatusWaitFacts,
-} from "../program-status-wait.js";
+  CompanionHostService,
+  createGamePresentationAdmissionProvider,
+  GameTurnLineageTracker,
+} from "../host-service.js";
+import { identityProfileMetadata } from "../identity-profile.js";
+import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
 import {
   createProgramSettlementReporter,
   type SettledProgramAnswer,
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
-import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
-import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
-import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
+import {
+  isTerminalProgramStatus,
+  MAX_PROGRAM_STATUS_WAIT_MS,
+  type PlanAnswerNode,
+  type PlanBatchAnswer,
+  type ProgramStatusProgress,
+  type ProgramStatusWaitFacts,
+  planBatchAnswer,
+  programStatusProgress,
+  waitForTerminalProgramStatus,
+} from "../program-status-wait.js";
+import {
+  type ActionRegistration,
+  type BodyNodeAdmissionChallenge,
+  type BodyNodeAdmissionResult,
+  type BodyProgramCandidateRequest,
+  type BodyProgramEventsRequest,
+  type BodyProgramStatusRequest,
+  type BodyProgramStatusResult,
+  type FarmhandPolicyIdentity,
+  type Snapshot,
+  validateBodyProgramCandidateRequest,
+  validateBodyProgramEventsResult,
+  validateBodyProgramStatusResult,
+  validateBodyProgramSubmitResult,
+} from "../protocol.js";
+import {
+  createRunTrace,
+  describeTraceFailure,
+  RUN_SPAN_NAMES,
+  RUN_TRACE_FILE_NAME,
+  type RunTrace,
+  startRunTraceFile,
+  tracedStep,
+} from "../run-trace.js";
+import type { RuntimeSession } from "../runtime.js";
+import { resolveRuntimePaths } from "../runtime-identity.js";
+import { type CompanionLocale, resolveCompanionLocale } from "../settings/player-preference-store.js";
+import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
+import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
+import {
+  consumeGameVoicePresentationAttachment,
+  type GameVoicePresentationAttachment,
+} from "../voice-gateway-client.js";
 import {
   type GameRuntimeMaterializer,
   type MaterializedGameRuntime,
   materializeExactEnter,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
+import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
+import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
 
 type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPorts>["bodyProgram"];
 type BodyProgramConsumer = object;
@@ -352,14 +352,17 @@ function createBodyProgramTools(
           const span = runTrace.begin("plan.script", {
             scriptSource: compiled.scriptSource,
             snapshotRevision: compiled.snapshotRevision ?? -1,
-            producedProgram: compiled.ok ? JSON.stringify(compiled.program) : "",
+            producedProgram: compiled.status === "refused" ? "" : JSON.stringify(compiled.program),
           });
-          if (!compiled.ok) {
+          // A PARTIAL PLAN HAS A PROGRAM, so the run artifact records it like one (`producedProgram` above): the artifact's
+          // job is to say what would run, and a plan half of which runs is not the same reading as a refusal with nothing
+          // behind it.
+          if (compiled.status === "refused") {
             span.end({ reasonCode: compiled.reasonCode });
-            // The compiler's own name for the refusal, unchanged and with no plan behind it: there is no partial plan
-            // to run, so the count is zero and the reason is what the companion tells the player. A name the builder
-            // does not have also gets the ids it DOES have, so a wrong guess teaches instead of blocking the turn.
+            // The compiler's own name for the refusal, unchanged and with no plan behind it. A name the builder does not
+            // have also gets the ids it DOES have, so a wrong guess teaches instead of blocking the turn.
             return planDetails({
+              planStatus: "refused",
               accepted: false,
               nodeCount: 0,
               reasonCode: compiled.reasonCode,
@@ -676,7 +679,6 @@ function readPlanActions(connection: GameConnection): readonly PublishedPlanActi
   return planActionsFromRegistrations(state?.catalogRegistrations ?? []);
 }
 
-
 /** The current Mod snapshot: a plan script reads the world as the Mod last published it. */
 function readLiveSnapshot(connection: GameConnection): Snapshot | null {
   const state = (connection as { state?: { snapshot?: Snapshot | null } }).state;
@@ -795,23 +797,45 @@ export function planRefusalAnswer(verification: unknown, submitted: string): Rea
 }
 
 /**
- * The difference between the plan she wrote and the program that runs, on an ACCEPTED plan.
+ * The difference between the plan she wrote and the program that runs, on a plan that HAS a program.
  *
  * <p>
- * Empty when there is none, for the same reason `layoutFactsNote` is: an ordinary plan should not spend payload saying
- * nothing. Present with a count and a `truncated` flag the moment the compiler wrote a step she did not (`inserted`),
- * folded two loops into one pass (`merged`) or found a step already true (`noStepNeeded`).
+ * Always says WHICH STATE the plan is in - `compiled` or `partial` - because that is the one fact every reader of this
+ * answer needs and the one the old `accepted: true` beside `droppedCount: 15` answer withheld. Empty otherwise, for the
+ * same reason `layoutFactsNote` is: an ordinary plan should not spend payload saying nothing. Present with a count and a
+ * `truncated` flag the moment the compiler wrote a step she did not (`inserted`), found a step already true
+ * (`noStepNeeded`) or REFUSED a call she did write (`dropped`).
  * </p>
  * <p>
- * `dropped` cannot appear here, and that is the invariant rather than a coincidence: a plan with a refused call is refused
- * whole by the compiler, so an accepted answer always carries every step she wrote. Measured at `3d249ff1`:
- * `builder.talk_to_npc(...); builder.shop_purchase(...)` came back `ok: true` with ONE node, and the answer said the plan
- * was accepted - which is the shape this answer may never be able to produce again.
+ * `dropped` on this answer is the whole point of `partial`: the steps that compiled run under `programId`, and the ones
+ * that did not are named by the position she wrote them, so "what ran" and "what I wrote" can be compared without
+ * guessing. Measured at `3d249ff1`: `builder.talk_to_npc(...); builder.shop_purchase(...)` came back `ok: true` with ONE
+ * node and the answer said the plan was accepted - the shape this answer may never produce again, because a plan that
+ * refused a call now says `planStatus: partial` beside the names.
  * </p>
  */
 function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
-  if (!compiled.ok) return {};
+  if (compiled.status === "refused") return {};
   return Object.freeze({
+    planStatus: compiled.status,
+    ...(compiled.status === "compiled"
+      ? {}
+      : {
+          // THE FIRST refusal's own code, unchanged, and every refused call with the action it named and the arguments it
+          // omitted - the same records the whole-plan refusal has always carried, now beside a program that runs.
+          reasonCode: compiled.reasonCode,
+          dropped: compiled.dropped,
+          droppedCount: compiled.droppedCount,
+          droppedTruncated: compiled.droppedCount > compiled.dropped.length,
+          rejected: compiled.rejected,
+          ...(compiled.requirement === undefined
+            ? {}
+            : {
+                actionId: compiled.requirement.actionId,
+                requiredArguments: compiled.requirement.requiredArguments,
+                resourceClaims: compiled.requirement.resourceClaims,
+              }),
+        }),
     ...(compiled.insertedCount === 0
       ? {}
       : {
@@ -838,7 +862,7 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
  * </p>
  */
 function layoutFactsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
-  if (!compiled.ok || compiled.layoutFactsAbsentCount === 0) return {};
+  if (compiled.status === "refused" || compiled.layoutFactsAbsentCount === 0) return {};
   return Object.freeze({
     layoutFactsAbsent: compiled.layoutFactsAbsent,
     layoutFactsAbsentCount: compiled.layoutFactsAbsentCount,
@@ -1081,7 +1105,7 @@ function assertFreshBodyProgramPreflight(
   } catch {
     throw new Error("integration_not_ready");
   }
-  if (!isStateView(state) || !state.connected || state.registrations === undefined)
+  if (!(isStateView(state) && state.connected) || state.registrations === undefined)
     throw new Error("integration_not_ready");
   assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
   // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by four layers - the
@@ -1179,9 +1203,7 @@ function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPoli
     throw new Error("integration_not_ready");
   }
   if (
-    !isStateView(state) ||
-    !state.connected ||
-    !isFarmhandPolicyIdentity(state.policyIdentity) ||
+    !(isStateView(state) && state.connected && isFarmhandPolicyIdentity(state.policyIdentity)) ||
     state.capabilityRevision !== state.policyIdentity.capabilityRevision
   ) {
     throw new Error("integration_not_ready");
@@ -1210,7 +1232,7 @@ function assertCurrentBodyProgramPolicyIdentity(
 }
 
 function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {
-  if (!isRecord(value) || !hasExactKeys(value, ["value", "capabilityRevision"])) return false;
+  if (!(isRecord(value) && hasExactKeys(value, ["value", "capabilityRevision"]))) return false;
   const capabilityRevision = value.capabilityRevision;
   if (
     typeof value.value !== "string" ||
@@ -1223,7 +1245,7 @@ function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdenti
 
 function validateStatusRequest(value: Record<string, unknown>): string | null {
   const allowed = Object.hasOwn(value, "waitMs") ? ["programId", "waitMs"] : ["programId"];
-  if (!hasExactKeys(value, allowed) || !isOpaque(value.programId)) return "invalid_body_program_request";
+  if (!(hasExactKeys(value, allowed) && isOpaque(value.programId))) return "invalid_body_program_request";
   if (!Object.hasOwn(value, "waitMs")) return null;
   const waitMs = value.waitMs;
   return typeof waitMs === "number" && Number.isSafeInteger(waitMs) && waitMs >= 0 && waitMs <= 30_000

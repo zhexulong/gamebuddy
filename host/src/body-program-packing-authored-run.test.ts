@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { TOOL_FOOTPRINT_TILES_BY_CHARGE, footprintTiles, packAreaSteps } from "./body-program-packing.js";
+import { footprintTiles, packAreaSteps, TOOL_FOOTPRINT_TILES_BY_CHARGE } from "./body-program-packing.js";
 import { type CompiledPlan, compilePlanScript, planActionsFromRegistrations } from "./body-program-script.js";
 import type { ActionRegistration, Snapshot } from "./protocol.js";
 
@@ -128,7 +128,7 @@ type PlanNode = Readonly<{
 }>;
 
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
-  if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
+  if (result.status === "refused") assert.fail(`expected a plan, received ${result.reasonCode}`);
   return result.program.nodes as unknown as readonly PlanNode[];
 }
 

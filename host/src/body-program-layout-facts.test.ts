@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { compilePlanScript } from "./body-program-script.js";
+import { compilePlanScript, planActionsFromRegistrations } from "./body-program-script.js";
 import type { ActionRegistration, Snapshot } from "./protocol.js";
-import { planActionsFromRegistrations } from "./body-program-script.js";
 
 /**
  * A MISTAKE VISIBLE BEFORE IT IS MADE.
@@ -89,25 +87,25 @@ test("a plan whose row lacks a layout fact is compiled and warned about, not ref
   const { isRaised: _raised, tileBlockedNow: _blocked, ...rowWithoutLayoutFacts } = rowWithFacts;
   const compiled = compileAgainst([rowWithoutLayoutFacts]);
 
-  assert.equal(compiled.ok, true, "the plan still runs: the warning is a fact, not a gate");
-  assert.deepEqual(compiled.ok ? compiled.layoutFactsAbsent : [], [
+  assert.equal(compiled.status === "compiled", true, "the plan still runs: the warning is a fact, not a gate");
+  assert.deepEqual(compiled.status === "compiled" ? compiled.layoutFactsAbsent : [], [
     "layout_facts_absent:call 1:isRaised",
     "layout_facts_absent:call 1:tileBlockedNow",
   ]);
-  assert.equal(compiled.ok ? compiled.layoutFactsAbsentCount : -1, 2);
+  assert.equal(compiled.status === "compiled" ? compiled.layoutFactsAbsentCount : -1, 2);
 });
 
 test("a plan whose row carries the facts is answered with no warning at all", () => {
   const compiled = compileAgainst([rowWithFacts]);
-  assert.equal(compiled.ok, true);
-  assert.deepEqual(compiled.ok ? compiled.layoutFactsAbsent : ["unreachable"], []);
-  assert.equal(compiled.ok ? compiled.layoutFactsAbsentCount : -1, 0);
+  assert.equal(compiled.status === "compiled", true);
+  assert.deepEqual(compiled.status === "compiled" ? compiled.layoutFactsAbsent : ["unreachable"], []);
+  assert.equal(compiled.status === "compiled" ? compiled.layoutFactsAbsentCount : -1, 0);
 });
 
 test("a node aimed at a tile the snapshot has no row for warns by the node's own position", () => {
   const compiled = compileAgainst([]);
-  assert.equal(compiled.ok, true);
-  assert.deepEqual(compiled.ok ? compiled.layoutFactsAbsent : [], [
+  assert.equal(compiled.status === "compiled", true);
+  assert.deepEqual(compiled.status === "compiled" ? compiled.layoutFactsAbsent : [], [
     "layout_facts_absent:call 1:isRaised",
     "layout_facts_absent:call 1:tileBlockedNow",
   ]);
@@ -134,10 +132,14 @@ test("the warning list is bounded while its count is not", () => {
     { snapshot: { ...baseSnapshot, cropTargets: rows } as unknown as Snapshot, actions },
   );
 
-  assert.equal(compiled.ok, true);
-  assert.equal(compiled.ok ? compiled.layoutFactsAbsentCount : -1, 24, "twelve nodes, two facts each");
+  assert.equal(compiled.status === "compiled", true);
   assert.equal(
-    compiled.ok ? compiled.layoutFactsAbsent.length : -1,
+    compiled.status === "compiled" ? compiled.layoutFactsAbsentCount : -1,
+    24,
+    "twelve nodes, two facts each",
+  );
+  assert.equal(
+    compiled.status === "compiled" ? compiled.layoutFactsAbsent.length : -1,
     8,
     "the list is bounded; the count is the population",
   );
@@ -145,12 +147,14 @@ test("the warning list is bounded while its count is not", () => {
   // never read as a whole answer that happens to be short. Measured before this row existed: eight rows and no way to
   // tell 8 of 8 from 8 of 24 without comparing `layoutFactsAbsentCount` beside them by hand.
   assert.equal(
-    compiled.ok ? compiled.layoutFactsAbsent.at(-1) : "",
+    compiled.status === "compiled" ? compiled.layoutFactsAbsent.at(-1) : "",
     "layout_facts_absent_over_ceiling:24:8",
     "a truncated list ends in the code that names its ceiling and the population it cut",
   );
   assert.equal(
-    compiled.ok ? compiled.layoutFactsAbsent.filter((row) => row.startsWith("layout_facts_absent:")).length : -1,
+    compiled.status === "compiled"
+      ? compiled.layoutFactsAbsent.filter((row) => row.startsWith("layout_facts_absent:")).length
+      : -1,
     7,
     "the ceiling row takes one slot of the eight, so the window is 7 facts and one code - the list stays eight long",
   );

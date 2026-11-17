@@ -1292,8 +1292,8 @@ test("the plan tool hands its compiled program to the one submission path a mode
   // A PERMISSIVE COMPILE IS FINE; A PERMISSIVE ANSWER IS NOT. Measured on a live run: six statements, two refused for a
   // missing required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the companion
   // planned around an item it never picked up. The answer now carries the compiler's account of every call she wrote -
-  // which ones were dropped, and which ones compiled - on the branch where nothing ran, because that is the only branch
-  // a refused call can reach: a plan with a dropped step is refused whole and never submitted.
+  // which ones were dropped, and which ones compiled - on BOTH branches that carry it: the refusal, where nothing ran, and
+  // the partial plan, where the rest of the batch does. `planStatus` is the field that says which of the two this answer is.
   assert.match(source, /droppedCount: compiled\.droppedCount,/u);
   assert.match(source, /acceptedSteps: compiled\.acceptedSteps,/u);
   assert.match(source, /droppedTruncated: compiled\.droppedCount > compiled\.dropped\.length,/u);
@@ -1302,6 +1302,9 @@ test("the plan tool hands its compiled program to the one submission path a mode
     /\.\.\.stepAccountNote\(compiled\),/u,
     "an accepted answer still states the steps the compiler wrote or folded, not only the ones the author wrote",
   );
+  // THE STATE THE ANSWER IS IN, beside the account, from the compiler's own field: `planStatus` is what distinguishes a
+  // plan that ran all of it from one that ran the part that compiled, and an answer that omits it is read as a success.
+  assert.match(source, /planStatus: compiled\.status,/u);
   // A caller that names one action writes `actionId`; the schema says `actionIds`. The reader accepts both.
   assert.match(source, /value\.actionIds === undefined \? value\.actionId : value\.actionIds/u);
   // The property, not the sentence: the tool reads its request once and hands that request to `planShape`. Written
@@ -1310,10 +1313,11 @@ test("the plan tool hands its compiled program to the one submission path a mode
     source,
     /readPlanShapeRequest\(params\)[\s\S]{0,200}planShape\(readPlanActions\(connection\), request\);/u,
   );
-  // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
+  // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged, beside the
+  // state that says nothing ran.
   assert.match(
     source,
-    /return planDetails\(\{\s+accepted: false,\s+nodeCount: 0,\s+reasonCode: compiled\.reasonCode,/u,
+    /return planDetails\(\{\s+planStatus: "refused",\s+accepted: false,\s+nodeCount: 0,\s+reasonCode: compiled\.reasonCode,/u,
   );
   // What the accepted plan ANSWERS, as a property rather than as one line of source: it must name the program, it must
   // say whether the plan settled, and it must carry the same status payload a status call would have - because the
@@ -1350,10 +1354,11 @@ test("the plan tool hands its compiled program to the one submission path a mode
     "by WAITING for it with the one waiter, not by returning early and inviting a poll",
   );
   // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be
-  // replayed and audited instead of guessed at.
+  // replayed and audited instead of guessed at - and a PARTIAL plan is one that produced a program, so it is recorded
+  // like one: only a refusal has nothing to serialize.
   assert.match(
     source,
-    /runTrace\.begin\("plan\.script", \{\s+scriptSource: compiled\.scriptSource,\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\s+producedProgram: compiled\.ok \? JSON\.stringify\(compiled\.program\) : ""/u,
+    /runTrace\.begin\("plan\.script", \{\s+scriptSource: compiled\.scriptSource,\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\s+producedProgram: compiled\.status === "refused" \? "" : JSON\.stringify\(compiled\.program\)/u,
   );
 });
 

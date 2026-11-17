@@ -235,54 +235,41 @@ type PlanCallAccount = Readonly<{
   droppedCount: number;
 }>;
 
+/**
+ * What one plan script compiled to, in three states that are three different answers.
+ *
+ * `compiled` - every call the author wrote became a step, and the program is the plan she wrote.
+ *
+ * `partial` - SOME calls became steps and some were refused. THE COMPILED STEPS RUN: the program is a real program and
+ * it has an identity, so the answer carries it. What makes the answer honest is that it says so - `status` is not
+ * `compiled`, and `dropped` names every refused call by the position she wrote it. It was not always so: one refused call
+ * used to void the batch, so a single typo in a sixteen-step plan cost her the fifteen steps that were correct, and the
+ * measured price of that is a companion who stops batching - every extra call she writes is another chance to lose the
+ * whole turn, so she writes one call at a turn and pays a model round-trip for each. The forgery the old rule was built
+ * for (`ok: true` beside a dropped call) is answered by `status` instead: an answer that ran part of the work says
+ * `partial`, and nothing in this type can be read as a success while it is.
+ *
+ * `refused` - not one call produced a step, or the script itself could not be run (a throw, a timeout, an empty script, a
+ * snapshot that cannot be read, a program that breaks the Mod's claim rule). There is no program, so there is no program
+ * id and nothing runs.
+ *
+ * THE FIELD IS THE ONLY SPELLING OF THE DISTINCTION. There is no `ok` beside it: a boolean that is false for two states
+ * which differ in the one way a consumer must not confuse (does a program run?) is what let a refusal answer stand for a
+ * partial one. A consumer switches on `status`, and `program` is present exactly when something runs.
+ */
 export type CompiledPlan =
   | Readonly<
       {
-        ok: true;
-        scriptSource: string;
-        snapshotRevision: number;
-        program: Readonly<{ nodes: readonly PlanNode[] }>;
-        /**
-         * The nodes this compiler INSERTED into the list the script wrote, in program order, one entry per node, spelled
-         * `inserted=<actionId>;before=<nodeId>`: what it wrote, and the node it wrote that immediately before.
-         *
-         * Present because the program that runs is NOT the program the author wrote, and an author who cannot see the
-         * difference reads a node list that disagrees with her script for no stated reason. Bounded;
-         * `insertedCount` is the population.
-         */
-        inserted: readonly string[];
-        /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
-        insertedCount: number;
-        /**
-         * The node IDS this compiler minted, in program order, in full - the population `inserted` names by action.
-         *
-         * `inserted` says WHAT was written and where; this says which nodes are the compiler's, exactly. It exists for
-         * the one reading nobody can derive from a node list: whether a node the author never asked for ever surfaced as
-         * a failure (`inserted_node_refusals`). A prefix match on `auto_` would answer that too and would be a second
-         * spelling of the fact, so the producer states the set it wrote - and a plan that inserted nothing states an
-         * empty array rather than leaving a reader to infer zero from an absent field.
-         */
-        insertedNodeIds: readonly string[];
-        /**
-         * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
-         * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
-         * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
-         * population it truncated.
-         */
-        layoutFactsAbsent: readonly string[];
-        layoutFactsAbsentCount: number;
-      } & PlanCallAccount
+        status: "compiled";
+      } & RunnablePlan
     >
   | Readonly<
       {
-        ok: false;
-        scriptSource: string;
-        snapshotRevision: number | null;
+        status: "partial";
+        /** The FIRST refused call's own code, unchanged: the one to fix first. Every other refusal travels in `rejected`. */
         reasonCode: string;
-        /** Present when the refusal was a builder call, so the answer names what that action demands. */
+        /** Present when that first refusal was a builder call, so the answer names what the action demands. */
         requirement?: PlanArgumentRequirement;
-        /** Every argument the refused call left out, so a correction fixes all of them and not only the first. */
-        missingArguments?: readonly string[];
         /**
          * The refused calls, in the order the script wrote them: the call's position, the action it named, and why.
          *
@@ -292,10 +279,67 @@ export type CompiledPlan =
         rejected: readonly PlanCallRejection[];
         /** Every refusal, including the ones past `MAX_REPORTED_PLAN_CALLS`. */
         rejectedCount: number;
+      } & RunnablePlan
+    >
+  | Readonly<
+      {
+        status: "refused";
+        scriptSource: string;
+        snapshotRevision: number | null;
+        reasonCode: string;
+        /** Present when the refusal was a builder call, so the answer names what that action demands. */
+        requirement?: PlanArgumentRequirement;
+        /** Every argument the refused call left out, so a correction fixes all of them and not only the first. */
+        missingArguments?: readonly string[];
+        rejected: readonly PlanCallRejection[];
+        rejectedCount: number;
         /** Present when the script threw, so the answer says what the engine said and where. */
         threw?: PlanScriptThrow;
       } & PlanCallAccount
     >;
+
+/**
+ * Everything a plan that RUNS carries, in both states that run.
+ *
+ * One shape for `compiled` and `partial` because the difference between them is the calls that did not compile, which the
+ * partial answer states in `dropped` - never in what the program is made of. A consumer that only needs to run the plan
+ * reads this and nothing else, which is what keeps "some calls were refused" from being re-decided at every call site.
+ */
+type RunnablePlan = Readonly<{
+  scriptSource: string;
+  snapshotRevision: number;
+  program: Readonly<{ nodes: readonly PlanNode[] }>;
+  /**
+   * The nodes this compiler INSERTED into the list the script wrote, in program order, one entry per node, spelled
+   * `inserted=<actionId>;before=<nodeId>`: what it wrote, and the node it wrote that immediately before.
+   *
+   * Present because the program that runs is NOT the program the author wrote, and an author who cannot see the
+   * difference reads a node list that disagrees with her script for no stated reason. Bounded;
+   * `insertedCount` is the population.
+   */
+  inserted: readonly string[];
+  /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
+  insertedCount: number;
+  /**
+   * The node IDS this compiler minted, in program order, in full - the population `inserted` names by action.
+   *
+   * `inserted` says WHAT was written and where; this says which nodes are the compiler's, exactly. It exists for
+   * the one reading nobody can derive from a node list: whether a node the author never asked for ever surfaced as
+   * a failure (`inserted_node_refusals`). A prefix match on `auto_` would answer that too and would be a second
+   * spelling of the fact, so the producer states the set it wrote - and a plan that inserted nothing states an
+   * empty array rather than leaving a reader to infer zero from an absent field.
+   */
+  insertedNodeIds: readonly string[];
+  /**
+   * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
+   * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
+   * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
+   * population it truncated.
+   */
+  layoutFactsAbsent: readonly string[];
+  layoutFactsAbsentCount: number;
+}> &
+  PlanCallAccount;
 
 /**
  * How many targets ONE PLAN can name, which is what the observation budget sizes its per-stack window against.
@@ -951,7 +995,7 @@ export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 7154;
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. One call the compiler refuses voids the whole plan - nothing runs - and the answer names the dropped calls beside the compiled ones, so repair and resend. Stop when builder.isFull() is true and plan the rest in the next script of this same turn, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. Stop when builder.isFull() is true and plan the rest in the next script of this same turn, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// In order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
@@ -1095,8 +1139,9 @@ function layoutFactsAbsent(
  * Compiles one plan script against the live snapshot.
  *
  * The script receives a frozen copy of the snapshot and the builder, and produces nodes in call
- * order. Every refusal is named and bounded; a refused script produces NO program, so a partial plan
- * can never be submitted as if it were the plan the companion wrote.
+ * order. Every refusal is named and bounded, and the batch is answered in ONE of three states: `compiled` (every call
+ * became a step), `partial` (some did, and the steps that did RUN - `status` is what says so, never a success beside a
+ * refused call) or `refused` (nothing became a step, so there is no program). See `CompiledPlan`.
  *
  * It runs inside the windows `PLAN_SCRIPT_BUDGET_MS` declares, and a window that expired is re-measured
  * before it is believed: `runPlanScriptWindows` is where that happens and why.
@@ -1158,7 +1203,7 @@ export function compilePlanScript(
   // A script may swallow a refusal with its own try/catch; a refusal that ends the SCRIPT still ends it, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote. A refusal that
   // ends only its own CALL never reaches here: the call boundary answers it and the script carries on, so every call is
-  // accounted for by name at the end - and a plan with any call refused is refused whole there.
+  // accounted for by name at the end - and a plan with SOME calls refused is answered `partial` there, not refused whole.
   if (state.refusal !== null)
     return refused(state.refusal, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
   // A script that produced no node has asked for nothing, in one of three ways that need different answers:
@@ -1223,28 +1268,22 @@ export function compilePlanScript(
       undefined,
       state,
     );
-  // AN `ok: true` ANSWER IS A PROMISE THAT EVERY STEP THE AUTHOR WROTE IS IN THE PROGRAM, and the promise is answered
-  // here rather than left to the caller to check against `dropped`.
+  // THE RULE THAT USED TO STAND HERE - ONE REFUSED CALL VOIDS THE BATCH - answered a real forgery and cost the calls that
+  // were correct. The forgery is measured: at `3d249ff1`, `builder.talk_to_npc(...); builder.shop_purchase(...)` answered
+  // `ok: true` and carried ONE node, the purchase refused and the plan submitted without it; round40 is the same shape
+  // from the other end (`accepted: true` beside `droppedCount: 15`). The fix bought that honesty by refusing the PLAN, so a
+  // sixteen-step plan became sixteen chances to lose the turn - and the safe move, one call at a time and a model
+  // round-trip between each, is the behaviour this whole tool exists to remove.
   //
-  // It was not, and the price is measured twice. At `3d249ff1`, `builder.talk_to_npc(...); builder.shop_purchase(...)`
-  // answered `ok: true` and carried ONE node: the purchase was refused, the plan was submitted without it, and the answer
-  // reported a successful plan (the fixpoint gate in `tools/check-plan-legal-fixpoint.mjs` is what found it). Round40 is
-  // the same shape from the other end: `accepted: true` beside `droppedCount: 15`. A plan that runs part of the work while
-  // its answer says it ran all of it is the most expensive answer this product can give - the companion plans around a seed
-  // she never bought, and neither the program nor the answer disagrees with her.
-  //
-  // So a refused call now refuses the PLAN: nothing runs, the first refusal's own code is the reason (unchanged), and
-  // `dropped` beside `acceptedSteps` says which of her steps went missing and which ones compiled - one edit and one
-  // resubmission, instead of a turn spent discovering what the program left out.
-  if (state.rejectedCount > 0) {
-    const first = state.rejected[0]!;
-    return refused(first.reasonCode, scriptSource, snapshotRevision, state.requirement, first.missingArguments, state);
-  }
+  // The state below keeps the honesty and drops the collateral: the steps that compiled RUN under their own program id,
+  // `dropped` names every call that did not, by the position she wrote it, and `status` is `partial` rather than `compiled`
+  // - so an answer cannot claim the whole plan ran, and a typo cannot cost the batch. What still refuses the WHOLE plan is
+  // above, and it is a different kind of fact: no plan exists (nothing compiled), or the program would be one the Mod
+  // refuses.
   // What this plan assumed and the snapshot it read could not answer. Read from the SAME nodes that are about to be
   // submitted, so the warning describes the plan rather than the script.
   const layout = layoutFactsAbsent(ordered.nodes, dependencies.actions, snapshot);
-  return Object.freeze({
-    ok: true as const,
+  const runnable = {
     scriptSource,
     snapshotRevision,
     program: Object.freeze({ nodes: ordered.nodes }),
@@ -1268,7 +1307,17 @@ export function compilePlanScript(
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
-  });
+  };
+  if (state.rejectedCount > 0)
+    return Object.freeze({
+      status: "partial" as const,
+      reasonCode: state.rejected[0]!.reasonCode,
+      ...(state.requirement === undefined ? {} : { requirement: state.requirement }),
+      rejected: Object.freeze(state.rejected.slice(0, MAX_REPORTED_PLAN_CALLS)),
+      rejectedCount: state.rejectedCount,
+      ...runnable,
+    });
+  return Object.freeze({ status: "compiled" as const, ...runnable });
 }
 
 /** How one run of the script ended, and the error it ended with when the engine raised one. */ type PlanScriptAttempt =
@@ -1487,7 +1536,7 @@ function refused(
   threw?: PlanScriptThrow,
 ): CompiledPlan {
   return Object.freeze({
-    ok: false as const,
+    status: "refused" as const,
     scriptSource,
     snapshotRevision,
     reasonCode,

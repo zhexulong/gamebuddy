@@ -144,15 +144,28 @@ const BUDGET_TOTAL_MS = PLAN_SCRIPT_BUDGET_MS.reduce((total, windowMs) => total 
 const TIMEOUT_CODE = `plan_script_timeout:${BUDGET_TOTAL_MS}ms:attempts=${PLAN_SCRIPT_BUDGET_MS.length}`;
 
 function refusalOf(result: CompiledPlan): string {
-  if (result.ok) assert.fail("expected a refusal");
+  if (result.status !== "refused") assert.fail(`expected a refusal, received ${result.status}`);
   return result.reasonCode;
 }
 
 /**
- * The calls a compile refused, read from the refusal they are part of.
+ * The compiler's own code for the FIRST refused call, in the two states that can carry one.
  *
- * A plan with even one refused call is refused WHOLE (`ok: false`), so there is nothing to read from an accepted answer:
- * `ok` means every step the author wrote is in the program.
+ * A plan whose every call was refused is `refused` and a plan with some refused is `partial`; both state the same code at
+ * the same position, and what differs between them is whether anything RUNS - which is `status`, not the code. So a test
+ * about the REFUSAL reads it here, and a test about whether the plan ran reads `status`. Asking `refusalOf` for a plan
+ * with one bad call and five good ones would demand the whole-batch void this contract no longer has.
+ */
+function firstRefusalOf(result: CompiledPlan): string {
+  if (result.status === "compiled") assert.fail("expected a refused call, received a plan that compiled every call");
+  return result.reasonCode;
+}
+
+/**
+ * The calls a compile refused, read from the answer that carries them.
+ *
+ * A plan with ANY refused call is `partial` or `refused` - never `compiled` - so there is nothing to read from a
+ * `compiled` answer: that state means every step the author wrote is in the program.
  */
 function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   call: number;
@@ -160,7 +173,8 @@ function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   reasonCode: string;
   missingArguments?: readonly string[];
 }>[] {
-  if (result.ok) assert.fail("expected a refusal: a plan with a refused call is refused whole");
+  if (result.status === "compiled")
+    assert.fail("expected refused calls: a plan that compiled every call has no refusals to read");
   return result.rejected;
 }
 
@@ -181,7 +195,7 @@ function accountOf(result: CompiledPlan) {
 
 /** The action shape a refused builder call answered with, read from the result the materializer publishes. */
 function requirementOf(result: CompiledPlan) {
-  if (result.ok) assert.fail("expected a refusal");
+  if (result.status === "compiled") assert.fail("expected refused calls, received a plan that compiled every call");
   return result.requirement;
 }
 
@@ -192,11 +206,17 @@ function surfaceClaims(actionId: string): readonly Readonly<{ key: string; value
   return (action.resourceTemplate?.claims ?? []).map((claim) => ({ key: claim.key, value: claim.value }));
 }
 
-type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
+type PlanNode = Extract<CompiledPlan, { status: "compiled" }>["program"]["nodes"][number];
+
+/** The program a plan that RUNS carries. `refused` is the one state with nothing to run, so it is the one state this
+ *  helper fails on - a `partial` answer has a real program and a real program id. */
+function programOf(result: CompiledPlan) {
+  if (result.status === "refused") assert.fail(`expected a plan, received ${result.reasonCode}`);
+  return result.program;
+}
 
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
-  if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
-  return result.program.nodes;
+  return programOf(result).nodes;
 }
 
 /**
@@ -206,13 +226,14 @@ function nodesOf(result: CompiledPlan): readonly PlanNode[] {
  * without a plan nothing runs and no insertion means anything.
  */
 function insertionsOf(result: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
-  if (!result.ok) assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
+  if (result.status === "refused") assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
   return { inserted: result.inserted, count: result.insertedCount };
 }
 
 /** The node ids the compiler MINTED, which is the population a run's inserted-node reading joins on. */
 function insertedNodeIdsOf(result: CompiledPlan): readonly string[] {
-  if (!result.ok) assert.fail(`expected a plan beside its inserted node ids, received ${result.reasonCode}`);
+  if (result.status === "refused")
+    assert.fail(`expected a plan beside its inserted node ids, received ${result.reasonCode}`);
   return result.insertedNodeIds;
 }
 
@@ -644,7 +665,7 @@ test("the same script and snapshot compile to a byte-identical program and progr
   const first = compile(WATER_BY_DOOR, overrides);
   const second = compile(WATER_BY_DOOR, overrides);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
-  if (!(first.ok && second.ok)) assert.fail("both compiles must produce a plan");
+  if (first.status !== "compiled" || second.status !== "compiled") assert.fail("both compiles must produce a plan");
   assert.equal(planProgramId(11, first.program.nodes), planProgramId(11, second.program.nodes));
   // A different plan over the same world is a DIFFERENT program: the id is content-addressed, so the second
   // plan cannot be answered as the first one's duplicate.
@@ -711,9 +732,15 @@ builder.move_to_tile({ x: 12, y: 8 });
 builder.sleep();
 builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
 `);
-  // The refused step cannot exist in the plan - a node after `sleep` aims at a world that is gone - so nothing of this
-  // script runs, and the answer names the step that was thrown away beside the two that compiled around it.
-  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
+  // The refused step cannot exist in the plan - a node after `sleep` aims at a world that is gone - so it is the one
+  // call that does not become a node, and the answer names it beside the two that compiled.
+  assert.equal(result.status, "partial", "the walk and the sleep ran; the step after the reset could not");
+  assert.equal(firstRefusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "sleep"],
+    "the step written after the world reset is the one absent, and it is the last one she wrote",
+  );
   assert.deepEqual(rejectionsOf(result), [
     { call: 3, actionId: "cut_weeds", reasonCode: "plan_script_action_after_world_reset:cut_weeds:sleep" },
   ]);
@@ -884,7 +911,7 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
     const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`);
     if (worldResetting.includes(action.actionId)) {
       assert.equal(
-        refusalOf(result),
+        firstRefusalOf(result),
         `plan_script_action_after_world_reset:move_to_tile:${action.actionId}`,
         `${action.actionId} rebuilds the world, so no step may follow it - named here rather than dropped from the population`,
       );
@@ -964,9 +991,9 @@ test("with no published dismissal to write, the refusal keeps its name", () => {
     },
   ]);
   assert.equal(
-    refusalOf(result),
+    firstRefusalOf(result),
     `plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
-    "the code is the refusal's own, unchanged, and the step beside it did not run",
+    "the code is the refusal's own, unchanged: the compiler cannot write a dismissal the surface does not publish",
   );
   assert.deepEqual(
     accountOf(result).acceptedSteps,
@@ -1001,7 +1028,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
   );
   assert.ok(pairs.length > 20, `the pair population is a real population, not ${pairs.length} pairs`);
   const expiredCode = (result: CompiledPlan): string | null =>
-    !result.ok && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
+    result.status === "refused" && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
   const deadEnds: string[] = [];
   const notMeasured: string[] = [];
   let asWritten = 0;
@@ -1013,7 +1040,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       notMeasured.push(`${yieldingId}->${dependentId}: ${pairExpired}`);
       continue;
     }
-    if (pair.ok) {
+    if (pair.status === "compiled") {
       asWritten += 1;
       continue;
     }
@@ -1028,7 +1055,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       notMeasured.push(`${yieldingId}->${dependentId}:${named}: ${remedyExpired}`);
       continue;
     }
-    if (!remedy.ok) {
+    if (remedy.status !== "compiled") {
       deadEnds.push(`${yieldingId}->${dependentId}: remedy ${named} does not compile (${remedy.reasonCode})`);
       continue;
     }
@@ -1156,7 +1183,7 @@ test("every action the surface declares day_advanced refuses a step written afte
   for (const actionId of dayAdvanced) {
     const result = compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`);
     assert.equal(
-      refusalOf(result),
+      firstRefusalOf(result),
       `plan_script_action_after_world_reset:move_to_tile:${actionId}`,
       `${actionId} declares day_advanced, so a plan may not write a node after it`,
     );
@@ -1337,7 +1364,7 @@ test("every declared argument, omitted, is refused with what it must be and wher
     for (const argument of action.arguments) {
       const subject = `${action.actionId}.${argument.name}`;
       const result = compile(callScript(action, { omit: [argument.name] }), { ...SOURCE_SNAPSHOT });
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${subject}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
@@ -1373,7 +1400,7 @@ test("a sparse snapshot changes the source, never the shape of the answer", () =
         { script: callScript(action, { omit: [argument.name] }) },
         { snapshot: sparse, actions: ACTIONS },
       );
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${action.actionId}.${argument.name}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${action.actionId}.${argument.name}: ${code}`);
@@ -1448,7 +1475,7 @@ test("a value of the wrong kind names the argument, its expectation, its source 
       const result = compile(callScript(action, { values: { [argument.name]: wrong.literal } }), {
         ...SOURCE_SNAPSHOT,
       });
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_argument_not_canonical:${subject}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
@@ -1639,8 +1666,8 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
   const slowed = compile(burn(20_000_000));
   const slowedMs = performance.now() - slowedStartedAt;
   assert.ok(
-    slowed.ok,
-    `a ${slowedMs.toFixed(0)} ms compile of a finite script answered ${slowed.ok ? "" : slowed.reasonCode}`,
+    slowed.status === "compiled",
+    `a ${slowedMs.toFixed(0)} ms compile of a finite script answered ${slowed.status === "compiled" ? "" : slowed.reasonCode}`,
   );
   assert.equal(slowed.program.nodes.length, 1, "the step written after the burn is the program that compiled");
 
@@ -1654,7 +1681,7 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
     const startedAt = performance.now();
     const measured = compile(burn(iterations));
     elapsedMs = performance.now() - startedAt;
-    if (!measured.ok)
+    if (measured.status !== "compiled")
       assert.fail(`${iterations} iterations in ${elapsedMs.toFixed(0)} ms answered ${measured.reasonCode}`);
     assert.equal(measured.program.nodes.length, 1, `the step after a ${iterations}-iteration burn is the program`);
     iterations = Math.ceil(iterations * 1.5);
@@ -1676,7 +1703,7 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
  */
 test("a script that throws answers with the engine's own message and the line it named", () => {
   const threwOf = (result: CompiledPlan) => {
-    if (result.ok) assert.fail("expected a refusal");
+    if (result.status !== "refused") assert.fail(`expected a refusal, received ${result.status}`);
     return result.threw;
   };
   const unparsed = compile("const steps = 2;\nbuilder.move_to_tile({ x: 10, y: 10 );");
@@ -2645,6 +2672,28 @@ function descriptionOverBudget(actions: readonly PublishedPlanAction[]): string 
     : `plan_description_exceeds_budget:${String(description.length)}:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}`;
 }
 
+/**
+ * THE PARTIAL CONTRACT REACHES THE ONE PLACE THE COMPANION LEARNS IT.
+ *
+ * `planStatus` is the field that stops an answer from claiming the whole plan ran, and a field nobody is told about is a
+ * field she will not read: the description is handed to her every Game turn and is the only place the answer's contract
+ * is stated. The rule it replaced - "one call the compiler refuses voids the whole plan" - was true until this contract
+ * and is false now, so it may not survive in the text that teaches the rule.
+ */
+test("the description teaches that a refused call costs its own call, and names the field that says so", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  assert.match(
+    description,
+    /planStatus: partial/u,
+    "the answer's own field has to be named where the contract is taught",
+  );
+  assert.doesNotMatch(
+    description,
+    /voids the whole plan/u,
+    "a rule no longer in force may not be taught: it is the sentence that made one typo cost the batch",
+  );
+});
+
 test("the plan description fits the budget its own constant declares", () => {
   assert.ok(PLAN_WORK_DESCRIPTION_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
   assert.equal(
@@ -2910,7 +2959,7 @@ test("every argument plan_shape marks required is one whose omission the builder
         { script: callScript(action, { omit: [argument.name] }) },
         { snapshot: snapshot(SOURCE_SNAPSHOT), actions: ACTIONS },
       );
-      const code = omitted.ok ? "accepted" : omitted.reasonCode;
+      const code = omitted.status === "compiled" ? "accepted" : omitted.reasonCode;
       const refuses = code.startsWith(`plan_script_missing_argument:${action.actionId}.${argument.name}:`);
       if (argument.required === true && !refuses)
         faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
@@ -2953,20 +3002,19 @@ test("a shape call for several actions answers the ones that exist and names the
 });
 
 /**
- * ONE REFUSED CALL REFUSES THE PLAN, AND THE ANSWER STILL NAMES EVERY CALL SHE WROTE.
+ * ONE REFUSED CALL COSTS THE CALL IT NAMES, AND THE REST OF THE BATCH RUNS.
  *
  * This is the first of the fourteen voided batches measured in `.tmp/fork-why-slow.jsonl`, replayed verbatim: six calls,
  * two of which pass every argument and four of which omit `expectedQualifiedItemId` on a `harvest_crop` that declares it.
  * The companion's own words - "write 30 nodes and any one miss zeroes the batch" - are why it kept its bets at 2.8 nodes
- * per plan.
+ * per plan, and why every extra call she writes costs her a turn instead of saving one.
  *
- * The half-fix was to run the other five nodes anyway, and it cost more than the all-or-nothing it replaced: the answer
- * said `accepted: true` (round40: `accepted: true` beside `droppedCount: 15`; at `3d249ff1` the round42 talk-then-buy
- * pair) while a step the companion had planned around never ran. So the plan is refused WHOLE - nothing runs, so nothing
- * is a lie - and the answer hands back both halves of the account: the calls that were dropped, and the calls that
- * compiled, so the correction is one edit and one resubmission instead of a rediscovered plan.
+ * The rule that answered the ORIGINAL forgery (at `3d249ff1` a refused call was simply left out and the answer still said
+ * `ok: true`; round40 is `accepted: true` beside `droppedCount: 15`) was "refuse the whole plan", and it bought that
+ * honesty with the five calls that were right. `partial` keeps both: the five run under a real program id, the answer says
+ * `partial` rather than claiming the plan ran, and `dropped` names the one call that did not.
  */
-test("a refused call refuses the whole plan, and the answer names every call that was dropped or kept", () => {
+test("a refused call costs the call it names and no others, and the batch runs as partial", () => {
   const measured = `
 builder.move_to_tile({ x: 60, y: 11 });
 builder.harvest_crop({ x: 60, y: 10, expectedTargetId: "crop_72f6ce55311cf7c3" });
@@ -2978,12 +3026,30 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   const result = compile(measured, { ...SOURCE_SNAPSHOT });
   // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
   // reading is "one refused call, five that were fine", which is the property, not the session's arithmetic.
+  assert.equal(result.status, "partial", "one call did not become a step, so the answer may not say `compiled`");
   assert.equal(
-    refusalOf(result),
+    result.status === "partial" ? result.reasonCode : "compiled",
     "plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
-    "the first refused call's own code, unchanged, is the reason nothing runs",
+    "the first refused call's own code, unchanged, is the reason to fix first",
   );
-  assert.deepEqual(result.ok ? null : result.rejected, [
+  // THE FIVE THAT WERE CORRECT RUN. This is the assertion the whole state exists for: before it, one refused call voided
+  // the batch and these five had no program to be part of.
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "move_to_tile", "harvest_crop", "move_to_tile", "harvest_crop"],
+    "the refused call is the one absent, in its own position, and nothing else moved",
+  );
+  // AND WHAT RUNS IS A CANDIDATE THE MOD ACCEPTS: a partial plan is submitted like any other, so it must satisfy the
+  // wire's own shape check and the compiler's claim-rule self-check - running is not a licence to emit garbage.
+  const nodes = nodesOf(result);
+  assert.equal(
+    result.snapshotRevision,
+    snapshot(SOURCE_SNAPSHOT).revision,
+    "a partial plan carries the revision it was built against, because it is submitted against one",
+  );
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  assert.deepEqual(planResourceConflictCodes(nodes, ACTIONS), []);
+  assert.deepEqual(rejectionsOf(result), [
     {
       call: 2,
       actionId: "harvest_crop",
@@ -3004,10 +3070,66 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
 });
 
 /**
+ * The property above, at the boundary that decides how far a refusal reaches: its POSITION in the batch.
+ *
+ * A rule that dropped the calls written AFTER the refusal would still pass a test whose bad call came last, so the same
+ * three-call batch is compiled with the refused call first, in the middle and last. Every arrangement must keep the two
+ * calls that were written correctly - which is the difference between "costs the call it names" and "costs the batch".
+ */
+test("a refused call costs only itself wherever the author wrote it", () => {
+  const first = "builder.move_to_tile({ x: 12, y: 8 });";
+  const second = "builder.move_to_tile({ x: 13, y: 8 });";
+  // `till_soil` declares `x`, `y` and `charge`, so a call with none of them is refused by the surface's own declaration.
+  const refused = "builder.till_soil({});";
+  const arrangements = [
+    ["first", `${refused}\n${first}\n${second}`],
+    ["middle", `${first}\n${refused}\n${second}`],
+    ["last", `${first}\n${second}\n${refused}`],
+  ] as const;
+  for (const [position, script] of arrangements) {
+    const result = compile(script);
+    assert.equal(result.status, "partial", `a refusal written ${position} leaves two calls that compiled`);
+    assert.equal(
+      nodesOf(result).length,
+      2,
+      `a refusal written ${position} must cost one call, not the batch: ${JSON.stringify(accountOf(result))}`,
+    );
+    assert.equal(result.droppedCount, 1, `a refusal written ${position} is named exactly once`);
+  }
+});
+
+/**
+ * THE BOUNDARY OF `partial`: A BATCH WITH NO STEP IS STILL A REFUSAL, and the code says which kind of empty it is.
+ *
+ * `partial` exists because a program with SOME of the author's steps can run. With NONE of them there is no program, so
+ * there is nothing to submit and nothing to name - and a state that ran an empty program would be the mirror image of the
+ * forgery this contract was built to stop. The three ways a script produces no step are different mistakes and are named
+ * differently: it never called a builder at all, it called one and nothing was added, or it called a method the builder
+ * does not have - which cannot be interpreted past, because the runtime cannot know what that call would have added.
+ */
+test("a script that produced no step is refused, never an empty partial plan", () => {
+  // A well-formed loop whose body calls no builder: the shape round60 sent three times, and the one that must still
+  // void - `plan_script_empty_no_builder_call` is a diagnosis of the script, not a refusal of any call it made.
+  const askedNothing = compile("for (let index = 0; index < 3; index += 1) { const tile = index; }");
+  assert.equal(askedNothing.status, "refused", "zero steps is zero program");
+  assert.equal(refusalOf(askedNothing), "plan_script_empty_no_builder_call");
+  // Every call refused: there is a count to name, and it is not the same mistake as asking for nothing.
+  const allRefused = compile("builder.till_soil({});\nbuilder.move_to_tile({});");
+  assert.equal(allRefused.status, "refused");
+  assert.equal(allRefused.droppedCount, 2);
+  assert.equal(allRefused.acceptedStepsCount, 0);
+  // A method the builder does not publish ends the SCRIPT: nothing after it can be interpreted.
+  const unknownMethod = compile("builder.for_each({ source: 'cropTargets' });");
+  assert.equal(unknownMethod.status, "refused");
+  assert.equal(refusalOf(unknownMethod), "plan_script_unknown_action:for_each");
+});
+
+/**
  * The dependent case, with the one dependency a script can actually express: `equipFor` ANSWERS a slot, and the call
  * after it consumes that answer. When the equip step is refused there is no slot, so the action that would have named it
  * must not become a node - it is refused too, not silently written with a missing argument the Mod would hit at runtime.
- * Both refusals are named against the call that caused them, and the plan they are part of runs nothing.
+ * Both refusals are named against the call that caused them, and the walk they followed still runs: a dependent refusal
+ * costs its own call, never the calls before it.
  */
 test("a call that consumes a refused call's answer does not run, and both are named", () => {
   const result = compile(
@@ -3026,14 +3148,19 @@ builder.cut_weeds({ x: 10, y: 10, slot: slot, expectedTargetId: 'weed_01' });
       { call: 3, actionId: "cut_weeds" },
     ],
   );
-  assert.equal(result.ok ? null : result.rejected[0]?.reasonCode, "plan_script_tool_slot_unresolved:cut_weeds:scythe");
+  assert.equal(
+    result.status === "compiled" ? null : rejectionsOf(result)[0]?.reasonCode,
+    "plan_script_tool_slot_unresolved:cut_weeds:scythe",
+  );
   assert.match(
-    result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""),
+    result.status === "compiled" ? "" : (rejectionsOf(result)[1]?.reasonCode ?? ""),
     /^plan_script_argument_not_canonical:cut_weeds\.slot:/u,
   );
-  assert.match(result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""), /:got:missing$/u);
+  assert.match(result.status === "compiled" ? "" : (rejectionsOf(result)[1]?.reasonCode ?? ""), /:got:missing$/u);
   assert.deepEqual(accountOf(result).acceptedSteps, ["n01"], "the walk before the refusal compiled, and is named");
   assert.equal(result.droppedCount, 2);
+  // THE WALK STILL RUNS. Two refused calls in a three-call script used to mean nothing ran at all.
+  assert.equal(nodesOf(result).length, 1, "the one step that compiled is the program");
 });
 
 /**
@@ -3046,7 +3173,7 @@ test("a batch in which nothing was accepted is still a refusal, and it names eve
 builder.claim_mail_attachment({ expectedTargetId: 'mailbox_a21663c33741df54' });
 builder.move_to_tile({ x: 10 });
 `);
-  assert.ok(!result.ok, "no accepted node is not a plan");
+  assert.equal(result.status, "refused", "no accepted node is not a plan");
   assert.match(result.reasonCode, /^plan_script_missing_argument:claim_mail_attachment\.x:/u);
   assert.deepEqual(result.missingArguments, ["x", "y"]);
   assert.equal(result.requirement?.actionId, "claim_mail_attachment");

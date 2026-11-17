@@ -5,19 +5,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { HostNodeAdmissionService } from "../action-execution-coordinator.internal.js";
+import { type CompiledPlan, compilePlanScript, planActionsFromRegistrations } from "../body-program-script.js";
+import type { GameConnection } from "../game-connection.js";
 import {
-  type CompiledPlan,
-  compilePlanScript,
-  planActionsFromRegistrations,
-} from "../body-program-script.js";
-import {
+  createIntegrationActionCatalog,
   DEFAULT_INTEGRATION_ACTION_POLICY,
   type GameIntegrationAdapter,
   type IntegrationActionRegistration,
   type IntegrationStateView,
-  createIntegrationActionCatalog,
 } from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
 import type { ActionRegistration, BodyNodeAdmissionChallenge, FarmhandPolicyIdentity, Snapshot } from "../protocol.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import { createStardewBodyNodeAdmissionValidator } from "./continuity-semantic-game-runtime-materializer.js";
@@ -168,7 +164,7 @@ type PlanNode = Record<string, unknown> & { arguments: Record<string, unknown> }
 
 function compiledNode(script: string): PlanNode {
   const compiled: CompiledPlan = compilePlanScript({ script }, { snapshot: SNAPSHOT, actions: ACTIONS });
-  if (!compiled.ok) assert.fail(`expected a plan, received ${compiled.reasonCode}`);
+  if (compiled.status === "refused") assert.fail(`expected a plan, received ${compiled.reasonCode}`);
   assert.equal(compiled.program.nodes.length, 1, "each case here is one node");
   return compiled.program.nodes[0] as unknown as PlanNode;
 }
