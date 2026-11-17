@@ -30,7 +30,6 @@ import {
 } from "./model-field-budget.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
-import { createProgramProgressObserver } from "./program-status-wait.js";
 import { EXECUTION_REQUEST_ARGUMENT_RULES, SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 
 /**
@@ -164,38 +163,8 @@ function richBrief(): string {
     inputs: [playerInput],
     snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
     events: richBatchFacts(),
-    inFlight: richInFlight(),
     locale: "zh-CN",
   });
-}
-
-/**
- * A programme mid-flight, read out of the real ledger from a real journal payload.
- *
- * The fixture is not a hand-written `{programmes: [...]}`: it is a `program_status` answer fed to a fresh observer, so
- * the block below is composed from what the production reader actually produces. The clock is fixed (`0` read at, `4000`
- * asked) so the determinism test can compare two renderings.
- */
-function richInFlight() {
-  const observer = createProgramProgressObserver();
-  observer.observe(
-    {
-      code: "found",
-      snapshot: {
-        programId: "plan_rich",
-        state: "active",
-        catalogRevision: 3,
-        stopEpoch: 0,
-        eventHighWater: 9,
-        nodes: [
-          { nodeId: "n001", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
-          { nodeId: "n002", state: "pending", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
-        ],
-      },
-    },
-    0,
-  );
-  return observer.inFlight(4_000);
 }
 
 /** Every block name the text opens, in order. */

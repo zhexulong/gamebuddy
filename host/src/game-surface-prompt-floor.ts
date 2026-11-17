@@ -1,6 +1,10 @@
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
-import { CONTENT_IDS_IN_WORDS, NIGHT_HAS_ENFORCED_HOURS, SLEEPING_IS_AN_ACTION } from "./games/stardew/prompt/stardew-game-conduct.js";
+import {
+  CONTENT_IDS_IN_WORDS,
+  NIGHT_HAS_ENFORCED_HOURS,
+  SLEEPING_IS_AN_ACTION,
+} from "./games/stardew/prompt/stardew-game-conduct.js";
 import { type IdentityProfile } from "./identity-profile.js";
 import { buildCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
@@ -296,8 +300,7 @@ function gameBubbleMaxChars(): number {
 const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
   "world-state":
     "the world as last observed; its first line names the revision and says whether this turn brought a new observation or re-states the last one",
-  "in-flight": "plans you already submitted that have not settled - dispatched is not done",
-  "world-facts": "what has happened since",
+  "world-facts": "the decisions you have to see: a refusal, a notice, an arrival, the bridge going away",
   "execution-result": "what a plan you submitted did",
 };
 

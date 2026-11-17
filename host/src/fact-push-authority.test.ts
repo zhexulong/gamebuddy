@@ -37,10 +37,10 @@ const BLOCK_JUSTIFICATION: Readonly<Record<FactBriefBlock, string | undefined>> 
   // RESULT. Her own call's outcome: the settlement states what the call did, and it is the one block that answers a call
   // she made rather than something that happened around her.
   "execution-result": "the result of her own call: the programme's settlement, per node",
-  // PUSH. A row per unfinished node: the settlement is the answer, and every intermediate step is a trace.
-  "in-flight": undefined,
-  // PUSH. Every event that happened, whether or not she asked and whether or not it was her own call's result.
-  "world-facts": undefined,
+  // DECISIONS. What remains of this block after the push half was deleted: a refusal, a notice, an arrival, the bridge
+  // going away - the news she must see to correct herself. The world itself is what `stardew_observe` answers, and a
+  // successful step of her own programme is stated by `<execution-result>`.
+  "world-facts": "the decisions she has to see: a refusal, a notice, an arrival, the bridge going away",
 });
 
 test("push_fact_has_no_pull: every assembled block is a pull answer, a result, a refusal, the player, or an arrival", () => {

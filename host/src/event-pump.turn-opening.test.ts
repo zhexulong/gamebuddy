@@ -57,7 +57,6 @@ import {
   UNATTRIBUTED_EXECUTION_TOKEN,
   type WorldFact,
 } from "./event-pump.js";
-import { createProgramProgressObserver } from "./program-status-wait.js";
 
 /**
  * A turn opens only when the batch carries at least one thing she did not have and that can change what she does next.
@@ -516,61 +515,6 @@ test("suppression holds the facts: the next turn that opens carries what a suppr
     "and it is delivered as itself, not as the re-statement beside it",
   );
   assert.equal(pump.pendingCount, 0, `nothing is left queued behind the suppression: ${String(queueAfterFirstTurn)}`);
-});
-
-test("suppression leaves the settlement observer alone: it runs on its own timer, and its reading reaches the next turn", async () => {
-  const observer = createProgramProgressObserver();
-  observer.observe(
-    {
-      code: "found",
-      snapshot: {
-        programId: "plan_r46_weed_row",
-        state: "active",
-        catalogRevision: 3,
-        stopEpoch: 0,
-        eventHighWater: 7,
-        nodes: [
-          { nodeId: "n001", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "cut_weeds" },
-          { nodeId: "n002", state: "pending", nodeAttempt: 0, admissionAttempt: 0, actionId: "cut_weeds" },
-        ],
-      },
-    },
-    0,
-  );
-  let reads = 0;
-  const pump = new CompanionEventPump(() => {
-    reads += 1;
-    return observer.inFlight(11_000);
-  });
-  const recorder = recordingSink();
-
-  pump.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
-  await pump.flush(recorder.sink);
-  const readsAfterTurn = reads;
-  assert.ok(readsAfterTurn > 0, "a delivered batch states the programme in flight");
-
-  // A call that owes no turn is not an observation of the journal, and must not consume or clear its reading.
-  pump.enqueueFact(readingFact(1), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(
-    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
-    FACT_PRODUCER.adapterIngress,
-  );
-  await pump.flush(recorder.sink);
-  // NOT A FLUSH AT ALL: the same content arrived twice, so nothing owed a turn and no batch was composed. The answer is
-  // its own member (`not_owed`), which is the state the old `suppressed` spelling collapsed together with a lost turn.
-  assert.equal(pump.turnAccount.lastDecision?.kind, "not_owed");
-  assert.equal(
-    reads,
-    readsAfterTurn,
-    "the ledger is read when a batch is composed, never to decide whether to compose",
-  );
-
-  // The next turn that opens still carries it: a call that owed no turn neither starved the observer nor hid its result.
-  pump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
-  await pump.flush(recorder.sink);
-  assert.match(recorder.batches.at(-1)!.text, /<in-flight>\n/u, "the programme in flight reaches the next turn");
-  assert.match(recorder.batches.at(-1)!.text, /plan_r46_weed_row/u);
 });
 
 test("the delivered-content memory is bounded, and its drain errs toward a turn", async () => {

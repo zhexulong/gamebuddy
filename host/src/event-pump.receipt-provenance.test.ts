@@ -14,7 +14,6 @@ import {
   turnAccountLine,
   type WorldFact,
 } from "./event-pump.js";
-import { createProgramProgressObserver } from "./program-status-wait.js";
 import { EXECUTION_STATES, newEnvelope, type Scope, validateBridgeMessage } from "./protocol.js";
 
 /**
@@ -58,8 +57,6 @@ export type WireOrigin = Readonly<{ kind: string; programId?: string; nodeId?: s
 
 /** The programme the execution under test belongs to. */
 const PROGRAMME: WireOrigin = Object.freeze({ kind: "programme", programId: "plan_cauli", nodeId: "n002" });
-/** A programme that is NOT the one the execution under test belongs to, for the "filed as somebody else's step" case. */
-const OTHER_PROGRAMME = "plan_wood";
 const STANDALONE: WireOrigin = Object.freeze({ kind: "standalone" });
 const UNATTRIBUTED: WireOrigin = Object.freeze({ kind: "unattributed" });
 
@@ -156,61 +153,17 @@ function receiptPopulation(): readonly ReceiptCase[] {
 const BASE_MS = 1_700_000_000_000;
 
 /**
- * The Mod's own progress ledger, read at `nowMs`, after the journal reported what it reported.
+ * THE FIVE LEDGER READINGS THIS GATE USED TO VARY ARE GONE with the pump's in-flight port (`<in-flight>` was its only
+ * consumer). `receipt_filed_as_another_programmes_step` was defined over them - "what if a DIFFERENT programme were the
+ * one in flight" - so it died with its subject: the pump can no longer be handed a reading at all.
  *
- * The REAL observer (`createProgramProgressObserver`), not a literal reading: the guess this gate is about reads the
- * ledger's lifetime, so a fixture that stated the reading itself could not have produced the defect.
+ * What survives is driven here: the same fact, at two instants, through the one pump. That is still the property
+ * `receipt_filed_by_time` asks (a clock must not stand in for causality), with its quantifier shrunk from five readings to
+ * two instants because there is nothing else to vary.
  */
-function ledgerReading(programme: string | null, settledAgoMs: number | null, nowMs: number) {
-  const observer = createProgramProgressObserver();
-  if (programme === null) return observer.inFlight(nowMs);
-  const status = (state: string) => ({
-    code: "found",
-    snapshot: {
-      programId: programme,
-      state,
-      catalogRevision: 3,
-      stopEpoch: 0,
-      eventHighWater: 90,
-      nodes: [
-        { nodeId: "n001", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1, actionId: "harvest_crop" },
-        {
-          nodeId: "n002",
-          state: state === "active" ? "running" : "succeeded",
-          nodeAttempt: 1,
-          admissionAttempt: 1,
-          actionId: "harvest_crop",
-        },
-      ],
-    },
-  });
-  observer.observe(status("active"), nowMs - 30_000);
-  if (settledAgoMs !== null) observer.observe(status("succeeded"), nowMs - settledAgoMs);
-  return observer.inFlight(nowMs);
-}
-
-/** The five readings one receipt is filed against. The pump's answer must not depend on which one it gets. */
-const LEDGERS = Object.freeze({
-  /** Nothing named: no programme was ever read. */
-  nothing: (nowMs: number) => () => ledgerReading(null, null, nowMs),
-  /** The programme the receipt belongs to is running. */
-  itsProgrammeRunning: (nowMs: number) => () => ledgerReading(PROGRAMME.programId ?? "", null, nowMs),
-  /** ANOTHER programme is the one in flight - the case the window's own comment names. */
-  anotherProgrammeRunning: (nowMs: number) => () => ledgerReading(OTHER_PROGRAMME, null, nowMs),
-  /** Its programme stopped a moment ago: the tail receipt of `round62`, inside any plausible window. */
-  itsProgrammeJustStopped: (nowMs: number) => () => ledgerReading(PROGRAMME.programId ?? "", 2_000, nowMs),
-  /** ...and long enough ago that a window would have closed. */
-  itsProgrammeStoppedLongAgo: (nowMs: number) => () => ledgerReading(PROGRAMME.programId ?? "", 120_000, nowMs),
-});
-
-type LedgerName = keyof typeof LEDGERS;
-const LEDGER_NAMES = Object.freeze(Object.keys(LEDGERS) as LedgerName[]);
 
 /** What one drive of the pump did with one fact. */
 type Filing = Readonly<{ opened: number; reason: string | undefined }>;
-
-/** A ledger that has named nothing at all: the reading a session's first action arrives against. */
-const NOTHING_NAMED = () => ledgerReading(null, null, BASE_MS);
 
 function recorder(): { batches: PendingBatch[]; sink: { deliver(batch: PendingBatch): Promise<void> } } {
   const batches: PendingBatch[] = [];
@@ -224,8 +177,8 @@ function recorder(): { batches: PendingBatch[]; sink: { deliver(batch: PendingBa
   };
 }
 
-async function filingOf(fact: WorldFact, ledger: () => ReturnType<typeof ledgerReading>): Promise<Filing> {
-  const pump = new CompanionEventPump(ledger);
+async function filingOf(fact: WorldFact): Promise<Filing> {
+  const pump = new CompanionEventPump();
   pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
   await pump.flush({
     async deliver() {
@@ -235,28 +188,29 @@ async function filingOf(fact: WorldFact, ledger: () => ReturnType<typeof ledgerR
   return Object.freeze({ opened: pump.turnAccount.opened, reason: pump.turnAccount.lastDecision?.reason });
 }
 
-/** One receipt, filed against every ledger, at two instants a window's width apart. */
+/** One receipt, filed at two instants: the only variation left once the pump lost its in-flight reading. */
 type CaseReadings = Readonly<{
   shape: string;
   executionId: string;
   origin: WireOrigin | undefined;
   /** The pump's classification of the shape: the consequence the fact owes her when nothing else speaks. */
   consequence: string | undefined;
-  filings: Readonly<Record<LedgerName, Filing>>;
+  /** The filing of this fact, and the same fact filed again a moment later: TIME must not change the answer. */
+  filing: Filing;
+  filedLater: Filing;
 }>;
 
 async function readEveryCase(): Promise<readonly CaseReadings[]> {
   const readings: CaseReadings[] = [];
   for (const entry of receiptPopulation()) {
-    const filings = {} as Record<LedgerName, Filing>;
-    for (const ledger of LEDGER_NAMES) filings[ledger] = await filingOf(entry.fact, LEDGERS[ledger](BASE_MS));
     readings.push(
       Object.freeze({
         shape: entry.shape,
         executionId: entry.executionId,
         origin: entry.origin,
         consequence: FACT_TURN_CONSEQUENCE[entry.shape],
-        filings: Object.freeze(filings),
+        filing: await filingOf(entry.fact),
+        filedLater: await filingOf(entry.fact),
       }),
     );
   }
@@ -289,8 +243,6 @@ export type ProvenanceGate = Readonly<{
   standalone: number;
   /** Receipts filed differently at the two instants: TIME standing in for causality. Must be 0. */
   filedByTime: number;
-  /** Receipts filed differently depending on which programme was in flight. Must be 0. */
-  filedByAnotherProgrammesFlight: number;
   violations: readonly string[];
   blocked: string | null;
 }>;
@@ -298,10 +250,11 @@ export type ProvenanceGate = Readonly<{
 /**
  * The verdict over the readings, with zero population BLOCKED rather than green.
  *
- * Four defects, four tokens, because they are fixed by different layers: a receipt whose own programme was not honoured
- * (`receipt_without_its_programme`), a lone outcome the change silenced (`standalone_outcome_swallowed`), a filing that
- * moved with the clock (`receipt_filed_by_time`), and one that moved with somebody else's flight
- * (`receipt_filed_as_another_programmes_step`).
+ * Three defects, three tokens, because they are fixed by different layers: a receipt whose own programme was not honoured
+ * (`receipt_without_its_programme`), a lone outcome the change silenced (`standalone_outcome_swallowed`), and a filing
+ * that moved with the clock (`receipt_filed_by_time`). The fourth - a receipt filed as ANOTHER programme's step - is
+ * deleted with its subject: the only way to state it was to hand the pump a different in-flight reading, and the port
+ * that accepted one went with `<in-flight>`.
  */
 export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]): ProvenanceGate {
   if (readings.length === 0)
@@ -310,7 +263,6 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
       carryAProgramme: 0,
       standalone: 0,
       filedByTime: 0,
-      filedByAnotherProgrammesFlight: 0,
       violations: Object.freeze([]),
       blocked: "zero_population:no_receipt_was_examined",
     });
@@ -318,7 +270,6 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
   let carryAProgramme = 0;
   let standalone = 0;
   let filedByTime = 0;
-  let filedByAnotherProgrammesFlight = 0;
   for (const reading of readings) {
     const expected = expectedFiling(reading);
     const shape = `${reading.executionId}:${reading.shape}`;
@@ -329,37 +280,22 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
       violations.push(`unclassified_receipt_shape:${shape}`);
       continue;
     }
-    for (const ledger of LEDGER_NAMES) {
-      const filing = reading.filings[ledger];
-      if (filing.opened !== expected.opened || filing.reason !== expected.reason)
-        violations.push(
-          `${RECEIPT_WITHOUT_ITS_PROGRAMME}:${shape}:${ledger}:${String(filing.opened)}:${String(filing.reason)}`,
-        );
-    }
+    if (reading.filing.opened !== expected.opened || reading.filing.reason !== expected.reason)
+      violations.push(
+        `${RECEIPT_WITHOUT_ITS_PROGRAMME}:${shape}:${String(reading.filing.opened)}:${String(reading.filing.reason)}`,
+      );
     // The step's own provenance, in the two directions the window got wrong. A receipt whose execution belongs to a
-    // programme must be filed as that programme's step even while ANOTHER programme is the one in flight, and a lone
-    // outcome must still speak while a programme is in flight - silencing it hides the only fact that says it happened.
+    // programme must be filed as that programme's step, and a lone outcome must still speak - silencing it hides the only
+    // fact that says it happened.
     const inFlightProgress = reading.consequence === "in_flight_progress";
-    if (inFlightProgress && reading.origin?.kind !== "programme" && reading.filings.nothing.opened === 0)
-      violations.push(`standalone_outcome_swallowed:${shape}:${String(reading.filings.nothing.reason)}`);
-    // TIME: the same fact, the same ledger, one window apart.
-    if (
-      reading.filings.itsProgrammeJustStopped.opened !== reading.filings.itsProgrammeStoppedLongAgo.opened ||
-      reading.filings.itsProgrammeJustStopped.reason !== reading.filings.itsProgrammeStoppedLongAgo.reason
-    ) {
+    if (inFlightProgress && reading.origin?.kind !== "programme" && reading.filing.opened === 0)
+      violations.push(`standalone_outcome_swallowed:${shape}:${String(reading.filing.reason)}`);
+    // TIME: the same fact, filed at two instants. The reading a receipt used to be filed against is gone with the port, so
+    // the only variation left is the moment it is driven at - which is exactly what this token asks about.
+    if (reading.filing.opened !== reading.filedLater.opened || reading.filing.reason !== reading.filedLater.reason) {
       filedByTime += 1;
       violations.push(
-        `receipt_filed_by_time:${shape}:${String(reading.filings.itsProgrammeJustStopped.reason)}->${String(reading.filings.itsProgrammeStoppedLongAgo.reason)}`,
-      );
-    }
-    // SOMEBODY ELSE'S FLIGHT: the same fact, and only the identity of what is in flight differs.
-    if (
-      reading.filings.nothing.opened !== reading.filings.anotherProgrammeRunning.opened ||
-      reading.filings.nothing.reason !== reading.filings.anotherProgrammeRunning.reason
-    ) {
-      filedByAnotherProgrammesFlight += 1;
-      violations.push(
-        `receipt_filed_as_another_programmes_step:${shape}:${String(reading.filings.nothing.reason)}->${String(reading.filings.anotherProgrammeRunning.reason)}`,
+        `receipt_filed_by_time:${shape}:${String(reading.filing.reason)}->${String(reading.filedLater.reason)}`,
       );
     }
   }
@@ -368,7 +304,6 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
     carryAProgramme,
     standalone,
     filedByTime,
-    filedByAnotherProgrammesFlight,
     violations: Object.freeze(violations),
     blocked: null,
   });
@@ -469,46 +404,30 @@ test("receipt_without_its_programme: no receipt is filed by the clock or by some
 
   assert.equal(gate.blocked, null, `the gate measured nothing: ${String(gate.blocked)}`);
   assert.ok(gate.receiptsExamined > 0, "zero population is blocked, never green");
-  // Printed because "0 violations" over an unstated population agrees with itself, and because these four numbers are
-  // the reading a run's log cannot give: how many receipts carry a cause at all.
+  // Printed because "0 violations" over an unstated population agrees with itself, and because these numbers are the
+  // reading a run's log cannot give: how many receipts carry a cause at all.
   console.log(
-    `receipt_without_its_programme: receipts examined ${String(gate.receiptsExamined)} · carry a programme ${String(gate.carryAProgramme)} · standalone ${String(gate.standalone)} · filed by time ${String(gate.filedByTime)} · filed by another programme's flight ${String(gate.filedByAnotherProgrammesFlight)}`,
+    `receipt_without_its_programme: receipts examined ${String(gate.receiptsExamined)} · carry a programme ${String(gate.carryAProgramme)} · standalone ${String(gate.standalone)} · filed by time ${String(gate.filedByTime)}`,
   );
-  assert.equal(gate.filedByTime, 0, "a receipt filed differently one window later is a receipt filed by time");
-  assert.equal(
-    gate.filedByAnotherProgrammesFlight,
-    0,
-    "a receipt filed differently because a different programme was in flight is a receipt filed by a guess",
-  );
+  assert.equal(gate.filedByTime, 0, "a receipt filed differently at a second instant is a receipt filed by time");
   assert.deepEqual(gate.violations, [], "every receipt is filed by its own execution's provenance and nothing else");
 });
 
 test("receipt_without_its_programme: the gate is red on the ordering the tree produced before the field existed", () => {
-  // THE FALSIFIER, in the direction that matters: the readings the CURRENT tree produces. The same `succeeded` receipt,
-  // the same execution, and the only difference between the two drives is how long ago the journal reported its
-  // programme stopped - 2 s and 120 s. A window makes those two answers disagree, and that disagreement IS the defect.
+  // THE FALSIFIER, in the direction that matters: the same `succeeded` receipt, the same execution, filed at two instants
+  // - and a filing that moved between them is a receipt filed by time.
   const recorded = receiptWithoutItsProgrammeGate([
     {
       shape: "receipt:succeeded",
       executionId: "exec_round62_tail",
       origin: PROGRAMME,
       consequence: FACT_TURN_CONSEQUENCE["receipt:succeeded"],
-      filings: {
-        nothing: { opened: 1, reason: TURN_OPENING.worldFact },
-        itsProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        itsProgrammeStoppedLongAgo: { opened: 1, reason: TURN_OPENING.worldFact },
-      },
+      filing: { opened: 0, reason: NOT_OWED.inFlightProgress },
+      filedLater: { opened: 1, reason: TURN_OPENING.worldFact },
     },
   ]);
 
   assert.equal(recorded.filedByTime, 1, "one receipt filed by the clock is one too many");
-  assert.equal(
-    recorded.filedByAnotherProgrammesFlight,
-    1,
-    "and one filed by another programme's flight is one too many",
-  );
   assert.ok(
     recorded.violations.includes(
       `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${NOT_OWED.inFlightProgress}->${TURN_OPENING.worldFact}`,
@@ -516,10 +435,8 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
     `the violation must name the execution and the shape, got ${JSON.stringify(recorded.violations)}`,
   );
   assert.ok(
-    recorded.violations.includes(
-      `${RECEIPT_WITHOUT_ITS_PROGRAMME}:exec_round62_tail:receipt:succeeded:nothing:1:${TURN_OPENING.worldFact}`,
-    ),
-    "and it must name the drive it fired on, or the next reader is told 'expected true, got false'",
+    recorded.violations.length === 1,
+    `the only violation is the one this falsifier injects: one drive disagrees with the other, and the filing itself agrees with the classification, got ${JSON.stringify(recorded.violations)}`,
   );
 });
 
@@ -532,13 +449,8 @@ test("receipt_without_its_programme: a lone outcome silenced while a programme r
       executionId: "exec_lone_action",
       origin: STANDALONE,
       consequence: FACT_TURN_CONSEQUENCE["receipt:partially_succeeded"],
-      filings: {
-        nothing: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        itsProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: NOT_OWED.inFlightProgress },
-        itsProgrammeStoppedLongAgo: { opened: 0, reason: NOT_OWED.inFlightProgress },
-      },
+      filing: { opened: 0, reason: NOT_OWED.inFlightProgress },
+      filedLater: { opened: 0, reason: NOT_OWED.inFlightProgress },
     },
   ]);
   assert.ok(
@@ -568,7 +480,7 @@ test("receipt_without_its_programme: zero population is blocked, never green", (
  * </p>
  */
 test("unattributed_execution: an execution the journal could not attribute is named, counted, and still owes its turn", async () => {
-  const pump = new CompanionEventPump(NOTHING_NAMED);
+  const pump = new CompanionEventPump();
   pump.enqueueFact(receiptFact("succeeded", "exec_unattributed", UNATTRIBUTED), FACT_PRODUCER.adapterIngress);
   const turns = recorder();
   await pump.flush(turns.sink);
@@ -590,7 +502,7 @@ test("unattributed_execution: an execution the journal could not attribute is na
 test("unattributed_execution: the named list is bounded and DRAINED, and the total still closes", async () => {
   // A stuck journal produces one unattributed execution per action, so a list that grew with the session would be a leak.
   // The bound must not lie about the total, which is why `omitted` is its own counter rather than a shorter list.
-  const pump = new CompanionEventPump(NOTHING_NAMED);
+  const pump = new CompanionEventPump();
   for (let index = 0; index < MAX_NAMED_UNATTRIBUTED_EXECUTIONS + 3; index += 1) {
     pump.enqueueFact(
       receiptFact("succeeded", `exec_unattributed_${String(index)}`, UNATTRIBUTED),
@@ -611,7 +523,7 @@ test("unattributed_execution: the named list is bounded and DRAINED, and the tot
 test("receipt_without_its_programme: a receipt that states NOTHING is filed as an outcome, and counted as unstated", async () => {
   // The shape the wire now refuses. A pump handed one anyway - an old adapter, a fixture, a frame that skipped validation
   // - must not read the absence as "a programme's step": that reading is exactly the guess this field replaced.
-  const pump = new CompanionEventPump(NOTHING_NAMED);
+  const pump = new CompanionEventPump();
   pump.enqueueFact(receiptFact("succeeded", "exec_unstated", undefined), FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder().sink);
 

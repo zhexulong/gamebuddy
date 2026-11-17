@@ -8,7 +8,6 @@ import {
   worldStateStaleThreshold,
 } from "./fact-brief.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
-import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
 import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
@@ -1482,30 +1481,6 @@ export interface CompanionTurnSink {
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
-  /**
-   * The one reading a batch cannot derive from the facts it forwards: the programmes the Mod's journal still shows in
-   * flight.
-   *
-   * <p>
-   * WHY IT IS INJECTED. The pump holds receipts and world events, and neither names a programme or a node - an
-   * `execution_receipt` carries an `executionId`, not the step that owned it. The layer that knows is the journal ledger
-   * (`program-status-wait.ts#programStatusProgress`), which the submit echo, the settlement watch and every status call
-   * already write, so the production default is that ledger and nothing had to change to wire it. It is a constructor
-   * argument because a test that had to feed a process-global ledger to prove a batch's text would be one test's
-   * leftover programme deciding another test's batch.
-   * </p>
-   *
-   * <p>
-   * READ ONCE PER BATCH (`takeBatch`, `takeExpiringOnly`): the byte-bound loop recomposes the same batch several times,
-   * and a reading that moved between those passes would give the retry a text the delivery never had.
-   * </p>
-   */
-  readonly #inFlight: () => InFlightProgrammeReading;
-
-  public constructor(inFlight: () => InFlightProgrammeReading = readInFlightProgrammes) {
-    this.#inFlight = inFlight;
-  }
-
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
   /**
@@ -2951,8 +2926,7 @@ export class CompanionEventPump {
       text: composeFactBrief({
         inputs: [],
         snapshot: this.#worldStateReading(),
-        events: expiring,
-        inFlight: this.#inFlight(),
+        events: expiring.filter((fact) => this.#owesTurn(fact)),
         locale: DEFAULT_BRIEF_LOCALE,
       }),
     });
@@ -3031,9 +3005,6 @@ export class CompanionEventPump {
     // nothing observed.
     const worldState = this.#worldStateReading();
     const locale = batchInputs.at(-1)?.locale ?? DEFAULT_BRIEF_LOCALE;
-    // Read ONCE for this batch, outside the byte-bound loop below: every pass states the same programme in the same
-    // state, so the text the delivery carries is the text the retry would compose.
-    const inFlight = this.#inFlight();
 
     // Fit the batch to MAX_BATCH_BYTES by dropping the OLDEST facts, and hand back whatever did not fit.
     //
@@ -3061,11 +3032,19 @@ export class CompanionEventPump {
           .filter((fact) => fact.kind !== undefined && presentationKinds.has(fact.kind))
           .map((fact) => normalizeFact(fact)),
       ].sort(compareEvents);
+      // WHAT THIS DELIVERY IS OWED, which is not the same as everything it CARRIES. `batchFacts` is the frame - the record
+      // of what arrived, which `canonicalPresentationSource` and the account read - while the model-facing text states only
+      // the four classes a turn exists for: her own call's result (the settlement, rendered by `<execution-result>` below),
+      // a refusal, a notice or an arrival, and the player's own words. A program's step is a TRACE of her body, and a clock
+      // mark is only news if she asks (`stardew_observe`, the pull); neither is delivered. Measured 2026-11-16 (`round64`):
+      // 401 admitted "facts" for 8 opened turns, 260 of them one tile of movement stated twice.
+      const promptFacts = batchFacts.filter(
+        (fact) => fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND || this.#owesTurn(fact),
+      );
       const text = composeFactBrief({
         inputs: batchInputs,
         snapshot: worldState,
-        events: batchFacts,
-        inFlight,
+        events: promptFacts,
         locale,
       });
       const triggerEventIds = Object.freeze([
