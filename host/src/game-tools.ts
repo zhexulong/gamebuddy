@@ -15,6 +15,7 @@ import {
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import { composeWorldState, unchangedWorldAnswer } from "./fact-brief.js";
+import { MODEL_STOP_REASON_CODE } from "./event-pump.js";
 import {
   LOOKUP_SUBJECTS,
   type AffordanceAction,
@@ -3901,7 +3902,7 @@ export function createStardewActionTools(
           // The Mod's own gate keys on this reason code, so the player STOP and the worker's teardown keep their
           // semantics while a MODEL stop can be refused.
           return receiptResult(
-            await integration.cancel(active.requestId, active.executionId, "model_stop_requested"),
+            await integration.cancel(active.requestId, active.executionId, MODEL_STOP_REASON_CODE),
             null,
           );
         } catch (error) {
