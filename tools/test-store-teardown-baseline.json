@@ -1,7 +1,7 @@
 {
   "note": "Store-opening source lines per committed host/src test file. Update deliberately, in its own commit; a file with no entry has an allowance of zero.",
   "revision": "57e6b552",
-  "files": 50,
+  "files": 49,
   "openings": {
     "continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.private.test.ts": 3,
     "continuity-semantic-composition/continuity-semantic-composition.test.ts": 1,
@@ -26,7 +26,6 @@
     "tavern-management-dialogue-web.st-card-stage.private.test.ts": 1,
     "tavern/catalog-service.test.ts": 13,
     "tavern/chat-companion-binding.private.test.ts": 5,
-    "tavern/chat-lifecycle/chat-lifecycle.private.test.ts": 1,
     "tavern/chat-management/chat-management-service.test.ts": 1,
     "tavern/chat-pipeline-service.test.ts": 1,
     "tavern/chat-thread-profile-repin.test.ts": 1,
