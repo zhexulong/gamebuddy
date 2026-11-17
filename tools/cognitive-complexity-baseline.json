@@ -625,9 +625,9 @@
       "language": "ts",
       "name": "host/src/event-pump.ts#CompanionEventPump.enqueueFact",
       "file": "host/src/event-pump.ts",
-      "line": 1893,
-      "value": 40,
-      "reason": "recorded at 11e7cc9b: 39 -> 40, in `612b2ea4` (a flush that owes no turn is not a flush, and a loss is named). Measured 39 at 83ae46f0, 40 at `612b2ea4`, and 40 at every commit that touched the file after it."
+      "line": 1925,
+      "value": 41,
+      "reason": "recorded 40 at 11e7cc9b, and 40 at `6b54dad4^`; 41 at `6b54dad4` and at HEAD (measured at 11e7cc9b, at the merge 57142c05, at `6b54dad4^`, at `6b54dad4` and at HEAD). The one point is `6b54dad4` (`account(traces): the body-trace count names its kinds`), +95/-20 in this file: admission now classifies the fact as a trace and counts it by kind (`factTraceKind`) before it chooses a window, which is one more conditional in a body that already had it. RECORDED AS DEBT, not accepted: 41 is still over the bound of 30 and the bound is unchanged."
     },
     {
       "id": "ts:host/src/fact-brief.ts#worldFactLine",
@@ -700,8 +700,9 @@
       "language": "ts",
       "name": "host/src/local-stardew-bridge.ts#LocalStardewBridgeClient.receive",
       "file": "host/src/local-stardew-bridge.ts",
-      "line": 848,
-      "value": 96
+      "line": 884,
+      "value": 106,
+      "reason": "recorded 96 at 11e7cc9b and 96 at `53d605b8^`; 106 at `53d605b8` and at HEAD. `53d605b8` (`bridge(attachment): a reply to a request we stopped waiting for is late news, not a teardown`) added 48 lines to this file and deleted none: the late-reply arm is a new branch chain inside `receive`, and no other commit has touched the file since this record. RECORDED AS DEBT, not accepted: the ten points are the new arm's branches, and the cheaper shape - lifting the late-reply arm into its own method - is a change to the bridge's receive path that this lane does not make."
     },
     {
       "id": "ts:host/src/native-companion-content.ts#onEvent",
@@ -1145,7 +1146,8 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4543
+      "value": 4546,
+      "reason": "recorded 4543 at 11e7cc9b; 4546 at HEAD. `c4519440` (`[forage] a distance is a walk, not a verdict: pickup_forage closes the native click radius`) added `ExecutePickupForage(...)` to `farmhandexecutioncontroller.gatheringactions.cs` - one method whose in-place, on-arrival and no-standable-approach arms are three branches - so the class reads three points higher over the SAME 52 partials. The points are the new method's; no other member of the type moved."
     },
     {
       "id": "cs:ModEntry",
@@ -1265,9 +1267,9 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 24165,
-      "methods": 836,
-      "reason": "parts 51 -> 52 and files 50 -> 51 in `287e227a`, which added this type's 51st partial declaration: `integrations/stardew/ExecutionEvidence.cs`, +182 lines there and +55/-41 in `farmhandexecutioncontroller.tailoringactions.cs` where the code it absorbed came from. `2f037eed` then rewrote two comment lines of the new partial (+9/-7). Lines 24058 -> 24181 over the SAME 838 methods and the class complexity FELL 4553 -> 4552: a re-partition of one declaration, not a member and not a branch. Then `04598eda` (the executor stops narrating its body) removed this type's half of the trace channel: from the 83ae46f0 reading of 24181/838 the type read 24195/838 at `04598eda^` (+14 lines of intervening work) and 24165/836 at that commit, its value 4553 -> 4543. Nothing has touched these partials since."
+      "lines": 24208,
+      "methods": 837,
+      "reason": "parts 51 -> 52 and files 50 -> 51 in `287e227a`, which added this type's 51st partial declaration: `integrations/stardew/ExecutionEvidence.cs`, +182 lines there and +55/-41 in `farmhandexecutioncontroller.tailoringactions.cs` where the code it absorbed came from. `2f037eed` then rewrote two comment lines of the new partial (+9/-7). Lines 24058 -> 24181 over the SAME 838 methods and the class complexity FELL 4553 -> 4552: a re-partition of one declaration, not a member and not a branch. Then `04598eda` (the executor stops narrating its body) removed this type's half of the trace channel: from the 83ae46f0 reading of 24181/838 the type read 24195/838 at `04598eda^` (+14 lines of intervening work) and 24165/836 at that commit, its value 4553 -> 4543. THE LAST MOVE IS ONE METHOD: `c4519440` (`[forage] a distance is a walk, not a verdict`) added `ExecutePickupForage(...)` to `farmhandexecutioncontroller.gatheringactions.cs` (+63/-13 there, and the two lines its neighbours lost), so the type reads 837 methods and 24208 lines over the SAME 52 partials and 51 files, and its complexity 4543 -> 4546 are that method's three arms. This record was stale, not grown: the 836 was taken at 11e7cc9b, before that commit."
     },
     {
       "id": "cs:FarmhandActionCatalog",
@@ -1320,9 +1322,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs",
       "line": 51,
-      "lines": 1147,
+      "lines": 1151,
       "methods": 26,
-      "reason": "recorded at 604844a6: 1147 lines, first record, and it is over the 1000-line ceiling. This is a TEST type (`GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs`) whose length is a table of pickup cases rather than a branched body - its class complexity is 13 against a bound of 200 - so the ceiling reading is the whole fact and 1147 is the ceiling now. RECORDED AS DEBT: splitting the case table into partials or a data source is what would take it under 1000, and nothing in this unit touched it."
+      "reason": "recorded at 604844a6: 1147 lines, first record, and it is over the 1000-line ceiling. This is a TEST type (`GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs`) whose length is a table of pickup cases rather than a branched body - its class complexity is 13 against a bound of 200 - so the ceiling reading is the whole fact. `c4519440` (`[forage] a distance is a walk, not a verdict`) then took it 1147 -> 1151 lines over the SAME 26 methods (+5/-1: the case that states the walk instead of a refusal beyond the click radius), which is one more row in the table, not one more branch. RECORDED AS DEBT: splitting the case table into partials or a data source is what would take it under 1000, and nothing in this unit does that."
     },
     {
       "id": "cs:ModEntry",
