@@ -799,9 +799,10 @@ function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined)
 // a world later than the settlement, so the remainder could contradict the answer it sits beside.
 //
 // THE ONE THING THE HOST CANNOT DERIVE is WHICH family a step's work consumes. That is the Mod's declaration (its
-// descriptor's `TargetFamily`, present only where the descriptor also declares what it `Clears`, because "how many
-// machines are left" is not a chore), and the Mod mints it into the node's own verdict line as `chore=<family>`. A
-// settlement whose steps say nothing about their chore states `还剩多少未测` rather than staying silent.
+// descriptor's `Chore` claim, whose family is the `TargetFamily` it addressed - NOT its `Clears`, which answers a routing
+// question and is declared only on the actions that open a route, so asking it here answered `未测` for 14 of round70's
+// 14 delivered batches), and the Mod mints it into the node's own verdict line as `chore=<family>`. A settlement whose
+// steps say nothing about their chore states `剩下的：未测` rather than staying silent.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** How many chore families one settlement's remainder names before it counts the rest. */
@@ -972,7 +973,8 @@ function choreReading(nodes: readonly SettledNode[], reading: WorldStateReading 
  * Read from the node's own verdict line - the `:`-delimited `key=value` document the Mod already writes there
  * (`route_reentrant_terminal:state=…:request=…:revision=…`, `for_each_pass:decided=…:succeeded=…`) - so the family
  * arrives from the descriptor that declares it rather than from a table here that could drift from that declaration.
- * Present only on a step whose action declares what it CLEARS: a step that reads or loads a machine has no chore.
+ * Present only on a step whose action declares that its success TAKES its family's row out of the world: a step that
+ * reads or loads a machine has no chore, and neither has one that clears a route (`clearing is a different question`).
  */
 function choreFamilyOf(node: SettledNode): string | undefined {
   if (typeof node.state !== "string" || !PROVEN_EFFECT_STATES.has(node.state)) return undefined;

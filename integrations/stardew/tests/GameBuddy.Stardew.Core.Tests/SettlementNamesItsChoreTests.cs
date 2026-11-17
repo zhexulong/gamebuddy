@@ -21,55 +21,75 @@ namespace GameBuddy.Stardew.Core.Tests;
 ///
 /// <para>
 /// SO THE MINT IS A DECLARATION, NOT A MEASUREMENT, and it costs no world read: `ChoreFamilyOf` reads the action's own
-/// `Clears` and `TargetFamily` and nothing else. `Clears` is the half that makes it a chore rather than a target list -
-/// `machine_load` addresses `machineTargets` and finishes nothing, and "how many machines are left" is not work
-/// anybody gave her.
+/// <see cref="FarmhandChoreDeclaration"/> and the family it addressed, and nothing else. It used to read `Clears`, which
+/// answers a ROUTING question - measured `round70`, that form answered `未测` for 14 of 14 delivered batches, because a
+/// harvest never stands in anybody's way.
 /// </para>
 ///
 /// <para>
 /// POPULATION FROM THE AUTHORITY: every registration in <see cref="FarmhandActionCatalog"/> is examined, so an action
-/// added tomorrow is covered without an edit here, and the assertion names the drifting action when it breaks.
+/// added tomorrow is covered without an edit here, and the assertion names the drifting action when it breaks. Whether
+/// every action that addresses a family of work units has ANSWERED is the other half, and it is derived from the
+/// families rather than from this declaration (`ChoreDeclarationCoverageTests`).
 /// </para>
 /// </summary>
 public sealed class SettlementNamesItsChoreTests
 {
     /// <summary>
-    /// The population is the catalogue's own registrations, and each one answers the pair it declares.
+    /// The population is the catalogue's own registrations, and the mint answers exactly what the row declares.
     /// </summary>
     [Fact]
     public void EveryActionNamesItsOwnChoreFamilyExactlyWhenItDeclaresOne()
     {
-        var cleared = 0;
+        var consuming = 0;
+        var leaving = 0;
         var silent = 0;
         var findings = new List<string>();
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
             string? family = RouteReenteringBodyProgramExecutor.ChoreFamilyOf(registration.ActionId);
-            string? declared = registration.Descriptor?.Clears is null ? null : registration.Descriptor.TargetFamily;
-            if (declared is null) silent += 1;
-            else cleared += 1;
+            FarmhandChoreDeclaration? chore = registration.Descriptor?.Chore;
+            if (chore is null) silent += 1;
+            else if (chore.Consumes) consuming += 1;
+            else leaving += 1;
+            string? declared = chore is { Consumes: true } ? registration.Descriptor!.TargetFamily : null;
+            if (chore is { Consumes: true } && registration.Descriptor!.TargetFamily is not { Length: > 0 })
+                findings.Add($"{registration.ActionId}: consumes a family and addresses none");
             if (!string.Equals(family, declared, StringComparison.Ordinal))
                 findings.Add($"{registration.ActionId}: declared {(declared ?? "<none>")}, answered {(family ?? "<none>")}");
         }
 
+        string report =
+            $"registrations examined {FarmhandActionCatalog.Registrations.Count} · consuming their family {consuming} · " +
+            $"saying why they do not {leaving} · undeclared {silent}";
         findings.Should().BeEmpty(
-            $"actions examined {FarmhandActionCatalog.Registrations.Count} · declaring a chore {cleared} · clearing nothing {silent} - " +
-            "an action that clears a tile's occupant must name the family the rest of that chore is counted in, and one that " +
-            "clears nothing must name none (a settlement would otherwise report a remainder for work nobody asked for)");
-        cleared.Should().BeGreaterThan(0, "the catalog must declare some clearing actions, or this gate examines nothing");
+            $"{report} - an action that consumes its family's rows must mint that family, an action that does not must " +
+            "mint none (a settlement would otherwise report a remainder for work nobody asked for), and neither may " +
+            "stay silent where its family's rows are units of work");
+        consuming.Should().BeGreaterThan(0, "the catalog must declare some consuming actions, or this gate examines nothing");
+        leaving.Should().BeGreaterThan(0, "the catalog must state why some addressed family is left standing");
     }
 
     /// <summary>
     /// The two actions the defect was measured on, in the catalogue's own words.
     /// </summary>
     [Fact]
-    public void ClearingWorkNamesItsFamilyAndReadingDoesNot()
+    public void WorkThatLeavesNothingBehindNamesItsFamilyAndReadingDoesNot()
     {
+        // THE ONES THAT TAKE WORK OUT OF THE WORLD WITHOUT EVER BEING IN THE WAY - the 14 `未测` clauses of round70.
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("harvest_crop").Should().Be("harvestTargets");
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("pickup_forage").Should().Be("forageTargets");
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("water_crop").Should().Be("cropTargets");
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf("cut_weeds").Should().Be("weedTargets");
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf("break_rock").Should().Be("rockSourceTargets");
         // ADDRESSES A FAMILY AND FINISHES NOTHING: `machineTargets` rows are not a chore, so no remainder is owed.
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf("machine_load").Should().BeNull();
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("machine_collect_output").Should().BeNull();
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf("equip_tool").Should().BeNull();
+        // EIGHT ACTIONS ADDRESS `worldObjectTargets` AND THREE OF THEM TAKE THE OBJECT AWAY: one family, two answers,
+        // which is why the declaration is per action and not per family.
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("remove_placed_item").Should().Be("worldObjectTargets");
+        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("move_placed_furniture").Should().BeNull();
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf("no_such_action").Should().BeNull();
         RouteReenteringBodyProgramExecutor.ChoreFamilyOf(null).Should().BeNull();
     }
@@ -110,6 +130,12 @@ public sealed class SettlementNamesItsChoreTests
         cut.Should().NotBeNull();
         cut!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
         cut.PostconditionVerification.Should().EndWith(":chore=weedTargets");
+
+        // THE ROUND70 SHAPE: a harvest is work finished with nothing in its way, and the line must say which family.
+        BodyProgramTerminalResult? harvest = ExecuteSettled("harvest_crop", ("x", "58"), ("y", "14"), ("expectedQualifiedItemId", "(O)24"), ("expectedTargetId", "crop_1"));
+        harvest.Should().NotBeNull();
+        harvest!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
+        harvest.PostconditionVerification.Should().EndWith(":chore=harvestTargets");
 
         BodyProgramTerminalResult? load = ExecuteSettled("machine_load", ("x", "1"), ("y", "1"), ("slot", "0"), ("expectedTargetId", "machine_1"));
         load.Should().NotBeNull();
