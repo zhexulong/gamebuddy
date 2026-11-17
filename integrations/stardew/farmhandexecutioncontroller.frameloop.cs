@@ -61,16 +61,19 @@ internal sealed partial class ExecutionManager
             }
             else if (graceExpired)
             {
-                // THE WINDOW'S ENDING IS TOTAL. It used to settle only while the actor was NOT actionable, so a window
-                // that expired with the manager's own probe answering "actionable" fell through both branches and the
-                // navigation kept the body with no terminal and no fact. Both halves of the real question have already
-                // been asked inside the window - the replan ran on every tick - so expiry is the answer either way; the
-                // evidence says which reading it expired under rather than leaving the caller to infer it.
+                // THE EXPIRY NAMES WHAT HELD HER, from the one vocabulary that describes a held body. MEASURED round68:
+                // this terminal published `destination=Town;phase=awaiting_warp;grace_expired=true;actionable=false;
+                // never_retry=true` and the run ended there. The hold had a game condition, the window had a length, and
+                // neither was in the sentence; `never_retry` is a ledger fact (this request id is not executed twice)
+                // that reads to a caller as "there is no next move", which was false - the destination stayed reachable
+                // once the game released her. The hold's own countermeasure (`held_by=…;admissible_actions=…` or
+                // `next_step=…`) is what says what unlocks it, and a hold the vocabulary cannot name still gets a step.
                 bool actionable = this.IsPlayerActionableNow();
+                string hold = WorldModel.DescribeCurrentNavigationHold(Game1.player);
                 this.slots.ClearWarpReplan();
-                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity};actionable={actionable}");
+                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity};actionable={actionable};{hold}");
                 this.SettleNavigationTerminal(deferredNavigation, ExecutionState.Rejected, "destination_locked",
-                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;actionable={actionable.ToString().ToLowerInvariant()};never_retry=true");
+                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;window_ticks={NavigationWarpReplanGraceTicks};actionable={actionable.ToString().ToLowerInvariant()};{hold}");
             }
         }
         if (this.activeTravel is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeTravel.DeadlineMs)
