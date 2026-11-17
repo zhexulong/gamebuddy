@@ -138,6 +138,24 @@ test("desktop bootstrap helper publishes the ready frame the declaration beside 
   );
 });
 
+test("desktop bootstrap helper writes the guardian hello the declaration beside it states", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("success");
+
+  // The first frame the Host really writes over the guardian pipe is its hello request; the Desktop broker
+  // reads it in C# and the gate launcher's broker reads it here, both held to this one declaration.
+  assert.equal(result.requests[0]?.operation, "hello");
+  assert.deepEqual(
+    Object.keys(result.requests[0]!),
+    JSON.parse(
+      readFileSync(
+        resolve(packageRoot, "src", "bootstrap", "wire", "desktop-guardian-session-hello.keys.json"),
+        "utf8",
+      ),
+    ),
+  );
+});
+
 test("desktop bootstrap helper names a failed Mod step and still serves the player", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("success", { modOutcome: "companion-mod-smapi-not-installed" });

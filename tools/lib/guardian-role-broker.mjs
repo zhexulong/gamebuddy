@@ -47,6 +47,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createConnection, createServer } from "node:net";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -73,15 +74,22 @@ const HEX64 = /^[a-f0-9]{64}$/;
 const OPAQUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PRIVATE_FRAME = /^[A-Za-z0-9_-]{1,87382}$/;
 
-const HELLO_KEYS = Object.freeze([
-  "schema",
-  "protocolVersion",
-  "operation",
-  "bootstrapId",
-  "generation",
-  "inventoryDigest",
-  "runtimeAdmissionSha256",
-]);
+/**
+ * The hello request's key sequence, declared once beside the Host client that writes it
+ * (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `GuardianSessionClient.hello`).
+ *
+ * This broker stands in for the Host on that pipe, and the Desktop broker reads the same request in
+ * C# (`DesktopHostBootstrapBroker.cs`, `ExactObject(hello, …)`), which is why the declaration sits
+ * beside the writer rather than in either reader.
+ */
+const HELLO_KEYS = Object.freeze(
+  JSON.parse(
+    readFileSync(
+      new URL("../../host/src/bootstrap/wire/desktop-guardian-session-hello.keys.json", import.meta.url),
+      "utf8",
+    ),
+  ),
+);
 
 // `status` sits after `operation`, exactly where the Desktop writes it and where the Host reads
 // it; appending it would order this broker's own acknowledgement outside the wire it serves.

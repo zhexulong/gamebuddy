@@ -377,6 +377,18 @@ test("the Desktop launcher's runtime admission is the declaration beside the pub
   );
 });
 
+const declaredHelloKeys = JSON.parse(
+  readFileSync(new URL("../host/src/bootstrap/wire/desktop-guardian-session-hello.keys.json", import.meta.url), "utf8"),
+);
+
+test("the Desktop guardian broker's hello shape is the declaration beside the Host client", () => {
+  assert.deepEqual(
+    csharpDeclaredKeys("desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs", "ExactObject(hello, "),
+    declaredHelloKeys,
+    "DesktopHostBootstrapBroker reads the hello request with a key sequence of its own",
+  );
+});
+
 test("composition launch validates the child IPC ready fact and composes the child environment", () => {
   assert.deepEqual(
     validateCompositionReadyMessage(compositionReadyFrom("http://127.0.0.1:4444/#profile=reference&boot=t")),
@@ -712,16 +724,17 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
               // stub must complete that session on the real endpoint.
               const socket = createConnection(`\\\\.\\pipe\\GameBuddy.HostGuardian.${frame.bootstrapId}`);
               socket.once("connect", () => {
+                const helloValues = {
+                  schema: "gamebuddy-desktop-guardian-session/v1",
+                  protocolVersion: 1,
+                  operation: "hello",
+                  bootstrapId: frame.bootstrapId,
+                  generation: frame.generation,
+                  inventoryDigest: frame.inventoryDigest,
+                  runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
+                };
                 socket.write(
-                  `${JSON.stringify({
-                    schema: "gamebuddy-desktop-guardian-session/v1",
-                    protocolVersion: 1,
-                    operation: "hello",
-                    bootstrapId: frame.bootstrapId,
-                    generation: frame.generation,
-                    inventoryDigest: frame.inventoryDigest,
-                    runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
-                  })}\n`,
+                  `${JSON.stringify(Object.fromEntries(declaredHelloKeys.map((key) => [key, helloValues[key]])))}\n`,
                 );
               });
               socket.on("error", () => undefined);

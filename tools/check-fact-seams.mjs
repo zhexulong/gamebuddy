@@ -1275,10 +1275,11 @@ export const KEY_SEQUENCES = Object.freeze([
       file: "tools/lib/guardian-role-broker.mjs",
       schema: "gamebuddy-desktop-guardian-session/v1",
     },
-    authority: "desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs",
-    derives: { kind: "debt" },
-    reason:
-      "the guardian bridge in C# writes the hello answer and this broker validates it against `HELLO_KEYS`, a list of its own; the same file also spells the command and role-exit shapes",
+    authority: "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts",
+    derives: {
+      kind: "json",
+      file: "host/src/bootstrap/wire/desktop-guardian-session-hello.keys.json",
+    },
     owner: "the desktop guardian lane",
   },
 ]);
