@@ -263,3 +263,4 @@ ExecutionEvidenceWireTests.cs	mod-assembly	ExecutionManager, EvidenceDetail, Pai
 SweepTargetRefusalNamingTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, ExecutionManager (and Xna, StardewValley, StardewValley.Tools from the game)
 WaterTargetApproachTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, TargetFamilyWorld@TargetFamilyCompletenessTests.cs, ExecutionManager (and Xna, StardewValley, StardewValley.Tools, HeadlessGameWorld@HeadlessGameWorld.cs from the game)
 FarmhandConstructionInitializationGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); it reads the Mod's source text, so it needs neither Core alone nor this project's compile set
+GameOwnedIdGuardGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); it reads the Mod's source text, so it needs neither Core alone nor this project's compile set
