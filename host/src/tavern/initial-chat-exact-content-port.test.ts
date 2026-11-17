@@ -360,5 +360,5 @@ test("public initial content port exposes distinct explicit creation and exact r
 test("port has no semantic, selector, or mutex imports", async () => {
   const source = await readFile(new URL("./initial-chat-exact-content-port.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /^import(?:\s+type)?\s+.*(?:continuity-semantic|mutex)/mu);
-  assert.doesNotMatch(source, /\.selectActiveThread\(|\.readActiveThread|latest|title/imu);
+  assert.doesNotMatch(source, /latest|title/imu);
 });

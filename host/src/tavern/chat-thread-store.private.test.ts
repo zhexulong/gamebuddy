@@ -99,12 +99,11 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
       const tables = (
         db
           .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_messages', 'tavern_message_swipes', 'tavern_thread_stable_artifact_bindings', 'tavern_thread_world_info_bindings', 'tavern_turns', 'tavern_turn_variants', 'tavern_turn_attempts', 'tavern_turn_observations', 'tavern_turn_presentations', 'tavern_turn_terminalizations', 'tavern_chat_submit_idempotency', 'tavern_drafts', 'tavern_active_selection')",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_messages', 'tavern_message_swipes', 'tavern_thread_stable_artifact_bindings', 'tavern_thread_world_info_bindings', 'tavern_turns', 'tavern_turn_variants', 'tavern_turn_attempts', 'tavern_turn_observations', 'tavern_turn_presentations', 'tavern_turn_terminalizations', 'tavern_chat_submit_idempotency', 'tavern_drafts')",
           )
           .all() as any[]
       ).map((row) => row.name);
       assert.deepEqual(tables.sort(), [
-        "tavern_active_selection",
         "tavern_chat_submit_idempotency",
         "tavern_drafts",
         "tavern_message_swipes",
@@ -119,6 +118,13 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
         "tavern_turn_variants",
         "tavern_turns",
       ]);
+      // No selector lives here (ADR-0009): the active Chat is the semantic authority's
+      // `production_active_selection`, so a root must not grow a table of its own again.
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name = 'tavern_active_selection'").get() as any)
+          .count,
+        0,
+      );
       assert.equal(
         (
           db
@@ -475,24 +481,6 @@ test("renameThreadTitle updates title and increments managementRevision with CAS
         }),
       /chat_thread_management_revision_conflict/,
     );
-  } finally {
-    s.close?.();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("active thread selection persists singleton and detects surface mismatch", async () => {
-  const { root, store: s, creation } = await store();
-  try {
-    await creation.createExplicit(request());
-    const selection = await s.selectActiveThread("thread_01", "surface_01");
-    assert.equal(selection.chatThreadId, "thread_01");
-    assert.equal(selection.chatSurfaceSessionId, "surface_01");
-
-    const read = await s.readActiveThreadSelection();
-    assert.deepEqual(read, selection);
-
-    await assert.rejects(() => s.selectActiveThread("thread_01", "wrong_surface"), /chat_thread_surface_mismatch/);
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });

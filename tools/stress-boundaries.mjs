@@ -91,18 +91,14 @@ async function zeroCases() {
     try {
       const chats = await services.service.listChats();
       const companions = await services.service.listCompanions();
-      const active = await services.service.activeChatSelection();
       const flags = [];
       if (!Array.isArray(chats)) flags.push("chats_not_array");
-      if (active !== null) flags.push("active_not_null");
       return {
         created: "0 chats",
-        read: `listChats=${chats.length} listCompanions=${companions.length} active=${active === null ? "null" : "set"}`,
+        read: `listChats=${chats.length} listCompanions=${companions.length}`,
         turn: "n/a",
         flags,
-        detail: flags.length
-          ? `raw empty-list read: chats=${JSON.stringify(chats)} active=${JSON.stringify(active)}`
-          : "empty list reads as empty",
+        detail: flags.length ? `raw empty-list read: chats=${JSON.stringify(chats)}` : "empty list reads as empty",
       };
     } finally {
       await releaseRoot(root, [services.close]);

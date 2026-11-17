@@ -32,7 +32,7 @@ const binding = {
   continuityId: "continuity_01",
   chatSurfaceSessionId: "surface_01",
 } as const;
-const selectionMethods = {
+const acceptMethods = {
   async acceptPlayerMessage() {
     return Object.freeze({
       turnId: "turn_01",
@@ -42,18 +42,12 @@ const selectionMethods = {
       acceptedAtMs: 1,
     });
   },
-  async readActiveThreadSelection() {
-    return null;
-  },
-  async selectActiveThread(chatThreadId: string, chatSurfaceSessionId: string) {
-    return { schemaVersion: 1 as const, chatThreadId, chatSurfaceSessionId, selectedAtMs: 1 };
-  },
 };
 
 test("Tavern conversation explicitly creates a blank exact-surface thread and durably orders player then response", async () => {
   const calls: string[] = [];
   const store = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       calls.push("resume");
       throw new Error("must_not_resume");
@@ -102,7 +96,7 @@ test("Tavern retry reads the exact durable binding and permits only a safe no-ef
   });
   let resumeCount = 0;
   const store = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       resumeCount++;
       return responseState;
@@ -148,7 +142,7 @@ test("Tavern retry reads the exact durable binding and permits only a safe no-ef
 
 test("Tavern conversation fails closed for resume and append errors", async () => {
   const failingResume: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       throw new Error("chat_thread_surface_mismatch");
     },
@@ -165,7 +159,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
   await assert.rejects(() => resumeExactTavernConversation(failingResume, binding), /chat_thread_surface_mismatch/);
 
   const failingAppend: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       return state;
     },
@@ -189,7 +183,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
 test("strict semantic content resume opens only the specified existing exact binding", async () => {
   const calls: string[] = [];
   const store = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread(threadId: string, surfaceId: string) {
       calls.push(`resume:${threadId}:${surfaceId}`);
       return state;
@@ -212,7 +206,7 @@ test("strict semantic content resume opens only the specified existing exact bin
 test("strict semantic content resume fails closed without creating missing or mismatched content", async () => {
   const missingCalls: string[] = [];
   const missing: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
@@ -238,7 +232,7 @@ test("strict semantic content resume fails closed without creating missing or mi
   ]) {
     const calls: string[] = [];
     const mismatched: ChatThreadStore = {
-      ...selectionMethods,
+      ...acceptMethods,
       async resumeThread() {
         calls.push("resume");
         return state;
@@ -264,7 +258,7 @@ test("strict semantic content resume fails closed without creating missing or mi
 test("semantic content port returns an immutable exact receipt only after durable readback", async () => {
   const calls: string[] = [];
   const store = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread(threadId: string, surfaceId: string) {
       calls.push(`resume:${threadId}:${surfaceId}`);
       return state;
@@ -306,7 +300,7 @@ test("semantic content port returns an immutable exact receipt only after durabl
 test("semantic content port classifies exact missing and existing without conflating I/O", async () => {
   const missingCalls: string[] = [];
   const missing: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       missingCalls.push("resume");
       throw new Error("chat_thread_not_found");
@@ -329,7 +323,7 @@ test("semantic content port classifies exact missing and existing without confla
 
   const existingCalls: string[] = [];
   const existing: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       existingCalls.push("resume");
       return state;
@@ -361,7 +355,7 @@ test("semantic content port classifies exact missing and existing without confla
   );
 
   const unavailable: ChatThreadStore = {
-    ...selectionMethods,
+    ...acceptMethods,
     async resumeThread() {
       throw new Error("storage_unavailable");
     },
@@ -403,7 +397,7 @@ test("semantic content port rejects every mismatched exact binding after readbac
   ]) {
     const calls: string[] = [];
     const store = {
-      ...selectionMethods,
+      ...acceptMethods,
       async resumeThread() {
         calls.push("resume");
         return state;

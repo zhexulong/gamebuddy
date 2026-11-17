@@ -95,7 +95,10 @@ async function fixture() {
     continuityId: "continuity",
     opening: "blank",
   });
-  await threads.selectActiveThread(first.chatThreadId, first.chatSurfaceSessionId);
+  // The selected Chat the route's provisioner moves. Production keeps that fact in the semantic
+  // authority (`production_active_selection`); this fixture holds it locally because the route
+  // under test only asks "which Chat is selected", never a second store.
+  let selected: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }> = first;
   const handleOf = (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) =>
     opaqueHandle(`${target.chatThreadId}\u0000${target.chatSurfaceSessionId}`);
   let selectionCalls = 0;
@@ -111,20 +114,20 @@ async function fixture() {
      * generating turn and then release and remount the mounted Chat runtime).
      */
     async select(command: SelectChatCommandV1): Promise<ChatSelectResultV1> {
-      const active = await threads.readActiveThreadSelection();
-      const generation = active === null ? 1 : 1;
+      const generation = 1;
       if (command.selectionGeneration !== generation) throw new Error("chat_management_selection_conflict");
       const durable = await threads.listThreads!();
       const target = durable.find((thread) => handleOf(thread) === command.chatHandle);
       if (target === undefined) throw new Error("chat_management_selection_conflict");
       const alreadySelected =
-        active !== null &&
-        active.chatThreadId === target.chatThreadId &&
-        active.chatSurfaceSessionId === target.chatSurfaceSessionId;
+        selected.chatThreadId === target.chatThreadId && selected.chatSurfaceSessionId === target.chatSurfaceSessionId;
       if (alreadySelected) return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
       if (!startedAttempt) return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "turn_in_flight" });
       selectionCalls += 1;
-      await threads.selectActiveThread(target.chatThreadId, target.chatSurfaceSessionId);
+      selected = Object.freeze({
+        chatThreadId: target.chatThreadId,
+        chatSurfaceSessionId: target.chatSurfaceSessionId,
+      });
       return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
     },
   });
@@ -145,7 +148,7 @@ async function fixture() {
   });
   const managementService: ChatManagementService = Object.freeze({
     async listChats(): Promise<ChatListV1> {
-      const active = await threads.readActiveThreadSelection();
+      const active = selected;
       const durable = await threads.listThreads!();
       const lastMessages = new Map(
         (await threads.listThreadLastMessages!()).map((last) => [last.chatThreadId, last.text]),
@@ -159,7 +162,6 @@ async function fixture() {
             status: "active" as const,
             managementRevision: thread.managementRevision ?? 1,
             isSelected:
-              active !== null &&
               active.chatThreadId === thread.chatThreadId &&
               active.chatSurfaceSessionId === thread.chatSurfaceSessionId,
             updatedAtMs: thread.updatedAtMs,
@@ -238,10 +240,13 @@ async function fixture() {
   });
   return {
     page,
-    threads,
     first,
     second,
     handleOf,
+    selection: () => selected,
+    select: (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) => {
+      selected = target;
+    },
     selectionCalls: () => selectionCalls,
     setStartedAttempt: (value: boolean) => {
       startedAttempt = value;
@@ -302,9 +307,9 @@ test("chat.select switches the mounted Chat in process, refuses a stale generati
     assert.equal(whileGenerating.status, 200);
     assert.deepEqual(await whileGenerating.json(), { apiVersion: 1, status: "switched" });
     assert.equal(f.selectionCalls(), 1);
-    assert.equal((await f.threads.readActiveThreadSelection())?.chatThreadId, f.second.chatThreadId);
+    assert.equal(f.selection().chatThreadId, f.second.chatThreadId);
     // Back to the mounted Chat for the remaining cases.
-    await f.threads.selectActiveThread(f.first.chatThreadId, f.first.chatSurfaceSessionId);
+    f.select(f.first);
 
     // The one durable state with nothing to abort answers the residual
     // `turn_in_flight`, and nothing durable changes under it.
@@ -313,7 +318,7 @@ test("chat.select switches the mounted Chat in process, refuses a stale generati
     assert.equal(residual.status, 200);
     assert.deepEqual(await residual.json(), { apiVersion: 1, status: "turn_in_flight" });
     assert.equal(f.selectionCalls(), 1);
-    assert.equal((await f.threads.readActiveThreadSelection())?.chatThreadId, f.first.chatThreadId);
+    assert.equal(f.selection().chatThreadId, f.first.chatThreadId);
     f.setStartedAttempt(true);
 
     // Selecting the mounted Chat is a no-op: no durable write, no second admission.
@@ -330,9 +335,9 @@ test("chat.select switches the mounted Chat in process, refuses a stale generati
 
     // Real read-back: the durable active selection is now the chosen Chat, and a fresh list read
     // reflects it.
-    const active = await f.threads.readActiveThreadSelection();
-    assert.equal(active?.chatThreadId, f.second.chatThreadId);
-    assert.equal(active?.chatSurfaceSessionId, f.second.chatSurfaceSessionId);
+    const active = f.selection();
+    assert.equal(active.chatThreadId, f.second.chatThreadId);
+    assert.equal(active.chatSurfaceSessionId, f.second.chatSurfaceSessionId);
     const list = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
       headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
     });

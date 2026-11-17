@@ -50,7 +50,6 @@ export type TavernLibraryService = Readonly<{
   commitOpeningVariant(input: CommitOpeningVariantRequest): Promise<ChatThreadState>;
   /** Reads and validates one exact thread/surface route; runtime owner pins it only after activation. */
   openChat(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
-  activeChatSelection(): ReturnType<ChatThreadStore["readActiveThreadSelection"]>;
 }>;
 
 type CommitOpeningVariantRequest = Readonly<{
@@ -264,10 +263,6 @@ export function createTavernLibraryService(
       )
         throw new Error("tavern_chat_scope_mismatch");
       return state;
-    },
-
-    activeChatSelection(): ReturnType<ChatThreadStore["readActiveThreadSelection"]> {
-      return threads.readActiveThreadSelection();
     },
   });
 }

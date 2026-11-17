@@ -16,7 +16,6 @@ import {
  * from; it neither reads Pi/Magic Context state nor implements any Game operation.
  */
 export const CHAT_THREAD_SCHEMA_VERSION = 12 as const;
-export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
 export const MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES = 16_384 as const;
@@ -741,18 +740,6 @@ export type ChatThreadState = Readonly<{
   currentTurnContextPlan?: AcceptedTurnAuthoredContextPlan;
 }>;
 
-/**
- * The durable Tavern selector is intentionally distinct from the active Host
- * runtime. A caller must still construct the exact Pi session named here; the
- * store never treats selection as a context handoff or runtime switch.
- */
-export type ActiveChatThreadSelection = Readonly<{
-  schemaVersion: typeof CHAT_THREAD_SELECTION_SCHEMA_VERSION;
-  chatThreadId: string;
-  chatSurfaceSessionId: string;
-  selectedAtMs: number;
-}>;
-
 export type CreateChatThreadRequest = Readonly<{
   chatThreadId: string;
   companionId: string;
@@ -818,18 +805,6 @@ export type ChatThreadStore = Readonly<{
    * N+1 durable transcript reads; this read exists so that never happens.
    */
   listThreadLastMessages?(): Promise<readonly ChatThreadLastMessage[]>;
-  /** Returns no selection rather than guessing from a latest thread. */
-  readActiveThreadSelection(): Promise<ActiveChatThreadSelection | null>;
-  /**
-   * Reads a durable selector and its exact thread binding without nesting a
-   * selector→thread lock. A final selector read detects a concurrent change.
-   */
-  readActiveThreadBinding?(): Promise<ChatThreadState | null>;
-  /**
-   * Persists only an exact already-bound thread/surface pair after durable
-   * readback. It neither creates a surface nor changes a live Pi runtime.
-   */
-  selectActiveThread(chatThreadId: string, chatSurfaceSessionId: string): Promise<ActiveChatThreadSelection>;
   /** Opens precisely one persisted thread; there is deliberately no "latest" fallback. */
   resumeThread(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
   /**
@@ -2073,13 +2048,6 @@ ${THREAD_FORKS_TABLE_V11}
       updated_at_ms INTEGER NOT NULL
     );
 
-    CREATE TABLE tavern_active_selection (
-      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-      chat_thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
-      chat_surface_session_id TEXT NOT NULL,
-      selected_at_ms INTEGER NOT NULL
-    );
-
     CREATE UNIQUE INDEX idx_tavern_turns_one_current_per_thread
       ON tavern_turns(thread_id) WHERE is_current = 1;
     CREATE INDEX idx_tavern_threads_continuity
@@ -2145,7 +2113,6 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_turn_context_plans",
     "tavern_turn_context_sources",
     "tavern_drafts",
-    "tavern_active_selection",
   ];
   const tables = new Set(
     (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[]).map((row) => row.name),
@@ -2500,63 +2467,6 @@ export function createChatThreadStore(
         return Object.freeze(
           rows.map((row) => Object.freeze({ chatThreadId: row.thread_id, text: row.text }) as ChatThreadLastMessage),
         );
-      });
-    },
-
-    async readActiveThreadSelection(): Promise<ActiveChatThreadSelection | null> {
-      return withDb((db) => {
-        const row = db.prepare("SELECT * FROM tavern_active_selection WHERE singleton = 1").get() as any;
-        if (!row) return null;
-        return validateActiveSelection({
-          schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
-          chatThreadId: row.chat_thread_id,
-          chatSurfaceSessionId: row.chat_surface_session_id,
-          selectedAtMs: row.selected_at_ms,
-        });
-      });
-    },
-
-    async readActiveThreadBinding(): Promise<ChatThreadState | null> {
-      const first = await store.readActiveThreadSelection();
-      if (first === null) return null;
-      const state = await store.resumeThread(first.chatThreadId, first.chatSurfaceSessionId);
-      const final = await store.readActiveThreadSelection();
-      if (
-        final === null ||
-        final.chatThreadId !== first.chatThreadId ||
-        final.chatSurfaceSessionId !== first.chatSurfaceSessionId ||
-        final.selectedAtMs !== first.selectedAtMs
-      )
-        throw new Error("active_chat_thread_selection_changed");
-      return state;
-    },
-
-    async selectActiveThread(chatThreadId, chatSurfaceSessionId): Promise<ActiveChatThreadSelection> {
-      assertId("chatSurfaceSessionId", chatSurfaceSessionId);
-      assertId("chatThreadId", chatThreadId);
-      return withDb((db) => {
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
-        if (!threadRow) throw new ExactThreadNotFoundError();
-        const thread = rowToThread(db, threadRow);
-        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new ExactThreadSurfaceMismatchError();
-
-        const selectedAtMs = now();
-        db.prepare(
-          `INSERT INTO tavern_active_selection (singleton, chat_thread_id, chat_surface_session_id, selected_at_ms)
-          VALUES (1, ?, ?, ?)
-          ON CONFLICT(singleton) DO UPDATE SET
-            chat_thread_id = excluded.chat_thread_id,
-            chat_surface_session_id = excluded.chat_surface_session_id,
-            selected_at_ms = excluded.selected_at_ms`,
-        ).run(chatThreadId, chatSurfaceSessionId, selectedAtMs);
-
-        const selRow = db.prepare("SELECT * FROM tavern_active_selection WHERE singleton = 1").get() as any;
-        return validateActiveSelection({
-          schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
-          chatThreadId: selRow.chat_thread_id,
-          chatSurfaceSessionId: selRow.chat_surface_session_id,
-          selectedAtMs: selRow.selected_at_ms,
-        });
       });
     },
 
@@ -4613,28 +4523,6 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
     idempotency,
     ...(currentTurnContextPlan === undefined ? {} : { currentTurnContextPlan }),
   });
-}
-
-function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
-  if (
-    !isRecord(value) ||
-    !onlyKeys(value, ["schemaVersion", "chatThreadId", "chatSurfaceSessionId", "selectedAtMs"]) ||
-    value.schemaVersion !== CHAT_THREAD_SELECTION_SCHEMA_VERSION
-  )
-    throw new Error("invalid_active_chat_thread_selection");
-  assertId("chatThreadId", value.chatThreadId);
-  assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
-  assertTimestamp(value.selectedAtMs);
-  return freezeActiveSelection({
-    schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
-    chatThreadId: value.chatThreadId,
-    chatSurfaceSessionId: value.chatSurfaceSessionId,
-    selectedAtMs: value.selectedAtMs,
-  });
-}
-
-function freezeActiveSelection(value: ActiveChatThreadSelection): ActiveChatThreadSelection {
-  return Object.freeze({ ...value });
 }
 
 function validateProfileMetadata(value: unknown): Readonly<{

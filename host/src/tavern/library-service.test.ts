@@ -191,11 +191,9 @@ test("Companion Library persists inert selected companion metadata and Manage Ch
       (await service.listChats()).map((item) => item.chatThreadId),
       ["thread"],
     );
-    assert.deepEqual(await service.activeChatSelection(), null);
     assert.deepEqual(await service.openChat("thread", "surface"), created);
     // Library only validates the exact inert mapping; the runtime owner is
     // solely responsible for committing active selection after Pi activation.
-    assert.deepEqual(await service.activeChatSelection(), null);
     await assert.rejects(service.openChat("thread", "other"), /chat_thread_surface_mismatch/);
   } finally {
     threads.close?.();
