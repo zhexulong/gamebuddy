@@ -748,6 +748,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "and no `file:` dependency to examine",
   },
   {
+    gate: "check-fact-seams.mjs",
+    reason:
+      "prints a population line and one JSON object with population/examined/findings rather than the " +
+      "{gate,status,checks[]} self-report this suite runs, so it reads its own falsifier instead: " +
+      "tools/check-fact-seams.test.mjs replays 88e7e6e9^ and 25de4e8f out of the committed bytes and requires the " +
+      "finding the gate would have printed there, then injects one member into a mirrored vocabulary in a copied tree " +
+      "and requires fact_seam_drift:<fact> to name it. The gate's own red-proof markers name all three",
+  },
+  {
     gate: "check-vendored-bundle-leaks.mjs",
     reason:
       "reads a built bundle for the build machine's own paths (`bun build` inlined `E:\\\\projects\\\\…` into " +

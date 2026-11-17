@@ -82,13 +82,13 @@
  *     existed and was armed - so it is that gate's red, not this one's, and the header says so instead of implying a
  *     second coverage.
  *
- * red-proof: history. On `88e7e6e9^` this gate reports
+ * red-proof: history On `88e7e6e9^` this gate reports
  *   `fact_seam_underived:desktop-composition-ack` for `tools/desktop-composition-launch.mjs` (the shape file the fix
  *   added does not exist at that revision) - the launcher's nine-key list against the Host's eleven-key frame.
- * red-proof: history. On `25de4e8f` (before `51732f40`) this gate reports
+ * red-proof: history On `25de4e8f` (before `51732f40`) this gate reports
  *   `fact_declared_unproduced:stardew_game_create_world_held_by_player` and its slot sibling: declared and mirrored,
  *   produced by no host source, so the create route answered `state_unavailable`.
- * red-proof: inject. `tools/check-fact-seams.test.mjs` adds one member to a mirrored vocabulary in a copy of the tree and
+ * red-proof: inject `tools/check-fact-seams.test.mjs` adds one member to a mirrored vocabulary in a copy of the tree and
  *   requires `fact_seam_drift:<fact>` to name that member.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
