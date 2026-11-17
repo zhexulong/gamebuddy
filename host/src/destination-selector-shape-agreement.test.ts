@@ -324,7 +324,7 @@ function argumentDoors(): readonly Door[] {
           },
           { snapshot: snapshotFor(selector.actionId), actions: PLAN_ACTIONS },
         );
-        return compiled.ok ? null : { refusal: compiled.reasonCode, field: selector.argument };
+        return compiled.status === "refused" ? { refusal: compiled.reasonCode, field: selector.argument } : null;
       },
     });
   }
@@ -415,11 +415,11 @@ test("a_producer_object_is_refused_by_its_own_selector:the plan compiler mints o
         { snapshot: snapshotFor(selector.actionId), actions: PLAN_ACTIONS },
       );
       if (shape.names) {
-        assert.ok(
-          compiled.ok,
-          `the plan compiler refused ${JSON.stringify(shape.value)} (${shape.name}) with ` +
-            `${compiled.ok ? "" : compiled.reasonCode}; it is the shape the Mod's authoring door admits`,
-        );
+        if (compiled.status === "refused")
+          throw new Error(
+            `the plan compiler refused ${JSON.stringify(shape.value)} (${shape.name}) with ${compiled.reasonCode}; ` +
+              `it is the shape the Mod's authoring door admits`,
+          );
         const canonical = compiled.program.nodes[0]?.arguments[selector.argument];
         assert.deepEqual(
           validateBodyProgramCandidateRequest({
@@ -440,8 +440,8 @@ test("a_producer_object_is_refused_by_its_own_selector:the plan compiler mints o
         producerReads.push(`${selector.actionId} <- ${shape.name}`);
       } else {
         assert.equal(
-          compiled.ok,
-          false,
+          compiled.status,
+          "refused",
           `the plan compiler minted a program from ${JSON.stringify(shape.value)} (${shape.name}), which names no run ` +
             `handle: the Mod's IsValidSelector refuses it, so the Host must refuse it while the author can still fix it`,
         );
@@ -457,8 +457,8 @@ test("a_producer_object_is_refused_by_its_own_selector:the plan compiler mints o
       { snapshot: snapshotFor(SELECTOR_ARGUMENTS[0]!.actionId), actions: PLAN_ACTIONS },
     );
     assert.equal(
-      compiled.ok,
-      false,
+      compiled.status,
+      "refused",
       `the plan compiler minted a label the Mod refuses at its authoring door (${JSON.stringify(label)}): the label rule ` +
         `is readDestinationSelector's, not a second copy with its own bound`,
     );
@@ -471,8 +471,8 @@ test("a_producer_object_is_refused_by_its_own_selector:the plan compiler mints o
     { snapshot: snapshotFor(SELECTOR_ARGUMENTS[0]!.actionId), actions: PLAN_ACTIONS },
   );
   assert.equal(
-    withStrayKey.ok,
-    false,
+    withStrayKey.status,
+    "refused",
     "the plan compiler accepted a selector with a key the closed shape does not carry, so the refusal the author sees is the Mod's, a round trip later",
   );
   console.log(

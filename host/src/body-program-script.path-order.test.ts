@@ -113,7 +113,7 @@ const TILE_ADDRESSED: ReadonlySet<string> = new Set(
 );
 
 type Tile = Readonly<{ x: number; y: number }>;
-type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
+type PlanNode = Extract<CompiledPlan, { status: "compiled" }>["program"]["nodes"][number];
 
 const BASE_SNAPSHOT: Snapshot = {
   revision: 4,
@@ -139,19 +139,20 @@ function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPla
 }
 
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
-  if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
+  if (result.status === "refused") throw new Error(`expected a plan, received ${result.reasonCode}`);
   return result.program.nodes;
 }
 
 /** The nodes the compiler wrote into the program, and their population, read through the plan they stand beside. */
 function insertionsOf(plan: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
-  if (!plan.ok) assert.fail(`expected a plan beside the insertions, received ${plan.reasonCode}`);
+  if (plan.status === "refused") throw new Error(`expected a plan beside the insertions, received ${plan.reasonCode}`);
   return { inserted: plan.inserted, count: plan.insertedCount };
 }
 
 /** The ids of the nodes the compiler minted, in program order: the population an insertion reading joins on. */
 function insertedNodeIdsOf(plan: CompiledPlan): readonly string[] {
-  if (!plan.ok) assert.fail(`expected a plan beside its inserted node ids, received ${plan.reasonCode}`);
+  if (plan.status === "refused")
+    throw new Error(`expected a plan beside its inserted node ids, received ${plan.reasonCode}`);
   return plan.insertedNodeIds;
 }
 
