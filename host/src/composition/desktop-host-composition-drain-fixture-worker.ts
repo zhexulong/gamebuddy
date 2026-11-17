@@ -140,6 +140,9 @@ async function main(): Promise<void> {
     ).href,
     {
       namedExports: {
+        // The composition ends an in-flight turn before it releases the mounted lane; this
+        // fixture has no turn, so the seam only has to exist.
+        abortMountedTurnThroughCancelSeam: async () => undefined,
         createSharedSemanticProductionAuthorityFromDeploymentManifest: async (
           _manifest: unknown,
           options?: Readonly<{ tavernNarrativeGateNonceSha256?: string }>,

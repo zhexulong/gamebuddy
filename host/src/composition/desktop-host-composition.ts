@@ -20,7 +20,10 @@ import {
   createChatSemanticFacadeFromSharedAuthority,
   type ConstructedUnmountedChatSemanticFacade,
 } from "../continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
-import { createSharedSemanticProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import {
+  abortMountedTurnThroughCancelSeam,
+  createSharedSemanticProductionAuthorityFromDeploymentManifest,
+} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GameLifecycleProviderCapability } from "../integration-catalog.js";
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
@@ -33,7 +36,10 @@ import {
   type DesktopPresentationAdmission,
 } from "./desktop-presentation-admission-owner.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
-import { createCompanionSessionReflectionChild } from "./companion-session-reflection.js";
+import {
+  createCompanionSessionReflectionChild,
+  runPendingCompanionReflectionBesideShell,
+} from "./companion-session-reflection.js";
 import {
   ensureCompanionGameModDeployed,
   type CompanionGameModDeploymentOutcome,
@@ -162,8 +168,18 @@ export async function createDesktopProductComposition(
       close: async () => {
         // Mirrors the reference entry's Chat lane: the mounted runtime authority
         // closes first, then the facade drains its Chat runtime projection.
-        await mountedLease.close();
-        await mountedFacade.close();
+        //
+        // The turn this runtime is generating is ended before the lane is released, through the
+        // same cancel seam an authenticated browser Stop uses. The presentation port closed before
+        // this step, so that turn's stream has no reader left: waiting for it to finish would wait
+        // on output nobody can see, and the lease's own close would hold the exit for as long as
+        // the model keeps generating. The lane is released either way.
+        try {
+          await abortMountedTurnThroughCancelSeam(input.manifest, mountedLease, "host_exit");
+        } finally {
+          await mountedLease.close();
+          await mountedFacade.close();
+        }
       },
     });
     // E1: the chat-only and management surfaces are Chat-owned composition
@@ -211,6 +227,10 @@ export async function createDesktopProductComposition(
       // The composed surface is ready at the Host-owned seam: the launch URL is
       // published exactly once and never projects through the composition facade.
       input.publishLaunchUrl?.(presentationAdmission.launchUrl);
+      // The shell is serving: the reflection an earlier exit deferred runs beside it, where its
+      // output can still be read. Unawaited by construction - a launch never waits on a model
+      // call - and every failure is answered as a bounded outcome of its own.
+      runPendingCompanionReflectionBesideShell(input.manifest, mountedLease.chatSurfaceSessionId);
       // Children close in reverse registration order as the named reclamation steps:
       // stop admission and release the presentation port first, then drain the Chat
       // runtime, then release the shared semantic authority. No Game owner
@@ -218,9 +238,10 @@ export async function createDesktopProductComposition(
       const sharedAuthorityChild = shared;
       const chatRuntimeChild = chatRuntime;
       const presentationChild = presentationAdmission;
-      // One reflection on the session that just ended, after the Chat runtime has drained and before the shared
-      // authority closes (owner ruling E: reflection is a session-end act here, not a cron task - Magic Context's
-      // own timer was measured never to reach a tick inside a play session).
+      // One reflection on the session that just ended: the exit records that this root is owed one
+      // (a single file write) and the next launch runs it beside the shell. Owner ruling E: reflection
+      // is a session-end act here, not a cron task - Magic Context's own timer was measured never to
+      // reach a tick inside a play session.
       const reflectionChild = createCompanionSessionReflectionChild(input.manifest, mountedLease.chatSurfaceSessionId);
       return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
         { step: "release_shared_authority", close: () => sharedAuthorityChild.close() },
@@ -267,6 +288,9 @@ export async function createDesktopProductComposition(
     // launch URL is published exactly once and never projects through the
     // composition facade.
     input.publishLaunchUrl?.(presentationAdmission.launchUrl);
+    // The shell is serving: the reflection an earlier exit deferred runs beside it, where its output
+    // can still be read. Unawaited by construction, and every failure is a bounded outcome of its own.
+    runPendingCompanionReflectionBesideShell(input.manifest, mountedLease.chatSurfaceSessionId);
     // Children close in reverse registration order as the named reclamation steps:
     // stop admission and release the presentation port first; then drain the Chat
     // runtime; then drain the Game lifecycle owner - settle in-flight Game work,

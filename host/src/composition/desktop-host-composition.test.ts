@@ -469,3 +469,24 @@ test("desktop product composition source selects the Chat-only/management varian
     /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,?\s*\}\)[\s\S]*?surface === "chat-only"/,
   );
 });
+test("the Chat runtime's close ends the turn it is generating before it releases the mounted lane", async () => {
+  const { shape: source } = readSourceShape(
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"),
+  );
+  // The presentation port closed before this step, so an in-flight turn's stream has no reader:
+  // the exit ends that turn through the same cancel seam a browser Stop uses, and only then
+  // releases the lane whose close would otherwise wait for the model to stop generating.
+  const abortAt = source.indexOf('abortMountedTurnThroughCancelSeam(input.manifest, mountedLease, "host_exit")');
+  const leaseCloseAt = source.indexOf("await mountedLease.close();");
+  assert.ok(abortAt >= 0, "the Chat runtime's close never ends the turn it is generating");
+  assert.ok(leaseCloseAt >= 0, "the Chat runtime's close no longer releases the mounted lane");
+  assert.ok(
+    abortAt < leaseCloseAt,
+    "the Chat runtime's close releases the mounted lane before ending the turn: the lane's close waits for that turn",
+  );
+  // The lane is released whatever the abort answered: a stranded turn must not strand the exit.
+  assert.match(
+    source,
+    /try \{\s*await abortMountedTurnThroughCancelSeam\([\s\S]*?\} finally \{\s*await mountedLease\.close\(\);/,
+  );
+});
