@@ -2720,7 +2720,7 @@ function descriptionOfToolAfter(source: string, marker: string): string {
   return body.replace(/\\([\s\S])/gu, "$1");
 }
 
-test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes the companion", () => {
+test("stardew_plan_work says when it returns, what wakes the companion, and that the turn keeps composing", () => {
   // `plan_work` returns the moment the Mod accepts. That is only safe if the companion expects the outcome to arrive on
   // its own: measured 2026-11-03 (`round29`), a description that said nothing about a wake produced 48
   // `stardew_action_program_status` calls, `waitMs` median 30,000 (the cap), 248 s blocked.
@@ -2732,7 +2732,19 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
     /each step's receipt arrives later as a new message/u,
     "naming the fact that wakes the companion instead of a tool it would have to call",
   );
-  assert.match(planWork, /so end your turn\b/u, "so the turn it should take is stated too");
+  assert.match(
+    planWork,
+    /Keep composing/u,
+    "and what the turn is for is stated: composing work, not one call and a wait",
+  );
+  assert.match(
+    planWork,
+    /end the turn only when you have nothing more to plan/u,
+    'so "end the turn" means "no more to plan", never "I submitted something"',
+  );
+  // The sentence this replaces said "...so END YOUR TURN", which made one script a turn: measured `round66`, 40 turns
+  // bought 16 world-changing actions (2.2 requests a turn) while `round42` - whose description said nothing of the kind -
+  // bought 13.8 actions a turn. The anti-polling fact stays; the instruction to stop is the defect.
   // Whether she says anything with that turn is the preset's (`说清就停`), not the tool's: a description says how to
   // call the tool. Removed 2026-11-15 - "...so end your turn and speak to the player" made every settled plan owe a
   // bubble, and `conversational-stance-gate.test.ts` is what keeps it out.
