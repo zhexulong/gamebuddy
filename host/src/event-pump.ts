@@ -12,7 +12,13 @@ import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./progra
 // (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
 // call already write, so the pump asks it rather than keeping a second account of what is running.
 import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
-import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
+import {
+  BODY_PROGRAM_PROOF_NODE_STATES,
+  EXECUTION_STATES,
+  type ExecutionOrigin,
+  type ExecutionState,
+  type Snapshot,
+} from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
@@ -2895,7 +2901,7 @@ export class CompanionEventPump {
   }
 
   /**
-   * Hand the expiring facts to the RUNNING turn, without composing a turn of its own.
+   * Hand the STEERABLE facts to the RUNNING turn, without composing a turn of its own.
    *
    * <p>
    * This is a separate method from `flush` because the two answer different questions and live on different clocks.
@@ -2903,6 +2909,11 @@ export class CompanionEventPump {
    * a `#flushScheduled` flag for the entire duration of that turn - so anything routed through `flush` cannot run
    * while a turn is in flight, which is the only time a steer is useful. `steer` means "inject into the turn that is
    * already running"; putting it inside the turn-scoped method made it dead code.
+   * </p>
+   * <p>
+   * TWO CLASSES ARRIVE THIS WAY and `takeSteerableOnly` is the one function that decides which: a milestone, whose
+   * content is about to stop being true, and a receipt that says the plan CANNOT continue (`isPreemptingFact`). Both
+   * have the same property - waiting for the end of the turn buys nothing - which is the whole reason a steer exists.
    * </p>
    * <p>
    * Measured 2026-11-02 (`round25`): 8 milestones, 2 answered. The two that landed were the day-start ones, where
@@ -2918,9 +2929,9 @@ export class CompanionEventPump {
       this.#steerInFlight = undefined;
       if (!settled) return false;
     }
-    const expiring = this.takeExpiringOnly();
-    if (expiring === undefined) return false;
-    this.#steerInFlight = sink.deliver(expiring).then(
+    const steerable = this.takeSteerableOnly();
+    if (steerable === undefined) return false;
+    this.#steerInFlight = sink.deliver(steerable).then(
       () => true,
       () => false,
     );
@@ -2933,9 +2944,11 @@ export class CompanionEventPump {
    * Whether anything waiting describes a moment that will have passed by the time a run ends.
    *
    * <p>
-   * Read by `HostService` to decide whether an arriving fact warrants a steer at all, so the narrowness here is what
-   * keeps a receipt from interrupting a running plan: an `execution_receipt` terminal state does not expire - the
-   * result is the result - and only the world's own clock does.
+   * Read by `HostService` to decide whether an arriving fact warrants a steer at all. The narrowness here is about the
+   * CLOCK and nothing else: a `time_milestone` is true now and false later, so waiting for the end of the turn would
+   * deliver a statement about the past dressed as news. What this getter must never answer is the other question - "is
+   * the plan this turn is thinking about still able to continue" - because the two have different populations and
+   * different answers (`hasPreemptingFact`).
    * </p>
    */
   public get hasExpiringFact(): boolean {
@@ -2943,35 +2956,66 @@ export class CompanionEventPump {
   }
 
   /**
-   * The batch a steer carries while a turn is running: the expiring facts ONLY, and nothing else is consumed.
+   * Whether anything waiting says the plan this turn is working on CANNOT CONTINUE.
+   *
+   * <p>
+   * The other half of "is this worth interrupting a thought for", and the half that was missing. `hasExpiringFact`
+   * recognises only the world's clock, so NO execution receipt of any state could steer: measured `round66` and the
+   * round before it, a step rejected while a turn was thinking waited for the REST OF THE TURN (26 s measured on that
+   * run) before the model heard about it, and everything she thought in those 26 s was about a body that was not
+   * there. A `rejected` step is not progress to be dated; it is a wall, and the sooner she has it the fewer thoughts
+   * are spent on the wrong world.
+   * </p>
+   * <p>
+   * Deliberately NOT `time_milestone`, and deliberately not every receipt: a `succeeded` one is the plan WORKING, and
+   * interrupting a running plan to announce progress trades a finished action for a half-finished thought. See
+   * `isPreemptingFact` for the classification and `PREEMPTING_EXECUTION_STATES` for its population.
+   * </p>
+   */
+  public get hasPreemptingFact(): boolean {
+    return this.#hasPreemptingFact();
+  }
+
+  /**
+   * The batch a steer carries while a turn is running: the steerable facts ONLY, and nothing else is consumed.
    *
    * <p>
    * It does not go through `takeBatch` because that method's whole contract is to empty every window - which is
    * correct for a turn that is about to run and catastrophically wrong here, where a second batch is being handed to a
-   * turn that is still working through the first. Taking only the two or three `time_milestone` facts leaves the
-   * snapshot, the receipts and the player's input exactly where the in-flight turn's own follow-up expects them.
+   * turn that is still working through the first. Taking only the milestones and the receipts that stop the plan
+   * leaves the snapshot, the successful receipts and the player's input exactly where the in-flight turn's own
+   * follow-up expects them - which is a contract this function has to keep, not a description of what it happens to do.
+   * </p>
+   * <p>
+   * THE ORDER IS RECEIPTS FIRST: an obstruction is what she can act on, a clock mark is what she can only note.
    * </p>
    */
-  private takeExpiringOnly(): PendingBatch | undefined {
-    const expiring: WorldFact[] = [];
+  private takeSteerableOnly(): PendingBatch | undefined {
+    const steerable: WorldFact[] = [];
+    for (const [key, fact] of [...this.#receipts.entries()]) {
+      if (!isPreemptingFact(fact)) continue;
+      steerable.push(fact);
+      this.#receipts.delete(key);
+      this.#producedBy.delete(key);
+    }
     for (const [key, fact] of [...this.#worldFacts.entries()]) {
       if (fact.kind !== "world_fact" || fact.semanticKind !== "time_milestone") continue;
-      expiring.push(fact);
+      steerable.push(fact);
       this.#worldFacts.delete(key);
       this.#producedBy.delete(key);
     }
-    if (expiring.length === 0) return undefined;
+    if (steerable.length === 0) return undefined;
 
-    const deliveredFacts = expiring.map((fact) => {
+    const deliveredFacts = steerable.map((fact) => {
       const projection = fact.contextProjection;
       if (projection === undefined) return fact;
       const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
       return Object.freeze({ ...factWithoutProjection, payload: projection });
     });
-    const triggerEventIds = Object.freeze(expiring.map(factEventId));
+    const triggerEventIds = Object.freeze(steerable.map(factEventId));
     // A steer hands these to a turn that is already running, so they are delivered content like any other - and a
     // milestone published again later must not be a reason to open a new turn for what she has already been told.
-    this.#rememberDelivered(expiring);
+    this.#rememberDelivered(steerable);
     return Object.freeze({
       batchId: randomUUID(),
       disposition: "steer" as const,
@@ -2986,7 +3030,9 @@ export class CompanionEventPump {
       text: composeFactBrief({
         inputs: [],
         snapshot: this.#worldStateReading(),
-        events: expiring.filter((fact) => this.#owesTurn(fact)),
+        // A receipt is rendered by `receiptLine` (`actionId`, state, the Mod's own `reasonCode` and evidence detail),
+        // so the obstruction arrives as the Mod's words rather than as a Host paraphrase of them.
+        events: steerable.filter((fact) => this.#owesTurn(fact)),
         locale: DEFAULT_BRIEF_LOCALE,
       }),
     });
@@ -3002,8 +3048,13 @@ export class CompanionEventPump {
    * the day ended is a statement about the past dressed as news.
    * </p>
    * <p>
-   * Deliberately narrow. An `execution_receipt` terminal state does NOT expire - the result is the result, and
-   * interrupting a running plan to announce one would trade a finished action for a half-finished thought.
+   * THE RULING THIS USED TO ENCODE WAS HALF RIGHT, and the wrong half is why a blocked step waited out the turn.
+   * "An `execution_receipt` terminal state does not expire" is true of `succeeded`: the result is the result, and
+   * interrupting a running plan to announce progress trades a finished action for a half-finished thought. It is false
+   * of a receipt that says the plan CANNOT CONTINUE - a `rejected` node, a `failed` one, a Mod-verdict stall - which
+   * expires in the only sense that matters: it is useless to a turn that spends the next twenty seconds thinking about
+   * a body that has already stopped. That second class is `#hasPreemptingFact`, a separate question with its own name
+   * rather than a widening of this one.
    * </p>
    */
   #hasExpiringFact(): boolean {
@@ -3014,6 +3065,22 @@ export class CompanionEventPump {
       this.#retry !== undefined &&
       this.#retry.batch.facts.some((fact) => fact.kind === "world_fact" && fact.semanticKind === "time_milestone")
     );
+  }
+
+  /**
+   * Whether a waiting fact says the plan this turn is working on has STOPPED.
+   *
+   * <p>
+   * Two windows, because a receipt lives in `#receipts` and never in `#worldFacts`: a getter that scanned only the
+   * world facts would answer `false` for every receipt in the pump, which is exactly the shape of the defect this
+   * replaces. `#retry` is read for the same reason `#hasExpiringFact` reads it - a batch that could not be delivered is
+   * still owed, and the caller's question is "is there something worth steering", not "is the window I happen to scan
+   * full".
+   * </p>
+   */
+  #hasPreemptingFact(): boolean {
+    for (const fact of this.#receipts.values()) if (isPreemptingFact(fact)) return true;
+    return this.#retry !== undefined && this.#retry.batch.facts.some(isPreemptingFact);
   }
 
   private takeBatch(): PendingBatch {
@@ -4139,6 +4206,84 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
     typeof fact.payload.state === "string" &&
     isTerminalExecutionState(fact.payload.state as ExecutionState)
   );
+}
+
+/**
+ * The execution states whose receipts PROVED an effect, the one authority saying so.
+ *
+ * <p>
+ * `BODY_PROGRAM_PROOF_NODE_STATES` is the wire half of the Mod's own `provesEffect` rule
+ * (`OpenBodyProgramJournalAuthority.TryComplete`: `outcome is Succeeded or PartiallySucceeded`), already used to decide
+ * which node rows may carry evidence. A receipt that proved an effect is the plan WORKING, which is the difference the
+ * steer classification turns on - so it is read from that declaration rather than spelled again here.
+ * </p>
+ */
+const PROVED_EFFECT_STATES: ReadonlySet<string> = new Set<string>(BODY_PROGRAM_PROOF_NODE_STATES);
+
+/**
+ * Whether a receipt in this state says the plan it belongs to CANNOT CONTINUE - the population of `hasPreemptingFact`.
+ *
+ * <p>
+ * DERIVED FROM TWO AUTHORITIES RATHER THAN LISTED, because a listed set fails open the day a state is added: a receipt
+ * is stopped-plan iff the ledger says the execution can never resume (`TERMINAL_EXECUTION_STATES`, its single
+ * classification) and the Mod's `provesEffect` rule says it proved no effect. Everything else is progress - the three
+ * in-flight states, and the two that prove the step did something.
+ * </p>
+ * <p>
+ * THE STALL IS ALREADY HERE, and that is worth stating because the ruling used to name it separately: the live Mod's
+ * stall verdict is a `failed` receipt - the watchdog times out and calls `Fail(StallRefusalCode(...))`
+ * (`StardewBodyController.cs`), so it arrives with `native_path_ended` or `path_blocked_by_character:<name>` and no
+ * special case is needed. The non-terminal `stalled_waiting` receipt this file still names (`MOD_STALL_VERDICT_CODE`) is
+ * no longer minted: `WorldInterruptionTests.cs` pins its absence from the body loop, because the wait itself is body
+ * state. A branch for it would be a branch nothing can reach.
+ * </p>
+ * <p>
+ * `cancelled` IS THE ONE STATE THE TABLE CANNOT DECIDE ALONE: a cancel SHE asked for is already in her own tool result,
+ * so announcing it would interrupt a running thought with something she herself said; one the Mod performed is an
+ * obstruction she has not been told about. The record holds the un-narrowed reading - the direction that cannot lose an
+ * outcome - and `isPreemptingFact` applies the one narrowing the payload supports.
+ * </p>
+ */
+export const PREEMPTING_EXECUTION_STATES: Readonly<Record<ExecutionState, boolean>> = Object.freeze(
+  Object.fromEntries(
+    EXECUTION_STATES.map((state) => [state, isTerminalExecutionState(state) && !PROVED_EFFECT_STATES.has(state)]),
+  ) as Record<ExecutionState, boolean>,
+);
+
+/**
+ * The reason code that says a cancellation was HER OWN ASK rather than the Mod's verdict.
+ *
+ * <p>
+ * The payload DOES say which cancel a `cancelled` receipt is, so this is read rather than guessed. The Host's only
+ * production cancel is the `stardew_stop_action` tool, and it sends this code (`game-tools.ts`); the Mod keys its own
+ * refusal gate on the same token (`farmhandexecutioncontroller.cs#ModelStopReasonCode`) and echoes whatever the stop
+ * request carried straight onto the receipt it mints. Anything else on a `cancelled` receipt - `no_active_execution`, a
+ * superseded night that had not begun - is the Mod deciding, and that is news.
+ * </p>
+ * <p>
+ * The player's own STOP is NOT one of these and does not need to be: an interruption after a native side effect settles
+ * `Uncertain`, never `Cancelled`, which is the Mod's own stated distinction at `ModelStopReasonCode`.
+ * </p>
+ */
+export const MODEL_STOP_REASON_CODE = "model_stop_requested";
+
+/**
+ * Whether this fact says the plan the running turn is working on has STOPPED - the one thing a steer exists for.
+ *
+ * <p>
+ * Exported so the classification's population can be exercised through the real predicate instead of a second copy of
+ * the rule: `event-pump.steer-preemption.test.ts` walks `EXECUTION_STATES` through this function and through the pump's
+ * own getter, which are two paths, and fails by name on the member where they disagree.
+ * </p>
+ */
+export function isPreemptingFact(fact: WorldFact): boolean {
+  if (fact.kind !== "execution_receipt") return false;
+  const state = fact.payload.state;
+  // `Object.hasOwn` rather than a bare index: the payload is wire data, and `in`/`[]` would read a prototype member
+  // (`constructor`) as a classification.
+  if (typeof state !== "string" || !Object.hasOwn(PREEMPTING_EXECUTION_STATES, state)) return false;
+  if (!PREEMPTING_EXECUTION_STATES[state as ExecutionState]) return false;
+  return !(state === "cancelled" && fact.payload.reasonCode === MODEL_STOP_REASON_CODE);
 }
 
 /**
