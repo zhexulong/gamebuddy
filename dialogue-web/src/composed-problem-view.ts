@@ -681,8 +681,10 @@ const gameStateUnavailable: ProblemSentence = (labels) =>
 /**
  * The game process itself ended. The Host states it (the Guardian reported the exit and the code
  * that came with it), so this is a fact, not a failure of a read: the retry that `state_unavailable`
- * offers cannot change it, and the only step that can is starting the game again from a GameBuddy
- * whose lifecycle was not quarantined by the crash.
+ * offers cannot change it. Two routes answer with it - the cabin read, which would otherwise ask a
+ * dead process for its cabins, and a launch refused behind an ended attempt. So the sentence states
+ * the ending and the step and nothing route-specific, and the step is a fresh GameBuddy: the record
+ * that refuses both lives inside this Host's own process.
  */
 const gamePlayerHostExited: ProblemSentence = (labels) =>
   sentence(labels.gameProblemPlayerHostExitedTitle, labels.gameProblemPlayerHostExitedDetail, RESTART_GAMEBUDDY);
