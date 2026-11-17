@@ -282,10 +282,29 @@ export function GameSurface({
     [readCabinOffers],
   );
 
+  /**
+   * The surface's first read of the cabin handoff, taken the first time the panel is SHOWN.
+   *
+   * It used to be gated on `ready` alone, and `<GameSurface />` is mounted for the whole ready
+   * lifetime (`ComposedReferenceGameApp`: it renders the surface, which returns null when another one
+   * is selected), so the read fired while the player was still reading the conversation. That is a
+   * cross-process cabin discovery - the Host asks the game which cabins it can hand her - for a panel
+   * nobody had opened: measured on a fresh mount sitting on the Chat tab, one `game/stardew/cabins`
+   * request before the Game surface was ever selected.
+   *
+   * The ONE read stays one read: the ref keeps the arrival from paying for it again, so a player who
+   * opens the panel twice does not cost two scans of the game. Arrival freshness is not this read's
+   * job - the shell's own arrival refresh re-reads the Game projection the panel renders, and the
+   * panel's "Read cabins again" re-reads the handoff the player is actually looking at. What the read
+   * has to guarantee is that the panel is never a stale projection on arrival, and a read taken at the
+   * moment the panel is first shown is exactly that.
+   */
+  const cabinsReadRef = useRef(false);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !selected || cabinsReadRef.current) return;
+    cabinsReadRef.current = true;
     void readCabins("surface_ready");
-  }, [ready, readCabins]);
+  }, [ready, selected, readCabins]);
 
   /**
    * Whether the admitted launch can still be the reason no cabin has appeared.
