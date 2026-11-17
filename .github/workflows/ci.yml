@@ -265,7 +265,7 @@ jobs:
       # The order is the fixture's own: the tests project publishes the self-contained exact-child
       # runtime fixture that the generation build takes as its runtime tree.
       - run: dotnet build desktop/GameBuddy.Desktop.Tests -c Debug
-      - run: node host/scripts/build-desktop-launcher-test-generation.mjs "${{ runner.temp }}/desktop-launcher-generation" desktop/GameBuddy.Desktop.Tests/bin/Debug/net8.0-windows/Fixtures/ExactChildBootstrapFixture
+      - run: node host/scripts/build-desktop-launcher-test-generation.mjs "${{ runner.temp }}/desktop-launcher-generation" desktop/GameBuddy.Desktop.Tests/bin/Debug/net10.0-windows/Fixtures/ExactChildBootstrapFixture
       # Bounded on the measured work: the whole suite runs 15.7 minutes on a warm developer machine
       # (`测试总数: 306`), and every fixture-backed case spawns real launcher/guardian/Host children at
       # 15-70 seconds each, so a hosted runner's slower disk is the variable this number covers.

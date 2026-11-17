@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -34,7 +34,7 @@
     <ProjectReference Include="Fixtures\DevBrowserNominatedProgramFixture\DevBrowserNominatedProgramFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <Target Name="PublishExactChildBootstrapFixture" AfterTargets="Build" Condition="'$(SkipFixturePublish)' != 'true'">
-    <MSBuild Projects="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\net8.0-windows\Fixtures\ExactChildBootstrapFixture\" />
-    <MSBuild Projects="Fixtures\DesktopHostRuntimeFixture\DesktopHostRuntimeFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\net8.0-windows\Fixtures\DesktopHostRuntimeFixture\" />
+    <MSBuild Projects="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\Fixtures\ExactChildBootstrapFixture\" />
+    <MSBuild Projects="Fixtures\DesktopHostRuntimeFixture\DesktopHostRuntimeFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\$(TargetFramework)\Fixtures\DesktopHostRuntimeFixture\" />
   </Target>
 </Project>

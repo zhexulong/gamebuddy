@@ -12,10 +12,12 @@
  * than assumed.
  *
  * The second half was measured the same day, and it is a date: .NET 8's support window closed on 2026-11-10 and .NET 9's
- * on 2026-05-12, while `net6.0`, `net8.0` and `net8.0-windows` are the only frameworks this tree targets. A framework
- * that has left support is not a build error, which is why it can sit in a tree for a year without anyone noticing -
- * nothing fails, and every project keeps compiling. So the support window is a table here, the check is against
- * today's date, and the elevation of the reading into a task is the failure message naming the replacement.
+ * on 2026-05-12, while `net6.0`, `net8.0` and `net8.0-windows` were then the only frameworks this tree targets. A
+ * framework that has left support is not a build error, which is why it can sit in a tree for a year without anyone
+ * noticing - nothing fails, and every project keeps compiling. So the support window is a table here, the check is
+ * against today's date, and the elevation of the reading into a task is the failure message naming the replacement.
+ * The tree now targets `net6.0` (fourteen projects, held there by SMAPI) plus `net10.0` and `net10.0-windows` (the
+ * sixteen the finding named on 2026-11-16, moved the same day).
  *
  * WHAT EACH PROJECT MUST SATISFY, and the counter printed for each:
  *
@@ -72,7 +74,9 @@
  *   for the Mod's net6.0 - while this gate's `langversion in a csproj 0` read green over that state. The finding it
  *   raises is the drift that produced it (a csproj declaring its own version, a props file that governs nothing).
  *   The support half is the same tree either side of the day .NET 8 left support: `unsupported 16` at
- *   `--today 2026-11-16` against `unsupported 8` at `--today 2026-11-01`.
+ *   `--today 2026-11-16` against `unsupported 8` at `--today 2026-11-01`. The sixteen were then moved to
+ *   `net10.0`/`net10.0-windows`, so that same `--today 2026-11-16` now reads `supported 16 · forced 12 · declared 2 ·
+ *   unsupported 0` over the same thirty projects - the red-proof is the day, not a permanently red tree.
  */
 export const gateDeclaration = {
   id: "check-dotnet-target-and-language",
@@ -91,16 +95,26 @@ const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * The support window of every framework this repository could name, as published by Microsoft for the .NET releases.
  *
- * `ends` is the last day of support. A framework with no row here is `unrecognised`, which is a finding rather than a
+ * Keyed by FAMILY, not by TFM: `net8.0-windows` and `net8.0` are one release with one support window, and the platform
+ * suffix says which surface an app needs rather than which release it runs on. Measured 2026-11-16: before
+ * `familyOf` existed the table was read with the whole TFM, so a project correctly on `net10.0-windows` matched no row
+ * and was reported `unrecognised` - the gate's own advice (`move it to net10.0-windows`) was the state that reddened.
+ *
+ * `ends` is the last day of support. A family with no row here is `unrecognised`, which is a finding rather than a
  * pass: a table that silently accepts what it has never heard of is the same fail-open this gate is replacing.
  */
 export const SUPPORT_WINDOWS = Object.freeze({
-  "net6.0": { ends: "2024-11-12", family: "net6.0" },
-  "net7.0": { ends: "2024-05-14", family: "net7.0" },
-  "net8.0": { ends: "2026-11-10", family: "net8.0" },
-  "net9.0": { ends: "2026-05-12", family: "net9.0" },
-  "net10.0": { ends: "2028-11-10", family: "net10.0" },
+  "net6.0": { ends: "2024-11-12" },
+  "net7.0": { ends: "2024-05-14" },
+  "net8.0": { ends: "2026-11-10" },
+  "net9.0": { ends: "2026-05-12" },
+  "net10.0": { ends: "2028-11-10" },
 });
+
+/** `net10.0-windows` -> `net10.0`: the release whose support window the platform-qualified form shares. */
+export function familyOf(tfm) {
+  return String(tfm).split("-")[0];
+}
 
 /** The framework a project here would be moved to: the newest LTS in `SUPPORT_WINDOWS`, keeping its platform suffix. */
 export const REPLACEMENT_FAMILY = "net10.0";
@@ -122,7 +136,7 @@ export const DECLARED_CONSTRAINTS = Object.freeze([
   {
     project: "integrations/stardew/tests/farmhandcapabilitypublicationprojection.contract.csproj",
     tfm: "net6.0",
-    names: "the release closure published beside the Mod",
+    names: "the SMAPI build of the Mod, as the release closure beside it records",
     why:
       "the target-publication manifest asserts this contract tool's runtimeconfig declares Microsoft.NETCore.App@6.0.0, " +
       "so it is published as evidence about the .NET 6 generation it ships with; building it on another framework " +
@@ -296,7 +310,7 @@ export function judge({ root = DEFAULT_ROOT, now = new Date(), declared = DECLAR
 
     for (const tfm of frameworks) {
       census[tfm] = (census[tfm] ?? 0) + 1;
-      const window = SUPPORT_WINDOWS[tfm];
+      const window = SUPPORT_WINDOWS[familyOf(tfm)];
       if (window === undefined) {
         unsupported += 1;
         findings.push({ code: "targetframework_is_unsupported_and_not_declared", project: path, tfm });
@@ -388,7 +402,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 
   for (const line of report(reading)) console.log(`dotnet_target_and_language: ${line}`);
   console.log(
-    `dotnet_target_and_language: forced ${reading.bound.length} project(s) share the game host's framework · declared ${String(reading.declared.length)} row(s) checked against their evidence`,
+    `dotnet_target_and_language: forced ${String(reading.bound.length)} project(s) share SMAPI's framework (StardewModdingAPI.dll / Stardew Valley.dll, derived from the csproj graph) · declared ${String(reading.declared.length)} row(s) checked against their evidence`,
   );
 
   if (reading.findings.length === 0) process.exit(0);

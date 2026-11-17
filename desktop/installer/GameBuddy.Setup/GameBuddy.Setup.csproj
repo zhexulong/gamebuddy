@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -16,7 +16,7 @@
   <!--
     A Release installer carries its own runtime, for the same reason the launcher does: it is
     the FIRST thing a player runs, on a machine that has nothing installed yet. A
-    framework-dependent Setup.exe starts with the platform's "you need .NET 8.0 Desktop
+    framework-dependent Setup.exe starts with the platform's "you need .NET 10.0 Desktop
     Runtime" dialog before a single line of this installer runs, which is the exact dialog the
     self-contained launcher exists to prevent - and it would arrive one step EARLIER, when the
     player has no product at all to fall back on. The sandbox/clean-machine check in

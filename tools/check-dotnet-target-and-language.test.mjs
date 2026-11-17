@@ -134,6 +134,13 @@ describe("targetframework_is_unsupported_and_not_declared", () => {
     assert.equal(reading.unsupported, 1);
   });
 
+  it("reads a platform-qualified framework through its family, so net10.0-windows is inside the window", () => {
+    const root = checkout({ "desktop/Desktop.csproj": PLAIN("net10.0-windows") });
+    const reading = judgeFixture(root);
+    assert.deepEqual(codesOf(reading), []);
+    assert.deepEqual([reading.supported, reading.forced, reading.unsupported], [1, 0, 0]);
+  });
+
   it("is a boundary: the last day of support is supported, the day after is not", () => {
     const root = checkout({ "desktop/Desktop.csproj": PLAIN("net8.0") });
     const lastDay = judgeFixture(root, { today: "2026-11-10" });
@@ -169,6 +176,17 @@ describe("targetframework_is_unsupported_and_not_declared", () => {
     const reading = judgeFixture(root);
     assert.deepEqual(codesOf(reading), ["targetframework_is_unsupported_and_not_declared"]);
     assert.equal(reading.findings[0].tfm, "(none)");
+  });
+});
+
+describe("the forced bucket names SMAPI", () => {
+  it("derives the constraint from the mod build package and prints the authority it came from", () => {
+    const root = checkout({ "mod/Mod.csproj": MOD, "tool/Tool.csproj": PLAIN("net10.0") });
+    assert.deepEqual(codesOf(judgeFixture(root)), []);
+    // The CLI reads THIS repository's DECLARED_CONSTRAINTS, whose two rows name projects the fixture has not got, so
+    // its exit is 1 for that reason alone; the line under test is printed either way.
+    const result = runCli(root, "--today", "2026-11-16");
+    assert.match(result.stdout, /forced 1 project\(s\) share SMAPI's framework/u);
   });
 });
 
@@ -253,14 +271,16 @@ describe("the population is derived, and sums", () => {
 });
 
 describe("this repository, through the CLI", () => {
-  it("reds on every framework whose support window has closed and names net10.0 as the replacement", () => {
+  it("reads green at 2026-11-16, with every framework inside its window or forced by SMAPI", () => {
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const result = runCli(root, "--today", "2026-11-16");
-    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /langversion in a csproj 0/u);
+    assert.match(result.stdout, /unsupported 0/u);
     assert.match(
-      result.stderr,
-      /desktop\/GameBuddy\.Desktop\/GameBuddy\.Desktop\.csproj:net8\.0-windows — .*net10\.0-windows/u,
+      result.stdout,
+      /forced \d+ project\(s\) share SMAPI's framework/u,
+      "the forced bucket must name the authority that forces the framework",
     );
     assert.doesNotMatch(
       result.stderr,
