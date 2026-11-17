@@ -662,7 +662,11 @@ public sealed class MagnetPickupItemTests
     public void PickupForageDoesNotShareTheMagnetPredicate()
     {
         string source = Read("farmhandexecutioncontroller.gatheringactions.cs");
-        string forage = MethodBody(source, "public LocalExecutionReceipt RequestLocalPickupForage(");
+        // BOTH HALVES of one execution: `pickup_forage` walks in when the item is outside the native click radius, so
+        // its request half now hands the geometry to the shared approach leg and the same terminal half runs on arrival.
+        // Reading only the request half would miss every fact that moved into the half both paths share.
+        string forage = MethodBody(source, "public LocalExecutionReceipt RequestLocalPickupForage(")
+            + MethodBody(source, "private LocalExecutionReceipt ExecutePickupForage(");
         string item = MethodBody(source, "public LocalExecutionReceipt RequestLocalPickupItem(");
 
         forage.Should().NotContain("FindItemTarget(", "forage targets are location objects, not debris chunks");

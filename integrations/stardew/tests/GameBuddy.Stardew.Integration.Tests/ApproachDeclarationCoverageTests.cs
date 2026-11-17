@@ -45,21 +45,10 @@ public sealed class ApproachDeclarationCoverageTests
     private const string DefinitionsPath = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 
     /// <summary>
-    /// Every way a request path can begin walking the actor in. Four spellings because there are four seams, not
-    /// because the fact has four meanings: the tool family's approach leg, the building-contact form of it,
-    /// <c>pickup_item</c>'s own debris approach, which predates both, and the tile-target request seam the pedestal,
-    /// fence-gate, bush, fruit-tree and tree actions hand their request to. That seam begins the tool leg for all five,
-    /// and <c>TileTargetRequestSeamTests.TheSeamAdmitsResolvesWalksThenExecutesInThatOrder</c> pins that it still does.
+    /// Every way a request path can begin walking the actor in, shared with `ApproachBeforeRefusalTests`. The same six
+    /// seams answer both gates' questions - see <see cref="HandlerApproachFacts"/>.
     /// </summary>
-    private static readonly string[] ApproachLegMarkers =
-    {
-        "TryBeginToolApproach(",
-        "TryBeginBuildingApproach(",
-        "new LocalMoveSpec(",
-        "new LocalApproachSpec(",
-        "new LocalItemPickupSpec(",
-        "this.RequestLocalTileTarget(",
-    };
+    private static readonly string[] ApproachLegMarkers = HandlerApproachFacts.ApproachLegMarkers;
 
     /// <summary>The predicates that make a handler refuse from a distance instead of walking.</summary>
     private static readonly string[] TileDistanceMarkers =

@@ -20,10 +20,13 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// unify them into a defect.
 ///
 /// <para>
-/// <c>pickup_forage</c> DECLARES its precondition (<c>FarmhandActionDefinitions.cs:212</c>) and, in exchange, its
-/// request path must NOT walk in: it refuses <c>forage_target_out_of_range</c>. The walk is the
-/// caller's own <c>move_to_tile</c> step; if the handler started one, the declaration would be a redundant
-/// sentence and the refusal would arrive after a walk nobody planned.
+/// <c>pickup_forage</c> DECLARES that it closes the distance (<c>self_walked</c>) and, in exchange, its request path
+/// must WALK IN: it began as <c>adjacent, 1</c> and refused <c>forage_target_out_of_range</c> beyond the engine's own
+/// Chebyshev-1 click gate, and that recorded decision was REVERSED on 2026-11-17. The radius is not this action's rule
+/// - a player picking up a lily walks to it and clicks - and measured <c>round65</c> four such refusals were the only
+/// failure class in the whole run while one lily was never picked. The walk is the one <c>pickup_item</c>, beside it in
+/// the same handler group, already takes. So the declaration and the handler now agree from the other side, and this
+/// file pins that side: out of range is a walk, or a refusal that says what stopped it.
 /// </para>
 ///
 /// <para>
@@ -42,11 +45,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
-/// The four refusals below are driven through the REAL request paths against a headless world built the way
+/// The four request paths below are driven through the REAL ones against a headless world built the way
 /// <c>ClearStepMoveTests.CorridorHarness</c> builds one: a real <see cref="GameLocation"/>, a real
 /// <see cref="Farmer"/>, and the <c>Game1</c> statics the engine and <c>Context.IsWorldReady</c> dereference.
-/// Each case is paired with an in-range call that must NOT produce the same code, so a stub that always refuses
-/// fails them.
+/// Each distance case is paired with one inside the gate that must NOT produce the same answer, so a stub that
+/// answers everything the same way fails them.
 /// </para>
 /// </summary>
 public sealed class ApproachClassificationTests
@@ -54,50 +57,84 @@ public sealed class ApproachClassificationTests
     // ---- the declared half: pickup_forage -----------------------------------
 
     [Fact]
-    public void PickupForage_PublishesAdjacentOne_OnTheDescriptorTheSurfaceProjectionCarries()
+    public void PickupForage_PublishesSelfWalked_OnTheDescriptorTheSurfaceProjectionCarries()
     {
         // Both readings of the same fact: the registration declares it, and the surface projection publishes it
         // rather than dropping it. This is the artifact layer - see the file header for what that does NOT claim.
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == "pickup_forage");
-        registration.Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirement("adjacent", 1));
+        registration.Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirement("self_walked", null));
 
         FarmhandActionDescriptorProjection published = FarmhandActionSurfacePublication.Actions
             .Single(candidate => candidate.ActionId == "pickup_forage");
-        published.Approach.Should().Be(new FarmhandActionApproachRequirementProjection("adjacent", 1));
+        published.Approach.Should().Be(new FarmhandActionApproachRequirementProjection("self_walked", null));
     }
 
     [Fact]
-    public void PickupForage_OutOfRange_IsRefused_NotWalkedIn()
+    public void PickupForage_OutOfRange_IsWalkedTo_OrNamesWhatStoppedTheWalk()
     {
         using var world = HeadlessWorld.ForForage();
         world.PlaceActorAt(2, 3);
 
-        // Six tiles away, which is what the companion was when it learned this precondition the hard way.
+        // Six tiles away, which is what the companion was when it learned the old precondition the hard way.
         LocalExecutionReceipt receipt = world.RequestForage(8, 3);
 
-        // The REQUEST PATH is what this pins: a walk that had begun would return ExecutionState.Accepted
-        // (`TryBeginToolApproach` mints `Accepted, "accepted"`) and settle later, so requiring a terminal
-        // Rejected with this action's own code is exactly the difference between "refused" and "walked instead".
-        receipt.State.Should().Be(ExecutionState.Rejected, "pickup_forage refuses from range; it is not the walk");
-        receipt.ReasonCode.Should().Be("forage_target_out_of_range");
+        // THE REVERSED DECISION, as one assertion: a distance is not an answer. `TryBeginToolApproach` mints
+        // `Accepted, "accepted"` the moment the walk is dispatched, so the receipt below is the walk itself and not a
+        // verdict about geometry. The code that used to be here, `forage_target_out_of_range`, was the distance dressed
+        // as a reason. This drives the REAL request path, so a body that answers without walking - or that arms nothing -
+        // fails here rather than in a comment.
+        receipt.State.Should().Be(
+            ExecutionState.Accepted,
+            $"an out-of-range forageable is walked to, not refused: state={receipt.State} "
+                + $"code={receipt.ReasonCode} evidence={receipt.Evidence}");
+        receipt.ReasonCode.Should().Be("accepted");
+        receipt.Evidence.Should().Contain("approach=adjacent", "the approach leg says which geometry it dispatched");
+        receipt.Evidence.Should().Contain("distance=6", "and how far the walk had to close");
+        receipt.ReasonCode.Should().NotBe(
+            "forage_target_out_of_range",
+            "pickup_forage now closes the native click radius instead of refusing it");
     }
 
     [Fact]
-    public void PickupForage_InRange_DoesNotProduceTheRangeRefusal()
+    public void PickupForage_WithNoStandableApproach_RefusesAndNamesWhatBlockedIt()
+    {
+        using var world = HeadlessWorld.ForForage();
+        world.PlaceActorAt(2, 3);
+        world.BufferWarpsAround(8, 3);
+
+        // Nothing on the item's ring may be stood on: every one of its eight neighbours is a warp buffer, which the
+        // approach leg refuses (`IsWarpBufferTile`) because a body that stopped there would be teleported. So there is
+        // no walk to make - and THAT is the one case a refusal is honest. It has to say which impossibility it is:
+        // `standable_neighbour` separates a wall (a free tile it cannot walk to) from geometry (no free tile at all).
+        LocalExecutionReceipt receipt = world.RequestForage(8, 3);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "with nowhere to stand there is no walk to dispatch");
+        receipt.ReasonCode.Should().Be(
+            "no_reachable_approach:8:3",
+            "the shared approach refusal names the PLACEMENT whose ring has no approach");
+        receipt.Evidence.Should().Contain("standable_neighbour=none", "geometry, not a wall")
+            .And.Contain("standable_tiles=0", "and the count says the same thing in numbers");
+        receipt.Hint.Should().Be(
+            "no_approach;standable_neighbour=none",
+            "ADR-006 withholds a settled refusal's evidence, so the hint is the only channel that survives into the node");
+    }
+
+    [Fact]
+    public void PickupForage_InRange_ReportsTheMissingItemInsteadOfWalking()
     {
         using var world = HeadlessWorld.ForForage();
         world.PlaceActorAt(2, 3);
 
-        // One tile away: the radius gate is satisfied, so the request proceeds to the binding/object checks. This
-        // is the control that stops the case above from passing on a body that refuses everything: the same call,
-        // one tile closer, must answer something else. (It answers `observation_binding_target_unavailable` here
-        // because the headless farm holds no forage object - which is the point: a LATER gate spoke.)
+        // One tile away: no walk is needed, so the terminal half runs in place and finds nothing on the tile - the
+        // headless farm holds no forage object. That is the `target_not_found` ending, and it is the control that stops
+        // the case above from passing on a body that answers the same thing at every distance.
         LocalExecutionReceipt receipt = world.RequestForage(3, 3);
 
-        receipt.ReasonCode.Should().NotBe(
-            "forage_target_out_of_range",
-            "an in-range target must clear the radius gate the declaration describes");
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "target_not_found",
+            "a tile that holds no forageable is the item being gone, not a distance and not a walk");
     }
 
     // ---- the undeclared half: ride_bus -------------------------------------
@@ -258,6 +295,7 @@ public sealed class ApproachClassificationTests
             SetField(actor, "mailReceived", new NetStringHashSet());
             actor.position.Set(new Vector2(2 * 64 + 8, 3 * 64));
             actor.currentLocation = location;
+            SeedOnlineFarmers();
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
 
             WorldReadyPerScreen.GetValue(null)!.GetType()
@@ -270,6 +308,56 @@ public sealed class ApproachClassificationTests
 
         /// <summary>Moves the actor to a tile, which is the one variable the range gates read.</summary>
         public void PlaceActorAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
+
+        /// <summary>
+        /// Makes every tile on the eight-neighbour ring of (<paramref name="x"/>, <paramref name="y"/>) a warp buffer.
+        ///
+        /// <para>
+        /// This is the harness's way of saying "nowhere to stand": the approach leg asks
+        /// <c>IsStandableTile &amp;&amp; !IsWarpBufferTile</c>, and the second half is a fact about the location's own warp
+        /// table - the same table the engine reads - so it needs no content, no tilesheet and no clock. It is a real
+        /// predicate of the product, not a stub: a body that stopped on one of these tiles would be warped by the engine.
+        /// </para>
+        /// </summary>
+        public void BufferWarpsAround(int x, int y)
+        {
+            GameLocation location = Game1.player.currentLocation!;
+            for (int offsetX = -1; offsetX <= 1; offsetX++)
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                if (offsetX == 0 && offsetY == 0) continue;
+                location.warps.Add(new Warp(x + offsetX, y + offsetY, "Elsewhere", 0, 0, false));
+            }
+        }
+
+        /// <summary>
+        /// Seeds <c>Game1.otherFarmers</c>, which <c>Location.farmers</c> reads to answer "is a player present here".
+        ///
+        /// <para>
+        /// The approach leg reaches the ENGINE's finder now (<c>PathFindController</c>'s constructor calls
+        /// <c>isPlayerPresent</c>, <c>PathFindController.cs:133</c>), and an uninitialized netcode root is a null
+        /// dereference there rather than the empty answer it stands for. The harness seeds it the same way it seeds
+        /// <c>netWorldState</c>. Reflected rather than named because the member's type is the engine's own generic root;
+        /// a shape it cannot construct is left alone, which is exactly today's behaviour and no worse.
+        /// </para>
+        /// </summary>
+        private static void SeedOnlineFarmers()
+        {
+            FieldInfo? field = typeof(Game1).GetField("otherFarmers", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (field is null || field.GetValue(null) is not null)
+                return;
+            try
+            {
+                object root = Activator.CreateInstance(field.FieldType)!;
+                PropertyInfo? value = field.FieldType.GetProperty("Value");
+                if (value is not null && value.GetValue(root) is null)
+                    value.SetValue(root, Activator.CreateInstance(value.PropertyType));
+                field.SetValue(null, root);
+            }
+            catch (MissingMethodException)
+            {
+            }
+        }
 
         /// <summary>
         /// `pickup_forage` through its real request path. The address is `expectedTargetId`, the id the forage row

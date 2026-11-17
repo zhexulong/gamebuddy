@@ -49,7 +49,19 @@ internal sealed partial class ExecutionManager
         return (int)(this.tick - this.itemPickupMagnetStartedTick);
     }
 
-    /// <summary>Published native forage pickup. The native location action owns inventory and object removal.</summary>
+    /// <summary>
+    /// Published native forage pickup. The native location action owns inventory and object removal.
+    ///
+    /// <para>
+    /// OUT OF THE NATIVE RANGE THE ACTOR WALKS IN. <c>Utility.tileWithinRadiusOfPlayer(tile, 1)</c> is not this action's
+    /// rule - it is the engine's own guard on the click path (<c>Game1.cs:11509</c> requires it before
+    /// <c>checkAction</c>, which is what <c>Game1.tryToCheckAt</c> runs), so a player picking up a daffodil walks to it
+    /// first and clicks. The request path used to answer that distance with <c>forage_target_out_of_range</c> instead,
+    /// which is the refusal a walk belongs in: measured `round65`, the only failure class in the whole run was four of
+    /// them, and one lily was never picked. The walk is the one every other gathering action already takes
+    /// (<see cref="TryBeginToolApproach"/>), so the radius now decides WHETHER TO WALK, never whether to answer.
+    /// </para>
+    /// </summary>
     public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -66,19 +78,50 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_out_of_range",
-                $"target={targetX},{targetY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1");
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "pickup_forage",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePickupForage(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
 
-        StardewValley.GameLocation location = Game1.player.currentLocation;
+        return this.ExecutePickupForage(executionId, requestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// The terminal half of <c>pickup_forage</c>: the same body, run either in place or on arrival from the approach leg,
+    /// so the two paths cannot drift apart.
+    ///
+    /// <para>
+    /// THE ITEM BEING GONE IS ITS OWN ENDING. A walk takes ticks, and a forageable can leave the tile in that time - a
+    /// hoed-up daffodil, a second actor, a season change. `target_not_found` says the published target no longer exists,
+    /// which a caller answers by observing again; `forage_target_unavailable` says the tile holds something that answers
+    /// neither its published item nor its published id, which is a different correction. Collapsing them into one code
+    /// was invisible while nothing walked: the same tick that read the target also picked it up.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt ExecutePickupForage(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        StardewValley.GameLocation? location = Game1.player.currentLocation;
+        if (location is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+
         Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? forage)
-            || !forage.isForage())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable", $"target={targetX},{targetY}");
-        if (!string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? forage))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_not_found",
+                $"target={targetX},{targetY};expected={expectedQualifiedItemId};actual=none");
+        if (!forage.isForage()
+            || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
             || !string.Equals(BuildForageTargetId(location, targetX, targetY, forage), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable",
+                $"target={targetX},{targetY};expected={expectedQualifiedItemId};actual={forage.QualifiedItemId};is_forage={(forage.isForage() ? "true" : "false")};blocked_by={new RefusalLayerToken(RefusalLayerKind.ObjectOnTile, "different_object").Format()}");
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY};item={forage.QualifiedItemId}");
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         LocalForagePickupSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);

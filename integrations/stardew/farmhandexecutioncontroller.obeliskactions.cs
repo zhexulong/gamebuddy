@@ -438,7 +438,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Rejected,
                 "obelisk_out_of_reach",
-                $"target={targetX},{targetY};tile={actor.TilePoint.X},{actor.TilePoint.Y};route={resolution.Route}");
+                $"target={targetX},{targetY};tile={actor.TilePoint.X},{actor.TilePoint.Y};route={resolution.Route};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "adjacent").Format()}");
 
         if (resolution.Route == ObeliskBuildingRoute)
         {

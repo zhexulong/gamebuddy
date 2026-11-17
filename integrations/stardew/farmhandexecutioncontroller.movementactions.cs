@@ -683,7 +683,7 @@ internal sealed partial class ExecutionManager
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "minecart_station_out_of_range", $"source={sourceX},{sourceY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "minecart_station_out_of_range", $"source={sourceX},{sourceY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"reach:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}");
 
         MinecartRideResolution resolution = ResolveMinecartRide(location, sourceX, sourceY, expectedTargetId);
         if (!resolution.Accepted || resolution.Destination is null)
@@ -792,7 +792,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 doorOwned ? "door_out_of_range" : "warp_out_of_range",
-                $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY}");
+                $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}");
         }
 
         LocalTravelSpec specification = new(

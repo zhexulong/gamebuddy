@@ -85,7 +85,7 @@ public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandRes
 public sealed record FarmhandActionApproachRequirement(string Relation, int? WithinTiles)
 {
     /// <summary>You must already stand beside the target, in a step of your own: the handler refuses from further
-    /// away (`enter_exit`'s `door_out_of_range`, `pickup_forage`'s `observation_binding_target_out_of_range`).</summary>
+    /// away (`enter_exit`'s `door_out_of_range`, `ride_minecart`'s `minecart_station_out_of_range`).</summary>
     public static readonly FarmhandActionApproachRequirement Adjacent = new("adjacent", 1);
 
     /// <summary>
@@ -557,7 +557,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // the caller to copy, and `charge` is how far the actor charges the hoe before ONE native use - `0` covers
         // exactly the named tile, 1..5 the engine's own rectangle up to the held hoe's ceiling.
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, Charged(SelfWalked(A(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("charge","integer")))), FarmhandActionLifecycle.Published, "soilTiles"),
-        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage() with { Approach = FarmhandActionApproachRequirement.Adjacent }, FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, SelfWalked(TargetItem()), FarmhandActionLifecycle.Published, "itemTargets"),
+        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, SelfWalked(PickupForage()), FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, SelfWalked(TargetItem()), FarmhandActionLifecycle.Published, "itemTargets"),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
         // (`tool_not_owned:watering_can` when the pack holds none), so the can is an unconditional requirement.
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
