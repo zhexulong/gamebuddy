@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DEFAULT_REFLECTION_TIMEOUT_MS } from "./companion-session-reflection.js";
 import {
   DESKTOP_HOST_DRAIN_DEADLINE_MS,
   DESKTOP_HOST_DRAIN_TIMEOUT_MS,
@@ -43,13 +42,8 @@ const STEP_OWNED_OPERATIONS: Readonly<
       ms: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
     }),
   ],
-  /** One reflection, which the reflection child bounds with its own timeout. */
-  reflect_session: [
-    Object.freeze({
-      owner: "DEFAULT_REFLECTION_TIMEOUT_MS (composition/companion-session-reflection.ts)",
-      ms: DEFAULT_REFLECTION_TIMEOUT_MS,
-    }),
-  ],
+  /** Records the one reflection the runtime root is owed: one marker file, no operation to wait on. */
+  reflect_session: [],
   /** Closes the durable semantic authority: a store close, with no operation budget of its own. */
   release_shared_authority: [],
   /** Closes the authenticated session's pipe: a socket close, with no operation budget of its own. */
@@ -110,7 +104,7 @@ test("the gate is red for a detector below the operations the steps wait on", ()
   const outliving = stepsOutlivingTheDrainBudget(DESKTOP_HOST_RECLAMATION_STEPS, 15_000, STEP_OWNED_OPERATIONS);
   assert.deepEqual(
     outliving.map((entry) => entry.step),
-    ["drain_game_lifecycle", "reflect_session"],
+    ["drain_game_lifecycle"],
   );
 });
 

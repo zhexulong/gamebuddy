@@ -41,12 +41,13 @@ export const DESKTOP_HOST_RECLAMATION_STEPS = Object.freeze([
   /** Settle in-flight Game work, contain the AI role through its Job Object, release the bridge/control pipes. */
   "drain_game_lifecycle",
   /**
-   * One reflection on the session that just ended, per owner ruling E.
+   * Records the one reflection this runtime root is owed, and runs none of it.
    *
-   * It sits after both surfaces have drained - the material it reads is only complete once their turns have
-   * settled - and before the shared semantic authority closes, because it writes an ordinary memory row through
-   * that authority. It is bounded and fails closed: a reflection that cannot run leaves nothing behind and never
-   * delays or fails the exit it belongs to.
+   * It used to run the reflection here, and the reflection is a spawned model call: measured at 8 748 ms against a
+   * reachable provider and 4 306 ms against one that rejected the key, on the path where the player is leaving.
+   * The step now writes one bounded marker file - the material it reflects on stays complete either way, because
+   * the next launch reads the same runtime root - and the reflection runs beside the next launch's shell. It sits
+   * here rather than earlier only because it writes to the runtime root both surfaces drained out of.
    */
   "reflect_session",
   /** Close the durable semantic authority. */
@@ -141,13 +142,15 @@ export const DESKTOP_HOST_CLOSE_STEP_FAILED = "desktop_host_close_step_failed";
  *
  * The value is DERIVED, not chosen: it is the largest operation any step waits on. A
  * detector below that would name a step that is legitimately inside its own bounded
- * operation as failed, i.e. abandon work the product still owns. Two steps own such an
- * operation today and each of them names its own number: `drain_game_lifecycle` waits on
- * the arm/contain operation budget (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`), and
- * `reflect_session` on the reflection's own timeout (`DEFAULT_REFLECTION_TIMEOUT_MS`).
- * `desktop-host-reclamation-budget.test.ts` holds the invariant - every step's owned
- * operation must fit inside this one - so the next step that grows a five-minute call
- * reddens a gate instead of quietly spending the exit's whole deadline.
+ * operation as failed, i.e. abandon work the product still owns. One step owns such an
+ * operation today and names its own number: `drain_game_lifecycle` waits on the arm/contain
+ * operation budget (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`). `desktop-host-reclamation-budget.test.ts`
+ * holds the invariant - every step's owned operation must fit inside this one - so the next
+ * step that grows a five-minute call reddens a gate instead of quietly spending the exit's
+ * whole deadline.
+ *
+ * `reflect_session` deliberately no longer appears in that list: it records a marker instead of
+ * running the reflection, whose model call is the next launch's work, not the exit's.
  */
 export const DESKTOP_HOST_DRAIN_TIMEOUT_MS = 60_000;
 

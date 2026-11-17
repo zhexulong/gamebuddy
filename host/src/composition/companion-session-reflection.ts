@@ -1,18 +1,24 @@
 /**
- * The companion's reflection, run once when a Host session ends.
+ * The companion's reflection: one per Host session, recorded at the exit and RUN on the next launch.
  *
  * Owner ruling E for this product: reflection is not a cron task. Magic Context's own scheduler was measured on
  * this runtime - its first tick waits a two-minute quiet window and the periodic tick is fifteen minutes, both
  * `unref`'d - so a play session that lasts minutes never reaches a tick at all, however a task is scheduled. The
- * Host therefore asks for exactly one reflection at the moment a session ends, which is also the moment the
- * material it reflects on is complete.
+ * Host therefore asks for exactly one reflection per session end, which is also the moment the material it
+ * reflects on is complete.
  *
- * It runs inside the exit reclamation, before the shared semantic authority is released, and it is written to
- * fail closed: a reflection that cannot run leaves nothing behind and never delays or fails the exit it belongs
- * to. What it writes is an ordinary memory row (`sourceType: "dreamer"`); it does not touch compartments,
+ * It is not run there. Measured on this runtime, one reflection is a spawned `pi` model call - 8 748 ms against a
+ * reachable provider, 4 306 ms against one that rejected the key - so running it inside the exit spends provider
+ * time and wall clock on a call nobody is waiting for, on the one path where the player is trying to leave
+ * (Windows reads that as "this app is preventing shutdown"). The exit therefore records a bounded local marker
+ * (one file write) and the reflection runs beside the next launch's shell, where its output can still be read; a
+ * reflection that fails is retried by the marker's own attempt count and, past that, abandoned with its own name.
+ *
+ * What any of it writes is an ordinary memory row (`sourceType: "dreamer"`); it does not touch compartments,
  * chapters, m0, or the player's own text.
  */
-import { join, resolve } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 
@@ -46,7 +52,12 @@ export type CompanionSessionReflectionInput = Readonly<{
   timeoutMs?: number;
 }>;
 
-/** Far below the reclamation's own per-step drain detector: this is a courtesy, not a teardown. */
+/**
+ * How long one reflection attempt may take when a launch runs a deferred one.
+ *
+ * It bounds the promise this launch is waiting on, not the spawned model call: the vendored dreamer spawns its own
+ * `pi` child and abandons nothing when this expires, so the launch records the failure and the next launch retries.
+ */
 export const DEFAULT_REFLECTION_TIMEOUT_MS = 60_000;
 
 /**
@@ -168,12 +179,134 @@ async function withTimeout<T>(timeoutMs: number, work: () => Promise<T>): Promis
 }
 
 /**
+ * The marker one exit leaves behind, and the launch that reads it.
+ *
+ * The marker is the whole of the exit's reflection cost: a bounded JSON file under the runtime root that the
+ * conversation ran in, named by a schema so a marker written by another build is ignored rather than guessed at.
+ * `attempts` is the marker's own retry budget - a launch that fails increments it, and the attempt that reaches the
+ * ceiling removes the marker and reports `abandoned`, which is a named outcome rather than a silent endless retry.
+ */
+export const COMPANION_REFLECTION_PENDING_SCHEMA = "gamebuddy-companion-reflection-pending/v1";
+export const COMPANION_REFLECTION_PENDING_FILE = "companion-reflection-pending.json";
+export const COMPANION_REFLECTION_MAX_ATTEMPTS = 3;
+
+/** What one launch did with the reflection an earlier exit recorded. */
+export type PendingCompanionReflectionOutcome = "none" | "completed" | "not_applicable" | "failed" | "abandoned";
+
+type PendingCompanionReflection = Readonly<{
+  schema: typeof COMPANION_REFLECTION_PENDING_SCHEMA;
+  recordedAtMs: number;
+  attempts: number;
+}>;
+
+/** Where one runtime root keeps the reflection it still owes. */
+export function companionReflectionPendingPath(runtimeCwd: string): string {
+  return join(resolve(runtimeCwd), COMPANION_REFLECTION_PENDING_FILE);
+}
+
+/**
+ * Records that this runtime root owes one reflection.
+ *
+ * The runtime root is created here if it is absent - the marker sits beside the root the runtime itself uses, and
+ * the exit may reach this step before any launch has written there. A medium that refuses the write fails this step
+ * with its own bounded code instead of pretending the reflection was recorded.
+ */
+export async function recordPendingCompanionReflection(runtimeCwd: string): Promise<void> {
+  const path = companionReflectionPendingPath(runtimeCwd);
+  const marker: PendingCompanionReflection = Object.freeze({
+    schema: COMPANION_REFLECTION_PENDING_SCHEMA,
+    recordedAtMs: Date.now(),
+    attempts: 0,
+  });
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(marker)}\n`, "utf8");
+  } catch {
+    throw new Error("companion_reflection_marker_unwritable");
+  }
+}
+
+/**
+ * Runs the reflection an earlier exit recorded, once, beside this launch's shell.
+ *
+ * `none` is the ordinary answer - most launches inherit no marker - and it never touches the dreamer at all, so a
+ * launch that owes nothing pays nothing. A completed (or not-applicable) reflection is owed no longer and its
+ * marker is removed; a failed one keeps the marker with its attempt count for the next launch, until the ceiling
+ * removes it as `abandoned`. Nothing here throws: it runs unawaited beside a live shell.
+ */
+export async function runPendingCompanionReflection(
+  input: CompanionSessionReflectionInput,
+): Promise<PendingCompanionReflectionOutcome> {
+  const path = companionReflectionPendingPath(input.runtimeCwd);
+  const pending = await readPendingCompanionReflection(path);
+  if (pending === undefined) return "none";
+  const outcome = await reflectCompanionSessionOnce(input);
+  if (outcome !== "failed") {
+    await removePendingCompanionReflection(path);
+    return outcome;
+  }
+  const attempts = pending.attempts + 1;
+  if (attempts >= COMPANION_REFLECTION_MAX_ATTEMPTS) {
+    await removePendingCompanionReflection(path);
+    return "abandoned";
+  }
+  try {
+    await writeFile(path, `${JSON.stringify({ ...pending, attempts } satisfies PendingCompanionReflection)}\n`, "utf8");
+  } catch {
+    // The marker could not be advanced; the next launch reads the attempts it can see, so this is the same
+    // bounded answer as a marker that could never be written.
+  }
+  return "failed";
+}
+
+/**
+ * A malformed or foreign marker is removed rather than trusted: it carries no usable attempt count, and the
+ * alternative - reflecting on a guess - is worse than reflecting once more than necessary.
+ */
+async function readPendingCompanionReflection(path: string): Promise<PendingCompanionReflection | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text) as Partial<PendingCompanionReflection>;
+    if (
+      parsed.schema !== COMPANION_REFLECTION_PENDING_SCHEMA ||
+      typeof parsed.recordedAtMs !== "number" ||
+      typeof parsed.attempts !== "number" ||
+      !Number.isInteger(parsed.attempts) ||
+      parsed.attempts < 0
+    ) {
+      await removePendingCompanionReflection(path);
+      return undefined;
+    }
+    return Object.freeze({
+      schema: COMPANION_REFLECTION_PENDING_SCHEMA,
+      recordedAtMs: parsed.recordedAtMs,
+      attempts: parsed.attempts,
+    });
+  } catch {
+    await removePendingCompanionReflection(path);
+    return undefined;
+  }
+}
+
+async function removePendingCompanionReflection(path: string): Promise<void> {
+  try {
+    await rm(path, { force: true });
+  } catch {
+    // A marker that cannot be removed is answered by the next launch's own attempt count.
+  }
+}
+
+/**
  * The exit reclamation's `reflect_session` step.
  *
- * It resolves the runtime root the surface actually ran in - the same derivation the presentation admission
- * owner uses - and asks for one reflection there. A reflection that fails is named as a bounded failure of this
- * step, so the exit report says so; having nothing to reflect on (no store, no folded history yet) is not a
- * failure of the exit, so it completes without comment.
+ * It resolves the runtime root the surface actually ran in - the same derivation the presentation admission owner
+ * uses - and records the one reflection that root owes. That is a single file write: no store is opened, no model
+ * is called, and a failing medium is named as this step's bounded failure rather than a silently lost reflection.
  */
 export function createCompanionSessionReflectionChild(
   manifest: HostDeploymentManifest,
@@ -183,8 +316,34 @@ export function createCompanionSessionReflectionChild(
     step: "reflect_session" as const,
     close: async (): Promise<void> => {
       const runtimePaths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, chatSurfaceSessionId);
-      const outcome = await reflectCompanionSessionOnce({ runtimeCwd: runtimePaths.runtimeCwd });
-      if (outcome === "failed") throw new Error("companion_reflection_failed");
+      await recordPendingCompanionReflection(runtimePaths.runtimeCwd);
     },
   });
+}
+
+/** The runtime root of one Chat surface session: what an exit records into and the next launch reads. */
+export function companionReflectionRuntimeCwd(manifest: HostDeploymentManifest, chatSurfaceSessionId: string): string {
+  return resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, chatSurfaceSessionId).runtimeCwd;
+}
+
+/**
+ * Runs the reflection an earlier exit recorded, beside this launch's shell.
+ *
+ * Synchronous and unawaited by contract: a launch neither waits on a model call nor fails because of one. A runtime
+ * root this launch cannot derive is the ordinary `none` case - there is nothing to run - and every failure the
+ * reflection itself can report is `runPendingCompanionReflection`'s own bounded outcome.
+ */
+export function runPendingCompanionReflectionBesideShell(
+  manifest: HostDeploymentManifest,
+  chatSurfaceSessionId: string,
+): void {
+  void (async () => {
+    let runtimeCwd: string;
+    try {
+      runtimeCwd = companionReflectionRuntimeCwd(manifest, chatSurfaceSessionId);
+    } catch {
+      return;
+    }
+    await runPendingCompanionReflection({ runtimeCwd });
+  })();
 }
