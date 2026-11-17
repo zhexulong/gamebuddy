@@ -198,6 +198,7 @@ import {
 // world cannot be reported as a companion that stopped. It prints every read and beats once per bound of silence, because
 // a reading that only exists at the END cannot describe the stalls these runs are stopped for (`round50b`, `round51`).
 import { assessPauseOnUnfocus, createGameClock, GAME_CLOCK_HEARTBEAT_MS } from "./game-clock.mjs";
+import { describePresentationPiece } from "./presentation-piece-time.mjs";
 // The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
@@ -726,7 +727,6 @@ let presentedSummary = null;
 // agent turn was accepted, so the first piece's time-to-first-bubble is
 // measurable instead of inferred.
 const presentationPieces = [];
-const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 let agentTurnCount = 0;
 /**
@@ -1976,9 +1976,10 @@ function summarizePresentationEvidence() {
     // to report its longest stretch as an UPPER BOUND (161 s, `cause: run_end`, measured 2026-10-20).
     turnStartedAtMs,
     pieces: Object.freeze([...presentationPieces]),
-    pieceAtMs: Object.freeze([...presentationPieceAtMs]),
     pieceCount: presentationPieces.length,
-    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
+    // The first piece's time from ITS OWN turn's start, which is what "time to first bubble" has always meant and the
+    // only reading the old `elapsedMs` ever carried.
+    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].sinceTurnStartMs : null,
     // A turn that arrived as one wall at the end vs several pieces over time.
     chunked: presentationPieces.length > 1,
     // Every committed piece accounted for, in the unit it was committed in: the presented paragraphs, the pieces a
@@ -2012,9 +2013,19 @@ const onCompanionTextPresented = (text, locale) => {
   // Record EVERY committed piece before any single-shot voice logic runs: the
   // chunked-presentation evidence must not depend on voice being enabled or on
   // whether the piece happened to be the first one.
-  const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
   const committedAtMs = Date.now();
-  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  // ONE EPOCH (see `./presentation-piece-time.mjs`). `round67` printed ten pieces 22.5 s early because this field was
+  // measured from the turn's start while every other elapsed time in the log and the bundle uses the run's base; the
+  // derived pair also gives the bundle record the absolute moment it never had, which is why `check-live-run-silence`
+  // could only answer `presented_text_placed_on_run_clock: unmeasured`.
+  const pieceTime = describePresentationPiece({
+    index: presentationPieces.length,
+    chars: text.length,
+    committedAtMs,
+    runStartedAtMs: phaseTimings.runStartedAtMs,
+    turnStartedAtMs,
+  });
+  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, ...pieceTime.piece }));
   // The same moment the run's own record keeps: `round67`'s last delivery was the last thing anyone could date, and it
   // was only in the terminal log (2026-11-17).
   progress?.record({
@@ -2024,17 +2035,10 @@ const onCompanionTextPresented = (text, locale) => {
     atMs: committedAtMs,
   });
   ledger.record("present.visible", { index: presentationPieces.length - 1 });
-  // The absolute commit moment, kept in a SIDE array on purpose: `pieces` keeps its published shape (several tests pin
-  // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
-  // answer `not established`, which is what it had to do for every run before this.
-  presentationPieceAtMs.push(committedAtMs);
   // The first companion text that reached the player is this run's first MODEL response: the provider, the turn and the
   // presentation have all completed by the time this callback fires, so it is the honest end of the launch sequence.
   if (phaseTimings.marks.first_model_response === undefined) markPhase("first_model_response", committedAtMs);
-  console.error(
-    "AGENT_PRESENTATION_PIECE",
-    JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
-  );
+  console.error("AGENT_PRESENTATION_PIECE", JSON.stringify(pieceTime.line));
   // Dee-hydrate model scaffolding: the chat box and the voice line must both
   // speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
