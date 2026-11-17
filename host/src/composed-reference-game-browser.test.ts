@@ -881,6 +881,9 @@ test("game.launch maps only frozen typed outcomes without leaking internal error
     ["stardew_player_host_launch_not_staged", "game_prerequisites_missing"],
     ["stardew_player_host_launch_failed", "game_unavailable"],
     ["stardew_player_host_launch_quarantined", "game_unavailable"],
+    // A reported exit is knowledge, so the launch refused after one keeps the code that
+    // names the ending instead of the generic "GameBuddy does not know" answer.
+    ["stardew_player_host_exited", "stardew_player_host_exited"],
     ["stardew_lifecycle_closing", "game_unavailable"],
     ["private-launch-sensitive-detail", "state_unavailable"],
   ] as const;

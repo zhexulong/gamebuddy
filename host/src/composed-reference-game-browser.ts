@@ -492,6 +492,14 @@ function gameLaunchProblemCode(error: unknown): string {
     case "stardew_player_host_launch_quarantined":
     case "stardew_lifecycle_closing":
       return distinguishableLifecycleProblemCode(error, "game_unavailable");
+    // A reported exit is the one launch refusal that is knowledge rather than doubt: the
+    // Guardian watched this attempt's Player Host end and said with what code, and the state
+    // read publishes that same code once (`game.instance.playerHostExitCode`). It keeps the
+    // bounded code it arrives under, so the panel can say the game ended instead of telling
+    // the player the launch's result is uncertain. No new code: the contract already declares
+    // this one (`GAME_BROWSER_PROBLEM_CODES_V1`) because the cabin read answers with it.
+    case "stardew_player_host_exited":
+      return "stardew_player_host_exited";
     default:
       return "state_unavailable";
   }
