@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -27,6 +28,55 @@ import {
   validateCompositionSurface,
   validateGuardianHelloRequest,
 } from "./desktop-composition-launch.mjs";
+
+/**
+ * The acknowledgement's key sequence, read from the declaration the writer is written beside.
+ *
+ * Reading it instead of restating it is the point: this test used to build a nine-key ack of its own and
+ * assert the launcher accepted it, so when the Host's writer gained `drainDeadlineMs` and
+ * `stepHangDeadlineMs` both stayed green and every composed launch failed. The Host's wire test pins the
+ * real acknowledgement to this same file, so a field added on one side now fails a test on the other.
+ */
+const declaredAckKeys = JSON.parse(
+  readFileSync(new URL("../host/src/bootstrap/wire/desktop-host-bootstrap-ack.keys.json", import.meta.url), "utf8"),
+);
+
+/**
+ * The acknowledgement a Host answers with, built key by key from the declaration above.
+ *
+ * Both places in this file that need an ack - the validator case and the cooperative stub child the spawn
+ * test launches - use this, so no third copy of the wire shape can appear here and stay green after the
+ * writer moves.
+ */
+function acknowledgementFrom(frame, { drainDeadlineMs = 60_000, stepHangDeadlineMs = 10_000 } = {}) {
+  const values = {
+    schema: "gamebuddy-desktop-host-bootstrap/v1",
+    protocolVersion: 1,
+    status: "accepted",
+    bootstrapId: frame.bootstrapId,
+    generation: frame.generation,
+    inventoryDigest: frame.inventoryDigest,
+    runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
+    rootLayoutSchema: frame.rootLayout.schema,
+    drainDeadlineMs,
+    stepHangDeadlineMs,
+    sessionEntry: {
+      kind: "http",
+      method: "POST",
+      route: "/api/composed-reference-game/v1/bootstrap",
+      bodyKeys: ["apiVersion", "bootstrapToken"],
+    },
+  };
+  const ack = {};
+  for (const key of declaredAckKeys) {
+    assert.ok(
+      Object.hasOwn(values, key),
+      `the writer declares acknowledgement key '${key}' this helper has no value for`,
+    );
+    ack[key] = values[key];
+  }
+  return ack;
+}
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const hex = "a".repeat(64);
@@ -194,23 +244,16 @@ test("composition launch composes the exact schema-v2 bootstrap frame", () => {
 
 test("composition launch validates the bootstrap acknowledgement and guardian hello with exact binding facts", () => {
   const expected = { bootstrapId: hex, generation: "g-1", inventoryDigest: hex, runtimeAdmissionSha256: hex };
-  const ack = {
-    schema: "gamebuddy-desktop-host-bootstrap/v1",
-    protocolVersion: 1,
-    status: "accepted",
+  const ack = acknowledgementFrom({
     ...expected,
-    rootLayoutSchema: "gamebuddy-windows-root-layout/v1",
-    // The session entry the Host publishes: how a caller gets a session on the surface that was actually
-    // mounted. It must be present and well formed - the whole point is that a client reads this instead of
-    // assuming the management route.
-    sessionEntry: {
-      kind: "http",
-      method: "POST",
-      route: "/api/composed-reference-game/v1/bootstrap",
-      bodyKeys: ["apiVersion", "bootstrapToken"],
-    },
-  };
+    rootLayout: { schema: "gamebuddy-windows-root-layout/v1" },
+  });
+  assert.deepEqual(Object.keys(ack), declaredAckKeys);
   assert.equal(validateBootstrapAcknowledgement(ack, expected), true);
+  // The nine-key frame this launcher used to require no longer is the acknowledgement: a Host that predates
+  // the two deadline fields must not pass as the current one.
+  const { drainDeadlineMs: _drain, stepHangDeadlineMs: _hang, ...staleNineKey } = ack;
+  assert.equal(validateBootstrapAcknowledgement(staleNineKey, expected), false);
   assert.equal(
     validateBootstrapAcknowledgement(
       { ...ack, sessionEntry: { kind: "browser", launchPath: "/", bootFragmentKey: "boot" } },
@@ -572,25 +615,7 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
           write: (frameText) => {
             queueMicrotask(() => {
               const frame = JSON.parse(String(frameText));
-              fake.stdout.emit(
-                "data",
-                `${JSON.stringify({
-                  schema: "gamebuddy-desktop-host-bootstrap/v1",
-                  protocolVersion: 1,
-                  status: "accepted",
-                  bootstrapId: frame.bootstrapId,
-                  generation: frame.generation,
-                  inventoryDigest: frame.inventoryDigest,
-                  runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
-                  rootLayoutSchema: frame.rootLayout.schema,
-                  sessionEntry: {
-                    kind: "http",
-                    method: "POST",
-                    route: "/api/composed-reference-game/v1/bootstrap",
-                    bodyKeys: ["apiVersion", "bootstrapToken"],
-                  },
-                })}\n`,
-              );
+              fake.stdout.emit("data", `${JSON.stringify(acknowledgementFrom(frame))}\n`);
               // The launcher awaits the guardian hello before returning, so the
               // stub must complete that session on the real endpoint.
               const socket = createConnection(`\\\\.\\pipe\\GameBuddy.HostGuardian.${frame.bootstrapId}`);

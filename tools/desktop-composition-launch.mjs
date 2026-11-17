@@ -26,6 +26,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -51,6 +52,23 @@ const READY_SCHEMA = "gamebuddy-desktop-composition-ready/v1";
  * soon as the status channel shipped (commit 2e8672d9).
  */
 const BOOTSTRAP_STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
+/**
+ * The acknowledgement's key sequence, declared once beside the writer that produces it.
+ *
+ * The writer (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`, `writeAcknowledgement`)
+ * emits its frame from a literal object, so the field order exists only there. This launcher used to
+ * keep a second handwritten copy of that order and refuse any frame whose key set differed - and when
+ * the writer gained `drainDeadlineMs` and `stepHangDeadlineMs` (commit 0b4e9982) every composed launch
+ * failed `desktop_compose_bootstrap_ack_invalid` while every test stayed green, because the launcher's
+ * own test built its ack from the same stale copy. The declaration now lives next to the writer, the
+ * Host's own wire test asserts the real acknowledgement's keys against it, and this file reads it
+ * instead of repeating it.
+ */
+const BOOTSTRAP_ACK_KEYS = Object.freeze(
+  JSON.parse(
+    readFileSync(new URL("../host/src/bootstrap/wire/desktop-host-bootstrap-ack.keys.json", import.meta.url), "utf8"),
+  ),
+);
 const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
 
@@ -262,17 +280,7 @@ export function composeDesktopBootstrapFrame({
 
 export function validateBootstrapAcknowledgement(value, expected) {
   return (
-    exactKeysInOrder(value, [
-      "schema",
-      "protocolVersion",
-      "status",
-      "bootstrapId",
-      "generation",
-      "inventoryDigest",
-      "runtimeAdmissionSha256",
-      "rootLayoutSchema",
-      "sessionEntry",
-    ]) &&
+    exactKeysInOrder(value, BOOTSTRAP_ACK_KEYS) &&
     value.schema === BOOTSTRAP_SCHEMA &&
     value.protocolVersion === 1 &&
     value.status === "accepted" &&

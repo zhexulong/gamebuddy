@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
@@ -83,6 +83,16 @@ test("desktop bootstrap helper announces its bounded status stages before exactl
   // The acknowledgement is still exactly what it was, and it is the last frame on the channel.
   assert.equal(schemaOf(result.acknowledgement!), bootstrapSchema);
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+  // And it carries exactly the fields the declaration beside the writer states, in the order written.
+  // The launcher that reads this frame validates it against this same file, so a field added here
+  // without the declaration - which is how `drainDeadlineMs`/`stepHangDeadlineMs` once broke every
+  // composed launch while every test stayed green - fails on this side first.
+  assert.deepEqual(
+    Object.keys(JSON.parse(result.acknowledgement!)),
+    JSON.parse(
+      readFileSync(resolve(packageRoot, "src", "bootstrap", "wire", "desktop-host-bootstrap-ack.keys.json"), "utf8"),
+    ),
+  );
 
   // Everything before it is a well-formed, bounded status frame, in the order the child enters the
   // stages, and the acknowledgement follows them. Nothing else may appear on this channel: an extra
