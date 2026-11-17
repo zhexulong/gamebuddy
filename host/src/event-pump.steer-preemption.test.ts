@@ -7,6 +7,7 @@ import {
   PREEMPTING_EXECUTION_STATES,
   CompanionEventPump,
   isPreemptingFact,
+  TURN_OPENING,
   type PendingBatch,
   type WorldFact,
 } from "./event-pump.js";
@@ -35,6 +36,25 @@ const oneSnapshot = (revision: number): WorldFact => ({
   correlationId: `snapshot_${String(revision)}`,
   revision,
   payload: { revision, location: "Farm", actionable: true },
+});
+
+/**
+ * The Mod's own clock mark: the one opener here that is not a receipt.
+ *
+ * `time_milestone` is on `PRESENTATION_LEASE_KINDS` and carries an opaque `sourceEventId`, so `#opensTurn` accepts it
+ * through `#canPresent`. An `execution_receipt` never can - the wire's `#receipt` carries no event identity to present
+ * under - which is why a turn in these tests must not be opened with one (see falsifiers 1 and 3).
+ */
+const timeMilestone = (): WorldFact => ({
+  source: "stardew_mod",
+  kind: "world_fact",
+  eventId: "time_milestone_600",
+  sourceEventId: "time_milestone_600",
+  correlationId: "time_milestone_600",
+  revision: 1,
+  observedTick: 1000,
+  semanticKind: "time_milestone",
+  payload: { milestone: 600 },
 });
 
 /** The batch a steer hands over, or `undefined` when the pump had nothing steerable. */
@@ -210,14 +230,20 @@ test("a cancel she asked for is not news; a cancel the Mod performed is", async 
  * must still find everything the steer had no business taking: the successful receipt, the player's words, and the
  * snapshot slot that decides whether the next turn says `刚刚更新`.
  * </p>
+ * <p>
+ * THE OPENER IS THE MOD'S CLOCK MARK, NOT A RECEIPT, and the earlier version of this test got that wrong. It opened the
+ * turn with a `succeeded` node receipt on the reasoning "a step that OWES a turn opens it" - true when it was written,
+ * false since `9be6af14`: `#opensTurn` is `#owesTurn && !restatement && (isDueFact || #canPresent)`, and
+ * `presentationSourceOf` answers `undefined` for every `execution_receipt`. A receipt now OWES a turn and OPENS none, so
+ * that opener started nothing and every assertion after it was unreachable. The subject here is the STEER, so the turn
+ * is opened by a fact the pump's own `#opensTurn` accepts, and the receipt's two answers are asserted at the end: STATED
+ * by the follow-up's text, and NOT the opener of it.
+ * </p>
  */
 test("a rejected node reaches the running turn, and the turn's own follow-up still has the rest", async () => {
   const pump = new CompanionEventPump();
-  // A step that OWES a turn opens it; a `running` receipt is held progress and would open none (`HELD_RECEIPT_PROGRESS_STATES`).
-  pump.enqueueFact(
-    receipt("receipt_opener", { state: "succeeded", actionId: "water_crop" }),
-    FACT_PRODUCER.adapterIngress,
-  );
+  // A clock mark is presentable, so it opens a turn through `#canPresent`. A receipt could not: it has nothing to present.
+  pump.enqueueFact(timeMilestone(), FACT_PRODUCER.adapterIngress);
 
   const turn = holdFirstTurn(pump);
   await turn.firstDelivery;
@@ -283,6 +309,18 @@ test("a rejected node reaches the running turn, and the turn's own follow-up sti
     true,
     "and the snapshot slot is still the follow-up's: a steer states the world it joins, it does not take the reading",
   );
+  // THE TWO ANSWERS, IN THE ONE PLACE BOTH ARE VISIBLE. `#owesTurn` says the model is TOLD; `#opensTurn` says it is WOKEN.
+  // This receipt does the first and not the second, and a change that collapses the two has to leave one of these red.
+  assert.match(
+    followUp[0]?.text ?? "",
+    /water_crop 做成了/u,
+    "the outcome is STATED: a receipt OWES a turn even though it can open none, and this is the fact that says the node ran",
+  );
+  assert.deepEqual(
+    pump.turnAccount.lastDecision,
+    { kind: "opened", index: 2, reason: TURN_OPENING.playerInput },
+    "while the OPENER is the player's own word, not the receipt: `#owesTurn` and `#opensTurn` are two answers",
+  );
 });
 
 /**
@@ -326,9 +364,22 @@ test("a succeeded step never steers, whatever else is waiting", async () => {
  * FALSIFIER 3 — a preempting fact must never become a way to OPEN a turn.
  *
  * <p>
- * `steer` is for a turn that is already thinking. With no turn running the receipt is ordinary pending work and the
- * ordinary flush delivers it, with the ordinary disposition - the call site's `#flushScheduled` guard is what keeps the
- * two apart, and this pins the pump's half of that contract.
+ * `steer` is for a turn that is already thinking. With no turn running the receipt is ordinary pending work, and the
+ * call site's `#flushScheduled` guard is what keeps the two apart; this pins the pump's half of that contract.
+ * </p>
+ * <p>
+ * WHAT CHANGED HERE, AND WHY IT IS THE SAME PROPERTY. The old assertion was `batches.length === 1`, reading "the ordinary
+ * flush opened the turn the fact is owed" - which stopped being true at `9be6af14` for the reason falsifier 1 spells out:
+ * `#opensTurn` requires a presentable surface and a receipt has none. The property was never "a batch exists"; it was
+ * that a preempting fact is ORDINARY PENDING WORK when no turn is running, so that is what is asserted now - the flush
+ * owes no turn, the fact stays in its window with a ticket, and the turn that CAN present states it. Pending work is a
+ * delay, never a silence, and both halves are asserted.
+ * </p>
+ * <p>
+ * AND THE PUMP CANNOT TELL THAT NO TURN IS RUNNING: `takeSteerableOnly` reads `#receipts` for `isPreemptingFact` and
+ * nothing else, and `steer` is documented as the branch the CALLER takes only while its `#flushScheduled` guard says a
+ * turn is in flight. So `steer` hands the fact over whenever it is asked, which is asserted rather than implied - a pump
+ * that guessed at turn liveness would be a second, worse copy of a guard the Host already owns.
  * </p>
  */
 test("with no turn running a preempting fact is ordinary pending work, not a steer", async () => {
@@ -346,21 +397,55 @@ test("with no turn running a preempting fact is ordinary pending work, not a ste
   assert.equal(pump.hasExpiringFact, false, "and it is not a milestone, so the two questions stay separate");
 
   const batches: PendingBatch[] = [];
+  const outcome = await pump.flush({
+    async deliver(batch) {
+      batches.push(batch);
+    },
+  });
+  assert.equal(
+    outcome.kind,
+    "not_owed",
+    "no surface can show a receipt, so the ordinary flush invites no turn for it: it is pending work, not an opener",
+  );
+  assert.equal(batches.length, 0, "and nothing was delivered, so it did not become a turn of its own");
+  assert.equal(pump.turnAccount.opened, 0, "which is the number a run's own account reads");
+  assert.equal(pump.pendingCount, 1, "it is still in its window - not consumed, not steered, not dropped");
+  const ticket = outcome.kind === "not_owed" ? outcome.carry : undefined;
+  assert.ok(
+    ticket !== undefined && ticket.facts.length === 1,
+    "and ticketed, so 'it did not vanish' is a field, not a hope",
+  );
+
+  // PENDING WORK IS A DELAY, NOT A SILENCE: the next turn that CAN be shown states the obstruction.
+  pump.enqueueFact(timeMilestone(), FACT_PRODUCER.adapterIngress);
   await pump.flush({
     async deliver(batch) {
       batches.push(batch);
     },
   });
-  assert.equal(batches.length, 1, "the ordinary flush opened the turn the fact is owed");
-  assert.equal(batches[0]?.disposition, "follow_up", "and it is that turn's content rather than a steer");
+  assert.equal(batches.length, 1, "the clock mark opens the turn the refusal rides");
+  assert.match(batches[0]?.text ?? "", /navigate_to_destination/u, "and the obstruction is stated in it");
+  assert.match(batches[0]?.text ?? "", /native_path_ended/u, "with the Mod's own reason for it");
+  assert.equal(pump.carriedInto(ticket!), batches[0]?.batchId, "and the ticket resolves to that batch");
+
+  // THE PUMP'S HALF OF THE `#flushScheduled` CONTRACT, asserted rather than assumed.
+  pump.enqueueFact(
+    receipt("receipt_again", { state: "failed", actionId: "water_crop", reasonCode: "tool_not_held" }),
+    FACT_PRODUCER.adapterIngress,
+  );
+  let steered: PendingBatch | undefined;
   assert.equal(
     await pump.steer({
-      async deliver() {
-        throw new Error("the window is empty");
+      async deliver(batch) {
+        steered = batch;
       },
     }),
-    false,
+    true,
+    "`steer` hands over anything preempting that is waiting: it does not know whether a turn is running, and that guard " +
+      "is `HostService.#flushScheduled`'s, not this pump's",
   );
+  assert.deepEqual(receiptIdentities(steered), ["receipt_again"], "and the steer carries that fact alone");
+  assert.equal(pump.pendingCount, 0, "the steer consumed exactly it");
 });
 
 /**
