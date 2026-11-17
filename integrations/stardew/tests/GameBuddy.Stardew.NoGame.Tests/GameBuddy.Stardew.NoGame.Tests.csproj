@@ -58,6 +58,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActiveExecutionProjectionSourceShapeTests.cs" Link="ActiveExecutionProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" Link="AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AssemblyInfo.cs" Link="AssemblyInfo.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AttachPreconditionOwnershipSourceShapeTests.cs" Link="AttachPreconditionOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodyProgramJournalSchemaTests.cs" Link="BodyProgramJournalSchemaTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodySettledOwnershipSourceShapeTests.cs" Link="BodySettledOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingActionSourceShapeTests.cs" Link="BuildFarmBuildingActionSourceShapeTests.cs" />
