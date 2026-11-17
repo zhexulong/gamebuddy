@@ -101,6 +101,7 @@ public sealed class ApproachArmOwnershipTests
             ["RequestLocalLoadBuildingChest"] = new(Pending, "ResolveBuildingChest(targetX, targetY, expectedTargetId, BuildingChestAction.Load)"),
             ["RequestLocalCollectBuildingChestOutput"] = new(Pending, "ResolveBuildingChest(targetX, targetY, expectedTargetId, BuildingChestAction.Collect)"),
             ["RequestLocalPlantSapling"] = new(Pending, "IsTreeSaplingTargetInRange(Game1.player, targetX, targetY)"),
+            ["RequestLocalPickupForage"] = new(PendingInlineResolver, "this.ExecutePickupForage("),
             ["RequestLocalScytheCrop"] = new(Pending, "IsScytheTargetInRange(Game1.player, targetX, targetY)"),
             ["RequestLocalMountTransport"] = new(Pending, "ResolveHorseTarget(location, expectedTargetId)"),
             ["RequestLocalUseMineLadder"] = new(Pending, "ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit)"),

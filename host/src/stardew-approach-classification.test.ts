@@ -69,12 +69,15 @@ test("ride_bus declares no approach requirement, and its shape is the cross-map 
   assert.deepEqual(bus.postcondition, { name: "bus_arrived" });
 });
 
-test("pickup_forage declares exactly (adjacent, 1) - it is not the walk, and it says so", () => {
-  // The declared half of the classification. `pickup_forage`'s handler measures the native Chebyshev-1 radius and
-  // REFUSES outside it (`forage_target_out_of_range`), so the declaration is a true statement: stand
-  // adjacent first, in your own step, and the action will work. Exactly a relation and a distance - a third field
-  // invented beside them would be a precondition nobody enforces.
-  assert.deepEqual(surfaceAction("pickup_forage").approach, { relation: "adjacent", withinTiles: 1 });
+test("pickup_forage declares self_walked - the reversal of a recorded decision, and why", () => {
+  // The handler used to measure the native Chebyshev-1 radius and REFUSE outside it (`forage_target_out_of_range`),
+  // and the artifact said `(adjacent, 1)` because that is what the handler did. The declaration was true and the
+  // handler was wrong: the radius is the ENGINE'S click gate (`Game1.cs:11509` requires `tileWithinRadiusOfPlayer`
+  // before `checkAction`, which is what `Game1.tryToCheckAt` runs), so a player picking up a lily walks to it first.
+  // Measured `round65`: four `forage_target_out_of_range` were the only failure class in the whole run, and one lily
+  // was never picked. `pickup_item`, beside it in the same handler group, already walks. So the relation is now the
+  // one every other gathering action declares, and the surface states NO distance because there is none to state.
+  assert.deepEqual(surfaceAction("pickup_forage").approach, { relation: "self_walked" });
 });
 
 test("the artifact declares the two relations, and each states exactly what its handler does", () => {
@@ -83,8 +86,7 @@ test("the artifact declares the two relations, and each states exactly what its 
   // is split by WHICH answer the handler gives:
   //
   //   `adjacent`    - the handler refuses from a distance and never walks: `enter_exit` and `ride_minecart` (cross-map /
-  //                   a warp resolved from the source tile), `use_obelisk` (the obelisk's own warp), and `pickup_forage`
-  //                   (the report's `observation_binding_target_out_of_range`).
+  //                   a warp resolved from the source tile), and `use_obelisk` (the obelisk's own warp).
   //   `self_walked` - the handler closes the distance itself, so there is nothing to stand beside first.
   //
   // The coverage half - that every action whose handler walks declares it, and that nothing declares it without the leg
@@ -95,7 +97,7 @@ test("the artifact declares the two relations, and each states exactly what its 
     .filter((action) => action.approach?.relation === "adjacent")
     .map((action) => action.actionId)
     .sort();
-  assert.deepEqual(adjacent, ["enter_exit", "pickup_forage", "ride_minecart", "use_obelisk"]);
+  assert.deepEqual(adjacent, ["enter_exit", "ride_minecart", "use_obelisk"]);
 
   const selfWalked = declaring.filter((action) => action.approach?.relation === "self_walked");
   assert.ok(selfWalked.length > 0, "the handlers that walk the actor in must declare it");

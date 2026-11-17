@@ -263,9 +263,11 @@ public sealed class SaplingApproachWiringTests
             "plant_sapling publishes the relation with no distance beside it");
 
         // The actions that DO still refuse from afar keep their declaration, so the relation above cannot be
-        // satisfied by a catalog that forgot to project anything at all.
+        // satisfied by a catalog that forgot to project anything at all. `ride_minecart` is one of those - a cross-map
+        // transition whose walk is the caller's own step - while `pickup_forage`, the action this control used to read,
+        // now walks to the item itself and declares `self_walked`.
         FarmhandActionSurfacePublication.Actions
-            .Single(candidate => candidate.ActionId == "pickup_forage")
+            .Single(candidate => candidate.ActionId == "ride_minecart")
             .Approach.Should().Be(new FarmhandActionApproachRequirementProjection("adjacent", 1));
     }
 
