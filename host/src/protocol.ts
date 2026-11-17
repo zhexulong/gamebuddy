@@ -3718,32 +3718,6 @@ function textOnlyRow(maxLength: number): ExecutionRequestRequirement {
   );
 }
 
-/**
- * The opaque family target the same snapshot published AT THAT TILE: the horse, the mine entrance, the ladder.
- *
- * The tile alone is not enough and the id alone is not enough. The id is re-resolved on the Mod's game thread against the
- * live world, so a pair that only one of the two could satisfy is a request the snapshot did not offer.
- */
-function publishedTargetRow(
-  shape: string,
-  refusal: string,
-  family: (snapshot: Snapshot) => readonly Readonly<{ targetId: string; x: number; y: number }>[] | undefined,
-): ExecutionRequestRequirement {
-  return requirement(
-    "args.expectedTargetId, args.x, args.y",
-    shape,
-    refusal,
-    (reading) =>
-      family(reading.snapshot)?.some(
-        (target) =>
-          target.targetId === reading.args.expectedTargetId &&
-          target.x === reading.args.x &&
-          target.y === reading.args.y,
-      ) === true,
-    withArg("x", 12),
-  );
-}
-
 /** The `{x, y, expectedTargetId}` shape, refused under the one code the action's own handler names. */
 function tileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
   return [tileRow(refusal), targetRow(refusal)];
@@ -4084,8 +4058,10 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     // nothing here models pricing or stock.
     integerRow("quantity", 1, null, "invalid_quantity"),
   ],
-  // The station tile plus one exact published ride. Both x/y and the opaque selector are mandatory: unlike `travel`
-  // there is no "plain" form, so a missing selector is a malformed request rather than an ordinary warp.
+  // The station tile plus the opaque ride selector. Both x/y and the selector are mandatory: unlike `travel` there is
+  // no "plain" form, so a missing selector is a malformed request rather than an ordinary warp. WHICH ride that selector
+  // names is the game thread's to say: `ResolveMinecartRide` re-derives it from the station tile's own `MinecartTransport`
+  // action and answers `minecart_target_changed` when the station no longer offers it.
   ride_minecart: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_minecart_station"),
@@ -4099,20 +4075,6 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
         typeof reading.args.expectedTargetId === "string" &&
         /^minecart_[a-f0-9]{16}$/u.test(reading.args.expectedTargetId),
       withArg("expectedTargetId", "minecart_not_a_selector"),
-    ),
-    requirement(
-      "args.expectedTargetId, args.x, args.y",
-      "one ride this exact snapshot advertised from that station tile",
-      "invalid_minecart_station",
-      (reading) =>
-        Array.isArray(reading.snapshot.minecartTargets) &&
-        reading.snapshot.minecartTargets.some(
-          (target) =>
-            target.targetId === reading.args.expectedTargetId &&
-            target.stationX === reading.args.x &&
-            target.stationY === reading.args.y,
-        ),
-      withArg("x", 12),
     ),
   ],
   // Only the opaque floor target: the floor SET is derived by the Mod from the live lowest level reached, so there is no
@@ -4238,53 +4200,35 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
   // held one.
   load_building_chest: [exactArgs(["x", "y", "slot", "expectedTargetId"], "invalid_execution_request")],
   collect_building_chest_output: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  // The raft slot and the water tile it is used on. That the tile IS water, and that the actor can reach it, are the
+  // handler's own admission: `RequestLocalUseRaft` asks `isWaterTile` of the live location, which is a wider set than the
+  // four cardinal neighbours discovery publishes.
   use_raft: [
     exactArgs(["slot", "x", "y"], "invalid_args"),
     slotRow("invalid_raft_target"),
     tileRow("invalid_raft_target"),
-    requirement(
-      "args.x, args.y",
-      "a raft site this exact snapshot published",
-      "invalid_raft_target",
-      (reading) =>
-        Array.isArray(reading.snapshot.raftTargets) &&
-        reading.snapshot.raftTargets.some((target) => target.x === reading.args.x && target.y === reading.args.y),
-      withArg("y", 12),
-    ),
   ],
+  // The horse is resolved by its opaque id from the location's own characters (`ResolveHorseTarget`), and the mount walks
+  // to it once it is out of reach, so the id is a name rather than a claim about where the horse stands now.
   mount_transport: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_horse_target"),
     opaqueArgRow("expectedTargetId", "invalid_horse_target"),
-    publishedTargetRow(
-      "the horse this exact snapshot published at that tile",
-      "invalid_horse_target",
-      (snapshot) => snapshot.horseTargets,
-    ),
   ],
+  // `ResolveMineEntrance` reads the tile's own `Action` property and the level that property declares, so the entrance is
+  // a place the actor can walk to rather than a row discovery happened to publish inside its radius.
   enter_mine: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_mine_entrance"),
     opaqueArgRow("expectedTargetId", "invalid_mine_entrance"),
-    publishedTargetRow(
-      "the mine entrance this exact snapshot published at that tile",
-      "invalid_mine_entrance",
-      (snapshot) => snapshot.mineEntranceTargets,
-    ),
   ],
-  // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id the
-  // `mineEntranceTargets` row published - because both are rows of that one family and the Mod is the side that can tell
-  // the kinds apart. The Host only proves the pair was published; which ladder it names is decided on the game thread,
-  // where a row of the other kind is refused by name with the action that owns it.
+  // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id - because both are
+  // rows of one family and the Mod is the side that can tell the kinds apart: `ResolveMineLadderTarget` re-scans the
+  // level's Buildings layer, and a row of the other kind comes back refused by name with the action that owns it.
   use_mine_ladder: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_mine_exit_ladder"),
     opaqueArgRow("expectedTargetId", "invalid_mine_exit_ladder"),
-    publishedTargetRow(
-      "the ladder this exact snapshot published at that tile",
-      "invalid_mine_exit_ladder",
-      (snapshot) => snapshot.mineEntranceTargets,
-    ),
   ],
   // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit lives
   // at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a transition

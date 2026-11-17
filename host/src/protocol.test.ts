@@ -1815,11 +1815,11 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       `${action} must still refuse an off-map tile it cannot use`,
     );
   }
-  // `ride_minecart` is its own action: the station tile AND one advertised
-  // objective are both mandatory, so a missing selector is malformed rather than
-  // an ordinary warp. An unknown ID, a stale ID from another snapshot, or a
-  // station/tile mismatch is refused; the named target must be present in this
-  // exact snapshot.
+  // `ride_minecart` is its own action: the station tile AND an opaque ride selector are both mandatory, so a missing
+  // selector is malformed rather than an ordinary warp. WHICH ride the selector names is not decided here: the station's
+  // own `MinecartTransport` action and the destinations it offers are live native state, and `ResolveMinecartRide`
+  // answers `minecart_target_changed` for one this station no longer offers. A snapshot that never advertised the ride -
+  // the stale case - must therefore reach the Mod instead of being refused by the Host with the game's own vocabulary.
   const minecartCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "ride_minecart"] };
   const rideMinecart = { ...valid, action: "ride_minecart" };
   const minecartSnapshot = {
@@ -1847,30 +1847,24 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     null,
   );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" } },
-      minecartSnapshot,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
-      minecartSnapshot,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
-      minecartCapability,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
+  for (const stale of [
+    {
+      args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" },
+      why: "a ride this snapshot never published",
+    },
+    { args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" }, why: "a published ride at another tile" },
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest({ ...rideMinecart, args: stale.args }, minecartSnapshot, now),
+      null,
+      `${stale.why} is the game thread's to refuse (minecart_target_changed), not a cached snapshot's`,
+    );
+    assert.equal(
+      validateExecutionRequest({ ...rideMinecart, args: stale.args }, minecartCapability, now),
+      null,
+      `${stale.why}, against a snapshot that published no ride at all, still reaches the Mod`,
+    );
+  }
   assert.equal(
     validateExecutionRequest(
       { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" } },
@@ -1878,6 +1872,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       now,
     ),
     "invalid_args",
+    "the selector's own wire shape is the envelope's, and that is still the Host's",
   );
   assert.equal(
     validateExecutionRequest({ ...rideMinecart, args: { x: 10, y: 10 } }, minecartSnapshot, now),
@@ -1898,10 +1893,12 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(
     validateExecutionRequest({ ...useRaft, args: { slot: 37, x: 10, y: 11 } }, raftSnapshot, now),
     "invalid_raft_target",
+    "a slot no backpack has is still the envelope's to refuse",
   );
   assert.equal(
     validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now),
-    "invalid_raft_target",
+    null,
+    "a water tile discovery never published is `raft_target_not_water`'s call on the live location, not a raftTargets lookup",
   );
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
