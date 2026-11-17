@@ -33,6 +33,13 @@ internal enum ShellIntent
 internal readonly record struct ShellIntentOutcome(ShellIntent Intent, string Category);
 
 /// <summary>
+/// One of the two things the shell can say while a quit is under way, as a fixed category and its
+/// sentence. It is the closing copy's whole shape: the tray renders it and a test names it, and
+/// neither of them invents a third state.
+/// </summary>
+internal readonly record struct ClosingCopy(string Category, string Sentence);
+
+/// <summary>
 /// The primary instance's own routing of shell intents. It holds no authority of its own:
 /// <c>Open</c> reaches the one presenter this launch already owns, and <c>Quit</c> reaches the
 /// one close path this launch already owns. Everything it decides is expressed as a fixed
@@ -47,19 +54,47 @@ internal sealed class ShellIntentRouter
     internal const string QuitRequested = "shell_quit_requested";
     internal const string QuitUnavailable = "shell_quit_unavailable";
 
+    /// <summary>The quit is under way and nothing has yet outlived its own expected time.</summary>
+    internal const string ClosingStarted = "shell_closing_started";
+
+    /// <summary>
+    /// The quit is still under way past the point where the Host would already have named a step as
+    /// stuck, so the shell says what is still being finished instead of leaving the player with the
+    /// same one-word state.
+    /// </summary>
+    internal const string ClosingStillFinishing = "shell_closing_still_finishing";
+
     /// <summary>The installed player copy's name for this surface. Never "Browser Preview".</summary>
     internal const string ProductSurfaceLabel = "Desktop Browser Presentation";
 
     private readonly Func<bool> openPresentation;
     private readonly Func<bool> requestQuit;
+    private readonly Func<long> nowMs;
+    private readonly long stillFinishingAfterMs;
     private int quitRequested;
+    private long quitAcceptedAtMs = -1;
 
-    internal ShellIntentRouter(Func<bool> openPresentation, Func<bool> requestQuit)
+    /// <summary>
+    /// How long a quit may run before the shell stops saying only that it is closing.
+    ///
+    /// It is the Host's own published <c>stepHangDeadlineMs</c> - the point at which the Host has
+    /// already named a step as stuck - so this file keeps no number of its own and the transition
+    /// cannot drift away from what the Host is actually doing. <paramref name="nowMs"/> is the
+    /// clock the transition is measured on, injectable so a spec can drive it instead of sleeping.
+    /// </summary>
+    internal ShellIntentRouter(
+        Func<bool> openPresentation,
+        Func<bool> requestQuit,
+        long stillFinishingAfterMs,
+        Func<long>? nowMs = null)
     {
         ArgumentNullException.ThrowIfNull(openPresentation);
         ArgumentNullException.ThrowIfNull(requestQuit);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stillFinishingAfterMs);
         this.openPresentation = openPresentation;
         this.requestQuit = requestQuit;
+        this.stillFinishingAfterMs = stillFinishingAfterMs;
+        this.nowMs = nowMs ?? (static () => Environment.TickCount64);
     }
 
     /// <summary>The sentence the shell shows for the most recent intent.</summary>
@@ -70,6 +105,26 @@ internal sealed class ShellIntentRouter
 
     /// <summary>How many times the player asked for a quit. One quit closes once.</summary>
     internal int QuitCount => Volatile.Read(ref quitRequested);
+
+    /// <summary>The point past which the shell says it is still finishing.</summary>
+    internal long StillFinishingAfterMs => stillFinishingAfterMs;
+
+    /// <summary>
+    /// The closing copy at the moment a caller is rendering: the first state until the quit has run
+    /// for <see cref="StillFinishingAfterMs"/>, the second one from then on. A shell that never
+    /// asked to quit has nothing of its own to say, so it reports the first state rather than a
+    /// third one.
+    /// </summary>
+    internal ClosingCopy ClosingCopy() => ClosingCopyAt(nowMs());
+
+    /// <summary>The transition itself, at the instant the caller names. Pure.</summary>
+    internal ClosingCopy ClosingCopyAt(long atMs)
+    {
+        var acceptedAt = Interlocked.Read(ref quitAcceptedAtMs);
+        var stillFinishing = acceptedAt >= 0 && atMs - acceptedAt >= stillFinishingAfterMs;
+        var category = stillFinishing ? ClosingStillFinishing : ClosingStarted;
+        return new ClosingCopy(category, SentenceFor(category));
+    }
 
     /// <summary>
     /// Routes one typed intent. It never throws: the shell's job is to tell the player what
@@ -96,16 +151,26 @@ internal sealed class ShellIntentRouter
     {
         if (Interlocked.Exchange(ref quitRequested, 1) != 0)
             return new ShellIntentOutcome(ShellIntent.Quit, QuitRequested);
+        // The close this quit starts is the clock the second closing copy is measured from, so it is
+        // read before the close path is reached: a close that takes a while is exactly the case the
+        // second copy exists for.
+        Interlocked.Exchange(ref quitAcceptedAtMs, nowMs());
         return new ShellIntentOutcome(ShellIntent.Quit, requestQuit() ? QuitRequested : QuitUnavailable);
     }
 
-    private static string Sentence(ShellIntentOutcome outcome) => outcome.Category switch
+    private static string Sentence(ShellIntentOutcome outcome) => SentenceFor(outcome.Category);
+
+    private static string SentenceFor(string category) => category switch
     {
         OpenAccepted => $"{ProductSurfaceLabel} opened in your browser.",
         OpenUnavailable => $"{ProductSurfaceLabel} is not available right now.",
         WindowNotOwned => $"{ProductSurfaceLabel} is your own browser window: GameBuddy owns no window to hide, and the app keeps running.",
         QuitRequested => "Closing GameBuddy.",
         QuitUnavailable => "GameBuddy could not confirm the close. It is still running.",
+        // The two closing states name the same work: Chat and Game settle first, and the app leaves
+        // once they have. The second one exists only because the player is still waiting.
+        ClosingStarted => "Closing GameBuddy.",
+        ClosingStillFinishing => "Still closing: Chat and Game are settling.",
         _ => DefaultStatusText,
     };
 

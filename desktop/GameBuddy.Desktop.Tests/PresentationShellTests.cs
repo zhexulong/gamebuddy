@@ -377,7 +377,11 @@ public sealed class PresentationShellTests
     {
         var opens = 0;
         var quits = 0;
-        var router = new ShellIntentRouter(() => { opens += 1; return true; }, () => { quits += 1; return true; });
+        var router = new ShellIntentRouter(
+            () => { opens += 1; return true; },
+            () => { quits += 1; return true; },
+            stillFinishingAfterMs: 180,
+            nowMs: () => 0);
 
         var open = router.Dispatch(ShellIntent.Open);
         Assert.Equal(ShellIntentRouter.OpenAccepted, open.Category);
@@ -398,9 +402,51 @@ public sealed class PresentationShellTests
         // reaches the close path a second time.
         Assert.Equal(1, router.QuitCount);
 
-        var unavailable = new ShellIntentRouter(() => false, () => false);
+        var unavailable = new ShellIntentRouter(() => false, () => false, stillFinishingAfterMs: 180);
         Assert.Equal(ShellIntentRouter.OpenUnavailable, unavailable.Dispatch(ShellIntent.Open).Category);
         Assert.Equal(ShellIntentRouter.QuitUnavailable, unavailable.Dispatch(ShellIntent.Quit).Category);
+    }
+
+    /// <summary>
+    /// The closing copy's second state, driven by the clock instead of by a wait: the shell says only
+    /// that it is closing until the Host's own published step-hang number has passed, and says what
+    /// is still being finished from that instant on.
+    ///
+    /// Catches: a copy that needs a wall-clock sleep to prove the transition, a second state pinned as
+    /// a literal sentence instead of the state it belongs to, a threshold that lives in the shell
+    /// rather than coming from the Host, and a tray that disappears at the click and can therefore
+    /// never show either state while the Host is still reclaiming.
+    /// </summary>
+    [Fact]
+    public void The_closing_copy_gains_its_second_state_at_the_host_published_instant()
+    {
+        const long stillFinishingAfterMs = 180;
+        var now = 1_000L;
+        var router = new ShellIntentRouter(
+            () => true,
+            () => true,
+            stillFinishingAfterMs,
+            nowMs: () => now);
+
+        // The threshold is the Host's number, not a copy of it.
+        Assert.Equal(stillFinishingAfterMs, router.StillFinishingAfterMs);
+
+        // Before a quit there is nothing of the second state to show.
+        Assert.Equal(ShellIntentRouter.ClosingStarted, router.ClosingCopy().Category);
+
+        router.Dispatch(ShellIntent.Quit);
+        Assert.Equal(ShellIntentRouter.ClosingStarted, router.ClosingCopyAt(now).Category);
+        Assert.Equal(ShellIntentRouter.ClosingStarted, router.ClosingCopyAt(now + stillFinishingAfterMs - 1).Category);
+        Assert.Equal(ShellIntentRouter.ClosingStillFinishing, router.ClosingCopyAt(now + stillFinishingAfterMs).Category);
+
+        // The two states are different sentences, and the second one names what is still running.
+        var started = router.ClosingCopyAt(now);
+        var stillFinishing = router.ClosingCopyAt(now + stillFinishingAfterMs);
+        Assert.NotEqual(started.Sentence, stillFinishing.Sentence, StringComparer.Ordinal);
+        Assert.Contains("Chat", stillFinishing.Sentence, StringComparison.Ordinal);
+        Assert.Contains("Game", stillFinishing.Sentence, StringComparison.Ordinal);
+        // ... and it still fits the platform's tooltip limit without being truncated to nothing.
+        Assert.Equal(stillFinishing.Sentence, TrayShell.TooltipFor(stillFinishing.Sentence));
     }
 
     /// <summary>

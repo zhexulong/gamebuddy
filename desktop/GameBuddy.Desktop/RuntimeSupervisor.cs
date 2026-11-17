@@ -23,6 +23,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private static readonly string[] AcknowledgementRequiredProperties =
     [
         "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema", "drainDeadlineMs",
+        "stepHangDeadlineMs",
     ];
     // The acknowledgement means READY FOR SERVICE: by the time the child writes it, it has opened
     // its databases, provisioned the semantic authority, Magic Context and the Pi agent stores, and
@@ -616,9 +617,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             watchdog.ObserveFrame(waitingForPlayerInput);
             return stage;
         }
-        if (IsAcknowledgement(value, selection, bootstrapId, out var drainDeadlineMs))
+        if (IsAcknowledgement(value, selection, bootstrapId, out var drainDeadlineMs, out var stepHangDeadlineMs))
         {
-            acknowledgement = new HostBootstrapResult(drainDeadlineMs);
+            acknowledgement = new HostBootstrapResult(drainDeadlineMs, stepHangDeadlineMs);
             return null;
         }
         throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
@@ -649,10 +650,19 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     /// could make unbounded would be a tray that never comes back. It is returned rather than merely
     /// accepted: the one wait that uses it is <see cref="RuntimeSupervisorLease.CloseAsync"/>.
     /// </para>
+    /// <para>
+    /// <c>stepHangDeadlineMs</c> is the other number the child's own arithmetic publishes: the point
+    /// at which it has already named a step as stuck. The shell's second closing copy starts there,
+    /// so it is read from the child rather than chosen here. The two are bounded independently on
+    /// purpose: a launcher that refused a child because one number did not fit the other would be
+    /// the same generation-skew failure this predicate exists to avoid, and a pair that does not fit
+    /// only means the second copy never appears before the watchdog.
+    /// </para>
     /// </summary>
-    private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId, out long drainDeadlineMs)
+    private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId, out long drainDeadlineMs, out long stepHangDeadlineMs)
     {
         drainDeadlineMs = 0;
+        stepHangDeadlineMs = 0;
         if (ack.ValueKind != JsonValueKind.Object ||
             !AcknowledgementRequiredProperties.All(name => ack.TryGetProperty(name, out _)) ||
             ack.GetProperty("schema").GetString() != "gamebuddy-desktop-host-bootstrap/v1" ||
@@ -664,8 +674,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             ack.GetProperty("runtimeAdmissionSha256").GetString() != selection.RuntimeAdmissionSha256 ||
             ack.GetProperty("rootLayoutSchema").GetString() != "gamebuddy-windows-root-layout/v1" ||
             !ack.GetProperty("drainDeadlineMs").TryGetInt64(out var declared) ||
-            declared is <= 0 or > MaximumReportedDrainDeadlineMs) return false;
+            declared is <= 0 or > MaximumReportedDrainDeadlineMs ||
+            !ack.GetProperty("stepHangDeadlineMs").TryGetInt64(out var declaredStepHang) ||
+            declaredStepHang is <= 0 or > MaximumReportedDrainDeadlineMs) return false;
         drainDeadlineMs = declared;
+        stepHangDeadlineMs = declaredStepHang;
         return true;
     }
 
@@ -888,7 +901,7 @@ internal static class HostBootstrapPipeIo
 /// Redacted evidence that the exact private bootstrap acknowledgement was accepted, carrying the one
 /// number the launcher takes from it: the child's own exit deadline, in milliseconds.
 /// </summary>
-internal sealed record HostBootstrapResult(long DrainDeadlineMs);
+internal sealed record HostBootstrapResult(long DrainDeadlineMs, long StepHangDeadlineMs);
 
 /// <summary>Owns the exact Host child and the two admitted file locks after bootstrap.</summary>
 internal sealed class RuntimeSupervisorLease : IAsyncDisposable

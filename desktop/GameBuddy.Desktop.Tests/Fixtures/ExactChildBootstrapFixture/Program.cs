@@ -77,11 +77,13 @@ try
         acknowledgementWriter.WriteString("inventoryDigest", frame.GetProperty("inventoryDigest").GetString());
         acknowledgementWriter.WriteString("runtimeAdmissionSha256", frame.GetProperty("runtimeAdmissionSha256").GetString());
         acknowledgementWriter.WriteString("rootLayoutSchema", rootLayoutSchema);
-        // The exit deadline the launcher waits before it treats this child as hung. A test bound rather
-        // than the production Host's derived value: this stand-in exists for the frame, the command line
-        // and the environment it received, and the exit handshake has its own stand-in. Publishing it is
-        // still required - a child that omitted it would be refused as unreadable.
+        // The exit deadline the launcher waits before it treats this child as hung, and the point at
+        // which the Host would already have named a step as stuck. Test bounds rather than the
+        // production Host's derived values: this stand-in exists for the frame, the command line and
+        // the environment it received, and the exit handshake has its own stand-in. Publishing both
+        // is still required - a child that omitted either would be refused as unreadable.
         acknowledgementWriter.WriteNumber("drainDeadlineMs", 5_000);
+        acknowledgementWriter.WriteNumber("stepHangDeadlineMs", 180);
         acknowledgementWriter.WriteEndObject();
     }
     acknowledgementBytes.WriteByte((byte)'\n');

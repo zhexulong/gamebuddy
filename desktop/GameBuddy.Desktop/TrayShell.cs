@@ -41,6 +41,7 @@ internal sealed class TrayShell : IDisposable
     private readonly Thread thread;
     private ApplicationContext? context;
     private NotifyIcon? icon;
+    private System.Windows.Forms.Timer? stillFinishing;
     private int disposed;
 
     private TrayShell(ShellIntentRouter router)
@@ -83,6 +84,15 @@ internal sealed class TrayShell : IDisposable
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(MenuItem(QuitLabel, ShellIntent.Quit, menu));
             icon.ContextMenuStrip = menu;
+            // The second closing copy is scheduled, not polled: the router says when the quit stops
+            // being ordinary, and this timer fires exactly once at that instant. Its interval is the
+            // Host's own published number, so the shell keeps no copy of it.
+            stillFinishing = new System.Windows.Forms.Timer { Interval = TimerInterval(router.StillFinishingAfterMs) };
+            stillFinishing.Tick += (_, _) =>
+            {
+                stillFinishing.Stop();
+                ShowCopy();
+            };
             ShowExplanation();
             started.Set();
             Application.Run(context);
@@ -102,24 +112,47 @@ internal sealed class TrayShell : IDisposable
                 icon.Dispose();
                 icon = null;
             }
+            stillFinishing?.Dispose();
+            stillFinishing = null;
             context?.Dispose();
             context = null;
         }
     }
 
+    /// <summary>
+    /// One scheduled redraw of the tray copy, plus the one-shot arm for the second closing copy.
+    ///
+    /// Quit no longer ends this shell's message loop: the shell is the only surface that can tell
+    /// the player the Host is still finishing, so it lives until the launch itself ends and the
+    /// lease disposes it. Nothing here decides how long a quit takes - it renders what the router
+    /// says at this instant.
+    /// </summary>
     private ToolStripMenuItem MenuItem(string label, ShellIntent intent, ContextMenuStrip menu)
     {
         var item = new ToolStripMenuItem(label);
         item.Click += (_, _) =>
         {
             router.Dispatch(intent);
-            if (icon is not null) icon.Text = TooltipFor(router.StatusText);
-            if (intent == ShellIntent.Quit && context is not null) context.ExitThread();
+            ShowCopy();
+            if (intent == ShellIntent.Quit) stillFinishing?.Start();
         };
         item.Tag = intent;
         _ = menu;
         return item;
     }
+
+    /// <summary>The copy the router reports at this instant: one authority for both closing states.</summary>
+    private void ShowCopy()
+    {
+        if (icon is null) return;
+        // A quit under way is narrated by the router's closing copy - the only place the two closing
+        // states are decided - and every other intent by the sentence that intent produced.
+        icon.Text = TooltipFor(router.QuitCount > 0 ? router.ClosingCopy().Sentence : router.StatusText);
+    }
+
+    /// <summary>The Windows timer's interval for a bound expressed in milliseconds.</summary>
+    private static int TimerInterval(long milliseconds) =>
+        (int)Math.Clamp(milliseconds, 1, int.MaxValue / 2);
 
     private void ShowExplanation()
     {

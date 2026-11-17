@@ -85,10 +85,12 @@ try
         ["inventoryDigest"] = binding.inventoryDigest,
         ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256,
         ["rootLayoutSchema"] = rootLayoutSchema,
-        // The whole reclamation's deadline, exactly as the production Host derives and publishes it
-        // over this same acknowledgement: one per-step budget times the number of steps. A plan below
-        // may rewrite it so a test observes the launcher's expiry in milliseconds.
-        ["drainDeadlineMs"] = 480_000L,
+        // The two numbers the production Host derives and publishes over this same
+        // acknowledgement: the whole reclamation's deadline (each step's own bound, summed) and the
+        // point at which it has already named a step as stuck. A plan below may rewrite either so a
+        // test observes the launcher's expiry in milliseconds.
+        ["drainDeadlineMs"] = 601_260L,
+        ["stepHangDeadlineMs"] = 180L,
     };
     var acknowledgementPlanPath = Path.Combine(dataRoot, "desktop-host-runtime-fixture.ack.json");
     if (File.Exists(acknowledgementPlanPath))

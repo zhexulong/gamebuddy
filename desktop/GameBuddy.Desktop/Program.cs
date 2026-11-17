@@ -480,33 +480,6 @@ internal static class Program
                 VoicePort = voiceLease is null ? null : voiceLaunch!.Port,
                 VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
             };
-            await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
-            // The accepted acknowledgement is this run's completion fact - the Host has
-            // opened its databases, provisioned or opened the semantic authority and is ready
-            // for service - so the staging marker's intent is spent here, and the only launch
-            // that can be holding an unspent one is one that died before this point. Clearing
-            // it unconditionally is the same statement the Host's own mount decision makes: a
-            // marker beside a published authority is spent, and a marker over a root that was
-            // never published can still only attribute that root to a first run.
-            FirstRunStaging.Clear(layout);
-            stage = LaunchStage.HostSession;
-            // The authenticated Host broker session is the only thing that may
-            // ask for a recovery, and the image admitted for this generation is
-            // the only image it may launch. Mounting binds those two; it has to
-            // happen before the resident Guardian starts the broker's command
-            // loop, which is what serves a recovery request.
-            host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));
-            GuardianSupervisorLease? resident = null;
-            try
-            {
-                resident = await guardianSupervisor.StartResidentAsync(image, cancellationToken).ConfigureAwait(false);
-                await host.AttachResidentGuardianAsync(resident, cancellationToken).ConfigureAwait(false);
-                resident = null;
-            }
-            finally
-            {
-                if (resident is not null) await resident.DisposeAsync().ConfigureAwait(false);
-            }
             // The Host child owns the session: the entry is done when that exact
             // child has exited. A wait that could not reap it is a failed session
             // rather than one more silent success.
@@ -516,24 +489,71 @@ internal static class Program
             // a tray that cannot be created never affects the session. Quit is the only thing it
             // owns here, and it ends this flow - which is what seals ingress and ends the exact
             // admitted child - instead of claiming a per-surface close the launcher cannot prove.
-            using var quit = new CancellationTokenSource();
-            using var tray = TrayShell.Start(new ShellIntentRouter(
-                () => runtimeSupervisor.Presentation.Open(),
-                () =>
+            //
+            // It also outlives the quit it started. The close the lease runs can take longer than
+            // a tray that vanished at the click would ever explain, so the tray is disposed after
+            // the lease has ended the child and not before: while the Host is still reclaiming,
+            // the tray is the one surface that can say so (`ShellIntentRouter.ClosingCopy`).
+            var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
+            TrayShell? tray = null;
+            try
+            {
+                // The accepted acknowledgement is this run's completion fact - the Host has
+                // opened its databases, provisioned or opened the semantic authority and is ready
+                // for service - so the staging marker's intent is spent here, and the only launch
+                // that can be holding an unspent one is one that died before this point. Clearing
+                // it unconditionally is the same statement the Host's own mount decision makes: a
+                // marker beside a published authority is spent, and a marker over a root that was
+                // never published can still only attribute that root to a first run.
+                FirstRunStaging.Clear(layout);
+                stage = LaunchStage.HostSession;
+                // The authenticated Host broker session is the only thing that may
+                // ask for a recovery, and the image admitted for this generation is
+                // the only image it may launch. Mounting binds those two; it has to
+                // happen before the resident Guardian starts the broker's command
+                // loop, which is what serves a recovery request.
+                host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));
+                GuardianSupervisorLease? resident = null;
+                try
                 {
-                    try
+                    resident = await guardianSupervisor.StartResidentAsync(image, cancellationToken).ConfigureAwait(false);
+                    await host.AttachResidentGuardianAsync(resident, cancellationToken).ConfigureAwait(false);
+                    resident = null;
+                }
+                finally
+                {
+                    if (resident is not null) await resident.DisposeAsync().ConfigureAwait(false);
+                }
+                using var quit = new CancellationTokenSource();
+                tray = TrayShell.Start(new ShellIntentRouter(
+                    () => runtimeSupervisor.Presentation.Open(),
+                    () =>
                     {
-                        quit.Cancel();
-                        return true;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        return false;
-                    }
-                }));
-            if (!await WaitForSessionEndAsync(host, quit.Token, cancellationToken).ConfigureAwait(false))
-                return LaunchOutcome.Of(DesktopLaunchResult.HostSessionFailed);
-            return LaunchOutcome.NoClaim;
+                        try
+                        {
+                            quit.Cancel();
+                            return true;
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            return false;
+                        }
+                    },
+                    // The Host's own published number: the point at which it has already named a
+                    // step as stuck is where this shell stops saying only that it is closing.
+                    host.Result.StepHangDeadlineMs));
+                if (!await WaitForSessionEndAsync(host, quit.Token, cancellationToken).ConfigureAwait(false))
+                    return LaunchOutcome.Of(DesktopLaunchResult.HostSessionFailed);
+                return LaunchOutcome.NoClaim;
+            }
+            finally
+            {
+                // The lease ends the exact child (controller EOF, then the wait inside the deadline
+                // the child published, then the watchdog); the shell goes last, because it is what
+                // narrates that wait.
+                try { await host.DisposeAsync().ConfigureAwait(false); }
+                finally { tray?.Dispose(); }
+            }
         }
         catch (GuardianLaunchUnavailableException exception)
         {
