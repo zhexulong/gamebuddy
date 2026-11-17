@@ -30,7 +30,19 @@ try
         inventoryDigest = frame.GetProperty("inventoryDigest").GetString(),
         runtimeAdmissionSha256 = frame.GetProperty("runtimeAdmissionSha256").GetString(),
     };
-    using var session = new NamedPipeClientStream(".", $"GameBuddy.Host{"Gua" + "rdian"}.{binding.bootstrapId}", PipeDirection.InOut);
+    // An ASYNCHRONOUS client handle, because that is the shape of the peer this stand-in models:
+    // the production Host speaks the session over a Node net.Socket, which Windows backs with an
+    // overlapped (full-duplex) handle, so it really can read and write at the same time.
+    //
+    // This is not a nicety. This child keeps exactly ONE read pending for the whole conversation (its
+    // controller-EOF watch, below) and it also writes frames on the same stream. On a handle opened for
+    // synchronous I/O, .NET cannot start an overlapped operation, so it routes ReadAsync and WriteAsync
+    // through the base Stream implementation, which SERIALIZES async operations on the one Stream
+    // instance: the pending read holds the stream and the next write never starts. Measured: with
+    // PipeOptions.None the arm frame's WriteLineAsync had not returned after 36 s, nothing reached the
+    // launcher's pipe (PeekNamedPipe: 0 bytes available). With this option the same probe delivers all
+    // 28 bytes while the read is still pending.
+    using var session = new NamedPipeClientStream(".", $"GameBuddy.Host{"Gua" + "rdian"}.{binding.bootstrapId}", PipeDirection.InOut, PipeOptions.Asynchronous);
     session.Connect(10_000);
     using var writer = new StreamWriter(session, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
     using var reader = new StreamReader(session, new UTF8Encoding(false, true), leaveOpen: true);
