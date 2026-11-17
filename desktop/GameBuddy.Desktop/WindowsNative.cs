@@ -60,6 +60,21 @@ internal static class WindowsNative
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
 
+    /// <summary>
+    /// The ceiling on waiting for a handle whose process has already been told to terminate. This is
+    /// the bound on "the handle never signalled", not a teardown budget: the kill is the last resort,
+    /// and a process the kernel has been told to end is either gone promptly or is not something a
+    /// launcher can usefully watch for longer.
+    /// </summary>
+    internal const uint TerminatedHandleCeilingMs = 30_000;
+
+    /// <summary>
+    /// How often a wait that must observe a cancellation token re-checks a process handle. The wait
+    /// itself is the caller's loop, not this interval: a wait that spends player time declares its own
+    /// bound beside the loop that owns it.
+    /// </summary>
+    internal const uint HandlePollIntervalMs = 100;
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool DuplicateHandle(IntPtr sourceProcessHandle, IntPtr sourceHandle, IntPtr targetProcessHandle, out SafeThreadHandle targetHandle, uint desiredAccess, bool inheritHandle, uint options);
