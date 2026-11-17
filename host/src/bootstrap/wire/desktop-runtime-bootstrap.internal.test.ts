@@ -120,6 +120,24 @@ test("desktop bootstrap helper announces its bounded status stages before exactl
   }
 });
 
+test("desktop bootstrap helper publishes the ready frame the declaration beside it states", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  // `shutdown-request` is the scenario that gives the child the readiness IPC channel the production launcher
+  // opens, so this is the frame the child really publishes - not a copy of the shape it publishes.
+  const result = await runWireFixture("shutdown-request");
+
+  assert.equal(result.messages.length, 1, "one ready frame, and nothing else, rides the readiness channel");
+  assert.equal(result.messages[0]!.schema, "gamebuddy-desktop-composition-ready/v1");
+  // The declaration beside the writer (`publishCompositionReady`), which the gate launcher reads instead of
+  // spelling these three keys inline: a field added on one side now fails a test on the other.
+  assert.deepEqual(
+    Object.keys(result.messages[0]!),
+    JSON.parse(
+      readFileSync(resolve(packageRoot, "src", "bootstrap", "wire", "desktop-composition-ready.keys.json"), "utf8"),
+    ),
+  );
+});
+
 test("desktop bootstrap helper names a failed Mod step and still serves the player", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("success", { modOutcome: "companion-mod-smapi-not-installed" });
@@ -460,6 +478,7 @@ async function runWireFixture(
   statuses: readonly string[];
   stderr: string;
   guardianClosed: boolean;
+  messages: readonly Record<string, unknown>[];
   armReceiptAt: number | undefined;
   workerClosedAt: number | undefined;
   workerExitCode: number | null;
@@ -823,6 +842,12 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       },
     });
     const workerClose = waitForClose(worker);
+    // The readiness IPC channel the launcher opens (`fixturesWithIpc`). Nothing else in this fixture reads it,
+    // except the shutdown cases that send TO the child - so an entry here is a frame the child published.
+    const messages: Record<string, unknown>[] = [];
+    worker.on("message", (message: unknown) => {
+      messages.push(message as Record<string, unknown>);
+    });
     const failureScenario =
       scenario === "composition-failure" ||
       scenario === "ack-write-failure" ||
@@ -907,6 +932,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       statuses: frames?.statuses ?? [],
       stderr: await stderr,
       guardianClosed,
+      messages,
       armReceiptAt,
       workerClosedAt,
       workerExitCode: worker.exitCode,

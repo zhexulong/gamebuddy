@@ -69,6 +69,19 @@ const BOOTSTRAP_ACK_KEYS = Object.freeze(
     readFileSync(new URL("../host/src/bootstrap/wire/desktop-host-bootstrap-ack.keys.json", import.meta.url), "utf8"),
   ),
 );
+/**
+ * The ready frame's key sequence, declared beside the child that writes it.
+ *
+ * `publishCompositionReady` (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`) builds
+ * that frame from a literal object, so its shape exists only there. This launcher used to spell the
+ * three keys inline on the line that checked them - a second copy that a fourth field would have
+ * refused, exactly the shape of the acknowledgement defect above.
+ */
+const COMPOSITION_READY_KEYS = Object.freeze(
+  JSON.parse(
+    readFileSync(new URL("../host/src/bootstrap/wire/desktop-composition-ready.keys.json", import.meta.url), "utf8"),
+  ),
+);
 const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
 
@@ -313,7 +326,7 @@ function isSessionEntry(value) {
 
 export function validateCompositionReadyMessage(value) {
   return (
-    exactKeysInOrder(value, ["schema", "protocolVersion", "launchUrl"]) &&
+    exactKeysInOrder(value, COMPOSITION_READY_KEYS) &&
     value.schema === READY_SCHEMA &&
     value.protocolVersion === 1 &&
     typeof value.launchUrl === "string" &&

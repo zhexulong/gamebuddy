@@ -290,14 +290,37 @@ test("composition launch validates the bootstrap acknowledgement and guardian he
   );
 });
 
+/**
+ * The ready frame's key sequence, read from the declaration beside the child that writes it.
+ *
+ * The child (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`) writes that frame from a
+ * literal object, so the declaration is its shape's one copy: the Host's wire test pins the real frame to
+ * it (`desktop-runtime-bootstrap.internal.test.ts`), and this file builds every ready frame it needs from
+ * it rather than restating it.
+ */
+const declaredReadyKeys = JSON.parse(
+  readFileSync(new URL("../host/src/bootstrap/wire/desktop-composition-ready.keys.json", import.meta.url), "utf8"),
+);
+
+/** The ready frame a Host publishes over its readiness IPC, built key by key from the declaration above. */
+function compositionReadyFrom(launchUrl) {
+  const values = { schema: "gamebuddy-desktop-composition-ready/v1", protocolVersion: 1, launchUrl };
+  return Object.fromEntries(declaredReadyKeys.map((key) => [key, values[key]]));
+}
+
 test("composition launch validates the child IPC ready fact and composes the child environment", () => {
   assert.deepEqual(
-    validateCompositionReadyMessage({
-      schema: "gamebuddy-desktop-composition-ready/v1",
-      protocolVersion: 1,
-      launchUrl: "http://127.0.0.1:4444/#profile=reference&boot=t",
-    }),
+    validateCompositionReadyMessage(compositionReadyFrom("http://127.0.0.1:4444/#profile=reference&boot=t")),
     true,
+  );
+  // The falsifier the acknowledgement's own defect was missing: a field the child publishes without the
+  // declaration beside it is refused here, so a fourth key cannot ride along unread.
+  assert.equal(
+    validateCompositionReadyMessage({
+      ...compositionReadyFrom("http://127.0.0.1:4444/#profile=reference&boot=t"),
+      launchSurface: "chat-only",
+    }),
+    false,
   );
   assert.equal(
     validateCompositionReadyMessage({
@@ -633,11 +656,7 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
                 );
               });
               socket.on("error", () => undefined);
-              fake.emit("message", {
-                schema: "gamebuddy-desktop-composition-ready/v1",
-                protocolVersion: 1,
-                launchUrl: "http://127.0.0.1:1/#profile=reference",
-              });
+              fake.emit("message", compositionReadyFrom("http://127.0.0.1:1/#profile=reference"));
             });
             return true;
           },

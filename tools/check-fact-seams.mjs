@@ -54,6 +54,13 @@
  *                           a recorded crossing whose declarations have moved apart is `fact_seam_drift`, and one whose
  *                           declarations are gone is `stale_fact_seam`. So the list can shrink but never rot.
  *
+ * The same three resolutions and the same debt apply to a KEY SEQUENCE's record in KEY_SEQUENCES, and the two
+ * populations are COUNTED APART on the reading's last slot: `over a frame another side writes K (one authority X ·
+ * recorded debt Y)` - K is how many validator sites have a producer on another side, and X/Y are what the K crossings
+ * resolved to. A frame debt is paid by moving its record to `json` beside the writer or to `asserted-by` with a test
+ * that names both ends; the entry then leaves Y for X, and a reader that starts deriving is no longer a restatement
+ * (`stale_fact_seam` if the record still says debt).
+ *
  * FINDINGS, each naming the member and what would have to change:
  *   fact_declared_twice:<file>:<line> <fact>   a declaration in the population with no authority and no record
  *   fact_seam_drift:<fact>                     a recorded crossing whose two declarations now disagree (names the members)
@@ -1156,6 +1163,11 @@ export function evaluate(root) {
       debt: records.filter((record) => !record.resolved).length,
       sequences: keys.length,
       crossings: keys.filter((site) => !site.thisSideOnly).length,
+      // The frame records are a second population with its own verdict: a crossing over a frame another side writes
+      // is one authority when its reader derives, and recorded debt while it still spells the list. Counting them
+      // beside the mirrored vocabularies' totals is what lets a resolution show as movement rather than as prose.
+      crossingAuthority: KEY_SEQUENCES.filter((entry) => entry.derives.kind !== "debt").length,
+      crossingDebt: KEY_SEQUENCES.filter((entry) => entry.derives.kind === "debt").length,
       unproduced: codes.unproduced.length,
       codes: codes.declarations.length,
     },
@@ -1225,9 +1237,10 @@ export const KEY_SEQUENCES = Object.freeze([
       schema: "gamebuddy-desktop-composition-ready/v1",
     },
     authority: "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts",
-    derives: { kind: "debt" },
-    reason:
-      "the child writes this frame (`desktop-runtime-bootstrap.internal.ts:606`) and this launcher spells its three keys inline on the line that checks them; there is no shape file beside the writer to read",
+    derives: {
+      kind: "json",
+      file: "host/src/bootstrap/wire/desktop-composition-ready.keys.json",
+    },
     owner: "the desktop launch lane",
   },
   {
@@ -1294,7 +1307,7 @@ function main(argv) {
 
   const { readings } = report;
   console.log(
-    `facts examined ${readings.facts} · one authority ${readings.derived} · recorded debt ${readings.debt} · key sequences examined ${readings.sequences} · over a frame another side writes ${readings.crossings} · declared codes examined ${readings.codes} · unproduced ${readings.unproduced}`,
+    `facts examined ${readings.facts} · one authority ${readings.derived} · recorded debt ${readings.debt} · key sequences examined ${readings.sequences} · over a frame another side writes ${readings.crossings} (one authority ${readings.crossingAuthority} · recorded debt ${readings.crossingDebt}) · declared codes examined ${readings.codes} · unproduced ${readings.unproduced}`,
   );
   for (const finding of report.findings) console.log(`  ${finding}`);
 
@@ -1319,6 +1332,8 @@ function main(argv) {
       recordedDebt: readings.debt,
       keySequences: readings.sequences,
       keyCrossings: readings.crossings,
+      keyCrossingsDerived: readings.crossingAuthority,
+      keyCrossingsRecorded: readings.crossingDebt,
       codes: readings.codes,
       unproduced: readings.unproduced,
     }),
