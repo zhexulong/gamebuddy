@@ -789,7 +789,11 @@ test("the delivery never cuts below the transport, and a cut past it is named on
   let cut = 0;
   for (const turn of examined) {
     assert.notEqual(turn.bubble, null, `${turn.id}: a turn with speech has a bubble`);
-    assert.equal(turn.pieces.length, 1, `${turn.id}: one bubble per turn is the surface's contract`);
+    assert.deepEqual(
+      turn.pieces.slice(1),
+      [],
+      `${turn.id}: one bubble per turn is the surface's contract, and these are past the first`,
+    );
     const delivered = turn.pieces[0]!;
     if (fits(turn)) {
       whole += 1;
@@ -1007,9 +1011,9 @@ test("the deletion guard turns red in both directions: a fact the delivery lost,
   );
   // And the real delivery is the control: it misses nothing, so the unpublished reading above is what a lost fact looks
   // like rather than what this gate always sees.
-  assert.equal(
-    missingFrom(delivery).length,
-    0,
+  assert.deepEqual(
+    missingFrom(delivery),
+    [],
     "blocked: the delivery this falsifier mutates already misses facts, so it cannot show what a missing fact looks like",
   );
 

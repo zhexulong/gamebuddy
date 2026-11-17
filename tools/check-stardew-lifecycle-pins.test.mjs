@@ -181,7 +181,12 @@ public sealed class FixtureActionTests
     },
     (directory) => {
       const codes = codesOf(readLifecyclePins({ testsRoot: directory }).findings);
-      assert.equal(codes.length, 1);
+      // The rule that fired, kept in order, so a second finding or a different rule reads as a member and not as `1 -> 2`.
+      assert.deepEqual(
+        codes.map((code) => code.slice(0, code.indexOf(":"))),
+        ["lifecycle_pin_marker_has_no_reason"],
+        `findings: [${codes.join(", ")}]`,
+      );
       assert.match(
         codes[0],
         /^lifecycle_pin_marker_has_no_reason:GameBuddy\.Stardew\.Core\.Tests\/FixtureActionTests\.cs:\d+$/u,

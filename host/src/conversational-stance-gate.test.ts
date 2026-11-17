@@ -1070,16 +1070,26 @@ test("the persona still states when and how much she speaks", () => {
 /** The rule that left the floor for the preset is readable in the preset the Game surface mounts. */
 test("the rule that moved to the preset is stated there, not only deleted", () => {
   const directory = join(REPOSITORY_ROOT, PRESET_DIRECTORY);
-  const gameSurfaces = readdirSync(directory)
+  const presets = readdirSync(directory)
     .filter((name) => name.endsWith(".json"))
-    .map((name) => ({ name, document: JSON.parse(readFileSync(join(directory, name), "utf8")) as unknown }))
-    .filter((preset) => JSON.stringify(preset.document).includes("(Game Surface)"));
-  assert.equal(
-    gameSurfaces.length,
-    1,
-    `blocked: exactly one preset must declare itself the Game Surface's, and this directory has ${String(
-      gameSurfaces.length,
-    )}`,
+    .map((name) => ({ name, document: JSON.parse(readFileSync(join(directory, name), "utf8")) as unknown }));
+  // A surface declared by two presets leaves the run with no single answer to "which preset am I measuring", so the
+  // invariant is one home per surface - stated as the declaring pairs, which name themselves when it breaks.
+  const homes = new Map<string, string[]>();
+  for (const preset of presets)
+    for (const [marker] of JSON.stringify(preset.document).matchAll(/\([A-Za-z ]+ Surface\)/gu))
+      homes.set(marker, [...(homes.get(marker) ?? []), preset.name]);
+  assert.deepEqual(
+    [...homes].filter(([, files]) => files.length > 1),
+    [],
+    "blocked: every surface must have exactly one home preset, and these are declared by more than one",
+  );
+  const gameSurfaces = presets.filter((preset) => JSON.stringify(preset.document).includes("(Game Surface)"));
+  assert.ok(
+    gameSurfaces.length > 0,
+    `blocked: no preset declares itself the Game Surface's, so the rule deleted from the floor has no home: ${[...homes]
+      .map(([marker, files]) => `${marker} in [${files.join(", ")}]`)
+      .join("; ")}`,
   );
   const preset = gameSurfaces[0];
   assert.ok(preset !== undefined);

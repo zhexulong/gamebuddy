@@ -195,8 +195,6 @@ test("the collection population is derived from the decompiled type, not from a 
     population.map((entry) => entry.id),
     ["buildings", "objects", "furniture", "animals", "Game1.locations"],
   );
-  // `Objects` is the property over `objects`: one collection, one row.
-  assert.equal(population.filter((entry) => entry.id.toLowerCase() === "objects").length, 1);
 });
 
 /**

@@ -759,10 +759,11 @@ const oracleFindings = ({ dir, revision, refs }) => {
   const findings = [];
   for (const path of promptSurfacePopulation({ repositoryRoot: dir, revision: commit })) {
     const launched = blobAt(dir, commit, path);
-    const holders = refs.filter((ref) => blobAt(dir, ref, path) !== launched);
-    if (holders.length === 0) continue;
+    // Every ref that holds a different blob for this path, folded into the subjects that changed it. A path no ref holds
+    // differently contributes no subject, which is the whole guard: the loop below only ever reads holders.
     const subjects = [];
-    for (const ref of holders) {
+    for (const ref of refs) {
+      if (blobAt(dir, ref, path) === launched) continue;
       const found = git(dir, [
         "log",
         "--no-merges",

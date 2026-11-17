@@ -40,13 +40,19 @@ const run = (overrides = {}) =>
     ...overrides,
   });
 
+/**
+ * The clause each failure names, in order: the population a failing case produces is WHICH clause failed, not how many
+ * failures there are - so a change that moves this hook to another clause reads as a member and not as `1 -> 0`.
+ */
+const clausesOf = (failures) => failures.map((failure) => failure.slice(0, failure.indexOf(":")));
+
 test("as many ejected fish as the pond held satisfies the clause", () => {
   assert.deepEqual(run(), []);
 });
 
 test("one fish short fails, and the failure names both numbers", () => {
   const failures = run({ after: { itemTargets: debris(["(O)128", "(O)128"]) } });
-  assert.equal(failures.length, 1);
+  assert.deepEqual(clausesOf(failures), [...asserts], "the one clause this hook answers is the one that failed");
   assert.match(failures[0], /^worldAfter\.itemTargets:/u, "a failure names the clause it belongs to");
   assert.match(failures[0], /= 2\b/u, `the count that was found is named: ${failures[0]}`);
   assert.match(failures[0], /occupants before = 3\b/u, `the count it was measured against is named: ${failures[0]}`);
@@ -60,12 +66,15 @@ test("the two id forms the two surfaces use are counted together", () => {
 test("a substring of the id is not the fish, so 1280 does not count for 128", () => {
   const pond = { ...POND, occupants: 1 };
   const failures = run({ before: { fishPondTargets: [pond] }, after: { itemTargets: debris(["(O)1280"]) } });
-  assert.equal(failures.length, 1, "an id that merely contains 128 is not the pond's fish");
+  assert.deepEqual(clausesOf(failures), [...asserts], "an id that merely contains 128 is not the pond's fish");
 });
 
 test("debris of a different fish does not count as this pond's ejection", () => {
   const pond = { ...POND, occupants: 1 };
-  assert.equal(run({ before: { fishPondTargets: [pond] }, after: { itemTargets: debris(["(O)999"]) } }).length, 1);
+  assert.deepEqual(
+    clausesOf(run({ before: { fishPondTargets: [pond] }, after: { itemTargets: debris(["(O)999"]) } })),
+    [...asserts],
+  );
 });
 
 test("a receipt that names no pond is a failure, never a crash and never a pass", () => {
@@ -73,15 +82,21 @@ test("a receipt that names no pond is a failure, never a crash and never a pass"
   // look" must not read as "there was nothing to find".
   for (const evidence of [evidenceOf({}), new Map(), null, undefined]) {
     const failures = run({ evidence });
-    assert.equal(failures.length, 1, `evidence ${String(evidence)} produced ${failures.length} failures`);
+    assert.deepEqual(
+      clausesOf(failures),
+      [...asserts],
+      `evidence ${String(evidence)} produced ${failures.length} failure(s) in [${clausesOf(failures).join(", ")}]`,
+    );
     assert.match(failures[0], /pond_id=none/u, `the missing key is named: ${failures[0]}`);
   }
 });
 
 test("a pond the observation does not publish, and a surface with no itemTargets, both fail", () => {
-  assert.equal(run({ before: { fishPondTargets: [{ ...POND, targetId: "another_pond" }] } }).length, 1);
+  assert.deepEqual(clausesOf(run({ before: { fishPondTargets: [{ ...POND, targetId: "another_pond" }] } })), [
+    ...asserts,
+  ]);
   const unobservable = run({ after: {} });
-  assert.equal(unobservable.length, 1);
+  assert.deepEqual(clausesOf(unobservable), [...asserts]);
   assert.match(unobservable[0], /no itemTargets array/u, `the run says it could not look: ${unobservable[0]}`);
 });
 
