@@ -224,7 +224,6 @@ TargetFamilyRoundTripTests.cs	mod-assembly	Xna, Netcode, StardewValley, TargetFa
 TargetRoundTripProbe.cs	mod-assembly	Handlers, Netcode, StardewValley, TargetFamilyCompletenessTests, TargetFamilyWorld
 TaskDeliveryActionTests.cs	mod-assembly	Handlers
 ReturnedReceiptIdentityTests.cs	mod-assembly	ExecutionManager, TargetFamilyWorld, MachineAndAnimalActionHandler, Pet
-TerminalIdlePublicationTests.cs	mod-assembly	ExecutionManager, ExecutionTrace, FarmhandCapabilityPublication
 TerminalReceiptObservabilityTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager
 TileAreaQueryTests.cs	game	Xna, StardewValley
 TileOccupantVocabularyTests.cs	game	StardewValley (using at :7, Game1.floorPathData and TerrainFeatures.ResourceClump at :129/:157), TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs (:117/:160)

@@ -45,7 +45,6 @@ internal sealed class StardewBodyController
     private PathFindController? pathController;
     private Vector2 lastTile;
     private int lastProgressTick;
-    private bool hasEmittedRunning;
     private bool hasEmittedStalledWaiting;
     private bool isStallWaiting;
     private int stallWaitStartedTick;
@@ -671,10 +670,6 @@ internal sealed class StardewBodyController
         }
 
         this.InstallStagedStep(arrived.Requested, resumed, localPlayer, tick);
-        this.transition(
-            ExecutionState.Running,
-            "clear_step_cleared",
-            $"tile={FormatTile(currentTile)};target={FormatTile(arrived.Requested.TargetTile)};clear_step_cleared=true");
     }
 
     /// <summary>
@@ -925,7 +920,6 @@ internal sealed class StardewBodyController
         localPlayer.controller = plannedPath;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -956,7 +950,6 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.clearApproach = null;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -990,11 +983,6 @@ internal sealed class StardewBodyController
 
         Farmer localPlayer = Game1.player;
         PathFindController? pathController = this.pathController;
-        if (!this.hasEmittedRunning)
-        {
-            this.hasEmittedRunning = true;
-            this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}{FormatStagedMarker(specification)}");
-        }
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (tick > specification.DeadlineTick || nowMs >= specification.DeadlineMs)
@@ -1150,10 +1138,13 @@ internal sealed class StardewBodyController
 
         if (currentTile != this.lastTile)
         {
+            // WHERE THE BODY IS, NOT WHAT HAPPENED. A tile of movement is body state: the fact stream carries the
+            // settlement (or the terminal receipt) that says how far this got, and the snapshot carries the tile. One
+            // receipt per tile made 130 of a run's 401 facts say "she moved", twice each, so the pump assembled 134
+            // batches and discarded 126 of them.
             this.lastTile = currentTile;
             this.lastProgressTick = tick;
             this.hasEmittedStalledWaiting = false;
-            this.transition(ExecutionState.MeaningfulProgress, "tile_advanced", $"tile={FormatTile(currentTile)};path=stardew_native");
             return;
         }
 
@@ -1166,12 +1157,12 @@ internal sealed class StardewBodyController
 
         if (stallAction == StallWatchdogAction.Waiting)
         {
+            // The wait itself is body state. What the caller needs is its ending, and that is the refusal this
+            // watchdog mints a few seconds later (`StallTimeoutTicks`), not a receipt per no-progress window.
             this.hasEmittedStalledWaiting = true;
             this.isStallWaiting = true;
             this.stallWaitStartedTick = tick;
             this.HaltNativeMovement(localPlayer);
-            int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};wait_ticks={StallWaitTicks}{FormatStagedMarker(specification)}");
         }
     }
 
@@ -2277,7 +2268,6 @@ internal sealed class StardewBodyController
         localPlayer.controller = path;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -2359,15 +2349,10 @@ internal sealed class StardewBodyController
         localPlayer.controller = path;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
         this.transientSinceMs = 0;
-        this.transition(
-            ExecutionState.Running,
-            "staged_approach_continued",
-            $"tile={FormatTile(currentTile)};target={FormatTile(staged.TargetTile)};{evidence}");
         return true;
     }
 
@@ -2448,7 +2433,6 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.clearApproach = null;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;

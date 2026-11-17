@@ -270,8 +270,13 @@ public sealed class WorldInterruptionTests
         dispositionSwitch.Should().BeGreaterThanOrEqualTo(0);
         stallWatchdog.Should().BeGreaterThan(dispositionSwitch,
             "disposition rulings must precede L2 stall handling");
-        source.Should().Contain("transition(ExecutionState.Running, \"stalled_waiting\",",
-            "the first stall is a non-terminal progress notification");
+        // A STALL'S FIRST ATTRIBUTION IS ITS ENDING, NOT A NOTIFICATION WHILE IT WAITS. Waiting is body state, so the
+        // non-terminal `stalled_waiting` notification this pin used to require is gone with the rest of the per-step
+        // facts. What must survive is that the quiet window ends in a NAMED refusal carrying the evidence of the wait.
+        source.Should().Contain("StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(",
+            "the quiet window's ending names the blocker that stood in front of her and how long she waited");
+        source.Should().NotContain("transition(ExecutionState.Running, \"stalled_waiting\"",
+            "and the wait itself is body state: it is not a fact, and the notification that said so is retired");
         source.Should().Contain("this.HaltNativeMovement(localPlayer)",
             "stall detection must stop native pushing before the quiet window");
         MethodBody(source, "private void HaltNativeMovement(")

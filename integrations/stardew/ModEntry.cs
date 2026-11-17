@@ -205,7 +205,6 @@ public sealed partial class ModEntry : Mod
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
-        helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded AI Farmhand directive/route/body execution trace evidence.", this.TraceCommand);
         // Fixture console mechanics are registered only under an explicit valid
         // NativeLocalPlayerFixture admission. Handlers additionally revalidate
         // the same admission on the game thread before executing, so a stale or
@@ -929,7 +928,6 @@ public sealed partial class ModEntry : Mod
         FarmhandExecutionJournal executionJournal = new(new SmapiGlobalDataPersistence(this.Helper.Data));
         state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
             receipt => this.PublishReceipt(state, receipt),
-            trace => this.PublishBodyTrace(state, trace),
             executionJournal,
             executionScope);
         // The profile's declared co-op night minimum governs the wire action too,
@@ -1886,13 +1884,6 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.CreateSnapshot(), BridgeProtocol.JsonOptions), LogLevel.Info);
     }
 
-    private void TraceCommand(string command, string[] args)
-    {
-        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
-            return;
-        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.Trace, BridgeProtocol.JsonOptions), LogLevel.Info);
-    }
-
     private void CancelCommand(string command, string[] args)
     {
         if (!this.RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state))
@@ -2364,17 +2355,6 @@ public sealed partial class ModEntry : Mod
         if (generation != 0 && state.BridgeSession.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, out string json)
             && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped semantic event due to closed/backpressured bridge.", LogLevel.Warn);
-    }
-
-    private void PublishBodyTrace(ScreenEmbodimentState state, ExecutionTrace trace)
-    {
-        if (state.LocalPipeBridge is null || state.BridgeSession is null)
-            return;
-        long generation = state.LocalPipeBridge.CurrentGeneration;
-        string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && state.BridgeSession.TryCreateBodyTraceEvent(generation, trace, correlationId, out string json)
-            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
-            this.Monitor.Log("GameBuddy dropped body trace event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
     private void PublishLifecycle(ScreenEmbodimentState state, string lifecycleState, string reasonCode)

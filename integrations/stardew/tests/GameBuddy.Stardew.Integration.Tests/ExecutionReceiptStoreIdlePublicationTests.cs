@@ -8,143 +8,97 @@ using Xunit;
 namespace GameBuddy.Stardew.Integration.Tests;
 
 /// <summary>
-/// THE IDLE TRANSITION'S ORDER AND ITS FAILURE ARE PROPERTIES, NOT SIDE EFFECTS.
+/// AN EXECUTION'S IDLE TRANSITION IS RETIRED ONCE, AND ONLY AFTER THE ACTOR IS FREE.
 ///
 /// <para>
-/// <c>ExecutionReceiptStore.DrainPendingIdleAfterRelease</c> is the only place an execution's one <c>body_idle</c> fact
-/// is published, and it publishes from INSIDE the loop that retires the pending entries: each entry is marked
-/// published, removed, and then announced, one at a time. That ordering is what makes a publication failure cost the
-/// transition it reached and nothing else. A drain rewritten to collect its transitions and publish them afterwards
-/// would look identical in "a trace was emitted for each entry" and would differ here: the second entry would already be
-/// retired when the first entry's trace ran, and a throwing sink would leave a different set of entries behind.
+/// <c>ExecutionReceiptStore.DrainPendingIdleAfterRelease</c> is the only place that transition happens, and it happens
+/// from INSIDE the loop that retires the pending entries: each entry is marked retired and removed before the next one
+/// is examined. That ordering is what makes a failure in the drain cost the entry it reached and nothing else.
 /// </para>
 ///
 /// <para>
-/// The store is driven directly, with the two collaborators it declares as parameters - the ownership query and the
-/// publication - because the two-entry drain cannot be produced through a real <c>ExecutionManager</c> without a live
-/// actor: there, ownership is read from the body slots and an entry leaves the pending map in the same call that adds it.
+/// What this store no longer does is ANNOUNCE that transition: <c>body_idle</c> was a trace of the body rather than a
+/// change of the world, so the executor stopped producing it and the announcement callback went with it. The
+/// bookkeeping that the announcement used to depend on - parked while the body still owns the execution, retired
+/// exactly once, and the navigation marker retired together with the receipt that owned it - is what remains, and it is
+/// asserted here because the release ordering is what made the announcement trustworthy.
+/// </para>
+///
+/// <para>
+/// The store is driven directly, with the one collaborator it declares - the ownership query - because the two-entry
+/// drain cannot be produced through a real <c>ExecutionManager</c> without a live actor: there, ownership is read from
+/// the body slots and an entry leaves the pending map in the same call that adds it.
 /// </para>
 /// </summary>
 public sealed class ExecutionReceiptStoreIdlePublicationTests
 {
     [Fact]
-    public void EachIdleTraceIsPublishedBeforeTheNextPendingEntryIsRetired()
+    public void APendingIdleWaitsForOwnershipAndIsRetiredOnce()
     {
-        var events = new List<string>();
         var owned = new HashSet<string>(StringComparer.Ordinal) { "execution_1" };
-        var store = new ExecutionReceiptStore(
-            new RecordingOwnership(owned, events),
-            publishBodyIdleTrace: (executionId, requestId) => events.Add($"body_idle:{executionId}"));
+        var store = new ExecutionReceiptStore(new RecordingOwnership(owned));
 
-        // The body still holds the first execution, so its idle waits rather than publishing...
+        // The body still owns the execution, so its idle transition parks rather than being retired...
         store.PublishIdleAfterRelease("execution_1", "request_1");
-        // ...and the next tick's drain sees both entries, in the order they were parked.
-        owned.Clear();
-        store.PublishIdleAfterRelease("execution_2", "request_2");
+        store.HasPendingIdle("execution_1").Should().BeTrue("a body that is still owned has not come back");
 
-        events.Should().Equal(
-            new[]
-            {
-                "own:execution_1",
-                "own:execution_1",
-                "body_idle:execution_1",
-                "own:execution_2",
-                "body_idle:execution_2",
-            },
-            "each entry's idle trace is published before the next entry is examined, so a publication that throws "
-            + "cannot retire an entry whose trace has not run");
+        // ...and the next drain retires it the moment the actor is free.
+        owned.Clear();
+        store.DrainPendingIdleAfterRelease();
+        store.HasPendingIdle("execution_1").Should().BeFalse();
     }
 
     [Fact]
-    public void AFailingIdleTraceRetiresOnlyTheEntriesItReached()
+    public void EachEntryIsRetiredBeforeTheNextIsExaminedAndNothingIsAnnouncedTwice()
     {
-        var events = new List<string>();
-        var owned = new HashSet<string>(StringComparer.Ordinal) { "execution_1", "execution_2" };
-        int published = 0;
-        var store = new ExecutionReceiptStore(
-            new RecordingOwnership(owned, events),
-            publishBodyIdleTrace: (executionId, requestId) =>
-            {
-                events.Add($"body_idle:{executionId}");
-                if (++published == 2)
-                    throw new InvalidOperationException("trace sink failed");
-            });
+        var owned = new HashSet<string>(StringComparer.Ordinal) { "execution_1" };
+        var store = new ExecutionReceiptStore(new RecordingOwnership(owned));
+
         store.PublishIdleAfterRelease("execution_1", "request_1");
-        store.PublishIdleAfterRelease("execution_2", "request_2");
         owned.Clear();
+        store.PublishIdleAfterRelease("execution_2", "request_2");
 
-        Action drain = () => store.DrainPendingIdleAfterRelease();
-        drain.Should().Throw<InvalidOperationException>("the publication's own failure is not swallowed here");
+        store.HasPendingIdle("execution_1").Should().BeFalse("its release reached it first");
+        store.HasPendingIdle("execution_2").Should().BeFalse("the same drain retired it");
 
-        // MEASURED on the loop this store keeps (mark published, remove, then trace): each entry is retired before its
-        // own trace is attempted, so the entry whose trace threw is retired and untraced - not published a second time.
-        store.HasPendingIdle("execution_1").Should().BeFalse("its trace was published");
-        store.HasPendingIdle("execution_2").Should().BeFalse("it was retired before its own trace threw");
-        Published(events).Should().Equal(new[] { "execution_1", "execution_2" });
-
-        // Nothing is re-announced: neither a later drain nor a repeat of the same release publishes again.
+        // Nothing is re-parked: the retired set is what makes the transition once per execution.
         store.DrainPendingIdleAfterRelease();
         store.PublishIdleAfterRelease("execution_2", "request_2");
-        Published(events).Should().Equal(new[] { "execution_1", "execution_2" });
-    }
-
-    /// <summary>The executions whose idle trace the sink received, in the order it received them.</summary>
-    private static List<string> Published(List<string> events)
-    {
-        var published = new List<string>();
-        foreach (string entry in events)
-        {
-            if (entry.StartsWith("body_idle:", StringComparison.Ordinal))
-                published.Add(entry["body_idle:".Length..]);
-        }
-
-        return published;
+        store.HasPendingIdle("execution_2").Should().BeFalse("a retired execution never becomes pending again");
     }
 
     [Fact]
-    public void EvictingAReceiptRetiresTheNavigationMarkerSoItsSettledExecutionStillAnnouncesTheIdle()
+    public void EvictingAReceiptRetiresTheNavigationMarkerSoItsSettledExecutionIsRetiredByTheDrain()
     {
-        var events = new List<string>();
-        var store = new ExecutionReceiptStore(
-            new RecordingOwnership(new HashSet<string>(StringComparer.Ordinal), events),
-            publishBodyIdleTrace: (executionId, requestId) => events.Add($"body_idle:{executionId}"));
+        var store = new ExecutionReceiptStore(new RecordingOwnership(new HashSet<string>(StringComparer.Ordinal)));
 
-        // A navigation lineage's marker deliberately suppresses the generic body_idle trace; it is the ONE record the
-        // eviction has to retire together with the receipt, or the marker outlives the receipt that owned it.
+        // A navigation lineage's marker suppresses the generic drain until its own settle retires it; it is the ONE
+        // record the eviction has to retire together with the receipt, or the marker outlives the receipt that owned it
+        // and the execution's idle transition is never retired at all.
         store.MarkNavigationExecution("execution_navigation");
         store.Remember(Receipt("request_navigation", "execution_navigation"));
         for (int index = 0; index < ExecutionReceiptStore.MaximumRememberedReceipts; index++)
             store.Remember(Receipt($"request_{index}", $"execution_{index}"));
 
-        store.PublishIdleAfterRelease("execution_navigation", "request_navigation");
+        store.IsNavigationExecution("execution_navigation")
+            .Should().BeFalse("the evicted receipt's navigation marker must go with it");
 
-        events.Should().Contain(
-            "body_idle:execution_navigation",
-            "the evicted receipt's navigation marker must go with it: a stale marker would be removed by the drain "
-            + "instead of being absent, and the settled execution would never announce that the actor came back");
+        store.PublishIdleAfterRelease("execution_navigation", "request_navigation");
+        store.HasPendingIdle("execution_navigation").Should().BeFalse();
     }
 
     private static LocalExecutionReceipt Receipt(string requestId, string executionId) =>
         new(executionId, requestId, ExecutionState.Succeeded, "terminal", 1, null);
 
-    /// <summary>The two questions the store asks of the body, recorded in the order it asks them.</summary>
+    /// <summary>The one question the store asks of the body.</summary>
     private sealed class RecordingOwnership : IActiveBodyOwnership
     {
         private readonly HashSet<string> owned;
-        private readonly List<string> events;
 
-        internal RecordingOwnership(HashSet<string> owned, List<string> events)
-        {
-            this.owned = owned;
-            this.events = events;
-        }
+        internal RecordingOwnership(HashSet<string> owned) => this.owned = owned;
 
-        public bool HasOwnership(string executionId)
-        {
-            this.events.Add($"own:{executionId}");
-            return this.owned.Contains(executionId);
-        }
+        public bool HasOwnership(string executionId) => this.owned.Contains(executionId);
 
-        public void ReleaseModalLease(string executionId) => this.events.Add($"lease:{executionId}");
+        public void ReleaseModalLease(string executionId) { }
     }
 }

@@ -1110,50 +1110,15 @@ string? bodyProgramUnavailableReason = null,
         => this.TryCreateWorldFactEvent(generation, fact, fact.EventId, out json);
 
     internal bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, out string json)
-        => this.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, null, out json);
-
-    internal bool TryCreateBodyTraceEvent(long generation, ExecutionTrace trace, string correlationId, out string json)
-    {
-        // A body trace is published only through the typed semantic-event
-        // channel. Its category is the event kind, so remote consumers can
-        // reject a mismatched envelope before treating it as lifecycle proof.
-        if (!IsBodyTraceCategory(trace.Category) || this.IsNavigationTrace(trace))
-        {
-            json = string.Empty;
-            return false;
-        }
-        BridgeBodyTrace bodyTrace = new(trace.Category, trace.ExecutionId, trace.RequestId, trace.Tick, trace.Revision,
-            trace.Location, trace.ActorTile is Vector2 tile ? new BridgeTile(tile.X, tile.Y) : null,
-            this.OriginOf(trace.ExecutionId));
-        return this.TryCreateSemanticEvent(generation, trace.Category, correlationId, "body_trace", bodyTrace, out json);
-    }
-
-    private static bool IsBodyTraceCategory(string category) => category is
-        "execution_started" or
-        "route_progress" or
-        "execution_settled_succeeded" or
-        "execution_settled_cancelled" or
-        "execution_settled_failed" or
-        "execution_invalidated" or
-        "body_idle";
-
-    // Defense in depth for the manager's no-trace Navigation policy. A direct
-    // caller must not serialize a synthetic navigation trace with a live
-    // location/tile after the ledger has bound that request to Navigation.
-    private bool IsNavigationTrace(ExecutionTrace trace) =>
-        this.executions.TryGetReceipt(trace.RequestId, out LocalExecutionReceipt receipt)
-        && string.Equals(receipt.ExecutionId, trace.ExecutionId, StringComparison.Ordinal)
-        && string.Equals(receipt.ActionId, "navigate_to_destination", StringComparison.Ordinal);
-
-    private bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, BridgeBodyTrace? bodyTrace, out string json)
     {
         json = string.Empty;
         if (!IsAuthenticated(generation, out _) || !BridgeProtocol.IsOpaqueId(correlationId) || !BridgeProtocol.IsReasonCode(reasonCode)) return false;
-        // One field, from the projection that names it - never the whole world. A semantic event is published per
-        // observation (`route_progress` per tile), so asking `CreateBridgeSnapshot()` walked every radar source and
-        // minted a SHA-256 id per target on the game thread to read `ActiveExecution` and nothing else.
+        // One field, from the projection that names it - never the whole world: asking `CreateBridgeSnapshot()` walked
+        // every radar source and minted a SHA-256 id per target on the game thread to read `ActiveExecution` and nothing
+        // else. No body trace is published: the executor states outcomes, not the steps it took to reach them, so this
+        // event carries the active execution and nothing about the body's own path.
         BridgeActiveExecution? active = this.executions.DescribeActiveExecution();
-        return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode, bodyTrace)), out json, out _);
+        return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode)), out json, out _);
     }
 
     internal bool TryCreatePlayerControlEvent(long generation, BridgePlayerControlFact control, string correlationId, out string json)

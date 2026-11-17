@@ -106,6 +106,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetBaitRowComparisonSourceShapeTests.cs" Link="TargetBaitRowComparisonSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TerminalStateDeclarationTests.cs" Link="TerminalStateDeclarationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TileTargetRequestSeamTests.cs" Link="TileTargetRequestSeamTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolLightActionTests.cs" Link="ToolLightActionTests.cs" />

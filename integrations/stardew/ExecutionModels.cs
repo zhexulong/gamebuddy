@@ -9,15 +9,6 @@ namespace GameBuddy.Stardew;
 /// arguments, receipt evidence, planner state, or arbitrary object dumps.
 /// Idle is emitted only when an owned route has settled, never on every tick.
 /// </summary>
-internal sealed record ExecutionTrace(
-    string Category,
-    string ExecutionId,
-    string RequestId,
-    int Tick,
-    long Revision,
-    string? Location,
-    Vector2? ActorTile);
-
 internal sealed record LocalMoveSpec(
     string ExecutionId,
     string RequestId,
