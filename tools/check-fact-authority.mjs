@@ -56,12 +56,17 @@
  *        fails, naming each state and the emitting `file:line`.
  *
  *   7 `settlement_evidence_still_carries_them:<kind>`
- *        population: the same folded states.
+ *        population: the same folded states, AND every receipt the Mod mints and withholds from the fact stream
+ *        (`RememberTerminal(...)` with `publish: false`, derived from the producer).
  *        property: the fold is not a deletion - the seam RECORDS the step, CARRIES it on the settled receipt,
  *        BOUNDS it, and COUNTS what did not fit (`steps_omitted`), so "walked 40 tiles then chopped" survives as
- *        evidence instead of as its own message.
- *        print: `folded states examined N · recorded R · carried C · bounded B · counted K`; anything short of N
- *        fails, naming the state and the half that is missing.
+ *        evidence instead of as its own message. A WITHHELD receipt is not a deletion either: it must still STATE its
+ *        own content in evidence (`tool=watering_can` is what the plan's reader loses if it does not), the funnel must
+ *        still write that evidence into the durable transition row a plan's settlement is composed from, and the
+ *        funnel's one publish point must still consult the flag - otherwise `publish: false` is a comment.
+ *        print: `folded states examined N · recorded R · carried C · bounded B · counted K` and
+ *        `withheld receipts examined S · stated T · journaled J · seam W`; anything short of N or S fails, naming
+ *        the state or the receipt and the half that is missing.
  *
  * ZERO POPULATION IS BLOCKED, NEVER GREEN. A derivation that finds no wire union and no transition call site agrees
  * with itself over a source tree it never opened, so an empty population prints `fact_authority_no_population: <what
@@ -158,8 +163,8 @@ for (const kind of population) {
     );
     continue;
   }
-  if (!isEmitted(kind)) declaredOnce.push(kind);
-  else events.push(kind);
+  if (isEmitted(kind)) events.push(kind);
+  else declaredOnce.push(kind);
 }
 
 // `declared-once` is a READING, not a pass with the door open on the defect: a kind the wire declares and nothing
@@ -366,6 +371,7 @@ if (ownFacts.length > 0) findings.push(...ownFacts);
 // Check 7 · settlement_evidence_still_carries_them
 // ---------------------------------------------------------------------------------------------------------------
 const fold = readTraceFold();
+const withheld = readWithheldSteps();
 const unfolded = [];
 for (const state of receiptStates.partition.progress) {
   const missing = [
@@ -393,16 +399,55 @@ for (const state of receiptStates.partition.progress) {
     ),
   );
 }
+const unstated = [];
+for (const step of withheld.steps) {
+  const missing = [
+    step.stated
+      ? null
+      : "the step STATES no evidence, so withholding it from the fact stream deletes what it said rather than " +
+        "moving it into the settlement's evidence line",
+    withheld.journaled
+      ? null
+      : "the funnel no longer writes the receipt's evidence into the durable transition row " +
+        "(`FarmhandExecutionReceipt(..., receipt.Evidence, ...)`), which is the row a plan's settlement is composed " +
+        "from - so the evidence a withheld step carries reaches no reader at all",
+    withheld.seamGuarded
+      ? null
+      : "the funnel does not consult `publish` at its one publish point (`if (settled && publish)`), so the receipt " +
+        "is a fact again and `publish: false` is a comment",
+  ].filter((entry) => entry !== null);
+  if (missing.length === 0) continue;
+  unstated.push(
+    finding(
+      "settlement_evidence_still_carries_them",
+      step.kind,
+      `${step.file}:${step.line} mints \`${step.kind}\` as a step and does not publish it, and ` +
+        missing.join("; ") +
+        ". What the fact used to say has to survive somewhere a reader reaches: the receipt's own evidence line, " +
+        "carried into the plan's journal row.",
+    ),
+  );
+}
 const checkSeven = {
   examined: receiptStates.partition.progress.length,
   recorded: fold.recorded ? checkSix.evidence : 0,
   carried: fold.carried ? checkSix.evidence : 0,
   bounded: fold.bounded ? checkSix.evidence : 0,
   counted: fold.counted && fold.named ? checkSix.evidence : 0,
+  withheldExamined: withheld.steps.length,
+  withheldStated: withheld.steps.filter((step) => step.stated).length,
+  withheldJournaled: withheld.journaled ? withheld.steps.length : 0,
+  withheldSeam: withheld.seamGuarded ? withheld.steps.length : 0,
 };
 report.checks.settlement_evidence_still_carries_them = checkSeven;
 if (checkSeven.examined === 0) blocked("no receipt state is folded, so there is no evidence fold to read");
+if (checkSeven.withheldExamined === 0)
+  blocked(
+    "no receipt is withheld from the fact stream, so the step half of the settlement's evidence was not measured - " +
+      "nothing here reads a step that was deleted instead of moved",
+  );
 if (unfolded.length > 0) findings.push(...unfolded);
+if (unstated.length > 0) findings.push(...unstated);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Verdict
@@ -712,7 +757,9 @@ function publishIsGuardedByTerminality(site, terminalityLocals) {
     .filter((line) => line.trim() !== "");
   for (const line of before.slice(-3)) {
     if (/\.IsTerminal\(\)/u.test(line)) return true;
-    const guard = /if\s*\(\s*!?\s*(\w+)\s*\)/u.exec(line);
+    // `if (settled && publish)` is still the terminality guard: the second condition WITHHOLDS a settled receipt, it
+    // never lets an unsettled one through, so the local is read from the first operand.
+    const guard = /if\s*\(\s*!?\s*(\w+)\s*(?:&&[^)]*)?\)/u.exec(line);
     if (guard !== null && terminalityLocals.has(`${site.file}:${guard[1]}`)) return true;
   }
   return false;
@@ -754,6 +801,57 @@ function readTraceFold() {
     counted: /Omitted\+\+/u.test(text) && /steps_omitted=/u.test(text),
     named: /\bfolded=/u.test(text),
   };
+}
+
+/**
+ * Every receipt the Mod mints and WITHHOLDS from the fact stream, with what it must still say.
+ *
+ * <p>
+ * Population, DERIVED from the producer: each `RememberTerminal(...)` call that passes `publish: false`, plus the two
+ * halves of the funnel such a call depends on. A withheld receipt is not a deleted one - the dispatch that asked for
+ * it, the ledger and the plan's own journal row all still read it - so the properties are exactly what is left once
+ * the fact stream is gone:
+ * </p>
+ * <ul>
+ *   <li>`stated` - the step STATES its own content in its evidence. `tool=watering_can;before=…` is the sentence the
+ *       fact used to carry; an empty evidence here is the information deleted rather than moved.</li>
+ *   <li>`journaled` - the funnel writes that evidence into the durable transition row
+ *       (`FarmhandExecutionReceipt(..., receipt.Evidence, ...)`), which is the row `planBatchAnswer` composes a plan's
+ *       settlement from, so the reader of the settlement still learns which tool it was.</li>
+ *   <li>`seamGuarded` - the funnel's one publish point consults the flag (`if (settled && publish)`). Without it a
+ *       `publish: false` at a mint site is a comment and the receipt is a fact again.</li>
+ * </ul>
+ */
+function readWithheldSteps() {
+  const files = walkProductionFiles(MOD_ROOT, (name) => name.endsWith(".cs"));
+  const steps = [];
+  const seams = [];
+  let journaled = false;
+  let seamGuarded = false;
+  for (const file of files) {
+    const text = readFileSync(join(ROOT, file), "utf8");
+    if (/if\s*\(\s*settled\s*&&\s*publish\s*\)[\s\S]{0,120}?this\.receiptPublished\?\.Invoke\(/u.test(text))
+      seamGuarded = true;
+    if (/receipt\.ReasonCode,\s*receipt\.Revision,\s*receipt\.Evidence,/u.test(text)) journaled = true;
+    for (const match of text.matchAll(/RememberTerminal\(([\s\S]{0,700}?)\);/gu)) {
+      if (!/publish:\s*false/u.test(match[1])) continue;
+      const kind = /ExecutionState\.\w+\s*,\s*"([a-z0-9_]+)"/u.exec(match[1])?.[1] ?? "unresolved";
+      const evidence = (
+        /ExecutionState\.\w+\s*,\s*"[a-z0-9_]+"\s*,\s*([\s\S]*?),\s*publish:\s*false/u.exec(match[1])?.[1] ?? ""
+      ).trim();
+      steps.push({
+        kind,
+        file,
+        line: lineOf(text, match.index),
+        evidence,
+        stated: evidence !== "" && evidence !== "null",
+        fields: [...evidence.matchAll(/([a-z_]+)=/gu)].map((entry) => entry[1]),
+      });
+    }
+    if (text.includes("receiptPublished?.Invoke("))
+      seams.push({ file, line: lineOf(text, text.indexOf("receiptPublished?.Invoke(")) });
+  }
+  return { steps, journaled, seamGuarded, seams, file: seams[0]?.file ?? `${MOD_ROOT}/farmhandexecutioncontroller.cs` };
 }
 
 /** Every `*PROGRESS*` set declaration in this tree, split by whether production code declares it. */
@@ -862,6 +960,12 @@ function render() {
   lines.push(
     `progress_kinds_declared_only_in_a_test: concepts examined ${checkFive.examined} · ` +
       `in-production ${checkFive.inProduction} · test-only ${checkFive.testOnly}`,
+  );
+  lines.push(
+    `settlement_evidence_still_carries_them: folded states examined ${checkSeven.examined} · recorded ${checkSeven.recorded} · ` +
+      `carried ${checkSeven.carried} · bounded ${checkSeven.bounded} · counted ${checkSeven.counted} · ` +
+      `withheld receipts examined ${checkSeven.withheldExamined} · stated ${checkSeven.withheldStated} · ` +
+      `journaled ${checkSeven.withheldJournaled} · seam ${checkSeven.withheldSeam}`,
   );
   for (const entry of findings) {
     lines.push(`✖ ${entry.code}:${entry.id} - ${entry.detail}`);

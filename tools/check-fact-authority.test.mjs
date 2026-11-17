@@ -49,17 +49,32 @@ const goodExecutionManager = () => `internal sealed partial class ExecutionManag
     internal const int MaximumFoldedTraceSteps = 8;
     internal const int MaximumFoldedTraceChars = 1024;
 
-    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
+    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt, bool publish = true)
     {
         bool settled = receipt.State.IsTerminal();
         if (settled)
             receipt = this.CarryTraceSteps(receipt);
         else
             this.RecordTraceStep(receipt);
-        if (settled)
+        if (this.admission.TryGetDurableAdmission(receipt.RequestId, out FarmhandExecutionAdmission admission))
+        {
+            FarmhandExecutionReceipt durableReceipt = new(
+                receipt.ExecutionId,
+                receipt.RequestId,
+                admission.ActionId,
+                receipt.State,
+                receipt.ReasonCode,
+                receipt.Revision,
+                receipt.Evidence,
+                receipt.Observation);
+        }
+        if (settled && publish)
             this.receiptPublished?.Invoke(receipt);
         return receipt;
     }
+
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true) =>
+        this.AddTrace(new LocalExecutionReceipt(executionId, requestId, state, reasonCode, this.revision, evidence), publish);
 
     private void RecordTraceStep(LocalExecutionReceipt trace) => this.folded.Add(trace.ReasonCode);
 
@@ -78,6 +93,23 @@ const goodExecutionManager = () => `internal sealed partial class ExecutionManag
         }
 
         internal string Render() => $"steps={this.steps.Count + this.Omitted};folded={string.Join("|", this.steps)};steps_omitted={this.Omitted}";
+    }
+}
+`;
+
+/**
+ * The one action that is a STEP of the plan rather than an event: its receipt answers its own dispatch and the plan's
+ * journal row, and the fact stream never sees it. Its evidence is what survives, so it has to say `tool=…`.
+ */
+const goodResourceToolActions = () => `internal sealed partial class ExecutionManager
+{
+    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool)
+    {
+        string? previousTool = DescribeTool(Game1.player.CurrentTool);
+        string? expectedTool = DescribeTool(selectedTool);
+        Game1.player.CurrentToolIndex = slot.Value;
+        string? currentTool = DescribeTool(Game1.player.CurrentTool);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}", publish: false);
     }
 }
 `;
@@ -141,6 +173,7 @@ function goodTree() {
     "integrations/stardew/StardewBodyController.cs": goodBodyController(),
     "integrations/stardew/farmhandexecutioncontroller.cs": goodExecutionManager(),
     "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs": goodStates(),
+    "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs": goodResourceToolActions(),
     "host/src/event-pump.ts": goodEventPump(),
     "host/src/companion-loop.ts": goodCompanionLoop(),
     "host/src/program-settlement-digest.ts": goodSettlement(),
@@ -184,6 +217,12 @@ test("a tree where the body says nothing about itself passes, with all seven pop
   assert.equal(report.checks.progress_kinds_declared_only_in_a_test.testOnly, 0);
   assert.equal(report.checks.a_trace_is_produced_as_its_own_fact.ownFact, 0);
   assert.equal(report.checks.settlement_evidence_still_carries_them.counted, 3);
+  assert.equal(
+    report.checks.settlement_evidence_still_carries_them.withheldExamined,
+    1,
+    "the step half is measured, not skipped",
+  );
+  assert.equal(report.checks.settlement_evidence_still_carries_them.withheldStated, 1);
   assert.ok(report.population > 0, "the population is counted, so a green reading is a measurement");
   // N = E + T + D, so the four printed numbers describe one population rather than four overlapping ones.
   const one = report.checks.progress_reported_as_a_fact;
@@ -268,7 +307,7 @@ function receiptStatesNamedBy(report, code) {
 test("FALSIFIER a publish seam with no terminality guard hands an unsettled receipt to the fact stream, named at its line", () => {
   // The fold stays exactly as it was: only the guard is removed, so the finding is the defect and not a broken fixture.
   const unguarded = goodExecutionManager().replace(
-    "        if (settled)\n            this.receiptPublished?.Invoke(receipt);",
+    "        if (settled && publish)\n            this.receiptPublished?.Invoke(receipt);",
     "        this.receiptPublished?.Invoke(receipt);",
   );
   const { status, report } = read(withDefect("integrations/stardew/farmhandexecutioncontroller.cs", unguarded));
@@ -340,6 +379,54 @@ test("FALSIFIER a fold that drops what did not fit without counting it reads as 
   const silent = goodExecutionManager().replace("                this.Omitted++;\n", "");
   const { report } = read(withDefect("integrations/stardew/farmhandexecutioncontroller.cs", silent));
   assert.match(report.findings.find((entry) => entry.id === "accepted").detail, /not COUNTED/u);
+});
+
+// -------------------------------------------------------------------------------------------------------------
+// Falsifier 7b: a step withheld from the fact stream, and the three halves that make it a move rather than a deletion.
+// -------------------------------------------------------------------------------------------------------------
+test("FALSIFIER a withheld step that states no evidence is a deletion, named by the kind it stops saying", () => {
+  const silent = goodResourceToolActions().replace(
+    /, \$"tool=[\s\S]*?", publish: false\);/u,
+    ", null, publish: false);",
+  );
+  const { status, report } = read(
+    withDefect("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", silent),
+  );
+  assert.equal(status, 1, codes(report).join(", "));
+  assert.ok(codes(report).includes("settlement_evidence_still_carries_them:tool_equipped"), codes(report).join(", "));
+  const detail = report.findings.find((entry) => entry.id === "tool_equipped").detail;
+  assert.match(detail, /resourcetoolactions\.cs:\d+/u);
+  assert.match(detail, /STATES no evidence/u);
+  assert.equal(report.checks.settlement_evidence_still_carries_them.withheldStated, 0);
+});
+
+test("FALSIFIER a durable row that no longer carries the receipt's evidence reaches no reader", () => {
+  const dropped = goodExecutionManager().replace("                receipt.Evidence,\n", "                null,\n");
+  const { status, report } = read(withDefect("integrations/stardew/farmhandexecutioncontroller.cs", dropped));
+  assert.equal(status, 1, codes(report).join(", "));
+  const detail = report.findings.find((entry) => entry.id === "tool_equipped").detail;
+  assert.match(detail, /durable transition row/u);
+  assert.equal(report.checks.settlement_evidence_still_carries_them.withheldJournaled, 0);
+  // The step still STATES its content: only the channel that carries it is gone, so the finding names that half alone.
+  assert.equal(report.checks.settlement_evidence_still_carries_them.withheldStated, 1);
+});
+
+test("FALSIFIER a seam that ignores `publish` makes `publish: false` a comment", () => {
+  const ignored = goodExecutionManager().replace("if (settled && publish)", "if (settled)");
+  const { status, report } = read(withDefect("integrations/stardew/farmhandexecutioncontroller.cs", ignored));
+  assert.equal(status, 1, codes(report).join(", "));
+  assert.match(report.findings.find((entry) => entry.id === "tool_equipped").detail, /does not consult `publish`/u);
+  assert.equal(report.checks.settlement_evidence_still_carries_them.withheldSeam, 0);
+});
+
+test("FALSIFIER a tree that withholds nothing blocks the step half instead of passing it", () => {
+  const published = goodResourceToolActions().replace(", publish: false", "");
+  const { status, stdout } = read(
+    withDefect("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", published),
+  );
+  assert.equal(status, 2, stdout);
+  assert.match(stdout, /fact_authority_no_population/u);
+  assert.match(stdout, /withheld from the fact stream/u);
 });
 
 // -------------------------------------------------------------------------------------------------------------
