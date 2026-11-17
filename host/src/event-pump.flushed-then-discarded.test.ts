@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CompanionEventPump,
   FACT_PRODUCER,
+  FACT_TURN_CONSEQUENCE,
   HELD_RECEIPT_PROGRESS_STATES,
   HELD_SEMANTIC_PROGRESS_KINDS,
   NOT_OWED,
@@ -207,13 +208,6 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
       },
     },
     {
-      reason: NOT_OWED.inFlightProgress,
-      drive: async (pump, sink) => {
-        pump.enqueueFact(programmeStep("succeeded", 60), FACT_PRODUCER.adapterIngress);
-        await pump.flush(sink);
-      },
-    },
-    {
       reason: NOT_OWED.progress,
       drive: async (pump, sink) => {
         pump.enqueueFact(bodyTrace("route_progress", 61), FACT_PRODUCER.adapterIngress);
@@ -233,8 +227,19 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
       },
     },
   ];
+  // DERIVED FROM THE CLASSIFICATION, not from the reason list alone. `in_flight_progress` is still DECLARED - the
+  // pump's own table names it so a shape that came back would be filed rather than defaulted - but no shape is
+  // classified that way any more (`IN_FLIGHT_RECEIPT_PROGRESS_STATES` is empty by ruling), so no scenario can drive it.
+  // It is the one reason exempted here, and the exemption is checked in both directions: the census below fails if a
+  // reason appears that no scenario covers, and fails if a shape ever IS filed `in_flight_progress` while this list
+  // still says nothing can reach it.
   assert.deepEqual(
-    scenarios.map((scenario) => scenario.reason).sort(),
+    Object.values(FACT_TURN_CONSEQUENCE).filter((consequence) => consequence === "in_flight_progress"),
+    [],
+    "no fact shape is filed as in_flight_progress, which is the only reason this table cannot drive that answer",
+  );
+  assert.deepEqual(
+    [...scenarios.map((scenario) => scenario.reason), NOT_OWED.inFlightProgress].sort(),
     [...NOT_OWED_REASONS].sort(),
     "the scenario table must drive every declared reason, or a reason nobody exercises is a reason nobody measures",
   );
@@ -276,12 +281,15 @@ test("fact_flushed_then_discarded:carried, every fact that owed no turn reaches 
   const pump = new CompanionEventPump();
   const turns = recorder();
   pump.enqueueFact(snapshotFact(1), FACT_PRODUCER.adapterIngress);
+  // TWO TRACES, because a trace is what still owes no turn: a finished programme STEP used to be silent here and is
+  // now the answer that opens its own turn (`program_settled`/`execution_receipt` are both `decision`), so a test that
+  // drove this with a step would be asserting a premise the ruling removed.
   const trace = bodyTrace("route_progress", 61);
-  const step = programmeStep("succeeded", 62);
-  pump.enqueueFact(step, FACT_PRODUCER.adapterIngress);
+  const idle = bodyTrace("body_idle", 63);
   pump.enqueueFact(trace, FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(idle, FACT_PRODUCER.adapterIngress);
   const notOwed = await pump.flush(turns.sink);
-  assert.equal(notOwed.kind, "not_owed", `a trace and a programme step owe no turn, got ${notOwed.kind}`);
+  assert.equal(notOwed.kind, "not_owed", `two traces owe no turn, got ${notOwed.kind}`);
   assert.ok(notOwed.kind === "not_owed");
   assert.equal(notOwed.carry.facts.length, 2, "the ticket names both facts that are waiting");
   assert.equal(pump.carriedInto(notOwed.carry), undefined, "and answers `not yet` until a batch consumes them");
@@ -300,8 +308,7 @@ test("fact_flushed_then_discarded:carried, every fact that owed no turn reaches 
   const after = flushReading(pump.turnAccount);
   assert.equal(after.carried, 2, "and both facts are counted as arrived: 事件守恒 —— 一个都不许消失");
   assert.equal(after.pending, 0, "nothing is left waiting");
-  assert.equal(turns.batches[0]!.facts.filter((fact) => fact.kind === "execution_receipt").length, 1);
-  assert.equal(turns.batches[0]!.facts.filter((fact) => fact.kind === "semantic_event").length, 1);
+  assert.equal(turns.batches[0]!.facts.filter((fact) => fact.kind === "semantic_event").length, 2);
 });
 
 /**

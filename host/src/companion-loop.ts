@@ -831,15 +831,25 @@ export class CompanionLoop {
       // player saw - and publishing both is what lets a run reconcile its own `presentation.pieceCount` against this
       // account instead of reading the difference as missing turns. `messages` is the roll-up's own input: the messages
       // whose text the bubble had to fit, named so "28 messages arrived as 27 bubbles" is visible rather than inferred.
+      // `suppressedBubbles` is the reason-keyed account beside that count: what the turn owed and did not commit, and
+      // which layer kept it - so `bubbles: 0` is a named loss rather than an indistinguishable silence.
       if (assistantTextParts > 0 || presentedTextPieces > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
+        // THE BUBBLE'S OWN ACCOUNT, taken before the record is written because it is read from what the turn ended
+        // with; `bubbleNotDeliveredAccount` says what counts as a bubble that never arrived.
+        const suppressedBubbles = bubbleNotDeliveredAccount(
+          suppressedByReason,
+          presentedTextPieces,
+          assistantTextParts,
+        );
         process.stderr.write(
           `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify({
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
             bubbles: presentedTextPieces,
+            suppressedBubbles,
             messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
             ...(turnBubble === null ? {} : { bubble: turnBubble }),
           })}\n`,
@@ -1017,6 +1027,28 @@ function opensPresentationLease(kind: string | undefined): boolean {
     kind === "night_ended_pass_out" ||
     kind === "program_settled"
   );
+}
+
+/**
+ * The bubbles a turn OWED and did not get, keyed by why - the missing half of the `bubbles` count.
+ *
+ * `bubbles: 0` is TWO different endings and the account could not tell them apart: a turn whose every part the
+ * projection withheld, and a turn that spoke no line at all. The first is a delivery gap with a reason and the second is
+ * silence, and a reader reconciling `textParts` against `bubbles` had to guess which one it was looking at - measured
+ * 2026-11-09 (`round41`): 59 presented pieces across 13 delivery records, and nothing said why the two populations
+ * differed.
+ *
+ * ONE BUBBLE PER TURN, so this is a map of REASONS and never a bubble total: this surface has one channel for a turn
+ * (`onFinalText`), so at most one bubble was owed and every reason listed here is a layer that kept the same one. Summing
+ * the values counts reasons, not bubbles. The reason is the projection's own (`CompanionTurnPartSuppression`).
+ */
+function bubbleNotDeliveredAccount(
+  suppressedByReason: ReadonlyMap<string, number>,
+  presentedTextPieces: number,
+  assistantTextParts: number,
+): Readonly<Record<string, number>> {
+  if (presentedTextPieces !== 0 || assistantTextParts === 0) return Object.freeze({});
+  return Object.freeze(Object.fromEntries([...suppressedByReason.keys()].sort().map((reason) => [reason, 1] as const)));
 }
 
 function isOpaqueSource(value: unknown): value is string {

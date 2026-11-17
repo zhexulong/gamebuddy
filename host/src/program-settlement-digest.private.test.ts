@@ -38,11 +38,74 @@ function planNode(nodeId: string, actionId = "move_to_tile", x = 5, y = 8): Plan
 }
 
 function status(programId: string, state: string, nodes: readonly JournalNode[]): unknown {
-  return {
-    code: "found",
-    snapshot: { programId, state, catalogRevision: 3, stopEpoch: 0, eventHighWater: 90, nodes },
-  };
+  return { code: "found", snapshot: snapshotOf(programId, state, nodes) };
 }
+
+/**
+ * The journal SNAPSHOT alone - the object `planBatchAnswer` reads (`readPlanJournalNodes` takes `snapshot.nodes`).
+ *
+ * Spelled once here so a test that drives the reader directly cannot hand it the `{code, snapshot}` wrapper and get a
+ * silently empty journal: every row would then answer `unknown`, and a verdict computed over unreadable rows is a
+ * verdict about the fixture rather than about the plan.
+ */
+function snapshotOf(programId: string, state: string, nodes: readonly JournalNode[]): unknown {
+  return { programId, state, catalogRevision: 3, stopEpoch: 0, eventHighWater: 90, nodes };
+}
+
+test("a settled answer carries a VERDICT: ok, and the Mod's own reason when it is not", () => {
+  // WHAT AN ANSWER WITH NO VERDICT IS. `summary` counts and the rows name the work, and neither says whether the plan did
+  // what it was told - so `stardew_action_program_status` answered a stopped programme with a description, and a reader
+  // had to re-derive "did it work" from twenty rows to know whether to act. These two fields are what every tool result
+  // has, and they are read from the SAME counts and the SAME rows, so an `ok: true` and a `2 rejected` line cannot
+  // disagree.
+  const done = settledProgramAnswer(
+    planBatchAnswer(
+      [planNode("n01"), planNode("n02")],
+      snapshotOf("plan_ok", "succeeded", [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "succeeded" },
+      ]),
+    ),
+  );
+  assert.equal(done.ok, true, "every node did what it was told");
+  assert.equal(done.reason, null, "and a plan that worked owes no reason");
+
+  const refused = settledProgramAnswer(
+    planBatchAnswer(
+      [planNode("n01"), planNode("n02")],
+      snapshotOf("plan_refused", "failed", [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "rejected", rejectionCode: "tool_not_held" },
+      ]),
+    ),
+  );
+  assert.equal(refused.ok, false, "one node refused is not a plan that worked");
+  assert.equal(refused.reason, "#1 move_to_tile:rejected:tool_not_held", "in the Mod's own tokens, naming the step");
+  assert.equal(
+    refused.summary.includes("1 rejected"),
+    true,
+    `the sentence and the verdict are the same arithmetic, got ${refused.summary}`,
+  );
+});
+
+test("the verdict survives the row bound: a refusal past the ceiling is still the reason", () => {
+  // THE BOUND IS ON WHAT IS SHOWN, NOT ON WHAT IS KNOWN. `MAX_SETTLED_DIGEST_NODES` rows travel; the verdict is read
+  // over every row before that cut, so a plan of 25 whose LAST step was refused answers `ok: false` and names it. A
+  // reason derived from the bounded rows would be null exactly on the long plans where the reader most needs it.
+  const compiled = Array.from({ length: MAX_SETTLED_DIGEST_NODES + 5 }, (_, index) => planNode(`n${String(index)}`));
+  const rows: JournalNode[] = compiled.map((node) => ({ nodeId: node.nodeId, state: "succeeded" }));
+  const lastIndex = compiled.length - 1;
+  rows[lastIndex] = { nodeId: compiled[lastIndex]!.nodeId, state: "failed", failureCode: "no_native_path" };
+  const answer = settledProgramAnswer(planBatchAnswer(compiled, snapshotOf("plan_long", "failed", rows)));
+  assert.equal(answer.nodes.length, MAX_SETTLED_DIGEST_NODES, "the shown rows are still bounded");
+  assert.equal(answer.omitted, 5, "and the remainder is COUNTED");
+  assert.equal(answer.ok, false, "a refused step past the cut still makes the plan not ok");
+  assert.equal(
+    answer.reason,
+    `#${String(lastIndex)} move_to_tile:failed:no_native_path`,
+    "and it is NAMED, from the row that did not do what it was told rather than from the twenty that arrived",
+  );
+});
 
 test("a settled program reaches the pump as one ledger entry, and opens a turn of its own", async () => {
   // THE DEFECT THIS CLOSES. Measured 2026-11-07 over 29 plan batches: every node entry was `pending`, because

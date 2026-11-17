@@ -24,12 +24,17 @@ import {
  */
 
 /**
- * The semantic kinds the pump treats as progress: the PRODUCTION table, not a copy of it kept here.
+ * Whether this fact carries a kind the pump holds as PROGRESS - READ from the pump's own declaration.
  *
- * A hand-written list in a test is a second authority that agrees on the day it is written: a kind the pump adds would
- * leave this copy behind, and every case below would stop covering it without failing.
+ * A list written here would be a second copy of `HELD_SEMANTIC_PROGRESS_KINDS`, and it would agree with the pump only
+ * until one of them changed: a kind added there would be silently un-covered by every assertion below, and the file
+ * would keep passing while measuring three of four classes. A named `PROGRESS_KINDS` constant here is worse than that -
+ * the fact-authority gate reads it as the production notion of "progress" living in a test, which is a concept the
+ * product cannot enforce.
  */
-const PROGRESS_KINDS = Object.keys(HELD_SEMANTIC_PROGRESS_KINDS);
+function isHeldProgressKind(kind: unknown): boolean {
+  return typeof kind === "string" && kind in HELD_SEMANTIC_PROGRESS_KINDS;
+}
 
 /** The two things these tests read off a delivered batch: its text, and the facts it carries. */
 type DeliveredBatch = Pick<PendingBatch, "text" | "facts">;
@@ -103,9 +108,7 @@ function ordinaryTick(index: number): WorldFact {
 }
 
 function progressFactsOf(batch: DeliveredBatch): readonly WorldFact[] {
-  return batch.facts.filter(
-    (fact) => fact.kind === "semantic_event" && PROGRESS_KINDS.includes(String(fact.payload.kind)),
-  );
+  return batch.facts.filter((fact) => fact.kind === "semantic_event" && isHeldProgressKind(fact.payload.kind));
 }
 
 async function collect(pump: CompanionEventPump): Promise<DeliveredBatch[]> {

@@ -6,7 +6,7 @@ import {
   FACT_PRODUCER,
   FACT_TURN_CONSEQUENCE,
   factTurnConsequence,
-  IN_FLIGHT_SEMANTIC_PROGRESS_KINDS,
+  IN_FLIGHT_RECEIPT_PROGRESS_STATES,
   MAX_NAMED_UNATTRIBUTED_EXECUTIONS,
   type PendingBatch,
   TURN_OPENING,
@@ -41,10 +41,10 @@ import { EXECUTION_STATES, newEnvelope, type Scope, validateBridgeMessage } from
  *
  * <p>
  * THE POPULATION IS EVERY RECEIPT THE MOD EMITS, which is `EXECUTION_STATES` (the protocol's own list, and the list
- * `validateReceipt` refuses a state outside of) cross the provenance members the wire declares. The semantic events that
- * restate a finished step (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`) carry the same provenance from the same journal lookup,
- * so they are in the population for the same reason: they are the second spelling of one step, and a fix that only
- * covers the receipt leaves half the turns.
+ * `validateReceipt` refuses a state outside of) cross the provenance members the wire declares. A semantic event that
+ * restates a finished step would carry the same provenance from the same journal lookup, so any kind declared in
+ * `IN_FLIGHT_RECEIPT_PROGRESS_STATES` is in the population for the same reason - and that table is empty by ruling, so
+ * today the population is the receipts alone.
  * </p>
  *
  * {@link receiptWithoutItsProgrammeGate} is a function of recorded readings rather than of the pump, so the falsifier can
@@ -133,7 +133,7 @@ function receiptPopulation(): readonly ReceiptCase[] {
           origin,
         }),
       );
-  for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS))
+  for (const kind of Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES))
     for (const origin of [...provenancePopulation(), undefined])
       cases.push(
         Object.freeze({
@@ -225,16 +225,16 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
  * What the origin says the filing must be, or `undefined` when the fact does not state a cause the wire can carry.
  *
  * Derived from the classification, so a state added to `EXECUTION_STATES` or a kind added to
- * `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS` is judged by the same three lines rather than by a fourth hand-written rule.
+ * `IN_FLIGHT_RECEIPT_PROGRESS_STATES` is judged by the same three lines rather than by a fourth hand-written rule.
  */
 function expectedFiling(reading: CaseReadings): Readonly<{ opened: number; reason: string }> | undefined {
   if (reading.consequence === "decision") return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
   if (reading.consequence === "progress") return Object.freeze({ opened: 0, reason: NOT_OWED.progress });
-  if (reading.consequence !== "in_flight_progress") return undefined;
-  // The step's own provenance decides: a programme's step is progress whatever else is running, and a lone outcome is
-  // news because nothing else will ever state it.
-  if (reading.origin?.kind === "programme") return Object.freeze({ opened: 0, reason: NOT_OWED.inFlightProgress });
-  return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
+  // NOTHING IS FILED AGAINST ANOTHER OBJECT'S LIVENESS ANY MORE (`IN_FLIGHT_RECEIPT_PROGRESS_STATES` is empty by ruling),
+  // and this gate does not assume it: a shape that came back would be UNCLASSIFIED here and red by name, rather than
+  // silently agreeing with the pump about a rule nobody can state from the fact alone. That is the same direction the
+  // pump's own `decision` default takes - the cost is a red gate, never a lost outcome.
+  return undefined;
 }
 
 export type ProvenanceGate = Readonly<{
@@ -284,11 +284,10 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
       violations.push(
         `${RECEIPT_WITHOUT_ITS_PROGRAMME}:${shape}:${String(reading.filing.opened)}:${String(reading.filing.reason)}`,
       );
-    // The step's own provenance, in the two directions the window got wrong. A receipt whose execution belongs to a
-    // programme must be filed as that programme's step, and a lone outcome must still speak - silencing it hides the only
-    // fact that says it happened.
-    const inFlightProgress = reading.consequence === "in_flight_progress";
-    if (inFlightProgress && reading.origin?.kind !== "programme" && reading.filing.opened === 0)
+    // The step's own provenance, in the direction the window got wrong. A lone outcome must still speak: silencing it
+    // hides the only fact that says the execution happened, and the fix for that is a different one from the generic
+    // disagreement above - so the log names it with its own token.
+    if (reading.origin?.kind === "standalone" && expected.opened === 1 && reading.filing.opened === 0)
       violations.push(`standalone_outcome_swallowed:${shape}:${String(reading.filing.reason)}`);
     // TIME: the same fact, filed at two instants. The reading a receipt used to be filed against is gone with the port, so
     // the only variation left is the moment it is driven at - which is exactly what this token asks about.
@@ -414,29 +413,29 @@ test("receipt_without_its_programme: no receipt is filed by the clock or by some
 });
 
 test("receipt_without_its_programme: the gate is red on the ordering the tree produced before the field existed", () => {
-  // THE FALSIFIER, in the direction that matters: the same `succeeded` receipt, the same execution, filed at two instants
-  // - and a filing that moved between them is a receipt filed by time.
+  // THE FALSIFIER, in the direction that matters: the same `succeeded` receipt, the same execution, filed at two instants.
+  // The two filings are the pair the old window produced - silent while something was thought to be in flight, spoken once
+  // it was not - and a filing that moves between them is a receipt filed by time. Each defect is named by its own token,
+  // so this asserts the LIST rather than a count: a count cannot say which rule fired.
   const recorded = receiptWithoutItsProgrammeGate([
     {
       shape: "receipt:succeeded",
       executionId: "exec_round62_tail",
       origin: PROGRAMME,
       consequence: FACT_TURN_CONSEQUENCE["receipt:succeeded"],
-      filing: { opened: 0, reason: NOT_OWED.inFlightProgress },
+      filing: { opened: 0, reason: NOT_OWED.progress },
       filedLater: { opened: 1, reason: TURN_OPENING.worldFact },
     },
   ]);
 
   assert.equal(recorded.filedByTime, 1, "one receipt filed by the clock is one too many");
-  assert.ok(
-    recorded.violations.includes(
-      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${NOT_OWED.inFlightProgress}->${TURN_OPENING.worldFact}`,
-    ),
-    `the violation must name the execution and the shape, got ${JSON.stringify(recorded.violations)}`,
-  );
-  assert.ok(
-    recorded.violations.length === 1,
-    `the only violation is the one this falsifier injects: one drive disagrees with the other, and the filing itself agrees with the classification, got ${JSON.stringify(recorded.violations)}`,
+  assert.deepEqual(
+    recorded.violations,
+    [
+      `${RECEIPT_WITHOUT_ITS_PROGRAMME}:exec_round62_tail:receipt:succeeded:0:${NOT_OWED.progress}`,
+      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${NOT_OWED.progress}->${TURN_OPENING.worldFact}`,
+    ],
+    "the two drives disagree, the filing disagrees with the classification, and both are named with the execution and the shape",
   );
 });
 
@@ -449,16 +448,17 @@ test("receipt_without_its_programme: a lone outcome silenced while a programme r
       executionId: "exec_lone_action",
       origin: STANDALONE,
       consequence: FACT_TURN_CONSEQUENCE["receipt:partially_succeeded"],
-      filing: { opened: 0, reason: NOT_OWED.inFlightProgress },
-      filedLater: { opened: 0, reason: NOT_OWED.inFlightProgress },
+      filing: { opened: 0, reason: NOT_OWED.progress },
+      filedLater: { opened: 0, reason: NOT_OWED.progress },
     },
   ]);
   assert.ok(
     swallowed.violations.includes(
-      `standalone_outcome_swallowed:exec_lone_action:receipt:partially_succeeded:${NOT_OWED.inFlightProgress}`,
+      `standalone_outcome_swallowed:exec_lone_action:receipt:partially_succeeded:${NOT_OWED.progress}`,
     ),
     `a lone outcome that never spoke must be named, got ${JSON.stringify(swallowed.violations)}`,
   );
+  assert.equal(swallowed.filedByTime, 0, "and it is not a time defect: both drives filed it the same way");
   assert.equal(swallowed.standalone, 1, "and the printed population must count the standalone receipt it examined");
 });
 
@@ -543,10 +543,21 @@ test("receipt_without_its_programme: a receipt that states NOTHING is filed as a
 test("receipt_without_its_programme: the population is every receipt state the protocol declares, cross every provenance", () => {
   const population = receiptPopulation();
   assert.ok(population.length > 0, "an empty population proves nothing");
+  // DERIVED, NOT ASSERTED TRUE. The population used to hold the semantic restatements of a step beside the receipts;
+  // that kind table is empty by ruling, so asserting "some non-receipt shape exists" would pin today's emptiness as a
+  // premise. What must hold either way is that every kind the pump DECLARES is examined, and that nothing else is.
+  const declaredStepKinds = Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES);
   assert.deepEqual(
-    [...new Set(population.map((entry) => entry.shape))].filter((shape) => !shape.startsWith("receipt:")).length > 0,
-    true,
-    "the semantic restatements of a step are in the population, or a fix that covers only receipts leaves half the turns",
+    declaredStepKinds.filter((kind) => !population.some((entry) => entry.shape === `semantic:${kind}`)),
+    [],
+    "every semantic kind the pump declares as a suppressed step is in the population, or a fix that covers only receipts leaves half the turns",
+  );
+  assert.deepEqual(
+    [...new Set(population.map((entry) => entry.shape))].filter(
+      (shape) => !shape.startsWith("receipt:") && !declaredStepKinds.includes(shape.slice("semantic:".length)),
+    ),
+    [],
+    "and nothing else is examined: the population is the protocol's receipt states plus the pump's own declared kinds",
   );
   assert.deepEqual(
     EXECUTION_STATES.filter((state) => !population.some((entry) => entry.shape === `receipt:${state}`)),
