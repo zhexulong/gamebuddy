@@ -268,6 +268,16 @@ export type CharacterLabels = Readonly<{
   worldBookDraftHint: string;
   worldBookItemTitle: string;
   worldBookItemSummary: string;
+  /**
+   * What a field says when the player presses save and it is still empty. The rule is the durable
+   * validator's own four required fields - the item's title and summary, and every entry's title
+   * and words - and the sentences exist so the press NAMES the field instead of greying the
+   * control out, which stated the refusal and named nothing.
+   */
+  worldBookItemTitleRequired: string;
+  worldBookItemSummaryRequired: string;
+  worldBookEntryTitleRequired: string;
+  worldBookEntrySummaryRequired: string;
   worldBookEntriesLabel: string;
   worldBookEntriesEmpty: string;
   worldBookShowEntries: string;
@@ -685,6 +695,8 @@ const en: CharacterLabels = Object.freeze({
     "A world book is a title, a summary and at least one entry. An entry is used when your own words match one of its trigger words.",
   worldBookItemTitle: "Title",
   worldBookItemSummary: "Summary",
+  worldBookItemTitleRequired: "This item needs a title before the library can keep it.",
+  worldBookItemSummaryRequired: "This item needs a summary before the library can keep it.",
   worldBookEntriesLabel: "Entries",
   worldBookEntriesEmpty: "This world book carries no entries yet.",
   worldBookShowEntries: "Read it",
@@ -700,6 +712,8 @@ const en: CharacterLabels = Object.freeze({
   worldBookEntryScopeSetting: "About the world",
   worldBookEntryTitle: "Entry title",
   worldBookEntrySummary: "What it says",
+  worldBookEntryTitleRequired: "This entry needs a title before the library can keep it.",
+  worldBookEntrySummaryRequired: "This entry needs its words before the library can keep it.",
   worldBookEntryKeys: "Trigger words",
   worldBookEntryKeysHint: "Separated by commas. Leave empty for an entry that is always on.",
   worldBookEntryEnabled: "In use",
@@ -1013,6 +1027,8 @@ const zh: CharacterLabels = Object.freeze({
   worldBookDraftHint: "一本世界书由标题、简介和至少一条词条组成。当你的话命中词条的触发词时，这条词条才会被用到。",
   worldBookItemTitle: "标题",
   worldBookItemSummary: "简介",
+  worldBookItemTitleRequired: "这本世界书还没有标题，书库收不下它。",
+  worldBookItemSummaryRequired: "这本世界书还没有简介，书库收不下它。",
   worldBookEntriesLabel: "词条",
   worldBookEntriesEmpty: "这本世界书里还没有词条。",
   worldBookShowEntries: "查看内容",
@@ -1028,6 +1044,8 @@ const zh: CharacterLabels = Object.freeze({
   worldBookEntryScopeSetting: "关于世界",
   worldBookEntryTitle: "词条标题",
   worldBookEntrySummary: "词条内容",
+  worldBookEntryTitleRequired: "这条词条还没有标题，书库收不下它。",
+  worldBookEntrySummaryRequired: "这条词条还没有内容，书库收不下它。",
   worldBookEntryKeys: "触发词",
   worldBookEntryKeysHint: "用逗号分隔。留空表示这条词条始终生效。",
   worldBookEntryEnabled: "启用",

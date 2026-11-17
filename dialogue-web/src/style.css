@@ -5095,8 +5095,10 @@
   }
 
   /* One field with its own label and its own sentence. The three sit together so a sentence that
-   names a missing field is that field's, and the label stays tight to the control it names. */
-  .companion-world-book-field {
+   names a missing field is that field's, and the label stays tight to the control it names. Both
+   world book authoring forms mark a field from the press, so both carry the block. */
+  .companion-world-book-field,
+  .world-book-field {
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
@@ -5106,7 +5108,9 @@
    missing something. It is stated from `aria-invalid` rather than from a second class name, so the
    fact the screen reader is told and the fact the eye is shown are one attribute. */
   [data-companion-world-book-entry-draft] .form-input[aria-invalid="true"],
-  [data-companion-world-book-entry-draft] .form-textarea[aria-invalid="true"] {
+  [data-companion-world-book-entry-draft] .form-textarea[aria-invalid="true"],
+  [data-world-book-draft] .form-input[aria-invalid="true"],
+  [data-world-book-draft] .form-textarea[aria-invalid="true"] {
     border-color: var(--danger);
   }
 

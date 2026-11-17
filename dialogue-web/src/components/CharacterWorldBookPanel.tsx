@@ -11,6 +11,7 @@ import type { WorldInfoBindingSource } from "../world-info-binding-source";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
 import { downloadFile } from "./download-file";
+import { fieldError, firstFieldAtFault } from "./field-error";
 import { useRecordDraft } from "./surface-drafts";
 import { parseTriggerWords } from "./world-book-trigger-words";
 
@@ -120,19 +121,56 @@ function selectiveLogicOf(value: string): 0 | 1 | 2 | 3 | null {
 }
 
 /**
- * Whether the draft is what the Host accepts: a title, a summary and at least
- * one entry, each with its own title and summary. An incomplete draft is not a
- * refusal - the submit control is simply not offered yet - because the Host
- * refuses an empty title or summary with `invalid_request`, which names nothing
- * a player can act on.
+ * The id one field of the item carries.
+ *
+ * The label's `htmlFor`, the field's own id and the press's "put the keyboard on the field that is
+ * missing something" are one string, so it is written once: two spellings of an id is a focus that
+ * lands on nothing.
  */
-function worldBookDraftIsComplete(draft: WorldBookDraft): boolean {
-  return (
-    draft.publicTitle.trim().length > 0 &&
-    draft.summary.trim().length > 0 &&
-    draft.entries.length > 0 &&
-    draft.entries.every((entry) => entry.publicTitle.trim().length > 0 && entry.summary.trim().length > 0)
-  );
+function worldBookItemFieldId(field: string): string {
+  return `world-book-item-${field}`;
+}
+
+/** The id one field of one entry carries, for the same reason. */
+function worldBookEntryFieldId(index: number, field: string): string {
+  return `world-book-entry-${index}-${field}`;
+}
+
+/**
+ * The one field order a draft is read in: the item's two fields, then every entry's two - the order
+ * the form draws them, and therefore the order a press walks when it looks for the first field that
+ * is missing something (`firstFieldAtFault`).
+ */
+const WORLD_BOOK_REQUIRED_FIELDS = ["title", "summary"] as const;
+
+/** What one row of the draft is still missing, one sentence per field or `null` where it is complete. */
+type WorldBookFieldProblems = Readonly<{ title: string | null; summary: string | null }>;
+
+/**
+ * What the draft is still missing, in the player's words: the durable validator's own four required
+ * fields, each with its own sentence so the message can sit under the field it is about.
+ *
+ * This is the rule the submit control used to fold into one `disabled` bit. A disabled control
+ * states a refusal and names nothing: a player who had cleared the item's title, or a row's words,
+ * saw a grey button, no sentence, no focus and no way to learn which field it meant. The rule is
+ * unchanged - a title, a summary and at least one entry, each entry with its own title and words -
+ * and what changed is where it is enforced: on the press, out loud, rather than by taking the
+ * control away.
+ */
+function worldBookDraftProblems(
+  draft: WorldBookDraft,
+  labels: CharacterLabels,
+): Readonly<{ item: WorldBookFieldProblems; entries: readonly WorldBookFieldProblems[] }> {
+  return {
+    item: {
+      title: draft.publicTitle.trim().length === 0 ? labels.worldBookItemTitleRequired : null,
+      summary: draft.summary.trim().length === 0 ? labels.worldBookItemSummaryRequired : null,
+    },
+    entries: draft.entries.map((entry) => ({
+      title: entry.publicTitle.trim().length === 0 ? labels.worldBookEntryTitleRequired : null,
+      summary: entry.summary.trim().length === 0 ? labels.worldBookEntrySummaryRequired : null,
+    })),
+  };
 }
 
 /**
@@ -331,7 +369,7 @@ export function CharacterWorldBookPanel({
    */
   const submitDraft = (): void => {
     const draft = itemDraft.value;
-    if (view.kind !== "ready" || draft === null || !worldBookDraftIsComplete(draft)) return;
+    if (view.kind !== "ready" || draft === null) return;
     const expectedRevision = view.worldInfo.revision;
     const target = draft.handle;
     const authored = {
@@ -880,6 +918,7 @@ function WorldBookEntryDraftRow({
   index,
   canRemove,
   labels,
+  problems,
   onChange,
   onRemove,
 }: Readonly<{
@@ -889,6 +928,8 @@ function WorldBookEntryDraftRow({
   /** The form keeps at least one entry, so the last remaining row offers no removal at all. */
   canRemove: boolean;
   labels: CharacterLabels;
+  /** What this row is still missing, or `null` while the form has nothing to say about it. */
+  problems: WorldBookFieldProblems | null;
   onChange: (entry: WorldBookEntryDraft) => void;
   onRemove: () => void;
 }>): ReactElement {
@@ -899,13 +940,15 @@ function WorldBookEntryDraftRow({
     onRemove();
   };
   const title = entry.publicTitle.trim();
+  const titleError = fieldError(problems?.title ?? null, `${worldBookEntryFieldId(index, "title")}-problem`);
+  const summaryError = fieldError(problems?.summary ?? null, `${worldBookEntryFieldId(index, "summary")}-problem`);
   return (
     <div data-world-book-entry-draft>
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-scope`}>
+      <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "scope")}>
         {labels.worldBookEntryScope}
       </label>
       <select
-        id={`world-book-entry-${index}-scope`}
+        id={worldBookEntryFieldId(index, "scope")}
         className="form-select"
         value={entry.scope}
         onChange={(event) =>
@@ -915,44 +958,62 @@ function WorldBookEntryDraftRow({
         <option value="setting">{labels.worldBookEntryScopeSetting}</option>
         <option value="companion">{labels.worldBookEntryScopeCompanion}</option>
       </select>
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-title`}>
-        {labels.worldBookEntryTitle}
-      </label>
-      <input
-        id={`world-book-entry-${index}-title`}
-        className="form-input"
-        type="text"
-        maxLength={128}
-        value={entry.publicTitle}
-        onChange={(event) => onChange({ ...entry, publicTitle: event.target.value })}
-      />
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-summary`}>
-        {labels.worldBookEntrySummary}
-      </label>
-      <textarea
-        id={`world-book-entry-${index}-summary`}
-        className="form-textarea"
-        rows={3}
-        maxLength={4000}
-        value={entry.summary}
-        onChange={(event) => onChange({ ...entry, summary: event.target.value })}
-      />
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-keys`}>
+      <div className="world-book-field">
+        <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "title")}>
+          {labels.worldBookEntryTitle}
+        </label>
+        <input
+          id={worldBookEntryFieldId(index, "title")}
+          className="form-input"
+          type="text"
+          maxLength={128}
+          aria-invalid={titleError.invalid}
+          aria-describedby={titleError.describedBy}
+          value={entry.publicTitle}
+          onChange={(event) => onChange({ ...entry, publicTitle: event.target.value })}
+        />
+        {problems?.title == null ? null : (
+          <p role="status" className="error-banner" id={titleError.id} data-world-book-field-problem>
+            {problems.title}
+          </p>
+        )}
+      </div>
+      <div className="world-book-field">
+        <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "summary")}>
+          {labels.worldBookEntrySummary}
+        </label>
+        <textarea
+          id={worldBookEntryFieldId(index, "summary")}
+          className="form-textarea"
+          rows={3}
+          maxLength={4000}
+          aria-invalid={summaryError.invalid}
+          aria-describedby={summaryError.describedBy}
+          value={entry.summary}
+          onChange={(event) => onChange({ ...entry, summary: event.target.value })}
+        />
+        {problems?.summary == null ? null : (
+          <p role="status" className="error-banner" id={summaryError.id} data-world-book-field-problem>
+            {problems.summary}
+          </p>
+        )}
+      </div>
+      <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "keys")}>
         {labels.worldBookEntryKeys}
       </label>
       <input
-        id={`world-book-entry-${index}-keys`}
+        id={worldBookEntryFieldId(index, "keys")}
         className="form-input"
         type="text"
         value={entry.keys}
         onChange={(event) => onChange({ ...entry, keys: event.target.value })}
       />
       <p className="management-settings-hint">{labels.worldBookEntryKeysHint}</p>
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-secondary-keys`}>
+      <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "secondary-keys")}>
         {labels.worldBookEntrySecondaryKeys}
       </label>
       <input
-        id={`world-book-entry-${index}-secondary-keys`}
+        id={worldBookEntryFieldId(index, "secondary-keys")}
         className="form-input"
         type="text"
         data-world-book-entry-secondary-keys
@@ -960,11 +1021,11 @@ function WorldBookEntryDraftRow({
         onChange={(event) => onChange({ ...entry, secondaryKeys: event.target.value })}
       />
       <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
-      <label className="management-settings-label" htmlFor={`world-book-entry-${index}-selective-logic`}>
+      <label className="management-settings-label" htmlFor={worldBookEntryFieldId(index, "selective-logic")}>
         {labels.worldBookEntrySelectiveLogic}
       </label>
       <select
-        id={`world-book-entry-${index}-selective-logic`}
+        id={worldBookEntryFieldId(index, "selective-logic")}
         className="form-select"
         data-world-book-entry-selective-logic
         value={entry.selectiveLogic === null ? "" : String(entry.selectiveLogic)}
@@ -982,7 +1043,7 @@ function WorldBookEntryDraftRow({
           per-turn candidate, which is how a player parks it without losing it. */}
       <label className="companion-world-book-constant">
         <input
-          id={`world-book-entry-${index}-enabled`}
+          id={worldBookEntryFieldId(index, "enabled")}
           className="companion-world-book-constant-box"
           type="checkbox"
           data-world-book-entry-enabled
@@ -1059,34 +1120,94 @@ function WorldBookDraftEditor({
   onCancel: () => void;
 }>): ReactElement {
   const editing = draft.handle !== null;
+  // Whether the last press found something missing. It gates the sentences only: the problems are
+  // recomputed from the draft on every render, so a field the player fixes loses its sentence as she
+  // types it rather than on the next press.
+  const [showProblems, setShowProblems] = useState(false);
+  // The field the last press put the keyboard on. Focus is requested through state because the
+  // sentence above the field is rendered in the same press, so the layout settles first.
+  const [focusRequest, setFocusRequest] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusRequest === null) return;
+    document.getElementById(focusRequest)?.focus();
+    setFocusRequest(null);
+  }, [focusRequest]);
+
+  /**
+   * The save control's own press, and the whole of what used to be a disabled button.
+   *
+   * A draft the Host will not keep is not a reason to take the control away: a greyed button states a
+   * refusal and names nothing. The press is always offered. When something is missing it marks every
+   * field that is - the field's own red edge, and a sentence under it saying what it needs - and puts
+   * the keyboard on the first of them, in the order the form draws them. When nothing is missing the
+   * save goes out, and a Host that refuses it answers in its own words.
+   */
+  const attemptSave = (): void => {
+    const at = worldBookDraftProblems(draft, labels);
+    const first = firstFieldAtFault([at.item, ...at.entries], WORLD_BOOK_REQUIRED_FIELDS);
+    if (first === null) {
+      setShowProblems(false);
+      onSubmit();
+      return;
+    }
+    setShowProblems(true);
+    setFocusRequest(
+      first.row === 0 ? worldBookItemFieldId(first.field) : worldBookEntryFieldId(first.row - 1, first.field),
+    );
+  };
+
+  const problems = showProblems ? worldBookDraftProblems(draft, labels) : null;
+  const itemTitle = fieldError(problems?.item.title ?? null, `${worldBookItemFieldId("title")}-problem`);
+  const itemSummary = fieldError(problems?.item.summary ?? null, `${worldBookItemFieldId("summary")}-problem`);
   return (
     <section data-world-book-draft>
       <h3>
         {editing ? labels.worldBookEditTitle.replace("{{title}}", draft.publicTitle) : labels.worldBookCreateTitle}
       </h3>
       <p className="management-settings-hint">{labels.worldBookDraftHint}</p>
-      <label className="management-settings-label" htmlFor="world-book-item-title">
-        {labels.worldBookItemTitle}
-      </label>
-      <input
-        id="world-book-item-title"
-        className="form-input"
-        type="text"
-        maxLength={128}
-        value={draft.publicTitle}
-        onChange={(event) => onChange({ ...draft, publicTitle: event.target.value })}
-      />
-      <label className="management-settings-label" htmlFor="world-book-item-summary">
-        {labels.worldBookItemSummary}
-      </label>
-      <textarea
-        id="world-book-item-summary"
-        className="form-textarea"
-        rows={3}
-        maxLength={4000}
-        value={draft.summary}
-        onChange={(event) => onChange({ ...draft, summary: event.target.value })}
-      />
+      {/* One field, its own label, and the sentence it needs when it is the field that is missing
+          something. The pair is a block of its own so the sentence belongs to this field alone. */}
+      <div className="world-book-field">
+        <label className="management-settings-label" htmlFor={worldBookItemFieldId("title")}>
+          {labels.worldBookItemTitle}
+        </label>
+        <input
+          id={worldBookItemFieldId("title")}
+          className="form-input"
+          type="text"
+          maxLength={128}
+          aria-invalid={itemTitle.invalid}
+          aria-describedby={itemTitle.describedBy}
+          value={draft.publicTitle}
+          onChange={(event) => onChange({ ...draft, publicTitle: event.target.value })}
+        />
+        {problems?.item.title == null ? null : (
+          <p role="status" className="error-banner" id={itemTitle.id} data-world-book-field-problem>
+            {problems.item.title}
+          </p>
+        )}
+      </div>
+      <div className="world-book-field">
+        <label className="management-settings-label" htmlFor={worldBookItemFieldId("summary")}>
+          {labels.worldBookItemSummary}
+        </label>
+        <textarea
+          id={worldBookItemFieldId("summary")}
+          className="form-textarea"
+          rows={3}
+          maxLength={4000}
+          aria-invalid={itemSummary.invalid}
+          aria-describedby={itemSummary.describedBy}
+          value={draft.summary}
+          onChange={(event) => onChange({ ...draft, summary: event.target.value })}
+        />
+        {problems?.item.summary == null ? null : (
+          <p role="status" className="error-banner" id={itemSummary.id} data-world-book-field-problem>
+            {problems.item.summary}
+          </p>
+        )}
+      </div>
       <p className="management-settings-label">{labels.worldBookEntriesLabel}</p>
       {draft.entries.map((entry, index) => (
         <WorldBookEntryDraftRow
@@ -1095,6 +1216,7 @@ function WorldBookDraftEditor({
           index={index}
           canRemove={draft.entries.length > 1}
           labels={labels}
+          problems={problems?.entries[index] ?? null}
           onChange={(next) =>
             onChange({
               ...draft,
@@ -1121,13 +1243,7 @@ function WorldBookDraftEditor({
           keeps its place in the flow, so the form's height is unchanged and the
           row's own buttons, and what they do, are untouched. */}
       <div className="composer-actions" data-world-book-draft-actions>
-        <button
-          type="button"
-          className="small-button"
-          data-world-book-submit
-          disabled={saving || !worldBookDraftIsComplete(draft)}
-          onClick={onSubmit}
-        >
+        <button type="button" className="small-button" data-world-book-submit disabled={saving} onClick={attemptSave}>
           {worldBookSubmitLabel(saving, editing, labels)}
         </button>
         <button type="button" className="small-button" data-world-book-cancel disabled={saving} onClick={onCancel}>
