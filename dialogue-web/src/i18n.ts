@@ -1143,7 +1143,6 @@ const en = {
   gameConnectionDisconnected: "Disconnected",
 
   gameInstanceNone: "Not running",
-  gameInstanceDetected: "Found, not started",
   gameInstanceLaunching: "Starting…",
   gameInstanceRunning: "Running",
   gameInstanceStopped: "Stopped",
@@ -2268,7 +2267,6 @@ const zh: Messages = {
   gameConnectionDisconnected: "已断开连接",
 
   gameInstanceNone: "未运行",
-  gameInstanceDetected: "已发现，未启动",
   gameInstanceLaunching: "正在启动…",
   gameInstanceRunning: "运行中",
   gameInstanceStopped: "已停止",

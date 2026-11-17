@@ -74,8 +74,6 @@ export function instanceLabel(labels: Messages, instance: GameProjection["instan
   switch (instance.status) {
     case "none":
       return labels.gameInstanceNone;
-    case "detected":
-      return labels.gameInstanceDetected;
     case "launching":
       return labels.gameInstanceLaunching;
     case "running":

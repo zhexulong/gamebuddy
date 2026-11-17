@@ -44,7 +44,7 @@ const baseState = {
   browserSession: { expiresAtMs: 100_000 },
   game: {
     prerequisites: { status: "met", detectedGame: "Stardew Valley" },
-    instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
+    instance: { status: "none" as const, gameTitle: null, generation: 0 },
     compatibility: { status: "compatible" as const, message: null },
     attachment: { status: "none" as const, generation: 0 },
     connectionStatus: "none" as const,
@@ -429,7 +429,7 @@ test("GameBrowserStateV1 rejects prerequisite with extra field", () => {
 
 test("GameBrowserStateV1 accepts all valid instance statuses", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  for (const status of ["none", "detected", "launching", "running", "stopped", "crashed"] as const) {
+  for (const status of ["none", "launching", "running", "stopped", "crashed"] as const) {
     assert.equal(
       validator.Check({
         ...baseState,
@@ -440,6 +440,17 @@ test("GameBrowserStateV1 accepts all valid instance statuses", () => {
   }
 });
 
+test("GameBrowserStateV1 refuses the detected status, which names a game this product does not own", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  assert.equal(
+    validator.Check({
+      ...baseState,
+      game: { ...baseState.game, instance: { status: "detected", gameTitle: "Stardew Valley", generation: 0 } },
+    }),
+    false,
+  );
+});
+
 test("GameBrowserStateV1 rejects instance with path field", () => {
   const validator = Compile(GameBrowserStateV1Schema);
   assert.equal(
@@ -447,7 +458,7 @@ test("GameBrowserStateV1 rejects instance with path field", () => {
       ...baseState,
       game: {
         ...baseState.game,
-        instance: { status: "detected", gameTitle: "Stardew Valley", detectedPath: "E:\\games" },
+        instance: { status: "running", gameTitle: "Stardew Valley", detectedPath: "E:\\games" },
       },
     }),
     false,

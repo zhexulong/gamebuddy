@@ -146,7 +146,6 @@ const PrerequisiteStatus = Type.Union([Type.Literal("unknown"), Type.Literal("me
  */
 const InstanceStatus = Type.Union([
   Type.Literal("none"),
-  Type.Literal("detected"),
   Type.Literal("launching"),
   Type.Literal("running"),
   Type.Literal("stopped"),
@@ -1050,7 +1049,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
       browserSession: { expiresAtMs: 100_000 },
       game: {
         prerequisites: { status: "met" as const, detectedGame: "Stardew Valley" },
-        instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
+        instance: { status: "none" as const, gameTitle: null, generation: 0 },
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "none" as const, generation: 0 },
         connectionStatus: "none" as const,

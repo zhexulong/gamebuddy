@@ -50,7 +50,7 @@ const CONNECTION_STATUSES = [
   "failed",
   "disconnected",
 ];
-const INSTANCE_STATUSES = ["none", "detected", "launching", "running", "stopped", "crashed"];
+const INSTANCE_STATUSES = ["none", "launching", "running", "stopped", "crashed"];
 const COMPATIBILITY_STATUSES = ["unchecked", "compatible", "incompatible", "warning"];
 const ACTION_AUTHORITIES = ["unavailable", "active", "paused"];
 const OUTCOMES = ["none", "succeeded", "failed", "cancelled"];
