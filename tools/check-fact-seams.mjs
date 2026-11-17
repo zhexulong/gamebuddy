@@ -256,6 +256,20 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  {
+    fact: "companion mod outcomes",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "CompanionModOutcome" },
+    readers: [
+      { file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "COMPANION_MOD_OUTCOMES" },
+      { file: "dialogue-web/src/game-presentation.ts", name: "COMPANION_MOD_OUTCOMES" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["CompanionModOutcome", "COMPANION_MOD_OUTCOMES"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
@@ -291,10 +305,6 @@ const mirrorDebt = (fact, authority, readers, extra = {}) => ({
  */
 export const DEBT = Object.freeze([
   // ─── The game contract's vocabularies, mirrored by the composed game client ───
-  mirrorDebt("companion mod outcomes", `${GAME_CONTRACT}:CompanionModOutcome`, [
-    `${GAME_CLIENT}:COMPANION_MOD_OUTCOMES`,
-    "dialogue-web/src/game-presentation.ts:COMPANION_MOD_OUTCOMES",
-  ]),
   // The fact-patch vocabulary. The browser's list and the Host union's discriminant set are two spellings of "which
   // facts can travel", and `check-switch-exhaustiveness` owns the third end of the same fact - that the mapping switch
   // arms every member. A fourth fact added to the union and not to this list is this record's drift.
