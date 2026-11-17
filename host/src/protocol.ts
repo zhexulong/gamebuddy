@@ -4593,6 +4593,130 @@ function argumentRulesFor(action: unknown): readonly ExecutionRequestRequirement
   return isExecutionAction(action) ? EXECUTION_REQUEST_ARGUMENT_RULES[action] : [];
 }
 
+/** What a row of this declaration is allowed to be doing when it reads the snapshot it is judged against. */
+export type ExecutionRequestSnapshotReadBucket = "transport" | "policy" | "game-owned" | "stale-snapshot";
+
+/**
+ * One row that reads a snapshot field, and why that read is not a second authority on the state of the world.
+ *
+ * The three admitted buckets are the three claims a Host-side preflight may make: `transport` (the envelope's own shape, a
+ * field of the request compared with the snapshot it is dispatched against), `policy` (what the Host permits at all), and
+ * `game-owned` (a fact the game thread decides, recorded here only because some reader had to name it). `stale-snapshot` -
+ * a request refused because a cached row is older than the game - is the one bucket this validator may never use, which is
+ * why it is a member rather than an absence: `execution-request-snapshot-authority.test.ts` fails on it by name.
+ */
+export type ExecutionRequestSnapshotRead = Readonly<{
+  /** The row's own `field`. Paired with `shape` it is the row's content identity, so the table cannot drift by position. */
+  field: string;
+  shape: string;
+  bucket: ExecutionRequestSnapshotReadBucket;
+  reason: string;
+}>;
+
+/**
+ * Every row of the two declarations below that reads a snapshot field, and the bucket that read belongs to.
+ *
+ * The population is NOT this table. `execution-request-snapshot-authority.test.ts` walks every row of both declarations with
+ * the snapshot replaced by a recording proxy, so the set of rows that read a snapshot field is measured from the rows
+ * themselves; this table only says which bucket each measured read is in, and an unmeasured entry (a row that stopped
+ * reading) or an unclassified row (a row that started) is red there by name.
+ *
+ * Two rows are admitted. `expectedRevision` compares a field of the request with the revision of the snapshot that request
+ * was built against - `executeGameAction` writes both from the one snapshot it holds, so the comparison cannot fail on
+ * staleness, and the revision a caller actually raced against is compared with the Mod's live one on the game thread.
+ * `capabilities` is the Host's own restrictive projection: the tool surface it mounts and the requests it forwards are
+ * both limited to what the Mod advertised (ADR 635), and whether the action is still ENABLED for this body is the Mod's
+ * own refusal from live policy. Neither is a claim about where a minecart is.
+ */
+export const EXECUTION_REQUEST_SNAPSHOT_READS: readonly ExecutionRequestSnapshotRead[] = Object.freeze([
+  {
+    field: "expectedRevision",
+    shape: "the revision of the snapshot the request is dispatched against",
+    bucket: "transport",
+    reason:
+      "the request's own field, compared with the snapshot that request was constructed from; the caller's revision is judged against the game's live one by the Mod",
+  },
+  {
+    field: "action",
+    shape: "declared in the snapshot's live capabilities",
+    bucket: "policy",
+    reason:
+      "the Host may only forward what its own tool surface advertised, and the Mod still refuses an action its live EnabledActionSet does not offer",
+  },
+]);
+
+/**
+ * One world fact this validator used to decide from a snapshot row, and the game-thread refusal that answers it instead.
+ *
+ * These are the rows that were DELETED rather than refreshed. Each read a discovery family - a minecart at a station, a
+ * raft site, a horse at a tile, a mine entrance, a ladder, a machine's load row - as though the cached projection were the
+ * world. The Mod re-resolves every one of them from live native state before it acts, and answers with a code that names
+ * what it found; the six codes below are read from the Mod's own sources by
+ * `execution-request-snapshot-authority.test.ts`, so this table is a handoff that is checked rather than a comment saying a
+ * handoff happened. `producer` is repo-relative.
+ */
+export type ExecutionRequestWorldFact = Readonly<{
+  action: ExecutionRequest["action"];
+  /** The snapshot field the Host read, and no longer reads, to decide this action. */
+  snapshotField: keyof Snapshot;
+  /** The code the Mod answers with from the live game thread where the Host used to refuse. */
+  gameRefusal: string;
+  /** The Mod source that produces `gameRefusal`. */
+  producer: string;
+  reason: string;
+}>;
+
+export const EXECUTION_REQUEST_WORLD_FACTS_OWED_TO_THE_GAME: readonly ExecutionRequestWorldFact[] = Object.freeze([
+  {
+    action: "ride_minecart",
+    snapshotField: "minecartTargets",
+    gameRefusal: "minecart_target_changed",
+    producer: "integrations/stardew/farmhandexecutioncontroller.minecartactions.cs",
+    reason:
+      "discovery publishes only stations within its radius, so a station the player walked away from and back to is a ride the snapshot does not offer and the level still does",
+  },
+  {
+    action: "use_raft",
+    snapshotField: "raftTargets",
+    gameRefusal: "raft_target_not_water",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "discovery publishes the four cardinal neighbours that are water; the handler's own admission is `isWaterTile` on the live location, which is a wider set than the row that was refusing",
+  },
+  {
+    action: "mount_transport",
+    snapshotField: "horseTargets",
+    gameRefusal: "horse_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveHorseTarget` re-reads the location's own characters by the opaque id, and the mount walks to the horse once it is out of reach",
+  },
+  {
+    action: "enter_mine",
+    snapshotField: "mineEntranceTargets",
+    gameRefusal: "mine_entrance_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveMineEntrance` reads the tile's own `Action` property, so the entrance is a place the actor can walk to, not a row discovery happened to publish inside its radius",
+  },
+  {
+    action: "use_mine_ladder",
+    snapshotField: "mineEntranceTargets",
+    gameRefusal: "mine_exit_ladder_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveMineLadderTarget` re-scans the level's Buildings layer for the exit tile and names the kind it found, which is the one fact the Host could not tell from the shared id family",
+  },
+  {
+    action: "machine_load",
+    snapshotField: "machineTargets",
+    gameRefusal: "machine_load_unsupported_input",
+    producer: "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
+    reason:
+      "discovery publishes the FIRST backpack slot a machine accepts, while `ResolveLoadInput` accepts any slot holding the named item - the row refused a load the machine performs",
+  },
+]);
+
 /**
  * The whole-number ranges one action's arguments pin, in declaration order.
  *
