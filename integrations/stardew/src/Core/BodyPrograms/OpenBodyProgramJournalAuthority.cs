@@ -1418,10 +1418,11 @@ public static class ActionProgramCandidateCodec
     }
     private static bool ReadSelector(JsonElement value, out BodyProgramDestinationSelector? selector)
     {
-        selector = null; if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String) return false;
-        if (kind.GetString() == "label" && Exact(value, "kind", "label") && value.GetProperty("label").ValueKind == JsonValueKind.String) selector = new("label", value.GetProperty("label").GetString(), null);
-        else if (kind.GetString() == "ref" && Exact(value, "kind", "ref") && value.GetProperty("ref").ValueKind == JsonValueKind.String) selector = new("ref", null, value.GetProperty("ref").GetString());
-        return selector is not null && BodyProgramValidation.IsValidSelector(selector);
+        selector = BodyProgramValidation.TryReadSelectorShape(value, out string? kind, out string? label, out string? reference)
+            ? BodyProgramValidation.SelectorFromShape(kind, label, reference)
+            : null;
+        if (selector is not null && !BodyProgramValidation.IsValidSelector(selector)) selector = null;
+        return selector is not null;
     }
     private static bool ReadStringList(JsonElement value, out IReadOnlyList<string>? values) { values = null; if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 8) return false; List<string> result = new(); foreach (JsonElement item in value.EnumerateArray()) if (item.ValueKind != JsonValueKind.String || !BodyProgramValidation.IsIdentifier(item.GetString())) return false; else result.Add(item.GetString()!); values = Array.AsReadOnly(result.ToArray()); return true; }
     private static bool ReadBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings) { bindings = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, ActionProgramBinding> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !Exact(property.Value, "producerNodeId", "factName") || property.Value.GetProperty("producerNodeId").ValueKind != JsonValueKind.String || property.Value.GetProperty("factName").ValueKind != JsonValueKind.String || !result.TryAdd(property.Name, new(property.Value.GetProperty("producerNodeId").GetString()!, property.Value.GetProperty("factName").GetString()!))) return false; } bindings = new ReadOnlyDictionary<string, ActionProgramBinding>(result); return true; }

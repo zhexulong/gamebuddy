@@ -734,11 +734,11 @@ public static class BodyProgramJournalPersistence
 
     private static bool ReadSelector(JsonElement value, out BodyProgramDestinationSelector? selector)
     {
-        selector = null;
-        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String) return false;
-        if (kind.GetString() == "label" && Exact(value, "kind", "label") && value.GetProperty("label").ValueKind == JsonValueKind.String) selector = new("label", value.GetProperty("label").GetString(), null);
-        else if (kind.GetString() == "ref" && Exact(value, "kind", "ref") && value.GetProperty("ref").ValueKind == JsonValueKind.String) selector = new("ref", null, value.GetProperty("ref").GetString());
-        return selector is not null && BodyProgramValidation.IsValidSelector(selector);
+        selector = BodyProgramValidation.TryReadSelectorShape(value, out string? kind, out string? label, out string? reference)
+            ? BodyProgramValidation.SelectorFromShape(kind, label, reference)
+            : null;
+        if (selector is not null && !BodyProgramValidation.IsValidSelector(selector)) selector = null;
+        return selector is not null;
     }
 
     private static bool ReadArrival(JsonElement value, out BodyProgramDestinationArrival? arrival)

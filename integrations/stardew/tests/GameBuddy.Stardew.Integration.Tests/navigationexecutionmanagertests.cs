@@ -861,6 +861,43 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.Commits.Should().Be(1);
     }
 
+    [Fact]
+    public void PersistentPostWarpHold_IsBoundedByOneWindow_AndSettlesInsteadOfHoldingTheBodyForever()
+    {
+        // The body may not be held with no way out. After the first warp the destination reads locked (a hold the fresh
+        // world keeps reporting) while the manager's OWN actionability probe answers true - two readings of one question
+        // that disagree. Every retry inside the window re-read `destination_locked`, and re-arming the window from that
+        // retry meant the window it was supposed to bound could never expire: the navigation kept the body with no
+        // terminal, published nothing, and the caller's ten-minute deadline was the only thing left that could end it.
+        var harness = new PersistentLockHarness();
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_lock_persist", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted, $"{accepted.ReasonCode} / {accepted.Evidence}");
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.Commits.Should().Be(1);
+
+        // The warp lands and the world it lands in is still locked.
+        harness.CompleteWarp("Farm", "Mountain", 2, 2);
+        harness.Armed.Should().HaveCount(1, "a locked read arms nothing");
+        harness.Manager.IsBodySettled.Should().BeFalse("the lineage still owns the body inside its window");
+
+        // Drive well past the window. The window is armed ONCE per warp and its retries do not move it.
+        for (int i = 0; i < 400; i++)
+            harness.Manager.Update();
+
+        LocalExecutionReceipt terminal = harness.Stored("req_lock_persist");
+        terminal.ExecutionId.Should().Be(accepted.ExecutionId);
+        terminal.State.Should().Be(ExecutionState.Rejected);
+        terminal.ReasonCode.Should().Be("destination_locked");
+        harness.Manager.IsBodySettled.Should().BeTrue("an owner that can hold the body must have a way out");
+
+        // And the way out is single: further ticks do not mint a second terminal.
+        for (int i = 0; i < 10; i++)
+            harness.Manager.Update();
+        harness.Stored("req_lock_persist").ReasonCode.Should().Be("destination_locked");
+    }
+
     // ── helpers ──
 
     private static Func<FarmhandCapabilityPublication> Surface()
@@ -1055,6 +1092,142 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         {
             this.Manager.TryGetReceipt(requestId, out LocalExecutionReceipt? receipt).Should().BeTrue();
             return receipt!;
+        }
+    }
+
+    /// <summary>
+    /// A multi-hop navigation whose destination stays LOCKED after the first warp, while the manager's own actionability
+    /// probe keeps answering true. The two readings answer one question differently, which is the state a bound must
+    /// survive: nothing else in the run will ever make that window advance.
+    /// </summary>
+    private sealed class PersistentLockHarness
+    {
+        private readonly PersistentLockWorldSource source;
+
+        internal PersistentLockHarness()
+        {
+            NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+            NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+            this.source = new PersistentLockWorldSource(
+                beforeWarp: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+                afterWarp: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+            this.Manager = new ExecutionManager(new DummyMonitor(), Surface());
+            var references = new NavigationReferenceStore();
+            var destinations = new[]
+            {
+                new NavigationDestination("stardew", "Mine", "Mine", null),
+                new NavigationDestination("stardew", "Mountain", "Mountain", null),
+            };
+            var set = new DerivedDestinationSet("generation_01", new NavigationSourceNode("root", null, null, null, Array.Empty<NavigationSourceNode>()), destinations);
+            this.Manager.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(references, "runtime_01", Scope, () => set, this.source, new PersistentLockConnectivitySource(this.source)));
+            this.Manager.SetNavigationApproachNative(new NavigationApproachNative(
+                (spec, farmer, tick) => { this.Armed.Add(spec); return (true, "accepted"); },
+                (farmer, leg) => new StardewValley.Warp(leg.SourceX, leg.SourceY, leg.TargetLocation, leg.TargetX, leg.TargetY, flipFarmer: false, npcOnly: false),
+                (farmer, warp) => { this.Commits++; },
+                _ => true));
+            this.Manager.SetNavigationLifecycleTestAuthorization(() => true);
+            // The manager's own reading of "may the player act" answers TRUE for the whole window, while the world read
+            // the routing consumes keeps reporting a hold. That disagreement is the state the fixture holds still: the
+            // deferred replan runs on every tick and every run re-reads the lock.
+            this.Manager.SetNavigationPlayerActionableProbe(() => true);
+        }
+
+        internal ExecutionManager Manager { get; }
+
+        internal List<LocalMoveSpec> Armed { get; } = new();
+
+        internal int Commits { get; private set; }
+
+        internal void EmitApproachSucceeded() =>
+            this.Manager.EmitNavigationApproachTransition(ExecutionState.Succeeded, "target_reached", "tile=1,2;target=2,2");
+
+        internal void CompleteWarp(string oldLocation, string newLocation, int newTileX, int newTileY)
+        {
+            this.source.Warp();
+            this.Manager.CompleteNavigationAfterWarp(true, oldLocation, newLocation, newTileX, newTileY);
+        }
+
+        internal LocalExecutionReceipt Stored(string requestId)
+        {
+            this.Manager.TryGetReceipt(requestId, out LocalExecutionReceipt? receipt).Should().BeTrue();
+            return receipt!;
+        }
+    }
+
+    /// <summary>Two views, switched once by the warp: before it the route is open, after it the destination is locked.</summary>
+    private sealed class PersistentLockWorldSource : INavigationWorldSource
+    {
+        private readonly NavigationWorldView beforeWarp;
+        private readonly NavigationWorldView afterWarp;
+        private bool warped;
+
+        internal PersistentLockWorldSource(NavigationWorldView beforeWarp, NavigationWorldView afterWarp)
+        {
+            this.beforeWarp = beforeWarp;
+            this.afterWarp = afterWarp;
+        }
+
+        internal void Warp() => this.warped = true;
+
+        /// <summary>Every leg either view knows, with the location it leaves from: a leg names its source by its entry in
+        /// this list, not by a field, because the wire's leg record carries only the two tiles and the target.</summary>
+        internal IReadOnlyList<(string Source, NavigationTransitionLeg Leg)> AllLegs
+        {
+            get
+            {
+                var legs = new List<(string Source, NavigationTransitionLeg Leg)>();
+                foreach ((string source, NavigationWorldView view) in new[]
+                {
+                    (this.beforeWarp.CurrentSourceLocation ?? "Farm", this.beforeWarp),
+                    (this.afterWarp.CurrentSourceLocation ?? "Mountain", this.afterWarp),
+                })
+                {
+                    foreach (NavigationTransitionLeg leg in view.OrdinaryLegs)
+                        legs.Add((source, leg));
+                }
+
+                return legs;
+            }
+        }
+
+        public NavigationWorldView CurrentView(NavigationDestinationBinding binding) =>
+            this.warped ? this.afterWarp : this.beforeWarp;
+    }
+
+    /// <summary>Connectivity derived from whichever view the world source is reporting, so the two cannot disagree.</summary>
+    private sealed class PersistentLockConnectivitySource : INavigationConnectivitySource
+    {
+        private readonly PersistentLockWorldSource world;
+
+        internal PersistentLockConnectivitySource(PersistentLockWorldSource world) => this.world = world;
+
+        public bool TryCreateCurrentOrdinaryWarpTopology(
+            NavigationDestinationBinding acceptedBinding,
+            out NavigationOrdinaryWarpTopology? topology,
+            out string reasonCode)
+        {
+            // Every leg either view knows about, so the route exists before the warp and the locked read that follows it
+            // is the ONLY thing that changes: the hold, not the map.
+            NavigationWorldView view = this.world.CurrentView(acceptedBinding);
+            string current = view.CurrentSourceLocation ?? "Farm";
+            var sources = new Dictionary<string, List<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                [acceptedBinding.CanonicalDestinationIdentity] = new List<NavigationTransitionLeg>(),
+            };
+            foreach ((string source, NavigationTransitionLeg leg) in this.world.AllLegs)
+            {
+                if (!sources.TryGetValue(source, out List<NavigationTransitionLeg>? from))
+                    sources[source] = from = new List<NavigationTransitionLeg>();
+                from.Add(leg);
+                if (!sources.ContainsKey(leg.TargetLocation))
+                    sources[leg.TargetLocation] = new List<NavigationTransitionLeg>();
+            }
+
+            topology = new NavigationOrdinaryWarpTopology(
+                current,
+                sources.Select(kvp => new NavigationOrdinaryWarpLegs(kvp.Key, kvp.Value)).ToArray());
+            reasonCode = "accepted";
+            return true;
         }
     }
 
