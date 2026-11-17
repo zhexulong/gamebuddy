@@ -108,6 +108,68 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         return ToTerminal(grant, execution, receipt);
     }
 
+    /// <summary>The word the verdict line publishes before the family a step's work consumed, so the Host can count
+    /// what is left of it without a second world read (`fact-brief.ts#remainderSentence`).</summary>
+    internal const string ChoreField = "chore=";
+
+    /// <summary>
+    /// The one family this action's WORK consumes - the family a finished step leaves a remainder in - or null.
+    ///
+    /// <para>
+    /// WHY THIS IS MINTED AT ALL. Measured `round69`: a script of 16 nodes cut six weeds out of a field that has more,
+    /// the settlement said `16/16 步做成了`, and the run then sat idle for 2.8 minutes - because nothing in the answer
+    /// said how much of the same chore was left. The Host can count that remainder from the reading it already holds,
+    /// but it cannot know WHICH family a step consumed: that is this catalogue's declaration, and a table over there
+    /// would be a second spelling of it.
+    /// </para>
+    /// <para>
+    /// `Clears` IS THE OTHER HALF OF THE QUESTION. `TargetFamily` alone names the rows an action addresses, and
+    /// `machine_load` addresses `machineTargets` without finishing anything - "how many machines are left" is not a
+    /// chore anyone gave her. A declaration that says what the swing REMOVES says the tile is one piece of work done,
+    /// and the family says which reading counts the rest of them.
+    /// </para>
+    /// <para>
+    /// IT COSTS NO WORLD READ: both halves are descriptor facts the catalogue already publishes, so the settlement's
+    /// evidence is minted from declarations rather than from a second look at the farm.
+    /// </para>
+    /// </summary>
+    internal static string? ChoreFamilyOf(string? actionId)
+    {
+        if (actionId is null) return null;
+        FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
+        if (descriptor?.Clears is null) return null;
+        return descriptor.TargetFamily is { Length: > 0 } family ? family : null;
+    }
+
+    /// <summary>The verdict line's own suffix for a chore family, or nothing on an action that finishes no chore.</summary>
+    internal static string ChoreSuffix(string? family) => family is null ? string.Empty : $":{ChoreField}{family}";
+
+    /// <summary>
+    /// The ONE chore a pass finished, or null when its rows do not agree on one.
+    ///
+    /// A pass is `by_kind` or an area strip, so its rows can name different actions: a strip through weeds and stones
+    /// removes two kinds of thing and there is no single "what is left of it". The answer is then nothing rather than
+    /// a guess - the settlement says the remainder was not measured, which is the truth.
+    /// </summary>
+    internal static string? PassChoreFamily(FarmhandForEachPassResult pass)
+    {
+        ArgumentNullException.ThrowIfNull(pass);
+        var families = new HashSet<string>(StringComparer.Ordinal);
+        foreach (FarmhandForEachTargetResult row in pass.Targets)
+        {
+            if (row.Outcome != FarmhandForEachTargetOutcome.Succeeded) continue;
+            if (row.Steps is { Count: > 0 } steps)
+            {
+                foreach (FarmhandForEachStepResult step in steps)
+                    if (ChoreFamilyOf(step.ActionId) is { } stepped) families.Add(stepped);
+                continue;
+            }
+            if (ChoreFamilyOf(row.Target?.ActionId) is { } single) families.Add(single);
+        }
+        return families.Count == 1 ? families.First() : null;
+    }
+
     /// <summary>A refusal before any native dispatch: it has a reason and no effect, so it carries the reason only.</summary>
     /// <param name="hint">
     /// What the caller can act on when the reason alone is not enough - a failed `for_each` pass states its counts here,
@@ -383,7 +445,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     facts,
                     receipt.ExecutionId,
                     receipt.Evidence,
-                    $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
+                    $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}{ChoreSuffix(ChoreFamilyOf(grant.ActionId))}");
             case BodyProgramNodeOutcome.Cancelled:
                 // A cancellation is still a settlement, and the receipt that produced one may state why (`Invalidated`
                 // arrives here through the default arm below). Its reason detail belongs on the node; its evidence does
@@ -500,7 +562,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // identity is the lineage a reader needs to find this attempt.
                 LastReceiptId(pass) ?? execution.ExecutionId,
                 aggregate,
-                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}",
+                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(PassChoreFamily(pass))}",
                 DominantReason(pass),
                 FailureHint(pass),
                 FailureDetail(pass));
@@ -512,7 +574,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             // identity is the lineage a reader needs to find this attempt.
             LastReceiptId(pass) ?? execution.ExecutionId,
             aggregate,
-            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}");
+            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}{ChoreSuffix(PassChoreFamily(pass))}");
     }
 
     /// <summary>

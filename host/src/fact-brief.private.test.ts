@@ -1783,3 +1783,203 @@ function dropNotice(rendered: string): { named: readonly string[]; unnamed: numb
   const named = tail.groups?.name === "" ? parts.slice(0, -1) : [...parts.slice(0, -1), tail.groups?.name ?? ""];
   return { named, unnamed: Number(tail.groups?.count) };
 }
+
+/**
+ * A SETTLEMENT THAT SAYS "DONE" AND NEVER SAYS WHAT IS LEFT.
+ *
+ * <p>
+ * Measured `round69` (`tools/_multiday-routine-round69-live-runner.log`): healthy on every reading - `carried 24 ·
+ * consumed 24 · lost 0 · held 0`, `travel_postcondition_mismatch 0`, `due 0`, `nothing_pending 0` - with real work
+ * (`weeds_cut 6`, `crop_harvested 3`, `rock_source_broken`, `worked 6`), one script of 16 nodes, and then **2.8 minutes
+ * idle**: nothing pending, nothing owed, nothing to read. She cleared six weeds out of a field that has more, read
+ * `16/16 步做成了`, and answered "done" - because the one thing every settlement omitted was the remainder of the
+ * chore it had just finished.
+ * </p>
+ *
+ * <p>
+ * THE REMAINDER IS DERIVED, NEVER RE-READ. The population it is taken from is the reading this very message already
+ * carries (`<world-state>`, from the same `Snapshot`), and the tiles to subtract are the ones the settlement's own
+ * node rows prove were worked (`tile` on a single node, the pass's own row table for a `for_each`). No world query is
+ * made to answer it - a second read would disagree with the settlement it sits beside, and the number would be a
+ * different number than the answer it explains. What the Mod must supply is the one thing the Host cannot derive:
+ * WHICH family the step's work consumes, minted into the node's proof as `chore=<family>` (its descriptor's own
+ * `TargetFamily`, a declaration and not a read).
+ * </p>
+ *
+ * <p>
+ * THE PROPERTY IS TWO-SIDED. An answer states the remaining work of its own kind when there is some, and states that
+ * there is none when there is not: a settlement that always says 还有 is as wrong as one that never does, and it is
+ * the second that cost the 2.8 minutes. A third answer is legal and must be NAMED rather than silent - a settlement
+ * composed with no reading, or one whose nodes name no chore, says `还剩多少未测` and why. `silent` counts the
+ * settlements that say nothing at all, and any one of them fails, naming the program.
+ * </p>
+ *
+ * <p>
+ * POPULATION, from the authority: every row family the wire publishes (`TARGET_FAMILY_LABELS`) is settled three ways -
+ * one tile worked out of `ROWS`, every tile worked, and a family the reading does not carry - so a family added
+ * tomorrow is examined without an edit here. Plus the `round69` shape itself (six of twenty) replayed, and the two
+ * unmeasurable shapes.
+ * </p>
+ */
+test("a_settlement_does_not_say_what_is_left: every settlement states its own remainder, or says none", () => {
+  const ROWS = 5;
+  const families = Object.keys(TARGET_FAMILY_LABELS);
+
+  /** A reading that carries `rows` tiles of ONE family, all of them at y=40, spread along x from 80. */
+  const readingWith = (family: string, rows: number) => ({
+    snapshot: {
+      revision: 7,
+      location: "Farm",
+      tile: { x: 80, y: 40 },
+      [family]: Array.from({ length: rows }, (_, index) => ({
+        targetId: `${family}_${String(index)}`,
+        x: 80 + index,
+        y: 40,
+      })),
+    } as unknown as Snapshot,
+    revision: 7,
+    ageTurns: 0,
+    ageMs: 0,
+    contentAgeMs: 0,
+  });
+
+  /** One settled plan whose steps all worked tiles of `family`, on the first `worked` of them. */
+  const settlement = (
+    family: string,
+    worked: number,
+    total: number,
+    programId: string,
+    origin: Readonly<{ x: number; y: number }> = { x: 80, y: 40 },
+  ): WorldFact =>
+    fact({
+      kind: "world_fact",
+      eventId: `program_settled_${programId}`,
+      semanticKind: "program_settled",
+      payload: {
+        total,
+        counts: { succeeded: worked },
+        nodes: Array.from({ length: worked }, (_, index) => ({
+          nodeId: `n${String(index)}`,
+          actionId: "cut_weeds",
+          state: "succeeded",
+          tile: { x: origin.x + index, y: origin.y },
+          postconditionVerification: `route_reentrant_terminal:state=Succeeded:request=r${String(index)}:revision=12:chore=${family}`,
+        })),
+      },
+    });
+
+  const compose = (events: readonly WorldFact[], reading: ReturnType<typeof readingWith> | undefined): string =>
+    composeFactBrief({ inputs: [], snapshot: reading, events, locale: "zh-CN" });
+
+  const examined: string[] = [];
+  const statesRemainder: string[] = [];
+  const saysNone: string[] = [];
+  const saysUnmeasured: string[] = [];
+  const silent: string[] = [];
+
+  /** THE ONE READING OF ONE ANSWER: does it state a remainder, none, or a named cannot-measure - or nothing? */
+  const classify = (
+    programId: string,
+    text: string,
+    family: string | undefined,
+    remaining: number | undefined,
+  ): void => {
+    examined.push(programId);
+    const clause = remainderClause(text);
+    if (clause === undefined) {
+      silent.push(`${programId}:no clause`);
+      return;
+    }
+    if (remaining === undefined) {
+      if (!clause.includes("未测")) silent.push(`${programId}:clause says nothing about what could not be measured`);
+      else saysUnmeasured.push(programId);
+      return;
+    }
+    if (remaining === 0) {
+      if (
+        !clause.includes("没剩") ||
+        (family !== undefined && !clause.includes(TARGET_FAMILY_LABELS[family] ?? family))
+      )
+        silent.push(`${programId}:should say none for ${String(family)}, says ${JSON.stringify(clause)}`);
+      else saysNone.push(programId);
+      return;
+    }
+    if (!clause.includes(`${String(remaining)} 处`)) {
+      silent.push(`${programId}:should state ${String(remaining)} left, says ${JSON.stringify(clause)}`);
+      return;
+    }
+    if (family !== undefined && !clause.includes(TARGET_FAMILY_LABELS[family] ?? family)) {
+      silent.push(`${programId}:does not name the family ${String(family)}, says ${JSON.stringify(clause)}`);
+      return;
+    }
+    statesRemainder.push(programId);
+  };
+
+  for (const family of families) {
+    const label = TARGET_FAMILY_LABELS[family] ?? family;
+    // (a) ONE TILE WORKED OF MANY: the family the plan touched still has `ROWS - 1` in the same reading.
+    classify(
+      `${family}:partial`,
+      compose([settlement(family, 1, 1, `plan_partial_${family}`)], readingWith(family, ROWS)),
+      family,
+      ROWS - 1,
+    );
+    // (b) EVERY TILE WORKED: the reading still shows them all, and the answer must say the chore is finished - the
+    //     falsifier for "a settlement that always says there is more".
+    classify(
+      `${family}:complete`,
+      compose([settlement(family, ROWS, ROWS, `plan_complete_${family}`)], readingWith(family, ROWS)),
+      family,
+      0,
+    );
+    // (c) THE READING DOES NOT CARRY THE FAMILY: it cannot be measured, and saying so is not silence.
+    classify(
+      `${family}:unmeasured`,
+      compose(
+        [settlement(family, 1, 1, `plan_unmeasured_${family}`)],
+        readingWith(family === "harvestTargets" ? "weedTargets" : "harvestTargets", 0),
+      ),
+      undefined,
+      undefined,
+    );
+    // (d) NO READING AT ALL: the same answer, from the other reason.
+    classify(
+      `${family}:no_reading`,
+      compose([settlement(family, 1, 1, `plan_no_reading_${family}`)], undefined),
+      undefined,
+      undefined,
+    );
+    assert.ok(label.length > 0, `the family ${family} has no label, so no sentence could name it`);
+  }
+
+  // (e) THE ROUND69 SHAPE, REPLAYED: six `cut_weeds` nodes out of the twenty weeds this reading carries. That is the
+  //     batch whose `16/16 步做成了` cost 2.8 idle minutes, and the remainder is what it never said.
+  const round69 = compose([settlement("weedTargets", 6, 16, "plan_round69", { x: 60, y: 15 })], {
+    snapshot: world,
+    revision: 1205,
+    ageTurns: 0,
+    ageMs: 0,
+    contentAgeMs: 0,
+  });
+  const round69Clause = remainderClause(round69);
+  classify("round69", round69, "weedTargets", 14);
+
+  const report =
+    `settlements examined ${String(examined.length)} · states-the-remainder ${String(statesRemainder.length)} · ` +
+    `says-none ${String(saysNone.length)} · says-unmeasured ${String(saysUnmeasured.length)} · silent ${String(silent.length)}`;
+  assert.ok(examined.length > 0, `${report} - an empty population agrees with itself`);
+  assert.deepEqual(silent, [], `${report}\nthese settlements never say what is left: ${silent.join("; ")}`);
+  assert.ok(statesRemainder.length > 0 && saysNone.length > 0, `${report} - both polarities must be produced`);
+  assert.ok(
+    round69Clause?.includes("(68,15)") === true,
+    `the remainder must say WHERE the work is, not only how much; the clause is ${JSON.stringify(round69Clause)}`,
+  );
+});
+
+/** The remainder clause of one composed answer, or undefined when the answer has none. */
+function remainderClause(text: string): string | undefined {
+  const at = text.indexOf("剩下的：");
+  if (at < 0) return undefined;
+  const end = text.indexOf("\n", at);
+  return text.slice(at, end < 0 ? undefined : end);
+}
