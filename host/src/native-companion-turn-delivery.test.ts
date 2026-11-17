@@ -411,6 +411,8 @@ type DeliveryObservation = Readonly<{
   answer: unknown;
   /** Did the turn itself settle? A delivery inside a turn that never ended is not a delivery. */
   settled: boolean;
+  /** How many bubbles the presentation sink actually received, when the case can read it. */
+  presented?: number;
 }>;
 
 /** The names a withheld delivery may carry: the projection's closed list, plus the loop's own no-lease member. */
@@ -597,7 +599,7 @@ test("turn_withheld_entirely_never_settles: every delivery names what reached th
       new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
     ]);
     assert.ok(nextOpened, "the turn after a withheld one must still be owed and delivered");
-    return Object.freeze({ site: site, answer, settled });
+    return Object.freeze({ site: site, answer, settled, presented: presented.length });
   };
   observations.push(
     await pumpAfter("all_withheld", ["*转过身微笑*"], function player_input(loop) {
@@ -648,6 +650,18 @@ test("turn_withheld_entirely_never_settles: every delivery names what reached th
   // H FIRST, SO A FAILURE NAMES THE SITE THAT HUNG rather than only the coverage gap it left behind.
   assert.deepEqual(tallied.findings, [], `every delivery must settle and name its answer: ${tallied.line}`);
   assert.equal(tallied.hung, 0, tallied.line);
+  // THE ANSWER AND THE SINK ARE READ TOGETHER: `delivered: 1` that never reached `onFinalText` would name something that
+  // did not happen, and `delivered: 0` that still presented would be a bubble nobody accounted for.
+  for (const observation of observations) {
+    if (observation.presented === undefined) continue;
+    const answer = typeof observation.answer === "object" && observation.answer !== null ? observation.answer : {};
+    const counted = (answer as { delivered?: unknown }).delivered === 1 ? 1 : 0;
+    assert.equal(
+      observation.presented,
+      counted,
+      `${observation.site}: the delivery answer and the presentation sink disagree`,
+    );
+  }
   // THE POPULATION IS THE AUTHORITY: every member of the closed lists must have been driven, so this gate cannot pass by
   // examining a subset somebody remembered.
   const examined = new Set(
