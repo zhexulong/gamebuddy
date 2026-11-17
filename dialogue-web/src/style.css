@@ -5106,11 +5106,10 @@
 
   /* The red edge a field carries while the player's own press has said it is the one that is
    missing something. It is stated from `aria-invalid` rather than from a second class name, so the
-   fact the screen reader is told and the fact the eye is shown are one attribute. */
-  [data-companion-world-book-entry-draft] .form-input[aria-invalid="true"],
-  [data-companion-world-book-entry-draft] .form-textarea[aria-invalid="true"],
-  [data-world-book-draft] .form-input[aria-invalid="true"],
-  [data-world-book-draft] .form-textarea[aria-invalid="true"] {
+   fact the screen reader is told and the fact the eye is shown are one attribute - and every form
+   that marks a field from its press reads this one declaration. */
+  .form-input[aria-invalid="true"],
+  .form-textarea[aria-invalid="true"] {
     border-color: var(--danger);
   }
 

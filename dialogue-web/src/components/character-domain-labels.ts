@@ -186,6 +186,13 @@ export type CharacterLabels = Readonly<{
   newCompanionTitle: string;
   newCompanionHint: string;
   newCompanionCreate: string;
+  /**
+   * What a field says when the player presses a save that cannot be honoured and that field is the
+   * one still empty. The rule is the durable validator's own required fields, and the sentences
+   * exist so the press NAMES the field instead of greying the control out, which stated the
+   * refusal and named nothing.
+   */
+  newCompanionNameRequired: string;
 
   voiceTitle: string;
   voiceHint: string;
@@ -194,6 +201,7 @@ export type CharacterLabels = Readonly<{
   voiceEditedByYou: string;
   voiceText: string;
   voiceSave: string;
+  voiceTextRequired: string;
   voiceClear: string;
   voiceAdd: string;
   voiceCancel: string;
@@ -225,6 +233,7 @@ export type CharacterLabels = Readonly<{
   personaAbsent: string;
   personaPresent: string;
   personaSave: string;
+  personaNameRequired: string;
 
   scenarioTitle: string;
   scenarioHint: string;
@@ -232,6 +241,8 @@ export type CharacterLabels = Readonly<{
   scenarioDescription: string;
   scenarioAbsent: string;
   scenarioSave: string;
+  scenarioNameRequired: string;
+  scenarioDescriptionRequired: string;
 
   openingTitle: string;
   openingHint: string;
@@ -619,6 +630,7 @@ const en: CharacterLabels = Object.freeze({
   newCompanionTitle: "New companion",
   newCompanionHint: "A display name only; GameBuddy mints every identity.",
   newCompanionCreate: "Create companion",
+  newCompanionNameRequired: "Give her a display name before creating her.",
 
   voiceTitle: "Performance directive",
   voiceHint:
@@ -629,6 +641,7 @@ const en: CharacterLabels = Object.freeze({
   voiceEditedByYou: "Edited by you",
   voiceText: "Directive",
   voiceSave: "Save directive",
+  voiceTextRequired: "Write the direction before saving it.",
   voiceClear: "Clear directive",
   voiceAdd: "Add a performance directive",
   voiceCancel: "Cancel",
@@ -658,6 +671,7 @@ const en: CharacterLabels = Object.freeze({
   personaAbsent: "No persona saved yet.",
   personaPresent: "Saved",
   personaSave: "Save persona",
+  personaNameRequired: "Your persona needs a display name before it can be kept.",
 
   scenarioTitle: "Scenario",
   scenarioHint: "The setting your companion assumes.",
@@ -665,6 +679,8 @@ const en: CharacterLabels = Object.freeze({
   scenarioDescription: "Scenario",
   scenarioAbsent: "No scenario saved yet.",
   scenarioSave: "Save scenario",
+  scenarioNameRequired: "This scenario needs a name before it can be kept.",
+  scenarioDescriptionRequired: "This scenario needs its setting before it can be kept.",
 
   openingTitle: "Opening",
   openingHint: "The first message this character can open a chat with. You choose one when a chat starts.",
@@ -955,6 +971,7 @@ const zh: CharacterLabels = Object.freeze({
   newCompanionTitle: "新建伙伴",
   newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
   newCompanionCreate: "创建伙伴",
+  newCompanionNameRequired: "先给她一个显示名称，才能创建。",
 
   voiceTitle: "演出指导",
   voiceHint:
@@ -964,6 +981,7 @@ const zh: CharacterLabels = Object.freeze({
   voiceEditedByYou: "你已修改",
   voiceText: "指令内容",
   voiceSave: "保存指令",
+  voiceTextRequired: "写点什么，再保存这段演出指导。",
   voiceClear: "清除指令",
   voiceAdd: "添加演出指导",
   voiceCancel: "取消",
@@ -992,6 +1010,7 @@ const zh: CharacterLabels = Object.freeze({
   personaAbsent: "还没有保存用户设定。",
   personaPresent: "已设置",
   personaSave: "保存用户设定",
+  personaNameRequired: "用户设定还没有显示名称，存不下来。",
 
   scenarioTitle: "场景",
   scenarioHint: "伙伴所假设的情境。",
@@ -999,6 +1018,8 @@ const zh: CharacterLabels = Object.freeze({
   scenarioDescription: "场景文本",
   scenarioAbsent: "还没有保存场景。",
   scenarioSave: "保存场景",
+  scenarioNameRequired: "这个场景还没有名称，存不下来。",
+  scenarioDescriptionRequired: "这个场景还没有情境内容，存不下来。",
 
   openingTitle: "开场白",
   openingHint: "该角色用于开始对话的第一句话；开始新对话时你可以选择其中一个。",

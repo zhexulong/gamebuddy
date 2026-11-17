@@ -18,6 +18,7 @@ import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionExamplesSection } from "./CompanionExamplesSection";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { fieldError, firstFieldAtFault } from "./field-error";
 import { isImeProcessingKey } from "./ime-composition";
 import { useChoiceDraft, useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
 
@@ -26,6 +27,72 @@ type SaveNotice = "saved" | Readonly<{ failure: string }> | null;
 
 /** The companion directive's own save outcome, which also has a cleared state. */
 type VoiceNotice = "saved" | "cleared" | Readonly<{ failure: string }> | null;
+
+/**
+ * The id one field of one of her profile forms carries.
+ *
+ * The label's `htmlFor`, the control's own id and the press's "put the keyboard on the field that is
+ * missing something" are one string, so it is written once: two spellings of an id is a focus that
+ * lands on nothing.
+ */
+function profileFieldId(form: "new-companion" | "character-voice" | "persona" | "scenario", field: string): string {
+  return `${form}-${field}`;
+}
+
+/**
+ * The fields each of her profile forms requires, in the order the form draws them - which is the
+ * order a press walks when it looks for the first field that is missing something
+ * (`firstFieldAtFault`). Each list is the durable validator's own required set: a companion needs a
+ * display name, a directive needs its words, a persona needs a display name (its description is
+ * optional), and a scenario needs both.
+ */
+const NEW_COMPANION_REQUIRED_FIELDS = ["name"] as const;
+const VOICE_REQUIRED_FIELDS = ["text"] as const;
+const PERSONA_REQUIRED_FIELDS = ["name"] as const;
+const SCENARIO_REQUIRED_FIELDS = ["name", "description"] as const;
+
+/**
+ * One profile form's press, and the two facts it produces.
+ *
+ * A save the Host would refuse is not a reason to take the control away: a greyed button states a
+ * refusal and names nothing, so a player who cleared the one required field saw a dead control, no
+ * sentence, no focus, and no way to learn which field it meant. The press is always offered. When
+ * something is missing it marks every field that is - the field's own red edge, and a sentence under
+ * it saying what it needs - and puts the keyboard on the first of them, in the order the form draws
+ * them. When nothing is missing the save goes out, and a Host that refuses it answers in its own
+ * words.
+ *
+ * `marked` gates the sentences only: the problems themselves are recomputed from the draft on every
+ * render, so a field the player fixes loses its sentence as she types it rather than on the next
+ * press - and nothing is painted before a press said so.
+ */
+function useFieldPress<Field extends string>(fields: readonly Field[]) {
+  const [showProblems, setShowProblems] = useState(false);
+  // Focus is requested through state because the sentence is rendered in the same press, so the
+  // layout settles first.
+  const [focusRequest, setFocusRequest] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusRequest === null) return;
+    document.getElementById(focusRequest)?.focus();
+    setFocusRequest(null);
+  }, [focusRequest]);
+
+  return {
+    marked: (problems: Readonly<Record<Field, string | null>>) => (showProblems ? problems : null),
+    /** Whether the press may go out; when it may not, it has just said what to fill in. */
+    press: (problems: Readonly<Record<Field, string | null>>, fieldId: (field: Field) => string): boolean => {
+      const atFault = firstFieldAtFault([problems], fields);
+      if (atFault === null) {
+        setShowProblems(false);
+        return true;
+      }
+      setShowProblems(true);
+      setFocusRequest(fieldId(atFault.field));
+      return false;
+    },
+  };
+}
 
 /**
  * The companion directive's view state. `ready` carries the durable read-back;
@@ -246,6 +313,41 @@ export function CharactersPanel({
     openingText.variants,
   );
 
+  /*
+   * What each of her profile forms is still missing, in the player's words, and the press that says
+   * it. Both are read from the draft on every render, so a sentence clears as the field it is about
+   * is filled - the list of required fields is `NEW_COMPANION_REQUIRED_FIELDS` and its three
+   * siblings above.
+   */
+  const newCompanionProblems = {
+    name: createName.value.trim().length === 0 ? labels.newCompanionNameRequired : null,
+  };
+  const voiceProblems = { text: voiceText.value.trim().length === 0 ? labels.voiceTextRequired : null };
+  const personaProblems = { name: personaName.value.trim().length === 0 ? labels.personaNameRequired : null };
+  const scenarioProblems = {
+    name: scenarioName.value.trim().length === 0 ? labels.scenarioNameRequired : null,
+    description: scenarioDescription.value.trim().length === 0 ? labels.scenarioDescriptionRequired : null,
+  };
+  const newCompanionPress = useFieldPress(NEW_COMPANION_REQUIRED_FIELDS);
+  const voicePress = useFieldPress(VOICE_REQUIRED_FIELDS);
+  const personaPress = useFieldPress(PERSONA_REQUIRED_FIELDS);
+  const scenarioPress = useFieldPress(SCENARIO_REQUIRED_FIELDS);
+  const newCompanionShown = newCompanionPress.marked(newCompanionProblems);
+  const voiceShown = voicePress.marked(voiceProblems);
+  const personaShown = personaPress.marked(personaProblems);
+  const scenarioShown = scenarioPress.marked(scenarioProblems);
+  const newCompanionNameError = fieldError(
+    newCompanionShown?.name ?? null,
+    `${profileFieldId("new-companion", "name")}-problem`,
+  );
+  const voiceTextError = fieldError(voiceShown?.text ?? null, `${profileFieldId("character-voice", "text")}-problem`);
+  const personaNameError = fieldError(personaShown?.name ?? null, `${profileFieldId("persona", "name")}-problem`);
+  const scenarioNameError = fieldError(scenarioShown?.name ?? null, `${profileFieldId("scenario", "name")}-problem`);
+  const scenarioDescriptionError = fieldError(
+    scenarioShown?.description ?? null,
+    `${profileFieldId("scenario", "description")}-problem`,
+  );
+
   const activeRef = useRef(true);
   /*
    * The companion whose choice this surface recorded, and the row in flight's handle.
@@ -370,8 +472,8 @@ export function CharactersPanel({
 
   const handleSaveVoice = async (): Promise<void> => {
     if (voice.kind !== "ready" || mountedHandle === null || voiceSaving || voiceClearing) return;
+    if (!voicePress.press(voiceProblems, (field) => profileFieldId("character-voice", field))) return;
     const text = voiceText.value.trim();
-    if (text.length === 0) return;
     setVoiceSaving(true);
     setVoiceNotice(null);
     try {
@@ -468,8 +570,9 @@ export function CharactersPanel({
   };
 
   const handleCreate = async (): Promise<void> => {
+    if (creating) return;
+    if (!newCompanionPress.press(newCompanionProblems, (field) => profileFieldId("new-companion", field))) return;
     const name = createName.value.trim();
-    if (name.length === 0 || creating) return;
     setCreating(true);
     setCreateNotice(null);
     try {
@@ -489,6 +592,7 @@ export function CharactersPanel({
 
   const handleSavePersona = async (): Promise<void> => {
     if (personaSaving || persona === "loading" || persona === "unavailable") return;
+    if (!personaPress.press(personaProblems, (field) => profileFieldId("persona", field))) return;
     const current = persona.present ? persona.revision : 0;
     setPersonaSaving(true);
     setPersonaNotice(null);
@@ -537,6 +641,7 @@ export function CharactersPanel({
 
   const handleSaveScenario = async (): Promise<void> => {
     if (scenarioSaving || scenario === "loading" || scenario === "unavailable") return;
+    if (!scenarioPress.press(scenarioProblems, (field) => profileFieldId("scenario", field))) return;
     const current = scenario.present ? scenario.revision : 0;
     setScenarioSaving(true);
     setScenarioNotice(null);
@@ -767,9 +872,12 @@ export function CharactersPanel({
             <p className="management-settings-hint">{labels.newCompanionHint}</p>
             <div className="composer-actions">
               <input
+                id={profileFieldId("new-companion", "name")}
                 type="text"
                 className="form-input"
                 aria-label={labels.newCompanionTitle}
+                aria-invalid={newCompanionNameError.invalid}
+                aria-describedby={newCompanionNameError.describedBy}
                 value={createName.value}
                 maxLength={128}
                 onChange={(event) => createName.type(event.target.value)}
@@ -781,12 +889,18 @@ export function CharactersPanel({
               <button
                 type="button"
                 className="small-button"
-                disabled={creating || createName.value.trim().length === 0}
+                data-new-companion-create
+                disabled={creating}
                 onClick={() => void handleCreate()}
               >
                 {creating ? labels.saving : labels.newCompanionCreate}
               </button>
             </div>
+            {newCompanionShown?.name == null ? null : (
+              <p role="status" className="error-banner" id={newCompanionNameError.id} data-character-field-problem>
+                {newCompanionShown.name}
+              </p>
+            )}
             {removedName !== null && (
               <p role="status" className="success-banner" data-companion-removed>
                 {labels.companionDeleted.replace("{{name}}", removedName)}
@@ -833,23 +947,32 @@ export function CharactersPanel({
                   <p data-character-voice-source>
                     {voice.value.characterVoice.source === "card" ? labels.voiceFromCard : labels.voiceEditedByYou}
                   </p>
-                  <label className="management-settings-label" htmlFor="character-voice-text">
-                    {labels.voiceText}
-                  </label>
-                  <textarea
-                    id="character-voice-text"
-                    className="form-textarea"
-                    rows={4}
-                    maxLength={8192}
-                    value={voiceText.value}
-                    onChange={(event) => voiceText.type(event.target.value)}
-                  />
+                  <div>
+                    <label className="management-settings-label" htmlFor={profileFieldId("character-voice", "text")}>
+                      {labels.voiceText}
+                    </label>
+                    <textarea
+                      id={profileFieldId("character-voice", "text")}
+                      className="form-textarea"
+                      rows={4}
+                      maxLength={8192}
+                      aria-invalid={voiceTextError.invalid}
+                      aria-describedby={voiceTextError.describedBy}
+                      value={voiceText.value}
+                      onChange={(event) => voiceText.type(event.target.value)}
+                    />
+                    {voiceShown?.text == null ? null : (
+                      <p role="status" className="error-banner" id={voiceTextError.id} data-character-field-problem>
+                        {voiceShown.text}
+                      </p>
+                    )}
+                  </div>
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
                       data-character-voice-save
-                      disabled={voiceSaving || voiceClearing || voiceText.value.trim().length === 0}
+                      disabled={voiceSaving || voiceClearing}
                       onClick={() => void handleSaveVoice()}
                     >
                       {voiceSaving ? labels.saving : labels.voiceSave}
@@ -903,23 +1026,32 @@ export function CharactersPanel({
                 </>
               ) : voiceAdding.value ? (
                 <>
-                  <label className="management-settings-label" htmlFor="character-voice-text">
-                    {labels.voiceText}
-                  </label>
-                  <textarea
-                    id="character-voice-text"
-                    className="form-textarea"
-                    rows={4}
-                    maxLength={8192}
-                    value={voiceText.value}
-                    onChange={(event) => voiceText.type(event.target.value)}
-                  />
+                  <div>
+                    <label className="management-settings-label" htmlFor={profileFieldId("character-voice", "text")}>
+                      {labels.voiceText}
+                    </label>
+                    <textarea
+                      id={profileFieldId("character-voice", "text")}
+                      className="form-textarea"
+                      rows={4}
+                      maxLength={8192}
+                      aria-invalid={voiceTextError.invalid}
+                      aria-describedby={voiceTextError.describedBy}
+                      value={voiceText.value}
+                      onChange={(event) => voiceText.type(event.target.value)}
+                    />
+                    {voiceShown?.text == null ? null : (
+                      <p role="status" className="error-banner" id={voiceTextError.id} data-character-field-problem>
+                        {voiceShown.text}
+                      </p>
+                    )}
+                  </div>
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
                       data-character-voice-save
-                      disabled={voiceSaving || voiceText.value.trim().length === 0}
+                      disabled={voiceSaving}
                       onClick={() => void handleSaveVoice()}
                     >
                       {voiceSaving ? labels.saving : labels.voiceSave}
@@ -990,22 +1122,31 @@ export function CharactersPanel({
               )}
               {persona !== "loading" && (
                 <>
-                  <label className="management-settings-label" htmlFor="persona-name">
-                    {labels.personaName}
-                  </label>
-                  <input
-                    id="persona-name"
-                    type="text"
-                    className="form-input"
-                    value={personaName.value}
-                    maxLength={128}
-                    onChange={(event) => personaName.type(event.target.value)}
-                  />
-                  <label className="management-settings-label" htmlFor="persona-description">
+                  <div>
+                    <label className="management-settings-label" htmlFor={profileFieldId("persona", "name")}>
+                      {labels.personaName}
+                    </label>
+                    <input
+                      id={profileFieldId("persona", "name")}
+                      type="text"
+                      className="form-input"
+                      aria-invalid={personaNameError.invalid}
+                      aria-describedby={personaNameError.describedBy}
+                      value={personaName.value}
+                      maxLength={128}
+                      onChange={(event) => personaName.type(event.target.value)}
+                    />
+                    {personaShown?.name == null ? null : (
+                      <p role="status" className="error-banner" id={personaNameError.id} data-character-field-problem>
+                        {personaShown.name}
+                      </p>
+                    )}
+                  </div>
+                  <label className="management-settings-label" htmlFor={profileFieldId("persona", "description")}>
                     {labels.personaDescription}
                   </label>
                   <textarea
-                    id="persona-description"
+                    id={profileFieldId("persona", "description")}
                     className="form-textarea"
                     rows={4}
                     value={personaDescription.value}
@@ -1016,7 +1157,8 @@ export function CharactersPanel({
                     <button
                       type="button"
                       className="small-button"
-                      disabled={personaSaving || personaName.value.trim().length === 0}
+                      data-persona-save
+                      disabled={personaSaving}
                       onClick={() => void handleSavePersona()}
                     >
                       {personaSaving ? labels.saving : labels.personaSave}
@@ -1043,37 +1185,57 @@ export function CharactersPanel({
               ) : null}
               {scenario !== "loading" && (
                 <>
-                  <label className="management-settings-label" htmlFor="scenario-name">
-                    {labels.scenarioName}
-                  </label>
-                  <input
-                    id="scenario-name"
-                    type="text"
-                    className="form-input"
-                    value={scenarioName.value}
-                    maxLength={128}
-                    onChange={(event) => scenarioName.type(event.target.value)}
-                  />
-                  <label className="management-settings-label" htmlFor="scenario-description">
-                    {labels.scenarioDescription}
-                  </label>
-                  <textarea
-                    id="scenario-description"
-                    className="form-textarea"
-                    rows={4}
-                    value={scenarioDescription.value}
-                    maxLength={8192}
-                    onChange={(event) => scenarioDescription.type(event.target.value)}
-                  />
+                  <div>
+                    <label className="management-settings-label" htmlFor={profileFieldId("scenario", "name")}>
+                      {labels.scenarioName}
+                    </label>
+                    <input
+                      id={profileFieldId("scenario", "name")}
+                      type="text"
+                      className="form-input"
+                      aria-invalid={scenarioNameError.invalid}
+                      aria-describedby={scenarioNameError.describedBy}
+                      value={scenarioName.value}
+                      maxLength={128}
+                      onChange={(event) => scenarioName.type(event.target.value)}
+                    />
+                    {scenarioShown?.name == null ? null : (
+                      <p role="status" className="error-banner" id={scenarioNameError.id} data-character-field-problem>
+                        {scenarioShown.name}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="management-settings-label" htmlFor={profileFieldId("scenario", "description")}>
+                      {labels.scenarioDescription}
+                    </label>
+                    <textarea
+                      id={profileFieldId("scenario", "description")}
+                      className="form-textarea"
+                      rows={4}
+                      aria-invalid={scenarioDescriptionError.invalid}
+                      aria-describedby={scenarioDescriptionError.describedBy}
+                      value={scenarioDescription.value}
+                      maxLength={8192}
+                      onChange={(event) => scenarioDescription.type(event.target.value)}
+                    />
+                    {scenarioShown?.description == null ? null : (
+                      <p
+                        role="status"
+                        className="error-banner"
+                        id={scenarioDescriptionError.id}
+                        data-character-field-problem
+                      >
+                        {scenarioShown.description}
+                      </p>
+                    )}
+                  </div>
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
-                      disabled={
-                        scenarioSaving ||
-                        scenarioName.value.trim().length === 0 ||
-                        scenarioDescription.value.trim().length === 0
-                      }
+                      data-scenario-save
+                      disabled={scenarioSaving}
                       onClick={() => void handleSaveScenario()}
                     >
                       {scenarioSaving ? labels.saving : labels.scenarioSave}
