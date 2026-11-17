@@ -878,30 +878,23 @@ export class CompanionLoop {
       // whose text the bubble had to fit, named so "28 messages arrived as 27 bubbles" is visible rather than inferred.
       // The bubble's own answer rides here: the bubble when one left, and the NAME of the withholding when none did, so a
       // turn that produced nothing presentable is a stated ending in the run's own log rather than `bubbles: 0`.
-      if (assistantTextParts > 0 || (turnDelivery?.delivered ?? 0) > 0) {
+      if (writesTurnDeliveryRecord(turnDelivery, assistantTextParts)) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
+        const delivered = deliveredBubbles(turnDelivery);
         // THE BUBBLE'S OWN ACCOUNT, taken before the record is written because it is read from what the turn ended
         // with; `bubbleNotDeliveredAccount` says what counts as a bubble that never arrived, and why it may name ONE
         // reason even when several layers withheld the turn's parts.
-        const suppressedBubbles = bubbleNotDeliveredAccount(
-          suppressedByReason,
-          turnDelivery?.delivered ?? 0,
-          assistantTextParts,
-        );
+        const suppressedBubbles = bubbleNotDeliveredAccount(suppressedByReason, delivered, assistantTextParts);
         process.stderr.write(
           `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify({
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
-            bubbles: turnDelivery?.delivered ?? 0,
+            bubbles: delivered,
             suppressedBubbles,
             messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
-            ...(turnDelivery === undefined
-              ? {}
-              : turnDelivery.delivered === 1
-                ? { bubble: turnDelivery.bubble }
-                : { withheld: turnDelivery.reason }),
+            ...turnDeliveryOutcome(turnDelivery),
           })}\n`,
         );
         const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
@@ -1081,6 +1074,34 @@ function opensPresentationLease(kind: string | undefined): boolean {
     kind === "night_ended_pass_out" ||
     kind === "program_settled"
   );
+}
+
+/**
+ * What the turn's bubble answer contributes to its delivery record: the bubble when one left, and the NAME of the
+ * withholding when none did.
+ *
+ * `deliverTurn` used to answer `null` for five different endings, so this record had nothing to print but `bubbles: 0`.
+ * The spread is a function because the nested choice is a decision the record's writer should not have to make three
+ * levels deep inside a template literal.
+ */
+function turnDeliveryOutcome(turnDelivery: CompanionTurnDelivery | undefined): Readonly<Record<string, unknown>> {
+  if (turnDelivery === undefined) return Object.freeze({});
+  return turnDelivery.delivered === 1
+    ? Object.freeze({ bubble: turnDelivery.bubble })
+    : Object.freeze({ withheld: turnDelivery.reason });
+}
+
+/** The bubble count the turn answered with, in the unit the player experienced: zero or one. */
+function deliveredBubbles(turnDelivery: CompanionTurnDelivery | undefined): number {
+  return turnDelivery?.delivered ?? 0;
+}
+
+/** Does this turn have a delivery record at all: text to account for, or a bubble that arrived without any? */
+function writesTurnDeliveryRecord(
+  turnDelivery: CompanionTurnDelivery | undefined,
+  assistantTextParts: number,
+): boolean {
+  return assistantTextParts > 0 || deliveredBubbles(turnDelivery) > 0;
 }
 
 /**
