@@ -209,7 +209,6 @@ const CANCELLING_STATES = Object.freeze(["stopping", "cancelling"]);
  */
 const CONTENTION_PROBLEM_CODES = Object.freeze([
   "turn_busy",
-  "selection_busy",
   "idempotency_in_progress",
   "idempotency_conflict",
   "draft_conflict",

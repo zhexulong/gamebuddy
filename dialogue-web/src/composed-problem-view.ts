@@ -35,7 +35,7 @@ import { ReferencePipelineSessionError } from "./reference-pipeline-session";
  *    mirror does not learn fails there, and the mirror cannot then grow a code with no sentence
  *    without failing here.
  *  - **the unit is a family, not a code.** Codes that state the same fact and ask the same next step
- *    share one sentence (the ten "this changed while you were editing" refusals, the four "still
+ *    share one sentence (the ten "this changed while you were editing" refusals, the three "still
  *    running" ones, the five "that is not there any more" ones ...); codes whose meaning differs
  *    keep their own, because a shared sentence that is only true for some of its members is the same
  *    defect one level down.
@@ -282,10 +282,10 @@ const chatSwipeLastVariant: ProblemSentence = (labels) =>
 const revisionConflict: ProblemSentence = (labels) =>
   sentence(labels.problemRevisionConflictTitle, labels.problemRevisionConflictDetail, RETRY_READ);
 
-// --- Four one-at-a-time refusals ----------------------------------------------------------------
+// --- Three one-at-a-time refusals ---------------------------------------------------------------
 
 /**
- * A turn, a selection change, a dialogue activation or the same request is already in progress.
+ * A turn, a dialogue activation or the same request is already in progress.
  */
 const stillRunning: ProblemSentence = (labels) =>
   sentence(labels.problemStillRunningTitle, labels.problemStillRunningDetail, HOST_RETRIES);
@@ -526,7 +526,6 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   world_info_revision_conflict: revisionConflict,
 
   turn_busy: stillRunning,
-  selection_busy: stillRunning,
   dialogue_busy: stillRunning,
   idempotency_in_progress: stillRunning,
 

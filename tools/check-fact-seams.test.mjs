@@ -7,6 +7,12 @@
  * pattern matches itself. So the red proofs read the committed bytes at the revision before each fix and assert the
  * finding the gate would have printed there.
  *
+ * red-proof: history On `88e7e6e9^` the gate reports `fact_seam_underived:desktop-composition-ack` for the launcher's
+ *   nine-key list against the Host's eleven-key frame; on `25de4e8f` it reports `fact_declared_unproduced:` for the two
+ *   create-world codes no host source produced. Both are replayed out of the committed bytes in this suite.
+ * red-proof: inject A mirrored vocabulary in a copied tree gains one member the other end does not have ->
+ *   `fact_seam_drift:<fact>` names that member.
+ *
  * What each proof reads, and why it is enough:
  *   `88e7e6e9^`  the launcher as it shipped, beside the Host file that writes the frame, and NOT the shape file the
  *                fix added - that absence is the defect.
@@ -224,7 +230,7 @@ test("red proof: the two game.create refusals are declared and unproduced at 25d
   }
 });
 
-test("red proof: the same two codes are produced on this tree, and the four tavern orphans are the ones recorded", () => {
+test("red proof: the same two codes are produced on this tree, and the three tavern orphans are the ones recorded", () => {
   const report = evaluate(REPO);
   const unproduced = report.codes.unproduced.map((entry) => entry.code);
   assert.deepEqual(
@@ -232,12 +238,7 @@ test("red proof: the same two codes are produced on this tree, and the four tave
     [],
     "the fix that gave the create route its two arms is what moved these out of the finding",
   );
-  assert.deepEqual(unproduced.sort(), [
-    "presentation_unavailable",
-    "selection_busy",
-    "turn_already_terminal",
-    "turn_not_active",
-  ]);
+  assert.deepEqual(unproduced.sort(), ["presentation_unavailable", "turn_already_terminal", "turn_not_active"]);
 });
 
 test("mutation: one member added to a mirrored list is a drift, not a silent difference", () => {

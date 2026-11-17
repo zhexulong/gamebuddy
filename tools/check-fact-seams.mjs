@@ -1282,28 +1282,24 @@ export const KEY_SEQUENCES = Object.freeze([
  */
 export const UNPRODUCED_DEBT = Object.freeze([
   {
-    code: "selection_busy",
-    declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason:
-      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route: either dead vocabulary or a refusal answered through a name this reader cannot see",
-    owner: "the tavern contract lane",
-  },
-  {
     code: "turn_not_active",
     declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason: "as `selection_busy`: declared, mirrored, worded, and sent by nobody",
+    reason:
+      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route",
     owner: "the tavern contract lane",
   },
   {
     code: "turn_already_terminal",
     declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason: "as `selection_busy`: declared, mirrored, worded, and sent by nobody",
+    reason:
+      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route",
     owner: "the tavern contract lane",
   },
   {
     code: "presentation_unavailable",
     declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason: "as `selection_busy`: declared, mirrored, worded, and sent by nobody",
+    reason:
+      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route",
     owner: "the tavern contract lane",
   },
 ]);

@@ -1463,7 +1463,6 @@ const PROBLEM_CODES = [
   "idempotency_expired",
   "turn_busy",
   "stream_resync_required",
-  "selection_busy",
   "turn_not_active",
   "turn_already_terminal",
   "runtime_unavailable",

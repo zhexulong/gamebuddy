@@ -508,7 +508,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // Regeneration learning to re-ask a reply that is not the transcript's tail moved it 70 to 71:
   // `chat_regenerate_anchor_unavailable` is the one way that press is refused - the delete removes a
   // line alone and clears every reply's parent with it, so the question her reply answered is gone.
-  assert.equal(tavern.size, 71, `the tavern problem union should have 71 members, read ${tavern.size}`);
+  // `selection_busy` left it 71 to 70: ADR-0010 made selecting another Chat a focus transfer that aborts
+  // the running turn, so no route can refuse a selection for being busy (a concurrent selection transition
+  // is `selection_conflict`, and the residual answer is the `turn_in_flight` STATUS of the success union).
+  assert.equal(tavern.size, 70, `the tavern problem union should have 70 members, read ${tavern.size}`);
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no
