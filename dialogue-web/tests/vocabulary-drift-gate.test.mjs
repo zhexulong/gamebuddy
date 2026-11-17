@@ -95,7 +95,12 @@ export const GAME_MIRROR_FILES = [join(WEB, "composed-reference-game-browser-api
  *    schema helper - a vocabulary the contract spells as an object's keys rather than as a union
  *    of literals (`WorldInfoStateV1Schema`) - and `within` names one property of that shape whose
  *    own object shape is the one meant;
- *  - with neither, the named const is itself a `Type.Union([Type.Literal(...)])`.
+ *  - with neither, the named const is itself a `Type.Union([Type.Literal(...)])` - or a frozen list
+ *    of strings, which is the same vocabulary stated as a value the schema is derived from.
+ *
+ * Two optional fields move a vocabulary off the two request/response mirrors: `file` on the locator
+ * names the Host module that OWNS the list when the contract only restates it, and `mirrorFile` on
+ * the entry names the one browser module that declares it.
  */
 export const MIRRORED_VOCABULARIES = [
   { mirror: "MESSAGE_ROLES", contract: { name: "BrowserMessageV1Schema", property: "role" } },
@@ -134,6 +139,15 @@ export const MIRRORED_VOCABULARIES = [
   // `TAVERN_PI_API_SHAPES` by `host/src/tavern/browser-contract/index.private.test.ts` (a shape Pi cannot
   // speak must never reach the runtime's provider entry), and the mirror is pinned to the contract here.
   { mirror: "CONNECTION_API_SHAPES", contract: { name: "TavernConnectionApiShapeV1Schema" } },
+  // Why a field this product recognises is not sent. The code is the Host's (`preset-sampling.ts`
+  // states the four reasons and the sentence beside each), the panel shows the player a line in their
+  // own language, and a code the surface has no line for is refused by name - so a code added to the
+  // Host alone turns a legal readout into a refusal.
+  {
+    mirror: "PRESET_NOT_APPLIED_CODES",
+    mirrorFile: join(WEB, "preset-assembly-surface.ts"),
+    contract: { file: "host/src/tavern/preset-sampling.ts", name: "PRESET_NOT_APPLIED_CODES" },
+  },
 ];
 
 /**
@@ -165,6 +179,26 @@ export const GAME_MIRRORED_VOCABULARIES = [
   { mirror: "COMPANION_MOD_OUTCOMES", contract: { name: "CompanionModOutcome" } },
   { mirror: "GAME_FACTS", contract: { name: "GameFactPatchV1Schema", discriminant: "fact" } },
 ];
+
+/** The browser module(s) a vocabulary is declared in: the two mirrors, unless the entry names its own. */
+function mirrorFilesOf(entry) {
+  return entry.mirrorFile === undefined ? MIRROR_FILES : [entry.mirrorFile];
+}
+
+/** The file the authority declaration lives in: the tavern contract, unless the locator names another. */
+function authorityFileOf(locator) {
+  return locator.file === undefined ? CONTRACT : join(REPO, locator.file);
+}
+
+/**
+ * The members a declaration spells. `Type.Literal("x")` inside a TypeBox union and a plain string in a
+ * frozen list are the same vocabulary - the second is what such a union is derived FROM - so one
+ * reading serves both.
+ */
+function membersOf(scope) {
+  const literals = literalValues(scope);
+  return literals.length > 0 ? literals : stringValues(scope);
+}
 
 function sourceOf(file) {
   const cached = SOURCE_CACHE.get(file);
@@ -258,7 +292,7 @@ function unionArms(declaration) {
 }
 
 /** The contract's declared members of one vocabulary, read out of the contract's own source. */
-export function contractVocabulary(locator, contract = CONTRACT) {
+export function contractVocabulary(locator, contract = authorityFileOf(locator)) {
   const sourceFile = sourceOf(contract);
   const members = new Set();
   for (const declaration of declarationsNamed(sourceFile, locator.name)) {
@@ -266,7 +300,7 @@ export function contractVocabulary(locator, contract = CONTRACT) {
       for (const arm of unionArms(declaration))
         for (const armDeclaration of declarationsNamed(sourceFile, arm))
           for (const property of propertiesNamed(armDeclaration, locator.discriminant))
-            for (const value of literalValues(property)) members.add(value);
+            for (const value of membersOf(property)) members.add(value);
       continue;
     }
     if (locator.properties === true) {
@@ -276,7 +310,7 @@ export function contractVocabulary(locator, contract = CONTRACT) {
       continue;
     }
     const scopes = locator.property === undefined ? [declaration] : propertiesNamed(declaration, locator.property);
-    for (const scope of scopes) for (const value of literalValues(scope)) members.add(value);
+    for (const scope of scopes) for (const value of membersOf(scope)) members.add(value);
   }
   return members;
 }
@@ -347,6 +381,12 @@ test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t
     const owned = declared.filter((name) => mirrorVocabulary(file, name) !== null);
     assert.ok(owned.length >= 5, `${mirrorName(file)} declares only ${owned.length} gated vocabulary/vocabularies`);
   }
+  // Every vocabulary is declared somewhere: an entry whose mirror name no file spells holds nothing.
+  for (const entry of MIRRORED_VOCABULARIES)
+    assert.ok(
+      mirrorFilesOf(entry).some((file) => mirrorVocabulary(file, entry.mirror) !== null),
+      `no file declares ${entry.mirror}, so this rule holds nothing for it`,
+    );
   t.diagnostic(
     `vocabulary-drift.1: ${MIRRORED_VOCABULARIES.length} contract vocabulary/vocabularies derived from the contract source; ${MIRROR_FILES.map((file) => `${mirrorName(file)}:${declared.filter((name) => mirrorVocabulary(file, name) !== null).length}`).join(", ")}; excluded by name: ${EXCLUDED_VOCABULARIES.join(", ")}`,
   );
@@ -355,8 +395,8 @@ test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t
 test("vocabulary-drift.2: every mirror IS the contract's vocabulary, not a stale copy of it", (t) => {
   const failures = [];
   let mirrored = 0;
-  for (const file of MIRROR_FILES) {
-    for (const entry of MIRRORED_VOCABULARIES) {
+  for (const entry of MIRRORED_VOCABULARIES) {
+    for (const file of mirrorFilesOf(entry)) {
       const declared = mirrorVocabulary(file, entry.mirror);
       if (declared === null) continue;
       mirrored += declared.size;
@@ -364,7 +404,7 @@ test("vocabulary-drift.2: every mirror IS the contract's vocabulary, not a stale
     }
   }
   t.diagnostic(
-    `vocabulary-drift.2: ${mirrored} mirrored member(s) across ${MIRROR_FILES.length} mirror(s) checked for equality against ${MIRRORED_VOCABULARIES.length} contract declaration(s), ${failures.length} drifted`,
+    `vocabulary-drift.2: ${mirrored} mirrored member(s) across ${new Set(MIRRORED_VOCABULARIES.flatMap((entry) => mirrorFilesOf(entry).map(mirrorName))).size} mirror file(s) checked for equality against ${MIRRORED_VOCABULARIES.length} contract declaration(s), ${failures.length} drifted`,
   );
   assert.deepEqual(
     failures,

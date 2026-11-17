@@ -319,6 +319,19 @@ export const SEAMS = Object.freeze([
     },
     owner: "the connection panel lane",
   },
+  {
+    fact: "preset not-applied codes",
+    authority: { file: "host/src/tavern/preset-sampling.ts", name: "PRESET_NOT_APPLIED_CODES" },
+    readers: [{ file: "dialogue-web/src/preset-assembly-surface.ts", name: "PRESET_NOT_APPLIED_CODES" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      // The two ends spell the symbol the same way, so the record names the mirror's own FILE as its
+      // second half: a reader that stopped naming that file is what makes this record stale.
+      symbols: ["PRESET_NOT_APPLIED_CODES", "preset-assembly-surface.ts"],
+    },
+    owner: "the preset assembly lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -378,9 +391,6 @@ export const DEBT = Object.freeze([
     `${TAVERN_CONTRACT}:TavernConnectionThinkingLevelV1Schema`,
     "dialogue-web/src/components/management-panels.tsx:MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS",
     `${MANAGEMENT_CLIENT}:CONNECTION_THINKING_LEVELS`,
-  ]),
-  mirrorDebt("preset not-applied codes", "host/src/tavern/preset-sampling.ts:PRESET_NOT_APPLIED_CODES", [
-    "dialogue-web/src/preset-assembly-surface.ts:PRESET_NOT_APPLIED_CODES",
   ]),
 
   // ─── The Host's own vocabularies, restated by the harnesses and the audits ───
