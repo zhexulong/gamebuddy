@@ -31,22 +31,26 @@ import type { ComposedBootstrap } from "./use-composed-bootstrap";
  * sentence then. It is taken whenever the conversation is shown again, so activating a connection
  * in Settings clears the surface's own sentence without a reload.
  *
- * The Game surface needs the same reread, and it is taken here rather than in `GameSurface` because
- * the composed root is the shell's own projection: every fact the panel renders - the connection,
- * the instance, the world and save, the last result - is that root's Game half, and the Host moves
- * it while another surface is open (a resume converging, a farm loading, a world ending). Measured
- * 2026-10-31 before this read existed: the panel read `Connection No game connection / Last result
- * No activity yet` and, after the Host had moved to an attached session while the player was on
- * the conversation, still read exactly that on the way back - the whole journey paid one `/state`
- * read, none of them on arrival.
+ * The Game surface needs the same reread, and it is taken here rather than in `GameSurface` because the composed root is
+ * the shell's own projection: every fact the panel renders - the connection, the instance, the world and save, the last
+ * result - is that root's Game half, and the Host moves it while another surface is open (a resume converging, a farm
+ * loading, a world ending). Measured 2026-10-31 before this read existed: the panel read `Connection No game connection`
+ * and `Last result No activity yet` and, after the Host had moved to an attached session while the player was on the
+ * conversation, still read exactly that on the way back - the whole journey paid one `/state` read, none of them on
+ * arrival.
+ *
+ * It reads the GAME's own route, never the aggregate. That root is the authority for the Game half, but it answers the
+ * whole conversation beside it: measured on a 200-message Chat, 45 392 B of which 44 734 B was the Chat half and 658 B
+ * the game's, on every arrival. `readGameState` (`GET …/game`) is the same Game projection from the same Host seam, so
+ * the slice cannot drift, and it costs the game's own bytes. The Chat half is not this read's subject: the conversation
+ * has its own arrival read below, and the one thing this read used to do to it - `applySnapshot(root.chat)` - was a Game
+ * arrival rewriting a conversation nobody switched to.
  *
  * It is deliberately NOT `GameSurface`'s own `rereadGame`: that is the authoritative path a Game
  * operation takes, and it is the operation's state machine the arrival must not touch - the surface
  * keeps a resume the player is watching in flight across the switch, and an arrival read that went
- * through its handlers could land in that attempt. The preview is not what separates them: both reads
- * keep a reply that is still streaming, because the preview belongs to the turn it was built from and
- * neither read may spend it while that turn runs. An arrival is a read and a commit; the preview is
- * left exactly where the stream put it.
+ * through its handlers could land in that attempt. The read is the same one; the difference is that
+ * an arrival is a read and a commit of the Game slice, and nothing else.
  *
  * A failed arrival read keeps the projection the shell already holds and states the refusal
  * instead, on BOTH surfaces: the projection was valid when the player switched, so replacing the
@@ -100,12 +104,14 @@ export function useArrivalReread(
     }
     if (shownSurface !== GAME_PANEL) return;
     void composedApiRef.current
-      .readState()
-      .then((root) => {
+      .readGameState()
+      .then((game) => {
         const current = viewRef.current;
         if (current.kind !== "ready") return;
         setGameArrivalNotice(null);
-        commit({ ...current, root, session: current.session.applySnapshot(root.chat) });
+        // The Game slice, and only the Game slice: a Game arrival is not a Chat read, so the two
+        // projections it does not own are carried over from the view that is current when the read LANDS.
+        commit({ ...current, root: { ...current.root, game } });
       })
       .catch((error: unknown) => setGameArrivalNotice(problemView(error, messages(localeRef.current)).detail));
   }, [shownSurface, commit]);

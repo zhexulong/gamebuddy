@@ -10,7 +10,7 @@ import { expect, test, type Page } from "./frontend-coverage";
  * was reading the conversation came back to `Connection No game connection` / `Last result No
  * activity yet`, and paid one `/state` read for the whole trip - none of them on arrival.
  *
- * The fix re-reads the composed root on arrival at the Game surface too, and commits it. It is
+ * The fix re-reads the Game projection on arrival at the Game surface too, and commits it. It is
  * deliberately NOT `GameSurface`'s own `rereadGame`: that is the state machine a Game *operation*
  * runs, and an arrival must not land inside an attempt the player is watching (the third test is that
  * invariant). The streaming preview is no longer what separates the two reads - both keep a reply
@@ -18,6 +18,13 @@ import { expect, test, type Page } from "./frontend-coverage";
  * that rule. What the arrival read must not do either way is erase the reply, which is what the full
  * `rereadGame` read did on the journey below: `previewAfterSwitch=0`, where the read-and-commit left
  * it at 1, exactly where the unfixed shell left it. The second test is that invariant.
+ *
+ * The read is `GET …/game`, the Game slice's own route, and this file is where that is pinned: the
+ * aggregate it used to read answers the whole conversation beside the game's few hundred bytes
+ * (measured on a 200-message Chat: 45 392 B per arrival, of which 44 734 B was the Chat half and 658 B
+ * the game's), and committing it also rewrote the Chat half - a Game arrival editing a conversation
+ * nobody had switched to. So the journey asserts BOTH halves of the exchange: the arrival pays one
+ * `/game` read, and no `/state` read crosses the boundary for it.
  */
 
 const token = "A".repeat(43);
@@ -106,12 +113,22 @@ function composedRoot(state: HostState) {
 }
 
 /** The Host's routes, answered from one mutable record so a journey can move it mid-run. */
-async function stubHost(page: Page, state: HostState): Promise<{ stateReads: () => number }> {
+async function stubHost(
+  page: Page,
+  state: HostState,
+): Promise<{ stateReads: () => number; gameReads: () => number }> {
   let stateReads = 0;
+  let gameReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot(state))));
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
     return route.fulfill(jsonOk(composedRoot(state)));
+  });
+  // The Game surface's own read, which is the ONE an arrival at that surface takes: the game slice and never the
+  // conversation beside it. Counted separately from `/state` so a journey can tell the two routes apart.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => {
+    gameReads += 1;
+    return route.fulfill(jsonOk(composedRoot(state).game));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -119,7 +136,19 @@ async function stubHost(page: Page, state: HostState): Promise<{ stateReads: () 
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
-  return { stateReads: () => stateReads };
+  return { stateReads: () => stateReads, gameReads: () => gameReads };
+}
+
+/**
+ * The conversation's own arrival read, waited for before a Game arrival is measured.
+ *
+ * The two surfaces take different routes, so a baseline taken while the conversation's `/state` is still in
+ * flight would be a reading of the wrong number: this waits for the read the Chat arrival really made.
+ */
+async function arriveAtChat(page: Page, host: Awaited<ReturnType<typeof stubHost>>): Promise<void> {
+  const before = host.stateReads();
+  await openChat(page);
+  await expect.poll(() => host.stateReads(), "the Chat arrival reads the aggregate").toBe(before + 1);
 }
 
 /**
@@ -191,8 +220,8 @@ test("arriving at the Game surface shows the Host's current projection, not the 
 
   // The player goes back to the conversation, and the Host starts a session while they are there -
   // no Game control is touched, which is the case the always-mounted design could not see.
-  await openChat(page);
-  const readsBeforeReturn = host.stateReads();
+  await arriveAtChat(page, host);
+  const readsBeforeReturn = { state: host.stateReads(), game: host.gameReads() };
   state.connectionStatus = "connected_idle";
   state.attachmentStatus = "attached";
   state.attachmentGeneration = 3;
@@ -202,23 +231,29 @@ test("arriving at the Game surface shows the Host's current projection, not the 
 
   // Back on the Game surface, every fact the panel shows is the Host's current answer. Before the
   // arrival read these assertions were the reported defect: the panel still read `No game
-  // connection` and `No activity yet`, and the journey had paid no `/state` read on the way back.
+  // connection` and `No activity yet`, and the journey had paid no read on the way back.
   await openGame(page);
   await expect(panel).toContainText("ConnectionConnected");
   await expect(panel).toContainText("Last resultCompleted successfully");
   await expect(panel).not.toContainText("ConnectionNo game connection");
-  // One read per arrival, never a timer behind it: the arrival is exactly the one the journey paid.
-  expect(host.stateReads()).toBe(readsBeforeReturn + 1);
+  // One read per arrival, and it is the GAME's own: the panel's facts come from `GET …/game`, never from
+  // the aggregate that carries the whole conversation beside them.
+  expect(host.gameReads(), "the arrival is the game slice's own read").toBe(readsBeforeReturn.game + 1);
+  expect(
+    host.stateReads(),
+    "and no aggregate read crosses the boundary for a Game arrival - the conversation is not this surface's subject",
+  ).toBe(readsBeforeReturn.state);
 
   // And it is not a one-way door: leaving and coming back reads again, so a second move lands too.
-  await openChat(page);
-  const readsBeforeSecondReturn = host.stateReads();
+  await arriveAtChat(page, host);
+  const readsBeforeSecondReturn = { state: host.stateReads(), game: host.gameReads() };
   state.connectionStatus = "disconnected";
   state.latestOutcome = "failed";
   await openGame(page);
   await expect(panel).toContainText("ConnectionDisconnected");
   await expect(panel).toContainText("Last resultDid not complete");
-  expect(host.stateReads()).toBe(readsBeforeSecondReturn + 1);
+  expect(host.gameReads()).toBe(readsBeforeSecondReturn.game + 1);
+  expect(host.stateReads()).toBe(readsBeforeSecondReturn.state);
 });
 
 /**
@@ -344,9 +379,11 @@ test("a failed Game arrival read keeps the projection on screen and says why", a
   };
   let stateHealthy = true;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot(state))));
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+  // The arrival's read is the game slice's, so the refusal the journey measures is that route's.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot(state))));
+  await page.route("**/api/composed-reference-game/v1/game", (route) =>
     stateHealthy
-      ? route.fulfill(jsonOk(composedRoot(state)))
+      ? route.fulfill(jsonOk(composedRoot(state).game))
       : route.fulfill({
           status: 500,
           contentType: "application/json",
@@ -384,9 +421,8 @@ test("a failed Game arrival read keeps the projection on screen and says why", a
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("GameBuddy could not read or settle the game's own state just now.");
 
-  // The next arrival refresh that succeeds spends the notice and carries the move. The Host has to
-  // answer again before the player leaves, because the conversation's own arrival read is the one
-  // that carries the Chat half of this same move.
+  // The next arrival refresh that succeeds spends the notice and carries the move: the read is the
+  // game's own, so one answer from `GET …/game` is the whole move this surface shows.
   stateHealthy = true;
   await openChat(page);
   await openGame(page);
