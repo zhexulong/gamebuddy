@@ -125,12 +125,14 @@ const en = {
   // player with the task manager as the one thing that matches the words.
   gameLaunchQuarantined:
     "This launch failed, and the lock it left is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - the restart is what frees the game from the attempt that failed.",
-  // The same quarantined launch, without the failure claim: the Guardian reported the game's
-  // process exiting with the OS's normal-termination code, so the player ended the game and the
-  // panel says that instead of telling them it failed. The step is identical because the
-  // quarantine is.
+  // The same dead end without the failure claim, for the ending the Guardian really reported
+  // (`instance.status: stopped`, `playerHostExitCode`). The one fact that tells the two apart is
+  // the exit the Host published, and it changes one thing in the sentence: a reported exit is a
+  // game that is gone, so "if it is still running, close it" would send the player to look for a
+  // process that does not exist. The clause stays in the sentence above, where the launch's
+  // outcome is unknown and the game may well still be running.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in, and the lock it leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - the restart is what frees the game from that attempt.",
+    "Stardew Valley ended before your companion moved in, and the lock that ending leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. Quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - restarting GameBuddy is what allows another launch of the game.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -267,6 +269,8 @@ const en = {
   memoryChapterRemove: "Remove",
   memoryChapterSave: "Save",
   memoryChapterCancel: "Cancel",
+  /** What the correction's own press says when the field it cannot honour is empty. */
+  memoryChapterRequired: "A chapter needs its words before it can be kept.",
   // The Memory panel's origin filter. One chip, one dimension, and the two
   // origin chips reuse the row labels above: the filter never needs its own
   // vocabulary for the same split.
@@ -951,10 +955,12 @@ const en = {
   // The game process itself ended. Unlike the row above, this is not "unknown": the Host's
   // Guardian watched the process end and reported the code the OS gave it, so the player is
   // told what happened and what the next step is, instead of being invited to retry a read
-  // against a game that is no longer running.
+  // against a game that is no longer running. The code arrives from the cabin read and from a
+  // launch refused behind an ended attempt, so the sentence states the ending and the step only -
+  // the cabins belong to the handoff's own words, not to a launch's refusal.
   gameProblemPlayerHostExitedTitle: "The game ended",
   gameProblemPlayerHostExitedDetail:
-    "Stardew Valley ended while your companion was moving in, so there were no cabins to read. Restart GameBuddy to start the game again.",
+    "Stardew Valley ended, so this launch is over and will not be repeated. The ending stays recorded inside GameBuddy's own process: no control on this page frees it, and reloading the page does not either. Quit GameBuddy itself from its tray icon (Quit GameBuddy), open it again, and another launch can begin.",
   gameInstanceExited: "Ended (exit code {{code}})",
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
@@ -1530,7 +1536,7 @@ const zh: Messages = {
   gameLaunchQuarantined:
     "这次启动失败了，它留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重新启动才会把这个游戏从那一次失败的尝试里释放出来。",
   gameEndedQuarantined:
-    "《星露谷物语》在伙伴搬进农场前就退出了，它留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重新启动才会把这个游戏从那一次尝试里释放出来。",
+    "《星露谷物语》在伙伴搬进农场前就退出了，这个结局留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。请从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重启 GameBuddy 才能再启动一次游戏。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
@@ -1626,6 +1632,7 @@ const zh: Messages = {
   memoryChapterRemove: "移除",
   memoryChapterSave: "保存",
   memoryChapterCancel: "取消",
+  memoryChapterRequired: "这一章还没有内容，存不下来。",
   memoryFilterAll: "全部",
   memorySearch: "查找一条记忆",
   memorySearchEmpty: "这里没有符合的内容。",
@@ -2096,10 +2103,11 @@ const zh: Messages = {
 
   // 游戏进程本身已经退出。与上一条不同，这不是“不知道”：Host 的 Guardian 看着进程结束，
   // 并报告了系统给出的退出代码，所以这里直接告诉玩家发生了什么、下一步做什么，
-  // 而不是让他对着一个已经不在运行的游戏反复重试。
+  // 而不是让他对着一个已经不在运行的游戏反复重试。这个代码既来自读小屋，
+  // 也来自一次被已结束的尝试拒绝的启动，所以句子只说“结局”和“下一步”，不提小屋。
   gameProblemPlayerHostExitedTitle: "游戏已退出",
   gameProblemPlayerHostExitedDetail:
-    "伙伴搬进农场时，《星露谷物语》已经退出，因此读不到可选的农舍。请重启 GameBuddy，再启动游戏。",
+    "《星露谷物语》已经退出，所以这次启动到此为止，不会再重来。这个结局一直记在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新页面也不行。请从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），重新打开，才能再启动一次游戏。",
   gameInstanceExited: "已退出（退出代码 {{code}}）",
   gameProblemCabinMissingTitle: "这个农场还没有伙伴可住的小屋",
   gameProblemCabinMissingDetail:

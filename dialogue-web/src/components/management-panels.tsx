@@ -27,6 +27,56 @@ import { isImeProcessingKey, preventImeFormSubmit } from "./ime-composition";
 import { useChoiceDraft, useDraft, useDraftOverAuthority, useOpenDraft, type DraftField } from "./surface-drafts";
 
 /**
+ * One required field's press, and the sentence it says when the press cannot go out.
+ *
+ * Memory's three authoring editors hold one field each, so the question the world book's two forms
+ * answer with `firstFieldAtFault` - which field does the press land on? - has exactly one answer
+ * here, and this is that answer: the field the press is about is marked (`aria-invalid` from
+ * `fieldError`, so the sentence is announced as well as painted) and takes the keyboard. The rule
+ * behind it is the world book's, not a second one: a save the Host would refuse is not a reason to
+ * take the control away, because a greyed button states a refusal and names nothing.
+ *
+ * `marked` gates the sentence only: the problem is recomputed from the draft on every render, so a
+ * field the player fills loses its sentence as she types it rather than on the next press.
+ */
+function useRequiredField() {
+  const [showProblem, setShowProblem] = useState(false);
+  // Focus is requested through state because the sentence is rendered in the same press, so the
+  // layout settles first.
+  const [focusRequest, setFocusRequest] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (focusRequest === null) return;
+    document.getElementById(focusRequest)?.focus();
+    setFocusRequest(null);
+  }, [focusRequest]);
+
+  return {
+    marked: (message: string | null) => (showProblem ? message : null),
+    /** Whether the press may go out; when it may not, it has just said what to fill in. */
+    press: (message: string | null, fieldId: string): boolean => {
+      if (message === null) {
+        setShowProblem(false);
+        return true;
+      }
+      setShowProblem(true);
+      setFocusRequest(fieldId);
+      return false;
+    },
+    /** A different record was opened in the same editor: the last press's sentence is not about it. */
+    reset: () => setShowProblem(false),
+  };
+}
+
+/**
+ * The id a chapter's own correction field carries: the field's id and the press's focus target are
+ * one string, because two spellings of an id is a focus that lands on nothing.
+ */
+function memoryChapterFieldId(handle: string): string {
+  return `memory-chapter-correct-${handle}`;
+}
+
+/**
  * The management panels (design/26 §4.2, design/28 §2), moved out of
  * ManagementApp so the composed player shell composes the same components
  * instead of re-implementing them. Nothing here decides capability: every panel
@@ -1618,6 +1668,15 @@ export function MemoryPanel({
   // refusal is a fact about one request rather than the player's words, so it stays with the mount.
   const [chapterRefusal, setChapterRefusal] = useState<string | null>(null);
   const [chapterSaving, setChapterSaving] = useState(false);
+  /*
+   * What the correction's press says when the field it is about is empty. Only one chapter is being
+   * corrected at a time, so this press state belongs to the panel rather than to the row; the field
+   * the sentence is about is named by the open chapter's own id.
+   */
+  const chapterPress = useRequiredField();
+  const chapterProblem = chapterPress.marked(
+    chapterDraft.value.trim().length === 0 ? labels.memoryChapterRequired : null,
+  );
   const needle = search.trim().toLowerCase();
   const visibleRows = rows.filter(
     (item) =>
@@ -1679,8 +1738,12 @@ export function MemoryPanel({
               // was a chapter she had written at all: the correction had overwritten the lifecycle.
               const lifecycle = chapter.status === "deleted" ? labels.memoryChapterDeleted : labels.memoryChapterSealed;
               // One correction per row: the message id names the row's own handle, so two chapters refused
-              // together do not both describe the first one.
-              const correctionError = fieldError(chapterRefusal, `memory-chapter-refusal-${chapter.handle}`);
+              // together do not both describe the first one. It is the field's one sentence either way -
+              // what the press found missing, or what the Host answered.
+              const correctionError = fieldError(
+                chapterProblem ?? chapterRefusal,
+                `memory-chapter-refusal-${chapter.handle}`,
+              );
               return (
                 <li key={chapter.handle} className="memory-chapter" data-memory-chapter={chapter.status}>
                   <div className="memory-chapter-head">
@@ -1703,15 +1766,26 @@ export function MemoryPanel({
                   </div>
                   {correctingHandle === chapter.handle ? (
                     <div className="memory-chapter-correct">
-                      <textarea
-                        className="form-textarea"
-                        aria-label={labels.memoryChapterEdit}
-                        aria-invalid={correctionError.invalid}
-                        aria-describedby={correctionError.describedBy}
-                        value={chapterDraft.value}
-                        onChange={(event) => chapterDraft.type(event.target.value)}
-                        rows={3}
-                      />
+                      <div>
+                        <textarea
+                          id={memoryChapterFieldId(chapter.handle)}
+                          className="form-textarea"
+                          aria-label={labels.memoryChapterEdit}
+                          aria-invalid={correctionError.invalid}
+                          aria-describedby={correctionError.describedBy}
+                          value={chapterDraft.value}
+                          onChange={(event) => chapterDraft.type(event.target.value)}
+                          rows={3}
+                        />
+                        {/* What the press says when it cannot be honoured, under the field it is
+                              about: the words stay where they were typed, and a chapter with no words
+                              is named rather than the control being withdrawn. */}
+                        {chapterProblem === null ? null : (
+                          <p role="status" className="error-banner" id={correctionError.id} data-memory-chapter-problem>
+                            {chapterProblem}
+                          </p>
+                        )}
+                      </div>
                       {/* The refusal sits under the draft it is about: the words stay in the
                             field, and the correction closes only once the Host kept it. */}
                       {chapterRefusal !== null && (
@@ -1723,8 +1797,19 @@ export function MemoryPanel({
                         <button
                           type="button"
                           className="small-button"
-                          disabled={chapterSaving || chapterDraft.value.trim().length === 0}
+                          data-memory-chapter-save
+                          disabled={chapterSaving}
                           onClick={() => {
+                            // This press is a new attempt, so the last answer's sentence is not about
+                            // it - and a field has one sentence on screen at a time.
+                            setChapterRefusal(null);
+                            if (
+                              !chapterPress.press(
+                                chapterDraft.value.trim().length === 0 ? labels.memoryChapterRequired : null,
+                                memoryChapterFieldId(chapter.handle),
+                              )
+                            )
+                              return;
                             const sent = chapterDraft.value;
                             setChapterSaving(true);
                             void (async () => {
@@ -1762,6 +1847,7 @@ export function MemoryPanel({
                           onClick={() => {
                             setChapterRefusal(null);
                             chapterDraft.clear();
+                            chapterPress.reset();
                             chapterEditOpen.clear();
                           }}
                         >
@@ -1784,6 +1870,7 @@ export function MemoryPanel({
                         className="small-button"
                         onClick={() => {
                           setChapterRefusal(null);
+                          chapterPress.reset();
                           chapterEditOpen.type(chapter.handle);
                         }}
                       >
