@@ -7,6 +7,9 @@ import {
   worldStateStaleCode,
   worldStateStaleThreshold,
 } from "./fact-brief.js";
+// Which facts the player's surface can show: the ONE reading the loop's own admission reads too (`presentation-lease.ts`),
+// so "this fact can present" cannot be true in one layer and false in the other.
+import { presentationSourceOf } from "./presentation-lease.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./program-settlement-digest.js";
 // The programme's own state is one of the two authorities that decide whether her work is alive
 // (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
@@ -23,9 +26,6 @@ import {
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
 import { evidenceDetailOf, evidenceField } from "./stardew-action-remedy.js";
-// Which facts the player's surface can show: the ONE reading the loop's own admission reads too (`presentation-lease.ts`),
-// so "this fact can present" cannot be true in one layer and false in the other.
-import { presentationSourceOf } from "./presentation-lease.js";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
@@ -303,6 +303,12 @@ type NotOwedCause = FlushDecision<NotOwedReason> & Readonly<{ shape?: string }>;
  * been told, the fact was a step of a programme she dispatched, the fact was progress she has not been shown, or there was
  * nothing at all. What changed is the unit, and the unit was the defect.
  * </p>
+ * <p>
+ * ONE MEMBER IS NEW, AND IT IS THE TURN'S SHAPE RATHER THAN A FACT'S: `plan_still_running` is the answer while her own
+ * plan still has nodes to get through, and it exists for the measurement this list could not previously state - `follow_up`
+ * went 9 -> 65 between `round42` and `round60` while a turn went from 8.2 model steps to 2.0 (see the member). The other
+ * six answer "is this fact news"; this one answers "is now the moment".
+ * </p>
  */
 export const NOT_OWED = Object.freeze({
   /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
@@ -345,6 +351,34 @@ export const NOT_OWED = Object.freeze({
    * </p>
    */
   noSurface: "no_surface_for",
+  /**
+   * The flush held news she may open a turn for, and her OWN PLAN still has nodes to get through: the answer that plan
+   * is about to give is the batch this news travels in.
+   *
+   * <p>
+   * THE TURN SHAPE, MEASURED. A turn in `round42` (2026-11-10) did 8.2 model steps and carried text on one of them; a
+   * turn in `round60` does 2.0 and carries text on both, while `follow_up` - the pump opening a turn after her own
+   * turn ended - went 9 -> 65. Her bubbles did not lengthen (23-125 chars in both eras): speaking took four fifths of
+   * the steps instead of one eighth, because the turn kept ending and being reopened. The gap between those two
+   * sessions holds one pump-side commit, `d09ae2f1`, which taught the Host to mint a fact out of silence.
+   * </p>
+   * <p>
+   * SO THE TRIGGER CHANGES, NOT THE WORDING: a fact arriving is not a reason to speak while the body she dispatched is
+   * still working through it. Waiting for the answer costs one `follow_up` instead of four, and the answer's batch
+   * carries everything that arrived (`CarryTicket`), so nothing is lost and nothing is re-stated twice.
+   * </p>
+   * <p>
+   * THE READING IS A FACT, NOT A HEURISTIC: `InFlightProgramme.remaining` from `readInFlightProgrammes` - the journal's
+   * own count of the nodes that have not happened yet (`total - settled`). A plan with nodes left is still working; a
+   * plan with none has answered (or the reading has expired, `IN_FLIGHT_READING_MAX_AGE_MS`, and the gate opens again).
+   * </p>
+   * <p>
+   * THE THREE OPENERS THAT DO NOT WAIT: the player's own word, a settlement (the plan's answer, which IS this turn), and
+   * a due wake (`PUMP_MINTED_WAKE_KINDS` - a stale reading, a narration run, the Mod's stall verdict), whose whole
+   * purpose is that she looks again.
+   * </p>
+   */
+  planStillRunning: "plan_still_running",
   nothingPending: "nothing_pending",
 });
 
@@ -2780,10 +2814,73 @@ export class CompanionEventPump {
    * clock marks a day, the day boundary, her arrival, a native notice, any player word), and the pump imposes no bound of
    * its own - `event-pump.node-batch-turns.test.ts` holds this reading red-able so it is not re-derived.
    * </p>
+   * <p>
+   * AND THE PLAN'S OWN WORK IS THE LAST QUESTION, not the first: `#waitsForThePlanToAnswer` declines a turn while the
+   * journal still shows nodes she dispatched, so a fact arriving mid-plan is CARRIED into the settlement's batch instead
+   * of buying a prompt. That is the trigger the measurement above made necessary - the cost of a plan was already one
+   * turn, and the cost of the world speaking during it was one turn per fact (`follow_up` 9 -> 65, a turn's 8.2 model
+   * steps down to 2.0).
+   * </p>
    */
   #opensTurn(fact: WorldFact): boolean {
     if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
-    return isDueFact(fact) || this.#canPresent(fact);
+    if (!(isDueFact(fact) || this.#canPresent(fact))) return false;
+    return !this.#waitsForThePlanToAnswer(fact);
+  }
+
+  /**
+   * Whether this fact has to wait for a plan she already dispatched to answer, because that answer is the batch it rides.
+   *
+   * <p>
+   * THE TRIGGER, NOT THE WORDING. `follow_up` - the pump opening a turn after her own turn ended - went 9 -> 65 between
+   * the two sessions this file's neighbours measure, and the turn that used to take 8.2 model steps took 2.0: a fact
+   * arriving had become a reason to speak. The reason a turn exists is that there is something left to PLAN, and while
+   * her own plan still has nodes the honest answer is "not yet" - the answer it is about to give is the one batch
+   * worth waking her for.
+   * </p>
+   * <p>
+   * TWO THINGS DO NOT WAIT, and both are declared above rather than special-cased here. A DUE wake is the liveness
+   * exception (`PUMP_MINTED_WAKE_KINDS`): a stale reading, a narration run and the Mod's stall verdict exist to make her
+   * look, and a look that waits for a plan is a look that never happens. A SETTLEMENT is the plan's own answer - it is
+   * the turn this rule is waiting FOR, so gating it on the same reading would deadlock a plan whose journal had not yet
+   * been re-read. The player's word does not come through here at all (`#opening` answers it first).
+   * </p>
+   * <p>
+   * WHAT IT READS IS A FACT: `InFlightProgramme.remaining` from `readInFlightProgrammes` - the journal's own count of
+   * the nodes that have not happened yet - and never a duration, a step count or this pump's opinion of either. A plan
+   * whose nodes have all happened answers `0`, and so does a reading that has expired (`IN_FLIGHT_READING_MAX_AGE_MS`,
+   * enforced by the reader): the gate can only hold a turn while a live journal says there is work left.
+   * </p>
+   */
+  #waitsForThePlanToAnswer(fact: WorldFact): boolean {
+    if (isDueFact(fact)) return false;
+    if (fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND) return false;
+    return this.#workLeftToPlan() > 0;
+  }
+
+  /**
+   * The nodes her own plans still have to get through, as the journal counts them.
+   *
+   * `InFlightProgramme.remaining` is `total - settled`, and the reader bounds how many programmes and node rows it
+   * names - neither can hide work, because `remaining` is computed from the journal's row count, not from the rows the
+   * block prints.
+   */
+  #workLeftToPlan(): number {
+    let remaining = 0;
+    for (const programme of this.#readInFlight().programmes) remaining += programme.remaining;
+    return remaining;
+  }
+
+  /**
+   * Whether this fact is news she may open a turn for, and is only waiting because her own plan is still working.
+   *
+   * The mirror of `#opensTurn`'s last line, asked once so the answer and the reason it is counted under cannot disagree
+   * - and only for facts that would otherwise have opened one, so a receipt that cannot present keeps its own reason.
+   */
+  #waitsOnlyForThePlan(fact: WorldFact): boolean {
+    if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
+    if (!(isDueFact(fact) || this.#canPresent(fact))) return false;
+    return this.#waitsForThePlanToAnswer(fact);
   }
 
   /**
@@ -2925,6 +3022,16 @@ export class CompanionEventPump {
   /** The reason half of `#notOwed`: the one question "why did nothing owe a turn", answered once per call. */
   #notOwedReason(): NotOwedCause {
     const facts = this.#ordinaryFacts();
+    // THE PLAN FIRST, because it is the outermost answer this flush has: while her own plan still has nodes, every
+    // presentable fact in the window is waiting on the same thing, and naming it here is what keeps those turns COUNTED
+    // (the account prints this member beside the openers, so "fewer turns" and "no turns" stay different readings).
+    for (const fact of facts) {
+      if (!this.#waitsOnlyForThePlan(fact)) continue;
+      return Object.freeze({
+        decision: NOT_OWED.planStillRunning,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
     // THE SURFACE FIRST, because it is the one answer here that changed WHICH turn exists: a decision fact that cannot present
     // is not a fact she has already been told (the re-statement below) and not a step of a programme she dispatched (the two
     // reviews after it) - it is news the surface has nowhere to put, and `#opening` declined it for exactly that reason.
