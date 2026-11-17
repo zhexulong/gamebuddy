@@ -2978,24 +2978,10 @@ function isAdmissionOpaque(value: unknown): value is string {
 }
 function isBodyCanonicalValue(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.type === "destination_selector") {
-    const destination = value.destination;
+  if (value.type === "destination_selector")
     return (
-      hasExactKeys(value, ["type", "destination"]) &&
-      isRecord(destination) &&
-      ((hasExactKeys(destination, ["kind", "label"]) &&
-        destination.kind === "label" &&
-        typeof destination.label === "string" &&
-        destination.label.length >= 1 &&
-        destination.label.length <= 128 &&
-        destination.label.trim().length > 0 &&
-        destination.label.normalize("NFC") === destination.label) ||
-        (hasExactKeys(destination, ["kind", "ref"]) &&
-          destination.kind === "ref" &&
-          typeof destination.ref === "string" &&
-          /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u.test(destination.ref)))
+      hasExactKeys(value, ["type", "destination"]) && readDestinationSelector(value.destination, "argument") !== null
     );
-  }
   if (
     !hasExactKeys(value, ["type", "canonicalValue"]) ||
     typeof value.canonicalValue !== "string" ||
@@ -3360,7 +3346,7 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
       value.entries === null &&
       value.nextCursor === null &&
       value.candidates === null &&
-      isNavigationSelector(value.destination) &&
+      readDestinationSelector(value.destination, "result") !== null &&
       value.unlockState === "unknown"
       ? null
       : "invalid_navigation_read_result";
@@ -3392,21 +3378,94 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
     : "invalid_navigation_read_result";
 }
 
-function isExecutionNavigationDestinationSelector(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  return value.kind === "label"
-    ? hasExactKeys(value, ["kind", "label"]) && isBoundedNonEmptyString(value.label, 128)
-    : value.kind === "ref" &&
-        hasExactKeys(value, ["kind", "ref"]) &&
-        typeof value.ref === "string" &&
-        /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+/**
+ * Where a destination selector is being read: the two doors whose CONTENT rules differ, and nothing else.
+ *
+ * `argument` is a value the companion NAMES a destination with - an `execution_request` argument, a body-program runtime
+ * value, the canonical argument a plan node carries - and `result` is a value the Mod REPORTS in a
+ * `navigation_read_result`.
+ */
+export type DestinationSelectorPosition = "argument" | "result";
+
+/** A selector that NAMES one destination: the arm it names carries the value an actor can be sent to. */
+export type NamedDestinationSelector =
+  | Readonly<{ kind: "label"; label: string; ref: null }>
+  | Readonly<{ kind: "ref"; label: null; ref: string }>;
+
+/** The Mod's canonical navigation run handle (`BridgeProtocol.IsNavigationHandle`, `dr1_` plus 22 base64url characters). */
+const NAVIGATION_RUN_REF = /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u;
+
+/**
+ * The Mod's ONE label rule (`BodyProgramValidation.IsPlayerText`): a bounded, self-trimmed, NFC name.
+ *
+ * A label that does not equal its own `Trim()` is not a location name - `find_destination` normalizes its query, so the
+ * name it resolves is not the one written here - and a label that is not NFC has two byte sequences for one name in an
+ * ordinal comparison. The Mod refuses both at its authoring door, so accepting them here would only move the refusal to
+ * a later round trip.
+ */
+function isPlayerText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value.trim().length > 0 &&
+    value === value.trim() &&
+    value.normalize("NFC") === value
+  );
 }
 
-function isNavigationSelector(value: unknown): value is NavigationSelector {
-  if (!isRecord(value) || !hasExactKeys(value, ["kind", "label", "ref"])) return false;
-  return value.kind === "label"
-    ? isBoundedNonEmptyString(value.label, 128) && value.ref === null
-    : value.kind === "ref" && value.label === null && (value.ref === null || isOpaqueId(value.ref));
+/**
+ * The ONE reading of a destination selector: `kind` plus the arm it names.
+ *
+ * <p>
+ * WHY ONE READER. `find_destination` answers with a selector whose absent arm is on the wire as `null` - the Mod writes
+ * both arms of `BridgeNavigationDestinationSelector` (`JsonIgnoreCondition.Never`), so a label selector arrives as
+ * `{"kind":"label","label":"Mine","ref":null}` - and the companion copies that object straight back into the next
+ * call. The Host read the same closed shape three times with two different arities: the result door demanded all three
+ * keys, the argument doors demanded exactly the two of the arm that is present. So the object a tool had just handed the
+ * model was refused by the Host's own reader (`invalid_navigation_destination`, `invalid_body_program_request`) while the
+ * Mod's one reader had accepted it since `TryReadSelectorShape`. The absent arm's SPELLING is not a fact any reader may
+ * key on: absent and `null` mean the same thing, they are stated once here, and a door with its own rule is a second
+ * spelling of the same fact.
+ * </p>
+ * <p>
+ * WHAT THE SHAPE IS. `kind` and the arm it names are required; the arm it does not name may be absent OR `null`; no other
+ * key is admitted (a selector never carries `route`, `tile` or `x`, and a duplicate key is refused where the envelope is
+ * parsed, before any reader sees the object); and both arms present is refused, because a selector names one destination
+ * one way.
+ * </p>
+ * <p>
+ * THE ONE FIELD WHOSE RULE DIFFERS BY POSITION IS `ref`, and the reason is what each door is FOR. An ARGUMENT must name
+ * a destination the actor can be sent to, so `kind: "ref"` requires the canonical run handle (the Mod's
+ * `IsValidSelector` -> `IsNavigationRef`). A RESULT may say "this is a place, and I have no run handle for it": the wire
+ * admits `ref: null` there (`$defs/navigationSelector`) and the Mod's own result door admits it
+ * (`BridgeProtocol.IsValidNavigationDestinationSelector`), so refusing it would close the bridge on a document the Mod is
+ * entitled to send. The same asymmetry exists for a label's text - the Mod's authoring door requires player text while
+ * its result door checks the bound alone (`isPlayerText` above, `isBoundedNonEmptyString` below) - and each of those is
+ * stated once, here.
+ * </p>
+ */
+export function readDestinationSelector(value: unknown, position: "argument"): NamedDestinationSelector | null;
+export function readDestinationSelector(value: unknown, position: "result"): NavigationSelector | null;
+export function readDestinationSelector(
+  value: unknown,
+  position: DestinationSelectorPosition,
+): NavigationSelector | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null;
+  if (!hasOnlyKeys(value, ["kind", "label", "ref"])) return null;
+  // An absent arm and a `null` arm are the same fact; the only value the wire admits for either is a string.
+  const label = value.label ?? null;
+  const ref = value.ref ?? null;
+  if ((label !== null && typeof label !== "string") || (ref !== null && typeof ref !== "string")) return null;
+  if (value.kind === "label") {
+    if (label === null || ref !== null) return null;
+    const accepted = position === "argument" ? isPlayerText(label) : isBoundedNonEmptyString(label, 128);
+    return accepted ? { kind: "label", label, ref: null } : null;
+  }
+  if (value.kind !== "ref" || label !== null) return null;
+  if (ref === null) return position === "result" ? { kind: "ref", label: null, ref: null } : null;
+  const accepted = position === "argument" ? NAVIGATION_RUN_REF.test(ref) : isOpaqueId(ref);
+  return accepted ? { kind: "ref", label: null, ref } : null;
 }
 
 function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapEntry {
@@ -3416,7 +3475,7 @@ function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapE
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
     (value.nodeRef === null || isOpaqueId(value.nodeRef)) &&
-    (value.destination === null || isNavigationSelector(value.destination))
+    (value.destination === null || readDestinationSelector(value.destination, "result") !== null)
   );
 }
 
@@ -3426,7 +3485,7 @@ function isNavigationSearchCandidate(value: unknown): value is NavigationSearchC
     hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
-    isNavigationSelector(value.destination) &&
+    readDestinationSelector(value.destination, "result") !== null &&
     value.unlockState === "unknown"
   );
 }
@@ -4033,7 +4092,7 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
       "args.destination",
       "the label-or-ref selector discovery published",
       "invalid_navigation_destination",
-      (reading) => isExecutionNavigationDestinationSelector(reading.args.destination),
+      (reading) => readDestinationSelector(reading.args.destination, "argument") !== null,
       withArg("destination", { kind: "label" }),
     ),
   ],
@@ -5454,35 +5513,14 @@ function isOrderingPredecessors(value: unknown): boolean {
 function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "destination_selector")
-    return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
+    return (
+      hasExactKeys(value, ["type", "destination"]) && readDestinationSelector(value.destination, "argument") !== null
+    );
   return (
     (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
     hasExactKeys(value, ["type", "canonicalValue"]) &&
     typeof value.canonicalValue === "string" &&
     value.canonicalValue.length <= 512
-  );
-}
-/** Mirrors the C# IsValidBodyProgramSelector: scalar labels are trimmed, run ids are canonical 26-char navigation refs. */
-function isBodyProgramDestinationSelector(value: unknown): value is BodyProgramDestinationSelector {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "label") return hasExactKeys(value, ["kind", "label"]) && isBodyProgramSelectorLabel(value.label);
-  if (value.kind === "ref")
-    return (
-      hasExactKeys(value, ["kind", "ref"]) &&
-      typeof value.ref === "string" &&
-      /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref)
-    );
-  return false;
-}
-function isBodyProgramSelectorLabel(value: unknown): value is string {
-  // Mirrors the C# ReadPlayerText FormC gate: only already-canonicalized NFC labels are exchangeable.
-  return (
-    typeof value === "string" &&
-    value.length >= 1 &&
-    value.length <= 128 &&
-    value === value.trim() &&
-    value.trim().length > 0 &&
-    value.normalize("NFC") === value
   );
 }
 function isBodyProgramFactReference(value: unknown): boolean {

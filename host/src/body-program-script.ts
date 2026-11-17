@@ -13,9 +13,10 @@ import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
   executionRequestIntegerBounds,
+  readDestinationSelector,
   type Snapshot,
 } from "./protocol.js";
-import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
+import { isNonNegativeSafeInteger, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
 /**
  * Host-side plan script compiler (CARD-BODY-PROGRAM-SYNTHESIZER-BOUNDARY, as amended by the owner).
@@ -2886,24 +2887,19 @@ function canonicalPlanArgument(
 }
 
 function canonicalDestinationSelector(value: unknown): PlanArgument | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const selector = value as Readonly<{ kind?: unknown; label?: unknown; ref?: unknown }>;
-  if (
-    selector.kind === "label" &&
-    typeof selector.label === "string" &&
-    selector.label.length >= 1 &&
-    selector.label.length <= 256
-  )
-    return Object.freeze({
-      type: "destination_selector" as const,
-      destination: Object.freeze({ kind: "label" as const, label: selector.label }),
-    });
-  if (selector.kind === "ref" && isOpaqueId(selector.ref))
-    return Object.freeze({
-      type: "destination_selector" as const,
-      destination: Object.freeze({ kind: "ref" as const, ref: selector.ref }),
-    });
-  return undefined;
+  // The selector's shape and content are the Host protocol's (`readDestinationSelector`), not this compiler's: a label
+  // this minted at a bound the Mod refuses (`256` here, `128` there), or with a trailing space, reached the Mod as a
+  // program it could not admit - and an object the model copied out of `find_destination` was refused here for carrying
+  // the arm that selector does not use.
+  const selector = readDestinationSelector(value, "argument");
+  if (selector === null) return undefined;
+  return Object.freeze({
+    type: "destination_selector" as const,
+    destination:
+      selector.kind === "label"
+        ? Object.freeze({ kind: "label" as const, label: selector.label })
+        : Object.freeze({ kind: "ref" as const, ref: selector.ref }),
+  });
 }
 
 /**
