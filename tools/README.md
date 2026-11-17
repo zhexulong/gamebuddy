@@ -507,6 +507,67 @@ worktree already has installed, and a package it does not have keeps the `depend
 trees. `pnpm test:replay-gate-on-history` runs its own suite, which replays the waiver gate and the
 selector-producer gate on the commits of 2026-11-14.
 
+## Fact seams: one fact, two declarations (`check:fact-seams`)
+
+`pnpm check:fact-seams` asks, for every fact that crosses a process or a package boundary, whether the tree
+holds ONE declaration of it or two that nothing compares. Three of those shipped on 2026-11-17 and the
+whole ladder was green for all three: the composed launcher validated the Host's acknowledgement against a
+nine-key list of its own while the writer had grown to eleven (every launch died
+`desktop_compose_bootstrap_ack_invalid`), the Game fact-patch vocabulary was mirrored and mapped by nothing
+that compared the two ends, and two `game.create` refusals were declared and mirrored while the route that
+had to answer them answered `state_unavailable`.
+
+The population is derived on every run, three ways, never listed:
+
+- **mirrors** - module-level string-literal vocabularies in `host/src`, `dialogue-web/src` and `tools`
+  (arrays, `Object.freeze([...])`, `new Set([...])`, a TypeBox `Type.Union([Type.Literal ...])`, and the
+  discriminant set of a `Type.Union` whose arms each carry one `Type.Literal` - the form the Game fact
+  union uses). Members with the same member set that span two of those packages are one fact with two
+  declarations. A list built inside a function is a fixture bound to one call site, not a vocabulary.
+- **key sequences** - key-list validator calls whose expected list is a literal, joined to the schema
+  literal the same function checks. That join is what proves another side writes the frame; a frame the
+  reader also writes is one authority, and a call that forwards a caller's list restates nothing.
+- **declared codes** - host code-shaped `Type.Union` members that no host source produces.
+
+Each member must resolve to one authority, and the resolution is a fact of the tree: `derives: json` (a
+shape file beside the writer, the mechanism `88e7e6e9` built for the ack), `derives: asserted-by` (a test
+that NAMES both symbols - a test that restates the shape and asserts its own copy names no authority), or a
+recorded DEBT entry with its reason and owner. Debt is printed on every run and EXPIRES: a recorded crossing
+whose declarations move apart is `fact_seam_drift`, one whose declaration is gone is `stale_fact_seam`, and a
+debt whose reader has started deriving is stale too. The ledger can shrink but never rot.
+
+It prints `facts examined N · one authority D · recorded debt U · key sequences examined ... · over a frame
+another side writes ... · declared codes examined ... · unproduced ...`, then one line per finding
+(`fact_declared_twice:<file>:<line> <fact>`, `fact_seam_drift:<fact>`, `fact_seam_underived:<fact>`,
+`stale_fact_seam:<fact>`, `fact_declared_unproduced:<code>`), then a JSON report
+(`{"gate":"fact_seams/v1",...}`). `examined 0` blocks: a scan that read no vocabulary agrees with itself.
+
+```powershell
+pnpm check:fact-seams          # exit 0 agreed, 1 drift, 2 blocked
+pnpm test:fact-seams           # the falsifier suite
+node tools/check-fact-seams.mjs --list      # every fact with its declarations
+node tools/check-fact-seams.mjs --root DIR  # read another checkout (a replay tree)
+```
+
+It runs in the ladder's L0 rung (`tools/prelive.mjs`), because the drift it catches otherwise surfaces only
+in a live run, and the two red proofs are replayable:
+
+```powershell
+pnpm replay:gate-on-history --gate tools/check-fact-seams.mjs --rev-range 88e7e6e9^ --expect fired@88e7e6e9^
+pnpm replay:gate-on-history --gate tools/check-fact-seams.mjs --rev-range 25de4e8f --expect fired@25de4e8f
+```
+
+The first fires on the launcher's nine-key acknowledgement; the second on
+`stardew_game_create_world_held_by_player` and its slot sibling, declared and sent by nobody until
+`51732f40`. The ABLATION (`did-not-fire@<rev>`) is not asserted on those revisions: the ledger records
+*this* tree's facts, so a tree from three weeks ago reports the facts resolved since as stale - the ablation
+lives in the falsifier suite instead, where the copy holds only the files one fact lives in and one member
+is appended to it.
+
+A switch that maps a mirrored vocabulary is NOT this gate's population: that is
+`pnpm check:switch-exhaustiveness`. This gate pins that the two ends agree; that one pins that every member
+of the union has an arm.
+
 ## Gate input populations (`audit:gate-inputs`)
 
 `tools/audit-gate-inputs.mjs` asks, for every gate in the one census population, three questions a green run

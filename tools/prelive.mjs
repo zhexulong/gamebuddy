@@ -117,6 +117,14 @@ export const L0_GATES = Object.freeze([
   // `dialogue-web/tsconfig.json`'s own `include`, so a new source file joins without an edit here. Authored
   // outside this lane and left untracked; wired here because a gate that runs in no rung cannot fail.
   "tools/check-switch-exhaustiveness.mjs",
+  // The other end of the same question, and the one three lanes were bitten by in a single night: a fact that crosses a
+  // process or a package boundary is declared on both sides, and only one of the two spellings is under the compiler's
+  // eye. The ack keys (nine in the launcher, eleven in the writer) killed every composed launch while every test was
+  // green, and two game resolutions reached the panel as generic states because the fact they carried had no arm on the
+  // consuming side. This one derives the vocabulary population from the sources and names each fact that has two ends,
+  // so it costs ~2 s of file reads and no compile - cheap enough to run before a live run, which is the only place the
+  // drift it catches would otherwise surface.
+  "tools/check-fact-seams.mjs",
   // The destructive press, as a population rather than a habit. Five lanes each armed one control by hand (her
   // whole record, the connection that IS the credential, a reply, a world-book entry) and the sixth - the
   // companion's performance directive - stayed bare until this gate was written: a derived population of every
