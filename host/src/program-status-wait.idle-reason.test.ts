@@ -146,9 +146,9 @@ test("every declared idle reason is reachable from a ledger reading, and none is
   const reached = new Map<IdleWaitReason, number>();
   for (const reading of readings) reached.set(reading.reason, (reached.get(reading.reason) ?? 0) + 1);
   const unreachable = IDLE_WAIT_REASONS.filter((reason) => (reached.get(reason) ?? 0) === 0);
-  assert.equal(
-    unreachable.length,
-    0,
+  assert.deepEqual(
+    unreachable,
+    [],
     `the closed list declares and no ledger reading produces: ${unreachable.join(", ")} (examined ${String(
       IDLE_WAIT_REASONS.length,
     )} · reached ${String(reached.size)})`,

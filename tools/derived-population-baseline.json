@@ -4,15 +4,6 @@
   "rule": "One entry per surviving literal count. Identity is file + authority + literal - never the line - so a reformat is the same site and a third copy beside two is not. `line` is documentation only. The recorded residual may only shrink: `literal_population_baseline_stale` fails a site the tree no longer has, and `literal_population_baseline_grew` fails a site that gained copies. Every entry's `reason` opens with one of `[derivable-now]` (an authority exists that both sides could read - the reason names the derivation), `[not-a-population]` (a character count, a guard, a ternary, or a recorder the test seeded - `new Set(actual)` has no members to print) or `[needs-a-decision]` (the two readings disagree about what the fact IS). An entry with no such verdict fails as `literal_population_baseline_unexplained`.",
   "sites": [
     {
-      "file": "host/src/companion-presentation-callers.test.ts",
-      "authority": "thirdCaller",
-      "literal": "1",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 190,
-      "reason": "[derivable-now] the audit's findings for one injected third caller: `deepEqual(thirdCaller.map((finding) => finding.match(/somewhere-else\\.ts/)), ...)` names the caller instead of counting findings. Host suite, not runnable in this lane."
-    },
-    {
       "file": "host/src/composition/companion-library-list.test.ts",
       "authority": "list.filter((entry) => entry.handle === \"handle-companion_01\")",
       "literal": "1",

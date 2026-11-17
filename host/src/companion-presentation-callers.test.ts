@@ -187,8 +187,7 @@ test("a third caller, a literal choice, a missing scaffolding name, or a flipped
     ...allowed,
     { path: "somewhere-else.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
   ]);
-  assert.equal(thirdCaller.length, 1);
-  assert.match(thirdCaller[0]!, /somewhere-else\.ts calls attachNativeCompanionContent/u);
+  assert.deepEqual(thirdCaller, ["somewhere-else.ts calls attachNativeCompanionContent"]);
 
   const literalChoice = auditPresentationCallSites(
     allowed.map((file) =>
