@@ -22,7 +22,7 @@ import {
   boundedReclamationCode,
   buildDesktopHostExitReason,
   DESKTOP_HOST_DRAIN_DEADLINE_MS,
-  DESKTOP_HOST_DRAIN_TIMEOUT_MS,
+  DESKTOP_HOST_STEP_HANG_DEADLINE_MS,
   runDesktopHostReclamation,
   type DesktopHostExitReason,
   type DesktopHostReclamationOperation,
@@ -242,7 +242,7 @@ async function reclaimDesktopHostExit(
           }),
     },
   ];
-  const tail = await runDesktopHostReclamation(operations, DESKTOP_HOST_DRAIN_TIMEOUT_MS);
+  const tail = await runDesktopHostReclamation(operations);
   return buildDesktopHostExitReason([...compositionReason.steps, ...tail]);
 }
 
@@ -1375,6 +1375,11 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
       // the only copy of that number: it is derived from the reclamation's own step table
       // (`desktop-host-reclamation.ts`), so a launcher constant cannot drift away from it.
       drainDeadlineMs: DESKTOP_HOST_DRAIN_DEADLINE_MS,
+      // The point at which this process has already named a step as stuck if the step it is inside
+      // is an ordinary one. The launcher shows its second closing copy - "still finishing" - from
+      // here, and reads the number rather than keeping one: it comes from the same table as the
+      // deadline above.
+      stepHangDeadlineMs: DESKTOP_HOST_STEP_HANG_DEADLINE_MS,
       sessionEntry: sessionEntryForSurface(process.env.GAMEBUDDY_HOST_SURFACE),
     })}\n`,
     "utf8",

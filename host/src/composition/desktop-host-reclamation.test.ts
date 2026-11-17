@@ -7,22 +7,28 @@ import {
   DESKTOP_HOST_CHILD_WILL_NOT_STOP_FAILURE,
   DESKTOP_HOST_CLOSE_STEP_FAILED,
   DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE,
-  DESKTOP_HOST_DRAIN_TIMEOUT_MS,
   DESKTOP_HOST_RECLAMATION_STEP_KIND,
   DESKTOP_HOST_RECLAMATION_STEPS,
   DESKTOP_HOST_RESOURCE_STILL_HELD_FAILURE,
   nameDesktopHostReclamationFailure,
   runDesktopHostReclamation,
+  type DesktopHostReclamationStep,
+  type DesktopHostReclamationStepBounds,
   type DesktopHostReclamationStepOutcome,
 } from "./desktop-host-reclamation.js";
 
 /**
- * The budget the drain-timeout tests drive: short enough that a step which never
- * settles is named instead of hanging the suite. The production budget is
- * `DESKTOP_HOST_DRAIN_TIMEOUT_MS` and is passed by every caller, so nothing here
- * asserts against a latency target either way.
+ * The bounds the drain-timeout tests drive: short enough that a step which never settles is named
+ * instead of hanging the suite. The production table is `DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS`,
+ * which every caller keeps, so nothing here asserts against a latency target either way.
  */
 const TEST_DRAIN_TIMEOUT_MS = 20;
+const TEST_BOUNDS: DesktopHostReclamationStepBounds = Object.freeze(
+  Object.fromEntries(DESKTOP_HOST_RECLAMATION_STEPS.map((step) => [step, TEST_DRAIN_TIMEOUT_MS])) as Record<
+    DesktopHostReclamationStep,
+    number
+  >,
+);
 
 test("the reclamation step list is the frozen reverse-teardown order", () => {
   // The names are the report's whole vocabulary: an owner that renames one, or
@@ -122,24 +128,21 @@ test("the naming decision is pure: each way a step can fail gets its own name, a
 });
 
 test("a step that cannot give up its child or its port is named on that step, never left silent", async () => {
-  const outcomes = await runDesktopHostReclamation(
-    [
-      {
-        step: "stop_admission",
-        close: async () => {
-          throw new Error("E:\\projects\\ai-game-companion\\secret-port-binding");
-        },
+  const outcomes = await runDesktopHostReclamation([
+    {
+      step: "stop_admission",
+      close: async () => {
+        throw new Error("E:\\projects\\ai-game-companion\\secret-port-binding");
       },
-      {
-        step: "drain_game_lifecycle",
-        close: async () => {
-          throw new Error("Unhandled failure out of the contain attempt");
-        },
+    },
+    {
+      step: "drain_game_lifecycle",
+      close: async () => {
+        throw new Error("Unhandled failure out of the contain attempt");
       },
-      { step: "release_guardian_session", close: async () => {} },
-    ],
-    DESKTOP_HOST_DRAIN_TIMEOUT_MS,
-  );
+    },
+    { step: "release_guardian_session", close: async () => {} },
+  ]);
 
   assert.deepEqual(
     outcomes.map((outcome) => [outcome.step, outcome.status, outcome.failure]),
@@ -165,7 +168,7 @@ test("a port that is still held when its drain budget expires is named a timeout
   });
   const outcomes = await runDesktopHostReclamation(
     [{ step: "stop_admission", close: () => neverSettles }],
-    TEST_DRAIN_TIMEOUT_MS,
+    TEST_BOUNDS,
   );
 
   assert.deepEqual(outcomes, [
@@ -178,24 +181,21 @@ test("a port that is still held when its drain budget expires is named a timeout
 
 test("the reclamation attempts every step in order and names a declared absence instead of skipping it", async () => {
   const attempted: string[] = [];
-  const outcomes = await runDesktopHostReclamation(
-    [
-      {
-        step: "stop_admission",
-        close: async () => {
-          attempted.push("stop_admission");
-        },
+  const outcomes = await runDesktopHostReclamation([
+    {
+      step: "stop_admission",
+      close: async () => {
+        attempted.push("stop_admission");
       },
-      { step: "drain_chat_runtime" },
-      {
-        step: "release_voice_client",
-        close: async () => {
-          attempted.push("release_voice_client");
-        },
+    },
+    { step: "drain_chat_runtime" },
+    {
+      step: "release_voice_client",
+      close: async () => {
+        attempted.push("release_voice_client");
       },
-    ],
-    DESKTOP_HOST_DRAIN_TIMEOUT_MS,
-  );
+    },
+  ]);
 
   assert.deepEqual(attempted, ["stop_admission", "release_voice_client"]);
   assert.deepEqual(outcomes, [
@@ -207,31 +207,28 @@ test("the reclamation attempts every step in order and names a declared absence 
 
 test("a failed step does not stop the reclamation, and the report names the first failure as the exit reason", async () => {
   const attempted: string[] = [];
-  const outcomes = await runDesktopHostReclamation(
-    [
-      {
-        step: "stop_admission",
-        close: async () => {
-          attempted.push("stop_admission");
-          throw new Error("bridge_session_unavailable");
-        },
+  const outcomes = await runDesktopHostReclamation([
+    {
+      step: "stop_admission",
+      close: async () => {
+        attempted.push("stop_admission");
+        throw new Error("bridge_session_unavailable");
       },
-      {
-        step: "drain_chat_runtime",
-        close: async () => {
-          attempted.push("drain_chat_runtime");
-        },
+    },
+    {
+      step: "drain_chat_runtime",
+      close: async () => {
+        attempted.push("drain_chat_runtime");
       },
-      {
-        step: "release_guardian_session",
-        close: async () => {
-          attempted.push("release_guardian_session");
-          throw new Error("guardian_pipe_unavailable");
-        },
+    },
+    {
+      step: "release_guardian_session",
+      close: async () => {
+        attempted.push("release_guardian_session");
+        throw new Error("guardian_pipe_unavailable");
       },
-    ],
-    DESKTOP_HOST_DRAIN_TIMEOUT_MS,
-  );
+    },
+  ]);
 
   // Every step is still attempted: one surface failing to drain must never leave
   // the step after it - the one that releases the Guardian pipe - unattempted.
@@ -254,23 +251,20 @@ test("a failed step does not stop the reclamation, and the report names the firs
 
 test("a clean reclamation reports the clean_exit reason and is the only clean outcome", async () => {
   const clean = buildDesktopHostExitReason(
-    await runDesktopHostReclamation(
-      [
-        { step: "stop_admission", close: async () => {} },
-        { step: "release_termination_watchers", close: async () => {} },
-      ],
-      DESKTOP_HOST_DRAIN_TIMEOUT_MS,
-    ),
+    await runDesktopHostReclamation([
+      { step: "stop_admission", close: async () => {} },
+      { step: "release_termination_watchers", close: async () => {} },
+    ]),
   );
   assert.equal(clean.outcome, "clean");
   assert.equal(clean.reason, "clean_exit");
 
   // An absent resource is not a failure and does not make the exit incomplete.
   const declaredAbsence = buildDesktopHostExitReason(
-    await runDesktopHostReclamation(
-      [{ step: "release_voice_client" }, { step: "release_termination_watchers", close: async () => {} }],
-      DESKTOP_HOST_DRAIN_TIMEOUT_MS,
-    ),
+    await runDesktopHostReclamation([
+      { step: "release_voice_client" },
+      { step: "release_termination_watchers", close: async () => {} },
+    ]),
   );
   assert.equal(declaredAbsence.outcome, "clean");
   assert.equal(declaredAbsence.reason, "clean_exit");
@@ -327,7 +321,7 @@ test("a step that never settles is named as a failed drain on its own step, and 
         },
       },
     ],
-    TEST_DRAIN_TIMEOUT_MS,
+    TEST_BOUNDS,
   );
 
   // The whole point of naming the timeout: a step that cannot finish is a findable
@@ -359,7 +353,7 @@ test("a close that refuses after its drain budget expired is observed, so the ab
   });
   const outcomes = await runDesktopHostReclamation(
     [{ step: "drain_chat_runtime", close: () => refusesAfterTheBudget }],
-    TEST_DRAIN_TIMEOUT_MS,
+    TEST_BOUNDS,
   );
 
   assert.deepEqual(outcomes, [
@@ -392,7 +386,7 @@ test("a close that throws synchronously is one failure of its own step, not a re
         },
       },
     ],
-    TEST_DRAIN_TIMEOUT_MS,
+    TEST_BOUNDS,
   );
 
   assert.deepEqual(attempted, ["drain_game_lifecycle", "release_shared_authority"]);

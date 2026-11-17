@@ -63,6 +63,12 @@ export const DESKTOP_HOST_RECLAMATION_STEPS = Object.freeze([
 export type DesktopHostReclamationStep = (typeof DESKTOP_HOST_RECLAMATION_STEPS)[number];
 
 /**
+ * The ceiling of every step's own operation as one table: what a caller may supply instead of the
+ * declared one, and what `runDesktopHostReclamation` reads per step.
+ */
+export type DesktopHostReclamationStepBounds = Readonly<Record<DesktopHostReclamationStep, number>>;
+
+/**
  * What one reclamation step is trying to give up, which is what its failure has
  * to name.
  *
@@ -133,45 +139,102 @@ export const DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE = "desktop_host_drain_timeout";
 export const DESKTOP_HOST_CLOSE_STEP_FAILED = "desktop_host_close_step_failed";
 
 /**
- * How long one reclamation step may take before it is NAMED as a failed drain.
+ * What a step that owns no budgeted operation may spend: twice the largest such close measured on
+ * a real exit.
  *
- * This is a hang detector, not a latency budget. A step is a sequence of
- * operations that are each bounded elsewhere - containing the AI role through its
- * Job Object, joining an in-flight endgame, releasing the presentation port - so
- * a legitimately slow step settles well inside this.
- *
- * The value is DERIVED, not chosen: it is the largest operation any step waits on. A
- * detector below that would name a step that is legitimately inside its own bounded
- * operation as failed, i.e. abandon work the product still owns. One step owns such an
- * operation today and names its own number: `drain_game_lifecycle` waits on the arm/contain
- * operation budget (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`). `desktop-host-reclamation-budget.test.ts`
- * holds the invariant - every step's owned operation must fit inside this one - so the next
- * step that grows a five-minute call reddens a gate instead of quietly spending the exit's
- * whole deadline.
- *
- * `reflect_session` deliberately no longer appears in that list: it records a marker instead of
- * running the reflection, whose model call is the next launch's work, not the exit's.
+ * The largest of them is the Chat drain's 90 ms (`5ccd00b8`, a real mounted authority with a
+ * generating turn: the ledger ends `cancelled` and both texts are kept). Measured beside it, the
+ * same way, were the presentation listener's close at 0.4 ms, a real WAL database's close at
+ * 1.2 ms, the Guardian socket's destroy at 0.1 ms, the Voice socket's at 0.7 ms and the watcher
+ * dispose at 0.03 ms. The multiple is the headroom: a step whose close is that many times slower
+ * than the machine it was measured on is no longer a close that is merely slow.
  */
-export const DESKTOP_HOST_DRAIN_TIMEOUT_MS = 60_000;
+const DESKTOP_HOST_ORDINARY_STEP_BOUND_MS = 90 * 2;
 
 /**
- * How long the WHOLE reclamation may take: what the Desktop launcher waits for this
- * process to leave before it treats the process as hung and terminates it.
+ * What `drain_game_lifecycle` may spend: the ceiling of the attempt its close must not race.
  *
- * It is the per-step detector times the number of declared steps, so the two numbers
- * cannot drift apart: a step can never believe it has more time than the launcher will
- * wait for all of them together. The launcher does not keep its own copy - the entry
- * publishes this value in the bootstrap acknowledgement it already writes
- * (`drainDeadlineMs`, `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:1364`)
- * and the Desktop reads it there (`desktop/GameBuddy.Desktop/RuntimeSupervisor.cs`,
- * `CloseAsync`: the one place that waits, and the watch whose expiry names
- * `host_teardown_timeout`).
- *
- * The bound covers the most the table can cost, which is every step running once: the
- * composition runs six of them and the fixed entry appends the two it owns. A launch with
- * fewer children costs less than this, never more.
+ * Its own budgeted operation is the Guardian arm/contain/close acknowledgement
+ * (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`, 60 s). Its LONGEST is the join an ordinary close
+ * performs on an in-flight `game.create`/`game.resume`, because close may not tear the world down
+ * under an attempt that is still writing its own durable rows: that attempt's deadline is
+ * `min(session expiry, now + Farmhand join budget)` (`STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS` 150 s
+ * plus the world's player-Mod count), and the browser admission lease it is admitted under is
+ * capped at ten minutes (`stardew-production-lifecycle-coordinator.internal.ts`), so no join the
+ * exit waits on can outlive that window. A bound below it marked a legitimate modded-world join as
+ * a failed step, which is the false failure this table exists to prevent.
  */
-export const DESKTOP_HOST_DRAIN_DEADLINE_MS = DESKTOP_HOST_DRAIN_TIMEOUT_MS * DESKTOP_HOST_RECLAMATION_STEPS.length;
+const DESKTOP_HOST_GAME_STEP_BOUND_MS = 600_000;
+
+/**
+ * What each reclamation step may spend before the exit NAMES it as a failed drain.
+ *
+ * A bound is the ceiling of the operation its step can be waiting on, never a latency
+ * target: a bound below that operation names a step that is legitimately inside its own
+ * bounded work as failed, which abandons work the product still owns - a false failure on
+ * the path where the player is leaving. The whole-exit deadline is the SUM of these, so
+ * no step can believe it has more time than the launcher will wait for all of them
+ * together, and no step's ceiling is spent eight times over.
+ *
+ * `desktop-host-reclamation-budget.test.ts` holds the invariant per step: every operation
+ * a step can be waiting on is named there with the number its owner publishes, so a step
+ * that grows a five-minute call - or a new step that waits on anything - reddens a gate
+ * instead of quietly spending the exit's whole deadline.
+ */
+export const DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS: DesktopHostReclamationStepBounds = Object.freeze({
+  /** Releases the presentation listener's port: measured 0.4 ms for the close of a served listener. */
+  stop_admission: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /** Ends the turn it was generating and releases the mounted lane: measured 90 ms on a real exit. */
+  drain_chat_runtime: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /**
+   * The one step that waits on budgeted operations: the Guardian arm/contain/close acknowledgement
+   * (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`, 60 s) and, because an ordinary close must not tear
+   * the world down under an in-flight `game.create`/`game.resume`, the join on that attempt.
+   */
+  drain_game_lifecycle: DESKTOP_HOST_GAME_STEP_BOUND_MS,
+  /** Writes the one marker this runtime root is owed: measured 3 ms. */
+  reflect_session: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /** Closes the durable semantic authority: measured 1.2 ms for a real WAL database's close. */
+  release_shared_authority: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /** Destroys the authenticated Guardian socket: measured 0.1 ms, and it never waits for the native Guardian. */
+  release_guardian_session: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /** Destroys the optional Voice client's socket: measured 0.7 ms. */
+  release_voice_client: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+  /** Disposes this process's own watchers: measured 0.03 ms, and it is synchronous. */
+  release_termination_watchers: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
+});
+
+/**
+ * How long the WHOLE reclamation may take: what the Desktop launcher waits for this process to
+ * leave before it treats the process as hung and terminates it.
+ *
+ * It is the sum of the declared per-step bounds - a step's ceiling counted once, which is what
+ * the sequence can actually cost: every step runs once, and a step that outlives its own bound is
+ * abandoned and named there, so the steps behind it start inside their own bound.
+ *
+ * The launcher does not keep its own copy - the entry publishes this value in the bootstrap
+ * acknowledgement it already writes (`drainDeadlineMs`,
+ * `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`) and the Desktop reads it there
+ * (`desktop/GameBuddy.Desktop/RuntimeSupervisor.cs`, `CloseAsync`: the one place that waits, and
+ * the watch whose expiry names `host_teardown_timeout`).
+ */
+export const DESKTOP_HOST_DRAIN_DEADLINE_MS = DESKTOP_HOST_RECLAMATION_STEPS.reduce(
+  (total, step) => total + DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS[step],
+  0,
+);
+
+/**
+ * The point at which the Host has already named a step as stuck if the step it is inside is an
+ * ordinary one: the smallest bound in the table.
+ *
+ * It is published beside the whole-exit deadline (`stepHangDeadlineMs`) because it is the only
+ * number that says "this quit is no longer normal": the Desktop shell shows its second closing
+ * copy - the one that says the app is still finishing - from this point, and it reads the number
+ * from the Host rather than keeping a second one.
+ */
+export const DESKTOP_HOST_STEP_HANG_DEADLINE_MS = Math.min(
+  ...DESKTOP_HOST_RECLAMATION_STEPS.map((step) => DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS[step]),
+);
 
 export type DesktopHostReclamationStepOutcome = Readonly<{
   step: DesktopHostReclamationStep;
@@ -246,14 +309,16 @@ export function nameDesktopHostReclamationFailure(
 }
 
 /**
- * Runs every step in the given order, attempting all of them under the drain
- * budget, and reports each outcome. The budget is a parameter rather than a
- * module constant so a focused test can drive a step that outlives it; every
- * production caller passes `DESKTOP_HOST_DRAIN_TIMEOUT_MS`.
+ * Runs every step in the given order, attempting all of them under each step's own bound, and
+ * reports each outcome.
+ *
+ * The bounds are a parameter rather than read straight from the table so a focused test can drive
+ * a table short enough that a step which never settles is named instead of hanging the suite;
+ * every production caller keeps the declared table.
  */
 export async function runDesktopHostReclamation(
   operations: readonly DesktopHostReclamationOperation[],
-  drainTimeoutMs: number,
+  bounds: DesktopHostReclamationStepBounds = DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS,
 ): Promise<readonly DesktopHostReclamationStepOutcome[]> {
   const outcomes: DesktopHostReclamationStepOutcome[] = [];
   for (const operation of operations) {
@@ -262,7 +327,7 @@ export async function runDesktopHostReclamation(
       outcomes.push(Object.freeze({ step: operation.step, status: "not_applicable", failure: null }));
       continue;
     }
-    const failure = await runDesktopHostReclamationStep(operation.step, close, drainTimeoutMs);
+    const failure = await runDesktopHostReclamationStep(operation.step, close, bounds[operation.step]);
     outcomes.push(
       Object.freeze({
         step: operation.step,

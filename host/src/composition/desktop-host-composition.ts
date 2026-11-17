@@ -8,7 +8,6 @@ import {
 } from "./stardew/stardew-guardian-platform.js";
 import {
   buildDesktopHostExitReason,
-  DESKTOP_HOST_DRAIN_TIMEOUT_MS,
   runDesktopHostReclamation,
   type DesktopHostExitReason,
   type DesktopHostReclamationOperation,
@@ -370,7 +369,7 @@ export function createDesktopPrivateHostComposition(
       ...[...children].reverse().map((child) => ({ step: child.step, close: () => child.close() })),
       { step: "release_guardian_session", close: () => closeSessionOnce() },
     ];
-    const outcomes = await runDesktopHostReclamation(operations, DESKTOP_HOST_DRAIN_TIMEOUT_MS);
+    const outcomes = await runDesktopHostReclamation(operations);
     // Keep the capability captured until every child and the authenticated
     // session have fully closed; it is not projected.
     void retainedRootLayoutCapability;
