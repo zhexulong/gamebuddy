@@ -152,19 +152,25 @@ export const DESKTOP_HOST_CLOSE_STEP_FAILED = "desktop_host_close_step_failed";
 const DESKTOP_HOST_ORDINARY_STEP_BOUND_MS = 90 * 2;
 
 /**
- * What `drain_game_lifecycle` may spend: the ceiling of the attempt its close must not race.
+ * What `drain_game_lifecycle` may spend: the LONGEST single operation its close can still be waiting on.
  *
- * Its own budgeted operation is the Guardian arm/contain/close acknowledgement
- * (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`, 60 s). Its LONGEST is the join an ordinary close
- * performs on an in-flight `game.create`/`game.resume`, because close may not tear the world down
- * under an attempt that is still writing its own durable rows: that attempt's deadline is
- * `min(session expiry, now + Farmhand join budget)` (`STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS` 150 s
- * plus the world's player-Mod count), and the browser admission lease it is admitted under is
- * capped at ten minutes (`stardew-production-lifecycle-coordinator.internal.ts`), so no join the
- * exit waits on can outlive that window. A bound below it marked a legitimate modded-world join as
- * a failed step, which is the false failure this table exists to prevent.
+ * It used to be 600 s because an ordinary close awaited an in-flight `game.create`/`game.resume` to the end of its
+ * join, and that join's deadline is `min(session expiry, now + Farmhand join budget)`, capped at ten minutes by the
+ * browser admission lease. The exit now ASKS both attempts to stop before it joins them - the create's own cancel
+ * epoch and the resume's - so each one ends at its next safe point and the join is left waiting on one operation, not
+ * on the join:
+ *
+ * - the create's cabin handoff admission, `min(60_000, expiresAt - now)`: the one await no cancel epoch can reach
+ *   (`stardew-private-bootstrap-composer.core.internal.ts`, `confirmAndAdmit`);
+ * - one authenticated bridge connect attempt, `STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS` (45 s), which used to be
+ *   handed the whole join;
+ * - one runtime operation of the composition, `DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS` (60 s), and the contained
+ *   Player Host role launch, `STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS` (60 s).
+ *
+ * The largest of them is 60 s, and a bound below any of them would name a step that is legitimately inside its own
+ * bounded work as failed - which is the false failure this table exists to prevent.
  */
-const DESKTOP_HOST_GAME_STEP_BOUND_MS = 600_000;
+const DESKTOP_HOST_GAME_STEP_BOUND_MS = 60_000;
 
 /**
  * What each reclamation step may spend before the exit NAMES it as a failed drain.
@@ -188,8 +194,8 @@ export const DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS: DesktopHostReclamationStepB
   drain_chat_runtime: DESKTOP_HOST_ORDINARY_STEP_BOUND_MS,
   /**
    * The one step that waits on budgeted operations: the Guardian arm/contain/close acknowledgement
-   * (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`, 60 s) and, because an ordinary close must not tear
-   * the world down under an in-flight `game.create`/`game.resume`, the join on that attempt.
+   * (`DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`, 60 s) and, because an ordinary close still joins the attempt it has
+   * asked to stop, the ONE operation that attempt can still be inside (60 s at most).
    */
   drain_game_lifecycle: DESKTOP_HOST_GAME_STEP_BOUND_MS,
   /** Writes the one marker this runtime root is owed: measured 3 ms. */

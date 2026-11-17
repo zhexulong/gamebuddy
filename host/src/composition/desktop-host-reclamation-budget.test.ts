@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   DESKTOP_HOST_DRAIN_DEADLINE_MS,
@@ -11,6 +14,7 @@ import {
 } from "./desktop-host-reclamation.js";
 import { DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS } from "./stardew/stardew-guardian-platform.js";
 import {
+  STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
   STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS,
   STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
   stardewFarmhandJoinBudgetMs,
@@ -31,6 +35,44 @@ import {
  */
 
 /**
+ * The one await no cancel epoch can reach: the create's cabin handoff admission.
+ *
+ * It is read from the module that owns it (`confirmAndAdmit` bounds the wait with
+ * `Math.min(60_000, Math.max(1, facts.expiresAtMs - readClock()))`) rather than imported,
+ * because that module is a private core with exactly three permitted importers - and a number
+ * this table could not see is exactly how the step's bound drifted below its own operations
+ * before. If the composer's number moves, this reading moves with it, or the gate names the line
+ * it could not find instead of passing over an unexamined operation.
+ */
+const MANIFEST_HANDOFF_ADMISSION_WAIT_BUDGET_MS = readManifestHandoffAdmissionWaitBudgetMs();
+
+function readManifestHandoffAdmissionWaitBudgetMs(): number {
+  // Same depth in `src/` and in `dist-test/`, so the reading works from either artifact.
+  const sourcePath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "src",
+    "games",
+    "stardew",
+    "lifecycle",
+    "stardew-private-bootstrap-composer.core.internal.ts",
+  );
+  const source = readFileSync(sourcePath, "utf8");
+  const match = /Math\.min\(([\d_]+),\s*Math\.max\(1,\s*facts\.expiresAtMs - readClock\(\)\)\)/u.exec(source);
+  if (match === null)
+    throw new Error(
+      `${sourcePath} no longer bounds its handoff admission wait in the shape this gate reads ` +
+        "(Math.min(<ms>, Math.max(1, facts.expiresAtMs - readClock()))): the create's own await must be named " +
+        "here, or this reading measured nothing",
+    );
+  const ms = Number(match[1]!.replaceAll("_", ""));
+  if (!Number.isSafeInteger(ms) || ms <= 0)
+    throw new Error(`the handoff admission wait ${match[1]!} is not a positive whole number of milliseconds`);
+  return ms;
+}
+
+/**
  * What a reclamation step can be waiting on, and the number its owner publishes for it.
  *
  * Every entry is an operation the step's close awaits - not an operation of some other surface it
@@ -49,10 +91,10 @@ const STEP_OWNED_OPERATIONS: Readonly<
    * The only step that waits on budgeted operations. Each is a number its owner publishes; none of
    * them is written here.
    *
-   * The join is the one that used to be missing from this table: an ordinary close must not tear
-   * the world down under an in-flight `game.create`/`game.resume`, so it awaits the attempt, whose
-   * deadline is the Farmhand join budget for the world it attaches to. The workload term is per
-   * player Mod, so the gate sweeps counts instead of picking one.
+   * The JOIN used to be in this table, and it was the reason the step's bound was 600 s: an ordinary
+   * close awaited an in-flight `game.create`/`game.resume` to the end of its join. The exit now asks
+   * both attempts to stop before it joins them, so what is left is the ONE await each of them can
+   * still be inside - which is what this table holds, and why the bound is 60 s.
    */
   drain_game_lifecycle: [
     Object.freeze({
@@ -63,6 +105,15 @@ const STEP_OWNED_OPERATIONS: Readonly<
       owner:
         "STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS (stardew-production-lifecycle-coordinator.internal.ts)",
       ms: STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
+    }),
+    Object.freeze({
+      owner: "STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS (stardew-production-lifecycle-coordinator.internal.ts)",
+      ms: STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+    }),
+    Object.freeze({
+      owner:
+        "the cabin handoff admission wait (games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts)",
+      ms: MANIFEST_HANDOFF_ADMISSION_WAIT_BUDGET_MS,
     }),
   ],
   /** Records the one reflection the runtime root is owed: one marker file, no operation to wait on. */
@@ -97,19 +148,6 @@ const MEASURED_ORDINARY_CLOSES: readonly Readonly<{ step: DesktopHostReclamation
 ]);
 
 /**
- * Player-Mod counts the join must cover: the empty Mods folder, a handful, the count where the
- * workload term alone reaches the admission-expiry ceiling, and counts past it.
- */
-const JOIN_MOD_COUNTS = Object.freeze([0, 1, 10, 100, 450, 1_000]);
-
-/**
- * The ceiling the coordinator's own admission lease puts on any attempt the close can join: the
- * lease expiry is capped at ten minutes (`stardew-production-lifecycle-coordinator.internal.ts`),
- * so a join never outlives it, whatever the world's Mod count.
- */
-const JOIN_CEILING_MS = 600_000;
-
-/**
  * Every step whose bound does not cover one of its owned operations, named with the owner of the
  * number that exposed it.
  *
@@ -134,20 +172,6 @@ function stepsOutlivingTheirBound(
       if (operation.ms > bounds[step]) {
         outliving.push(Object.freeze({ step, owner: operation.owner, ms: operation.ms }));
       }
-    }
-  }
-  // The joins are the operation no single owner constant can state, so they are checked over the
-  // counts a world can report rather than over one number.
-  for (const count of JOIN_MOD_COUNTS) {
-    const ms = Math.min(JOIN_CEILING_MS, stardewFarmhandJoinBudgetMs(count));
-    if (ms > bounds.drain_game_lifecycle) {
-      outliving.push(
-        Object.freeze({
-          step: "drain_game_lifecycle" as const,
-          owner: `the in-flight game.create/game.resume join (${STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS} ms + ${count} player Mods)`,
-          ms,
-        }),
-      );
     }
   }
   return Object.freeze(outliving);
@@ -178,10 +202,7 @@ test("every step's bound covers every operation that step can be waiting on", ()
 });
 
 test("the gate is red at a bound below the operations a step waits on, and it names the step and the owner", () => {
-  // The proof that the check above can fail, over the same population and the same numbers. The
-  // ordinary bound is short enough to fire inside the game step's own operation, and the 60 s
-  // ceiling this table used to declare for EVERY step is short enough that even a world with no
-  // player Mods outlives it - which is the false failure the table now prevents.
+  // The proof that the check above can fail, over the same population and the same numbers.
   const ordinaryBound = Math.min(
     ...DESKTOP_HOST_RECLAMATION_STEPS.map((step) => DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS[step]),
   );
@@ -193,6 +214,7 @@ test("the gate is red at a bound below the operations a step waits on, and it na
       >,
     );
 
+  // The ordinary bound fires inside every operation the game step owns.
   const atTheOrdinaryBound = stepsOutlivingTheirBound(
     DESKTOP_HOST_RECLAMATION_STEPS,
     uniform(ordinaryBound),
@@ -204,20 +226,48 @@ test("the gate is red at a bound below the operations a step waits on, and it na
     [
       DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
       STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS,
-      ...JOIN_MOD_COUNTS.map((count) => Math.min(JOIN_CEILING_MS, stardewFarmhandJoinBudgetMs(count))),
+      STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+      MANIFEST_HANDOFF_ADMISSION_WAIT_BUDGET_MS,
     ],
   );
 
-  // The old ceiling: the two budgeted operations fit inside it, and only the join does not - which
-  // is exactly the operation the table could not see before.
-  const atTheOldCeiling = stepsOutlivingTheirBound(
+  // Lowered BELOW the connect budget: the three 60 s operations are named and the 45 s connect is
+  // not, so the gate still fails when a bound sits under an operation the step owns - and it names
+  // which one.
+  const atTheConnectBudget = stepsOutlivingTheirBound(
     DESKTOP_HOST_RECLAMATION_STEPS,
-    uniform(60_000),
+    uniform(STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS),
     STEP_OWNED_OPERATIONS,
   );
-  assert.equal(atTheOldCeiling.length, JOIN_MOD_COUNTS.length);
-  assert.deepEqual([...new Set(atTheOldCeiling.map((entry) => entry.step))], ["drain_game_lifecycle"]);
-  assert.match(DESCRIBE_OUTLIVING(atTheOldCeiling, uniform(60_000)), /in-flight game\.create\/game\.resume join/);
+  assert.deepEqual([...new Set(atTheConnectBudget.map((entry) => entry.step))], ["drain_game_lifecycle"]);
+  assert.deepEqual(
+    atTheConnectBudget.map((entry) => entry.owner),
+    [
+      "DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS (composition/stardew/stardew-guardian-platform.ts)",
+      "STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS (stardew-production-lifecycle-coordinator.internal.ts)",
+      "the cabin handoff admission wait (games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts)",
+    ],
+  );
+  assert.match(
+    DESCRIBE_OUTLIVING(atTheConnectBudget, uniform(STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS)),
+    /cabin handoff admission/,
+  );
+});
+
+test("the exit no longer waits a join, so no bound has to cover one", () => {
+  // The number this replaced: 600 s, the ceiling of the join an ordinary close used to await. The
+  // declared bound must now be BELOW the smallest join a world can have, because the exit cancels
+  // both attempts before it joins them - a bound that still covered a join would mean the cancel
+  // stopped reaching the wait it was added for.
+  const smallestJoinMs = Math.min(600_000, stardewFarmhandJoinBudgetMs(0));
+  assert.equal(smallestJoinMs, STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS);
+  assert.ok(
+    DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS.drain_game_lifecycle < smallestJoinMs,
+    `drain_game_lifecycle still spends ${DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS.drain_game_lifecycle} ms, which only a join needs`,
+  );
+  // And it is exactly the largest operation the step still owns, so it is not merely small.
+  const ownedMs = STEP_OWNED_OPERATIONS.drain_game_lifecycle.map((operation) => operation.ms);
+  assert.equal(DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS.drain_game_lifecycle, Math.max(...ownedMs));
 });
 
 test("the gate refuses to pass over zero steps", () => {
