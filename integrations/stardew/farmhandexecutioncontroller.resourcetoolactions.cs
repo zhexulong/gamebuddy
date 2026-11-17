@@ -573,7 +573,12 @@ internal sealed partial class ExecutionManager
         if (!string.Equals(currentTool, expectedTool, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
 
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}");
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}", publish: false);
+        // `publish: false` above is `design/fact-authority.md` §1: 「工具被装上了」 is a STEP of the plan, not an event
+        // of the world - that document's not-fact column files it under 「属于结算的证据」. The plan's own node names the
+        // action and the tool it asked for, and this receipt's evidence line names the tool the hand actually holds, so
+        // the settlement that ends the step still says WHICH one it was. What is gone is the second spelling: the
+        // receipt answers the dispatch that asked for it and the plan's journal row, and the seam does not publish it.
     }
 
     private static int? SelectToolSlot(Farmer player, string tool)

@@ -3222,12 +3222,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static string DescribeApproachRing(StardewBodyController.CardinalRing? ring) =>
         ring is null ? string.Empty : $";approaches={ring.Evidence};approach_blocked_by:{ring.BlockedBy}";
 
-    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null)
+    /// <summary>
+    /// One execution's terminal receipt. <paramref name="publish"/> is the producer's answer to "is this NEWS":
+    /// <c>false</c> withholds it from the fact stream while every other step of the funnel still runs, so the receipt
+    /// that answers its own dispatch, that the ledger stores and that the plan's journal row carries is the same bytes
+    /// either way (<see cref="AddTrace"/>).
+    /// </summary>
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true)
     {
         string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.ledger.Remember(receipt);
-        LocalExecutionReceipt published = this.AddTrace(receipt);
+        LocalExecutionReceipt published = this.AddTrace(receipt, publish);
         if (state.IsTerminal())
             this.ledger.PublishIdleAfterRelease(executionId, requestId);
         return published;
@@ -3267,6 +3273,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// same bytes.
     /// </para>
     /// <para>
+    /// WHAT A STEP WITHHOLDS, AND WHAT IT KEEPS. A receipt that states a STEP of the plan rather than an event of the
+    /// world is minted with <c>publish: false</c>: `design/fact-authority.md` §1 files 「工具被装上了」 under "belongs to
+    /// the settlement's evidence", so the equip answers the dispatch that asked for it and the plan's own journal row,
+    /// and it does not become one more fact for the pump to weigh. Nothing else is skipped - the durable transition, the
+    /// ledger write, the hold mark, the revision and the trace fold below all run before the publish branch, so what the
+    /// caller is answered with and what a later reader finds is the same receipt.
+    /// </para>
+    /// <para>
     /// AND A SETTLED EXECUTION IS NEVER ANSWERED AGAIN. The progress transition in <c>round66</c> did not merely follow
     /// the terminal in the fact stream, it would also have OVERWRITTEN the ledger: the same funnel stores every receipt
     /// it is handed, so a late <c>running</c> replaces a stored <c>rejected</c> and every later reader - an exact
@@ -3275,7 +3289,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// caller gets back.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
+    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt, bool publish = true)
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
@@ -3336,7 +3350,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
-        if (settled)
+        if (settled && publish)
             this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
         return published;
