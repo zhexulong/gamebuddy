@@ -183,6 +183,7 @@ import { openRunProgress } from "../core/run-progress.mjs";
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
 import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
+import { bridgeClosureStop } from "./bridge-closure.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
@@ -255,6 +256,17 @@ let runtimeRoot = null;
 // The run's own record, written as it happens (see `../core/run-progress.mjs`). Null until the capture shows where the
 // run directory is, so every call site below guards on it rather than inventing a path.
 let progress = null;
+// THE END OF THE WAIT, ONCE. A closed bridge is not a slow world (see `./bridge-closure.mjs`): the day loop, the clock
+// beat and any other waiter all consult this, and the first to see a closure records it and says so on the log. Declared
+// at module scope rather than beside the multi-day loop, because the clock beat is armed thousands of lines above and a
+// timer that fired during a top-level await would read a later `let` in its temporal dead zone.
+let bridgeClosure = null;
+function noteBridgeClosure(candidate) {
+  if (candidate === null || bridgeClosure !== null) return bridgeClosure;
+  bridgeClosure = candidate;
+  console.error("MULTIDAY_STOPPED", JSON.stringify(candidate));
+  return bridgeClosure;
+}
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath =
@@ -3225,7 +3237,14 @@ const MOD_LOG_PATHS = () => {
 // pause-on-unfocus reading: creating the timer before the values it reads would let a 30 s beat fire during a module
 // evaluation parked on an await, and a diagnostic that throws there kills the run it is describing.
 //
-const gameClockHeartbeat = setInterval(() => gameClock.heartbeat(), GAME_CLOCK_HEARTBEAT_MS);
+const gameClockHeartbeat = setInterval(async () => {
+  const beat = await gameClock.heartbeat();
+  // A BEAT THAT SAYS THE BRIDGE IS CLOSED IS THE RUN'S ANSWER. `round66` published thirty-two of these over sixteen
+  // minutes, each one repeating `not_attempted:bridge_closed`, because a stall nobody decided on looks the same in the log
+  // as a stall somebody was still waiting out. The reading ends the wait (`./bridge-closure.mjs`), and every waiter in
+  // this file consults the result.
+  if (beat?.stalled === true) noteBridgeClosure(bridgeClosureStop({ solicit: beat.solicit }));
+}, GAME_CLOCK_HEARTBEAT_MS);
 gameClockHeartbeat.unref?.();
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
@@ -5187,6 +5206,12 @@ try {
           let objectiveProgress = null;
           let objectiveProgressAtMs = Date.now();
           while (!nightCrossedIn(dayScope)) {
+            // BEFORE ANYTHING IS ASKED: is there still a world to ask? A closed bridge is not a slow world - this run can
+            // no longer observe, dispatch or see a night cross, so the wait has no state to reach. Measured on `round66`:
+            // after `BRIDGE_DISCONNECTED` the loop emitted thirty-two `GAME_CLOCK_STALLED` lines whose
+            // `sinceLastSnapshotMs` climbed to 1,179,640 ms and then the log stopped, and `round65` is the same shape
+            // (to 1,326,166). The night watcher had already answered; this loop was the only thing still waiting.
+            if (noteBridgeClosure(bridgeClosure ?? bridgeClosureStop({ bridgeDisconnections })) !== null) break;
             const clock = readWorldClock();
             const nowMs = Date.now();
             // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
