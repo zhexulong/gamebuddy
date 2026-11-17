@@ -338,3 +338,49 @@ test("an expired Farmhand join names the wait and leaves the player's session re
     await fixture.broker.close();
   }
 });
+
+test("the cabin press's connect is granted the join budget, not what is left of the advertisement's lease", async () => {
+  // The real shape of the advertisement: the Mod republishes it every second with a ~3 s expiry (measured
+  // live in `.live-runs/gc1/w-game-launch.txt`, windows of 2697..2936 ms), and `readCabinChoices` mints the
+  // handle's `expiresAtMs` from it. Handing that lease to the bridge connect made the attempt's deadline a
+  // leftover - the manifest admission, the profile materialization and the AI-client launch all happen
+  // between the read and the loop - so one attempt was granted a deadline that had already passed and failed
+  // as `bridge_connect_deadline_exceeded`. What is asserted here is the deadline the connect RECEIVED.
+  const fixture = await prepareCabinCoordinator(Date.now() + 3_000);
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const choice = choices.choices[0]!;
+    assert.ok(
+      choice.expiresAtMs <= Date.now() + 3_000,
+      "the fixture must publish the advertisement's own ~3 s lease, or it is not the shape this test is about",
+    );
+    const confirmStartedAt = Date.now();
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choice.choiceHandle,
+      idempotencyKey: "confirm-key-lease",
+      confirmed: true as const,
+    };
+    const confirmed = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      command,
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await confirmed, { apiVersion: 1, status: "manifest_admitted" });
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    const connection = fixture.bridgeConnectCalls[0]!;
+    const grantedMs = connection.deadlineMs - confirmStartedAt;
+    assert.ok(
+      grantedMs >= STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+      `the connect was granted ${grantedMs} ms, which is what was left of a ${choice.expiresAtMs - confirmStartedAt} ms advertisement lease rather than the ${STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS} ms an attempt owns`,
+    );
+    assert.ok(
+      connection.deadlineMs > choice.expiresAtMs,
+      `the connect's deadline (${connection.deadlineMs}) must outlive the offer it was pressed through (${choice.expiresAtMs})`,
+    );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});

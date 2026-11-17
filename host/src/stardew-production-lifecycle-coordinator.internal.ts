@@ -1296,9 +1296,17 @@ function createCoordinator(
   let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let exactOwner: StardewOwnedPlayerHostBootstrap | undefined;
   let ownerQuarantined = false;
-  // This lifecycle owns one not-yet-launched Player Host instance. Reconnect
-  // generations are a separate authority and are not implemented in this slice.
-  const expectedPlayerHostInstanceGeneration = 1;
+  /**
+   * Which attempt this lifecycle is on, as the browser's launch gate names it.
+   *
+   * It is the one fact that says "attempt N+1 is a different attempt from attempt
+   * N". Every attempt a settled ending hands back gets the next number, so a
+   * command that bound the ended attempt's number - its launch, above all - is
+   * refused instead of being replayed onto the next one. It moves only where the
+   * attempt itself ends (`settleEndedAttempt`), never on a read, and never for an
+   * attempt whose outcome nobody knows: that attempt does not settle at all.
+   */
+  let expectedPlayerHostInstanceGeneration = 1;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   const installationDiscoveryProvider = installationDiscovery;
   let launchTerminal = false;
@@ -1386,9 +1394,11 @@ function createCoordinator(
    *   knows. Re-driving it would repeat a native effect this lifecycle cannot prove, so
    *   it stays terminal under its own name.
    *
-   * Both are answered ahead of `launchPromise`, because that promise is this lifecycle's
-   * single-launch slot and stays set after it settles. A settled launch is not a launch
-   * in flight, and answering "in progress" forever would hide the ending from the player.
+   * Both are answered ahead of `launchPromise`, because that promise belongs to the
+   * ATTEMPT: it is cleared where the attempt is settled, so a settled launch is never a
+   * launch in flight. Answering "in progress" forever would hide the ending from the
+   * player, and a promise that outlived its attempt would be the one-attempt assumption
+   * surviving in a second place.
    */
   const launchEndedRefusal = (): Error | undefined => {
     if (recordPlayerHostExit() !== null) return new Error(PLAYER_HOST_EXITED_REFUSAL);
@@ -1532,6 +1542,12 @@ function createCoordinator(
    */
   let endgameSettled = false;
   let closePromise: Promise<void> | undefined;
+  /**
+   * The one in-flight attempt settle, so two callers that both want the next attempt
+   * settle this one once. It is cleared when the settle failed, because a settle that
+   * could not finish left the attempt exactly where it was and must be retryable.
+   */
+  let attemptSettlePromise: Promise<void> | undefined;
   const handoffCoordinator = internal.createOwnedPlayerHostManifestHandoffCoordinator();
   const cabinHandles = new Map<
     string,
@@ -1705,12 +1721,34 @@ function createCoordinator(
   ): Promise<StardewPrivateActivationSnapshot> => {
     if (activationState === "closing" || activationState === "closed")
       return Promise.reject(new Error("stardew_lifecycle_closing"));
+    // Activation is where an attempt is PREPARED, so an attempt that ended has to be
+    // handed back before this one begins. `settleEndedAttempt` answers `undefined` for
+    // every shape that has nothing to hand back - a fresh lifecycle, an attempt that only
+    // staged, and an attempt whose outcome nobody knows - and then this activation runs
+    // exactly as it always has.
+    const settling = settleEndedAttempt();
     if (acceptedAdmission !== undefined) {
+      // The second press of an attempt that is already being prepared, including one
+      // still waiting on the settle above: it joins that attempt, it does not start a
+      // second one behind the same hand-back.
       if (acceptedAdmission !== admission) return Promise.reject(new Error("stardew_lifecycle_activation_conflict"));
       return activationPromise!;
     }
     acceptedAdmission = admission;
-    activationPromise = runActivation(admission);
+    activationPromise =
+      settling === undefined
+        ? runActivation(admission)
+        : settling.then(
+            () => runActivation(admission),
+            (error: unknown) => {
+              // The ended attempt still holds what a new one needs, and nothing of the
+              // new attempt was reserved. Drop this activation's own latch so the next
+              // press asks again instead of replaying a promise that never ran.
+              acceptedAdmission = undefined;
+              activationPromise = undefined;
+              throw error;
+            },
+          );
     return activationPromise;
   };
 
@@ -2243,7 +2281,7 @@ function createCoordinator(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: StardewCabinConfirmCommandV1,
   ): Promise<StardewCabinConfirmResultV1> =>
-    consumeBrowserAdmission(admission, "cabin_confirm", (browserSessionId) => {
+    consumeBrowserAdmission(admission, "cabin_confirm", (browserSessionId, sessionExpiry) => {
       const payload = JSON.stringify(command);
       const existing = cabinConfirmations.get(command.idempotencyKey);
       if (existing !== undefined) {
@@ -2262,6 +2300,18 @@ function createCoordinator(
 
       handle.consumed.value = true;
       cabinConfirmationKey = command.idempotencyKey;
+      // What the connect this press triggers may spend, and why it is NOT the offer's lease.
+      //
+      // `handle.expiresAtMs` is the cabin advertisement's own deadline: the Mod republishes that
+      // advertisement every second with a ~2.7-3.0 s expiry (measured live in
+      // `.live-runs/gc1/w-game-launch.txt`), and it exists to bound the PRESS - it is checked
+      // above, and the game decides whether the choice went stale. Handing it to the bridge
+      // connect made the attempt's budget electrical noise: by the time the loop below runs, the
+      // manifest has been admitted, the AI-client profile materialized and the client launched,
+      // so the lease is already spent and one attempt failed immediately as
+      // `bridge_connect_deadline_exceeded`. The attach is the join this lifecycle's own budget
+      // owns, read here exactly as the resume and create paths read it.
+      const joinDeadline = joinDeadlineMs(sessionExpiry);
       const uncertain = { value: false };
       let manifestAdmitted = false;
       const promise = handoffCoordinator
@@ -2286,12 +2336,12 @@ function createCoordinator(
                 (connection) =>
                   materializeFarmhandGameSession(
                     connection,
-                    stardewFarmhandBridgeConnectDeadlineMs(handle.expiresAtMs, Date.now()),
+                    stardewFarmhandBridgeConnectDeadlineMs(joinDeadline, Date.now()),
                   ),
               );
             } catch (error) {
               if (!isTransientFarmhandBridgeConnectError(error)) throw error;
-              await waitForFarmhandBridgeRetry(handle.expiresAtMs);
+              await waitForFarmhandBridgeRetry(joinDeadline);
             }
           }
           const enteredLease = await farmhandGameRuntimeFacade.runEnter();
@@ -2669,6 +2719,130 @@ function createCoordinator(
       return;
     }
     await closePartialAttachment();
+  };
+
+  /**
+   * The refusal a settle answers with when the ended attempt still holds the durable
+   * registration pointer. It is not a launch refusal and not a close failure: the
+   * attempt is over, but the one bookkeeping fact a NEW attempt needs - a free
+   * pointer - is still held, and only the OS proving the attempt's Guardian-owned
+   * objects gone can free it.
+   */
+  const ATTEMPT_SETTLE_REFUSED = "stardew_player_host_attempt_settle_refused";
+  /**
+   * Hands an attempt that really ended back to the surface, so the next attempt can be
+   * prepared. Returns `undefined` when there is nothing to hand back - the common case
+   * for a lifecycle that never launched, for an attempt that only staged, and for an
+   * attempt whose outcome nobody knows.
+   *
+   * Two endings are knowledge and both settle: the Guardian reported the Player Host
+   * process gone, or an explicit endgame already settled the attempt durably.
+   * `launchTerminal` is the opposite fact - a launch or an attestation whose outcome
+   * nobody knows - and it is answered first, because re-driving an unprovable native
+   * effect is exactly what must never be reachable through this door. Such an attempt
+   * keeps its generation and never settles, for this Host's life.
+   *
+   * What makes the settle SAFE is that the next attempt can reach nothing of this one.
+   * Under ADR-0015 the attempt is the Guardian session: its lease, both its Jobs, its
+   * arm binding and its attestation are minted per owner reservation and its other
+   * attempt identity (bootstrap id, revision, instance id, all three native names)
+   * comes from that reservation, not from this lifecycle. So the settle's whole job is
+   * to stop holding the ended attempt and prove the durable pointer is free - never to
+   * reuse, repair or re-attest anything it built:
+   *
+   * 1. This attempt's own authority ends. The exact semantic facade goes first (through
+   *    the shared teardown timing), then the AI client's role, then the platform
+   *    session that holds the Guardian. The PLAYER role is never contained here: its
+   *    world ended on its own and `contain_role` stays the explicit endgame's own
+   *    authenticated operation (ADR-0007).
+   * 2. The durable attempt is released by the ONE pass allowed to release it -
+   *    `reconcileHeldBootstrapRegistration`, the same bookkeeping the boot runs. It
+   *    finalises an attempt whose Guardian-owned objects the OS proves gone as
+   *    `ai_settled_player_preserved`, never claims containment, and leaves everything
+   *    untouched when the objects are present or unverifiable. A pointer still bound
+   *    afterwards refuses the settle by name instead of letting a second attempt be
+   *    prepared on top of the first one.
+   * 3. Only then does this lifecycle forget the attempt. Its owner, admission,
+   *    activation promise, launch promise, exit record, attestation, mod count and
+   *    runtime flags were the attempt's alone; the generation advances so nothing it
+   *    bound can be sent again.
+   */
+  const settleEndedAttempt = (): Promise<void> | undefined => {
+    if (attemptSettlePromise !== undefined) return attemptSettlePromise;
+    const owner = exactOwner;
+    if (owner === undefined || launchTerminal || isClosing()) return undefined;
+    const endedByReportedExit = recordPlayerHostExit() !== null;
+    if (!endedByReportedExit && !endgameSettled) return undefined;
+    // The ended attempt's own activation latch belongs to the attempt being handed back,
+    // not to the one being prepared, and it is released here - synchronously, before the
+    // first await - so the very call that settles the attempt is the one that may prepare
+    // the next one. It is safe because an ended attempt runs no command of its own any
+    // more, and a settle that then refuses leaves nothing latched: the next press asks
+    // again, which is exactly what a refused settle needs.
+    acceptedAdmission = undefined;
+    activationPromise = undefined;
+    const settling = (async (): Promise<void> => {
+      // A teardown already in flight owns the facade this settle would otherwise read.
+      const sharedTeardown = attachmentTeardownPromise;
+      if (sharedTeardown !== undefined) await sharedTeardown.catch(() => undefined);
+      await closeStaleAttachment();
+      if (containedRuntimeTeardown !== undefined) {
+        if (aiClientLaunchThroughRuntime && !runtimeContained.aiClient) {
+          await containedRuntimeTeardown.containAiClient(owner);
+          runtimeContained.aiClient = true;
+        }
+        if ((playerHostLaunchThroughRuntime || aiClientLaunchThroughRuntime) && !runtimeClosed) {
+          await containedRuntimeTeardown.close(owner);
+          runtimeClosed = true;
+        }
+      }
+      const heldBefore = (await readStardewInstallationRegistration(runtimeRoot))?.activeAttempt ?? null;
+      if (heldBefore !== null) {
+        await internal.reconcileHeldBootstrapRegistration(runtimeRoot, probeWindowsStardewGuardianObjects);
+        const heldAfter = (await readStardewInstallationRegistration(runtimeRoot))?.activeAttempt ?? null;
+        if (heldAfter !== null) throw new Error(ATTEMPT_SETTLE_REFUSED);
+      }
+      // 3. Only now does this lifecycle forget the attempt. Its activation latch was
+      //    released when the settle began (it belongs to the attempt handed back, and
+      //    the one being prepared has taken it since); everything below was this
+      //    attempt's alone.
+      exactOwner = undefined;
+      ownerQuarantined = false;
+      launchPromise = undefined;
+      playerHostAttestationCorrelated = false;
+      playerHostExit = null;
+      playerModCount = 0;
+      aiClientProfileMaterialized = false;
+      endgameSettled = false;
+      playerHostLaunchThroughRuntime = false;
+      aiClientLaunchThroughRuntime = false;
+      runtimeContained.playerHost = false;
+      runtimeContained.aiClient = false;
+      runtimeClosed = false;
+      farmhandGameRuntimeFacadeClosed = false;
+      gameLaunches.clear();
+      gameSetups.clear();
+      gameEndgames.clear();
+      cabinHandles.clear();
+      cabinConfirmations.clear();
+      cabinConfirmationKey = undefined;
+      attachmentGeneration = 0;
+      attachmentConnectionStatus = "none";
+      actionAuthorityStatus = "unavailable";
+      resumedGameSessionId = undefined;
+      expectedPlayerHostInstanceGeneration += 1;
+      transition("inactive");
+      publishGameFact("instance");
+      publishGameFact("attachment");
+      publishGameFact("selectedWorld");
+    })();
+    attemptSettlePromise = settling;
+    void settling.catch(() => {
+      // A settle that could not finish wrote nothing about the next attempt and left
+      // this one exactly as it was, so the next press must be able to retry it.
+      if (attemptSettlePromise === settling) attemptSettlePromise = undefined;
+    });
+    return settling;
   };
 
   /**
@@ -3562,12 +3736,15 @@ function createCoordinator(
           throw new Error("stardew_registered_installation_unavailable");
         transition("reserving");
         const headlessSessionId = `headless-${randomUUID()}`;
+        // The one-shot operational topology's own session deadline: the join this attach may spend is
+        // bounded by it, never by an advertisement's lease (see the cabin press's note on the same number).
+        const headlessSessionExpiryMs = Date.now() + 10 * 60_000;
         const claim = composition.broker
           .confirm({
             playerId,
             companionId,
             browserSessionId: headlessSessionId,
-            expiresAtMs: Date.now() + 10 * 60_000,
+            expiresAtMs: headlessSessionExpiryMs,
           })
           .consume(headlessSessionId);
         const owner = await internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
@@ -3602,7 +3779,9 @@ function createCoordinator(
         const choices = await handoffCoordinator.list(ownerForHandoff);
         const choice = choices[0];
         if (choice === undefined) throw new Error("stardew_headless_cabin_unavailable");
-        const handoffExpiry = choice.expiresAtMs;
+        // The advertisement's lease bounds the choice this one-shot run auto-selected, not the attach it
+        // triggers: the connect is the join, and its budget is the session's (as on every other path).
+        const joinDeadline = joinDeadlineMs(headlessSessionExpiryMs);
         const admission = await handoffCoordinator.confirmAndAdmit(choice.selection, { confirmed: true });
         await internal.materializeAiClientProfileAfterManifestAdmission(ownerForHandoff, admission);
         aiClientProfileMaterialized = true;
@@ -3621,12 +3800,12 @@ function createCoordinator(
               (connection) =>
                 materializeFarmhandGameSession(
                   connection,
-                  stardewFarmhandBridgeConnectDeadlineMs(handoffExpiry, Date.now()),
+                  stardewFarmhandBridgeConnectDeadlineMs(joinDeadline, Date.now()),
                 ),
             );
           } catch (error) {
             if (!isTransientFarmhandBridgeConnectError(error)) throw error;
-            await waitForFarmhandBridgeRetry(handoffExpiry);
+            await waitForFarmhandBridgeRetry(joinDeadline);
           }
         }
         const enteredLease = await farmhandGameRuntimeFacade.runEnter();
@@ -3732,6 +3911,12 @@ function createCoordinator(
     if (resumePromise !== undefined) resumeCancelRequested = true;
     const create = createPromise;
     if (create !== undefined) await create.catch(() => undefined);
+    // An attempt settle already in flight is driven by the same runtime this close is
+    // about to touch, so it is joined rather than raced. It cannot start after this
+    // point (`settleEndedAttempt` refuses once closing), and a settle that refused left
+    // the attempt intact for the teardown below.
+    const settling = attemptSettlePromise;
+    if (settling !== undefined) await settling.catch(() => undefined);
     // An explicit endgame is terminal: it already drained both role Jobs,
     // released the platform session and drove the durable owner record to
     // `contained`. The ordinary close that follows is pure bookkeeping and must
