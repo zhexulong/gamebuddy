@@ -424,6 +424,17 @@ public sealed class HostFarmhandProvisioningConfig
     /// </summary>
     public string FavoriteThing { get; init; } = "GameBuddy";
     public int ManifestLifetimeSeconds { get; init; } = 120;
+
+    /// <summary>
+    /// Whether this Host asks the engine to save the binding it just staged.
+    ///
+    /// A binding lives in Mod save data, and that data only lands inside the engine's own
+    /// <c>Saving</c>/<c>Saved</c> cycle. The cycle is the engine's; asking for it is this session's,
+    /// because the first attachment of a GameBuddy-launched world happens on a morning that no player
+    /// has ended yet. Default on, and the only switch for it: a second one in the fixture bundle made
+    /// this production step look like fixture setup.
+    /// </summary>
+    public bool TriggerNativeSaveAfterBinding { get; init; } = true;
     public List<string> AuthorizedCompanionIds { get; init; } = new();
 
     /// <summary>
@@ -478,7 +489,6 @@ public sealed class HostAutomationConfig
     /// supported non-empty values are exact release-verified native BCP-47 locales.
     /// </summary>
     public string RequireFixtureLiveLocale { get; init; } = string.Empty;
-    public bool TriggerNativeSaveAfterAttachment { get; init; }
     public bool TriggerNativeSaveAfterClientExit { get; init; }
 
     internal bool IsValid => Enable

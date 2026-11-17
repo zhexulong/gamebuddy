@@ -75,6 +75,7 @@ DispatchEnvelopeTests.cs	mod-assembly	ExecutionManager
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 DoorTargetsInteriorExitTests.cs	game	Xna, Netcode, StardewValley, GameLocation
 EdgeExitWarpSourceTests.cs	game	StardewValley
+EmbeddedWorldFactPayload.cs	mod-assembly	WireJson (declared in integrations/stardew/WireJson.cs, outside src/Core)
 EnterExitAdjacentExitRefusalTests.cs	game	Xna, Netcode, StardewModdingAPI, StardewValley, Game1, Farmer, LocationRequest, GameLocation
 EnterExitDoorGateTests.cs	mod-assembly	Handlers
 EngineParityCandidateScan.cs	game	Microsoft.Xna.Framework (Xna, from typeof(Point) in the offset-table reflection over the Mod's assemblies)
@@ -112,6 +113,7 @@ ItemDisplayNameTests.cs	mod-assembly	ItemDisplayName
 ItemTileActionTests.cs	mod-assembly	Handlers
 LevelUpMilestoneChoiceTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, IClickableMenu, LevelUpMenu
 LevelUpProfessionPairTests.cs	mod-assembly	ExecutionManager
+LiveGameLocaleWaitTests.cs	game	StardewModdingAPI, LiveGameLocaleWait (the wait itself is declared under integrations/stardew, outside src/Core)
 LocalPipeBridgeOutboundQueueTests.cs	mod-assembly	LocalPipeBridge, PipeOutbound, PipeOutboundCompletion
 LocalPipeBridgeOutboundRefusalObservabilityTests.cs	mod-assembly	LocalPipeBridge, OutboundFrameCounters
 MagnetPickupItemTests.cs	mod-assembly	Xna, Netcode, StardewModdingAPI, StardewValley, Game1
