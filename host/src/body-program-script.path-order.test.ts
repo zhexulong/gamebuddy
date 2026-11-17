@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
+import { footprintTiles, TOOL_FOOTPRINT_TILES_BY_CHARGE } from "./body-program-packing.js";
 import { type CompiledPlan, compilePlanScript, planActionsFromRegistrations } from "./body-program-script.js";
-import { type ActionRegistration, type Snapshot } from "./protocol.js";
+import type { ActionRegistration, Snapshot } from "./protocol.js";
 
 /**
  * GATE: A BATCH OF INDEPENDENT STEPS IS EMITTED AS A PATH, NOT IN THE ORDER THE SCRIPT WROTE THEM.
@@ -141,6 +141,18 @@ function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPla
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
   if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
   return result.program.nodes;
+}
+
+/** The nodes the compiler wrote into the program, and their population, read through the plan they stand beside. */
+function insertionsOf(plan: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
+  if (!plan.ok) assert.fail(`expected a plan beside the insertions, received ${plan.reasonCode}`);
+  return { inserted: plan.inserted, count: plan.insertedCount };
+}
+
+/** The ids of the nodes the compiler minted, in program order: the population an insertion reading joins on. */
+function insertedNodeIdsOf(plan: CompiledPlan): readonly string[] {
+  if (!plan.ok) assert.fail(`expected a plan beside its inserted node ids, received ${plan.reasonCode}`);
+  return plan.insertedNodeIds;
 }
 
 /** One node's tile: the integer `x`/`y` every positioned action declares, or undefined for a step that names none. */
@@ -437,13 +449,33 @@ test("a_batch_is_emitted_in_script_order:harvest_crop - every batch is emitted a
 test("a_path_order_changes_no_step:harvest_crop - a reorder keeps every step, its arguments and its count", () => {
   const findings: string[] = [];
   for (const fixture of FIXTURES) {
-    const nodes = nodesOf(compile(fixture.script, { tile: fixture.actor, enabledActionIds: fixture.enabled }));
+    const plan = compile(fixture.script, { tile: fixture.actor, enabledActionIds: fixture.enabled });
+    const nodes = nodesOf(plan);
     const carried = sorted(stepKeys(nodes));
     const wrote = sorted([...fixture.wrote, ...(fixture.inserted ?? [])]);
     if (JSON.stringify(carried) !== JSON.stringify(wrote))
       findings.push(`${fixture.name}: carried=[${carried.join(",")}] wrote=[${wrote.join(",")}]`);
     // A batch's own members stay distinct nodes: a merge or a drop shows up as a shorter multiset above, a duplicate as a
     // repeated key, so the count is asserted from the fixture's own cards rather than from the compiler's account.
+    // THE INSERTION ACCOUNT IS READ AGAINST THE PROGRAM IT IS BESIDE: `inserted=<action>;before=<id>` must name the node that
+    // immediately follows the inserted one. A reorder renumbers the program and may move the step an insertion was written
+    // before, so an answer that carried the id it captured at emission time names a node somewhere else entirely.
+    assert.equal(
+      fixture.inserted === undefined ? 0 : fixture.inserted.length,
+      insertedNodeIdsOf(plan).length,
+      `${fixture.name}: one stated insertion per node the compiler wrote`,
+    );
+    insertedNodeIdsOf(plan).forEach((nodeId, index) => {
+      const position = nodes.findIndex((node) => node.nodeId === nodeId);
+      assert.ok(position >= 0, `${fixture.name}: the inserted node ${nodeId} is in the program`);
+      const following = nodes[position + 1];
+      assert.ok(following, `${fixture.name}: ${nodeId} is written before a step of hers`);
+      assert.match(
+        insertionsOf(plan).inserted[index]!,
+        new RegExp(`;before=${following.nodeId}$`, "u"),
+        `${fixture.name}: the insertion account names ${following.nodeId} as the step it precedes`,
+      );
+    });
     const crops = nodes.filter((node) => node.actionId === "harvest_crop");
     if (fixture.name.startsWith("round66") || fixture.name === "dismissal-then-crops") {
       assert.equal(crops.length, ROUND66_CROPS.length, `${fixture.name}: three crop steps in, three crop nodes out`);
@@ -533,4 +565,75 @@ test("the same reading is red when a correct program's batch is put back into sc
   const finding = surplusFinding(batchReadings(scriptOrder, fixture.actor)[0]!);
   assert.ok(finding !== null, "putting the batch back into script order makes the reading red");
   assert.match(finding, /surplus=5/, finding);
+});
+/**
+ * THE TWO PASSES COMPOSE: packing decides WHICH nodes a patch becomes, the path order decides which is walked to first.
+ *
+ * <p>
+ * This is the reading the rebase onto the authored-run packing pass needs, because the two passes run back to back and
+ * each one could quietly undo the other. Packing replaces a run of authored tiles with the native uses that cover it, and
+ * the planting written on one of those tiles must consume THE USE THAT COVERS ITS TILE - not merely the node before it,
+ * and not nothing. That second failure is the one a re-derivation by tile would produce: a packed use names its ANCHOR
+ * tile, so looking for a node at the planting position finds none and the edge disappears while every test that counts
+ * nodes stays green.
+ * </p>
+ * <p>
+ * The reorder is forced rather than hoped for: the body stands at `61,17`, so the packing pass's own column order walks to
+ * `60,18` first (2 tiles) where `61,18` is adjacent (1 tile). After the reorder the planting edge must still name the use
+ * whose footprint covers `60,19`, and that use is now the SECOND node in the program.
+ * </p>
+ */
+test("a packed run is ordered by the same pass, and the planting edge still names the use that tills its tile", () => {
+  const patch = { x: 60, y: 18, w: 2, h: 3 };
+  const tiles = Array.from({ length: patch.w * patch.h }, (_, index) => ({
+    x: patch.x + (index % patch.w),
+    y: patch.y + Math.floor(index / patch.w),
+  }));
+  const script =
+    `for (const tile of ${JSON.stringify(tiles)}) builder.till_soil({ x: tile.x, y: tile.y, charge: 0 });\n` +
+    'builder.plant_seed({ x: 60, y: 19, slot: 0, expectedQualifiedItemId: "(O)472", expectedTargetId: "target:60,19" });';
+  const plan = compilePlanScript(
+    { script },
+    {
+      snapshot: {
+        ...BASE_SNAPSHOT,
+        tile: { x: 61, y: 17 },
+        enabledActionIds: ["till_soil", "plant_seed"],
+        currentToolSlot: 0,
+        toolSlots: [{ slot: 0, label: "Hoe", upgradeLevel: 3 }],
+      } as Snapshot,
+      actions: ACTIONS,
+    },
+  );
+  const nodes = nodesOf(plan);
+  const tilled = nodes.filter((node) => node.actionId === "till_soil");
+  assert.ok(
+    tilled.length < tiles.length,
+    `the patch must be PACKED for this reading to mean anything: ${String(tilled.length)} of ${String(tiles.length)} steps`,
+  );
+  // ONE ACTION AT ONE CHARGE WHOSE TILES FILL A RECTANGLE: the packing pass's own run predicate, read back as the batch.
+  const uses = tilled.map((node) => tileOf(node)!);
+  const fromHerTile = { x: 61, y: 17 };
+  const emitted = walkLength(uses, fromHerTile);
+  assert.equal(
+    emitted,
+    shortestWalk(uses, fromHerTile),
+    "the packed uses are emitted at the shortest length from her tile, not in the packing pass's column order",
+  );
+  // THE EDGE THAT CAN VANISH SILENTLY: the planting written on a packed tile consumes the use that covers it.
+  const planting = nodes.find((node) => node.actionId === "plant_seed");
+  assert.ok(planting, "the planting is in the program");
+  assert.equal(planting.dependsOn.length, 1, "the planting consumes exactly one node: the use that tills its tile");
+  const producer = nodes.find((node) => node.nodeId === planting.dependsOn[0]);
+  assert.ok(producer, "the edge names a node that is in the program");
+  assert.equal(producer.actionId, "till_soil", "and that node is the tilling");
+  const charge = Number((producer.arguments.charge as { canonicalValue: string }).canonicalValue);
+  const covered = footprintTiles(tileOf(producer)!, TOOL_FOOTPRINT_TILES_BY_CHARGE[charge]!, "y");
+  assert.ok(
+    covered.some((tile) => tile.x === 60 && tile.y === 19),
+    `the producer covers the planted tile: ${JSON.stringify(covered)}`,
+  );
+  console.log(
+    `packed run: ${String(tiles.length)} authored steps -> ${String(uses.length)} uses, walk ${String(emitted)} as emitted, planting consumes ${producer.nodeId} covering ${String(covered.length)} tiles`,
+  );
 });

@@ -2,18 +2,18 @@ import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import { isExpressionOnlyAction } from "./action-registry.js";
 import {
-  TOOL_FOOTPRINT_TILES_BY_CHARGE,
   footprintTiles,
+  type PackingResult,
   packAreaSteps,
   packingKindOf,
+  TOOL_FOOTPRINT_TILES_BY_CHARGE,
   toolChargeCeilingForClaim,
-  type PackingResult,
 } from "./body-program-packing.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
-  type Snapshot,
   executionRequestIntegerBounds,
+  type Snapshot,
 } from "./protocol.js";
 import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
@@ -1204,7 +1204,15 @@ export function compilePlanScript(
   // uses covering it runs here, so the conflict check, the layout reading and the program itself all describe the plan
   // that will run rather than the one that was typed.
   packAuthoredRuns(state, snapshot, dependencies.actions);
-  const conflicts = planResourceConflictCodes(state.nodes, dependencies.actions);
+  // THEN THE STEPS ARE PUT IN PATH ORDER, which is a different question from what the steps are: packing decides the nodes
+  // and the tiles each one works, the path order decides which of them is walked to first. One pass does the whole of it -
+  // re-order each batch of independent steps of one action, renumber from the new order, re-point both edges on it. See
+  // `planPathOrderedProgram` for the measurement, the guarantee, and the two things it does not do.
+  const ordered = planPathOrderedProgram(state, snapshot, dependencies.actions);
+  // The id a node has in the program that runs, for the account below: a reorder renumbers, so the ids the compiler
+  // recorded as it wrote them are looked up rather than printed straight.
+  const programNodeId = (nodeId: string): string => ordered.renamed.get(nodeId) ?? nodeId;
+  const conflicts = planResourceConflictCodes(ordered.nodes, dependencies.actions);
   if (conflicts.length > 0)
     return refused(
       `plan_resource_conflict:${conflicts.join(",")}`,
@@ -1233,30 +1241,41 @@ export function compilePlanScript(
   }
   // What this plan assumed and the snapshot it read could not answer. Read from the SAME nodes that are about to be
   // submitted, so the warning describes the plan rather than the script.
-  const layout = layoutFactsAbsent(state.nodes, dependencies.actions, snapshot);
+  const layout = layoutFactsAbsent(ordered.nodes, dependencies.actions, snapshot);
   return Object.freeze({
     ok: true as const,
     scriptSource,
     snapshotRevision,
-    program: Object.freeze({ nodes: Object.freeze([...state.nodes]) }),
+    program: Object.freeze({ nodes: ordered.nodes }),
     // The insertions are narrowed the same way the call account is and for the same reason: a loop over a body-yielding
     // family would otherwise repeat one sentence once per iteration. `insertedCount` is the population, so a bounded list
     // never reads as "that was the whole of it".
-    inserted: Object.freeze(state.inserted.slice(0, MAX_REPORTED_PLAN_INSERTIONS)),
+    //
+    // THE STEP AN INSERTION PRECEDES IS READ OFF THE PROGRAM IT IS BESIDE. The compiler wrote it before her own step at the
+    // time it emitted it, and the path order then re-ordered that step's batch and renumbered everything after it - so the
+    // node it precedes is the one the final program has next, and nothing else is the same fact.
+    inserted: Object.freeze(
+      state.inserted
+        .slice(0, MAX_REPORTED_PLAN_INSERTIONS)
+        .map(
+          (insertion) =>
+            `inserted=${insertion.actionId};before=${planFollowingNodeId(ordered.nodes, programNodeId(insertion.nodeId))}`,
+        ),
+    ),
     insertedCount: state.inserted.length,
-    insertedNodeIds: Object.freeze([...state.insertedNodeIds]),
+    insertedNodeIds: Object.freeze(state.insertedNodeIds.map(programNodeId)),
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
   });
 }
 
-/** How one run of the script ended, and the error it ended with when the engine raised one. */
-type PlanScriptAttempt = Readonly<{
-  outcome: "finished" | "refused" | "expired" | "threw";
-  /** The engine's error: present for `refused` and `threw`, absent for `finished` and `expired`. */
-  error?: unknown;
-}>;
+/** How one run of the script ended, and the error it ended with when the engine raised one. */ type PlanScriptAttempt =
+  Readonly<{
+    outcome: "finished" | "refused" | "expired" | "threw";
+    /** The engine's error: present for `refused` and `threw`, absent for `finished` and `expired`. */
+    error?: unknown;
+  }>;
 
 /**
  * Runs the script once, in a context of its own, under one window.
@@ -1480,6 +1499,16 @@ function refused(
   });
 }
 
+/**
+ * One node the compiler wrote itself: the answer's `inserted=<actionId>;before=<the node that follows it>`.
+ *
+ * The node it precedes is NOT carried: the path order renumbers the program and may move a batch's first step, so the node
+ * that follows an insertion is the one the FINAL program has there (`compilePlanScript` reads it off the program it is
+ * about to answer with). Recorded as the last emission the insertion preceded, it would be a sentence about a program
+ * nobody runs.
+ */
+type PlanInsertion = Readonly<{ actionId: string; nodeId: string }>;
+
 type PlanScriptState = {
   nodes: PlanNode[];
   refusal: string | null;
@@ -1508,12 +1537,13 @@ type PlanScriptState = {
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
-   * The nodes the compiler inserted, in program order, each one `inserted=<actionId>;before=<nodeId>`.
+   * The nodes the compiler inserted, in program order, each one `<actionId>` beside the id it was minted with.
    *
    * Kept in full here and narrowed once, where the plan is built: the bound is how many an answer can afford to spell
-   * out, and it must not decide whether a node is written.
+   * out, and it must not decide whether a node is written. The step the answer says it precedes is read off the final
+   * program, because the path order renumbers and re-orders everything after this point.
    */
-  inserted: string[];
+  inserted: PlanInsertion[];
   /**
    * The node ids the compiler MINTED, in program order, in full: the exact population a reader joins node outcomes to.
    *
@@ -1538,7 +1568,9 @@ type PlanScriptState = {
    * The world tile each emitted node addresses, for the nodes whose target IS a piece of world (see `planWorldTileOf`).
    *
    * The consumer rule reads this rather than re-deriving it: a node's action is not on the node, so the fact has to be
-   * captured where the action is still in hand.
+   * captured where the action is still in hand. It is an EMIT-TIME reading: `packAuthoredRuns` rewrites the program and
+   * replaces authored tiles with footprint uses, so nothing may read this map afterwards - the path order reads the tile
+   * a node names off the node itself for exactly that reason.
    */
   worldTileByNode: Map<string, string>;
 };
@@ -2079,11 +2111,11 @@ function emitPlanNode(
   const authorNodeId = planNodeId(PLAN_AUTHOR_NODE_PREFIX, authorPosition);
   // The answer shows the program is not exactly the script, once per node and in program order.
   if (dismissal !== null) {
-    state.inserted.push(`inserted=${dismissal.actionId};before=${authorNodeId}`);
+    state.inserted.push({ actionId: dismissal.actionId, nodeId: dismissalNodeId });
     state.insertedNodeIds.push(dismissalNodeId);
   }
   if (approach !== null) {
-    state.inserted.push(`inserted=${approach.actionId};before=${authorNodeId}`);
+    state.inserted.push({ actionId: approach.actionId, nodeId: approach.nodeId });
     state.insertedNodeIds.push(approach.nodeId);
   }
   // TWO EDGES, TWO MEANINGS: THE ORDER A SCRIPT WROTE IS NOT A CHAIN OF CONSUMERS.
@@ -2192,6 +2224,9 @@ function bodyYieldDismissalNode(nodeId: string, dismissal: PlanBodyYieldDismissa
   });
 }
 
+/** A tile of the world, as a step names it: the piece of map its coordinates point at. */
+type PlanTile = Readonly<{ x: number; y: number }>;
+
 /**
  * The tile of a PIECE OF WORLD a step addresses, or `null` when its coordinates are not state but a place to stand.
  *
@@ -2234,6 +2269,283 @@ function planProducerOnTile(state: PlanScriptState, tile: string): string | unde
     if (state.worldTileByNode.get(candidate) === tile) return candidate;
   }
   return undefined;
+}
+
+/**
+ * HOW MANY STEPS OF ONE ACTION THE COMPILER ORDERS EXACTLY, AND WHY THERE IS A LIMIT AT ALL.
+ *
+ * The shortest visiting order is a travelling-salesman path: exact computation is exponential in the batch. Twelve steps
+ * is 2^12 x 12 x 12 = 590k relaxations - a small fraction of the 250 ms window the script itself runs inside - while past
+ * it the order is nearest-first, which is not always the shortest. The guarantee the caller reads is NOT "the shortest":
+ * it is `planPathOrderedProgram`'s own check, "never longer than the order the script wrote", which holds at both sizes.
+ */
+const PLAN_PATH_EXACT_STEPS = 12;
+
+/** One node of the program, with the tile it names beside it - the only position the plan itself carries. */
+type PlanPathStep = Readonly<{
+  node: PlanNode;
+  /** The piece of world this step addresses, or `null` when it names none (`move_to_tile`, `dismiss_modal`). */
+  tile: PlanTile | null;
+  /** The call that wrote this node, so a renumbering carries the call account across with it. */
+  call: number;
+}>;
+
+/** The program's nodes in path order, and where each node id ended up after the renumbering a reorder needs. */
+type PlanPathOrder = Readonly<{ nodes: readonly PlanNode[]; renamed: ReadonlyMap<string, string> }>;
+
+/** The walk between two tiles: Manhattan, which is what a body with no obstacle in the way spends. */
+function planTileDistance(from: PlanTile, to: PlanTile): number {
+  return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+}
+
+/** The length of walking the given tiles in the order given, starting from `from`. */
+function planPathLength(tiles: readonly PlanTile[], from: PlanTile): number {
+  let length = 0;
+  let standing = from;
+  for (const tile of tiles) {
+    length += planTileDistance(standing, tile);
+    standing = tile;
+  }
+  return length;
+}
+
+/**
+ * The shortest order to visit every tile from where she stands: dynamic programming over the SET already visited.
+ *
+ * `best[mask][last]` is the shortest walk that starts at `from`, covers exactly `mask` and ends at `last` - Held-Karp,
+ * exact, and `undefined` past `PLAN_PATH_EXACT_STEPS` because the table is 2^count long. Ties resolve to the earliest
+ * step the script wrote, so the same batch always compiles to the same program.
+ */
+function planShortestOrder(tiles: readonly PlanTile[], from: PlanTile): readonly number[] | undefined {
+  const count = tiles.length;
+  if (count === 0 || count > PLAN_PATH_EXACT_STEPS) return undefined;
+  const full = (1 << count) - 1;
+  const cell = (mask: number, last: number): number => mask * count + last;
+  const best = new Array<number>((full + 1) * count).fill(Number.POSITIVE_INFINITY);
+  const cameFrom = new Array<number>((full + 1) * count).fill(-1);
+  for (let index = 0; index < count; index += 1) best[cell(1 << index, index)] = planTileDistance(from, tiles[index]!);
+  for (let mask = 1; mask <= full; mask += 1) {
+    for (let last = 0; last < count; last += 1) {
+      const walked = best[cell(mask, last)]!;
+      if (walked === Number.POSITIVE_INFINITY) continue;
+      for (let next = 0; next < count; next += 1) {
+        if ((mask & (1 << next)) !== 0) continue;
+        const reached = walked + planTileDistance(tiles[last]!, tiles[next]!);
+        if (reached >= best[cell(mask | (1 << next), next)]!) continue;
+        best[cell(mask | (1 << next), next)] = reached;
+        cameFrom[cell(mask | (1 << next), next)] = last;
+      }
+    }
+  }
+  let last = 0;
+  for (let index = 1; index < count; index += 1) if (best[cell(full, index)]! < best[cell(full, last)]!) last = index;
+  const order: number[] = [];
+  let mask = full;
+  while (mask !== 0) {
+    order.push(last);
+    const previous = cameFrom[cell(mask, last)]!;
+    mask ^= 1 << last;
+    last = previous;
+  }
+  return order.reverse();
+}
+
+/**
+ * Nearest-first from where she stands, ties broken by the order the script wrote: the order used past
+ * `PLAN_PATH_EXACT_STEPS`, where a strip of sixty-four tiles is an ordinary plan.
+ */
+function planNearestOrder(tiles: readonly PlanTile[], from: PlanTile): readonly number[] {
+  const remaining = tiles.map((_, index) => index);
+  const order: number[] = [];
+  let standing = from;
+  while (remaining.length > 0) {
+    let nearest = 0;
+    for (let index = 1; index < remaining.length; index += 1) {
+      const candidate = planTileDistance(standing, tiles[remaining[index]!]!);
+      if (candidate < planTileDistance(standing, tiles[remaining[nearest]!]!)) nearest = index;
+    }
+    const chosen = remaining.splice(nearest, 1)[0]!;
+    order.push(chosen);
+    standing = tiles[chosen]!;
+  }
+  return order;
+}
+
+/**
+ * The tile the body stands on when the step at `index` begins: the last positioned step before it, else the tile the
+ * snapshot says she stands on.
+ *
+ * `nodeTile` is the position a step NAMES - for a targeted action the target, for a walk the tile she ends on - which is
+ * the only position the plan itself carries. The Mod chooses the adjacent stand tile for a target on its own, so this is
+ * the plan's own measure of the walk and not the walk itself; both sides of every comparison are taken this way.
+ */
+function planStandingTile(steps: readonly PlanPathStep[], index: number, snapshot: Snapshot): PlanTile {
+  for (let back = index - 1; back >= 0; back -= 1) {
+    const named = nodeTile(steps[back]!.node);
+    if (named !== undefined) return named;
+  }
+  return { x: snapshot.tile.x, y: snapshot.tile.y };
+}
+
+/**
+ * The batches the program contains: maximal runs of CONSECUTIVE steps of ONE action, each naming a DIFFERENT piece of
+ * world, with no edge among them.
+ *
+ * THIS IS THE SAME SHAPE `authoredRunAt` PACKS, read for the other question. That pass reads written order to decide how
+ * many native uses a rectangle needs; this one reads the same run to decide which of those uses is walked to first. The
+ * four rules are the compiler's own, read from the other side:
+ *  - A PIECE OF WORLD: two `move_to_tile` steps are NOT interchangeable - the last one decides where she ends up - and
+ *    the surface's `targetFamily` is what says which steps address state instead of a place to stand.
+ *  - ONE ACTION: two actions on two tiles may still be a sequence (`till` then `plant`), and only a repeated action says
+ *    the steps are alternatives of one job.
+ *  - DIFFERENT TILES: a second step on a tile the run already names consumes the first, which is the next rule.
+ *  - NO EDGE AMONG THEM: `dependsOn` is "I consume its fact", and a batch is reordered only where there is nothing to
+ *    consume. Distinct tiles imply it for authored steps; after packing a use consumes nothing (`authoredRunAt` breaks a
+ *    run at any step that carries an edge), so the check states what holds rather than assuming it.
+ */
+function planBatchRuns(steps: readonly PlanPathStep[]): readonly Readonly<{ from: number; to: number }>[] {
+  const runs: { from: number; to: number }[] = [];
+  let open = -1;
+  const close = (end: number): void => {
+    if (open >= 0 && end - open > 1) runs.push({ from: open, to: end });
+    open = -1;
+  };
+  steps.forEach((step, index) => {
+    if (step.tile === null) {
+      close(index);
+      return;
+    }
+    if (open >= 0) {
+      const tile = step.tile;
+      const members = steps.slice(open, index);
+      const continues =
+        steps[open]!.node.actionId === step.node.actionId &&
+        members.every((member) => member.tile!.x !== tile.x || member.tile!.y !== tile.y) &&
+        !members.some((member) => step.node.dependsOn.includes(member.node.nodeId));
+      if (!continues) close(index);
+    }
+    if (open < 0) open = index;
+  });
+  close(steps.length);
+  return runs;
+}
+
+/**
+ * The node that immediately follows `nodeId` in the program: what an insertion's `before=<id>` states.
+ *
+ * An insertion is always written immediately before one of her own steps, so it always has a successor. When that ever
+ * stops being true the answer names the inserted node itself - a name a reader can see is wrong - rather than an empty
+ * field it would have to interpret.
+ */
+function planFollowingNodeId(nodes: readonly PlanNode[], nodeId: string): string {
+  const index = nodes.findIndex((node) => node.nodeId === nodeId);
+  return index < 0 ? nodeId : (nodes[index + 1]?.nodeId ?? nodeId);
+}
+
+/**
+ * THE PROGRAM IN PATH ORDER: every batch of independent steps of one action, re-ordered from where the body stands.
+ *
+ * <p>
+ * WHY (measured, `round66`). One node per builder call, in call order, and an ordering edge carrying that order to the
+ * game - so a script that named three crops in the order it happened to read them walked the field three times. That run
+ * walked **647 tiles (Manhattan) in 1230 s over 37 positioned events, 38 tiles per world-changing action**
+ * (`_multiday_routine-round66-live-runner.log`), and walking is 93.6% of a node's time (`body-program-packing.ts`). The
+ * submitted program `plan_4_bba49665079fd0dd` is the plain case: three `harvest_crop` nodes at `(60,10)`, `(58,14)`,
+ * `(60,9)` from the tile `61,11` - 15 tiles of walk where 10 is the shortest, out to the isolated crop and back past the
+ * middle one.
+ * </p>
+ * <p>
+ * IT IS A COMPILE-TIME OPTIMISATION AND IT IS INVISIBLE TO HER: the same nodes, the same arguments, the same action ids -
+ * only the order changes. Her `for` loop reads the same and walks less.
+ * </p>
+ * <p>
+ * IT RUNS AFTER `packAuthoredRuns`, AND THE SPLIT IS THE POINT. Packing answers WHAT the steps are - one authored step per
+ * tile becomes the few native uses that cover the rectangle - and this pass answers WHICH of them is walked to first. Run
+ * the other way round, every packed use would be left in the packing pass's own order, which is the walk the packing
+ * exists to save. Two consequences follow from running second, and both are stated here because both would be silently
+ * wrong:
+ * </p>
+ * <ul>
+ * <li>THE TILE IS READ FROM THE NODE'S OWN ARGUMENTS AND THE SURFACE'S `targetFamily`, not from `state.worldTileByNode`:
+ * that map is written where the action is in hand and is stale the moment packing rewrites the program.</li>
+ * <li>`dependsOn` IS REMAPPED, NEVER RE-DERIVED BY TILE. For an authored step its named tile is all it works, which is
+ * why `emitPlanNode` can find its producer by tile. A packed use's named tile is its ANCHOR, and the ground it produces is
+ * its whole footprint - so "the nearest earlier step on the same tile" would drop the planting edge that a use three
+ * tiles away really owns, which is the one thing the packing pass's own docblock warns can go wrong silently.</li>
+ * </ul>
+ * <p>
+ * THE GUARANTEE IS ONE LINE AND IT IS CHECKED, NOT ASSUMED: the emitted order is NEVER LONGER than the order the script
+ * wrote. The shortest order below `PLAN_PATH_EXACT_STEPS` makes that true by construction, nearest-first above it does
+ * not (a greedy first step can be worse than an arbitrary order), so the lengths are compared and the script's order is
+ * kept when the path is not shorter. A batch already written as a path is therefore left EXACTLY as written.
+ * </p>
+ * <p>
+ * WHAT A REORDER COSTS: node ids are positional (`planNodeId`), so the program is renumbered from its new order; every id
+ * an edge names is looked up in that table, `orderedAfter` is written fresh from the step before it (the rule
+ * `packAuthoredRuns` applies to the same field), and the call account and insertion record are carried across the same
+ * table so no part of the answer names a node that is no longer there.
+ * </p>
+ */
+function planPathOrderedProgram(
+  state: PlanScriptState,
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+): PlanPathOrder {
+  const addressed = new Set(actions.filter((action) => action.targetFamily !== null).map((action) => action.actionId));
+  const steps: PlanPathStep[] = state.nodes.map((node) =>
+    Object.freeze({
+      node,
+      tile: addressed.has(node.actionId) ? (nodeTile(node) ?? null) : null,
+      call: state.callOfNode.get(node.nodeId) ?? 0,
+    }),
+  );
+  let reordered = false;
+  for (const run of planBatchRuns(steps)) {
+    const members = steps.slice(run.from, run.to);
+    const tiles = members.map((member) => member.tile!);
+    const standing = planStandingTile(steps, run.from, snapshot);
+    const order = planShortestOrder(tiles, standing) ?? planNearestOrder(tiles, standing);
+    const path = order.map((index) => tiles[index]!);
+    if (planPathLength(path, standing) >= planPathLength(tiles, standing)) continue;
+    steps.splice(run.from, members.length, ...order.map((index) => members[index]!));
+    reordered = true;
+  }
+  if (!reordered) return Object.freeze({ nodes: state.nodes, renamed: new Map<string, string>() });
+  const renamed = new Map<string, string>();
+  steps.forEach((step, index) => {
+    renamed.set(step.node.nodeId, planNodeId(nodeIdPrefixOf(step.node.nodeId), index + 1));
+  });
+  const nodes = steps.map((step, index): PlanNode => {
+    const nodeId = renamed.get(step.node.nodeId)!;
+    const dependsOn = Object.freeze(
+      [
+        ...new Set(
+          step.node.dependsOn.flatMap((id) => {
+            const at = renamed.get(id);
+            return at === undefined ? [] : [at];
+          }),
+        ),
+      ].filter((id) => id !== nodeId),
+    );
+    const previous = index === 0 ? undefined : renamed.get(steps[index - 1]!.node.nodeId)!;
+    return Object.freeze({
+      nodeId,
+      actionId: step.node.actionId,
+      arguments: step.node.arguments,
+      dependsOn,
+      // ONE ORDERING EDGE PER NODE, the rule the packing pass writes to the same field: every published action claims the
+      // one body, so two steps ordered by neither are refused as `resource_conflict`.
+      ...(previous === undefined || dependsOn.includes(previous) ? {} : { orderedAfter: Object.freeze([previous]) }),
+      bindings: step.node.bindings,
+    });
+  });
+  state.callOfNode = new Map(steps.map((step) => [renamed.get(step.node.nodeId)!, step.call] as const));
+  state.insertedNodeIds = state.insertedNodeIds.map((id) => renamed.get(id) ?? id);
+  state.inserted = state.inserted.map((insertion) => ({
+    actionId: insertion.actionId,
+    nodeId: renamed.get(insertion.nodeId) ?? insertion.nodeId,
+  }));
+  return Object.freeze({ nodes: Object.freeze(nodes), renamed });
 }
 
 /**
@@ -2504,12 +2816,12 @@ function packAuthoredRuns(state: PlanScriptState, snapshot: Snapshot, actions: r
     const at = performs.get(id);
     return at === undefined ? id : idOf(at);
   });
-  state.inserted = state.inserted.map((text) =>
-    text.replace(/;before=([^;]+)$/u, (whole, id: string) => {
-      const at = performs.get(id);
-      return at === undefined ? whole : `;before=${idOf(at)}`;
-    }),
-  );
+  // AN INSERTION IS NOT PACKED, so `performs` answers itself for every one of them: the record still says which nodes the
+  // compiler wrote, and the step each precedes is read off the final program when the answer is built.
+  state.inserted = state.inserted.map((insertion) => ({
+    actionId: insertion.actionId,
+    nodeId: performs.has(insertion.nodeId) ? idOf(performs.get(insertion.nodeId)!) : insertion.nodeId,
+  }));
 }
 
 /** The id prefix a node was written with, so a renumbered program keeps the compiler's own nodes distinguishable. */
@@ -2744,4 +3056,3 @@ function deepFreeze<TValue>(value: TValue): TValue {
   for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
   return value;
 }
-
