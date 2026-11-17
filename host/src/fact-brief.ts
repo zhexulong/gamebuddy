@@ -59,6 +59,7 @@ import {
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
 import { MAX_WORLD_FACT_LINES, boundedField } from "./model-field-budget.js";
+import { ROW_TILE_FIELD_PAIRS, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
@@ -149,6 +150,12 @@ type SettledNode = Readonly<{
    * tilled, forty-five untouched, and not one tile named.
    */
   evidence?: string;
+  /**
+   * The tile the step's own arguments name, when they name one - the same field `stardew_action_program_status` answers
+   * with, and the one thing that says WHERE a step's work landed. Absent for the thirteen families whose rows carry no
+   * tile and for a pass, whose rows are in `evidence` instead.
+   */
+  tile?: Readonly<{ x: number; y: number }>;
   /** The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`. */
   postconditionVerification?: string;
 }>;
@@ -221,7 +228,7 @@ export function composeFactBrief(input: FactBriefInput): string {
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
   const factBlock = composeWorldFacts(facts);
   if (factBlock !== "") blocks.push(factBlock);
-  const resultBlock = composeExecutionResult(settlements);
+  const resultBlock = composeExecutionResult(settlements, input.snapshot);
   if (resultBlock !== "") blocks.push(resultBlock);
   return blocks.join("\n");
 }
@@ -740,8 +747,8 @@ function genericWorldFactLine(fact: WorldFact, at: string, kind: string): string
 }
 
 /** `<execution-result>`: what a submitted programme did, in sentences, one per settlement. */
-function composeExecutionResult(settlements: readonly WorldFact[]): string {
-  const lines = settlements.map(settlementLine).filter((line) => line !== "");
+function composeExecutionResult(settlements: readonly WorldFact[], reading: WorldStateReading | undefined): string {
+  const lines = settlements.map((settlement) => settlementLine(settlement, reading)).filter((line) => line !== "");
   return lines.length === 0 ? "" : block("execution-result", lines.join("\n"));
 }
 
@@ -753,7 +760,7 @@ function composeExecutionResult(settlements: readonly WorldFact[]): string {
  * `hint` and its own `reasonDetail`, each bounded, with its `reasonCode` beside them - never a Host paraphrase, and never
  * a bare count.
  */
-function settlementLine(fact: WorldFact): string {
+function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined): string {
   const total = Number(fact.payload.total);
   const counts = fact.payload.counts;
   const done =
@@ -774,9 +781,257 @@ function settlementLine(fact: WorldFact): string {
   const said = [...proofs, ...failures];
   const omitted = Number(fact.payload.omitted);
   const more = Number.isFinite(omitted) && omitted > 0 ? `（另有 ${omitted} 步未列出）` : "";
-  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}`;
+  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}；${remainderSentence(nodes, reading)}`;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// What is LEFT of the chore a settlement finished.
+//
+// WHY IT IS HERE. Measured `round69`: a script of 16 nodes cleared `weeds_cut 6`, and every health counter read 0 -
+// `travel_postcondition_mismatch 0`, `destination_locked 0`, `nothing_pending 0`, `due 0` - and then the run sat idle
+// for 2.8 minutes. Six weeds out of a field that has more, and the answer she was handed said `16/16 步做成了`: a
+// settlement that never says what is left reads as a finished job, and there is nothing in it to plan the next turn
+// from. The one thing every settlement omitted was the remainder of the chore it had just finished.
+//
+// WHAT IT COSTS. Nothing. The population is the reading this SAME message already carries (`<world-state>`), and the
+// tiles it subtracts are the ones the settlement's own node rows prove were worked - `tile` on a single node, the
+// pass's own row table for a `for_each`. No world query is made here and none may be: a second read would answer about
+// a world later than the settlement, so the remainder could contradict the answer it sits beside.
+//
+// THE ONE THING THE HOST CANNOT DERIVE is WHICH family a step's work consumes. That is the Mod's declaration (its
+// descriptor's `TargetFamily`, present only where the descriptor also declares what it `Clears`, because "how many
+// machines are left" is not a chore), and the Mod mints it into the node's own verdict line as `chore=<family>`. A
+// settlement whose steps say nothing about their chore states `还剩多少未测` rather than staying silent.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** How many chore families one settlement's remainder names before it counts the rest. */
+const MAX_REMAINDER_FAMILIES = 4;
+
+/** How many of a family's remaining tiles it names - the same six the world block spends on a family it names there. */
+const MAX_REMAINDER_TILES = 6;
+
+/** One tile, as the reading and a node's own proof both spell it. */
+type RemainderTile = Readonly<{ x: number; y: number }>;
+
+/** What one finished chore has left, taken from the reading the settlement is delivered with. */
+type ChoreRemainder = Readonly<{
+  family: string;
+  /** The word the world block uses for the same rows, so one family cannot be named two ways in one message. */
+  label: string;
+  left: number;
+  /** Up to `MAX_REMAINDER_TILES` of the tiles still carrying the chore, nearest to her first. */
+  nearest: readonly RemainderTile[];
+}>;
+
+/** The three states a chore family can be in, each named: work left, work done, rows this reading never carried. */
+type ChoreReading = Readonly<{
+  left: readonly ChoreRemainder[];
+  done: readonly ChoreRemainder[];
+  unmeasured: readonly string[];
+}>;
+
+/** The Mod's token for the family a step's work consumed, inside the node's verdict line. */
+const CHORE_FIELD = "chore=";
+
+/**
+ * The states in which a node PROVED it did something.
+ *
+ * `partially_succeeded` is included on purpose: a pass that worked forty-five of sixty rows cleared forty-five, and
+ * omitting it would report those forty-five tiles as work still to do.
+ */
+const PROVEN_EFFECT_STATES: ReadonlySet<string> = new Set(["succeeded", "partially_succeeded"]);
+
+/**
+ * The one sentence a settlement owes about what is left of its own chore.
+ *
+ * BOTH POLARITIES ARE REQUIRED. `还剩 杂草 14 处（最近 (66,15) …）` is what lets the next turn continue the job;
+ * `这一类没剩（杂草）` is what lets her stop. A settlement that always said there was more would be as wrong as the
+ * one this replaces, in the other direction.
+ *
+ * A THIRD ANSWER IS NAMED RATHER THAN SILENT: no reading in this delivery, or steps that never said which family they
+ * worked, or a reading that does not carry the family at all. Each is a statement about what could not be measured,
+ * which is a different fact from "nothing is left" and must never be spelled as one.
+ */
+function remainderSentence(nodes: readonly SettledNode[], reading: WorldStateReading | undefined): string {
+  const chores = choreReading(nodes, reading);
+  if (chores === undefined) return `${REMAINDER_LEAD}未测（${unmeasuredReason(reading, [])}）`;
+  const named = chores.left.slice(0, MAX_REMAINDER_FAMILIES);
+  const unmeasuredSuffix =
+    chores.unmeasured.length === 0
+      ? ""
+      : `；${chores.unmeasured.slice(0, MAX_REMAINDER_FAMILIES).join("、")} 这一回合的观察里没有`;
+  if (named.length > 0) {
+    const parts = named.map(
+      (chore) => `${chore.label} ${String(chore.left)} 处（最近 ${chore.nearest.map(tileWord).join(" ")}）`,
+    );
+    const rest = chores.left.length - named.length;
+    return `${REMAINDER_LEAD}${parts.join("、")}${rest > 0 ? ` 等 ${String(chores.left.length)} 类` : ""}${unmeasuredSuffix}`;
+  }
+  if (chores.done.length > 0)
+    return `${REMAINDER_LEAD}没剩（${chores.done
+      .slice(0, MAX_REMAINDER_FAMILIES)
+      .map((chore) => chore.label)
+      .join("、")}）${unmeasuredSuffix}`;
+  return `${REMAINDER_LEAD}未测（${unmeasuredReason(reading, chores.unmeasured)}）`;
+}
+
+/**
+ * The words every remainder answer opens with, so ONE rule decides what a settlement says about its own remainder.
+ *
+ * It is a lead rather than three separate sentences because the answer is a fact of one shape with three values -
+ * work left, none left, and could-not-be-measured - and a reader (or an audit) that finds this word has found the
+ * answer whatever its value is.
+ */
+const REMAINDER_LEAD = "剩下的：";
+
+/** Why a remainder could not be measured, in the one condition that applies. */
+function unmeasuredReason(reading: WorldStateReading | undefined, families: readonly string[]): string {
+  if (reading === undefined || reading.snapshot === null || typeof reading.snapshot !== "object")
+    return "这一回合没有世界观察";
+  if (families.length > 0) return `这一回合的观察里没有 ${families.join("、")}`;
+  return "这一份结算没说是哪一类活";
+}
+
+/** A tile, spelled the one way this file spells a coordinate. */
+function tileWord(tile: RemainderTile): string {
+  return `(${String(tile.x)},${String(tile.y)})`;
+}
+
+/**
+ * What each chore one settlement finished has left, from the settlement's own rows and the reading beside it.
+ *
+ * `undefined` means the question cannot be asked at all: no reading in this delivery, or not one settled step that
+ * names the family it worked. A family the reading does not publish is `unmeasured`, never `0` - an absent family is
+ * one the Mod did not measure, and the whole vocabulary of this block turns on that distinction.
+ */
+function choreReading(nodes: readonly SettledNode[], reading: WorldStateReading | undefined): ChoreReading | undefined {
+  const worked = new Map<string, RemainderTile[]>();
+  for (const node of nodes) {
+    const family = choreFamilyOf(node);
+    if (family === undefined) continue;
+    const tiles = worked.get(family) ?? [];
+    tiles.push(...workedTiles(node));
+    worked.set(family, tiles);
+  }
+  if (worked.size === 0) return undefined;
+  if (reading === undefined) return undefined;
+  const snapshot = reading.snapshot;
+  if (snapshot === null || typeof snapshot !== "object") return undefined;
+  const actor = snapshot.tile;
+  const reach = (tile: RemainderTile): number =>
+    Number.isFinite(actor?.x) && Number.isFinite(actor?.y)
+      ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y))
+      : 0;
+  const left: ChoreRemainder[] = [];
+  const done: ChoreRemainder[] = [];
+  const unmeasured: string[] = [];
+  for (const [family, workedTilesOfFamily] of worked) {
+    const label = TARGET_FAMILY_LABELS[family] ?? family;
+    const rows = (snapshot as unknown as Record<string, unknown>)[family];
+    if (!Array.isArray(rows)) {
+      unmeasured.push(label);
+      continue;
+    }
+    const taken = new Set(workedTilesOfFamily.map((tile) => `${String(tile.x)},${String(tile.y)}`));
+    let remaining = 0;
+    const rest: RemainderTile[] = [];
+    for (const row of rows) {
+      const tile = row === null || typeof row !== "object" ? undefined : rowTileOf(row as Record<string, unknown>);
+      // A ROW THIS READING CANNOT PLACE IS STILL A ROW: counted as work left, and it cannot be named - the same rule
+      // the world block follows for a family whose rows carry no tile.
+      if (tile === undefined) {
+        remaining += 1;
+        continue;
+      }
+      if (taken.has(`${String(tile.x)},${String(tile.y)}`)) continue;
+      remaining += 1;
+      rest.push(tile);
+    }
+    const remainder: ChoreRemainder = Object.freeze({
+      family,
+      label,
+      left: remaining,
+      nearest: Object.freeze(
+        rest
+          .sort((a, b) => reach(a) - reach(b) || a.x - b.x || a.y - b.y)
+          .slice(0, MAX_REMAINDER_TILES)
+          .map((tile) => Object.freeze({ x: tile.x, y: tile.y })),
+      ),
+    });
+    (remaining > 0 ? left : done).push(remainder);
+  }
+  if (left.length === 0 && done.length === 0 && unmeasured.length === 0) return undefined;
+  // The family with the most work left first, so a cap becomes "the rest is smaller" rather than a lottery.
+  left.sort((a, b) => b.left - a.left || a.family.localeCompare(b.family));
+  return Object.freeze({ left: Object.freeze(left), done: Object.freeze(done), unmeasured: Object.freeze(unmeasured) });
+}
+
+/**
+ * The family whose work one settled step consumed, as the Mod minted it: `…:chore=weedTargets`.
+ *
+ * Read from the node's own verdict line - the `:`-delimited `key=value` document the Mod already writes there
+ * (`route_reentrant_terminal:state=…:request=…:revision=…`, `for_each_pass:decided=…:succeeded=…`) - so the family
+ * arrives from the descriptor that declares it rather than from a table here that could drift from that declaration.
+ * Present only on a step whose action declares what it CLEARS: a step that reads or loads a machine has no chore.
+ */
+function choreFamilyOf(node: SettledNode): string | undefined {
+  if (typeof node.state !== "string" || !PROVEN_EFFECT_STATES.has(node.state)) return undefined;
+  for (const field of [node.postconditionVerification, node.evidence]) {
+    if (typeof field !== "string") continue;
+    for (const segment of field.split(":")) {
+      if (!segment.startsWith(CHORE_FIELD)) continue;
+      const family = segment.slice(CHORE_FIELD.length);
+      if (family !== "") return family;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The tiles one settled step proves it worked: its own tile, or the pass's own row table.
+ *
+ * A `for_each` settles ONE node for up to sixty-four rows, and its aggregate
+ * (`{"state":…,"succeeded":N,…,"rows":[{"x":…,"y":…,"state":"succeeded"}]}`) is where those rows live - the
+ * same document the settlement prints. Reading it is reading the producer's own table, never a second derivation.
+ */
+function workedTiles(node: SettledNode): readonly RemainderTile[] {
+  if (node.tile !== undefined) return [node.tile];
+  if (typeof node.evidence !== "string") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(node.evidence);
+  } catch {
+    return [];
+  }
+  if (parsed === null || typeof parsed !== "object") return [];
+  const rows = (parsed as { rows?: unknown }).rows;
+  if (!Array.isArray(rows)) return [];
+  const tiles: RemainderTile[] = [];
+  for (const row of rows) {
+    if (row === null || typeof row !== "object") continue;
+    const entry = row as Record<string, unknown>;
+    if (entry.state !== "succeeded") continue;
+    const tile = rowTileOf(entry);
+    if (tile !== undefined) tiles.push(tile);
+  }
+  return tiles;
+}
+
+/**
+ * The tile a row stands on, through the wire's own placement contract.
+ *
+ * NOT a guess and not a second table: `ROW_TILE_FIELD_PAIRS` is the declaration the world block places its rows with
+ * (`x`/`y` for seventy-two families, `sourceX`/`sourceY` for `doorTargets` and `warps`), so a row this function cannot
+ * place is one that block cannot place either.
+ */
+function rowTileOf(row: Record<string, unknown>): RemainderTile | undefined {
+  for (const [xField, yField] of ROW_TILE_FIELD_PAIRS) {
+    const x = row[xField];
+    const y = row[yField];
+    if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return undefined;
+}
 /**
  * One node's own proof of what it did: its action, the pass's verdict line, and the row table - all the Mod's bytes.
  *
