@@ -125,6 +125,11 @@ export const MIRRORED_VOCABULARIES = [
   // The connection probe's closed failure vocabulary. A member the mirror does not know is refused
   // as protocol corruption, so a player whose endpoint throttled them would read a blank result.
   { mirror: "CONNECTION_FAILURES", contract: { name: "ConnectionFailure" } },
+  // The fields the player may fill on a connection, and the shapes the escape hatch may name. Both are
+  // closed unions on the wire and both are read by the management mirror's own validators: a field the
+  // mirror does not list is refused (`setupFields.every(isOneOf)`), so a Host that admits `apiKeyRequired`
+  // while the panel knows four fields reads a legal projection as protocol corruption.
+  { mirror: "CONNECTION_SETUP_FIELDS", contract: { name: "TavernConnectionSetupFieldV1Schema" } },
 ];
 
 /**

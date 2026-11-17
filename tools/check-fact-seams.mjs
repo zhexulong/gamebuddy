@@ -123,6 +123,12 @@ const MINIMUM_MEMBERS = 3;
 /** The key-list validators: a frame's shape, written as a list of names, at the reader's end. */
 const KEY_VALIDATORS = Object.freeze(["exactKeysInOrder", "hasExactKeys", "hasExactKeysOrOptional", "hasOnlyKeys"]);
 
+const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
+const GAME_CLIENT = "dialogue-web/src/composed-reference-game-browser-api.ts";
+const TAVERN_CONTRACT = "host/src/tavern/browser-contract/index.ts";
+const MANAGEMENT_CLIENT = "dialogue-web/src/management-pipeline-api.ts";
+const REFERENCE_CLIENT = "dialogue-web/src/reference-pipeline-api.ts";
+
 /**
  * The crossings that resolve to ONE authority, verified on every run.
  *
@@ -281,13 +287,25 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  // ─── The tavern contract's vocabularies, held to the contract by the same drift gate ───
+  //
+  // These are the DEBT rows' neighbours on the other side: the crossing is the same one (the browser bundle has no
+  // typebox and no Host runtime module, so the list is spelled out there by hand), and what changed is that the two ends
+  // are now COMPARED. `dialogue-web/tests/vocabulary-drift-gate.test.mjs` derives each side from its own source and
+  // reports the symmetric difference by member and by file, so a member added to one end alone is a named failure
+  // rather than a value the mirror reads as protocol corruption.
+  {
+    fact: "connection setup fields",
+    authority: { file: TAVERN_CONTRACT, name: "TavernConnectionSetupFieldV1Schema" },
+    readers: [{ file: MANAGEMENT_CLIENT, name: "CONNECTION_SETUP_FIELDS" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["TavernConnectionSetupFieldV1Schema", "CONNECTION_SETUP_FIELDS"],
+    },
+    owner: "the connection panel lane",
+  },
 ]);
-
-const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
-const GAME_CLIENT = "dialogue-web/src/composed-reference-game-browser-api.ts";
-const TAVERN_CONTRACT = "host/src/tavern/browser-contract/index.ts";
-const MANAGEMENT_CLIENT = "dialogue-web/src/management-pipeline-api.ts";
-const REFERENCE_CLIENT = "dialogue-web/src/reference-pipeline-api.ts";
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
 const reference = (value) => {
@@ -322,9 +340,6 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
-  mirrorDebt("connection setup fields", `${TAVERN_CONTRACT}:TavernConnectionSetupFieldV1Schema`, [
-    `${MANAGEMENT_CLIENT}:CONNECTION_SETUP_FIELDS`,
-  ]),
   mirrorDebt("connection api shapes", `${TAVERN_CONTRACT}:TavernConnectionApiShapeV1Schema`, [
     "host/src/tavern/provider-catalog.ts:TAVERN_PI_API_SHAPES",
     `${MANAGEMENT_CLIENT}:CONNECTION_API_SHAPES`,
