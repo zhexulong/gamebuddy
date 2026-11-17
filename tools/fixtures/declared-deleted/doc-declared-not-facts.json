@@ -1,0 +1,13 @@
+{
+  "authority": "design/fact-authority.md (zhexulong/gamebuddy-docs)",
+  "measured": "2026-11-17T14:24:36 · 8032 bytes · read from a mount of the design repository",
+  "why": "A CI checkout does not mount the design repository, and a gate that cannot read its authority would count only the pump's tables - which is exactly how `tool_equipped` survived a day unnoticed. This transcription is NOT a second authority: when the document is mounted the gate parses it and fails member by member on any difference with this list (`declared_deleted_transcription_drift`).",
+  "notFacts": ["body_idle", "execution_started", "route_progress", "tile_advanced", "tool_equipped"],
+  "unnamed": [
+    {
+      "phrase": "正在做第 N 项",
+      "why": "a programme's step position has no kind of its own: the step rides a receipt in a progress state, so it is counted by that state's member (`running`) and never by a word of its own"
+    }
+  ],
+  "factShapes": ["receipt:rejected", "semantic:player_input"]
+}
