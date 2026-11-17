@@ -745,9 +745,15 @@ async function deliveredCeilingTurn(
       },
     });
   }
-  const bubble = observer.deliverTurn();
+  const delivery = observer.deliverTurn();
   await observer.close();
-  return Object.freeze({ pieces: Object.freeze(pieces), bubble });
+  // A turn with speech must have delivered; the caller's own assertion below says so, and the named withholding is what it
+  // would be failing on if it ever did not.
+  return Object.freeze({
+    pieces: Object.freeze(pieces),
+    bubble: delivery.delivered === 1 ? delivery.bubble : null,
+    ...(delivery.delivered === 0 ? { withheld: delivery.reason } : {}),
+  });
 }
 
 /**

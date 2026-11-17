@@ -2159,6 +2159,8 @@ test("a turn with no presentation source accounts for its text instead of leavin
     // kept it is named beside the count, so this zero is a measured loss rather than an indistinguishable silence.
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 2, ids: ["assistant_1", "assistant_2"] },
+    // THE BUBBLE'S ANSWER, not an absence: no lease means no projection, and the turn says which way it ended.
+    withheld: "no_presentation_lease",
   });
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
 });
@@ -2470,6 +2472,7 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     // The bubble this turn owed, and the layer that kept it: `bubbles: 0` alone said only that nothing was drawn.
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
+    withheld: "no_presentation_lease",
   });
 });
 
@@ -2551,6 +2554,7 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     // The bubble this turn owed, and the layer that kept it: `bubbles: 0` alone said only that nothing was drawn.
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
+    withheld: "no_presentation_lease",
   });
 });
 
