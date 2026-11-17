@@ -33,7 +33,7 @@ internal sealed class HostFarmhandProvisioner
     private bool pendingSaveTimedOut;
     private bool quarantined;
     private Cabin? pendingCreatedCabin;
-    private long pendingCreatedFarmhandId;
+    private long? pendingCreatedFarmhandId;
 
     private HostFarmhandProvisioner(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig config, string sessionDirectory, bool allowNativeAutomationWorldReady)
     {
@@ -168,7 +168,7 @@ internal sealed class HostFarmhandProvisioner
         if (!this.pendingSaveObserved)
             this.RollbackCreatedFarmhand();
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
         this.pendingSaveTimedOut = false;
@@ -293,7 +293,7 @@ internal sealed class HostFarmhandProvisioner
         this.pendingSaveWriteFailed = false;
         this.pendingSaveTimedOut = false;
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
         FarmhandAttachmentResponse response = new()
         {
             SchemaVersion = FarmhandProvisioningProtocol.Version,
@@ -533,7 +533,17 @@ internal sealed class HostFarmhandProvisioner
         bool createdFarmhand = target.Created;
 
         string expectedName = Utility.FilterDirtyWords(this.config.FarmhandName);
-        if (farmhand.UniqueMultiplayerID <= 0 || farmhand.Name != expectedName || farmhand.displayName != expectedName)
+        if (farmhand.UniqueMultiplayerID == 0)
+        {
+            // Zero is the ONE value that is not a Farmhand id: the engine draws the id with `Utility.RandomLong`
+            // (`StardewValley.Locations/Cabin.cs:52-59`), a signed 64-bit value that is negative for half of all draws and
+            // is never reassigned afterwards, and this protocol's own `TryParseNativeId` refuses the same one value.
+            if (createdFarmhand)
+                this.RollbackCreatedFarmhand(cabin, farmhand);
+            this.monitor.Log("GameBuddy refused a first binding: the Farmhand the Cabin owns carries no multiplayer id (0), which is the one value the provisioning protocol cannot name.", LogLevel.Error);
+            return new("rejected", "farmhand_id_unassigned");
+        }
+        if (farmhand.Name != expectedName || farmhand.displayName != expectedName)
         {
             if (createdFarmhand)
                 this.RollbackCreatedFarmhand(cabin, farmhand);
@@ -577,7 +587,7 @@ internal sealed class HostFarmhandProvisioner
         if (!createdFarmhand)
         {
             this.pendingCreatedCabin = null;
-            this.pendingCreatedFarmhandId = 0;
+            this.pendingCreatedFarmhandId = null;
         }
         return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
     }
@@ -837,12 +847,12 @@ internal sealed class HostFarmhandProvisioner
 
     private void RollbackCreatedFarmhand()
     {
-        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId <= 0)
+        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId is not long createdId)
             return;
-        Farmer? farmhand = Game1.GetPlayer(this.pendingCreatedFarmhandId, onlyOnline: false);
+        Farmer? farmhand = Game1.GetPlayer(createdId, onlyOnline: false);
         this.RollbackCreatedFarmhand(this.pendingCreatedCabin, farmhand);
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
     }
 
     private void RollbackCreatedFarmhand(Cabin cabin, Farmer? farmhand)
@@ -853,7 +863,7 @@ internal sealed class HostFarmhandProvisioner
             && (farmhand is null || this.pendingCreatedFarmhandId == farmhand.UniqueMultiplayerID))
         {
             this.pendingCreatedCabin = null;
-            this.pendingCreatedFarmhandId = 0;
+            this.pendingCreatedFarmhandId = null;
         }
     }
 

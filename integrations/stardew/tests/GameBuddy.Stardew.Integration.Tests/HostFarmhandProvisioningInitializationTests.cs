@@ -104,8 +104,37 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         farmhand.displayName.Should().Be("GameBuddy");
         farmhand.favoriteThing.Value.Should().Be("GameBuddy");
         cabin.OwnerId.Should().Be(FarmhandId, "the identity is repaired in place, never replaced");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0,
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull(
             "nothing was created, so the save-timeout and generic-failure paths have nothing of theirs to delete");
+    }
+
+    /// <summary>
+    /// THE ID SPACE THE ENGINE ACTUALLY USES. `Cabin.CreateFarmhand` draws a Farmhand's id with `Utility.RandomLong`
+    /// (`StardewValley.Locations/Cabin.cs:52-59` -> `StardewValley/Utility.cs:7735-7742`), which is a SIGNED 64-bit draw:
+    /// half of the Farmhands the engine creates carry a negative id, and nothing reassigns it afterwards. The binding
+    /// therefore has to name such an id, carry it into the manifest, and find the Cabin's owner by it - the state is
+    /// named, not refused. The one value that is not an id is zero, and the same protocol refuses it, which is what keeps
+    /// this assertion from being true by accepting everything.
+    /// </summary>
+    [Fact]
+    public void AnEngineAllocatedNegativeId_IsABindableFarmhandId()
+    {
+        const long engineId = -8070450532247903136;
+        engineId.ToString(CultureInfo.InvariantCulture).Should().StartWith("-", "this is the engine's negative half, not a typo");
+
+        FarmhandProvisioningProtocol.TryParseNativeId(engineId.ToString(CultureInfo.InvariantCulture), out long parsed)
+            .Should().BeTrue("the engine's own draw is negative for half of all values, so a negative id is a Farmhand id");
+        parsed.Should().Be(engineId, "the id is carried through unchanged, signs and all");
+
+        FarmhandProvisioningProtocol.TryParseNativeId("0", out _)
+            .Should().BeFalse("zero is the one value that is not a Farmhand id, and it stays refused");
+
+        Farmer farmhand = SeedFarmer(engineId, "GameBuddy", customized: true);
+        Game1.netWorldState.Value.farmhandData[engineId] = farmhand;
+        Cabin cabin = CabinOwning(farmhand);
+
+        cabin.OwnerId.Should().Be(engineId, "the Cabin owns the identity the engine allocated, whatever its sign");
+        cabin.owner.Should().BeSameAs(farmhand, "`NetFarmerRef` resolves by equality, not by sign");
     }
 
     /// <summary>
@@ -130,7 +159,7 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         farmhand.isCustomized.Value.Should().BeFalse("the attempt failed before it wrote the profile");
         cabin.OwnerId.Should().Be(FarmhandId,
             "a Farmhand that existed before the request is never deleted by the request's failure");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0);
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull("nothing is tracked, so nothing is deleted");
 
         // Every path that rolls a CREATED Farmhand back - save timeout, save write failure, a thrown request, returning
         // to title - runs this method. With nothing tracked it must not touch the identity the save already had.
@@ -160,7 +189,7 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         cabin.OwnerId.Should().Be(0, "the created Farmhand is released through the engine's own Cabin.DeleteFarmhand");
         Game1.netWorldState.Value.farmhandData.ContainsKey(FarmhandId).Should().BeFalse(
             "the created Farmhand was released through the engine's own FarmerTeam.DeleteFarmhand");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0);
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull("nothing is tracked, so nothing is deleted");
     }
 
     // ---- the fixture ---------------------------------------------------------
@@ -224,10 +253,10 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
             (string)type.GetProperty("RefusalReason")!.GetValue(target)!);
     }
 
-    private static long PendingCreatedFarmhandId(object provisioner) =>
-        (long)typeof(HostFarmhandProvisioner)
+    private static long? PendingCreatedFarmhandId(object provisioner) =>
+        typeof(HostFarmhandProvisioner)
             .GetField("pendingCreatedFarmhandId", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(provisioner)!;
+            .GetValue(provisioner) as long?;
 
     private static void Invoke(object provisioner, string name) =>
         typeof(HostFarmhandProvisioner)
