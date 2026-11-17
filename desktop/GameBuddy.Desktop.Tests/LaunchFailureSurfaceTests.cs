@@ -181,7 +181,9 @@ public sealed class LaunchFailureSurfaceTests
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var harness = await BootstrapHandshakeHarness.CreateAsync(
             statusPlan: BootstrapHandshakeHarness.StatusPlan([Status(AnnouncedStage)], holdMs: 60_000),
-            silenceTimeout: TimeSpan.FromMilliseconds(400));
+            // The watch is what ends this launch, so it has to be far shorter than the wait - but long
+            // enough that a loaded machine still delivers the frame the child announced first.
+            silenceTimeout: TimeSpan.FromSeconds(3));
 
         var failure = await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
             () => harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None));

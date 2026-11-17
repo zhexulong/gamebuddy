@@ -131,9 +131,17 @@ public sealed class LauncherProvisioningWiringTests
         // was lost before. (The Voice catch inside this path stays unnamed on
         // purpose - a Voice child that cannot start is not a launch failure at all.)
         Assert.Contains("catch (GuardianLaunchUnavailableException exception)", productionPath, StringComparison.Ordinal);
-        Assert.Contains("return new LaunchOutcome(named, exception.Category, exception.Diagnostic);", productionPath, StringComparison.Ordinal);
+        // The named failure, the step's own reason and the child's own words travel together, and the two
+        // structured facts the player's window and the record read ride beside them: neither surface
+        // re-parses the operator's one line.
+        Assert.Contains(
+            "return new LaunchOutcome(named, exception.Category, exception.Diagnostic, exception.BootstrapStage, exception.ChildStderr);",
+            productionPath,
+            StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(productionPath, "exception.Category"));
         Assert.Equal(1, CountOccurrences(productionPath, "exception.Diagnostic"));
+        Assert.Equal(1, CountOccurrences(productionPath, "exception.BootstrapStage"));
+        Assert.Equal(1, CountOccurrences(productionPath, "exception.ChildStderr"));
     }
 
     [Fact]
