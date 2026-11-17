@@ -784,6 +784,33 @@ const BASELINE_NOTE =
   "gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries " +
   "its own `producer`.";
 
+/**
+ * What this file is, and where its debt is concentrated, as one paragraph appended to `BASELINE_NOTE`.
+ *
+ * Every entry here is debt: a member over its language's bound, a class over its sum, a type over its ceilings. A
+ * list of that many numbers with no named worst member is an allow-list - a reader cannot tell where the debt sits
+ * without running the gate, and nothing in the file says the numbers may only move one way. So the record carries
+ * the population it holds and the worst of each producer, read out of the same measurement that wrote the entries:
+ * `--update` refreshes them, and no hand-written copy can drift from the members below.
+ */
+function debtNote(measured) {
+  const counts = describe(measured.members, measured.types, measured.bounds);
+  const named = (over, row) => (over === 0 || row === null ? "none" : `${row.name} = ${formatComplexity(row)}`);
+  const largest =
+    counts.sizes.over === 0 || counts.sizes.largest === null
+      ? "none"
+      : `${counts.sizes.largest.name} at ${counts.sizes.largest.lines} lines / ${counts.sizes.largest.methods} members across ${counts.sizes.largest.parts} partial(s)`;
+  return (
+    " Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only " +
+    "shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than " +
+    `grown. Recorded: ${counts.ts.over} ts member(s) over ${measured.bounds.ts} (${counts.ts.saturating} at Biome's ` +
+    `ceiling), ${counts.cs.over} cs member(s) over ${CS_FUNCTION_BOUND}, ${counts.classes.over} class(es) over ` +
+    `${CLASS_BOUND}, ${counts.sizes.over} type(s) over ${CLASS_LINE_CEILING} lines / ${CLASS_METHOD_CEILING} ` +
+    `members. Worst: ts ${named(counts.ts.over, counts.ts.worst)}, cs ${named(counts.cs.over, counts.cs.worst)}, ` +
+    `class ${named(counts.classes.over, counts.classes.worst)}, largest ${largest}.`
+  );
+}
+
 const sortedById = (entries) => [...entries].sort((left, right) => left.id.localeCompare(right.id));
 
 /**
@@ -1108,7 +1135,7 @@ function recordBaseline(root, measured) {
   const withReason = (kind) => (entry) =>
     reasons.has(`${kind}:${entry.id}`) ? { ...entry, reason: reasons.get(`${kind}:${entry.id}`) } : entry;
   const baseline = {
-    note: BASELINE_NOTE,
+    note: `${BASELINE_NOTE}${debtNote(measured)}`,
     revision: readRevision(root),
     producers: {
       ts: `biome ${BIOME_VERSION} complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity ${measured.bounds.ts} from biome.json)`,

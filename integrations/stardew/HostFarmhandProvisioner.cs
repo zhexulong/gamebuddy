@@ -564,17 +564,9 @@ internal sealed class HostFarmhandProvisioner
             return new("rejected", "farmhand_profile_mismatch");
         }
         if (cabin.OwnerId != farmhand.UniqueMultiplayerID)
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "cabin_identity_mismatch");
-        }
+            return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "cabin_identity_mismatch");
         if (farmhand.isActive())
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "target_farmhand_busy");
-        }
+            return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "target_farmhand_busy");
         if (existingBinding is null)
         {
             this.pendingBinding = new FarmhandBinding
@@ -601,6 +593,18 @@ internal sealed class HostFarmhandProvisioner
             this.pendingCreatedFarmhandId = null;
         }
         return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
+    }
+
+    /// <summary>
+    /// The refusal for a Farmhand that was prepared and can no longer be bound: the Farmhand this request created is
+    /// taken out of the save first, because one that exists only because this request made it must not survive a
+    /// binding that never happened. Every refusal after <see cref="PrepareTargetFarmhand"/> shares that consequence.
+    /// </summary>
+    private FarmhandProvisioningResult RefusePreparedFarmhand(Cabin cabin, Farmer farmhand, bool createdFarmhand, string reasonCode)
+    {
+        if (createdFarmhand)
+            this.RollbackCreatedFarmhand(cabin, farmhand);
+        return new("rejected", reasonCode);
     }
 
     /// <summary>
