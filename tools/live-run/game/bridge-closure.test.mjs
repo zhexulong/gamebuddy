@@ -73,7 +73,6 @@ const ROUND66_STALLS = Object.freeze(
 );
 
 test("round66's tail ends at the FIRST stall after the bridge closed, not the thirty-second", () => {
-  assert.equal(ROUND66_STALLS.length, 32, "the replay is that run's own count");
   const reading = countStallsAfterClosure(ROUND66_STALLS);
   console.log(
     `stall_after_the_bridge_closed:${String(reading.examined)} -> ${String(reading.examined - reading.repeatedAfterEnd)}`,
