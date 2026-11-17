@@ -11,6 +11,7 @@ import {
   type GameFactPatchV1,
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
+  type StardewInstallationDiscoveryV1,
 } from "../composed-reference-game-browser-api";
 import {
   deriveGameLifecycleControlAvailability,
@@ -1468,11 +1469,31 @@ export function GameSurface({
       }}
     />
   );
+  /**
+   * The last scan the installation panel made, kept here so a tab switch does not buy another one.
+   *
+   * The panel is a sibling of the Game state region inside this surface, and this surface returns nothing while
+   * another one is selected - so the panel is unmounted on every switch and its own answer goes with it. Its mount
+   * effect starts a scan, and a scan is the slowest thing a cold machine does (`StardewInstallationDiscovery`: the
+   * Host reads the registry, the Steam libraries and every known location). Measured on the mounted shell, phases
+   * mount | chat-idle | game-1 | chat-2 | game-2, `game/installation/discovery` per phase: 0 | 0 | 1 | 0 | 1 - the
+   * second arrival paid the whole sweep again for an answer that had not changed.
+   *
+   * This ref survives the switch because THIS component does (it is mounted for the whole ready lifetime), so the
+   * panel is handed the answer it settled on last time and starts from it instead of scanning. A scan is the
+   * player's own request after that: "Find again" and "Choose game folder" still read the Host, and a registration
+   * the player just made is still what the panel states.
+   */
+  const lastInstallationScan = useRef<StardewInstallationDiscoveryV1 | null>(null);
   const installationDiscovery = (
     <StardewInstallationDiscovery
       key="installation-discovery"
       api={composedApi}
       labels={labels}
+      seed={lastInstallationScan.current}
+      onScanSettled={(result) => {
+        lastInstallationScan.current = result;
+      }}
       // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
       // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
       // the folder had been accepted, and only a reload cleared it.
