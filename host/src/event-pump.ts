@@ -3470,18 +3470,6 @@ export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>>
 });
 
 /**
- * Semantic-event kinds that are the same STEP, stated a second way: the Mod publishes both a body trace and a receipt
- * for one node finishing, and neither is news while the plan that owns it is settling.
- *
- * The settled FAILED/CANCELLED/INVALIDATED kinds are deliberately absent: those are refusals, and a refusal is a
- * decision no settlement can soften.
- */
-export const IN_FLIGHT_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Object.freeze({
-  execution_settled_succeeded:
-    "the receipt for the same step and the programme's own settlement both state it, and the settlement's own outcome decides whether a turn opens",
-});
-
-/**
  * What a SETTLEMENT states about the programme it closes, as the one classification its fact SHAPE is built from.
  *
  * <p>
@@ -3553,10 +3541,10 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
  * <p>
  * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, every settlement
  * outcome the pump declares is classified as a settlement, and every kind the
- * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`,
- * `HOST_MINTED_WAKE_KINDS`) is classified as a semantic event. A state the protocol adds, an outcome or kind added to one
- * of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also why the table is
- * built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
+ * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `HOST_MINTED_WAKE_KINDS`) is classified as a semantic
+ * event. A state the protocol adds, an outcome or kind added to one of those tables, appears here or fails
+ * `event-pump.in-flight-progress.test.ts` by name - which is also why the table is built by code rather than typed out:
+ * two hand-written copies of one vocabulary disagree eventually.
  * </p>
  */
 function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence>> {
@@ -3571,7 +3559,6 @@ function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence
   for (const state of Object.keys(HELD_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "progress";
   for (const state of Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES)) table[`receipt:${state}`] = "in_flight_progress";
   for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
-  for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "in_flight_progress";
   for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
   for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
     table[`settled:${outcome}`] = SETTLED_PROGRAM_OUTCOMES[outcome].consequence;
@@ -3608,9 +3595,9 @@ export function factTurnConsequence(fact: WorldFact): FactTurnConsequence {
  * Which programme the fact's execution belongs to, as the MOD's OWN JOURNAL stated it on the wire.
  *
  * <p>
- * THE ONE READING OF A STEP'S CAUSE. Both statements of one step carry it - the `execution_receipt` itself and the body
- * trace that restates it (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`) - and both come from one journal lookup in the Mod
- * (`BridgeSession#OriginOf`), so they cannot disagree about which programme owns an execution.
+ * THE ONE READING OF A STEP'S CAUSE. The `execution_receipt` carries it, and so does the body trace that would restate
+ * one - both from one journal lookup in the Mod (`BridgeSession#OriginOf`) - so they cannot disagree about which
+ * programme owns an execution.
  * </p>
  * <p>
  * `undefined` means THIS FACT SAYS NOTHING ABOUT AN EXECUTION: a settlement, a milestone, the world speaking. A fact that

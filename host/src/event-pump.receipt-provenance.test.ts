@@ -6,7 +6,6 @@ import {
   FACT_PRODUCER,
   FACT_TURN_CONSEQUENCE,
   factTurnConsequence,
-  IN_FLIGHT_SEMANTIC_PROGRESS_KINDS,
   MAX_NAMED_UNATTRIBUTED_EXECUTIONS,
   type PendingBatch,
   TURN_OPENING,
@@ -42,10 +41,11 @@ import { EXECUTION_STATES, newEnvelope, type Scope, validateBridgeMessage } from
  *
  * <p>
  * THE POPULATION IS EVERY RECEIPT THE MOD EMITS, which is `EXECUTION_STATES` (the protocol's own list, and the list
- * `validateReceipt` refuses a state outside of) cross the provenance members the wire declares. The semantic events that
- * restate a finished step (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`) carry the same provenance from the same journal lookup,
- * so they are in the population for the same reason: they are the second spelling of one step, and a fix that only
- * covers the receipt leaves half the turns.
+ * `validateReceipt` refuses a state outside of) cross the provenance members the wire declares. It was wider until the
+ * Mod stopped publishing a semantic restatement of a finished step (`IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`, removed with
+ * its emitters): a class nothing can emit is a gate agreeing with itself, and no `semantic:` shape a programme's step
+ * could arrive as is classified any more - a kind the pump does not declare takes the `decision` default, so the loss of
+ * that table can only cost a turn, never a fact.
  * </p>
  *
  * {@link receiptWithoutItsProgrammeGate} is a function of recorded readings rather than of the pump, so the falsifier can
@@ -86,35 +86,6 @@ function receiptFact(state: string, executionId: string, origin: WireOrigin | un
   };
 }
 
-/** The Mod's body trace: the same step, stated a second way, with the same provenance from the same lookup. */
-function traceFact(kind: string, executionId: string, origin: WireOrigin | undefined): WorldFact {
-  return {
-    source: "stardew_mod",
-    kind: "semantic_event",
-    correlationId: executionId,
-    executionId,
-    revision: 3,
-    payload: {
-      kind,
-      revision: 3,
-      reasonCode: "body_trace",
-      activeExecution: null,
-      ...(origin === undefined
-        ? {}
-        : {
-            bodyTrace: {
-              category: kind,
-              executionId,
-              requestId: `request_${executionId}`,
-              tick: 12,
-              revision: 3,
-              origin,
-            },
-          }),
-    },
-  };
-}
-
 /** One fact the gate files, and the shape the classification answers for it. */
 type ReceiptCase = Readonly<{ shape: string; executionId: string; fact: WorldFact; origin: WireOrigin | undefined }>;
 
@@ -133,16 +104,6 @@ function receiptPopulation(): readonly ReceiptCase[] {
           shape: `receipt:${state}`,
           executionId: `exec_${state}_${origin?.kind ?? "unstated"}`,
           fact: receiptFact(state, `exec_${state}_${origin?.kind ?? "unstated"}`, origin),
-          origin,
-        }),
-      );
-  for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS))
-    for (const origin of [...provenancePopulation(), undefined])
-      cases.push(
-        Object.freeze({
-          shape: `semantic:${kind}`,
-          executionId: `exec_${kind}_${origin?.kind ?? "unstated"}`,
-          fact: traceFact(kind, `exec_${kind}_${origin?.kind ?? "unstated"}`, origin),
           origin,
         }),
       );
@@ -270,8 +231,8 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
 /**
  * What the origin says the filing must be, or `undefined` when the fact does not state a cause the wire can carry.
  *
- * Derived from the classification, so a state added to `EXECUTION_STATES` or a kind added to
- * `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS` is judged by the same three lines rather than by a fourth hand-written rule.
+ * Derived from the classification, so a state added to `EXECUTION_STATES` is judged by the same three lines rather than
+ * by a fourth hand-written rule.
  */
 function expectedFiling(reading: CaseReadings): Readonly<{ opened: number; reason: string }> | undefined {
   if (reading.consequence === "decision") return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
@@ -633,9 +594,9 @@ test("receipt_without_its_programme: the population is every receipt state the p
   const population = receiptPopulation();
   assert.ok(population.length > 0, "an empty population proves nothing");
   assert.deepEqual(
-    [...new Set(population.map((entry) => entry.shape))].filter((shape) => !shape.startsWith("receipt:")).length > 0,
-    true,
-    "the semantic restatements of a step are in the population, or a fix that covers only receipts leaves half the turns",
+    [...new Set(population.map((entry) => entry.shape))].filter((shape) => !shape.startsWith("receipt:")),
+    [],
+    "the population is RECEIPTS, and only receipts: the Mod publishes no other statement of a step since the body-trace cut, and a kind nothing can emit would be a gate agreeing with itself. A step stated a second way is judged by the same reading the moment it is classified (`FACT_TURN_CONSEQUENCE`), so widening this population means adding the shape here and the consequence there",
   );
   assert.deepEqual(
     EXECUTION_STATES.filter((state) => !population.some((entry) => entry.shape === `receipt:${state}`)),

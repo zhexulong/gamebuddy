@@ -7,7 +7,6 @@ import {
   factTurnConsequence,
   HELD_SEMANTIC_PROGRESS_KINDS,
   HOST_MINTED_WAKE_KINDS,
-  IN_FLIGHT_SEMANTIC_PROGRESS_KINDS,
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
   type SettledProgramOutcome,
@@ -517,22 +516,16 @@ function semanticEventOf(kind: string): WorldFact {
 }
 
 /**
- * The semantic kinds this pump declares - a kind added to ANY of the three tables must be classified here.
+ * The semantic kinds this pump declares - a kind added to ANY of the two tables must be classified here.
  *
  * THE BOUNDARY IS WHAT THIS GATE READS, and it is worth naming: the Mod's semantic vocabulary is open, so a kind no Host
  * table mentions reaches the pump as an unclassified shape and takes the `decision` default (one extra turn, never a
- * lost fact). What is closed here is the pump's own vocabulary: the protocol's `EXECUTION_STATES` and the three kind
+ * lost fact). What is closed here is the pump's own vocabulary: the protocol's `EXECUTION_STATES` and the two kind
  * tables. `event-pump-wake-classification.test.ts` reports the wider spelled-kind population from source without
  * asserting over it, for exactly this reason.
  */
 function semanticKindPopulation(): readonly string[] {
-  return [
-    ...new Set([
-      ...Object.keys(HELD_SEMANTIC_PROGRESS_KINDS),
-      ...Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS),
-      ...Object.keys(HOST_MINTED_WAKE_KINDS),
-    ]),
-  ].sort();
+  return [...new Set([...Object.keys(HELD_SEMANTIC_PROGRESS_KINDS), ...Object.keys(HOST_MINTED_WAKE_KINDS)])].sort();
 }
 
 /**
