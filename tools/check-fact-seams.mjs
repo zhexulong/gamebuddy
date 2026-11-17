@@ -194,6 +194,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  {
+    fact: "compatibility statuses",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "CompatibilityStatus" },
+    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "COMPATIBILITY_STATUSES" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["CompatibilityStatus", "COMPATIBILITY_STATUSES"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
@@ -231,9 +242,6 @@ export const DEBT = Object.freeze([
   // ─── The game contract's vocabularies, mirrored by the composed game client ───
   mirrorDebt("prerequisite statuses", `${GAME_CONTRACT}:PrerequisiteStatus`, [`${GAME_CLIENT}:PREREQUISITE_STATUSES`]),
   mirrorDebt("instance statuses", `${GAME_CONTRACT}:InstanceStatus`, [`${GAME_CLIENT}:INSTANCE_STATUSES`]),
-  mirrorDebt("compatibility statuses", `${GAME_CONTRACT}:CompatibilityStatus`, [
-    `${GAME_CLIENT}:COMPATIBILITY_STATUSES`,
-  ]),
   mirrorDebt("attachment statuses", `${GAME_CONTRACT}:AttachmentStatus`, [`${GAME_CLIENT}:ATTACHMENT_STATUSES`]),
   mirrorDebt("connection statuses", `${GAME_CONTRACT}:ConnectionStatus`, [`${GAME_CLIENT}:CONNECTION_STATUSES`]),
   mirrorDebt("companion mod outcomes", `${GAME_CONTRACT}:CompanionModOutcome`, [
