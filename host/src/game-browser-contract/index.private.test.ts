@@ -364,7 +364,7 @@ test("GameBrowserStateV1 rejects action ID in nested game fields", () => {
 
 test("GameBrowserStateV1 accepts all valid prerequisite statuses", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  for (const status of ["unknown", "met", "checking", "failed"] as const) {
+  for (const status of ["unknown", "met", "failed"] as const) {
     assert.equal(
       validator.Check({
         ...baseState,
@@ -387,6 +387,17 @@ test("GameBrowserStateV1 refuses the unmet status and the missing-items list the
       JSON.stringify(prerequisites),
     );
   }
+});
+
+test("GameBrowserStateV1 refuses the checking status, which no Host read can be in", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  assert.equal(
+    validator.Check({
+      ...baseState,
+      game: { ...baseState.game, prerequisites: { status: "checking", detectedGame: null } },
+    }),
+    false,
+  );
 });
 
 test("GameBrowserStateV1 rejects invalid prerequisite status", () => {

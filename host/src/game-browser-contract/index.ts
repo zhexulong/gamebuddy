@@ -128,12 +128,7 @@ export const GAME_BROWSER_PROBLEM_CODES_V1: readonly Static<typeof GameProblemCo
 
 // ─── Redacted read projections ──────────────────────────────────────────────
 
-const PrerequisiteStatus = Type.Union([
-  Type.Literal("unknown"),
-  Type.Literal("met"),
-  Type.Literal("checking"),
-  Type.Literal("failed"),
-]);
+const PrerequisiteStatus = Type.Union([Type.Literal("unknown"), Type.Literal("met"), Type.Literal("failed")]);
 
 /**
  * The Player Host instance slot `game.state.read` publishes.
