@@ -12,7 +12,7 @@ import {
 } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
-import { fieldError } from "./field-error";
+import { fieldError, firstFieldAtFault } from "./field-error";
 import { useRecordDraft } from "./surface-drafts";
 import { parseTriggerWords } from "./world-book-trigger-words";
 
@@ -216,6 +216,9 @@ function companionWorldBookEntryProblems(
     content: entry.content.trim().length === 0 ? labels.companionWorldBookEntryBodyRequired : null,
   };
 }
+
+/** The one field order an entry is read in, and the order the save press walks to find its first problem. */
+const COMPANION_ENTRY_FIELDS = ["title", "content"] as const;
 
 /**
  * The id one field of one row carries.
@@ -660,15 +663,16 @@ function CompanionWorldBookEditor({
    */
   const attemptSave = (): void => {
     const problems = draft.entries.map((entry) => companionWorldBookEntryProblems(entry, labels));
-    const first = problems.findIndex((problem) => problem.title !== null || problem.content !== null);
-    if (first === -1) {
+    const first = firstFieldAtFault(problems, COMPANION_ENTRY_FIELDS);
+    if (first === null) {
       setShowProblems(false);
       onSubmit();
       return;
     }
     setShowProblems(true);
-    setEntryOpen(draft.entries[first]!.rowId, true);
-    setFocusRequest(companionWorldBookFieldId(first, problems[first]!.title === null ? "body" : "title"));
+    setEntryOpen(draft.entries[first.row]!.rowId, true);
+    // The row's own field is `content`; the id the field carries is `body`.
+    setFocusRequest(companionWorldBookFieldId(first.row, first.field === "content" ? "body" : "title"));
   };
 
   return (

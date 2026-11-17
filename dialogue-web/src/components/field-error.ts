@@ -28,3 +28,24 @@ export function fieldError(message: string | null, id: string): FieldError {
     ? { invalid: undefined, describedBy: undefined, id }
     : { invalid: "true", describedBy: id, id };
 }
+
+/**
+ * The first field, in reading order, that a press found empty.
+ *
+ * Both world book authoring forms enforce the rule that a draft is complete on the press rather
+ * than by withdrawing the control, and both must then answer one question: which field does the
+ * keyboard land on? The order is the reading order the form is laid out in - each row's own fields
+ * in the order the row draws them, and each row before the next - so the press lands on the problem
+ * the player meets first, and the two forms cannot answer it differently.
+ *
+ * `rows` is one record per row (a managed item is a row of its own above its entries), and `fields`
+ * is that row's own field order; the caller keeps its own spelling of the field ids.
+ */
+export function firstFieldAtFault<Field extends string>(
+  rows: readonly Readonly<Record<Field, string | null>>[],
+  fields: readonly Field[],
+): Readonly<{ row: number; field: Field }> | null {
+  for (const [row, problems] of rows.entries())
+    for (const field of fields) if (problems[field] !== null) return { row, field };
+  return null;
+}
