@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
-import {
-  forEachDocumentLength,
-  MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
-  PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
-  type PlanForEachLoop,
-  readForEachLoop,
-} from "./body-program-for-each.js";
 import { isExpressionOnlyAction } from "./action-registry.js";
 import {
   TOOL_FOOTPRINT_TILES_BY_CHARGE,
@@ -346,25 +339,16 @@ export const TARGETS_NAMED_PER_PLAN = 16;
 export const MAX_PLAN_NODES = 256;
 
 /**
- * The node action id of the `for_each` plan form.
- *
- * It is NOT one of the Mod's published actions and nothing registers it as one: the Mod cannot execute the form yet, and
- * a capability advertised without an executor is a capability a caller can believe in. The node still exists, because
- * both alternatives are lies - a plan that silently dropped the loop would read as a patch that was covered, and a plan
- * that refused the whole script would lose the steps the caller wrote around it. So the form compiles into a node the
- * submission path already carries, and `plan_work` names by code exactly the nodes whose action id the attached Mod does
- * not publish (`for_each_execution_unavailable`) rather than sending work that cannot run.
- */
-export const FOR_EACH_PLAN_ACTION_ID = "for_each";
-
-/**
  * Every node action id this compiler can produce that is a HOST plan FORM rather than a published Mod action.
  *
- * The distinction is answered at submission time from the Mod's own catalogue, never from a list kept here: a form whose
- * id the attached Mod does publish is executable by definition, and stops being named unavailable the moment the Mod
- * ships it. `plan_work` therefore derives the answer instead of restating it.
+ * IT IS EMPTY, AND THAT IS THE DECLARATION. A batch is a `for` loop over a snapshot family, so every node the script
+ * compiles to is one of the Mod's published actions - there is no second vocabulary in this compiler at all. The list
+ * stays because it is the authority two gates read rather than a table to fill: `two_ways_to_write_a_loop` derives the
+ * loop shapes taught and accepted from it, and `a_script_form_is_reachable_from_the_description` refuses a form the
+ * description does not teach. Adding an id here without teaching it is red by name, which is the gate whose absence let
+ * `for_each` live while nobody used it.
  */
-export const PLAN_FORM_ACTION_IDS: readonly string[] = Object.freeze([FOR_EACH_PLAN_ACTION_ID]);
+export const PLAN_FORM_ACTION_IDS: readonly string[] = Object.freeze([]);
 
 /** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
@@ -925,7 +909,7 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * reads it (`body-program-script.test.ts`) refuses an overrun by name
  * (`plan_description_exceeds_budget:<chars>:<budget>`) instead of leaving the cost to be noticed in a transcript.
  */
-export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 6853;
+export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 7154;
 
 /**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
@@ -1361,7 +1345,6 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
-    packedByForm: new Set(),
   };
 }
 
@@ -1552,14 +1535,6 @@ type PlanScriptState = {
    */
   argumentOwners: ReadonlyMap<string, readonly string[]>;
   /**
-   * The node ids the `for_each` form's own packing wrote, so "a run of authored tiles" never reads one back as tiles again.
-   *
-   * A packed use names ONE tile and covers a footprint; the author's own steps name one tile each. Without this, the
-   * pass that packs authored runs would read a form's already-packed nodes as a run of tiles and pack a footprint as if
-   * it were a tile.
-   */
-  packedByForm: Set<string>;
-  /**
    * The world tile each emitted node addresses, for the nodes whose target IS a piece of world (see `planWorldTileOf`).
    *
    * The consumer rule reads this rather than re-deriving it: a node's action is not on the node, so the fact has to be
@@ -1598,13 +1573,6 @@ function createPlanBuilder(
         if (property === "nodeCount") return state.nodes.length;
         if (property === "isFull") return () => state.nodes.length >= MAX_PLAN_NODES;
         if (property === "equipFor") return equipFor;
-        // THE FORM OWNS ITS NAME. A published action that took the same id would shadow the loop for every script that
-        // writes `for_each`, and the loop is the Host's own plan vocabulary, so the form is answered first.
-        if (property === FOR_EACH_PLAN_ACTION_ID)
-          return (arguments_: unknown) => {
-            state.builderCalls += 1;
-            atPlanCall(state, FOR_EACH_PLAN_ACTION_ID, () => emitForEachNode(arguments_, snapshot, actions, state));
-          };
         const method = methods.get(property);
         if (method !== undefined) return method;
         return refusePlan(`plan_script_unknown_action:${property}`, state);
@@ -2319,189 +2287,6 @@ function transitionApproachNode(
   });
 }
 
-/**
- * ONE PACKED AREA INSTEAD OF ONE LOOP: the native uses that cover the rectangle exactly, emitted as ordinary nodes.
- *
- * <p>
- * WHY THE LOOP IS BYPASSED RATHER THAN TAUGHT TO PACK. `for_each` expands one target per tile on the game thread
- * (`FarmhandForEachExpansion.cs:373`), so a loop over a 3x20 patch at `charge: 3` becomes 60 dispatches of which 57 are
- * refused `soil_already_tilled` - every walk the packing saved, handed back. Teaching the loop to pack would make one form
- * carry two meanings; emitting the packed steps as ordinary nodes keeps the loop's meaning intact and gives each native use
- * its own receipt.
- * </p>
- * <p>
- * THE CHARGE IS THE COMPILER'S CHOICE, and the step's own value is not it. The words a model should have to write are "till
- * this 3x20"; `charge` is a per-ROW value that exists because a single row cannot derive a footprint, and the description's
- * own example writes the wire's minimum (`0`, the one-tile tap). Reading that value as the intent pinned every copied plan
- * to the tap: a 3x20 patch at gold compiled to one loop node, the Mod expanded sixty rows
- * (`RouteReenteringBodyProgramExecutor.cs:442`), and the walk the resolver exists to save was handed straight back - the one
- * shape this bypass was written for, produced by the tool's own teaching. The rectangle names the tiles; how many native
- * uses cover it is the answer of the tool the Mod will swing for THIS action - the best one the pack carries for the
- * action's own `tool:<category>` claim, not the one in her hand (`toolChargeCeilingForClaim`).
- * </p>
- * <p>
- * A CHARGE THE ACTION'S OWN TOOL CANNOT REACH IS NOT RAISED OR LOWERED INTO ONE. That value is left to the loop, whose rows
- * the Mod refuses by name (`charge_exceeds_tool_upgrade:<requested>:<ceiling>`), because silently packing at the ceiling
- * would spend a native use the caller asked for something else on.
- * </p>
- * <p>
- * A FILTERED LOOP IS NEVER PACKED. `where` decides a row against the live world, so a loop that carries one names a SUBSET
- * of its rectangle - the empty tillable tiles inside a patch of weeds and stone - and the compiler cannot know which tiles
- * those are. A packed use covers every tile of its footprint, so packing a filtered loop would till the rows the caller
- * excluded - an EFFECT rather than a refusal, and the one thing a packed native use may never do (the same rule the Mod's
- * own sweep applies to an arc nobody named, `farmhandexecutioncontroller.resourcetoolactions.cs:1428-1439`). The loop is
- * left exactly as written, and the Mod's per-row rules decide it live.
- * </p>
- * <p>
- * IT REFUSES TO GUESS, AND DOES NOT DRESS A FALLBACK AS A REFUSAL. An unreadable tool reading leaves the loop exactly as
- * written rather than packing from a level-0 assumption - `plan_packing_footprint_unknown:tool_claim` is the resolver's own
- * name for why it could not answer, and the loop is still a correct program, so the caller is handed no refusal to repair.
- * A packing that would not save a single step is left as the loop for the same reason: its rows are resolved live.
- * </p>
- */
-function tryEmitPackedArea(
-  loop: PlanForEachLoop,
-  snapshot: Snapshot,
-  actions: readonly PublishedPlanAction[],
-  state: PlanScriptState,
-): boolean {
-  // A predicate names rows, not a rectangle: the tiles it excludes are tiles a footprint would still cover.
-  if (loop.where !== undefined) return false;
-  const effect = loop.do;
-  // A chain is several actions over the SAME tile: the last one's footprint is not the one the first needs, so a chain is
-  // never packed.
-  if (effect === null || effect.length !== 1) return false;
-  const step = effect[0]!;
-  const action = actions.find((candidate) => candidate.actionId === step.action);
-  if (action === undefined) return false;
-  if (packingKindOf(action.arguments.map((argument) => argument.name)) !== "charged_rectangle") return false;
-  const written = step.charge;
-  if (written !== undefined && (typeof written !== "number" || !Number.isInteger(written) || written < 0)) return false;
-  // NO READABLE CEILING, NO PACKING. The plan would then promise footprints the action's own tool may not reach, and the
-  // Mod would refuse them one by one after the walk. The loop is still a correct program, so it is left exactly as the
-  // caller wrote it.
-  const requirement = action.toolRequirement;
-  const ceiling = toolChargeCeilingForClaim(snapshot, requirement.declared ? requirement : undefined);
-  if (ceiling === undefined) return false;
-  // A CHARGE ABOVE THE ACTION'S OWN TOOL IS THE MOD'S REFUSAL TO MAKE, per row and by name, not a footprint this side
-  // invents.
-  if (written !== undefined && written > ceiling) return false;
-  const packing = packAreaSteps({
-    area: loop.source.area,
-    kind: "charged_rectangle",
-    maximumCharge: ceiling,
-  });
-  if (packing.status !== "packed") return false;
-  const tiles = loop.source.area.w * loop.source.area.h;
-  // A packing that saves no step is left as the loop: one node covering the rectangle live is strictly better than the same
-  // number of pre-resolved ones, and emitting them would make the plan larger without making the walk shorter.
-  if (packing.steps.length >= tiles) return false;
-  if (state.nodes.length + packing.steps.length > MAX_PLAN_NODES) return false;
-  let previousNodeId: string | undefined = state.nodes[state.nodes.length - 1]?.nodeId;
-  for (const packed of packing.steps) {
-    const nodeId = `n${String(state.nodes.length + 1).padStart(2, "0")}`;
-    state.nodes.push(
-      Object.freeze({
-        nodeId,
-        actionId: step.action,
-        arguments: Object.freeze({
-          x: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.x) }),
-          y: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.y) }),
-          charge: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.charge) }),
-        }),
-        // A packed step consumes nothing a previous step produced: it names its own tile, so it never binds an earlier
-        // node's output, and it is only ORDERED after the one before it.
-        dependsOn: Object.freeze([]),
-        ...(previousNodeId === undefined ? {} : { orderedAfter: Object.freeze([previousNodeId]) }),
-        bindings: Object.freeze({}),
-      }),
-    );
-    state.callOfNode.set(nodeId, state.builderCalls);
-    state.packedByForm.add(nodeId);
-    previousNodeId = nodeId;
-  }
-  state.acceptedSteps.push(state.builderCalls);
-  return true;
-}
-
-/**
- * Compiles one `builder.for_each({ source, where, do })` call into the single node the loop form is.
- *
- * ONE CALL, ONE NODE - UNLESS THE LOOP IS A PACKABLE AREA, in which case the packing pass above turns it into the native
- * uses that cover the rectangle exactly. That is the ONE exception, and it exists because the loop's own expansion is one
- * target per tile (`FarmhandForEachExpansion.cs`): a packed area left as a loop is walked tile by tile again, which hands
- * back every walk the packing saved.
- *
- * A LOOP THAT NAMES A SOURCE AN EARLIER LOOP ALREADY NAMES IS STILL ITS OWN NODE. The compiler used to fold it into that
- * earlier node as a second rule of one pass (`then`), which made one pass claim two kinds of row; measured over every plan
- * call she wrote, the fold was the ONLY writer of that key and `then` itself was authored `0 of 37`. Two kinds of row in
- * one rectangle are two calls, and each reports the rows it did not claim - which is a fact she can read per node instead
- * of a fold she cannot see.
- *
- * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
- * caller did not write, a rectangle past the row bound with its own count, an action the surface does not publish - so one
- * bad loop is one named refusal beside the loops that did read, and the author corrects that call rather than rewriting the
- * script.
- */
-function emitForEachNode(
-  value: unknown,
-  snapshot: Snapshot,
-  actions: readonly PublishedPlanAction[],
-  state: PlanScriptState,
-): void {
-  state.calls += 1;
-  if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${String(state.calls)}`, state);
-  if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${String(state.nodes.length + 1)}`, state);
-  const reading = readForEachLoop(
-    value,
-    actions.map((action) => action.actionId),
-  );
-  if (!reading.ok)
-    rejectPlanCall(
-      reading.detail.length === 0 ? `plan_script_${reading.code}` : `plan_script_${reading.code}:${reading.detail}`,
-      state,
-    );
-  const loop: PlanForEachLoop = reading.loop;
-  // PACKING IS DECIDED BEFORE THE LOOP IS EMITTED, and it is decided here rather than in the Mod because the Host is the
-  // layer that knows the surface's declarations and the snapshot's tools. See tryEmitPackedArea.
-  if (tryEmitPackedArea(loop, snapshot, actions, state)) return;
-  // The step's own arguments are checked HERE as well as per row: an argument only the caller can supply, left out of a
-  // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
-  refuseMissingStepArguments(loop, actions, state);
-  const previous = state.nodes[state.nodes.length - 1];
-  RefuseOversizedDocument(loop, state);
-  state.nodes.push(
-    Object.freeze({
-      nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,
-      actionId: FOR_EACH_PLAN_ACTION_ID,
-      // The wire tag is added HERE and nowhere else: the caller writes a loop, the node carries a runtime value.
-      arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...loop }) }),
-      // A loop names no tile of its own - its rows are resolved on the game thread - so it consumes no earlier step.
-      dependsOn: Object.freeze([]),
-      ...(previous === undefined ? {} : { orderedAfter: Object.freeze([previous.nodeId]) }),
-      bindings: Object.freeze({}),
-    }),
-  );
-  state.acceptedSteps.push(state.builderCalls);
-  state.callOfNode.set(state.nodes[state.nodes.length - 1]!.nodeId, state.builderCalls);
-}
-
-/**
- * Refuses a loop document the wire cannot carry, with its own length and the bound.
- *
- * The canonical string the loop becomes is bounded on both sides of the bridge (`MAX_FOR_EACH_LOOP_DOCUMENT_CHARS`), and a
- * document over it is answered by the TRANSPORT with a code that names nothing a caller can act on. So the producer says
- * it instead: one dropped call, with the number that broke it and the number to stay under.
- */
-function RefuseOversizedDocument(loop: PlanForEachLoop, state: PlanScriptState): void {
-  const length = forEachDocumentLength(loop);
-  if (length <= MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) return;
-  rejectPlanCall(
-    `plan_script_for_each_loop_document_too_long:${String(length)}_of_${String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS)}`,
-    state,
-  );
-}
-
 /** An integer plan argument: the whole-number wire value, canonicalized to its exact decimal spelling. */
 /**
  * ONE PACKED AREA IS NOT A FORM: the rectangle a run of authored steps covers, packed into the uses that cover it.
@@ -2564,7 +2349,6 @@ function authoredRunAt(
 ): PackedAuthoredRun | null {
   const first = state.nodes[start];
   if (first === undefined || !first.nodeId.startsWith(PLAN_AUTHOR_NODE_PREFIX)) return null;
-  if (state.packedByForm.has(first.nodeId)) return null;
   const action = actions.find((candidate) => candidate.actionId === first.actionId);
   if (action === undefined || action.targetFamily === null) return null;
   if (packingKindOf(action.arguments.map((argument) => argument.name)) !== "charged_rectangle") return null;
@@ -2575,7 +2359,7 @@ function authoredRunAt(
   let index = start;
   while (index < state.nodes.length) {
     const node = state.nodes[index]!;
-    if (!node.nodeId.startsWith(PLAN_AUTHOR_NODE_PREFIX) || state.packedByForm.has(node.nodeId)) break;
+    if (!node.nodeId.startsWith(PLAN_AUTHOR_NODE_PREFIX)) break;
     if (node.actionId !== action.actionId) break;
     if (node.dependsOn.length > 0 || planIntegerOf(node.arguments.charge) !== charge) break;
     const key = tileKeyOf(node.arguments);
@@ -2961,72 +2745,3 @@ function deepFreeze<TValue>(value: TValue): TValue {
   return value;
 }
 
-/**
- * The arguments a loop row derives from the tile itself, so a step neither supplies nor withholds.
- *
- * One fact, one spelling: the Mod's dispatch seam keeps the same three (`x`, `y`, and the row's minted target id) and
- * refuses a step that names one of them (`row_argument_reserved:<name>`), so the compiler's check below cannot drift
- * from the rule the row answers with.
- */
-export const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze([
-  "x",
-  "y",
-  PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
-]);
-
-/**
- * The arguments a step may still leave out, and why it is not every argument.
- *
- * MEASURED, and it is a finding rather than a permission: the description's own chain example writes
- * `do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]`, which omits `slot` and
- * `expectedQualifiedItemId` (and names an argument `plant_seed` does not declare at all). The Mod
- * refuses every one of those rows today, because `TryBuildRowArguments` demands each declared argument the row cannot
- * derive, so that example is ALREADY broken per row. Moving it to plan time here would turn a repair of this unit
- * into a rewrite of that form's documentation, so they are named instead; a THIRD name is a capability decision, and the
- * test that reads this list asserts it holds exactly these two.
- */
-export const STEP_ARGUMENTS_STILL_OMISSIBLE: readonly string[] = Object.freeze(["slot", "expectedQualifiedItemId"]);
-
-/**
- * Refuses a loop whose step names an action and leaves out an argument the row could never supply.
- *
- * <p>
- * THE ROW CANNOT SUPPLY IT EITHER. A `for_each` row's arguments are the tile's own coordinates, the identity the family
- * mints from the live tile, and the step's scalars - nothing else. So a step that omits a declared argument is not a
- * step the Mod can complete: every row closes `row_argument_missing:<name>` and the pass does nothing. Discovering that
- * costs a whole pass, which is why the compiler says it here, in the call that wrote it, with the arguments the action
- * actually declares. `charge` on `till_soil` and `water_crop` is that shape: `0` is the one named tile.
- * </p>
- *
- * <p>
- * A `by_kind` step names no action of its own - the Mod's classifier decides per row - so there is nothing here to
- * compare it against, and its refusals stay the row's (`no_action_for_kind:<kind>`).
- * </p>
- */
-function refuseMissingStepArguments(
-  loop: PlanForEachLoop,
-  actions: readonly PublishedPlanAction[],
-  state: PlanScriptState,
-): void {
-  const declared = new Map(actions.map((action) => [action.actionId, action.arguments]));
-  if (loop.do === null) return;
-  for (const step of loop.do) {
-    const arguments_ = declared.get(step.action);
-    if (arguments_ === undefined) continue;
-    const supplied = new Set(Object.keys(step));
-    const declaredNames = arguments_.map((argument) => argument.name);
-    const missing = declaredNames.filter(
-      (name) =>
-        !ROW_DERIVED_STEP_ARGUMENTS.includes(name) &&
-        !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name) &&
-        !supplied.has(name),
-    );
-    if (missing.length === 0) continue;
-    rejectPlanCall(
-      `plan_script_loop_do_argument_missing:${missing[0]!}:declared=[${declaredNames.join(",")}]`,
-      state,
-      undefined,
-      Object.freeze(missing),
-    );
-  }
-}

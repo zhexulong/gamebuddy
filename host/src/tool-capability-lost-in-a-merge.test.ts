@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readForEachLoop } from "./body-program-for-each.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import { TILE_OCCUPANT_NONE } from "./game-world-vocabulary.js";
@@ -27,7 +26,7 @@ import type { Scope, Snapshot, TileAreaRequest, TileAreaResult, TileAreaRow } fr
  * </p>
  * <p>
  * THE VERDICT LINE is `capabilities examined N · delivered M · lost K`. K>0 fails and names the capability, the tool and
- * the field: `tool_capability_lost_in_a_merge:occupant_kind_in_the_where_vocabulary:stardew_observe:occupantKind`. A zero
+ * the field: `tool_capability_lost_in_a_merge:occupant_kind_word:stardew_observe:occupantKind`. A zero
  * population is blocked rather than green.
  * </p>
  */
@@ -296,9 +295,8 @@ const MERGED_CAPABILITIES: readonly MergedCapability[] = Object.freeze([
     },
   },
   {
-    // "occupantKind (what stands there in the words a for_each where filter uses ... so a row can be filtered in
-    // JavaScript with the same word a loop's where writes)".
-    capability: "occupant_kind_in_the_where_vocabulary",
+    // "occupantKind (what stands there in the Mod's own taxonomy ... )".
+    capability: "occupant_kind_word",
     tool: "stardew_observe",
     field: "occupantKind",
     deliver: async (probe) => {
@@ -311,13 +309,6 @@ const MERGED_CAPABILITIES: readonly MergedCapability[] = Object.freeze([
           return `the row's occupantKind ${row.occupantKind} is not printed, so the model never reads it`;
         if (!allowed.has(row.occupantKind))
           return `a row published occupantKind ${row.occupantKind}, which the Mod's vocabulary does not have`;
-        const loop = readForEachLoop(
-          { source: { area: { x: 44, y: 12, w: 3, h: 1 } }, where: [{ occupant: row.occupantKind }], do: null },
-          null,
-        );
-        if (!loop.ok) return `the where filter refused the word ${row.occupantKind}: ${loop.code}`;
-        if (loop.loop.where?.[0]?.occupant !== row.occupantKind)
-          return `the where filter did not keep the word ${row.occupantKind} it was given`;
       }
       return null;
     },
@@ -427,7 +418,7 @@ test("the gate is red on an occupant word the Mod's vocabulary does not have", a
   assert.ok(
     verdict.findings.some((finding) =>
       finding.startsWith(
-        "tool_capability_lost_in_a_merge:occupant_kind_in_the_where_vocabulary:stardew_observe:occupantKind",
+        "tool_capability_lost_in_a_merge:occupant_kind_word:stardew_observe:occupantKind",
       ),
     ),
     verdict.report,
@@ -461,7 +452,7 @@ test("a 101-tile rectangle is refused by name with the limit and the size that w
   );
 });
 
-test("a 3x20 strip answers per tile, and its kind is the word a for_each where filter takes", async () => {
+test("a 3x20 strip answers per tile, and its kind is the word the observation publishes", async () => {
   const session = farmSession();
   const answer = await observe(session.tools, STRIP);
   assert.deepEqual(session.asked, [{ x: 44, y: 12, w: 3, h: 20 }], "the four numbers are the whole request");
@@ -472,16 +463,8 @@ test("a 3x20 strip answers per tile, and its kind is the word a for_each where f
   assert.equal(total, 60, "every named tile lands in exactly one kind's count");
   const rows = kinds.flatMap((kind) => kind.shown);
   assert.ok(rows.length > 0);
-  // THE FALSIFIER: one row's own word, fed straight into the filter a loop is written with.
-  for (const row of rows) {
-    const loop = readForEachLoop(
-      { source: { area: { x: row.x, y: row.y, w: 1, h: 1 } }, where: [{ occupant: row.occupantKind }], do: null },
-      null,
-    );
-    assert.ok(loop.ok, `${row.occupantKind} must be a word the where filter accepts`);
-    assert.equal(loop.loop.where?.[0]?.occupant, row.occupantKind, "and it must travel as the caller wrote it");
+  for (const row of rows)
     assert.match(answer.text, new RegExp(`\\(${String(row.x)},${String(row.y)}\\) ${row.occupantKind}`, "u"));
-  }
   // The three zeroes are per tile here: read and empty, and every tile accounted for.
   const tiles = answer.details.selection?.tiles;
   assert.equal(

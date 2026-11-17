@@ -5,12 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
-import {
-  ROW_DERIVED_STEP_ARGUMENTS,
-  STEP_ARGUMENTS_STILL_OMISSIBLE,
-  planWorkDescription,
-  planActionsFromRegistrations,
-} from "./body-program-script.js";
+import { planWorkDescription, planActionsFromRegistrations } from "./body-program-script.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { buildCandidateToolSchema, createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import {
@@ -632,27 +627,19 @@ function exampleStringValues(body: string): readonly (readonly [string, string])
 /**
  * Every example the plan tool's own description prints, read off the rendered text.
  *
- * Both shapes are read because both are copied: a `builder.<action>({...})` call on a line of its own, and a loop step
- * written as `{ action: "<id>", ... }` - including the one the prose teaches mid-sentence. Nothing else in the description
- * is parsed: a line that is not a whole builder call, and an object that names no action, are not examples.
+ * One shape is read, because one shape is copied: a `builder.<action>({...})` call, on a line of its own or inside the
+ * loop the example is about. Nothing else in the description is parsed - a line that carries no whole builder call
+ * teaches no call a caller could copy.
  */
 function planExamples(description: string): readonly PlanExample[] {
   const examples: PlanExample[] = [];
   for (const line of description.split("\n")) {
-    const builder = /^\s*builder\.([a-z0-9_]+)\(\{(.*)\}\);?\s*$/u.exec(line);
-    if (builder !== null)
+    for (const builder of line.matchAll(/builder\.([a-z0-9_]+)\(\{([^}]*)\}\)/gu))
       examples.push({
         action: builder[1]!,
         names: exampleArgumentNames(builder[2]!),
         strings: exampleStringValues(builder[2]!),
         source: "builder",
-      });
-    for (const step of line.matchAll(/\{ action: "([a-z0-9_]+)"([^}]*)\}/gu))
-      examples.push({
-        action: step[1]!,
-        names: exampleArgumentNames(step[2]!),
-        strings: exampleStringValues(step[2]!),
-        source: "step",
       });
   }
   return examples;
@@ -662,11 +649,8 @@ function planExamples(description: string): readonly PlanExample[] {
  * An argument a plan example omits and a caller would have to add before the example would run.
  *
  * The example is a STRONGER instruction than the argument list - a caller copies it - so an example that leaves out a
- * wire-required argument teaches a call the compiler refuses (`loop_do_argument_missing:charge`) or the validator refuses
- * (`invalid_args`). Two facts decide what an example must carry, and neither is invented here: a loop step's row supplies
- * `x`, `y` and the minted target id (`ROW_DERIVED_STEP_ARGUMENTS`), and the two names the compiler still tolerates are
- * `STEP_ARGUMENTS_STILL_OMISSIBLE` - the loop form's own measured gap, which this gate must not turn into a second, silent
- * one.
+ * wire-required argument teaches a call the compiler refuses or the validator refuses (`invalid_args`). Every rendered
+ * example is a whole builder call, so every argument the wire pins is one the example must carry.
  */
 test("every plan example carries the arguments the wire requires of it", () => {
   const registrations = publishedSurface().map(registrationFor);
@@ -681,13 +665,7 @@ test("every plan example carries the arguments the wire requires of it", () => {
     if (pinned === undefined) continue;
     examined.push(`${example.source}:${example.action}`);
     const supplied = new Set(example.names);
-    const required =
-      example.source === "builder"
-        ? pinned
-        : pinned.filter(
-            (name) => !ROW_DERIVED_STEP_ARGUMENTS.includes(name) && !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name),
-          );
-    for (const argument of required)
+    for (const argument of pinned)
       if (!supplied.has(argument)) findings.push(`plan_example_omits_argument:${example.action}:${argument}`);
   }
 
