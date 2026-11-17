@@ -70,6 +70,9 @@ internal static class InstalledGenerationRollback
         {
             using var document = JsonDocument.Parse(pointer);
             var root = document.RootElement;
+            // As in `InstalledGenerationSelection`: the declaration is host/scripts/host-generation-pointer.keys.json, and
+            // this copy is compared with it by tools/desktop-composition-launch.test.mjs because the launcher reads a
+            // generation on the player's machine and cannot read a repository declaration at runtime.
             if (!InstalledGenerationPaths.ExactProperties(root, "schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"))
                 return false;
             if (root.GetProperty("schema").GetString() != "gamebuddy-host-production-current/v2") return false;

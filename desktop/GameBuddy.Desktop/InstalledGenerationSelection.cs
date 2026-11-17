@@ -44,6 +44,11 @@ internal sealed class InstalledGenerationSelection : IDisposable, IAsyncDisposab
             {
                 using var pointer = JsonDocument.Parse(ReadAll(pointerLock));
                 var root = pointer.RootElement;
+                // The pointer's key sequence is declared beside the release publisher that writes it
+                // (host/scripts/host-generation-pointer.keys.json). This file cannot read that declaration at runtime:
+                // the launcher reads a generation on the player's machine, not a repository. So the list below is a copy
+                // on purpose, and tools/desktop-composition-launch.test.mjs compares it with the declaration instead of
+                // this file embedding one - do not "fix" the copy, fix the comparison.
                 if (!InstalledGenerationPaths.ExactProperties(root, "schema", "generation", "inventoryDigest", "runtimeAdmissionSha256") ||
                     root.GetProperty("schema").GetString() != PointerSchema ||
                     !InstalledGenerationPaths.ValidGeneration(root.GetProperty("generation").GetString()) ||

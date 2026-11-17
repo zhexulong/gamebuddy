@@ -64,6 +64,10 @@ internal sealed class InstalledHostRuntimeAdmission
             if (bytes.Length == 0) throw new GuardianLaunchUnavailableException();
             using var document = JsonDocument.Parse(bytes);
             var value = document.RootElement;
+            // The sidecar's key sequence is declared beside the publisher that writes it (host/scripts/host-runtime-admission.keys.json).
+            // This file cannot read that declaration at runtime: the launcher reads a generation on the player's machine,
+            // not a repository. The list below is therefore a copy on purpose, and tools/desktop-composition-launch.test.mjs
+            // compares it with the declaration - do not "fix" the copy, fix the comparison.
             if (!InstalledGenerationPaths.ExactProperties(value, "schema", "inventoryDigest", "generation", "runtimePath", "runtimeSha256", "bootstrapPath", "bootstrapSha256", "runtimeVersion", "runtimePlatform", "runtimeArch", "runtimeClosure") ||
                 value.GetProperty("schema").GetString() != AdmissionSchema || value.GetProperty("inventoryDigest").GetString() != selection.InventoryDigest || value.GetProperty("generation").GetString() != selection.Generation ||
                 value.GetProperty("runtimePath").GetString() != RuntimePath || !InstalledGenerationPaths.ValidDigest(value.GetProperty("runtimeSha256").GetString()) || value.GetProperty("bootstrapPath").GetString() != BootstrapPath || !InstalledGenerationPaths.ValidDigest(value.GetProperty("bootstrapSha256").GetString()) ||

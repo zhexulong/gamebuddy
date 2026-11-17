@@ -96,6 +96,10 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
         VerifySameCurrentUserSid(child);
         var hello = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
+        // The hello request's key sequence is declared beside the Host client that writes it
+        // (host/src/bootstrap/wire/desktop-guardian-session-hello.keys.json). This broker cannot read that declaration at
+        // runtime - it serves a launch on the player's machine - so the list below is a copy on purpose, and
+        // tools/desktop-composition-launch.test.mjs compares it with the declaration; do not "fix" the copy.
         if (!ExactObject(hello, "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256") ||
             hello.GetProperty("schema").GetString() != "gamebuddy-desktop-guardian-session/v1" || hello.GetProperty("protocolVersion").GetInt32() != 1 || hello.GetProperty("operation").GetString() != "hello" ||
             hello.GetProperty("bootstrapId").GetString() != bootstrapId || hello.GetProperty("generation").GetString() != generation || hello.GetProperty("inventoryDigest").GetString() != inventoryDigest || hello.GetProperty("runtimeAdmissionSha256").GetString() != runtimeAdmissionSha256)
