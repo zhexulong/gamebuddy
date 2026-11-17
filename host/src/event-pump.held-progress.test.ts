@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import {
+  CompanionEventPump,
+  FACT_PRODUCER,
+  HELD_SEMANTIC_PROGRESS_KINDS,
+  type PendingBatch,
+  type WorldFact,
+} from "./event-pump.js";
 
 /**
  * A held PROGRESS fact that has not changed says nothing the model does not already have.
@@ -17,8 +23,16 @@ import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } 
  * are not content; the tile, the location, the kind and the execution are.
  */
 
-/** The three semantic kinds the pump treats as progress (`isProgressSemanticEvent`). */
-const PROGRESS_KINDS = ["execution_started", "route_progress", "body_idle"];
+/**
+ * Whether this fact carries a kind the pump holds as PROGRESS - READ from the pump's own declaration.
+ *
+ * A list written here would be a second copy of `HELD_SEMANTIC_PROGRESS_KINDS`, and it would agree with the pump only
+ * until one of them changed: a kind added there would be silently un-covered by every assertion below, and the file
+ * would keep passing while measuring three of four classes.
+ */
+function isHeldProgressKind(kind: unknown): boolean {
+  return typeof kind === "string" && kind in HELD_SEMANTIC_PROGRESS_KINDS;
+}
 
 /** The two things these tests read off a delivered batch: its text, and the facts it carries. */
 type DeliveredBatch = Pick<PendingBatch, "text" | "facts">;
@@ -92,9 +106,7 @@ function ordinaryTick(index: number): WorldFact {
 }
 
 function progressFactsOf(batch: DeliveredBatch): readonly WorldFact[] {
-  return batch.facts.filter(
-    (fact) => fact.kind === "semantic_event" && PROGRESS_KINDS.includes(String(fact.payload.kind)),
-  );
+  return batch.facts.filter((fact) => fact.kind === "semantic_event" && isHeldProgressKind(fact.payload.kind));
 }
 
 async function collect(pump: CompanionEventPump): Promise<DeliveredBatch[]> {
