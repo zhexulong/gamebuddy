@@ -360,6 +360,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the world info surface lane",
   },
+  {
+    fact: "tavern operation ids",
+    authority: { file: TAVERN_CONTRACT, name: "OperationId" },
+    readers: [{ file: MANAGEMENT_CLIENT, name: "OPERATION_IDS" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["OperationId", "OPERATION_IDS"],
+    },
+    owner: "the management surface lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -398,7 +409,6 @@ export const DEBT = Object.freeze([
   mirrorDebt("connection readiness", "host/src/tavern/connection-store.ts:READINESS", [
     `${MANAGEMENT_CLIENT}:CONNECTION_READINESS`,
   ]),
-  mirrorDebt("tavern operation ids", `${TAVERN_CONTRACT}:OperationId`, [`${MANAGEMENT_CLIENT}:OPERATION_IDS`]),
   mirrorDebt("management label keys", `${TAVERN_CONTRACT}:LabelKey`, [`${MANAGEMENT_CLIENT}:MANAGEMENT_LABEL_KEYS`]),
   mirrorDebt("navigation item ids", `${TAVERN_CONTRACT}:NavigationItemId`, [
     `${TAVERN_CONTRACT}:contractDeclaredNavigationItemIds`,
