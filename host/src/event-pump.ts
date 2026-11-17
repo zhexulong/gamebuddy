@@ -463,6 +463,16 @@ export const NOT_OWED_LABEL = "not owed";
 export const CARRIED = "carried";
 /** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
 export const TRACES = "traces";
+
+/**
+ * How many traces the account counted, over the kinds it counted them in.
+ *
+ * Derived, so a total and its members cannot disagree: the account prints this number and the braces beside it, and a
+ * count moved from one kind to another cannot change the total without changing the reading beside it.
+ */
+export function tracedFacts(traces: Readonly<Record<string, number>>): number {
+  return Object.values(traces).reduce((total, count) => total + count, 0);
+}
 export const BUBBLES_DELIVERED = "bubbles delivered";
 export const LOST = "lost";
 /**
@@ -561,8 +571,19 @@ export type TurnAccount = Readonly<{
   examined: number;
   /** Facts that opened no turn and were consumed by a later batch, and the ones still waiting (see `CarryTicket`). */
   carry: Readonly<{ carried: number; pending: number }>;
-  /** Facts admitted whose shape is a body trace: not news, never a turn, never counted as a fact that arrived. */
-  traces: number;
+  /**
+   * Facts admitted whose shape is a body trace, one count per trace KIND: not news, never a turn, never counted as a fact
+   * that arrived.
+   *
+   * <p>
+   * A MAP RATHER THAN A NUMBER, and `round65` is why. That run printed `traces 69` over ten minutes and the number named
+   * nothing: `tile_advanced` was 0, so the pump could say that the per-tile flood was gone and could not say what had
+   * replaced it. The kinds are `TRACE_KINDS`, derived from the two tables the pump classifies traces by, so a state or
+   * semantic kind added there is counted and printed without a second list - and the total is `tracedFacts`, derived, so
+   * the number and the braces beside it cannot disagree.
+   * </p>
+   */
+  traces: Readonly<Record<string, number>>;
   /**
    * The stall facts this run minted, by the Mod's own reason - the `stalled N {reason: count}` reading.
    *
@@ -726,7 +747,12 @@ export function turnAccountLine(account: TurnAccount): string {
     .map((reason) => `${reason}: ${String(account.stalled.byReason[reason])}`)
     .join(", ");
   const stalledSegment = `${STALLED} ${String(account.stalled.total)}${stalledReading === "" ? "" : ` {${stalledReading}}`}`;
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${TRACES} ${String(account.traces)} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+  // The trace reading's population is the pump's own `TRACE_KINDS`, so a declared member is printed as `0` rather than
+  // left out: `traces 69` alone was a number no run could act on (`round65`), and `which trace stopped` is the question
+  // the zeros answer.
+  const tracesReading = TRACE_KINDS.map((kind) => `${kind}: ${String(account.traces[kind] ?? 0)}`).join(", ");
+  const tracesSegment = `${TRACES} ${String(tracedFacts(account.traces))} {${tracesReading}}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
 /**
@@ -1746,7 +1772,7 @@ export class CompanionEventPump {
    */
   #examinedFlushes = 0;
   /**
-   * Facts admitted whose shape is a BODY TRACE rather than an event (`isHeldProgressFact`).
+   * Facts admitted whose shape is a BODY TRACE rather than an event, one count per `TRACE_KINDS` member (`factTraceKind`).
    *
    * <p>
    * The distinction the flood needed: `round64` produced 401 "facts", of which 260 were `tile_advanced` and its second
@@ -1755,8 +1781,14 @@ export class CompanionEventPump {
    * as progress (`event-pump.flushed-then-discarded.test.ts`). What this counter must never do is grow with something that
    * was a decision.
    * </p>
+   * <p>
+   * COUNTED BY KIND, because a total alone was a number nobody could act on: `round65` printed `traces 69` in ten minutes
+   * and, with `tile_advanced 0`, could not say what the 69 were - so the one question a run's log should answer (which
+   * trace is the Mod still producing) needed the Mod's source. The population is `TRACE_KINDS`, declared zeros included,
+   * so a member that stopped is as visible as one that fired.
+   * </p>
    */
-  #traceFacts = 0;
+  readonly #tracesByKind: Record<string, number> = initializedTraceKinds();
   /** Flush calls that owed no turn, one count per `NOT_OWED_REASONS` member - DERIVED, so a reason added to that
    * list is counted here without a second table to extend. */
   readonly #notOwedByReason: Record<NotOwedReason, number> = initializedByReason(NOT_OWED_REASONS);
@@ -1902,8 +1934,10 @@ export class CompanionEventPump {
     // A BODY TRACE IS COUNTED AS ONE, not as a fact that arrived: `tile_advanced` and `route_progress` are the same step
     // stated twice and neither can open a turn, so they are named here rather than in the population a delivery is measured
     // against. The watch bookkeeping above still sees them - a moving body is how the stall watch knows she is NOT stalled
-    // - which is exactly why a trace can be counted and still not be a fact.
-    if (isHeldProgressFact(frozen)) this.#traceFacts += 1;
+    // - which is exactly why a trace can be counted and still not be a fact. Counted by KIND, so the account says which
+    // trace the Mod is producing rather than how many of them there were.
+    const trace = factTraceKind(frozen);
+    if (trace !== undefined) this.#tracesByKind[trace] = (this.#tracesByKind[trace] ?? 0) + 1;
     if (fact.kind === "snapshot") {
       const previous = this.#lastSnapshot;
       // An OLDER reading describes an older world (`takeBatch` applies the same rule to a batch that is too large), so
@@ -2105,7 +2139,7 @@ export class CompanionEventPump {
     this.#deliveredFactIdentities.clear();
     this.#openedTurns = 0;
     this.#examinedFlushes = 0;
-    this.#traceFacts = 0;
+    for (const kind of TRACE_KINDS) this.#tracesByKind[kind] = 0;
     this.#stallFacts = 0;
     for (const reason of Object.keys(this.#stallReasons)) delete this.#stallReasons[reason];
     this.#carryPending.clear();
@@ -2163,7 +2197,7 @@ export class CompanionEventPump {
       // number exists to make impossible.
       examined: this.#examinedFlushes,
       carry: Object.freeze({ carried: this.#carriedFacts, pending: this.#carryPending.size }),
-      traces: this.#traceFacts,
+      traces: Object.freeze({ ...this.#tracesByKind }),
       stalled: Object.freeze({ total: this.#stallFacts, byReason: Object.freeze({ ...this.#stallReasons }) }),
       delivery: Object.freeze({
         bubbles: this.#deliveryBubbles,
@@ -3710,6 +3744,24 @@ export const HELD_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Ob
 });
 
 /**
+ * The kinds a body trace can be, in the one spelling `factTraceKind` answers with: `receipt:<state>` for the latest-only
+ * receipt states and `semantic:<kind>` for the semantic ones.
+ *
+ * <p>
+ * DERIVED FROM THE TWO HELD TABLES ABOVE, so a state or kind added there is counted and printed without a second list.
+ * This is the shape of `TurnAccount.traces` and the reason a run cannot print `traces 69` and leave the reader guessing
+ * which 69: `round65` counted 69 traces in ten minutes, `tile_advanced` was 0, and the account could not say what the 69
+ * were - the only way to answer "which trace is the Mod still producing" was to read the Mod.
+ * </p>
+ */
+export const TRACE_KINDS: readonly string[] = Object.freeze(
+  [
+    ...Object.keys(HELD_RECEIPT_PROGRESS_STATES).map((state) => `receipt:${state}`),
+    ...Object.keys(HELD_SEMANTIC_PROGRESS_KINDS).map((kind) => `semantic:${kind}`),
+  ].sort(),
+);
+
+/**
  * Semantic kinds the HOST mints on a schedule it keeps itself, each with the path that turns it into a turn.
  *
  * Same defect class as the held tables above, with the trap that makes it worse: no adapter will ever publish one of
@@ -3762,6 +3814,16 @@ export const PUMP_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
  * a shape question wearing a liveness name - `round57` opened 57 of 66 turns on one adapter fact because every finished
  * node was declared silent while its programme ran, and `round64` shows what is actually left once the body traces are
  * gone: about 16 real receipts and 22 settlements in one run, not 66 turns.
+ * </p>
+ * <p>
+ * MEASURED AGAIN, AND IT HOLDS. `round65` (`tools/_multiday_routine-round65-live-runner.log`) opened 26 turns with
+ * `program_settlement 0`, and the first reading of that number was "the steps stole the turns". Attributing each of the 24
+ * `adapter_ingress` openers to the facts in its window says otherwise: 20 had a terminal receipt of a NAMED programme arrive
+ * with them, and the other four are a lone action's outcome (2 standalone receipts), a clock mark, and two turns opened by
+ * a fact carried from an earlier window. **No turn in that run was opened by an orphan receipt** - a receipt arriving after
+ * its programme was gone. The 103 terminal programme receipts went out as 26 turns because the pump batches them, so
+ * `program_settlement 0` is a CREDIT artefact, not a lost answer: the settlement is delivered in the batch
+ * (`promptFacts` admits it unconditionally) and simply is not the fact `#opening` names first.
  * </p>
  * <p>
  * THE DECLARATION STAYS, AND IT IS THE GATE'S READING. `tools/check-fact-authority.mjs` refuses a fact suppressed
@@ -3943,15 +4005,6 @@ function statedOrigin(value: unknown): ExecutionOrigin | undefined {
     : undefined;
 }
 
-/** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
-function isMeaningfulProgressFact(fact: WorldFact): boolean {
-  return (
-    fact.kind === "execution_receipt" &&
-    typeof fact.payload.state === "string" &&
-    fact.payload.state in HELD_RECEIPT_PROGRESS_STATES
-  );
-}
-
 /**
  * Semantic-event kinds that are PROGRESS, not outcomes: per-tile route advance, the start of an execution, and
  * the actor falling idle. They describe a moving state, so only the latest one matters.
@@ -3959,7 +4012,7 @@ function isMeaningfulProgressFact(fact: WorldFact): boolean {
  * Measured 2026-10-17 on a real multi-day run: one long agent turn (70 assistant messages, ~350s) made the Mod
  * publish 129 such observations, each with its OWN freshly-minted correlationId, and they filled the 128-entry
  * pending window - so the pump threw and the bridge closed mid-run. The receipt counterpart of exactly this
- * traffic is already latest-only (see `isMeaningfulProgressFact`); a semantic event describing the same progress
+ * traffic is already latest-only (see `HELD_RECEIPT_PROGRESS_STATES`); a semantic event describing the same progress
  * must be treated the same way, or a long session is indistinguishable from a flood.
  *
  * The settled/invalidated kinds are deliberately NOT here: those are outcomes, and dropping one would hide an
@@ -3984,8 +4037,30 @@ function isHeldFact(fact: WorldFact): boolean {
  * The snapshot is deliberately not here. It is held too, but it is the world the rest of a batch describes, so a
  * batch that carried facts without it would describe a state the model cannot see.
  */
+/**
+ * Which `TRACE_KINDS` member this fact is, or `undefined` when it is an event rather than a trace.
+ *
+ * THE ONE SPELLING, and the reason the two tables are read in one place: `isHeldProgressFact` ("never a turn"), the
+ * account's per-kind counter, and the declared population `initializedTraceKinds` all come from here, so a trace cannot be
+ * counted under one kind and classified under another.
+ */
+export function factTraceKind(fact: WorldFact): string | undefined {
+  if (fact.kind === "execution_receipt" && typeof fact.payload.state === "string")
+    return fact.payload.state in HELD_RECEIPT_PROGRESS_STATES ? `receipt:${fact.payload.state}` : undefined;
+  if (fact.kind === "semantic_event" && typeof fact.payload.kind === "string")
+    return fact.payload.kind in HELD_SEMANTIC_PROGRESS_KINDS ? `semantic:${fact.payload.kind}` : undefined;
+  return undefined;
+}
+
+/** The account's trace ledger, every declared kind present at zero: a member that stopped is a reading, not an absence. */
+function initializedTraceKinds(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const kind of TRACE_KINDS) counts[kind] = 0;
+  return counts;
+}
+
 function isHeldProgressFact(fact: WorldFact): boolean {
-  return isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
+  return factTraceKind(fact) !== undefined;
 }
 
 /**

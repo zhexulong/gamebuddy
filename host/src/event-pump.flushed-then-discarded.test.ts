@@ -59,7 +59,8 @@ function flushReading(account: TurnAccount): Readonly<{
   discarded: number;
   carried: number;
   pending: number;
-  traces: number;
+  /** The trace count, by the kind that produced it: the reading `traces N` alone could not give. */
+  traces: Readonly<Record<string, number>>;
 }> {
   const notOwed = NOT_OWED_REASONS.reduce((total, reason) => total + account.notOwed[reason], 0);
   return Object.freeze({
@@ -76,7 +77,7 @@ function flushReading(account: TurnAccount): Readonly<{
 }
 
 function describe(reading: ReturnType<typeof flushReading>, account: TurnAccount): string {
-  return `flushes examined ${String(reading.examined)} · opened ${String(reading.opened)} · named-refused ${String(reading.notOwed)} · discarded ${String(reading.discarded)} · carried ${String(reading.carried)} · pending ${String(reading.pending)} · traces ${String(reading.traces)} · not owed ${JSON.stringify(account.notOwed)}`;
+  return `flushes examined ${String(reading.examined)} · opened ${String(reading.opened)} · named-refused ${String(reading.notOwed)} · discarded ${String(reading.discarded)} · carried ${String(reading.carried)} · pending ${String(reading.pending)} · traces ${JSON.stringify(reading.traces)} · not owed ${JSON.stringify(account.notOwed)}`;
 }
 
 function snapshotFact(revision: number): WorldFact {
@@ -338,7 +339,11 @@ test("progress_reported_as_a_fact: no trace shape opens a turn", async () => {
       `progress_reported_as_a_fact:${kind}: a body trace is not an event: it must never become a delivery`,
     );
     assert.equal(turns.batches.length, 0, `progress_reported_as_a_fact:${kind}: no batch may exist for a trace`);
-    assert.equal(pump.turnAccount.traces, 1, `progress_reported_as_a_fact:${kind}: the trace is counted as what it is`);
+    assert.equal(
+      pump.turnAccount.traces[`semantic:${kind}`],
+      1,
+      `progress_reported_as_a_fact:${kind}: the trace is counted under the kind that produced it`,
+    );
   }
   for (const state of receiptStates) {
     const pump = new CompanionEventPump();
