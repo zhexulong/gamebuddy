@@ -2762,6 +2762,24 @@ export class CompanionEventPump {
    * PRESENT would mean teaching the Game side a new salient identity, which is `integrations/**` and not this layer's to
    * mint (`host-service.ts:GameTurnLineageTracker` refuses an id the Game did not register).
    * </p>
+   * <p>
+   * `#owesTurn` AND THIS ARE TWO QUESTIONS, AND COLLAPSING THEM SILENTLY DELETES ONE. `#owesTurn` answers "the prompt
+   * states it"; this answers "the model is woken for it". A terminal receipt OWES a turn and OPENS none, because
+   * `presentationSourceOf` answers `undefined` for every `execution_receipt` - `protocol/bridge-v1.schema.json#receipt`
+   * carries no event identity to present under. Filing such a receipt as `progress` would make `#owesTurn` false, and the
+   * model-facing text is `promptFacts`, filtered on `#owesTurn` - so the only fact that says the node ran would leave the
+   * prompt; the same filter composes a STEER's text, so a `rejected` receipt would steer a batch that states nothing.
+   * </p>
+   * <p>
+   * WHAT A PLAN COSTS IN TURNS, MEASURED 2026-11-18 (the built pump, real facts, one flush per case):
+   * 60 node receipts in one flush ⇒ <b>0 turns</b> (`not_owed {no_surface_for {receipt:succeeded: 60}}`); the same 60
+   * flushed one per receipt ⇒ <b>0 turns</b>; 60 receipts plus the programme's settlement ⇒ <b>1 turn</b>; 60 receipts
+   * plus a presentable milestone ⇒ <b>1 turn</b>. Adding a node buys no turn, and the settlement's turn states the nodes.
+   * The wake for a plan is therefore ONE HOP, and it is the settlement - a presentable fact, so it opens its own turn. A
+   * terminal receipt belonging to NO programme has no settlement: it waits for the next presentable fact (the Mod's five
+   * clock marks a day, the day boundary, her arrival, a native notice, any player word), and the pump imposes no bound of
+   * its own - `event-pump.node-batch-turns.test.ts` holds this reading red-able so it is not re-derived.
+   * </p>
    */
   #opensTurn(fact: WorldFact): boolean {
     if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
@@ -3932,11 +3950,19 @@ function worldStateRefreshRefusalReason(error: unknown): string {
  * settled into a fact that never asked for a turn. The companion went quiet for 816.5 s and the first bubble came only
  * because the player typed. Nothing in any bundle records "a turn was owed" - the fact is never delivered, so there is
  * no artifact of it at all - which is why the silence walked past every audit until someone read this file.
+ *
+ * <p>
+ * A TERMINAL RECEIPT IS NOT HELD HERE, AND IT OPENS NO TURN EITHER - IT OWES ONE. `#owesTurn` and `#opensTurn` answer
+ * different questions ("the prompt states it" / "the model is woken for it"), a receipt can never present, so for every
+ * terminal state the two answers differ. Filing those states here would delete the first answer - the outcome would
+ * leave `promptFacts`, and a `rejected` one would steer a batch that states nothing - which is measured, red, in
+ * `event-pump.node-batch-turns.test.ts`.
+ * </p>
  */
 export const HELD_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({
-  accepted: "the terminal receipt for the same execution wakes the model",
-  running: "the terminal receipt for the same execution wakes the model",
-  meaningful_progress: "the terminal receipt for the same execution wakes the model",
+  accepted: "the programme's settlement states the step and opens the turn: it is the plan's one answer",
+  running: "the programme's settlement states the step and opens the turn: it is the plan's one answer",
+  meaningful_progress: "the programme's settlement states the step and opens the turn: it is the plan's one answer",
 });
 
 /**
