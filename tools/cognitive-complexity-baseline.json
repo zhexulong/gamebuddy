@@ -258,9 +258,9 @@
       "language": "cs",
       "name": "ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 2021,
-      "value": 67,
-      "reason": "70 -> 71 in `51ccae18` (its `farmhand_action_policy_request` arm, which the multiplexer must declare), then 67: the three per-type `if`s that reported an ingress marker are one `DequeuedIngressMarkers` lookup. A defect family rather than a local edit - each new message type used to add a comparison to the drain - so the member now sits 3 below the number it held, and the table is what stops the next message type from taking it back up."
+      "line": 2008,
+      "value": 71,
+      "reason": "70 -> 71 in `51ccae18`: the multiplexer's switch expression gained the `farmhand_action_policy_request` arm, and an arm is one point. Collapsing the three per-type marker `if`s above it was tried in this lane and the tree refused it - tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs:227 builds the phase vocabulary from `MonitorNativeChatIngress(\"literal\")` emissions and fails with `navigation_execution_dequeued is no longer emitted anywhere in the Mod`, and the same function refuses a marker passed as a value. One literal emission per message type is that guard's own requirement, so one point is what a new wire type costs here. Recorded, not absorbed; the revert in this lane is the proof it cannot be deleted."
     },
     {
       "id": "cs:ModEntry.FindNativeLocalItemTileStandingTile(GameLocation,Point,int)",
@@ -1149,8 +1149,8 @@
       "parts": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 2745,
-      "reason": "2718 -> 2752 across eight commits (`07fe81f6` +4, `9b573a97` +16, `9bbadccf` +2, `52fb0b8d` +13, `2fb661e2` -15, `2c72e961` +27, `e0a3cb31` -6, `feff335b` -7), then 2752 -> 2745: `51ccae18` replaced the 120-tick config poll with a forward-only push pair (-3 for the class), and this lane's `DequeuedIngressMarkers` table took the drain's three marker `if`s to one lookup (-4 more). 2745 is the ceiling now, and it is lower than the record it replaces."
+      "value": 2749,
+      "reason": "2718 -> 2752 across eight commits (`07fe81f6` +4, `9b573a97` +16, `9bbadccf` +2, `52fb0b8d` +13, `2fb661e2` -15, `2c72e961` +27, `e0a3cb31` -6, `feff335b` -7), then 2752 -> 2749 over the same 58 parts across the five commits that followed `83ae46f0` (`cfc5d407`, `97b20e49`, `629760f2`, `51ccae18`, `9adf97b5`). The one that replaced a method is `51ccae18`: the 120-tick config poll is gone and a forward-only push pair took its place, and the drain's new switch arm is the one point it added back. 2749 is the ceiling now."
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1326,9 +1326,9 @@
       "files": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 15759,
+      "lines": 15750,
       "methods": 345,
-      "reason": "15683 -> 15759 lines and 344 -> 345 methods at the same 58 parts, over the five commits that touched this type's partials after 83ae46f0. THE METHOD is `51ccae18`'s and has to stay on this type: the 120-tick config poll (`RefreshFarmhandCapabilityPublication`) is gone and `HandleFarmhandActionPolicy` + `ApplyFarmhandActionPolicy` replace it, and integrations/stardew/tests/farmhandcapabilitypublicationprojectionmetadata.cs:112,140 requires exactly those two method names on `ModEntry` by reflection, to prove a pushed policy can only re-publish the catalogue's own enabled subset - moving them to another type fails that test by name, not by degree. THE LINES are named rather than summed per commit because this history is not a line: `cfc5d407` is not an ancestor of 83ae46f0, it arrived through `9adf97b5`, so a per-commit sum would report a story nobody can replay. What each added: `cfc5d407` + `97b20e49` the live-locale wait (`LiveGameLocaleWait` as its own type, and the fixture's re-arm), `629760f2` the companion bubble's declared engine slot and its draw site, `51ccae18` the policy push, `9adf97b5` the merge. Growth, not a move: no partial changed hands. Nine of these lines are this lane's own and are a deliberate trade - the drain's three per-type marker `if`s are one `DequeuedIngressMarkers` table, which costs 9 lines and takes the member 71 -> 67 and the class 2749 -> 2745, so the class bought 4 points of complexity with 9 lines instead of recording a 71."
+      "reason": "15683 -> 15750 lines and 344 -> 345 methods at the same 58 parts, over the five commits that touched this type's partials after 83ae46f0. THE METHOD is `51ccae18`'s and has to stay on this type: the 120-tick config poll (`RefreshFarmhandCapabilityPublication`) is gone and `HandleFarmhandActionPolicy` + `ApplyFarmhandActionPolicy` replace it, and integrations/stardew/tests/farmhandcapabilitypublicationprojectionmetadata.cs:112,140 requires exactly those two method names on `ModEntry` by reflection, to prove a pushed policy can only re-publish the catalogue's own enabled subset - moving them to another type fails that test by name, not by degree. THE LINES are named rather than summed per commit because this history is not a line: `cfc5d407` is not an ancestor of 83ae46f0, it arrived through `9adf97b5`, so a per-commit sum would report a story nobody can replay. What each added: `cfc5d407` + `97b20e49` the live-locale wait and the fixture's re-arm, `629760f2` the companion bubble's declared engine slot and its draw site, `51ccae18` the policy push, `9adf97b5` the merge. Growth, not a move: no partial changed hands, and the class's own complexity FELL over the same stretch (2752 -> 2749), so this is 67 more lines without one more branch than the push needed."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
