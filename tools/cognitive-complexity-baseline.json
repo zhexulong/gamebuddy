@@ -258,8 +258,9 @@
       "language": "cs",
       "name": "ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1965,
-      "value": 70
+      "line": 2021,
+      "value": 67,
+      "reason": "70 -> 71 in `51ccae18` (its `farmhand_action_policy_request` arm, which the multiplexer must declare), then 67: the three per-type `if`s that reported an ingress marker are one `DequeuedIngressMarkers` lookup. A defect family rather than a local edit - each new message type used to add a comparison to the drain - so the member now sits 3 below the number it held, and the table is what stops the next message type from taking it back up."
     },
     {
       "id": "cs:ModEntry.FindNativeLocalItemTileStandingTile(GameLocation,Point,int)",
@@ -1148,8 +1149,8 @@
       "parts": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 2752,
-      "reason": "2718 -> 2752 over the same 58 parts across eight commits, and the range moves in both directions: +4 `07fe81f6`, +16 `9b573a97`, +2 `9bbadccf`, +13 `52fb0b8d`, -15 `2fb661e2`, +27 `2c72e961`, -6 `e0a3cb31`, -7 `feff335b`. The churn is the companion bubble's two rewrites (the engine's own bubble, then `Display.RenderedWorld`) and the key that opened her conversation, withdrawn when the engine's own chat box arrived. 2752 is the ceiling now."
+      "value": 2745,
+      "reason": "2718 -> 2752 across eight commits (`07fe81f6` +4, `9b573a97` +16, `9bbadccf` +2, `52fb0b8d` +13, `2fb661e2` -15, `2c72e961` +27, `e0a3cb31` -6, `feff335b` -7), then 2752 -> 2745: `51ccae18` replaced the 120-tick config poll with a forward-only push pair (-3 for the class), and this lane's `DequeuedIngressMarkers` table took the drain's three marker `if`s to one lookup (-4 more). 2745 is the ceiling now, and it is lower than the record it replaces."
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1325,9 +1326,9 @@
       "files": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 15683,
-      "methods": 344,
-      "reason": "339 -> 344 methods and 15473 -> 15683 lines at the same 58 parts, summed over eight commits: +6 `9b573a97`, +6 `52fb0b8d`, -6 `2fb661e2`, +1 `2c72e961`, -2 `feff335b` (net +5). Both directions are real: the companion bubble was written twice and the chat key arrived and then left, which is why the record's methods and lines disagree with any single commit's story. Growth, not a move - no partial changed hands."
+      "lines": 15759,
+      "methods": 345,
+      "reason": "15683 -> 15759 lines and 344 -> 345 methods at the same 58 parts, over the five commits that touched this type's partials after 83ae46f0. THE METHOD is `51ccae18`'s and has to stay on this type: the 120-tick config poll (`RefreshFarmhandCapabilityPublication`) is gone and `HandleFarmhandActionPolicy` + `ApplyFarmhandActionPolicy` replace it, and integrations/stardew/tests/farmhandcapabilitypublicationprojectionmetadata.cs:112,140 requires exactly those two method names on `ModEntry` by reflection, to prove a pushed policy can only re-publish the catalogue's own enabled subset - moving them to another type fails that test by name, not by degree. THE LINES are named rather than summed per commit because this history is not a line: `cfc5d407` is not an ancestor of 83ae46f0, it arrived through `9adf97b5`, so a per-commit sum would report a story nobody can replay. What each added: `cfc5d407` + `97b20e49` the live-locale wait (`LiveGameLocaleWait` as its own type, and the fixture's re-arm), `629760f2` the companion bubble's declared engine slot and its draw site, `51ccae18` the policy push, `9adf97b5` the merge. Growth, not a move: no partial changed hands. Nine of these lines are this lane's own and are a deliberate trade - the drain's three per-type marker `if`s are one `DequeuedIngressMarkers` table, which costs 9 lines and takes the member 71 -> 67 and the class 2749 -> 2745, so the class bought 4 points of complexity with 9 lines instead of recording a 71."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
