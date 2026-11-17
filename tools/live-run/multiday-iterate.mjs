@@ -14,11 +14,14 @@
  * that from a defect.
  */
 import { spawnSync } from "node:child_process";
-import { cleanOutputLines } from "../lib/subprocess-output.mjs";
-import { assertResultLabel, planResultFile } from "../lib/live-run-bundle.mjs";
-import { judgeResultFreshness, supersedePreviousResult } from "./core/result-freshness.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import { assertResultLabel, planResultFile } from "../lib/live-run-bundle.mjs";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
+import { resolveLiveRunRoot } from "./core/capture.mjs";
+import { judgeResultFreshness, supersedePreviousResult } from "./core/result-freshness.mjs";
+import { judgeRunOutcome } from "./core/run-outcome-exit.mjs";
+import { readNewestRunProgress } from "./core/run-progress.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..", "..");
 const args = process.argv.slice(2);
@@ -67,9 +70,7 @@ function resolveFixtureSave() {
         const slot = recorded?.observedSaveSlot;
         if (typeof slot !== "string" || slot.length === 0) continue;
         candidates.push({ slot, at: fs.statSync(path.join(fixturesRoot, name)).mtimeMs });
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
   if (candidates.length === 0)
@@ -237,6 +238,10 @@ if (!dryRun) {
 }
 
 const launchedAtMs = Date.now();
+// The launcher's own status, kept because it is HALF of what a missing result means: "exited 0 and wrote no bundle" and
+// "was killed" are different failures, and the reading below has to name which one happened (see
+// `core/run-outcome-exit.mjs`).
+let launcherExitCode = null;
 if (!dryRun) {
   process.stdout.write(`\n$ node tools/live-run/game/launch-ladder-live.mjs --scenario ${SCENARIO} --label ${label}\n`);
   const launched = spawnSync(
@@ -257,13 +262,33 @@ if (!dryRun) {
     { cwd: repo, env, encoding: "utf8", stdio: "inherit" },
   );
   process.stdout.write(`\nlauncher exit: ${String(launched.status)}\n`);
+  launcherExitCode = launched.status ?? null;
 }
 
 // 5. REPORT what the run says, and stop. Interpreting it is the reader's job.
 const result = resultPath;
-if (!fs.existsSync(result)) {
-  console.log(`\nno result at ${path.relative(repo, result)} - the launcher did not finish`);
-  process.exit(0);
+// A ROUND THAT PRODUCED NOTHING IS NOT A PASS. Until this decision existed, a launcher that died without writing a bundle
+// printed one line and exited 0, so the loop that watched `round65`, `round66` and `round67` was green on the failure
+// that happened three times running. The decision, its exit status and its reading live in `core/run-outcome-exit.mjs` so
+// a test can put a real empty run directory on the other end of it.
+const outcome = judgeRunOutcome({
+  launched: !dryRun,
+  launcherExitCode,
+  resultExists: fs.existsSync(result),
+  resultPath: result,
+});
+if (outcome.exitCode !== 0) {
+  console.error(`\n${outcome.reading}`);
+  // WHAT THE RUN ITSELF REACHED, when it left a record (see `core/run-progress.mjs`). For `round67` this is the reading
+  // no artifact could answer: the Host went away at 278.98 s and the run directory held `launch.json` alone.
+  const reached = readNewestRunProgress({ root: resolveLiveRunRoot({ repoRoot: repo }) });
+  if (reached !== null)
+    console.error(
+      `the run's own record (${reached.path}, ${String(reached.lines)} line(s)) last said: ${JSON.stringify(reached.last)}`,
+    );
+  else console.error("no run left a progress record either: nothing about this round can be read from its directory");
+  console.error("A round with no result answers nothing about the companion, whatever its exit status said.");
+  process.exit(outcome.exitCode);
 }
 // Freshness is the second half of the same defect: a bundle this launch did not write is not this run's answer,
 // whatever it says. Both decisions live in `tools/live-run/core/result-freshness.mjs` so they can be asserted.

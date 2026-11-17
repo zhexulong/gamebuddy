@@ -2,17 +2,24 @@
 //   `AssertionError: she declared locally ready: got companion_sleep_refused:requires_other_player` at
 //   tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs:2715
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { turnSettled } from "../../lib/turn-settled.mjs";
-import { sessionEntries } from "../../lib/session-jsonl.mjs";
-import { resolveLiveRunRoot } from "../core/capture.mjs";
+import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
+import {
+  actionBreadthClause,
+  buildSnapshotCensus,
+  measureActionBreadth,
+  readActionBreadthSurface,
+} from "../../lib/action-breadth.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
+import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import {
   assessMultiDayBaseline,
   classifyNight,
@@ -23,21 +30,25 @@ import {
   parseReceiptEvidence,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
+import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 import { decideDayWake, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
-import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
-import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
-import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
-import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
-import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
-import {
-  actionBreadthClause,
-  buildSnapshotCensus,
-  measureActionBreadth,
-  readActionBreadthSurface,
-} from "../../lib/action-breadth.mjs";
+import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
-import { programNodeOutcomes } from "./program-node-outcomes.mjs";
+import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import { turnSettled } from "../../lib/turn-settled.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
+import { resolveLiveRunRoot } from "../core/capture.mjs";
+import {
+  createLaunchPhaseLog,
+  LAUNCH_PHASE_PREFIX,
+  readLaunchPhaseHandover,
+  writeLaunchPhaseHandover,
+} from "../core/launch-phase.mjs";
+import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
+import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { createGameClock } from "./game-clock.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
   COMPANION_SLEEP_REFUSED,
@@ -47,19 +58,8 @@ import {
   sleepVerdictCase,
   summarizeCrossings,
 } from "./night-verdict.mjs";
+import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
-import { createGameClock } from "./game-clock.mjs";
-import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
-import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
-import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
-import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
-import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
-import {
-  createLaunchPhaseLog,
-  LAUNCH_PHASE_PREFIX,
-  readLaunchPhaseHandover,
-  writeLaunchPhaseHandover,
-} from "../core/launch-phase.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 // The launch begins before the runner exists, so the steps the RUNNER cannot see (the save copy, the deploy, the game's
@@ -276,7 +276,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   // First-class fields of the result JSON: the health report and its
   // companion observation block (roll-monitoring data) sit next to the
   // presented text in the same result object.
-  assert.match(RUNNER_SOURCE, /systemFindings,\n    observation,\n    presentedSummary/);
+  assert.match(RUNNER_SOURCE, /systemFindings,\n {4}observation,\n {4}presentedSummary/);
   assert.match(RUNNER_SOURCE, /buildRunObservation\(\{\n\s+prompt,/);
   // Live-run evidence capture (tools/live-run/README.md): every run writes its
   // own local directory with the runtime root's evidence and the result, and
@@ -355,12 +355,12 @@ test("the runner emits system findings as a first-class health signal", () => {
   // held the full Chinese reply). Only the VOICE lane stays ladder-scoped.
   assert.match(
     RUNNER_SOURCE,
-    /presentationPieces\.push\(Object\.freeze\(\{ index: presentationPieces\.length, text, locale, elapsedMs \}\)\)/,
+    /presentationPieces\.push\(Object\.freeze\(\{ index: presentationPieces\.length, text, locale, \.\.\.pieceTime\.piece \}\)\)/u,
   );
-  assert.match(RUNNER_SOURCE, /if \(SCENARIO !== "npc_social_and_presence"\) return;\n  if \(voiceStarted\) return;/);
+  assert.match(RUNNER_SOURCE, /if \(SCENARIO !== "npc_social_and_presence"\) return;\n {2}if \(voiceStarted\) return;/);
   assert.doesNotMatch(
     RUNNER_SOURCE,
-    /const onCompanionTextPresented = \(text, locale\) => \{\n  if \(SCENARIO !== "npc_social_and_presence"\) return;/,
+    /const onCompanionTextPresented = \(text, locale\) => \{\n {2}if \(SCENARIO !== "npc_social_and_presence"\) return;/,
   );
   // Ladder 5 dialogue is covered by the interaction gate too (its reply is the covenant answer to the player);
   // before this it was never assessed at all.
@@ -379,7 +379,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   );
   assert.match(
     RUNNER_SOURCE,
-    /function withAuthorityIdentityMismatch\(error, root, manifest\) \{\n  return explainAuthorityIdentityMismatch\(error, root, manifest\);/,
+    /function withAuthorityIdentityMismatch\(error, root, manifest\) \{\n {2}return explainAuthorityIdentityMismatch\(error, root, manifest\);/,
   );
   assert.match(RUNNER_SOURCE, /throw withAuthorityIdentityMismatch\(knownError, root, deploymentManifest\);/);
   assert.match(RUNNER_SOURCE, /const deploymentManifest = await loadHostDeploymentManifest\(manifestPath\);/);
@@ -658,7 +658,7 @@ test("the run computes the deterministic claim-fulfillability presence projectio
     /import \{ buildPresenceProjection \} from "\.\.\/\..\/lib\/stardew-companion-presence-projection\.mjs"/,
   );
   assert.match(RUNNER_SOURCE, /PRESENCE_ACTION_VOCABULARY/);
-  assert.match(RUNNER_SOURCE, /const presenceProjection =\n    presentationPieces\.length > 0/);
+  assert.match(RUNNER_SOURCE, /const presenceProjection =\n {4}presentationPieces\.length > 0/);
   assert.match(RUNNER_SOURCE, /visibleActionIds/);
   assert.match(RUNNER_SOURCE, /presenceProjection,/);
 });
@@ -825,10 +825,10 @@ test("a session that did work cannot report `completed` for a task whose purpose
     RUNNER_SOURCE.indexOf("const sessionVerdict = deriveSessionVerdict({"),
     RUNNER_SOURCE.indexOf("\n  );\n  const morningRoutinePassed"),
   );
-  assert.match(verdictCall, /^    taskPurposes,$/m, "the verdict is handed the judged purposes");
+  assert.match(verdictCall, /^ {4}taskPurposes,$/m, "the verdict is handed the judged purposes");
   assert.match(
     RUNNER_SOURCE,
-    /^    taskPurposes,$/m,
+    /^ {4}taskPurposes,$/m,
     "the judged purposes are published beside the work they were judged against",
   );
   assert.match(RUNNER_SOURCE, /taskPurposes\.push\(\n\s+Object\.freeze\(\{ day, task: dayTask,/);
@@ -879,7 +879,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   // expected receipt.
   // The one derivation the assertions below read, extracted so they test its ORDER and not one spelling of it.
   const deriveSessionVerdictSource = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict").source;
-  assert.match(RUNNER_SOURCE, /morning_routine: Object\.freeze\(\{\n    zh: `现在是星露谷春季的早晨/);
+  assert.match(RUNNER_SOURCE, /morning_routine: Object\.freeze\(\{\n {4}zh: `现在是星露谷春季的早晨/);
   assert.match(RUNNER_SOURCE, /en: `It is a spring morning in Stardew Valley/);
   assert.match(RUNNER_SOURCE, /const SESSION_GOALS = \(process\.env\.GAMEBUDDY_AGENT_SESSION_GOALS \?\? ""\)/);
   assert.match(
@@ -888,7 +888,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   );
   assert.match(
     RUNNER_SOURCE,
-    /const morningRoutinePassed =\n    SCENARIO === "morning_routine"\n      \? sessionTurns\.length > 0 && attemptedActionIds\.length > 0 && sessionVerdict === "completed"\n      : true;/,
+    /const morningRoutinePassed =\n {4}SCENARIO === "morning_routine"\n {6}\? sessionTurns\.length > 0 && attemptedActionIds\.length > 0 && sessionVerdict === "completed"\n {6}: true;/,
   );
   // The audit must read the run's OWN advertised surface, never a build-time
   // table that could drift from the snapshot the Agent actually saw.
@@ -896,10 +896,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   // Sampled while the session runs: the post-run snapshot is empty in practice,
   // which silently emptied the "capability it never used" axis on the first run.
   assert.match(RUNNER_SOURCE, /function sampleAdvertisedActions\(\) \{/);
-  assert.match(
-    RUNNER_SOURCE,
-    /SCENARIO === "morning_routine"\n      \? buildCapabilityAudit\(\{\n          actionTrace,/,
-  );
+  assert.match(RUNNER_SOURCE, /SCENARIO === "morning_routine"\n {6}\? buildCapabilityAudit\(\{\n {10}actionTrace,/);
   assert.match(RUNNER_SOURCE, /capabilityAudit,/);
   const clauseList = rungClauseList(RUNNER_SOURCE);
   for (const clause of [
@@ -917,7 +914,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   // The per-turn errors are published, and a provider failure counts as one: the turn WAS
   // delivered (so it is not `unsettled`) and produced no text (so it is not silence). A real run
   // reported exactly such a failure as `silent` with an empty error list.
-  assert.match(RUNNER_SOURCE, /^    sessionTurnErrors,$/m);
+  assert.match(RUNNER_SOURCE, /^ {4}sessionTurnErrors,$/m);
   assert.match(RUNNER_SOURCE, /agentTurnOutcome,/);
   // Run H attempted 14 actions, got 14 refusals and one successful walk, harvested
   // nothing, and still passed: a session that only moved/looked/equipped must not be
@@ -1266,7 +1263,7 @@ test("memory_covenant is judged by receipts, not keywords", () => {
   // the protected item must never ship. The judgement must sit on REAL
   // execution receipts (item_shipped evidence carrying item=(O)400), never on
   // transcript text, and the top-level verdict must depend on it.
-  assert.match(RUNNER_SOURCE, /memory_covenant: Object\.freeze\(\{\n    \/\/ The standing rule is NOT in this prompt/);
+  assert.match(RUNNER_SOURCE, /memory_covenant: Object\.freeze\(\{\n {4}\/\/ The standing rule is NOT in this prompt/);
   assert.match(RUNNER_SOURCE, /zh: `今天是星露谷春季的雨天/);
   assert.match(RUNNER_SOURCE, /en: `Today is a rainy Spring day/);
   assert.match(RUNNER_SOURCE, /PROTECTED_COVENANT_ITEM_ID = "\(O\)400";/);
@@ -1305,9 +1302,9 @@ test("memory_covenant is judged by receipts, not keywords", () => {
   );
   assert.match(
     RUNNER_SOURCE,
-    /if \(SCENARIO === "memory_covenant" && !usesDisposableRoot\) \{\n  const seeded = await seedMemoriesViaManagementSurface\(\{\n    root,\n    deploymentManifestPath: manifestPath,\n    seeds: \["之前商量好的：/,
+    /if \(SCENARIO === "memory_covenant" && !usesDisposableRoot\) \{\n {2}const seeded = await seedMemoriesViaManagementSurface\(\{\n {4}root,\n {4}deploymentManifestPath: manifestPath,\n {4}seeds: \["之前商量好的：/,
   );
-  assert.match(RUNNER_SOURCE, /covenantSeed = Object\.freeze\(\{\n    durable: seeded\.result\.durable/);
+  assert.match(RUNNER_SOURCE, /covenantSeed = Object\.freeze\(\{\n {4}durable: seeded\.result\.durable/);
   assert.match(RUNNER_SOURCE, /有没有什么关于这些草莓的规矩/);
   // The prompt no longer states the rule: the seeded memory carries it.
   assert.doesNotMatch(RUNNER_SOURCE, /memory_covenant[\s\S]{0,400}一颗都不要卖掉/);
@@ -1380,7 +1377,7 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // The seed is the dominant cold-start cost, so its own phases must reach the
   // artifact instead of only the total.
   assert.match(RUNNER_SOURCE, /onPhase: \(name, elapsedMs\) => \{/);
-  assert.match(RUNNER_SOURCE, /phaseTimings\.marks\[\`seed_\$\{name\}\`\] = elapsedMs;/);
+  assert.match(RUNNER_SOURCE, /phaseTimings\.marks\[`seed_\$\{name\}`\] = elapsedMs;/);
   // Presentation observation is attached for every ladder: gating it to 3/4 let a
   // ladder-5 run whose session DID contain the companion line report
   // presentation.pieces = [] and presentedSummary = "".
@@ -4801,7 +4798,7 @@ test("the day's shortage fact is composed once, on the first turn, and published
   // Published, so "she was handed the supply and did not go" is distinguishable from "nothing ever told her".
   assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
   assert.match(RUNNER_SOURCE, /if \(dayFact !== null\) seedFacts\.push\(Object\.freeze\(\{ day, \.\.\.dayFact \}\)\);/);
-  assert.match(RUNNER_SOURCE, /\n    seedFacts,/);
+  assert.match(RUNNER_SOURCE, /\n {4}seedFacts,/);
 });
 
 // WHAT MAY WAKE HER: a gate over every place the runner can put a prompt in front of the model.

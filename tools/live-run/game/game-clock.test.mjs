@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { GAME_CLOCK_HEARTBEAT_MS, assessPauseOnUnfocus, createGameClock, readSnapshotClock } from "./game-clock.mjs";
+import { assessPauseOnUnfocus, createGameClock, GAME_CLOCK_HEARTBEAT_MS, readSnapshotClock } from "./game-clock.mjs";
 
 /** One admitted snapshot, as the bridge freezes it: a NEW object per read, which is what makes it one reading. */
 const snapshotAt = (timeOfDay, { day = 1, season = 0, year = 1, revision = 1 } = {}) =>
@@ -550,8 +550,18 @@ test("the run is actually wired to print both: every read, and a beat per bound 
   // A module nobody calls prints nothing, which is indistinguishable from the instrument that only spoke at the end.
   // So the call sites are read out of the runner itself, at the three points that make the lines exist at all.
   const runner = readFileSync(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
-  const beat = runner.indexOf("setInterval(() => gameClock.heartbeat(), GAME_CLOCK_HEARTBEAT_MS)");
-  assert.ok(beat > 0, "the runner must beat the clock on a timer: no waiting loop can be trusted to report a stall");
+  const beatAt = runner.indexOf("const gameClockHeartbeat = setInterval(async () => {");
+  assert.ok(beatAt > 0, "the runner must beat the clock on a timer: no waiting loop can be trusted to report a stall");
+  // The beat is an instrument AND a decision: it awaits the clock's own `heartbeat()`, and a beat that says the bridge is
+  // closed ends the wait instead of being printed thirty-two times (round66: `not_attempted:bridge_closed` for sixteen
+  // minutes). Both halves are read from the timer's own body, so a beat that forgot one of them fails here.
+  const beatBody = runner.slice(beatAt, runner.indexOf("}, GAME_CLOCK_HEARTBEAT_MS);", beatAt));
+  assert.match(beatBody, /const beat = await gameClock\.heartbeat\(\);/u, "the beat is the clock's own, awaited");
+  assert.match(
+    beatBody,
+    /noteBridgeClosure\(bridgeClosureStop\(\{ solicit: beat\.solicit \}\)\)/u,
+    "a beat that reports a closed bridge must end the run's wait, not count the stall",
+  );
   assert.match(
     runner,
     /gameClockHeartbeat\.unref\?\.\(\);/u,
@@ -572,7 +582,7 @@ test("the run is actually wired to print both: every read, and a beat per bound 
     "the beat has to publish the run's own pause-on-unfocus reading",
   );
   assert.ok(
-    beat > runner.indexOf("const readModLogText") && beat > runner.indexOf("const MOD_LOG_PATHS"),
+    beatAt > runner.indexOf("const readModLogText") && beatAt > runner.indexOf("const MOD_LOG_PATHS"),
     "the beat is created before the log readers it calls, so a beat during module evaluation would throw",
   );
   // And the per-read line comes from the sampler every world read already goes through.

@@ -20,26 +20,28 @@
  *    treats a new finding, a lost receipt or a worse interaction score as a
  *    regression. Do not silence a finding to make a rung pass.
  */
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { freemem as freeMemory } from "node:os";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import { turnSettled } from "../../lib/turn-settled.mjs";
-import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
-import { once } from "node:events";
+
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  decideDayWake,
-  objectiveProgressKey,
-  runMultiDayLoop,
-  WAKE_REASON,
-  WAKE_REASONS,
-  WAKE_SUPPRESSION_REASONS,
-  watchRollover,
-  worldFactWake,
-} from "../../lib/multiday-loop.mjs";
+import { once } from "node:events";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { freemem as freeMemory } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
+import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
+import { identityKey } from "../../../host/dist-test/runtime-identity.js";
+import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
+import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
+import { describeActivityPoints, readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
+import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
+import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
+import { collectContextSummary } from "../../lib/context-db-summary.mjs";
+import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
+import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
+import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
+import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
 import {
   assessMultiDayBaseline,
   MAXIMUM_BASELINE_DAYS,
@@ -51,44 +53,27 @@ import {
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
-import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
-import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import {
   countPriorMultidayRuns,
   dayTaskSchedule,
   overriddenFirstDayTask,
+  overriddenTaskForDay,
   readTaskDelivery,
   runOffsetFor,
-  overriddenTaskForDay,
   sweepTaskPrompts,
 } from "../../lib/multiday-daily-tasks.mjs";
-import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
-import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs";
-import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
-import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
-import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
-import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
-import { collectContextSummary } from "../../lib/context-db-summary.mjs";
-import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
+import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import {
-  SCHEDULED_DIALOGUE_GATES,
-  assessDialogueGates,
-  assessPlayerInputSchedule,
-  planGateDeliveries,
-} from "../dialogue-gates.mjs";
-import { assessInteractionValue } from "../interaction-value-gate.mjs";
-import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+  decideDayWake,
+  objectiveProgressKey,
+  runMultiDayLoop,
+  WAKE_REASON,
+  WAKE_REASONS,
+  WAKE_SUPPRESSION_REASONS,
+  watchRollover,
+  worldFactWake,
+} from "../../lib/multiday-loop.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
-import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
-import { identityKey } from "../../../host/dist-test/runtime-identity.js";
-import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
-import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
-import {
-  launchVoiceGatewayChild,
-  pickVoiceGatewayPort,
-  resolveVoiceConfiguration,
-} from "../../lib/voice-gateway-launch.mjs";
-import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
 import {
   deliveryAccountClause,
   describeDeliveryAccount,
@@ -97,59 +82,58 @@ import {
   readWorldStateStaleFacts,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
-import { describeActivityPoints, readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
-import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
-import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
+import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
+import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
+import { turnSettled } from "../../lib/turn-settled.mjs";
+import {
+  launchVoiceGatewayChild,
+  pickVoiceGatewayPort,
+  resolveVoiceConfiguration,
+} from "../../lib/voice-gateway-launch.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
-import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
+import {
+  assessDialogueGates,
+  assessPlayerInputSchedule,
+  planGateDeliveries,
+  SCHEDULED_DIALOGUE_GATES,
+} from "../dialogue-gates.mjs";
+import { assessInteractionValue } from "../interaction-value-gate.mjs";
+import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
+import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
+
 // The registered terminal reason code per action is the only authority that can
 // tell a receipt that FINISHED an action from one that only progressed it. Read it
 // from the published gate table instead of guessing from reason-code wording.
 const TERMINAL_REASON_CODES = Object.freeze(
   Object.fromEntries(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => [gate.actionId, gate.terminalReasonCode])),
 );
-import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+
+// The mounted action tool names: the only tool calls that reach `client.execute`. Read from the Host's own table
+// rather than derived from a `stardew_` prefix, because `stardew_observe` and `stardew_execution_status` are reads
+// that never dispatch an action and must not be counted as one.
+import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
+import {
+  reserveGameRuntimeMaterialization,
+  withConsumedBindingExecution,
+} from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
+import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
+import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
+import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../../host/dist-test/stardew-game-integration-adapter.js";
 import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   STARDEW_INTEGRATION_LAUNCHER,
 } from "../../../host/dist-test/stardew-integration-launcher.js";
-import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import {
-  reserveGameRuntimeMaterialization,
-  withConsumedBindingExecution,
-} from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
-import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-// The mounted action tool names: the only tool calls that reach `client.execute`. Read from the Host's own table
-// rather than derived from a `stardew_` prefix, because `stardew_observe` and `stardew_execution_status` are reads
-// that never dispatch an action and must not be counted as one.
-import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
-import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
-import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
-import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../../../host/dist-test/windows-stale-lock-reclaimer/index.js";
-// memory_covenant: the covenant FACT is planted through the
-// real management surface under the product continuity, then the Game runtime on
-// the SAME root/continuity must render it into m[0] — the Agent reads the rule
-// from memory, never from a prompt line. When no configured root/continuity is
-// given (disposable-root runs), seeding is skipped and the covenant is not
-// asserted: a disposable root has no persisted memory by construction.
-import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
-// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
-// the assembly gate only proves hash consistency; this proves the assembled
-// profile actually has persona content and no unrendered SillyTavern macros.
-// A configured-root run whose captured profile is a hollow default (no persona)
-// is an explicit context failure, never a silent pass. A read GAP (no profile
-// captured) stays a gap: nothing to assert.
-import { assessIdentityProfile } from "../core/content-gate.mjs";
-import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
-import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
-import { writeInputManifest } from "../core/input-manifest.mjs";
-import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import {
   actionBreadthClause,
   addSnapshotToCensus,
@@ -158,7 +142,12 @@ import {
   readActionBreadthSurface,
 } from "../../lib/action-breadth.mjs";
 import { EVIDENCE_BUNDLE_FILES, writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+// Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
+// `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
+// `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
+import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
 import {
   installLiveRunInterrupt,
   killedReasonCode,
@@ -166,6 +155,35 @@ import {
   reclamationStep,
   stampReclamation,
 } from "../../lib/live-run-teardown.mjs";
+// The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
+// mid-run, which is exactly when a program's evidence matters most.
+import {
+  createBodyProgramJournalFallback,
+  executionsFromJournalEvents,
+  stardewDataPath,
+} from "../../lib/stardew-body-program-journal.mjs";
+import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
+// the assembly gate only proves hash consistency; this proves the assembled
+// profile actually has persona content and no unrendered SillyTavern macros.
+// A configured-root run whose captured profile is a hollow default (no persona)
+// is an explicit context failure, never a silent pass. A read GAP (no profile
+// captured) stays a gap: nothing to assert.
+import { assessIdentityProfile } from "../core/content-gate.mjs";
+import { writeInputManifest } from "../core/input-manifest.mjs";
+import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
+import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
+import { openRunProgress } from "../core/run-progress.mjs";
+// memory_covenant: the covenant FACT is planted through the
+// real management surface under the product continuity, then the Game runtime on
+// the SAME root/continuity must render it into m[0] — the Agent reads the rule
+// from memory, never from a prompt line. When no configured root/continuity is
+// given (disposable-root runs), seeding is skipped and the covenant is not
+// asserted: a disposable root has no persisted memory by construction.
+import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
+import { bridgeClosureStop } from "./bridge-closure.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
@@ -176,26 +194,14 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
-// The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
-import { programNodeOutcomes } from "./program-node-outcomes.mjs";
-import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 // Whether the WORLD moved while this run watched it: the clock every snapshot carries, read at least twice, so a paused
 // world cannot be reported as a companion that stopped. It prints every read and beats once per bound of silence, because
 // a reading that only exists at the END cannot describe the stalls these runs are stopped for (`round50b`, `round51`).
-import { GAME_CLOCK_HEARTBEAT_MS, assessPauseOnUnfocus, createGameClock } from "./game-clock.mjs";
-// The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
-// mid-run, which is exactly when a program's evidence matters most.
-import {
-  createBodyProgramJournalFallback,
-  executionsFromJournalEvents,
-  stardewDataPath,
-} from "../../lib/stardew-body-program-journal.mjs";
-import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
-// Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
-// `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
-// `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
-import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
-import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
+import { assessPauseOnUnfocus, createGameClock, GAME_CLOCK_HEARTBEAT_MS } from "./game-clock.mjs";
+import { describePresentationPiece } from "./presentation-piece-time.mjs";
+// The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
+import { programNodeOutcomes } from "./program-node-outcomes.mjs";
+import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 
 // THE LAUNCH CLOCK, which is the launcher's and not this file's.
 //
@@ -248,6 +254,20 @@ let capture = null;
 // name instead of an exception.
 let gameSessionId = null;
 let runtimeRoot = null;
+// The run's own record, written as it happens (see `../core/run-progress.mjs`). Null until the capture shows where the
+// run directory is, so every call site below guards on it rather than inventing a path.
+let progress = null;
+// THE END OF THE WAIT, ONCE. A closed bridge is not a slow world (see `./bridge-closure.mjs`): the day loop, the clock
+// beat and any other waiter all consult this, and the first to see a closure records it and says so on the log. Declared
+// at module scope rather than beside the multi-day loop, because the clock beat is armed thousands of lines above and a
+// timer that fired during a top-level await would read a later `let` in its temporal dead zone.
+let bridgeClosure = null;
+function noteBridgeClosure(candidate) {
+  if (candidate === null || bridgeClosure !== null) return bridgeClosure;
+  bridgeClosure = candidate;
+  console.error("MULTIDAY_STOPPED", JSON.stringify(candidate));
+  return bridgeClosure;
+}
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath =
@@ -707,7 +727,6 @@ let presentedSummary = null;
 // agent turn was accepted, so the first piece's time-to-first-bubble is
 // measurable instead of inferred.
 const presentationPieces = [];
-const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 let agentTurnCount = 0;
 /**
@@ -1463,7 +1482,7 @@ function summarizeCategoryTiming(durations) {
  * category or silently tolerated - an unequal pair a reader can see is worth more than an equality nobody measured.
  */
 function toolTimingInvariant({ calls, frames }) {
-  if (!Number.isInteger(calls) || !Number.isInteger(frames)) {
+  if (!(Number.isInteger(calls) && Number.isInteger(frames))) {
     return Object.freeze({
       checked: false,
       ok: null,
@@ -1957,9 +1976,10 @@ function summarizePresentationEvidence() {
     // to report its longest stretch as an UPPER BOUND (161 s, `cause: run_end`, measured 2026-10-20).
     turnStartedAtMs,
     pieces: Object.freeze([...presentationPieces]),
-    pieceAtMs: Object.freeze([...presentationPieceAtMs]),
     pieceCount: presentationPieces.length,
-    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
+    // The first piece's time from ITS OWN turn's start, which is what "time to first bubble" has always meant and the
+    // only reading the old `elapsedMs` ever carried.
+    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].sinceTurnStartMs : null,
     // A turn that arrived as one wall at the end vs several pieces over time.
     chunked: presentationPieces.length > 1,
     // Every committed piece accounted for, in the unit it was committed in: the presented paragraphs, the pieces a
@@ -1993,21 +2013,32 @@ const onCompanionTextPresented = (text, locale) => {
   // Record EVERY committed piece before any single-shot voice logic runs: the
   // chunked-presentation evidence must not depend on voice being enabled or on
   // whether the piece happened to be the first one.
-  const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
   const committedAtMs = Date.now();
-  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  // ONE EPOCH (see `./presentation-piece-time.mjs`). `round67` printed ten pieces 22.5 s early because this field was
+  // measured from the turn's start while every other elapsed time in the log and the bundle uses the run's base; the
+  // derived pair also gives the bundle record the absolute moment it never had, which is why `check-live-run-silence`
+  // could only answer `presented_text_placed_on_run_clock: unmeasured`.
+  const pieceTime = describePresentationPiece({
+    index: presentationPieces.length,
+    chars: text.length,
+    committedAtMs,
+    runStartedAtMs: phaseTimings.runStartedAtMs,
+    turnStartedAtMs,
+  });
+  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, ...pieceTime.piece }));
+  // The same moment the run's own record keeps: `round67`'s last delivery was the last thing anyone could date, and it
+  // was only in the terminal log (2026-11-17).
+  progress?.record({
+    event: "presented",
+    index: presentationPieces.length - 1,
+    chars: text.length,
+    atMs: committedAtMs,
+  });
   ledger.record("present.visible", { index: presentationPieces.length - 1 });
-  // The absolute commit moment, kept in a SIDE array on purpose: `pieces` keeps its published shape (several tests pin
-  // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
-  // answer `not established`, which is what it had to do for every run before this.
-  presentationPieceAtMs.push(committedAtMs);
   // The first companion text that reached the player is this run's first MODEL response: the provider, the turn and the
   // presentation have all completed by the time this callback fires, so it is the honest end of the launch sequence.
   if (phaseTimings.marks.first_model_response === undefined) markPhase("first_model_response", committedAtMs);
-  console.error(
-    "AGENT_PRESENTATION_PIECE",
-    JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
-  );
+  console.error("AGENT_PRESENTATION_PIECE", JSON.stringify(pieceTime.line));
   // Dee-hydrate model scaffolding: the chat box and the voice line must both
   // speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
@@ -2669,6 +2700,9 @@ async function runAgentTurn(text, tools, wake) {
   const wakeReason = wake?.reason;
   if (!WAKE_REASONS.includes(wakeReason)) throw new Error(`prompt_without_a_declared_reason:${String(wakeReason)}`);
   turnStartedAtMs = Date.now();
+  // The run's own record of the moment it started a turn - the reading that survives a process which never reaches its
+  // close (see `../core/run-progress.mjs`).
+  progress?.record({ event: "turn_started", turn: agentTurnCount, reason: wakeReason });
   // One line per turn, because the only question a memory death leaves open is its SHAPE: flat after the first
   // allocation spread, or growing with turns. `sessionBytes` is the retained-transcript proxy (Pi holds the session
   // twice in RAM) and costs one stat; `diagnostics` is the runner's own unbounded array.
@@ -3207,7 +3241,14 @@ const MOD_LOG_PATHS = () => {
 // pause-on-unfocus reading: creating the timer before the values it reads would let a 30 s beat fire during a module
 // evaluation parked on an await, and a diagnostic that throws there kills the run it is describing.
 //
-const gameClockHeartbeat = setInterval(() => gameClock.heartbeat(), GAME_CLOCK_HEARTBEAT_MS);
+const gameClockHeartbeat = setInterval(async () => {
+  const beat = await gameClock.heartbeat();
+  // A BEAT THAT SAYS THE BRIDGE IS CLOSED IS THE RUN'S ANSWER. `round66` published thirty-two of these over sixteen
+  // minutes, each one repeating `not_attempted:bridge_closed`, because a stall nobody decided on looks the same in the log
+  // as a stall somebody was still waiting out. The reading ends the wait (`./bridge-closure.mjs`), and every waiter in
+  // this file consults the result.
+  if (beat?.stalled === true) noteBridgeClosure(bridgeClosureStop({ solicit: beat.solicit }));
+}, GAME_CLOCK_HEARTBEAT_MS);
 gameClockHeartbeat.unref?.();
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
@@ -4739,6 +4780,11 @@ if (existsSync(join(runtimePaths.agentDir, "models.json"))) {
 // silent — a capture that broke would recreate exactly the blind spot this
 // mechanism exists to remove.
 capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
+// THE RECORD THAT SURVIVES A DEATH. Every other artifact this harness writes is written at its end, so a run that dies
+// mid-await leaves `launch.json` and nothing else - measured on `round66` and `round67`, where the Host went away inside
+// the first six minutes and the run directory could not say how far the run had got (2026-11-17). One flushed line per
+// turn and per delivered piece costs nothing at this volume and answers "where did it stop" without a terminal log.
+progress = openRunProgress({ dir: capture.dir, startedAtMs: phaseTimings.runStartedAtMs });
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
@@ -5164,6 +5210,12 @@ try {
           let objectiveProgress = null;
           let objectiveProgressAtMs = Date.now();
           while (!nightCrossedIn(dayScope)) {
+            // BEFORE ANYTHING IS ASKED: is there still a world to ask? A closed bridge is not a slow world - this run can
+            // no longer observe, dispatch or see a night cross, so the wait has no state to reach. Measured on `round66`:
+            // after `BRIDGE_DISCONNECTED` the loop emitted thirty-two `GAME_CLOCK_STALLED` lines whose
+            // `sinceLastSnapshotMs` climbed to 1,179,640 ms and then the log stopped, and `round65` is the same shape
+            // (to 1,326,166). The night watcher had already answered; this loop was the only thing still waiting.
+            if (noteBridgeClosure(bridgeClosure ?? bridgeClosureStop({ bridgeDisconnections })) !== null) break;
             const clock = readWorldClock();
             const nowMs = Date.now();
             // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
@@ -6518,6 +6570,10 @@ function splitSpeakableSentenceChunks(text) {
  */
 async function closeCapture(capture, runtimeRoot, into) {
   if (capture === null || capture === undefined) return null;
+  // The run reached its end, and the record says so beside the state it ended in: a `run-progress.jsonl` whose last event
+  // is `run_ended` is a run that published; one that stops at `turn_started` is a run whose process went away.
+  progress?.record({ event: "run_ended", state: into?.state ?? null, reasonCode: into?.reasonCode ?? null });
+  progress?.close();
   try {
     await capture.record("result.json", into);
     await capture.captureRuntimeRoot(runtimeRoot);
