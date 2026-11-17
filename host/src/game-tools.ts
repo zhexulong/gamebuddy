@@ -681,6 +681,7 @@ function composeObservationBody(
         ageTurns: 0,
         // This answer IS the observation the block describes, so its age is zero on both measures.
         ageMs: 0,
+        contentAgeMs: 0,
       });
   if (parts.selectionAnswer === null) return worldText;
   return worldText === "" ? parts.selectionAnswer.text : `${parts.selectionAnswer.text}\n${worldText}`;

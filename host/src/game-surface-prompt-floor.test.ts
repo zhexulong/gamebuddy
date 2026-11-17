@@ -477,7 +477,7 @@ function composedDelivery(
   assert.ok(shape !== undefined, "blocked: the delivery population is empty, so no shape was examined");
   const text = composeFactBrief({
     inputs: shape.inputs,
-    snapshot: { snapshot: DELIVERY_WORLD, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: DELIVERY_WORLD, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: [],
     locale: "zh-CN",
   });
@@ -925,7 +925,7 @@ function houseWorld(cookingStationTargets: Snapshot["cookingStationTargets"]): S
 function deliveryFor(world: Snapshot): string {
   return composeFactBrief({
     inputs: [],
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: [],
     locale: "zh-CN",
   });

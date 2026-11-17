@@ -1662,9 +1662,21 @@ export interface CompanionTurnSink {
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
-  public constructor(readInFlight: () => InFlightProgrammeReading = readInFlightProgrammes) {
+  public constructor(
+    readInFlight: () => InFlightProgrammeReading = readInFlightProgrammes,
+    now: () => number = Date.now,
+  ) {
     this.#readInFlight = readInFlight;
+    this.#now = now;
   }
+
+  /**
+   * The pump's own clock, injected so the two ages below can be measured in a test that does not sleep.
+   *
+   * Two ages, because they are two facts about one reading and only the pair is honest: see
+   * `#lastSnapshotArrivedAtMs` and `#lastSnapshotChangedAtMs`.
+   */
+  readonly #now: () => number;
 
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
@@ -1719,13 +1731,24 @@ export class CompanionEventPump {
   /** `#deliveredBatches` when that content was composed into a batch; the difference is the age `<world-state>` states. */
   #lastSnapshotDeliveredBatch = 0;
   /**
-   * When the CURRENT reading's content was first admitted, for the `ageMs` half of `world_state_stale`.
+   * When the world was last READ, whoever asked and whether it said anything new: the `ageMs` half of a
+   * `world_state_stale`.
+   *
+   * MEASURED 2026-11-21 (`round66`, `round67`): this advanced only when a reading said something ELSE, so a world re-read
+   * every thirty seconds and confirmed identical kept ageing. The model was then handed a block telling it the picture was
+   * two hundred seconds old while the Mod had answered two seconds ago - a fact about the CONTENT reported as a fact about
+   * the READING. A re-read is a read: `ageMs` is now the reading's own age, and the picture's age is `contentAgeMs`.
+   */
+  #lastSnapshotArrivedAtMs = 0;
+  /**
+   * When the CURRENT reading's content was first admitted: the `contentAgeMs` half, and the one the stale notice is
+   * about.
    *
    * Advanced only by a reading that says something else, because a re-stated copy of one reading arrives as a `snapshot`
    * fact too (`host-service.ts#restateWorldSnapshot`) and the Mod's revision cannot tell the two apart - it is minted per
    * frame and bumped by its own action receipts, so a counter-keyed clock would report a fifty-turn-old picture as fresh.
    */
-  #lastSnapshotArrivedAtMs = 0;
+  #lastSnapshotChangedAtMs = 0;
   /** Stale facts already published for the current reading; the re-arm, and the fact's own `staleFactsSoFar`. */
   #worldStateStalePublished = 0;
   /**
@@ -2048,15 +2071,19 @@ export class CompanionEventPump {
       if (previous !== undefined && fact.revision < previous.revision) return;
       // The world MOVED only if the reading says something else: the Mod's revision also moves when the Mod publishes a
       // receipt of its own action (`farmhandexecutioncontroller.cs`), and a counter that counts her actions cannot witness
-      // a world that stood still. Keyed on content, a re-stated reading keeps its age and keeps the `world_state_stale`
-      // evidence beside it (`#worldChangesSinceReading`) instead of resetting both without an observation.
+      // a world that stood still. Keyed on content, a re-stated reading keeps the CONTENT's age and keeps the
+      // `world_state_stale` evidence beside it (`#worldChangesSinceReading`) instead of resetting both without an
+      // observation - while its READING age restarts, because the world really was read again.
       const changes = previous === undefined || readingContentIdentity(fact) !== readingContentIdentity(previous);
       this.#snapshot = frozen;
       this.#lastSnapshot = frozen;
       this.#snapshotRestatesPrevious = !changes;
       this.#snapshotProducedBy = producedBy;
+      // A READING IS A READING: the world was read, so the reading's own age restarts whether or not it says something
+      // new. The content's age restarts only when the content does.
+      this.#lastSnapshotArrivedAtMs = this.#now();
       if (changes) {
-        this.#lastSnapshotArrivedAtMs = Date.now();
+        this.#lastSnapshotChangedAtMs = this.#lastSnapshotArrivedAtMs;
         this.#worldStateStalePublished = 0;
         this.#worldChangesSinceReading = 0;
         this.#lastWorldChange = undefined;
@@ -2210,6 +2237,7 @@ export class CompanionEventPump {
     this.#lastSnapshotDeliveredIdentity = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
     this.#lastSnapshotArrivedAtMs = 0;
+    this.#lastSnapshotChangedAtMs = 0;
     this.#worldStateStalePublished = 0;
     // The probe bookkeeping is one session's measurement too; the attached PORT is not - it is how this pump reaches the
     // integration at all, and a clear() is a STOP rather than a re-wiring.
@@ -3538,11 +3566,17 @@ export class CompanionEventPump {
     const fact = this.#lastSnapshot;
     if (fact === undefined) return undefined;
     const age = this.#deliveredBatches - this.#lastSnapshotDeliveredBatch;
+    const nowMs = this.#now();
     return Object.freeze({
       snapshot: fact.payload as unknown as Snapshot,
       revision: fact.revision,
       ageTurns: this.#readingIsNews(fact) === false ? Math.max(1, age) : 0,
-      ageMs: Math.max(0, Date.now() - this.#lastSnapshotArrivedAtMs),
+      // TWO AGES, and neither is the other's stand-in: `ageMs` is how long ago the world was READ (a re-read restarts
+      // it, because it is a read), `contentAgeMs` is how old the PICTURE is (only a different reading restarts that). A
+      // block that reported the second as the first told the model its world was two hundred seconds old while the Mod had
+      // answered two seconds ago (`round66`, `round67`).
+      ageMs: Math.max(0, nowMs - this.#lastSnapshotArrivedAtMs),
+      contentAgeMs: Math.max(0, nowMs - this.#lastSnapshotChangedAtMs),
     });
   }
 
@@ -3690,7 +3724,11 @@ export class CompanionEventPump {
         code,
         turns: reading.ageTurns,
         revision: reading.revision,
+        // Both ages, named: how long since the world was READ, and how old the reading's CONTENT is. The first can be
+        // seconds while the second is minutes (a world re-read and unchanged), and a reader that gets one of them for the
+        // other cannot tell a stale picture from an unread one.
         ageMs: reading.ageMs,
+        contentAgeMs: reading.contentAgeMs,
         worldChanges: this.#worldChangesSinceReading,
         ...(this.#lastWorldChange === undefined ? {} : { lastWorldChange: this.#lastWorldChange }),
         staleFactsSoFar: this.#worldStateStalePublished,
