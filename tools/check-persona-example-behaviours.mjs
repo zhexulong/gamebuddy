@@ -75,11 +75,14 @@
  *                     `example_demonstrates_a_behaviour_no_claim_permits:这泥巴比水泥还黏靴子:evaluates_the_thing_in_hand:…`
  *                     and `behaviour_claim_unmatched:comforts_with_her_own_scar:…`, both replayed out of the object store
  *                     (tools/check-persona-example-behaviours.test.mjs)
- * red-proof: inject   the incident itself, on a copy of the shipped presets: deleting
- *                     `对手头东西的评价、对工具的嫌弃不用回执，直接说` from `data.system_prompt` exits 1 naming all five
- *                     anchored demonstrations, and writing the bytes back exits 0. Appending a `{{char}}` turn carrying
- *                     no declared sample exits 1 with `example_unclassified:早啊，粥在锅里温着，自己盛。`, which is the
- *                     population being derived rather than listed (tools/check-persona-example-behaviours.test.mjs)
+ * red-proof: inject   the incident itself, on a copy of the shipped presets. Since the 2026-11-17 reversal the two rows
+ *                     that `对手头东西的评价、对工具的嫌弃不用回执，直接说` used to tie are tied to two DIFFERENT sentences,
+ *                     so the arm is run twice: deleting `但对手头东西的评价不用回执，直接说` from `data.system_prompt`
+ *                     exits 1 naming the three demonstrations of `evaluates_the_thing_in_hand`, and deleting
+ *                     `只用来调侃活计和工具` exits 1 naming the two demonstrations of `complains_about_a_tool`; writing
+ *                     the bytes back exits 0 each time. Appending a `{{char}}` turn carrying no declared sample exits 1
+ *                     with `example_unclassified:早啊，粥在锅里温着，自己盛。`, which is the population being derived
+ *                     rather than listed (tools/check-persona-example-behaviours.test.mjs)
  */
 
 export const gateDeclaration = {

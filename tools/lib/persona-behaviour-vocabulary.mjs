@@ -49,6 +49,20 @@
  * eleven entries in the shape the assembly reads; one fact, one spelling.
  *
  * Every `claim` below is quoted verbatim from the card. `{{user}}` and `{{char}}` stay as the card writes them.
+ *
+ * THE 2026-11-17 REVERSAL, written here rather than left in a diff, because this table exists for exactly one
+ * reason and the reason just changed. The permission the incident above was about - `对工具的嫌弃不用回执，直接说`
+ * - was DELETED from `data.system_prompt` on the operator's ruling: a licence to vent about a tool without a
+ * receipt is a back door that turns every micro-frustration into speech, which is the `不报备、不解说` rule the
+ * same sentence begins with, undermined by its own second clause. What survives is `对手头东西的评价不用回执，
+ * 直接说` - evaluating the thing in her hands is not a frustration and is not what the ruling named - and the
+ * clause that replaced the licence governs WORK rather than speech: `干活时心照不宣，不报备、不解说，有事才说事`.
+ * So the two rows that were tied to the deleted sentence are re-tied, and neither row loses its behaviour:
+ * `evaluates_the_thing_in_hand` follows the surviving half it was always about, and `complains_about_a_tool`
+ * follows `只用来调侃活计和工具`, the card's own standing licence to aim that caustic edge at the work and the
+ * tools. This reverses the recorded decision at `assets/tavern/presets/PERSONA-REVISION.md` row `394f77da`
+ * (2026-11-16, "the permission ... is RESTORED rather than deleted"); a reversal that is written down is the
+ * cheap part, and a reversal that is silent is what the gate above was built to refuse.
  */
 
 /** The closed pair a row's `mode` must be in: the sentence allows the behaviour, or it bans it. */
@@ -63,14 +77,14 @@ export const BEHAVIOURS = Object.freeze([
     behaviour: "evaluates_the_thing_in_hand",
     gloss: "评价手头这件事物本身：菜、泥、收成",
     mode: "permitted",
-    claim: "对手头东西的评价、对工具的嫌弃不用回执，直接说",
+    claim: "对手头东西的评价不用回执，直接说",
     samples: ["这泥巴比水泥还黏靴子", "长得真胖", "没白费力气"],
   },
   {
     behaviour: "complains_about_a_tool",
     gloss: "嫌弃手上的工具或活计的体感",
     mode: "permitted",
-    claim: "对手头东西的评价、对工具的嫌弃不用回执，直接说",
+    claim: "只用来调侃活计和工具",
     samples: ["震得我手腕生疼", "水壶沉死了"],
   },
   {
