@@ -21,6 +21,15 @@
  * 这条线之上"，所以它把今天的债务原样交出来，而不是发明一个没人达得到的圆整数。样本很小的扩展名（.mts 2 个、
  * .py 12 个文件）百分位就是样本的最大值本身，300 行地板接住它们：任何语言 300 行都还不到必须拆的程度。
  *
+ * `.css` 是唯一一个只有一份样本的扩展名（2026-11-17 实测：整个文件集里 1 个样式表，dialogue-web/src/style.css
+ * 7432 行；.scss/.less/.sass 各 0 个）。一份样本的百分位就是它自己，拿它当上限（7432 取整到 7500）等于把今天的
+ * 数字抄进常量：判定永远绿，读者也看不出那是一笔债。所以这一格用 300 行地板当上限 - 任何样式表 300 行都还不到
+ * 必须拆的程度 - 于是 7432 行是「超过上限的已知债务」，记进 file-complexity-baseline.json，只有再变大才失败；
+ * 文件瘦回 300 行之内时那条记录必须删掉。这正是本文件的分工：上限说目标，基准说今天。
+ *
+ * 这一格同时解释了 hotspot reading 的盲区：那个报告的文件集就是本文件的文件集，没有上限的扩展名不进样本，所以
+ * 90 天窗口里 185 次提交、15,348 行改动的 dialogue-web/src/style.css 此前连一行都没进过那个报告。
+ *
  * 判定与失败码：
  *   file_over_ceiling:<path>:<lines>:<ceiling>          未登记，且超过本扩展名上限
  *   baselined_file_grew:<path>:<lines>:<recorded>       已登记，且比记录的行数更大
@@ -36,6 +45,9 @@
  * red-proof: inject  一个 351 行的 `.py` 新文件（上限 300）进 git 工作树 ->
  *                    `file_over_ceiling:src/wide.py:351:300`、`files examined 9 · over ceiling 1 · baselined 0`，exit 1；
  *                    同一工作树在加这个文件之前打印「复杂度棘轮通过」，exit 0（tools/scripts/check-file-complexity-gate.mjs）
+ *            `.css` 取走 file-complexity-baseline.json 里 style.css 那条记录（上限 300，文件 7432 行）->
+ *                    `file_over_ceiling:dialogue-web/src/style.css:7432:300`、债务表 `7432 / 300`，exit 1；
+ *                    那条记录写回来 -> 该行消失、债务表打印「7432 / 300 ...（已登记）」（真树，2026-11-17）
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -56,6 +68,7 @@ export const CEILINGS_BY_EXTENSION = new Map([
   [".cjs", 900], // 28 个文件，p99 801
   [".py", 300], // 12 个文件，p99 206（地板）
   [".mts", 300], // 2 个文件，p99 33（地板）
+  [".css", 300], // 1 个文件，7432 行 - 百分位就是它自己，所以这一格取地板不取百分位（见文件头）
 ]);
 
 const baselineFor = (root) => join(root, "tools", "scripts", "file-complexity-baseline.json");

@@ -5,8 +5,8 @@
  * 一个基准清单从没听说过的文件也必须被量到。纯判定用例覆盖分类本身，fixture 用例跑真实脚本确认失败码与退出码。
  */
 // red-proof: inject  `lines > ceiling` widened to `lines >= ceiling` in verdict -> a file exactly at its
-//                    extension's ceiling is reported over it and the suite answers `✖ verdict.2:` (11 pass,
-//                    1 fail), exit 1; the unmodified suite answers 12 passing
+//                    extension's ceiling is reported over it and the suite answers `× verdict.2:` (11 pass,
+//                    1 fail), exit 1; the unmodified suite answers 13 passing
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +21,7 @@ const SCRIPTS_ROOT = dirname(fileURLToPath(import.meta.url));
 const GATE = join(SCRIPTS_ROOT, "check-file-complexity-gate.mjs");
 const MJS_CEILING = CEILINGS_BY_EXTENSION.get(".mjs");
 const TS_CEILING = CEILINGS_BY_EXTENSION.get(".ts");
+const CSS_CEILING = CEILINGS_BY_EXTENSION.get(".css");
 const BASELINE = ["tools", "scripts", "file-complexity-baseline.json"];
 
 const sizesOf = (entries) => new Map(Object.entries(entries));
@@ -189,4 +190,18 @@ test("planted.F: 门禁的默认 root 是本仓库，扫描读到真实源码而
   for (const file of sizes.keys())
     assert.ok(CEILINGS_BY_EXTENSION.has(file.slice(file.lastIndexOf("."))), `${file} 的扩展名没有上限`);
   assert.ok(extensions.size >= 5, `上限表里至少五种扩展名应在树里出现，实际 ${[...extensions.keys()].join(",")}`);
+});
+
+test("planted.G: 样式表也有上限 - .css 不再落在「未设上限」那一行，超限的文件被点名", () => {
+  assert.ok(CSS_CEILING > 0, ".css 必须有上限，否则样式表不进样本也不进 hotspot reading");
+  withFixture((root) => {
+    writeLines(join(root, "src", "wide.css"), 400);
+    const result = runGate(root);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, new RegExp(`\\.css 1 个文件 · 上限 ${CSS_CEILING} 行`, "u"));
+    assert.ok(result.stderr.includes(`file_over_ceiling:src/wide.css:400:${CSS_CEILING}`), result.stderr);
+    process.stdout.write(
+      `planted.G: 400/${CSS_CEILING} .css -> ${cleanOutputLines(result.stderr).find((line) => line.startsWith("file_over_ceiling"))}\n`,
+    );
+  });
 });
