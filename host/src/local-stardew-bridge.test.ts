@@ -1995,6 +1995,114 @@ async function withBodyProgramBridge(
   }
 }
 
+/**
+ * A reply that outlives its own request's deadline.
+ *
+ * The client's default request deadline is 5 s (`LocalStardewBridgeClient.request`), so this has to be longer than
+ * that before the peer speaks: the whole point is a peer whose answer arrives AFTER the client stopped waiting.
+ */
+const LATE_REPLY_AFTER_DEADLINE_MS = 5_500;
+const LATE_REPLY_SETTLE_MS = 1_000;
+
+/**
+ * A body-program answer to a request this client STOPPED WAITING FOR must not close the attachment.
+ *
+ * Measured round65: a `program_status` request passed its 5 s deadline while the game thread was busy, the Mod's answer
+ * arrived with the next flush, `receive` found no pending correlation, and the WHOLE bridge closed on
+ * `body_program_protocol_invalid:unsolicited:got=program_status_result;pending=none`. The game ran for another twenty
+ * minutes with nothing able to reach it and nothing able to make it reachable (`PROVIDER_RETRY` 0, `reconnect` 0).
+ * Our own deadline is not the peer's violation, and the snapshot channel already states this exact rule
+ * (`acceptSnapshot`: "never let a stale payload ... tear down the bridge").
+ */
+test("a body program reply that arrives after the request's own deadline does not close the attachment", async () => {
+  await withBodyProgramBridge(
+    "late_reply_after_deadline",
+    (socket, request) => {
+      setTimeout(() => {
+        if (socket.destroyed) return;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "body_program_late_reply",
+            type: "program_events_result",
+            payload: {
+              programId: request.payload.programId,
+              code: "found",
+              events: [],
+              nextCursor: request.payload.cursor,
+              highWater: request.payload.cursor,
+            },
+          }),
+        );
+      }, LATE_REPLY_AFTER_DEADLINE_MS).unref();
+    },
+    async (client) => {
+      const connectionFacts: string[] = [];
+      const diagnostics: string[] = [];
+      client.onConnectionFact((fact) => connectionFacts.push(`${fact.state}:${fact.reasonCode}`));
+      client.onDiagnostic((diagnostic) => diagnostics.push(diagnostic.reasonCode));
+      // The client gives up first: this is the ONLY reason the peer's answer will have nothing to match.
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 4 }),
+        /bridge_response_timeout/u,
+      );
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, LATE_REPLY_SETTLE_MS));
+      assert.deepEqual(connectionFacts, [], "the client's own deadline must not cost the attachment");
+      assert.equal(client.state.connected, true);
+      assert.ok(
+        diagnostics.includes("bridge_late_reply_dropped:program_events_result"),
+        `the late reply is NAMED rather than silently swallowed: ${diagnostics.join(",")}`,
+      );
+      client.close();
+    },
+  );
+});
+
+/**
+ * The falsifier for the guard above: forgetting a request is NOT the same as never having asked it.
+ *
+ * A body-program result correlated to something this client never sent is still the protocol violation the close exists
+ * for - the peer answering a question nobody asked is how a foreign or replayed frame enters. If the deadline record
+ * above were widened into "drop every unmatched body-program result", this case would go green and the guard would have
+ * lost its force.
+ */
+test("a body program result for a correlation this client never sent still closes the attachment", async () => {
+  await withBodyProgramBridge(
+    "never_sent_correlation",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_never_asked",
+          correlationId: "correlation_never_asked",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            events: [],
+            nextCursor: request.payload.cursor,
+            highWater: request.payload.cursor,
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(client.programEvents({ programId: "program_01", cursor: 0, pageSize: 4 }));
+      const closed = await factWithinDeadline(disconnected, "connection_fact");
+      assert.equal(closed.state, "disconnected");
+      assert.equal(
+        closed.reasonCode,
+        "body_program_protocol_invalid:unsolicited:got=program_events_result;pending=none",
+        "a frame answering nothing we ever asked stays fatal, and stays named",
+      );
+      assert.equal(client.state.connected, false);
+    },
+  );
+});
+
 test("body program closes the named pipe for a structurally valid wrong correlated response", async () => {
   await withBodyProgramBridge(
     "wrong_correlated_response",

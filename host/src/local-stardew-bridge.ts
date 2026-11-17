@@ -111,6 +111,9 @@ export type LocalStardewBridgeDiagnostic = Readonly<{
     // Emitted immediately before the close a refused frame causes, naming the frame's own type and the validator code:
     // `bridge_frame_refused:<kind>:<validatorCode>` (see `publishFrameRefusal`).
     | "bridge_frame_refused"
+    // Emitted when a body-program answer arrives for a request this client already stopped waiting for. The frame is
+    // NAMED and dropped; it does not close the attachment (see the `#abandonedCorrelations` check in `receive`).
+    | "bridge_late_reply_dropped"
     // Emitted just before a fact listener's failure closes the transport, carrying the bounded failure token so
     // the close is attributable (see the catch in `receive`).
     | "native_chat_bridge_fact_listener_failed";
@@ -122,6 +125,15 @@ type PendingRequest = Readonly<{
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>;
+
+/**
+ * How many abandoned correlations one bridge generation remembers.
+ *
+ * A timeout is rare (the deadline is 5 s against a Mod that normally answers in milliseconds), so this is sized for a
+ * game thread that froze for minutes rather than for steady state - and it is a DRAIN, not a log: the oldest entry is
+ * evicted when the bound is reached, so the set cannot grow with the process's lifetime.
+ */
+const ABANDONED_CORRELATION_MEMORY = 64;
 
 type BodyNodeAdmissionHandler = (challenge: BodyNodeAdmissionChallenge) => Promise<BodyNodeAdmissionResult>;
 type BodyNodeAdmissionBinder = (handler: BodyNodeAdmissionHandler) => void;
@@ -161,6 +173,20 @@ type OutboundRequestType =
  */
 export class LocalStardewBridgeClient implements StardewBridgeConnection {
   readonly #pending = new Map<string, PendingRequest>();
+  /**
+   * Correlations whose request this client STOPPED WAITING FOR.
+   *
+   * <p>
+   * Deleting a pending request on its deadline is not the same as never having asked: the peer's answer to it is
+   * merely late, and `receive` has to be able to tell the two apart. Without this record the only exit available for
+   * a late body-program answer is the one for a frame answering nothing - closing the attachment - which loses the
+   * live game to our own timer. Measured round65: a `program_status` passed its 5 s deadline while the game thread was
+   * busy, the Mod's answer arrived with the next flush, and the bridge closed on
+   * `body_program_protocol_invalid:unsolicited:got=program_status_result;pending=none`. The game then ran for another
+   * twenty minutes with the Host unable to reach it, `PROVIDER_RETRY` 0 and `reconnect` 0.
+   * </p>
+   */
+  readonly #abandonedCorrelations = new Set<string>();
   #authenticated = false;
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
@@ -832,6 +858,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     return new Promise<BridgeMessage>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(correlationId);
+        this.#rememberAbandoned(correlationId);
         reject(new Error(deadlineMs === undefined ? "bridge_response_timeout" : "bridge_connect_deadline_exceeded"));
       }, timeoutMs);
       this.#pending.set(correlationId, { type, resolve: resolvePromise, reject, timer });
@@ -843,6 +870,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         reject(error);
       }
     });
+  }
+
+  /** Remember that this correlation WAS asked and is no longer awaited, bounded by `ABANDONED_CORRELATION_MEMORY`. */
+  #rememberAbandoned(correlationId: string): void {
+    this.#abandonedCorrelations.add(correlationId);
+    if (this.#abandonedCorrelations.size > ABANDONED_CORRELATION_MEMORY) {
+      const oldest = this.#abandonedCorrelations.values().next().value;
+      if (oldest !== undefined) this.#abandonedCorrelations.delete(oldest);
+    }
   }
 
   private receive(json: string): void {
@@ -973,6 +1009,18 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       return;
     }
     if (isBodyProgramResponse(message.type) && (pending === undefined || !isBodyProgramRequest(pending.type))) {
+      // A reply to a request this client STOPPED WAITING FOR is late news, never a protocol violation. `request`'s own
+      // deadline removed the correlation, so the peer's answer arrives with nothing to match it - and closing the
+      // attachment for that loses the live game to our own timer. The rule is the snapshot channel's, stated there and
+      // applied here: our own lateness never tears down the bridge. A frame answering a correlation this client never
+      // sent stays fatal below, because that is the shape a foreign or replayed frame arrives in.
+      if (pending === undefined && this.#abandonedCorrelations.delete(message.correlationId)) {
+        const kind =
+          typeof message.type === "string" && FRAME_KIND_PATTERN.test(message.type) ? message.type : "unknown";
+        for (const listener of this.#diagnosticListeners)
+          listener({ stage: "bridge_late_reply_dropped", reasonCode: `bridge_late_reply_dropped:${kind}` });
+        return;
+      }
       this.transport.close(
         `body_program_protocol_invalid:unsolicited:got=${String(message.type)};pending=${String(pending?.type ?? "none")}`,
       );
