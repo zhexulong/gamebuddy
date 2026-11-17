@@ -20,26 +20,32 @@ import {
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+  BUBBLES_DELIVERED,
+  CARRIED,
   CompanionEventPump,
   EXECUTION_STALL_SEMANTIC_KIND,
   emptyTurnShapes,
   FACT_PRODUCER,
   FACT_PRODUCERS,
   factContentIdentity,
+  FLUSHES_EXAMINED,
   HOST_MINTED_FACT_SOURCE,
+  LOST,
   MAX_DELIVERED_FACT_IDENTITIES,
+  NOT_OWED_LABEL,
   type PendingBatch,
   PER_DELIVERED_BATCH,
   RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
+  TRACES,
   TURN_OPENING,
   TURN_OPENINGS,
   TURN_PRODUCTION,
   TURN_PRODUCTIONS,
   TURN_SETTLED_SILENT,
   TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
-  TURN_SUPPRESSION,
-  TURN_SUPPRESSIONS,
+  NOT_OWED,
+  NOT_OWED_REASONS,
   TURN_WITHOUT_ACTION,
   TURN_WITHOUT_ACTION_REASON,
   type TurnAccount,
@@ -51,7 +57,6 @@ import {
   UNATTRIBUTED_EXECUTION_TOKEN,
   type WorldFact,
 } from "./event-pump.js";
-import { createProgramProgressObserver } from "./program-status-wait.js";
 
 /**
  * A turn opens only when the batch carries at least one thing she did not have and that can change what she does next.
@@ -213,7 +218,7 @@ function turnWithoutNewContent(
     .map((turn) => {
       // The population is filtered to batches no person opened, so the only question left is whether the batch carried a
       // fact she had already received or nothing at all. A reading cannot be the answer any more: it opens no turn.
-      const reason = turn.revision >= 0 ? TURN_SUPPRESSION.worldFactRestated : TURN_SUPPRESSION.nothingPending;
+      const reason = turn.revision >= 0 ? NOT_OWED.worldFactRestated : NOT_OWED.nothingPending;
       return `${TURN_WITHOUT_NEW_CONTENT}:#${String(turn.index)}:${reason}:${String(turn.revision)}:${String(turn.ageMs)}`;
     });
   return Object.freeze({ examined: turns.length, violations: Object.freeze(violations), blocked: null });
@@ -263,9 +268,7 @@ test("turn_without_new_content: the gate is red on the recorded turn it exists t
   ];
   const reading = turnWithoutNewContent(turns);
 
-  assert.deepEqual(reading.violations, [
-    `${TURN_WITHOUT_NEW_CONTENT}:#2:${TURN_SUPPRESSION.worldFactRestated}:14:144000`,
-  ]);
+  assert.deepEqual(reading.violations, [`${TURN_WITHOUT_NEW_CONTENT}:#2:${NOT_OWED.worldFactRestated}:14:144000`]);
   assert.equal(reading.examined, 2, "and it says what it examined, so `0 violations` can be told from `0 examined`");
 });
 
@@ -332,28 +335,38 @@ test("fact_identity_is_the_statement: a nested row's member order is not news ei
   );
 });
 
-test("suppressed_turn_is_named: every examined flush is either an opened turn or one counted reason", async () => {
+test("not_owed_is_named: every flush call opens a turn or names why it owed none", async () => {
   const pump = new CompanionEventPump();
   const recorder = recordingSink();
+  // THE INVARIANT, IN THE UNIT IT NOW HAS. A call either opens a turn (and composes exactly one batch) or names, from the
+  // closed list, why no turn was owed - and the two are different counters. `flushes examined` no longer counts the calls
+  // that owed nothing: `round64` printed `examined 134 · opened 8` and every one of the 126 was a batch it built and threw
+  // away.
   const step = async (): Promise<void> => {
     const before = pump.turnAccount;
-    await pump.flush(recorder.sink);
+    const outcome = await pump.flush(recorder.sink);
     const after = pump.turnAccount;
-    const suppressedBefore = TURN_SUPPRESSIONS.reduce((total, reason) => total + before.suppressed[reason], 0);
-    const suppressedAfter = TURN_SUPPRESSIONS.reduce((total, reason) => total + after.suppressed[reason], 0);
+    const notOwedBefore = NOT_OWED_REASONS.reduce((total, reason) => total + before.notOwed[reason], 0);
+    const notOwedAfter = NOT_OWED_REASONS.reduce((total, reason) => total + after.notOwed[reason], 0);
     const openedDelta = after.opened - before.opened;
-    const suppressedDelta = suppressedAfter - suppressedBefore;
-    assert.equal(after.examined - before.examined, 1, "every flush is examined exactly once");
+    const notOwedDelta = notOwedAfter - notOwedBefore;
     assert.equal(
-      openedDelta + suppressedDelta,
-      1,
-      `a flush that neither opened a turn nor named a suppression is a turn lost in silence: ${JSON.stringify(after.lastDecision)}`,
+      after.examined - before.examined,
+      openedDelta,
+      "a flush is examined only when it composes a batch, and a batch is composed only when a turn is owed",
     );
-    if (openedDelta === 0) {
+    assert.equal(openedDelta + notOwedDelta, 1, "every call is answered exactly once: opened, or not owed");
+    assert.equal(
+      outcome.kind === "opened",
+      openedDelta === 1,
+      `the answer and the account must agree: ${JSON.stringify(after.lastDecision)}`,
+    );
+    if (notOwedDelta === 1) {
       assert.ok(
-        TURN_SUPPRESSIONS.includes(after.lastDecision?.reason as never),
-        `a suppression must carry a reason from the closed list, got ${String(after.lastDecision?.reason)}`,
+        NOT_OWED_REASONS.includes(after.lastDecision?.reason as never),
+        `a call that owed no turn must carry a reason from the closed list, got ${String(after.lastDecision?.reason)}`,
       );
+      assert.equal(outcome.kind, "not_owed", "and the caller gets the ticket, not `undefined`");
     }
   };
 
@@ -372,9 +385,9 @@ test("suppressed_turn_is_named: every examined flush is either an opened turn or
   await step(); // the re-statement of it: suppressed, and named
 
   const account = pump.turnAccount;
-  assert.equal(account.suppressed[TURN_SUPPRESSION.nothingPending], 1);
-  assert.equal(account.suppressed[TURN_SUPPRESSION.observationRestated], 1);
-  assert.equal(account.suppressed[TURN_SUPPRESSION.worldFactRestated], 1);
+  assert.equal(account.notOwed[NOT_OWED.nothingPending], 1);
+  assert.equal(account.notOwed[NOT_OWED.observationRestated], 1);
+  assert.equal(account.notOwed[NOT_OWED.worldFactRestated], 1);
   assert.equal(account.opened, 2, "two turns: the first reading and the settlement");
 });
 
@@ -425,8 +438,8 @@ test("the closed list is what opens turns: every member has a producer, and noth
   observationPump.enqueueFact(readingFact(1, 15, { location: "Farm", gameTime: "0750" }), FACT_PRODUCER.adapterIngress);
   await open(observationPump, recorder.sink);
   assert.deepEqual(observationPump.turnAccount.lastDecision, {
-    kind: "suppressed",
-    reason: TURN_SUPPRESSION.observationMoved,
+    kind: "not_owed",
+    reason: NOT_OWED.observationMoved,
   });
   assert.equal(
     observationPump.turnAccount.opened,
@@ -502,59 +515,6 @@ test("suppression holds the facts: the next turn that opens carries what a suppr
     "and it is delivered as itself, not as the re-statement beside it",
   );
   assert.equal(pump.pendingCount, 0, `nothing is left queued behind the suppression: ${String(queueAfterFirstTurn)}`);
-});
-
-test("suppression leaves the settlement observer alone: it runs on its own timer, and its reading reaches the next turn", async () => {
-  const observer = createProgramProgressObserver();
-  observer.observe(
-    {
-      code: "found",
-      snapshot: {
-        programId: "plan_r46_weed_row",
-        state: "active",
-        catalogRevision: 3,
-        stopEpoch: 0,
-        eventHighWater: 7,
-        nodes: [
-          { nodeId: "n001", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "cut_weeds" },
-          { nodeId: "n002", state: "pending", nodeAttempt: 0, admissionAttempt: 0, actionId: "cut_weeds" },
-        ],
-      },
-    },
-    0,
-  );
-  let reads = 0;
-  const pump = new CompanionEventPump(() => {
-    reads += 1;
-    return observer.inFlight(11_000);
-  });
-  const recorder = recordingSink();
-
-  pump.enqueueFact(readingFact(0), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
-  await pump.flush(recorder.sink);
-  const readsAfterTurn = reads;
-  assert.ok(readsAfterTurn > 0, "a delivered batch states the programme in flight");
-
-  // A suppressed flush is not an observation of the journal, and must not consume or clear its reading.
-  pump.enqueueFact(readingFact(1), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(
-    settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
-    FACT_PRODUCER.adapterIngress,
-  );
-  await pump.flush(recorder.sink);
-  assert.equal(pump.turnAccount.lastDecision?.kind, "suppressed");
-  assert.equal(
-    reads,
-    readsAfterTurn,
-    "the ledger is read when a batch is composed, never to decide whether to compose",
-  );
-
-  // The next turn that opens still carries it: suppression neither starved the observer nor hid its result.
-  pump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
-  await pump.flush(recorder.sink);
-  assert.match(recorder.batches.at(-1)!.text, /<in-flight>\n/u, "the programme in flight reaches the next turn");
-  assert.match(recorder.batches.at(-1)!.text, /plan_r46_weed_row/u);
 });
 
 test("the delivered-content memory is bounded, and its drain errs toward a turn", async () => {
@@ -707,12 +667,15 @@ function readTurnAccountLine(line: string): Readonly<{
   byReason: Record<string, number>;
   /** The producers printed inside each opener's braces: the reasons a FACT opened, and which entrance it came in by. */
   openedProducers: Record<string, Record<string, number>>;
-  suppressed: Readonly<{
+  notOwed: Readonly<{
     total: number;
     counts: Record<string, number>;
     producers: Record<string, Record<string, number>>;
   }>;
   examined: number;
+  carried: Readonly<{ total: number; pending: number }>;
+  traces: number;
+  delivery: Readonly<{ bubbles: number; lostTotal: number; lost: Record<string, number> }>;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
   silentSettled: Readonly<{ total: number; counts: Record<string, number> }>;
   settledWithExecutionInFlight: number;
@@ -729,8 +692,12 @@ function readTurnAccountLine(line: string): Readonly<{
     ASSISTANT_TURNS_WITH_TEXT,
     ASSISTANT_TURNS_TOOL_ONLY,
     `${PER_DELIVERED_BATCH} turns opened`,
-    "suppressed",
-    "flushes examined",
+    FLUSHES_EXAMINED,
+    NOT_OWED_LABEL,
+    CARRIED,
+    TRACES,
+    BUBBLES_DELIVERED,
+    LOST,
     TURN_WITHOUT_ACTION,
     TURN_SETTLED_SILENT,
     TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
@@ -754,8 +721,12 @@ function readTurnAccountLine(line: string): Readonly<{
     withTextSegment,
     toolOnlySegment,
     openedSegment,
-    suppressedSegment,
     examinedSegment,
+    notOwedSegment,
+    carriedSegment,
+    tracesSegment,
+    bubblesSegment,
+    lostSegment,
     emptySegment,
     silentSegment,
     inFlightSegment,
@@ -764,6 +735,10 @@ function readTurnAccountLine(line: string): Readonly<{
     declinedSegment,
     rearmedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -788,12 +763,15 @@ function readTurnAccountLine(line: string): Readonly<{
     opened: openedSegment.total,
     byReason: openedSegment.counts,
     openedProducers: openedSegment.producers,
-    suppressed: Object.freeze({
-      total: suppressedSegment.total,
-      counts: suppressedSegment.counts,
-      producers: suppressedSegment.producers,
+    notOwed: Object.freeze({
+      total: notOwedSegment.total,
+      counts: notOwedSegment.counts,
+      producers: notOwedSegment.producers,
     }),
     examined: examinedSegment.total,
+    carried: Object.freeze({ total: carriedSegment.total, pending: carriedSegment.counts.pending ?? 0 }),
+    traces: tracesSegment.total,
+    delivery: Object.freeze({ bubbles: bubblesSegment.total, lostTotal: lostSegment.total, lost: lostSegment.counts }),
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
     settledWithExecutionInFlight: inFlightSegment.total,
@@ -890,23 +868,23 @@ test("the account line reads back into the account it names", () => {
         [TURN_OPENING.due]: { [FACT_PRODUCER.stallWatch]: 3 },
       }),
     ),
-    suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationRestated]: 2,
-      [TURN_SUPPRESSION.observationMoved]: 1,
-      [TURN_SUPPRESSION.worldFactRestated]: 4,
-      [TURN_SUPPRESSION.inFlightProgress]: 3,
-      [TURN_SUPPRESSION.progress]: 6,
-      [TURN_SUPPRESSION.nothingPending]: 5,
+    notOwed: Object.freeze({
+      [NOT_OWED.observationRestated]: 2,
+      [NOT_OWED.observationMoved]: 1,
+      [NOT_OWED.worldFactRestated]: 4,
+      [NOT_OWED.inFlightProgress]: 3,
+      [NOT_OWED.progress]: 6,
+      [NOT_OWED.nothingPending]: 5,
     }),
-    suppressedByProducer: Object.freeze(
-      producerHistograms(TURN_SUPPRESSIONS, {
-        [TURN_SUPPRESSION.observationRestated]: { [FACT_PRODUCER.snapshotRestate]: 2 },
-        [TURN_SUPPRESSION.observationMoved]: { [FACT_PRODUCER.adapterIngress]: 1 },
-        [TURN_SUPPRESSION.worldFactRestated]: { [FACT_PRODUCER.adapterIngress]: 4 },
-        [TURN_SUPPRESSION.inFlightProgress]: { [FACT_PRODUCER.adapterIngress]: 3 },
+    notOwedByProducer: Object.freeze(
+      producerHistograms(NOT_OWED_REASONS, {
+        [NOT_OWED.observationRestated]: { [FACT_PRODUCER.snapshotRestate]: 2 },
+        [NOT_OWED.observationMoved]: { [FACT_PRODUCER.adapterIngress]: 1 },
+        [NOT_OWED.worldFactRestated]: { [FACT_PRODUCER.adapterIngress]: 4 },
+        [NOT_OWED.inFlightProgress]: { [FACT_PRODUCER.adapterIngress]: 3 },
       }),
     ),
-    examined: 24,
+    examined: 12,
     assistantTurns: Object.freeze({
       examined: 6,
       byProduction: Object.freeze(
@@ -935,6 +913,9 @@ test("the account line reads back into the account it names", () => {
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
+    carry: Object.freeze({ carried: 9, pending: 2 }),
+    traces: 4,
+    delivery: Object.freeze({ bubbles: 7, lost: Object.freeze({ no_presentation_lease: 1 }), lostTotal: 1 }),
     autoObserve: autoObserveAccount(
       { refreshed: 4, lastAgeTurns: 20 },
       { [AUTO_OBSERVE_UNAVAILABLE.refused]: 1 },
@@ -952,10 +933,10 @@ test("the account line reads back into the account it names", () => {
       firedProducers(account.openedByProducer[opener]),
       `the producers under \`${opener}\` read back: only the ones that fired are printed, and a decision no fact made carries none`,
     );
-  for (const reason of TURN_SUPPRESSIONS)
+  for (const reason of NOT_OWED_REASONS)
     assert.deepEqual(
-      parsed.suppressed.producers[reason] ?? {},
-      firedProducers(account.suppressedByProducer[reason]),
+      parsed.notOwed.producers[reason] ?? {},
+      firedProducers(account.notOwedByProducer[reason]),
       `the producers under \`${reason}\` read back, so \`why was this flush suppressed\` is a query and not an investigation`,
     );
   assert.equal(
@@ -963,18 +944,18 @@ test("the account line reads back into the account it names", () => {
     account.byReason[TURN_OPENING.worldFact],
     "the block inside `world_fact`'s braces IS its count: a turn cannot be opened and attributed to no producer",
   );
-  for (const readingHeld of [TURN_SUPPRESSION.observationRestated, TURN_SUPPRESSION.observationMoved])
+  for (const readingHeld of [NOT_OWED.observationRestated, NOT_OWED.observationMoved])
     assert.equal(
-      Object.values(account.suppressedByProducer[readingHeld]).reduce((total, count) => total + count, 0),
-      account.suppressed[readingHeld],
+      Object.values(account.notOwedByProducer[readingHeld]).reduce((total, count) => total + count, 0),
+      account.notOwed[readingHeld],
       `and the same for \`${readingHeld}\`: every flush that held a reading names the producer that put it there`,
     );
   assert.equal(
-    parsed.suppressed.total,
-    Object.values(account.suppressed).reduce((total, count) => total + count, 0),
-    "the suppressed total is the SUM of its reasons, derived: a member added to `TURN_SUPPRESSION` cannot leave the printed total behind",
+    parsed.notOwed.total,
+    Object.values(account.notOwed).reduce((total, count) => total + count, 0),
+    "the suppressed total is the SUM of its reasons, derived: a member added to `NOT_OWED` cannot leave the printed total behind",
   );
-  assert.deepEqual(parsed.suppressed.counts, account.suppressed);
+  assert.deepEqual(parsed.notOwed.counts, account.notOwed);
   assert.equal(parsed.examined, account.examined);
   assert.equal(
     parsed.assistantTurns.examined,
@@ -1054,15 +1035,15 @@ test("the account line names a member that never fired, in both histograms", () 
       [TURN_OPENING.due]: 0,
     }),
     openedByProducer: Object.freeze(producerHistograms(TURN_OPENINGS)),
-    suppressed: Object.freeze({
-      [TURN_SUPPRESSION.observationRestated]: 0,
-      [TURN_SUPPRESSION.observationMoved]: 0,
-      [TURN_SUPPRESSION.worldFactRestated]: 0,
-      [TURN_SUPPRESSION.inFlightProgress]: 0,
-      [TURN_SUPPRESSION.progress]: 0,
-      [TURN_SUPPRESSION.nothingPending]: 0,
+    notOwed: Object.freeze({
+      [NOT_OWED.observationRestated]: 0,
+      [NOT_OWED.observationMoved]: 0,
+      [NOT_OWED.worldFactRestated]: 0,
+      [NOT_OWED.inFlightProgress]: 0,
+      [NOT_OWED.progress]: 0,
+      [NOT_OWED.nothingPending]: 0,
     }),
-    suppressedByProducer: Object.freeze(producerHistograms(TURN_SUPPRESSIONS)),
+    notOwedByProducer: Object.freeze(producerHistograms(NOT_OWED_REASONS)),
     examined: 1,
     assistantTurns: Object.freeze({
       examined: 0,
@@ -1076,6 +1057,9 @@ test("the account line names a member that never fired, in both histograms", () 
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
+    carry: Object.freeze({ carried: 0, pending: 0 }),
+    traces: 0,
+    delivery: Object.freeze({ bubbles: 0, lost: Object.freeze({}), lostTotal: 0 }),
     autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
     lastDecision: undefined,
   });
@@ -1102,7 +1086,7 @@ test("the account line names a member that never fired, in both histograms", () 
     [...TURN_PRODUCTIONS],
     "the assistant-turn population is the production list itself: a member nobody reached is a declared zero",
   );
-  assert.deepEqual(Object.keys(parsed.suppressed.counts), [...TURN_SUPPRESSIONS]);
+  assert.deepEqual(Object.keys(parsed.notOwed.counts), [...NOT_OWED_REASONS]);
   assert.deepEqual(
     Object.keys(parsed.autoObserve.unavailable.counts),
     [...AUTO_OBSERVE_UNAVAILABLE_REASONS],
@@ -1122,7 +1106,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /assistant turns examined, with text, tool-only, per delivered batch: turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
+    /per delivered batch: turns opened, flushes examined, not owed, carried, traces, bubbles delivered, lost, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });
@@ -1408,19 +1392,21 @@ test("turn_closed_without_action: a speaking turn with a stale reading is counte
   const afterSuppression = pump.turnAccount;
   assert.equal(afterSuppression.opened, 2, "a suppressed flush opens no turn");
   assert.equal(afterSuppression.emptyTurns.total, 2, "and an empty turn that never ran is not an empty turn");
-  assert.equal(afterSuppression.lastDecision?.kind, "suppressed");
-  assert.equal(afterSuppression.lastDecision?.reason, TURN_SUPPRESSION.worldFactRestated);
+  assert.equal(afterSuppression.lastDecision?.kind, "not_owed");
+  assert.equal(afterSuppression.lastDecision?.reason, NOT_OWED.worldFactRestated);
   assert.equal(
-    readTurnAccountLine(turnAccountLine(afterSuppression)).suppressed.counts[TURN_SUPPRESSION.worldFactRestated],
+    readTurnAccountLine(turnAccountLine(afterSuppression)).notOwed.counts[NOT_OWED.worldFactRestated],
     1,
     "the line names the reason the flush was suppressed, so `fewer turns` stays distinguishable from `lost turns`",
   );
 });
 
-test("turn_closed_without_action: the same flush suppressed rather than opened counts nothing", async () => {
-  // The other half of the red proof: the SAME flush that produced a count above, suppressed, leaves the count at zero
-  // and names the reason. A counter that incremented on every examined flush would pass the test above and be blind to
-  // the difference between a turn that happened and one that did not.
+test("turn_closed_without_action: a call that owes no turn has no turn to close, and no count to move", async () => {
+  // The other half of the red proof, re-derived from the three-state outcome: `turn_closed_without_action` was "a turn
+  // OPENED and closed on speech alone". A call answered `not_owed` opened nothing, so there is no turn to close - the
+  // counter must not move, and the reason it did not is the account's `not owed` member beside it. A counter that
+  // incremented on every `flush()` call would pass the test above and be blind to the difference between a turn that
+  // happened and one that never existed.
   const pump = new CompanionEventPump();
   const sink = speakingSink(pump);
   pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
@@ -1446,13 +1432,17 @@ test("turn_closed_without_action: the same flush suppressed rather than opened c
   await suppressed.flush(speakingSink(suppressed));
 
   const account = suppressed.turnAccount;
-  assert.equal(account.lastDecision?.kind, "suppressed");
-  assert.equal(account.emptyTurns.total, before, "a suppressed flush moved no count");
+  assert.equal(account.lastDecision?.kind, "not_owed");
+  assert.equal(
+    account.emptyTurns.total,
+    before,
+    "no turn opened, so nothing closed: the empty-turn counter is a reading of delivered turns, not of calls",
+  );
   const parsed = readTurnAccountLine(turnAccountLine(account));
   assert.equal(
-    parsed.suppressed.counts[TURN_SUPPRESSION.worldFactRestated],
+    parsed.notOwed.counts[NOT_OWED.worldFactRestated],
     1,
-    "and the line says which reason answered the flush instead",
+    "and the line says which reason answered the call instead",
   );
 });
 

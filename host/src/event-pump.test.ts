@@ -819,7 +819,14 @@ test("a body owned by a world transition holds the facts until the day starts", 
     } as never,
     FACT_PRODUCER.adapterIngress,
   );
-  assert.equal(await pump.flush(sink), undefined, "a delivery during the hold is refused, not dropped");
+  // HELD IS ITS OWN ANSWER. `undefined` used to mean all three of "nothing owed", "a delivery is in flight" and "a
+  // world transition is holding the body", so a caller could not tell a hold from a lost fact. The hold states which
+  // condition it is, and no batch was composed - the facts wait for the day that releases them.
+  assert.deepEqual(
+    await pump.flush(sink),
+    Object.freeze({ kind: "held", reason: "world_transition" }),
+    "a delivery during the hold is held, not dropped",
+  );
   assert.equal(delivered.length, 0, "and nothing reached the companion while she was asleep");
 
   pump.enqueueFact(

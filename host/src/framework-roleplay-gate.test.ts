@@ -918,9 +918,9 @@ test("the classifier reds a restated card fact of every claim, and blocks when t
     "the identity block's own sentence is not a Host rule",
   );
   assert.deepEqual(
-    claimsOf([GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text]),
+    claimsOf([GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text]),
     [],
-    "the bubble's size and the deletion past it are the surface's own delivery unit and belong to the floor",
+    "how a receipt's machine vocabulary is translated is the surface's, and the card states nothing about it",
   );
   // The premise itself must be able to fail: a directive that states no form blocks the reading instead of passing.
   const form = facts.find((fact) => fact.claim === "form");

@@ -20,6 +20,7 @@ import {
 } from "./game-surface-prompt-floor.test-support.js";
 import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_DELIVERY_UNIT,
@@ -602,42 +603,45 @@ test("the head-claim reader turns red on the sentence that proved the defect, an
 });
 
 /**
- * A TURN THAT SAYS MORE THAN ONE BUBBLE IS CUT, AND THE CUT REACHES HER OR IT IS SILENT.
+ * THE DELIVERY LOSES NOTHING BELOW THE TRANSPORT, AND THE FLOOR NEVER STATES A CEILING SHE COULD BUDGET BY.
  *
  * <p>
- * MEASURED 2026-11-16 on `round62`'s own session (the live runner's log, 90 turns that carried text, 70 that delivered a
- * bubble): **18 turns were cut, 533 characters and 26 whole sentences deleted before the player saw them**. Nothing said
- * so. The delivery measured the loss (`truncatedChars`, `sentencesDropped`), the turn loop printed it to stderr - which
- * neither the model nor the player reads - and the floor told her a bubble holds "about 80 characters", a soft target,
- * while the surface deletes. An under-statement is worse than a warning, because she budgets by it.
+ * MEASURED 2026-11-16 on `round62`'s own session (90 turns that carried text, 70 that delivered a bubble): **18 turns were
+ * cut, 533 characters and 26 whole sentences deleted before the player saw them** - and the rule that asked for it said
+ * "about 80 characters". The 80 was neither surface it described. The presentation transport carries 4,000 characters
+ * (`integrations/stardew/BridgeSession.cs` `MaximumPresentationTextLength`), the bubble draws two lines of 448 px - about
+ * 34 CJK glyphs - and clamps itself with a visible `…` (`CompanionBubble.cs`), and the chat line beside it keeps the whole
+ * text for scroll-back, which is what `ModEntry.cs` calls "the authority for the receipt". A compliant 79-character line
+ * already ended in `…` on screen, so the cut deleted speech from the surface that survives and never protected the one
+ * that clamps.
  * </p>
  *
  * <p>
- * WHY THE TAIL CANNOT SIMPLY BE DELIVERED. The bubble's unit is the prompt turn and its only channel is `onFinalText`,
- * one commit per turn (`native-companion-content.ts` `deliverTurn`); there is no mid-turn channel on this surface, and a
- * second commit per turn is the running commentary the turn unit was introduced to remove. So the tail has nowhere to
- * go, and what the surface owes her is the STATEMENT that it is deleted.
+ * Both halves are held here, because either one alone is the old defect wearing the other's clothes:
  * </p>
  *
- * <p>
- * The gate's population is DERIVED: every turn of the family below is delivered through the product's own observer with
- * the surface's own pacing, and a turn joins the population when the delivery says it was cut. The property is the
- * join: each cut turn either reached the player whole (as a continuation, which no game turn does today) or the model
- * was told, at the SAME ceiling the delivery applied, that the excess is deleted. The ceiling on both sides is
- * `GAME_DELIVERY_PACING.lengthBudget`, so a budget change moves the delivery and the sentence together or this fails.
- * </p>
+ * <ul>
+ *   <li>`speech_cut_below_the_transport:<turn>` - a turn whose speech and sound fit what the wire carries was cut
+ *     anyway. The population is DERIVED from the transport's own declaration and delivered through the product's own
+ *     observer with the surface's own pacing, so a smaller budget anywhere in the chain fails this line by the turn it
+ *     cut rather than by a number typed here.</li>
+ *   <li>`cut_turn_is_unnamed:<turn>` - a turn past the transport was cut and the record did not name the loss. The
+ *     bubble's `truncatedChars` / `sentencesDropped` is what `companion-loop.ts` prints and hands to the run's own
+ *     account, so a cut that is not counted is a deletion nobody can see.</li>
+ *   <li>`floor_states_a_bubble_ceiling:<sentence>` - the assembled prompt still gives her a size to budget by. The reader
+ *     is proved live on the verbatim sentence this unit deleted and on a rewording nobody wrote, because a detector that
+ *     only ever reads the prompt cannot tell "clean" from "blind".</li>
+ * </ul>
  */
 
-const BUBBLE_BUDGET = GAME_DELIVERY_PACING.lengthBudget;
+const TRANSPORT_CEILING = MAX_COMPANION_PRESENTATION_TEXT_CHARS;
 
 /** The turn every examined delivery is made for: the reaction sound is seeded by it, so the ceiling derivation needs it. */
-const CEILING_TURN_ID = "player_source_bubble_ceiling";
+const CEILING_TURN_ID = "player_source_transport_ceiling";
 
 /**
- * The measured `round46b` turn, verbatim: three messages and 89 characters of speech inside ONE prompt turn.
- *
- * `native-companion-turn-delivery.test.ts` pins this same speech as the shape one bubble cannot hold; here it is the
- * population's sentence-boundary half, beside the lengths derived from the ceiling below.
+ * The measured `round46b` turn: three messages and 92 characters of speech inside ONE prompt turn - and the turn the
+ * 80-character ceiling cut in half. Here it is the population's "a real turn" half, at the lengths a live run wrote.
  */
 const MEASURED_SPEECH = Object.freeze([
   "三格宽二十格长，种子还差五十八颗——先去把地方看明白，再盘算钱够不够跑一趟镇上。",
@@ -654,23 +658,25 @@ function sentenceOfLength(length: number): string {
 type CeilingTurnShape = Readonly<{ id: string; speech: readonly string[] }>;
 
 /**
- * The turns examined, derived from the ceiling the delivery cuts at rather than chosen.
+ * The turns examined, derived from the transport's ceiling rather than chosen.
  *
- * The sound is the head of the bubble and is spent from the same count (`deliverTurn`), so the character at which her
- * own speech starts being deleted is the ceiling minus the sound - read from the authority that picks the sound, never
- * typed here. The four single-sentence lengths sit ON that boundary (inside it, on it, one past it, and double, which
- * is the length a live turn reached when it lost 84 characters on `round62`).
+ * The sound is the head of the bubble and is spent from the same count (`deliverTurn`), so the last speech length that
+ * arrives whole is the ceiling minus the sound - read from the authority that picks the sound, never typed here. The four
+ * single-sentence lengths sit ON that boundary (inside it, on it, one past it, and the ceiling), and the recorded turns are
+ * what a live run actually wrote: the 92-character `round46b` turn and prefixes of it. There is deliberately no TWICE-the
+ * ceiling shape: the text layer has its own 16,384-BYTE bound (`MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES`), and 8,000 CJK
+ * characters are 24,000 bytes, which is suppressed as `undrawable_text` before any cut here is reached - a different named
+ * fact, and not this gate's.
  */
 function ceilingTurnShapes(): readonly CeilingTurnShape[] {
-  assert.ok(BUBBLE_BUDGET !== null, "blocked: the Game surface declares no bubble ceiling, so no tail can be deleted");
   const sound = selectReactionSound(CEILING_TURN_ID, "zh-CN", GAME_DELIVERY_PACING.reaction!);
   assert.notEqual(
     sound,
     null,
     "blocked: this turn has no reaction vocabulary, so the bubble's head cannot be measured",
   );
-  const speechCeiling = BUBBLE_BUDGET.maxChars - (sound!.length + 1);
-  const lengths = Object.freeze([speechCeiling - 1, speechCeiling, speechCeiling + 1, BUBBLE_BUDGET.maxChars * 2]);
+  const wholeSpeech = TRANSPORT_CEILING - (sound!.length + 1);
+  const lengths = Object.freeze([wholeSpeech - 1, wholeSpeech, wholeSpeech + 1, TRANSPORT_CEILING]);
   return Object.freeze([
     ...lengths.map((length) =>
       Object.freeze({ id: `one_sentence_of_${String(length)}`, speech: Object.freeze([sentenceOfLength(length)]) }),
@@ -745,47 +751,24 @@ async function deliveredCeilingTurn(
 }
 
 /**
- * The sentences of the conduct that state the bubble's size, joined: the statement the model reads about its ceiling.
+ * Every sentence of the assembled prompt that gives the bubble a SIZE, joined.
  *
- * The population is the assembled prompt, not the rule's source, so deleting the rule empties this and the gate fails
- * instead of passing on a constant. Every sentence that names the bubble joins, because the ceiling and what happens
- * past it are one statement that may be written over two sentences.
+ * The population is the prompt the model is handed, not the rule's source, so the reader cannot agree with a module that
+ * the prompt does not carry. A sentence joins when it names the bubble and states a number: that is a ceiling she could
+ * budget by, which is the defect this reader exists to keep out.
  */
-function bubbleSizeStatement(prompt: string): string {
-  return conductBlock(prompt)
+function bubbleCeilingStatements(prompt: string): readonly string[] {
+  return bubbleCeilingSentences(conductBlock(prompt));
+}
+
+/** The same reading over any text: the reader's own red proof needs it, and so does every sentence of the prompt. */
+function bubbleCeilingSentences(text: string): readonly string[] {
+  return text
     .split(/(?<=[.!?。！？])\s*/u)
-    .filter((sentence) => /\bbubble\b/iu.test(sentence))
-    .join(" ");
+    .filter((sentence) => /\bbubble\b/iu.test(sentence) && /\b\d+\b/u.test(sentence));
 }
 
-/**
- * A deletion, bound to what lies past a stated size - a KIND, never a phrasing.
- *
- * The two halves must meet inside one sentence: a verb that puts text out of reach, and the excess it applies to. A
- * sentence that only names a size says nothing about what happens past it, which is exactly the under-statement this
- * gate exists for.
- */
-const DELETES_THE_EXCESS =
-  /\b(?:delet(?:e|es|ed|ing)|cut|cuts|cutting|drop(?:s|ped)?|discard(?:s|ed)?|remove(?:s|d)?|never (?:arrives|reaches|delivers?))\b[^.!?]{0,120}?\b(?:past|beyond|over|rest|tail|excess)\b|\b(?:past|beyond|over|rest|tail|excess)\b[^.!?]{0,120}?\b(?:delet(?:e|es|ed|ing)|cut|cuts|cutting|dropped|discarded|removed)\b/iu;
-
-/**
- * The ceiling a statement says is DELETED, or `null` when it states a size and not what happens past it.
- *
- * The number is read from the statement itself and compared to the ceiling the delivery applied, so the two can never
- * disagree in silence; a statement carrying two different sizes names no single ceiling and is refused rather than
- * resolved by whichever number came first.
- */
-function statedDeletionCeiling(statement: string): number | null {
-  if (!DELETES_THE_EXCESS.test(statement)) return null;
-  const sizes = [...new Set([...statement.matchAll(/\b\d+\b/gu)].map((match) => Number(match[0])))];
-  return sizes.length === 1 ? sizes[0]! : null;
-}
-
-test("a turn the bubble cuts is never silent: the ceiling that deletes its tail is stated, and it is the delivery's own", async () => {
-  assert.ok(
-    BUBBLE_BUDGET !== null,
-    "blocked: the Game surface declares no bubble ceiling, so nothing here was examined",
-  );
+test("the delivery never cuts below the transport, and a cut past it is named on the bubble's own record", async () => {
   const shapes = ceilingTurnShapes();
   assert.ok(shapes.length > 0, "blocked: no turn shape was derived, so the population is empty");
   const examined: {
@@ -795,61 +778,73 @@ test("a turn the bubble cuts is never silent: the ceiling that deletes its tail 
     bubble: NativeCompanionTurnBubble | null;
   }[] = [];
   for (const shape of shapes) examined.push({ ...shape, ...(await deliveredCeilingTurn(shape.speech)) });
-  const statement = bubbleSizeStatement(GAME_PROMPT);
-  assert.ok(statement.length > 0, "blocked: the Game prompt states no bubble size, so no ceiling was read");
-  const stated = statedDeletionCeiling(statement);
 
-  const cut = examined.filter(
-    (turn) => turn.bubble !== null && (turn.bubble.truncatedChars > 0 || turn.bubble.sentencesDropped > 0),
+  const sound = selectReactionSound(CEILING_TURN_ID, "zh-CN", GAME_DELIVERY_PACING.reaction!);
+  assert.notEqual(sound, null);
+  const wholeSpeech = TRANSPORT_CEILING - (sound!.length + 1);
+  const fits = (turn: { speech: readonly string[] }): boolean => turn.speech.join(" ").length <= wholeSpeech;
+
+  const findings: string[] = [];
+  let whole = 0;
+  let cut = 0;
+  for (const turn of examined) {
+    assert.notEqual(turn.bubble, null, `${turn.id}: a turn with speech has a bubble`);
+    assert.equal(turn.pieces.length, 1, `${turn.id}: one bubble per turn is the surface's contract`);
+    const delivered = turn.pieces[0]!;
+    if (fits(turn)) {
+      whole += 1;
+      const speech = turn.speech.join(" ");
+      if (delivered !== `${sound!} ${speech}`)
+        findings.push(`speech_cut_below_the_transport:${turn.id}:${String(delivered.length)}:${String(speech.length)}`);
+      if (turn.bubble!.truncatedChars !== 0 || turn.bubble!.sentencesDropped !== 0)
+        findings.push(
+          `speech_cut_below_the_transport:${turn.id}:${String(turn.bubble!.truncatedChars)}:${String(turn.bubble!.sentencesDropped)}`,
+        );
+      continue;
+    }
+    cut += 1;
+    // Past the transport there is a real loss - the wire would refuse the request outright - and the whole of what the
+    // caller can act on is that it is COUNTED, at the ceiling the wire actually carries.
+    if (turn.bubble!.truncatedChars <= 0) findings.push(`cut_turn_is_unnamed:${turn.id}:${String(delivered.length)}`);
+    if (delivered.length !== TRANSPORT_CEILING)
+      findings.push(`cut_is_not_the_transport_ceiling:${turn.id}:${String(delivered.length)}`);
+  }
+
+  // THE READER IS PROVEN LIVE: the sentence this unit deleted, and a rewording nobody wrote, both have to be read.
+  const deletedRule =
+    "One bubble holds 80 characters and cannot be retracted once it is shown, and the sound that opens it is spent from " +
+    "that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail does " +
+    "not arrive as a second bubble, and it does not arrive later either.";
+  assert.ok(
+    bubbleCeilingSentences(deletedRule).length > 0,
+    "the verbatim text of the rule this unit deleted is not read as a ceiling statement, so the reader is blind",
   );
   assert.ok(
-    cut.length > 0,
-    "blocked: no examined turn was cut, so 'a cut turn is never silent' was never exercised - the family must cross " +
-      `the ${String(BUBBLE_BUDGET.maxChars)}-character ceiling`,
+    bubbleCeilingSentences("One bubble holds 120 characters, and anything past the bubble is deleted.").length > 0,
+    "a reworded ceiling must be read too, or this reader only detects the sentence it was written against",
   );
+  assert.deepEqual(
+    bubbleCeilingSentences("The bubble draws plain prose, so no markdown heading or list reaches it."),
+    [],
+    "a sentence about what the bubble draws states no size, so it must not be read as a ceiling",
+  );
+  const stated = bubbleCeilingStatements(GAME_PROMPT);
+  for (const sentence of stated) findings.push(`floor_states_a_bubble_ceiling:${sentence}`);
 
-  // THE READER IS PROVEN LIVE, because a detector that never fires reports the same zero as a floor that never lies.
-  assert.equal(
-    statedDeletionCeiling("One bubble holds about 80 characters and cannot be retracted once it is shown."),
-    null,
-    "the sentence this gate was written for states a size and no deletion, so it must read as no statement of the loss",
-  );
-  assert.equal(
-    statedDeletionCeiling("One bubble holds 120 characters. Anything past 120 is deleted before your partner sees it."),
-    120,
-    "an honest statement of a different ceiling must be read as that ceiling, or the number is not being read at all",
-  );
-  assert.equal(
-    statedDeletionCeiling("One bubble holds 80 characters, and anything past it is deleted at 120."),
-    null,
-    "a statement naming two sizes names no ceiling, and resolving it by position would compare the wrong number",
-  );
-
-  const squeeze = (text: string): string => text.replace(/\s+/gu, "");
-  const findings: string[] = [];
-  for (const turn of cut) {
-    // The other way a cut turn is not silent: the tail reached the player as a continuation. No game turn takes this
-    // branch today - `onFinalText` is the surface's only channel - so the model's statement is what holds the gate up.
-    const reachedThePlayer =
-      turn.pieces.length > 1 && squeeze(turn.pieces.join(" ")).includes(squeeze(turn.speech.join(" ")));
-    const reachedTheModel = stated === BUBBLE_BUDGET.maxChars;
-    if (!reachedThePlayer && !reachedTheModel)
-      findings.push(
-        `speech_truncated_without_telling_anyone:${turn.id}:${String(turn.bubble!.truncatedChars)} ` +
-          `(${String(turn.bubble!.sentencesDropped)} sentences)`,
-      );
-  }
   process.stdout.write(
-    `\nspeech truncation: turns examined ${String(examined.length)} · truncated ${String(cut.length)} · ` +
-      `silently truncated ${String(findings.length)} · the model is told the ceiling ${String(stated ?? "not at all")} · ` +
-      `the delivery cuts at ${String(BUBBLE_BUDGET.maxChars)}\n`,
+    `\nspeech bound: turns examined ${String(examined.length)} · whole ${String(whole)} · cut ${String(cut)} · ` +
+      `named ${String(cut)} · the wire carries ${String(TRANSPORT_CEILING)} · the floor states a bubble size: ` +
+      `${stated.length === 0 ? "none" : String(stated.length)}\n`,
+  );
+  assert.ok(
+    whole > 0 && cut > 0,
+    "blocked: the derived population never crossed the ceiling, so nothing was exercised",
   );
   assert.deepEqual(
     findings,
     [],
-    "a turn's speech was deleted at the bubble's ceiling and the model was told only a size, not that the tail is " +
-      "deleted: she budgets by a soft number while the surface removes the excess. State the deletion in the conduct " +
-      "sentence that states the ceiling (`game-surface-prompt-floor.ts` `one_bubble_of_size`).",
+    "a turn below the transport is delivered whole and a turn past it is counted (`native-companion-content.ts` " +
+      "`deliverTurn`), and the prompt states no size she could budget by (`game-surface-prompt-floor.ts`).",
   );
 });
 
@@ -1128,9 +1123,11 @@ test("the claims the floor stopped making are stated by the persona layer, and b
     1,
     "the ownership clause is stated once - widened to the whole village - and not a second time beside itself",
   );
-  // WHAT THE FLOOR STILL SAYS ABOUT A REPLY'S SHAPE, named rather than implied: the box it is spoken into and the
-  // deletion past that box, which are facts about the surface. No rule about how the prose is laid out is left.
-  assert.match(GAME_PROMPT, /One bubble holds \d+ characters/u);
+  // WHAT THE FLOOR STILL SAYS ABOUT A REPLY'S SHAPE: nothing, and that is now the whole of it. The box it is spoken into
+  // left on 2026-11-24 with the 80 that described no surface at all (the transport carries 4,000, the bubble clamps its own
+  // two lines with `…`), so neither a size nor a deletion past it is stated here - `game-surface-prompt-floor.test.ts`
+  // holds the delivery and the prompt together on that point.
+  assert.doesNotMatch(GAME_PROMPT, /One bubble holds \d+ characters/u);
   assert.doesNotMatch(GAME_PROMPT, /No markdown headings/u);
   assert.doesNotMatch(GAME_PROMPT, /Only state what you actually observed/u);
 });

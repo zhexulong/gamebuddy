@@ -197,6 +197,13 @@ export const L0_GATES = Object.freeze([
   // tools in total silence`) was reviewed, shipped, and answered with 132 bubbles over 93 prompt turns - 90 of them
   // standalone speech with no tool call - before anyone asked what KIND of rule it was. Pure file reads, milliseconds.
   "tools/check-game-surface-conduct-classes.mjs",
+  // Where a delivered line's CEILING comes from. The delivery cut every turn's speech at 80 characters - 77 with the
+  // reaction sound - while the presentation transport carries 4,000 and the bubble clamps its own two lines with `…`;
+  // measured on `round62` (90 turns carried text, 70 delivered a bubble), 18 turns lost their tails for it: 533 characters,
+  // 26 whole sentences. Nothing read where the number came from, and the floor restated it, so the two agreed with each
+  // other and neither agreed with the wire. This rung reads the bound, its three producers and the bubble's clamp, and
+  // fails when a bound states a literal instead of resolving to the transport's declaration. Pure file reads.
+  "tools/check-delivery-truncation-bound.mjs",
   // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
   // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
   // - and this rung ran `audit-totality-head.mjs` above instead, whose entry guard is missing, so it exits 0 having

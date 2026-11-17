@@ -134,19 +134,18 @@ export const CHAT_TRANSCRIPT_DELIVERY_UNIT = "message" as const;
  *
  * <p>
  * `chars` is what the player can read. `truncatedChars` and `sentencesDropped` say the turn's speech
- * did not fit one bubble and where the cut landed: a non-zero `truncatedChars` with
+ * did not fit the presentation transport and where the cut landed: a non-zero `truncatedChars` with
  * `sentencesDropped` 0 is a single sentence cut at the character ceiling (there was no sentence
- * boundary to stop at). This is a CADENCE fact, not a text fact - a turn that trips it spoke more
- * than one bubble's worth inside one turn.
+ * boundary to stop at). Nothing below that ceiling is cut, so a bubble that only shows two lines and a
+ * `…` is the Mod's own clamp on text it received complete and reports nothing here.
  * </p>
  *
  * <p>
  * THE CUT DELETES TEXT, AND NOTHING HERE CAN DELIVER IT. The bubble's unit is the turn and its one channel is
- * `onFinalText`, so a turn longer than the ceiling has no second commit to carry its tail (`deliverTurn`); the sound
- * that opens the bubble is spent from the same ceiling. What the surface owes her is the STATEMENT that the excess is
- * deleted - `game-surface-prompt-floor.ts` `one_bubble_of_size` states it, at the number this cut was taken at - and
- * what the run owes itself is this count, which `companion-loop.ts` prints as `speech_truncated:` for the turn it
- * happened on.
+ * `onFinalText`, so a turn past the transport's ceiling has no second commit to carry its tail (`deliverTurn`); the sound
+ * that opens the bubble is spent from the same ceiling. This count IS the loss, named on the record every caller reads
+ * (`companion-loop.ts` prints `speech_truncated:` for the turn it happened on and hands the same bubble to the run's
+ * account), rather than a number a prompt asked her to budget by.
  * </p>
  */
 export type NativeCompanionTurnBubble = Readonly<{
@@ -527,17 +526,16 @@ export function attachNativeCompanionContent(
   };
 
   /**
-   * The turn's one bubble: its reaction sound, then every message's presented text in arrival order,
-   * cut to the surface's own bubble ceiling.
+   * The turn's one bubble: its reaction sound, then every message's presented text in arrival order, cut at the
+   * presentation transport's own ceiling.
    *
    * <p>
    * MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49
    * bubbles - one bubble every 13 seconds, 2.04 messages per turn - because every assistant message
    * was delivered as a reply of its own. The floor asks for one spoken line per reply, and a reply is
    * one prompt turn; the two spellings of "reply" were the defect. Coalescing cannot lose text: every
-   * non-empty text part of the turn is in the result, and the only cut is the bubble's ceiling, which
-   * `deliverTurn` reports by name rather than hiding (`speech_truncated:`, printed by the turn loop,
-   * and the deletion it means is stated to her in the conduct).
+   * non-empty text part of the turn is in the result, and the only cut is the transport's ceiling, which
+   * `deliverTurn` reports on the bubble's own record (`truncatedChars`, `sentencesDropped`).
    * </p>
    */
   const deliverTurn = (): NativeCompanionTurnBubble | null => {

@@ -9,7 +9,7 @@ import {
   type PendingBatch,
   turnAccountLine,
   TURN_OPENING,
-  TURN_SUPPRESSION,
+  NOT_OWED,
   type WorldFact,
   type WorldStateRefreshPort,
 } from "./event-pump.js";
@@ -185,7 +185,7 @@ test("the reading alone opens no turn: round55's 90 snapshot-only flushes are st
   );
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.observationMoved }),
     "and the flush names what it was holding rather than claiming nothing arrived",
   );
   assert.equal(pump.turnAccount.opened, 1, "no turn was opened for it");
@@ -260,7 +260,7 @@ async function row(payload: Readonly<Record<string, unknown>>, revision: number)
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.observationMoved }),
     "the reading alone opens nothing, whatever field moved",
   );
 
@@ -298,7 +298,7 @@ test("content matrix: an identical payload with a new revision is still state, a
   assert.equal(batches.length, 1);
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationRestated }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.observationRestated }),
   );
 });
 
@@ -351,7 +351,7 @@ test("an aged reading still asks the world first, and the ask itself opens no tu
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.observationMoved }),
     "the answer to the ask is a reading, so it opens no turn either",
   );
   assert.equal(asked.length, 1, "the flush asked the world about the reading it could not use");
@@ -434,29 +434,29 @@ test("a reading that repeats the held one and a reading that moved are the same 
     pump.enqueueFact(reading(353 + index, row.payload, index + 1), row.by);
     await pump.flush(sink(batches));
     const decision = pump.turnAccount.lastDecision;
-    assert.equal(decision?.kind, "suppressed", `a reading opens no turn: ${JSON.stringify(decision)}`);
+    assert.equal(decision?.kind, "not_owed", `a reading opens no turn: ${JSON.stringify(decision)}`);
     labels.push((decision as { reason: string }).reason);
   }
 
   assert.equal(batches.length, 1, "no reading in the schedule was worth a turn");
   assert.equal(
-    labels.filter((label) => label === TURN_SUPPRESSION.observationRestated).length,
+    labels.filter((label) => label === NOT_OWED.observationRestated).length,
     repeats,
-    `the readings that said what the held one said are \`${TURN_SUPPRESSION.observationRestated}\`, and no others: ${labels.join(", ")}`,
+    `the readings that said what the held one said are \`${NOT_OWED.observationRestated}\`, and no others: ${labels.join(", ")}`,
   );
   assert.equal(
-    labels.filter((label) => label === TURN_SUPPRESSION.observationMoved).length,
+    labels.filter((label) => label === NOT_OWED.observationMoved).length,
     schedule.length - repeats,
-    `and the readings that moved are \`${TURN_SUPPRESSION.observationMoved}\`: ${labels.join(", ")}`,
+    `and the readings that moved are \`${NOT_OWED.observationMoved}\`: ${labels.join(", ")}`,
   );
   const account = pump.turnAccount;
   assert.equal(
-    account.suppressed[TURN_SUPPRESSION.observationRestated] + account.suppressed[TURN_SUPPRESSION.observationMoved],
+    account.notOwed[NOT_OWED.observationRestated] + account.notOwed[NOT_OWED.observationMoved],
     schedule.length,
     "the two members partition \`a reading and nothing else\`: every scheduled flush is in exactly one of them",
   );
   assert.equal(
-    account.suppressed[TURN_SUPPRESSION.nothingPending] + account.suppressed[TURN_SUPPRESSION.worldFactRestated],
+    account.notOwed[NOT_OWED.nothingPending] + account.notOwed[NOT_OWED.worldFactRestated],
     0,
     "and nothing in this window was anything else",
   );
@@ -470,7 +470,7 @@ test("the flush that holds only a reading is counted against the reading, never 
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.nothingPending }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.nothingPending }),
     "an empty pump has nothing pending, and no reading to blame",
   );
 
@@ -478,11 +478,11 @@ test("the flush that holds only a reading is counted against the reading, never 
   await pump.flush(sink(batches));
   assert.deepEqual(
     pump.turnAccount.lastDecision,
-    Object.freeze({ kind: "suppressed", reason: TURN_SUPPRESSION.observationMoved }),
+    Object.freeze({ kind: "not_owed", reason: NOT_OWED.observationMoved }),
     "a reading that arrived and decided nothing is its own named condition",
   );
   const line = turnAccountLine(pump.turnAccount);
-  assert.match(line, /suppressed 2 \{/u, line);
+  assert.match(line, /not owed 2 \{/u, line);
   assert.match(
     line,
     /observation_restated: 0/u,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, validateIdentityProfile } from "./identity-profile.js";
@@ -96,14 +96,17 @@ test("every preset example survives dehydration as speech the player can read", 
   }
 });
 
-test("a preset example fits one Game bubble, so the surface never has to cut it", () => {
-  const budget = GAME_DELIVERY_PACING.lengthBudget;
-  assert.ok(budget !== null, "the game surface must declare a length budget for this case to mean anything");
+test("a preset example fits what the transport carries, so the delivery never has to cut one", () => {
+  // The bound is the wire's own (`companion-presentation-transport.ts`), not the bubble's: the bubble draws two lines and
+  // clamps itself with `…` on screen, and the chat line keeps the whole text. This case used to hold the examples to an
+  // 80-character "bubble" that described neither surface. What it still protects is that a recorded example can be
+  // DELIVERED at all - an example past the transport's ceiling would be refused by the wire and reach nobody.
+  const maxChars = MAX_COMPANION_PRESENTATION_TEXT_CHARS;
   for (const example of presetExamples) {
     const delivered = deliveredLength(example.companion);
     assert.ok(
-      delivered <= budget.maxChars,
-      `example delivers ${delivered} characters, past the ${budget.maxChars}-character bubble: ` +
+      delivered <= maxChars,
+      `example delivers ${delivered} characters, past the ${maxChars} the presentation transport carries: ` +
         JSON.stringify(example.companion),
     );
   }

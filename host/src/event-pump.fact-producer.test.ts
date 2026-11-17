@@ -9,7 +9,7 @@ import {
   FACT_PRODUCER,
   FACT_PRODUCERS,
   TURN_OPENING,
-  TURN_SUPPRESSION,
+  NOT_OWED,
   type WorldFact,
 } from "./event-pump.js";
 
@@ -257,9 +257,9 @@ test("the account says WHICH entrance a suppressed flush was suppressed for", as
   await pump.flush(recordingSink());
 
   const held = pump.turnAccount;
-  assert.equal(held.suppressed[TURN_SUPPRESSION.observationMoved], 1);
+  assert.equal(held.notOwed[NOT_OWED.observationMoved], 1);
   assert.equal(
-    held.suppressedByProducer[TURN_SUPPRESSION.observationMoved][FACT_PRODUCER.adapterIngress],
+    held.notOwedByProducer[NOT_OWED.observationMoved][FACT_PRODUCER.adapterIngress],
     1,
     "the flush that held the adapter's reading names the adapter as the producer of the reading it held",
   );
@@ -271,9 +271,9 @@ test("the account says WHICH entrance a suppressed flush was suppressed for", as
   await pump.flush(recordingSink());
 
   const restated = pump.turnAccount;
-  assert.equal(restated.suppressed[TURN_SUPPRESSION.observationRestated], 1);
+  assert.equal(restated.notOwed[NOT_OWED.observationRestated], 1);
   assert.equal(
-    restated.suppressedByProducer[TURN_SUPPRESSION.observationRestated][FACT_PRODUCER.snapshotRestate],
+    restated.notOwedByProducer[NOT_OWED.observationRestated][FACT_PRODUCER.snapshotRestate],
     1,
     "and the re-stated copy is attributed to the Host's own refresh, not to the world it copied",
   );
@@ -294,9 +294,9 @@ test("a decision no fact made carries no producer, and the account says so rathe
 
   const empty = new CompanionEventPump();
   await empty.flush(recordingSink());
-  assert.equal(empty.turnAccount.suppressed[TURN_SUPPRESSION.nothingPending], 1);
+  assert.equal(empty.turnAccount.notOwed[NOT_OWED.nothingPending], 1);
   assert.deepEqual(
-    Object.values(empty.turnAccount.suppressedByProducer[TURN_SUPPRESSION.nothingPending]).filter((count) => count > 0),
+    Object.values(empty.turnAccount.notOwedByProducer[NOT_OWED.nothingPending]).filter((count) => count > 0),
     [],
     "and an empty window names no producer either - the reason's own count is the whole reading",
   );
