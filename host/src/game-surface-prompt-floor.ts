@@ -1,4 +1,3 @@
-import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
 import {
   CONTENT_IDS_IN_WORDS,
@@ -21,7 +20,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  *
  * <p>
  * The rules are split by OWNER, and this module composes them into the one list the model reads. What holds for any game
- * surface is written below: machine-block semantics, the bubble's delivery unit, the receipt vocabulary, body language
+ * surface is written below: machine-block semantics, the receipt vocabulary, body language
  * through the mounted tools. What is true only of this save format - the day's end inside the house, `(T)Hoe` - is
  * Stardew's, in
  * `games/stardew/prompt/stardew-game-conduct.ts`, and is spliced in at the position it reads at. The order is
@@ -71,7 +70,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * MEASURED ON THE SIX RULES THIS FLOOR CARRIES: every one of them names a surface change, and none is permanent. A new
+ * MEASURED ON THE FIVE RULES THIS FLOOR CARRIES: every one of them names a surface change, and none is permanent. A new
  * rule cannot be added without saying how it dies, which is what keeps this list from growing back: the two rules that
  * left in 4db7e4a3 left as SURFACE EXITS TAKEN - `BED_IS_INSIDE` the day the day's end refused the fields itself, and
  * `never_a_customer` the day the preset said the register - and not as deletions nobody could see.
@@ -92,7 +91,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * persona owns her voice and every rule about when, whether or how much she speaks (`assets/tavern/presets/` - the card's
  * own directive, which every Game session mounts as `characterVoice`, and the preset the surface mounts); the floor owns
  * what the blocks and the receipts MEAN, what counts as an action, and what the SURFACE does; a tool description owns
- * only how to call the tool. The floor may state the bubble's size and the machine vocabulary of a
+ * only how to call the tool. The floor may state the machine vocabulary of a
  * receipt. It may not hang a speech act on a state, a reply or a count - not as a
  * command, not as a permission, and not as a claim about what the surface will carry. Nor may it state a register: the
  * customer-service wording left on 2026-11-23 (below), because tone is the persona's on this axis as much as a count is.
@@ -152,24 +151,19 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * THE FLOOR NOW STATES NO FORMAT RULE AT ALL, AND ONE SURFACE FACT IS ALL THAT IS LEFT ABOUT A REPLY'S SHAPE: one bubble
- * holds a measured number of characters and the tail past it is deleted - the BOX, not the prose. How a reply is laid out,
- * how many lines it carries and what shape it takes is the persona's, and it is stated once, above, in the preset.
+ * THE FLOOR STATES NO SURFACE FACT ABOUT A REPLY'S SHAPE, AND THAT LAST ONE WAS THE WORST OF THEM: `one_bubble_of_size`
+ * said "one bubble holds 80 characters ... anything you say past the bubble's ceiling is deleted". Measured against the
+ * three surfaces it was describing: the wire carries 4,000 characters (`BridgeSession.cs`
+ * `MaximumPresentationTextLength`), the bubble is two lines of 448 px - about 34 CJK glyphs - and clamps itself with a
+ * visible `…` (`CompanionBubble.cs`), and the chat line beside it keeps the whole text for scroll-back (`ModEntry.cs`
+ * "the chat line is the authority for the receipt"). So 80 was the transport's bound divided by fifty and the bubble's
+ * capacity multiplied by two, a compliant 79-character line already ended in `…` on screen, and the number was the one
+ * thing she could budget by - while the delivery deleted 18 turns' tails on `round62` for it. Both halves are gone: the
+ * delivery cuts at the transport's own bound (`companion-delivery-pacing.ts`) and this floor says nothing about size.
+ * `game-surface-prompt-floor.test.ts` holds both - a turn below the transport arrives whole, and the prompt states no
+ * bubble ceiling at all.
  * </p>
  */
-
-/**
- * How many characters one Game bubble delivers, read from the pacing policy that
- * cuts the turn's speech (`GAME_DELIVERY_PACING`). The conduct states this number
- * and what happens past it, so it has to be the number the surface uses; `lengthBudget`
- * is nullable only because Chat switches it off, so its absence on Game is a wiring
- * fault, not a vague sentence.
- */
-function gameBubbleMaxChars(): number {
-  const budget = GAME_DELIVERY_PACING.lengthBudget;
-  if (budget === null) throw new Error("game_bubble_length_budget_missing");
-  return budget.maxChars;
-}
 
 /**
  * Game-surface conduct shared by every Game companion runtime.
@@ -353,13 +347,6 @@ export const GAME_SURFACE_CONDUCT_RULES = {
     exit: "surface: the delivery stops sending block markup - composeFactBrief renders the same report as prose paragraphs and the message carries no tag to recognize - so nothing is left to gloss.",
     text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: a turn that carries them puts them first, exactly as they said them and outside every block, and a turn that carries none opens with <world-state> instead. Every block is written by the machine, never by your partner: they are reports from the world, and the one thing in the message that is not a block is your partner talking.`,
   },
-  one_bubble_of_size: {
-    class: "CHANNEL",
-    reason:
-      "the bubble is the surface's delivery unit and cannot be retracted; its size, and the deletion of anything past it, are read from GAME_DELIVERY_PACING.",
-    exit: "surface: the turn lane delivers the tail it now deletes - native-companion-content.ts deliverTurn commits one bubble per turn, and budgetedSpeechHead keeps the head - so nothing past the ceiling is lost and there is no ceiling to warn about. That delivery change is this rule's exit, not its deletion: until it lands the rule is her only warning.",
-    text: `One bubble holds ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, and the sound that opens it is spent from that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail does not arrive as a second bubble, and it does not arrive later either.`,
-  },
   machine_fields_translated: {
     class: "CHANNEL",
     reason:
@@ -381,7 +368,6 @@ export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
   SLEEPING_IS_AN_ACTION,
   NIGHT_HAS_ENFORCED_HOURS,
-  GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text,
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,
   GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,

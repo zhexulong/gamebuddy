@@ -183,13 +183,16 @@ test("the Game floor states the bubble and asks for no line on any turn", () => 
   // `stopReason === "toolUse"`, plus the 3 s silence timer). The floor's answer was to
   // ask for that line on every turn, which is how a wake-up-say-one-thing-stop loop got
   // into the prompt; 2026-11-22 removed it, and the surface's delivery is stated as what
-  // it is: one bubble, its size, and nothing about how many lines a reply owes.
+  // it is: one bubble, its size, and nothing about how many lines a reply owes. THE SIZE LEFT TOO (2026-11-24): 80 was
+  // neither the transport's 4,000 nor the bubble's ~34 glyphs, and the delivery now cuts only at the wire's bound, so the
+  // prompt states no size at all. The negative below is the guard, and `game-surface-prompt-floor.test.ts` holds it
+  // against the delivery itself, one turn either side of the ceiling.
   //
   // WHEN a line belongs is the persona's: the card says 说完就停, and the preset the Game
   // surface mounts says what she does about it. `conversational-stance-gate.test.ts` reads
   // every rule in the floor and fails on any that states a moment or a count.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /One bubble holds \d+ characters/);
+  assert.doesNotMatch(game, /One bubble holds \d+ characters/u, "a stated bubble size is a number she budgets by");
   assert.doesNotMatch(game, /the surface carries one per reply/);
   assert.doesNotMatch(game, /say it as you begin a stretch of work/);
   assert.doesNotMatch(game, /work quietly until you are done/);
@@ -239,7 +242,7 @@ test("the Game floor does not command speech before every action, so the card ke
   assert.doesNotMatch(game, /Speak before you act/);
   assert.doesNotMatch(game, /Never run tools in total silence/);
   assert.doesNotMatch(game, /land your first reaction on what they said/);
-  assert.match(game, /One bubble holds \d+ characters/);
+  assert.doesNotMatch(game, /One bubble holds \d+ characters/u, "the floor describes no box for her to budget by");
   assert.doesNotMatch(game, /One utterance per reply/);
   assert.match(buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile), /先接住人/u);
 });
@@ -400,8 +403,8 @@ test("the Game floor carries no pacing bound at all", () => {
   // The old ruling removed a length ("keep each remark to a few words") and a count of
   // actions ("One quick remark between actions is plenty"), and then a pacing bound
   // survived in three more spellings. All of them are the persona's: the floor states
-  // the bubble it is spoken into (`one_bubble_of_size`) and nothing about how often or
-  // how much she says.
+  // nothing about how often or how much she says, and nothing about the size of the box
+  // either (below).
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   for (const gone of [
     /Keep lines short and conversational/u,
@@ -412,32 +415,23 @@ test("the Game floor carries no pacing bound at all", () => {
     /You may speak while you work/u,
   ])
     assert.doesNotMatch(game, gone, `${String(gone)} paces her speech, which the persona owns`);
-  assert.match(game, /One bubble holds \d+ characters/);
 });
 
-test("the Game conduct fits one spoken turn inside the bubble the player reads from", () => {
-  // The bubble is a physically small, transitory box: `companion-delivery-pacing.ts`
-  // delivers at most `lengthBudget.maxChars` characters per piece and splits at
-  // sentence ends, and `companion-interaction-gate.mjs` fails a turn past 120. The
-  // conduct said only "a brief remark goes a long way", so a live run answered in
-  // 157/178/144-character turns. The number here is derived from the delivery
-  // budget rather than restated, so changing the budget fails this line instead of
-  // leaving the prompt describing a box the surface no longer has.
+test("the Game floor states no bubble ceiling, because it describes no surface", () => {
+  // Measured against the three surfaces the deleted rule named at once: the presentation transport carries 4,000
+  // characters (`MAX_COMPANION_PRESENTATION_TEXT_CHARS`, the Mod's own `MaximumPresentationTextLength`), the bubble draws
+  // two lines of 448 px - about 34 CJK glyphs - and clamps itself with a visible `…`, and the chat line keeps the whole
+  // text for scroll-back. "One bubble holds 80 characters" was 50× the first divided by 2× the second, so a compliant
+  // 79-character line already ended in `…` on screen, and on `round62` the number deleted 18 turns' tails for it. The
+  // delivery now cuts at the transport's own bound (`companion-delivery-pacing.ts`), and no size is stated to her at all.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.doesNotMatch(game, /One bubble holds \d+ characters/u, "a stated bubble size is a number she budgets by");
+  assert.doesNotMatch(game, /past the bubble's ceiling is deleted/u, "and the deletion past it is the same claim");
   const budget = GAME_DELIVERY_PACING.lengthBudget;
-  assert.ok(budget !== null, "the Game surface must declare a bubble budget for this case to mean anything");
+  assert.ok(budget !== null, "the Game surface still declares the transport's bound, so delivery stays bounded");
   assert.ok(
-    game.includes(`One bubble holds ${budget.maxChars} characters`),
-    `the conduct must state the ${budget.maxChars}-character bubble it is spoken into`,
-  );
-  // And it must say what happens PAST that size, because the surface deletes: measured 2026-11-16 (`round62`, 90 turns
-  // that carried text) 18 turns were cut and 533 characters were deleted before the player saw them. A size on its own
-  // reads as a soft target, and she budgets by it. `game-surface-prompt-floor.test.ts` joins this statement to the
-  // delivery itself, one truncated turn at a time.
-  assert.match(
-    game,
-    /past the bubble's ceiling is deleted/u,
-    "the conduct states the bubble's size and not that the tail is deleted, so she budgets by a number nothing enforces gently",
+    game.length > 0 && !game.includes(String(budget.maxChars)),
+    "the prompt must not restate the transport's number either: it is the wire's, not something she can act on",
   );
   // Layout is the preset's as of 2026-11-23: markdown, lists and 首先/其次/最后 were a FORMAT rule wearing a channel's
   // clothes, so they left the floor for the layer that owns how a reply reads, and the floor states none of them.
@@ -445,7 +439,7 @@ test("the Game conduct fits one spoken turn inside the bubble the player reads f
   const gamePresetMain = presetMainText("amber-game.json");
   assert.match(gamePresetMain, /排版/u, "amber-game.json no longer bans a reply's layout in her voice");
   assert.match(gamePresetMain, /首先其次最后/u, "and it no longer names the sequencing words a person does not say");
-  // How MANY utterances one reply carries is the preset's (2026-11-15): the floor states the box, and
+  // How MANY utterances one reply carries is the preset's (2026-11-15): the floor states no box, and
   // `conversational-stance-gate.test.ts` refuses a count here.
   assert.doesNotMatch(game, /say one thing per reply/);
   assert.doesNotMatch(game, /stop when it has been said/);

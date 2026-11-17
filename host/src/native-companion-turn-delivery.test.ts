@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_DELIVERY_UNIT,
@@ -225,43 +226,47 @@ test("a turn that said nothing delivers nothing at all", async () => {
   assert.deepEqual(recorded.messages, [{ textParts: 1, suppression: "empty_after_projection" }]);
 });
 
-test("the bubble stops at the last complete sentence that fits, and says what that cost", async () => {
+test("a 108-character turn arrives whole: nothing below the transport is cut", async () => {
   const fx = fakeSession();
   const recorded = record();
   const observer = attachBubble(fx, recorded.sinks);
-  // The first three messages of a real round46b turn, verbatim: 89 characters of speech inside one prompt turn, which
-  // one bubble cannot hold.
+  // The first three messages of a real round46b turn, verbatim, with the middle one carried a clause further: 108
+  // characters of speech inside one prompt turn. The delivery used to cut this at 80 (77 with the sound) and delete the
+  // tail that the chat line keeps for scroll-back; the transport carries 4,000 and the bubble clamps itself on screen.
   const said = [
     "三格宽二十格长，种子还差五十八颗——先去把地方看明白，再盘算钱够不够跑一趟镇上。",
-    "先从屋里出去，站到门口才能量出那条长垄的边。",
+    "先从屋里出去，站到门口才能量出那条长垄的边，顺手看看门前那条水渠到底通不通。",
     "门前这片草和石头还横着呢，等脚踩上去才知道要从哪头下手。",
   ];
+  const speech = said.join(" ");
+  // The premise the case names, checked rather than assumed: this is the length the old ceiling could not carry.
+  assert.equal(speech.length, 108, "this case is the 108-character turn; the fixture must still be one");
   said.forEach((part, index) =>
     streamMessage(fx, [part], assistant([text(part), toolCall], index === said.length - 1 ? "stop" : "toolUse")),
   );
   const bubble = observer.deliverTurn();
   await observer.close();
 
-  const speech = said.join(" ");
-  const sound = soundOf();
   const delivered = recorded.bubbles[0]!;
   assert.ok(bubble !== null);
-  assert.ok(delivered.length <= GAME_DELIVERY_PACING.lengthBudget!.maxChars, "never wider than the bubble");
-  assert.ok(delivered.startsWith(`${sound} `), "the sound is the head of the bubble, spent from the same ceiling");
-  const spoken = delivered.slice(sound.length + 1);
-  assert.ok(speech.startsWith(spoken), `the bubble is the head of the turn's speech: ${JSON.stringify(delivered)}`);
-  assert.ok(spoken.length < speech.length, "this case must actually truncate");
-  assert.ok(spoken.endsWith("。"), "the cut lands on a sentence end, never inside one");
-  assert.equal(bubble!.truncatedChars, speech.length - spoken.length);
-  assert.equal(bubble!.sentencesDropped, said.length - said.filter((part) => spoken.includes(part)).length);
-  assert.ok(bubble!.sentencesDropped > 0, "the sentences that did not fit are counted");
+  assert.deepEqual(recorded.bubbles, [`${soundOf()} ${speech}`], "the turn reaches the line exactly as she said it");
+  assert.equal(
+    bubble!.truncatedChars,
+    0,
+    "the bubble's own clamp is the Mod's, and it is not a loss this delivery took",
+  );
+  assert.equal(bubble!.sentencesDropped, 0);
+  assert.equal(bubble!.chars, delivered.length);
+  assert.ok(delivered.length <= MAX_COMPANION_PRESENTATION_TEXT_CHARS, "and it is inside what the wire carries");
 });
 
-test("one sentence longer than the ceiling is cut at the ceiling, and the count says no sentence fitted", async () => {
+test("a turn past the transport's ceiling is cut there, and the bubble's own record names the loss", async () => {
   const fx = fakeSession();
   const recorded = record();
   const observer = attachBubble(fx, recorded.sinks);
-  const oneLongSentence = `${"这是一句很长很长的自言自语".repeat(8)}。`;
+  // One sentence longer than the ceiling: no sentence boundary for the cut to stop at, so it lands on the character
+  // ceiling itself. The bound is the transport's declaration, never a number typed here.
+  const oneLongSentence = `${"这".repeat(MAX_COMPANION_PRESENTATION_TEXT_CHARS)}。`;
   streamMessage(fx, [oneLongSentence], assistant([text(oneLongSentence)], "stop"));
   const bubble = observer.deliverTurn();
   await observer.close();
@@ -269,11 +274,13 @@ test("one sentence longer than the ceiling is cut at the ceiling, and the count 
   const sound = soundOf();
   const delivered = recorded.bubbles[0]!;
   assert.ok(bubble !== null);
-  assert.equal(delivered.length, GAME_DELIVERY_PACING.lengthBudget!.maxChars);
+  assert.equal(delivered.length, MAX_COMPANION_PRESENTATION_TEXT_CHARS, "cut at the wire's own bound, not below it");
   assert.equal(
     bubble!.truncatedChars,
-    oneLongSentence.length - (GAME_DELIVERY_PACING.lengthBudget!.maxChars - sound.length - 1),
+    oneLongSentence.length - (MAX_COMPANION_PRESENTATION_TEXT_CHARS - sound.length - 1),
+    "the characters the wire refused are counted on the record the caller reads",
   );
+  assert.ok(bubble!.truncatedChars > 0, "this case must actually truncate, or the naming is never exercised");
   assert.equal(bubble!.sentencesDropped, 0, "no complete sentence fitted, so none was dropped whole");
   assert.ok(delivered.startsWith(`${sound} `));
 });

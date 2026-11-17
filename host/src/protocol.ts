@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { isForEachLoopDocument, type PlanForEachLoop } from "./body-program-for-each.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import {
   hasExactKeys,
   hasExactKeysOrOptional,
@@ -2670,7 +2671,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isOpaqueId(payload.sourceEventId) &&
         typeof payload.text === "string" &&
         payload.text.trim().length > 0 &&
-        payload.text.length <= 4_000 &&
+        payload.text.length <= MAX_COMPANION_PRESENTATION_TEXT_CHARS &&
         isBcp47Locale(payload.locale)
         ? null
         : "invalid_companion_presentation_request";

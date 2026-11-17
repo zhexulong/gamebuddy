@@ -810,9 +810,14 @@ test("the rule reader turns red on the rules this unit moved, and on one nobody 
 test("what the floor may still say is not a finding", () => {
   const clean = (text: string): readonly string[] => speechGovernance(text);
   assert.deepEqual(
-    clean(GAME_SURFACE_CONDUCT_RULES.one_bubble_of_size.text),
+    clean(
+      "One bubble holds 80 characters and cannot be retracted once it is shown, and the sound that opens it is spent " +
+        "from that same count. Anything you say past the bubble's ceiling is deleted before your partner sees it: the tail " +
+        "does not arrive as a second bubble, and it does not arrive later either.",
+    ),
     [],
-    "the bubble's size, and the deletion past it, are what the surface does",
+    "a delivery fact about the surface is not a finding - the text is the rule that left the floor on 2026-11-24, kept as " +
+      "this reader's proof that what the floor may still say is not forced out by it",
   );
   assert.deepEqual(
     clean(
