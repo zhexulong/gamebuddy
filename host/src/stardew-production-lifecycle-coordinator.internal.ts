@@ -1349,6 +1349,20 @@ function createCoordinator(
    */
   let playerHostExit: StardewPlayerHostExitRecord | null = null;
   /**
+   * The ending an attempt that has been SETTLED left behind, kept as the fact the Game
+   * surface publishes about its game until a new attempt takes the instance slot.
+   *
+   * It is deliberately separate from `playerHostExit`. That one is the LIVE attempt's own
+   * ending and it is what the launch, the cabin read and the attestation answer with, so
+   * it must be empty again the moment the attempt is handed back - otherwise the next
+   * attempt would be refused by the last one's exit forever. This one is history: while
+   * no new attempt is staged the player's game really is still the one that ended, and the
+   * surface must keep saying so rather than claim a game it has not started. It is
+   * cleared at the one point a new attempt owns the instance slot (`staged`), which is
+   * also the point its generation is published.
+   */
+  let endedAttemptExit: StardewPlayerHostExitRecord | null = null;
+  /**
    * Reads the Guardian's exit report and latches it. Returns the latched record, or
    * null while the transport whose process this is reported none.
    *
@@ -1360,6 +1374,13 @@ function createCoordinator(
    */
   const recordPlayerHostExit = (): StardewPlayerHostExitRecord | null => {
     if (playerHostExit !== null) return playerHostExit;
+    // Only an attempt that LAUNCHED a role can own an exit. The platform's exit slot is
+    // the lifecycle's own read of "the role this attempt ran has ended", and after a
+    // settle it still carries the attempt that ended, so reading it for an attempt that has
+    // not launched yet would attribute the last attempt's ending to this one. The flags
+    // below are set by the one launch path and cleared by the one settle, so they are the
+    // exact statement of "this lifecycle has launched a role for the attempt it holds".
+    if (!playerHostLaunchThroughRuntime && !aiClientLaunchThroughRuntime) return null;
     const reported = readPlayerHostRoleExit === undefined ? null : readPlayerHostRoleExit();
     if (reported === null || reported.role !== "player_host") return null;
     playerHostExit = Object.freeze({ role: "player_host" as const, exitCode: reported.exitCode, atMs: Date.now() });
@@ -1581,7 +1602,11 @@ function createCoordinator(
   });
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
     readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
-      const exit = recordPlayerHostExit();
+      // The game this surface is about: the live attempt's own ending while it has one,
+      // otherwise the ending the attempt that was handed back left behind. Both are the
+      // SAME exit code by construction - the settle only ever moves the record - so the
+      // player never reads a different game than the one that ended.
+      const exit = recordPlayerHostExit() ?? endedAttemptExit;
       if (exit !== null) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
       if (launchTerminal) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
       if (exactOwner !== undefined && activationState === "staged") {
@@ -1709,10 +1734,42 @@ function createCoordinator(
         throw new Error("stardew_lifecycle_closing");
       }
       transition("staged");
+      // A new attempt owns the instance slot from here: the generation it publishes is its
+      // own, so the ending the last attempt left behind stops being this surface's game.
+      endedAttemptExit = null;
+      publishGameFact("instance");
       return snapshot();
     } catch (error) {
       if (!isClosing()) transition("failed");
       throw new Error("stardew_lifecycle_activation_failed", { cause: error });
+    }
+  };
+
+  /**
+   * The activation that follows a settle.
+   *
+   * It differs from `runActivation` in exactly one respect, and only for the shape this
+   * unit creates: a refusal that reserved nothing. The attempt it would have replaced is
+   * already handed back, so leaving this lifecycle in the terminal `failed` would put the
+   * surface in a state no press can leave - the very latch the settle exists to unbind.
+   * Nothing was reserved, so nothing of the refused attempt exists: the coordinator goes
+   * back to where a first attempt starts, and the next press asks again (and is answered
+   * by the same honest refusal until the fact behind it changes).
+   *
+   * Every other activation failure keeps `runActivation`'s own semantics untouched.
+   */
+  const runActivationAfterSettle = async (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPrivateActivationSnapshot> => {
+    try {
+      return await runActivation(admission);
+    } catch (error) {
+      if (!isClosing() && exactOwner === undefined) {
+        acceptedAdmission = undefined;
+        activationPromise = undefined;
+        transition("inactive");
+      }
+      throw error;
     }
   };
 
@@ -1739,7 +1796,7 @@ function createCoordinator(
       settling === undefined
         ? runActivation(admission)
         : settling.then(
-            () => runActivation(admission),
+            () => runActivationAfterSettle(admission),
             (error: unknown) => {
               // The ended attempt still holds what a new one needs, and nothing of the
               // new attempt was reserved. Drop this activation's own latch so the next
@@ -2810,6 +2867,7 @@ function createCoordinator(
       ownerQuarantined = false;
       launchPromise = undefined;
       playerHostAttestationCorrelated = false;
+      if (playerHostExit !== null) endedAttemptExit = playerHostExit;
       playerHostExit = null;
       playerModCount = 0;
       aiClientProfileMaterialized = false;

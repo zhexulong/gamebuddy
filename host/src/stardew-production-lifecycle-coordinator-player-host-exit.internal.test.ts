@@ -18,6 +18,7 @@ import {
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
 } from "./composition/stardew/stardew-guardian-platform.js";
 import type { DesktopGuardianSession, GuardianRoleExit } from "./containment/auth/desktop-guardian-session.internal.js";
+import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
 import {
   containedSessionAck,
   createFixture,
@@ -214,6 +215,130 @@ test("an attempt whose outcome nobody knows still refuses with the quarantine", 
         }),
         /stardew_player_host_launch_quarantined/,
         "an unknown outcome is never softened into the known-exit refusal",
+      );
+      // Ignorance is the one ending that never settles: a second attempt must not be
+      // prepared on top of an attempt whose native effect nobody can prove, so this
+      // lifecycle keeps its activation latch too. A KNOWN ending gives it back (see the
+      // settled-attempt test below); this one never does.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation")),
+        /stardew_lifecycle_activation_conflict/,
+        "the quarantine is never lifted by asking for the next attempt",
+      );
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "EEiM0RVZneImaq7zN3u_y",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_player_host_launch_quarantined/,
+        "a refused activation leaves the unknown attempt exactly as terminal as it was",
+      );
+      assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+        generation: 0,
+        status: "failed",
+        playerHostExitCode: null,
+      });
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("a settled attempt hands the surface back: the ending stops being the answer and the next attempt is generation 2", async () => {
+  await withWindowsPlatform(async () => {
+    const guardian = guardianSession();
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(guardian.session),
+    );
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
+    try {
+      await launchOwnedPlayerHost(fixture);
+      // Attempt 1 ends by the player's own hand, and the Guardian says so.
+      guardian.report(Object.freeze({ role: "player_host", exitCode: PLAYER_QUIT_EXIT_CODE }));
+      assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+        generation: 0,
+        status: "failed",
+        playerHostExitCode: PLAYER_QUIT_EXIT_CODE,
+      });
+
+      // Before anything settles, a press is answered by the ending itself. That is the
+      // fact that ended attempt 1, and it is not a quarantine of this Host.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "CEiM0RVZneImaq7zN3u_v",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_player_host_exited/,
+      );
+
+      // Attempt 2, in the same coordinator. It begins where a first attempt begins - a
+      // fresh activation - and that is the door that settles attempt 1.
+      //
+      // It stops one step later, at the ONE Host-side latch left below this lifecycle:
+      // the Player Host process owner's own one-shot launch reservation
+      // (`stardew-private-bootstrap-composer.core.internal.ts`, `reservePlayerHostLaunch`).
+      // It has an "the ended activation is superseded" edge for the AI client and none
+      // for the player role, so it refuses until that edge exists. Named here rather than
+      // summarised, because it - and not the Desktop - is what a second attempt meets
+      // first.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation")),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error.message, "stardew_lifecycle_activation_failed");
+          assert.equal(
+            (error.cause as Error | undefined)?.message,
+            "owned_player_host_launch_already_active",
+            "the next attempt reaches the process owner's one-shot reservation, not the Guardian",
+          );
+          return true;
+        },
+      );
+
+      // The settle did its own work before that refusal:
+      // 1. the durable registration pointer attempt 1 held is released, so a next attempt
+      //    could reserve at all;
+      assert.equal((await readStardewInstallationRegistration(fixture.runtimeRoot))?.activeAttempt, null);
+      // 2. the ending is retained as this surface's fact about its game - the player still
+      //    reads the game that ended, not a game that was never started - while the door
+      //    that refuses a launch answers about the LIVE attempt and no longer refuses;
+      assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+        generation: 0,
+        status: "failed",
+        playerHostExitCode: PLAYER_QUIT_EXIT_CODE,
+      });
+      const settledGame = await readRoute(fixture, "/api/composed-reference-game/v1/game");
+      const settledInstance = ((settledGame.body.game as Record<string, unknown>).instance ?? {}) as Record<
+        string,
+        unknown
+      >;
+      assert.equal(settledInstance.status, "stopped", "the game that ended did not become a game that failed");
+      assert.equal(settledInstance.playerHostExitCode, PLAYER_QUIT_EXIT_CODE);
+      // 3. the activation that could not be prepared left the coordinator where a first
+      //    attempt starts, not in a terminal `failed` the player cannot get out of;
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "inactive");
+      // 4. the generation advanced to exactly 2: the settled attempt's own number is now a
+      //    conflict, and the next attempt's number is the one the gate would take. The two
+      //    refusals together can only come from a counter of exactly 2, and neither is
+      //    "a launch is in progress" for a launch that already settled.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "CEiM0RVZneImaq7zN3u_v",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_game_instance_generation_conflict/,
+      );
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "EEiM0RVZneImaq7zN3u_y",
+          expectedInstanceGeneration: 2,
+        }),
+        /stardew_player_host_launch_not_staged/,
       );
     } finally {
       await fixture.coordinator.close();
