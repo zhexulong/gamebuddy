@@ -148,6 +148,7 @@ export const GAME_MIRRORED_VOCABULARIES = [
   { mirror: "ATTACHMENT_STATUSES", contract: { name: "AttachmentStatus" } },
   { mirror: "PREREQUISITE_STATUSES", contract: { name: "PrerequisiteStatus" } },
   { mirror: "INSTANCE_STATUSES", contract: { name: "InstanceStatus" } },
+  { mirror: "CONNECTION_STATUSES", contract: { name: "ConnectionStatus" } },
 ];
 
 function sourceOf(file) {

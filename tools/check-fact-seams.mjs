@@ -245,6 +245,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  {
+    fact: "connection statuses",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "ConnectionStatus" },
+    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "CONNECTION_STATUSES" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["ConnectionStatus", "CONNECTION_STATUSES"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
@@ -280,7 +291,6 @@ const mirrorDebt = (fact, authority, readers, extra = {}) => ({
  */
 export const DEBT = Object.freeze([
   // ─── The game contract's vocabularies, mirrored by the composed game client ───
-  mirrorDebt("connection statuses", `${GAME_CONTRACT}:ConnectionStatus`, [`${GAME_CLIENT}:CONNECTION_STATUSES`]),
   mirrorDebt("companion mod outcomes", `${GAME_CONTRACT}:CompanionModOutcome`, [
     `${GAME_CLIENT}:COMPANION_MOD_OUTCOMES`,
     "dialogue-web/src/game-presentation.ts:COMPANION_MOD_OUTCOMES",
