@@ -47,6 +47,7 @@
  *     [--scenario <name>]
  */
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, resolve, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -104,7 +105,16 @@ const REGISTRATION_LEAF = "registration.json";
 const GENERATION_ID = /^[a-z0-9-]+$/i;
 const HEX64 = /^[a-f0-9]{64}$/;
 const DRIVE_ROOT = /^[A-Za-z]:\\$/;
-const POINTER_KEYS = Object.freeze(["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"]);
+/**
+ * The pointer's key sequence, declared once beside the release publisher that writes `current.json`
+ * (`host/scripts/production-artifact.mjs`).
+ *
+ * The Desktop launcher reads the same pointer from C# (`InstalledGenerationSelection`), so this is not
+ * the browser's copy of a Host declaration: it is the one file all three readers are held to.
+ */
+const POINTER_KEYS = Object.freeze(
+  JSON.parse(readFileSync(new URL("../../../host/scripts/host-generation-pointer.keys.json", import.meta.url), "utf8")),
+);
 
 /** Every leaf I/O this resolver performs, so a test never needs the real machine. */
 const nodeFileSystem = Object.freeze({

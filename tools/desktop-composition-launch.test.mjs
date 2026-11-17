@@ -308,6 +308,60 @@ function compositionReadyFrom(launchUrl) {
   return Object.fromEntries(declaredReadyKeys.map((key) => [key, values[key]]));
 }
 
+/**
+ * The generation pointer's key sequence, read from the declaration beside the release publisher that writes
+ * `current.json`, and compared below with the Desktop launcher's own C# list of the same frame.
+ */
+const declaredPointerKeys = JSON.parse(
+  readFileSync(new URL("../host/scripts/host-generation-pointer.keys.json", import.meta.url), "utf8"),
+);
+
+/**
+ * The ordered key list a C# call passes, read out of that call's own argument list.
+ *
+ * The Desktop launcher reads the same frames from C# (`InstalledGenerationSelection`,
+ * `InstalledHostRuntimeAdmission`, `DesktopHostBootstrapBroker`), and it cannot share a declaration with this side: a
+ * different language in a different build, reading a generation on the player's machine rather than a repository. The
+ * two ends are compared here instead, and the scan is bracket-based so a reformat cannot change what it reads.
+ */
+/**
+ * The ordered key list a C# call passes, read out of that call's own argument list.
+ *
+ * The scan is bracket-based, not line-based: `InstalledHostRuntimeAdmission` writes its eleven names on
+ * one long line today, and a formatter that wrapped them must not change what this reads.
+ */
+function csharpDeclaredKeys(file, marker) {
+  const source = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `${file} must still name this call: ${marker}`);
+  // The marker ends with the call's own `(`, so the argument list starts one level in.
+  let depth = 1;
+  let end = start + marker.length;
+  for (let index = end; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        end = index;
+        break;
+      }
+    }
+  }
+  return [...source.slice(start + marker.length, end).matchAll(/"([A-Za-z][A-Za-z0-9]*)"/gu)].map((match) => match[1]);
+}
+
+test("the Desktop launcher's generation pointer is the declaration beside the publisher", () => {
+  for (const file of [
+    "desktop/GameBuddy.Desktop/InstalledGenerationSelection.cs",
+    "desktop/GameBuddy.Desktop/InstalledGenerationRollback.cs",
+  ])
+    assert.deepEqual(
+      csharpDeclaredKeys(file, "InstalledGenerationPaths.ExactProperties(root, "),
+      declaredPointerKeys,
+      `${file} reads current.json with a key sequence of its own`,
+    );
+});
+
 test("composition launch validates the child IPC ready fact and composes the child environment", () => {
   assert.deepEqual(
     validateCompositionReadyMessage(compositionReadyFrom("http://127.0.0.1:4444/#profile=reference&boot=t")),

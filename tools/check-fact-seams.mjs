@@ -1250,9 +1250,10 @@ export const KEY_SEQUENCES = Object.freeze([
       schema: "gamebuddy-host-production-current/v2",
     },
     authority: "host/scripts/production-artifact.mjs",
-    derives: { kind: "debt" },
-    reason:
-      "the publisher writes `current.json` and the launcher spells its four keys inline; the Desktop launcher reads the same pointer from C#, so three languages spell one shape",
+    derives: {
+      kind: "json",
+      file: "host/scripts/host-generation-pointer.keys.json",
+    },
     owner: "the release publication lane",
   },
   {

@@ -84,6 +84,13 @@ const COMPOSITION_READY_KEYS = Object.freeze(
 );
 const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
+/**
+ * The generation pointer's key sequence, read from the declaration beside the release publisher that writes
+ * `current.json`, and compared below with the Desktop launcher's own C# list of the same frame.
+ */
+const POINTER_KEYS = Object.freeze(
+  JSON.parse(readFileSync(new URL("../host/scripts/host-generation-pointer.keys.json", import.meta.url), "utf8")),
+);
 
 export const COMPOSITION_SURFACES = Object.freeze(["composed-reference-game", "chat-only", "management"]);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -370,7 +377,7 @@ export async function readProductionPointer({ outputRoot }) {
     throw new Error("desktop_compose_artifact_pointer_invalid");
   }
   if (
-    !exactKeysInOrder(value, ["schema", "generation", "inventoryDigest", "runtimeAdmissionSha256"]) ||
+    !exactKeysInOrder(value, POINTER_KEYS) ||
     value.schema !== POINTER_SCHEMA ||
     typeof value.generation !== "string" ||
     !/^[a-z0-9-]+$/i.test(value.generation) ||

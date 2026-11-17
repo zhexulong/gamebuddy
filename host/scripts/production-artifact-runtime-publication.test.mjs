@@ -172,6 +172,12 @@ test("production-private runtime publisher emits canonical admission/current bin
 
       const pointerPath = join(outputRoot, "current.json");
       const pointerBytes = await readFile(pointerPath);
+      // `current.json`'s key sequence is declared beside this writer: the gate launcher, the live-run resolver and
+      // the Desktop launcher's `InstalledGenerationSelection` all read that declaration.
+      assert.deepEqual(
+        Object.keys(JSON.parse(pointerBytes)),
+        JSON.parse(await readFile(new URL("./host-generation-pointer.keys.json", import.meta.url), "utf8")),
+      );
       const expectedPointer = {
         schema: "gamebuddy-host-production-current/v2",
         generation: published.generation,
