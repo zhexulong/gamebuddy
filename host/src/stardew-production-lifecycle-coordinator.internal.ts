@@ -1309,18 +1309,17 @@ function createCoordinator(
    * Reads the Guardian's exit report and latches it. Returns the latched record, or
    * null while the transport whose process this is reported none.
    *
-   * Recording it also marks this attempt's launch terminal: the process the attempt
-   * launched is gone, and relaunching it through the same owner/attempt would be a
-   * launch this lifecycle cannot attest. That is the same terminal a failed launch
-   * reaches, so later launch commands refuse with the same quarantined identity
-   * instead of a second vocabulary for the same dead end.
+   * Recording it deliberately does NOT set `launchTerminal`: that flag is for a launch
+   * whose OUTCOME nobody knows. A reported exit is the opposite fact - the attempt ended
+   * and the Guardian said how - so it is answered with the exit itself
+   * (`PLAYER_HOST_EXITED_REFUSAL`), never with a quarantine of this Host.
+   * `launchEndedRefusal` is where the two are kept apart.
    */
   const recordPlayerHostExit = (): StardewPlayerHostExitRecord | null => {
     if (playerHostExit !== null) return playerHostExit;
     const reported = readPlayerHostRoleExit === undefined ? null : readPlayerHostRoleExit();
     if (reported === null || reported.role !== "player_host") return null;
     playerHostExit = Object.freeze({ role: "player_host" as const, exitCode: reported.exitCode, atMs: Date.now() });
-    launchTerminal = true;
     publishGameFact("instance");
     return playerHostExit;
   };
@@ -1333,8 +1332,34 @@ function createCoordinator(
    * would send a player whose game just crashed back to a retry that cannot succeed.
    * The code states the condition only - the exit code itself is published once, in the
    * state read's `game.instance.playerHostExitCode`.
+   *
+   * The cabin read and the launch command both answer with it, because both would
+   * otherwise act on a game that is gone: the cabin read would ask a dead process for
+   * its cabins, and a launch would re-use this attempt's owner, lease and attestation.
    */
   const PLAYER_HOST_EXITED_REFUSAL = "stardew_player_host_exited";
+  /**
+   * The refusal for an attempt that already ended, or undefined while it has not.
+   *
+   * The two endings are different facts and keep their own names, because they ask
+   * different things of this Host:
+   *
+   * - A REPORTED exit (`recordPlayerHostExit`) is knowledge: the process this attempt
+   *   launched is gone and the Guardian said with what code. Nothing about this Host is
+   *   in doubt, so the answer is that fact and not a quarantine.
+   * - `launchTerminal` is ignorance: a launch or an attestation whose outcome nobody
+   *   knows. Re-driving it would repeat a native effect this lifecycle cannot prove, so
+   *   it stays terminal under its own name.
+   *
+   * Both are answered ahead of `launchPromise`, because that promise is this lifecycle's
+   * single-launch slot and stays set after it settles. A settled launch is not a launch
+   * in flight, and answering "in progress" forever would hide the ending from the player.
+   */
+  const launchEndedRefusal = (): Error | undefined => {
+    if (recordPlayerHostExit() !== null) return new Error(PLAYER_HOST_EXITED_REFUSAL);
+    if (launchTerminal) return new Error("stardew_player_host_launch_quarantined");
+    return undefined;
+  };
   /**
    * The player Mods the launched Player Host carried into its `--mods-path` root, as that
    * launch reported them. It is the workload reading every attach deadline in this lifecycle
@@ -1703,7 +1728,8 @@ function createCoordinator(
 
   const launchSelectedPlayerHost = (): Promise<StardewPrivateActivationSnapshot> => {
     if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
-    if (launchTerminal) return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
+    const ended = launchEndedRefusal();
+    if (ended !== undefined) return Promise.reject(ended);
     if (launchPromise !== undefined) return launchPromise;
     if (activationState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
     launchPromise = runPlayerHostLaunch();
@@ -2105,6 +2131,8 @@ function createCoordinator(
         return prior.promise;
       }
       if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
+      const ended = launchEndedRefusal();
+      if (ended !== undefined) return Promise.reject(ended);
       if (setupPromise !== undefined) return Promise.reject(new Error("stardew_game_setup_in_progress"));
       if (launchPromise !== undefined) return Promise.reject(new Error("stardew_game_launch_in_progress"));
       if (command.expectedInstanceGeneration !== expectedPlayerHostInstanceGeneration)

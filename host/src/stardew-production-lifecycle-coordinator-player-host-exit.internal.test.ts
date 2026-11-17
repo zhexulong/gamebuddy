@@ -22,6 +22,7 @@ import {
   containedSessionAck,
   createFixture,
   installLifecycleTestHooks,
+  publishSignedPlayerHostSession,
   withWindowsPlatform,
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
 
@@ -29,6 +30,9 @@ installLifecycleTestHooks();
 
 /** The native exit code a Windows process killed by a loader failure reports. */
 const PLAYER_HOST_EXIT_CODE = 3221225781;
+
+/** The code Windows reports for a process that ended on its own: the player quit the game. */
+const PLAYER_QUIT_EXIT_CODE = 0;
 
 /**
  * A Guardian session whose role exits this test publishes itself.
@@ -62,13 +66,18 @@ function guardianSession(): Readonly<{
   });
 }
 
-/** Stages, launches and attests the fixture's Player Host through the contained runtime. */
-async function launchOwnedPlayerHost(fixture: Awaited<ReturnType<typeof createFixture>>): Promise<void> {
+/** Stages the fixture's Player Host (activation + profile staging) without launching it. */
+async function stageOwnedPlayerHost(fixture: Awaited<ReturnType<typeof createFixture>>): Promise<void> {
   await fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation"));
   await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), {
     apiVersion: 1,
     idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
   });
+}
+
+/** Stages, launches and attests the fixture's Player Host through the contained runtime. */
+async function launchOwnedPlayerHost(fixture: Awaited<ReturnType<typeof createFixture>>): Promise<void> {
+  await stageOwnedPlayerHost(fixture);
   await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
     apiVersion: 1,
     idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
@@ -133,6 +142,78 @@ test("the Guardian's player-role exit reaches the cabin read and the game projec
       assert.deepEqual(
         fixture.coordinator.launchReadinessReader.readLaunchReadinessView().playerHostExitCode,
         PLAYER_HOST_EXIT_CODE,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("a game the player quit refuses a second launch by that exit, not by a quarantine", async () => {
+  await withWindowsPlatform(async () => {
+    const guardian = guardianSession();
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(guardian.session),
+    );
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
+    try {
+      await launchOwnedPlayerHost(fixture);
+      // The player closes the game. The Guardian reports the process ending on its own.
+      guardian.report(Object.freeze({ role: "player_host", exitCode: PLAYER_QUIT_EXIT_CODE }));
+      const game = await readRoute(fixture, "/api/composed-reference-game/v1/game");
+      const instance = ((game.body.game as Record<string, unknown>).instance ?? {}) as Record<string, unknown>;
+      assert.equal(instance.status, "stopped", "exit 0 is the OS's normal termination, not a crash");
+      assert.equal(instance.playerHostExitCode, PLAYER_QUIT_EXIT_CODE);
+
+      // Pressing Play again is answered with the fact that ended the attempt. A known exit
+      // is knowledge, not an untrustworthy Host: it must not be dressed as a quarantine,
+      // and it must not be dressed as a launch that is still in flight.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "DEiM0RVZneImaq7zN3u_x",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_player_host_exited/,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("an attempt whose outcome nobody knows still refuses with the quarantine", async () => {
+  await withWindowsPlatform(async () => {
+    const guardian = guardianSession();
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(guardian.session),
+    );
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
+    try {
+      // A Player Host that published a session for another launch generation is an attempt
+      // whose evidence cannot be correlated: the launch may have run, and nothing here can
+      // say what it did. That is the class that must stay terminal.
+      await stageOwnedPlayerHost(fixture);
+      await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-other");
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_player_host_launch_failed/,
+        "a mismatched attestation is a failed launch, never a successful one",
+      );
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+          apiVersion: 1,
+          idempotencyKey: "DEiM0RVZneImaq7zN3u_x",
+          expectedInstanceGeneration: 1,
+        }),
+        /stardew_player_host_launch_quarantined/,
+        "an unknown outcome is never softened into the known-exit refusal",
       );
     } finally {
       await fixture.coordinator.close();
