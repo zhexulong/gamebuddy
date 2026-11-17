@@ -242,7 +242,7 @@ const composedRoot = {
     csrfToken,
     browserSession: { expiresAtMs },
     game: {
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
       instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },
@@ -363,7 +363,6 @@ function expectedReadout(): Readonly<{
   macros: readonly string[];
   depthLine: string;
 }> {
-  const catalogue = messages("en");
   return {
     entriesLine: catalogue.presetEntriesLine
       .replace("{{total}}", String(SURFACE.entries.total))
@@ -554,7 +553,6 @@ function notAppliedSentence(code: SURFACE["notApplied"][number]["code"], catalog
  * four facts therefore carries its own sentence when it has nothing to say.
  */
 test("a preset with nothing to report says so on all four counts", async ({ page }) => {
-  const catalogue = messages("en");
   const clean = presetAssemblySurface({
     presetId: "clean",
     name: "A preset with nothing to report",
@@ -691,7 +689,6 @@ async function readBindingLine(page: Page): Promise<Readonly<{ state: string | n
  * second read exactly like the first, and like a panel that never loaded at all.
  */
 test("which preset is in force is named in every state, and an unreported binding says so", async ({ page }) => {
-  const catalogue = messages("en");
   const cases: readonly Readonly<{ what: string; activePreset: unknown; state: string; expected: string }>[] = [
     { what: "nothing bound", activePreset: { state: "none" }, state: "none", expected: catalogue.presetActiveNone },
     {
@@ -740,7 +737,6 @@ test("which preset is in force is named in every state, and an unreported bindin
  * that never answered - which is the one reading the design forbids in as many words (§4: never silently empty).
  */
 test("no imported preset and a read the Host refused say different things", async ({ page }) => {
-  const catalogue = messages("en");
   await stubPresetSurface(page, []);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
   const surface = page.getByTestId("presets-surface");
@@ -789,7 +785,6 @@ async function readFailureBanner(page: Page): Promise<Readonly<{ attribute: stri
  * (`6b24a0b9`), and why this panel does the same.
  */
 test("a read the Host refused and a reply this build cannot read say different things", async ({ page }) => {
-  const catalogue = messages("en");
   const surface = page.getByTestId("presets-surface");
 
   // The Host does not serve the read at all: there is no reply to make sense of.
@@ -835,7 +830,6 @@ test("a read the Host refused and a reply this build cannot read say different t
  * carries none, and a member this surface has no line for.
  */
 test("a readout that contradicts itself is refused instead of shown", async ({ page }) => {
-  const catalogue = messages("en");
   const drifted: Array<Readonly<{ what: string; body: unknown }>> = [
     {
       what: "a total that is not enabled + disabled",
@@ -927,7 +921,6 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
  * sent", which is a different and false claim (§5).
  */
 test("a preset with no composed model says the sampling was not measured", async ({ page }) => {
-  const catalogue = messages("en");
   const unmeasured = presetAssemblySurface({
     presetId: "unmeasured",
     name: "A preset with no composed model",
