@@ -962,7 +962,7 @@ test("flush never steers, whatever is pending: a steer is not a turn", async () 
   assert.equal(dispositions.length, 1, "a pending milestone still forms one ordinary delivery");
 });
 
-test("an ordinary fact is never steered, because a receipt does not expire", async () => {
+test("a SUCCEEDED terminal receipt does not steer, because the plan is working", async () => {
   const pump = new CompanionEventPump();
   pump.enqueueFact(
     {
@@ -978,11 +978,50 @@ test("an ordinary fact is never steered, because a receipt does not expire", asy
     FACT_PRODUCER.adapterIngress,
   );
 
-  assert.equal(pump.hasExpiringFact, false, "a terminal receipt must not be treated as expiring");
+  // The ruling that was RIGHT, kept: a receipt that proved its effect is progress, and interrupting a running plan to
+  // announce progress trades a finished action for a half-finished thought.
+  assert.equal(pump.hasExpiringFact, false, "a terminal receipt does not expire against the world's clock");
+  assert.equal(pump.hasPreemptingFact, false, "and it does not say the plan stopped either");
   const steered = await pump.steer({
     async deliver() {
       throw new Error("nothing should be steered");
     },
   });
-  assert.equal(steered, false, "there was nothing expiring to hand over");
+  assert.equal(steered, false, "there was nothing to hand over");
+});
+
+/**
+ * The ruling that was WRONG, re-derived rather than deleted: the old assertion said a terminal receipt of ANY state must
+ * not steer, and a `rejected` one is the case a steer exists for. Measured `round66` and the round before it, a step the
+ * Mod had refused waited for the rest of a ~26 s turn before the model heard of it - and everything it thought in those
+ * seconds was about a body that had already stopped.
+ */
+test("a REJECTED terminal receipt does steer, because the plan cannot continue", async () => {
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "receipt_refused",
+      sourceEventId: "receipt_refused",
+      correlationId: "receipt_refused",
+      revision: 2,
+      observedTick: 902,
+      payload: Object.freeze({
+        state: "rejected",
+        actionId: "navigate_to_destination",
+        reasonCode: "destination_unreachable",
+      }),
+    } as never,
+    FACT_PRODUCER.adapterIngress,
+  );
+
+  assert.equal(pump.hasExpiringFact, false, "still not a clock question - the two stays separate");
+  assert.equal(pump.hasPreemptingFact, true, "the plan this turn is working on cannot continue");
+  const steered = await pump.steer({
+    async deliver() {
+      return undefined;
+    },
+  });
+  assert.equal(steered, true, "so the refusal is handed to the turn that is still thinking");
 });
