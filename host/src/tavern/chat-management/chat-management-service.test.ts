@@ -432,3 +432,56 @@ test("the mounted list read returns the player's 101st Chat instead of refusing 
   assert.equal(new Set(handles).size, 101, "two rows of the list read as the same Chat");
   assert.equal(results.lastPreview, "Chat 101", "the 101st Chat is not in the list as its own row");
 });
+
+/**
+ * THE ACTIVE LIST MAY NEVER BE EMPTIED, and that rule is the library's now.
+ *
+ * It used to live only in the browser panel, which keeps it by creating and mounting a successor
+ * before it archives the last Chat. A writer that reaches this route directly had no such guard, and
+ * the state it produced is the one that bricks the whole Host: the next start reconciles the semantic
+ * selection against this durable list, finds no active Chat to move it to, and fails closed with
+ * `semantic_chat_liveness_unrecoverable` before a browser, a tray or a record exists.
+ *
+ * So the refusal is named here (`chat_active_list_empty`) and it is the only state refused: a removal
+ * with a survivor, and every restore, stay exactly as they were. The forward path is the one the
+ * product already has - create the successor first (`chat.create`), which is what the panel does -
+ * rather than a second creation hidden inside the archive.
+ */
+test("a removal that would leave the companion with no active Chat is refused by name, and only that removal", async () => {
+  const results = await mounted(`
+    const handle = lease.browserProjection.chatHandle;
+    const creation = createProfileAwareChatThreadCreationCapability(store(), { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+    // The companion's only Chat: archiving it would empty the active list.
+    const lastRemoval = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 1, operation: "archive" }));
+    const afterRefusal = await service.listChats({ apiVersion: 1, state: "active" });
+    const durableAfterRefusal = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    // The forward path: a second Chat exists, so the first may leave.
+    await creation.createExplicit({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), opening: { messageId: "opening_02", text: "The second one.", source: { greetingSetId: "greetings_01", sourceRevision: 2, canonicalHash: "a".repeat(64), variantId: "default_01", profileRevision: 3, scenarioRevision: null } } });
+    const firstRemoval = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 1, operation: "archive" }));
+    // ...and the SECOND is the last one now, so the same request against it is refused.
+    const secondHandle = lease.browserProjection.projectChatHandle("thread_02", "surface_02");
+    const secondRemoval = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: secondHandle, expectedManagementRevision: 1, operation: "trash" }));
+    // Restore only ever adds to the active list, so this rule never refuses it.
+    const restored = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 2, operation: "restore" }));
+    const oneActiveAgain = await service.listChats({ apiVersion: 1, state: "active" });
+    process.stdout.write(JSON.stringify({
+      lastRemoval,
+      activeAfterRefusal: afterRefusal.chats.length,
+      durableLifecycleAfterRefusal: durableAfterRefusal.thread.lifecycleStatus,
+      firstRemoval,
+      secondRemoval,
+      restored,
+      activeAtEnd: oneActiveAgain.chats.length,
+    }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.deepEqual(results.lastRemoval, { ok: false, error: "chat_active_list_empty" });
+  assert.equal(results.activeAfterRefusal, 1, "the refused removal left the active list changed");
+  assert.equal(results.durableLifecycleAfterRefusal, "active", "the refused removal reached the durable row");
+  assert.equal((results.firstRemoval as { ok: boolean }).ok, true, "a removal with a surviving Chat was refused too");
+  assert.deepEqual(results.secondRemoval, { ok: false, error: "chat_active_list_empty" });
+  assert.equal((results.restored as { ok: boolean }).ok, true, "a restore was refused as if it were a removal");
+  assert.equal(results.activeAtEnd, 2, "the durable list did not end where the two operations left it");
+});

@@ -3450,6 +3450,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "chat_opening_not_greeting") return { status: 409, code: "chat_opening_not_greeting" };
   if (message === "chat_opening_variant_not_found") return { status: 404, code: "chat_opening_variant_not_found" };
   if (message === "chat_management_lifecycle_invalid") return { status: 409, code: "state_reconciliation_required" };
+  // The only removal the Chat library refuses: the companion's last active Chat. The player's answer
+  // is the one the panel already performs - create the successor first - so it is a bounded 409 the
+  // surface can act on rather than a service outage that invites a blind retry.
+  if (message === "chat_active_list_empty") return { status: 409, code: "state_reconciliation_required" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
   // World Info authoring: each library refusal is its own bounded, player-actionable

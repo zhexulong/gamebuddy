@@ -285,6 +285,40 @@ export function createChatManagementService(options: ChatManagementServiceOption
     }
   };
 
+  /**
+   * THE ACTIVE LIST MAY NEVER BE EMPTIED - the rule the browser panel used to hold alone.
+   *
+   * A removal that leaves the companion with ZERO active Chats leaves the next start with nothing to
+   * mount. `createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest` reconciles the
+   * semantic selection against this durable list, finds no active successor to move it to, and fails
+   * closed with `semantic_chat_liveness_unrecoverable` - before a browser, a tray or a record exists.
+   * The panel keeps the invariant by creating and mounting a successor before it archives the last
+   * Chat, but a writer that reaches this route directly (or a root written before that rule) had no
+   * guard at all, and there is no second start that could repair it: the refusal has to be here.
+   *
+   * Only removals are judged, and only when the target is itself active: a removal with a survivor and
+   * every restore are the ordinary transitions below. The forward path stays the one the product
+   * already has - the successor is created by `chat.create`, the New Chat control's own creation,
+   * never invented by an archive.
+   */
+  const refuseAnEmptyActiveList = async (
+    target: ChatThread,
+    operation: ChatRetentionServiceCommand["operation"],
+  ): Promise<void> => {
+    if (operation === "restore") return;
+    if ((target.lifecycleStatus ?? "active") !== "active") return;
+    const threads = await listThreads();
+    assertLeaseAfterDurableRead();
+    const survivors = threads.filter(
+      (thread) =>
+        thread.companionId === manifest.principal.companionId &&
+        thread.continuityId === manifest.principal.continuityId &&
+        (thread.lifecycleStatus ?? "active") === "active" &&
+        thread.chatThreadId !== target.chatThreadId,
+    );
+    if (survivors.length === 0) throw new ChatActiveListEmptyError();
+  };
+
   const transitionLifecycle = async (command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1> => {
     assertOpen();
     validateRetentionCommand(command);
@@ -293,6 +327,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     try {
       const target = await resolveChatTarget(command.chatHandle);
       assertLeaseAfterDurableRead();
+      await refuseAnEmptyActiveList(target, command.operation);
       const thread = await store.transitionLifecycle({
         chatThreadId: target.chatThreadId,
         chatSurfaceSessionId: target.chatSurfaceSessionId,
@@ -498,6 +533,9 @@ function validateRetentionCommand(command: ChatRetentionServiceCommand): void {
 function rethrowRetentionError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
   if (error.message === "chat_not_found") return error;
+  // The library's own named refusal is carried out unchanged, so the route can name it rather than
+  // report it as a service outage.
+  if (error instanceof ChatActiveListEmptyError) return error;
   if (error.message === "chat_thread_management_revision_conflict")
     return new Error("chat_management_revision_conflict");
   if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
@@ -544,6 +582,20 @@ export function chatExportFitsWire(jsonlLength: number): boolean {
 export class ChatExportTooLargeError extends Error {
   constructor(jsonlLength: number, maxLength: number) {
     super(`chat_export_too_large:${jsonlLength}:${maxLength}`);
+  }
+}
+
+/**
+ * The one removal this library refuses: the last active Chat of the companion/continuity.
+ *
+ * It is named because the alternative is a root that can never start again - the mount finds no
+ * active Chat to move the selection to and fails closed - so a caller that produced this request has
+ * to read which rule it broke, not a generic service failure. The forward path is creating the
+ * successor first (see `refuseAnEmptyActiveList`).
+ */
+export class ChatActiveListEmptyError extends Error {
+  constructor() {
+    super("chat_active_list_empty");
   }
 }
 
