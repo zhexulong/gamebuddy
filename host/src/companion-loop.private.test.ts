@@ -891,6 +891,21 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without mintin
     {
       source: "stardew_mod",
       kind: "world_fact",
+      eventId: "notice_pierre_dialogue",
+      sourceEventId: "notice_pierre_dialogue",
+      correlationId: "notice_pierre_dialogue",
+      revision: 1,
+      occurredAtMs: 1,
+      observedTick: 901,
+      semanticKind: "native_notice",
+      payload: { message: "It is getting late." },
+    },
+    FACT_PRODUCER.nativeNotice,
+  );
+  loop.pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
       eventId: "npc_dialogue_pierre_3",
       sourceEventId: "npc_dialogue_pierre_3",
       correlationId: "npc_dialogue_pierre_3",
@@ -903,13 +918,17 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without mintin
     FACT_PRODUCER.adapterIngress,
   );
   await loop.flush();
-  // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact
-  // context with its readable payload. But `npc_dialogue_presented` is
-  // deliberately NOT in the isSalientSensoryKind allowlist: the companion turn
-  // runs without a native presentation lineage, so the Agent can act on the
-  // dialogue (e.g. answer_dialogue) but cannot voice a spoken reaction to it.
+  // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact context with its readable payload. But
+  // `npc_dialogue_presented` is deliberately NOT in the lease white-list: the dialogue can never be the identity a bubble is
+  // presented under, so the turn that carries it presents under the HUD line's identity instead (`presentation-lease.ts`).
+  // That is the whole rule, stated on the two ids: the dialogue's is absent from the lineage, the notice's is not.
   assert.equal(received.length, 1);
-  assert.deepEqual(lineage, []);
+  assert.deepEqual(lineage, ["begin:notice_pierre_dialogue", "end"]);
+  assert.equal(
+    lineage.some((entry) => entry.includes("npc_dialogue_pierre_3")),
+    false,
+    "the dialogue mints no presentation lineage of its own",
+  );
   assert.match(received[0] ?? "", /Pierre说：「欢迎光临！」/u);
 });
 
@@ -1501,13 +1520,18 @@ test("CompanionLoop explicitly follows up an ordinary fact-only batch", async ()
       received.push({ deliverAs: options?.deliverAs });
     }) as never,
   );
+  // An ordinary fact-only batch: the world said something the player's surface can show, and no player input is pending.
+  // A semantic event cannot stand here - the pump opens no turn on one (`presentation-lease.ts`).
   loop.pump.enqueueFact(
     {
       source: "stardew_mod",
-      kind: "semantic_event",
-      correlationId: "warp",
+      kind: "world_fact",
+      eventId: "notice_follow_up",
+      sourceEventId: "notice_follow_up",
+      correlationId: "notice_follow_up",
       revision: 1,
-      payload: { kind: "warped" },
+      semanticKind: "native_notice",
+      payload: { message: "It is getting late." },
     },
     FACT_PRODUCER.adapterIngress,
   );
@@ -2132,19 +2156,17 @@ test("a turn with no presentation source accounts for its text instead of leavin
     return true;
   }) as typeof process.stderr.write;
   try {
-    loop.pump.enqueueFact(
-      {
-        source: "stardew_mod",
-        kind: "execution_receipt",
-        eventId: "receipt_harvest",
-        sourceEventId: "receipt_harvest",
-        correlationId: "receipt_harvest",
-        revision: 7,
-        executionId: "execution_harvest",
-        payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
-      },
-      FACT_PRODUCER.adapterIngress,
-    );
+    // THE SHAPE THAT CAN STILL RUN WITH NO SOURCE. A receipt used to open this turn and no longer can (`round66`: `lost 12`),
+    // so the reachable case is a player input enqueued without an opaque `eventId` - a caller that bypassed
+    // `HostService.acceptPlayerInput`, which refuses one. The turn is real, the surface cannot show it, and the account below
+    // is what has to say so.
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_no_surface",
+      text: "去看看花椰菜。",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
     assert.equal(await loop.flush(), "completed");
   } finally {
     process.stderr.write = stderrWrite;
@@ -2165,9 +2187,10 @@ test("a turn with no presentation source accounts for its text instead of leavin
     messages: { count: 2, ids: ["assistant_1", "assistant_2"] },
     // THE BUBBLE'S ANSWER, not an absence: no lease means no projection, and the turn says which way it ended.
     withheld: "no_presentation_lease",
-    // `carried` names what the turn was made of: a receipt with nothing beside it, which is the class that has no lease.
+    // `carried` names what the turn was made of: nothing but the words themselves, since no fact arrived with them and
+    // no presentation source exists for a caller that bypassed the ingress.
     lease: { admitted: false },
-    carried: ["execution_receipt"],
+    carried: [],
   });
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
 });
@@ -2448,10 +2471,11 @@ test("a succeeded settlement is the programme's answer: one turn, its own lease,
   );
 });
 
-test("an ordinary execution outcome still opens no lease, so volume cannot creep", async () => {
-  // The one kind added is the settlement. Every other outcome keeps today's silence: the account names
-  // it, and nothing is presented - a lease granted to `execution_settled_succeeded` would put a bubble
-  // on every harvested crop, which is the volume this allowlist exists to bound.
+test("an ordinary execution outcome opens no turn and no lease, so volume cannot creep", async () => {
+  // The one kind given a lease is the settlement. Every other outcome gets no bubble - and, since `round66`, no turn of its
+  // own either: a semantic event is not a presentation source, so inviting an answer to it was inviting text nobody would be
+  // shown (`lost 12 {no_presentation_lease}`). The fact is carried into the next turn that can present, and the account names
+  // the shape that waited.
   const presented: unknown[] = [];
   const loop = new CompanionLoop(sessionSaying("草割完了。") as never, {
     beginPlayerBatch() {},
@@ -2473,23 +2497,17 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     },
     FACT_PRODUCER.adapterIngress,
   );
-  const account = await turnAccount(() => loop.flush());
+  assert.equal(await loop.flush(), undefined, "no turn is invited where nothing can be shown");
 
-  assert.deepEqual(presented, []);
-  assert.deepEqual(account, {
-    textParts: 1,
-    presented: 0,
-    suppressed: { no_presentation_lease: 1 },
-    bubbles: 0,
-    // The bubble this turn owed, and the layer that kept it: `bubbles: 0` alone said only that nothing was drawn.
-    suppressedBubbles: { no_presentation_lease: 1 },
-    messages: { count: 1, ids: ["assistant_settlement"] },
-    withheld: "no_presentation_lease",
-    // The turn's own reason, beside the loss: a semantic event is not a presentation source, so this turn carried only
-    // the verdict and had no surface to speak into - which is what the model is now told before it answers.
-    lease: { admitted: false },
-    carried: ["semantic_event"],
-  });
+  assert.deepEqual(presented, [], "and nothing is presented");
+  const account = loop.pump.turnAccount;
+  assert.equal(account.opened, 0, "the turn count does not grow for an outcome the player cannot see");
+  assert.equal(account.notOwed[NOT_OWED.noSurface], 1, "the refusal is counted, by name");
+  assert.deepEqual(
+    account.noSurface,
+    { "semantic:execution_settled_succeeded": 1 },
+    "and the account says which shape could not present",
+  );
 });
 
 test("the account names every piece the player was shown, not only the message parts behind them", async () => {
@@ -2547,19 +2565,16 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     async presentNativeAssistantContent() {},
   });
   const account = await turnAccount(async () => {
-    loop.pump.enqueueFact(
-      {
-        source: "stardew_mod",
-        kind: "semantic_event",
-        eventId: "execution_settled_account",
-        sourceEventId: "execution_settled_account",
-        correlationId: "execution_settled_account",
-        revision: 11,
-        occurredAtMs: 5,
-        payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
-      },
-      FACT_PRODUCER.adapterIngress,
-    );
+    // A turn the surface cannot show, reachable only through a caller that bypassed the ingress (`eventId` is what
+    // `HostService.acceptPlayerInput` refuses to leave out). The property below is the one that matters: the account still
+    // prints its own reason instead of letting the text vanish into a remainder.
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_settled_account",
+      text: "鹏子割草。",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
     await loop.flush();
   });
   assert.deepEqual(account, {
@@ -2571,10 +2586,10 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
     withheld: "no_presentation_lease",
-    // The turn's own reason, beside the loss: a semantic event is not a presentation source, so this turn carried only
-    // the verdict and had no surface to speak into - which is what the model is now told before it answers.
+    // The turn's own reason, beside the loss: no presentation source exists, so this turn had no surface to speak into -
+    // which is what the model is told before it answers.
     lease: { admitted: false },
-    carried: ["semantic_event"],
+    carried: [],
   });
 });
 

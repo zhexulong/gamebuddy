@@ -94,6 +94,9 @@ function milestoneFact(index: number, occurredAtMs: number): WorldFact {
     source: "stardew_mod",
     kind: "world_fact" as const,
     eventId: `time_milestone_${String(index)}`,
+    // The wire requires it (`protocol/bridge-v1.schema.json#worldFact`), and it is what makes the fact a presentation
+    // source: without it no projection can be attached to a turn opened on this milestone.
+    sourceEventId: `time_milestone_${String(index)}`,
     correlationId: `time_milestone_${String(index)}`,
     revision: 1,
     observedTick: index,

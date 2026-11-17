@@ -17,6 +17,9 @@ import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snaps
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
 // about who holds the body.
 import { evidenceDetailOf, evidenceField } from "./stardew-action-remedy.js";
+// Which facts the player's surface can show: the ONE reading the loop's own admission reads too (`presentation-lease.ts`),
+// so "this fact can present" cannot be true in one layer and false in the other.
+import { presentationSourceOf } from "./presentation-lease.js";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
@@ -242,6 +245,15 @@ export type FactProducer = (typeof FACT_PRODUCERS)[number];
 type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; producedBy: FactProducer | undefined }>;
 
 /**
+ * A `not_owed` answer, plus the fact SHAPE that could not be shown when the surface is what refused the turn.
+ *
+ * The shape is the reason's own detail rather than a second reason: `no_surface_for` is one member of the closed list (a
+ * reason added per Mod kind would be an open list the account could not print), and which shape arrived is what a reader
+ * acts on - see `TurnAccount.noSurface`.
+ */
+type NotOwedCause = FlushDecision<NotOwedReason> & Readonly<{ shape?: string }>;
+
+/**
  * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
  *
  * A batch whose only pending content is a `world_fact` she already received is the re-statement reason. A fact whose
@@ -308,6 +320,25 @@ export const NOT_OWED = Object.freeze({
    * be invisible in the account that exists to count them.
    */
   progress: "progress",
+  /**
+   * The flush held a DECISION fact whose own kind the player's surface cannot show: a node's terminal receipt, a lifecycle
+   * event, a world fact no projection is drawn for.
+   *
+   * <p>
+   * A decision fact that cannot present still owes her the news (`#owesTurn` keeps it in the batch's model-facing text), and it
+   * still does not open a turn of its own: the surface would attach no projection, so her answer to it could only be text
+   * nobody is shown. MEASURED 2026-11-17 (`round66`, ten minutes): 21 turns opened, 15 admitted; the six `admitted:false`
+   * turns each carried exactly `["execution_receipt","snapshot"]`, and the run counted `lost 8 {no_presentation_lease: 8}`
+   * for text it had paid a provider turn to write. The fact keeps its place in its window and the next turn that CAN present
+   * carries it - which is what `no_surface_for` counts and what the `CarryTicket` beside it proves.
+   * </p>
+   * <p>
+   * The reason's own braces in the account name the SHAPES (`factTurnShape`: `receipt:succeeded`, `world_fact`, ...) rather
+   * than the producer, because every one of them arrives through the adapter and the question a reader has is which fact
+   * shape is being invited to speak into nothing.
+   * </p>
+   */
+  noSurface: "no_surface_for",
   nothingPending: "nothing_pending",
 });
 
@@ -562,6 +593,16 @@ export type TurnAccount = Readonly<{
   /** Which producer's fact answered each such call: the re-stated fact, the step, or the reading held as state. */
   notOwedByProducer: Readonly<Record<NotOwedReason, Readonly<Record<FactProducer, number>>>>;
   /**
+   * The decision facts this pump declined to open a turn for because the surface could not show an answer, by the pump's own
+   * fact shape (`factTurnShape`) - `receipt:succeeded`, `world_fact`, `lifecycle`.
+   *
+   * THE SHAPE IS THE READING. `no_surface_for: 6 {adapter_ingress: 6}` would name the mouth the fact came in through, which is
+   * the same mouth for every one of them; what a reader has to fix is the KIND, and `round66`'s six lost turns were one kind
+   * (`execution_receipt`) with nothing else in the window. Its total is `notOwed[no_surface_for]` - one shape per call that
+   * was answered that way, so the two numbers cannot disagree and a missing shape would show as a short sum.
+   */
+  noSurface: Readonly<Record<string, number>>;
+  /**
    * The batches this pump assembled, counted where the batch is composed.
    *
    * INDEPENDENTLY OF `opened`, deliberately: if a future change composes a batch and then finds it owes no turn, this
@@ -670,7 +711,9 @@ export type TurnAccount = Readonly<{
  * examined 655` with no producer on it was a question answered by reading `enqueueFact`'s call sites instead of the log.
  * Only producers that FIRED are printed: the closed set is declared once above, the reason's own count is the declared
  * total beside it, and eleven zeroes repeated on each of a run's six hundred lines would be noise where the reading is
- * one number.
+ * one number. `no_surface_for` is the one exception, and it is the reverse: its braces name the fact SHAPES that could not
+ * be shown (`no_surface_for: 6 {receipt:succeeded: 6}`), because all six came in through the same producer and the shape is
+ * what `round66` measured and what a fix has to move.
  *
  * The three stale segments are what makes a REMOVED turn countable AND a turn that was NOT removed explainable. A refresh
  * costs no turn, so without them "the stale notices stopped opening turns" and "the stale notices stopped happening"
@@ -689,9 +732,13 @@ export function turnAccountLine(account: TurnAccount): string {
   const opened = TURN_OPENINGS.map(
     (reason) => `${reason}: ${String(account.byReason[reason])}${producerBlock(account.openedByProducer[reason])}`,
   ).join(", ");
-  const notOwed = NOT_OWED_REASONS.map(
-    (reason) => `${reason}: ${String(account.notOwed[reason])}${producerBlock(account.notOwedByProducer[reason])}`,
-  ).join(", ");
+  const notOwed = NOT_OWED_REASONS.map((reason) => {
+    // The surface reason's braces name the SHAPES that could not be shown rather than the producer that sent them: every one
+    // of them arrives through the adapter, so the producer would answer a question nobody asked.
+    const braces =
+      reason === NOT_OWED.noSurface ? shapeBlock(account.noSurface) : producerBlock(account.notOwedByProducer[reason]);
+    return `${reason}: ${String(account.notOwed[reason])}${braces}`;
+  }).join(", ");
   // The loss reading's population is the reasons the delivery layer REPORTED, so a reason the projection adds appears here
   // without a second table to extend. Sorted, so two runs' lines can be compared.
   const empty = emptyTurnShapes()
@@ -795,6 +842,19 @@ function producerBlock(counts: Readonly<Record<FactProducer, number>>): string {
   const fired = FACT_PRODUCERS.filter((producer) => counts[producer] > 0).map(
     (producer) => `${producer}: ${String(counts[producer])}`,
   );
+  return fired.length === 0 ? "" : ` {${fired.join(", ")}}`;
+}
+
+/**
+ * The fact shapes inside one reason's braces, sorted - see `TurnAccount.noSurface` for why this reason names shapes.
+ *
+ * Nothing is printed when the reason has not fired: the reason's own count beside it is the reading, and an empty block would
+ * be a claim that a shape was named.
+ */
+function shapeBlock(counts: Readonly<Record<string, number>>): string {
+  const fired = Object.keys(counts)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .map((shape) => `${shape}: ${String(counts[shape])}`);
   return fired.length === 0 ? "" : ` {${fired.join(", ")}}`;
 }
 
@@ -1795,6 +1855,8 @@ export class CompanionEventPump {
   /** The nested half of both histograms above: which `FACT_PRODUCER` entrance the deciding fact came in through. */
   readonly #openedByProducer = initializedByProducer(TURN_OPENINGS);
   readonly #notOwedByProducer = initializedByProducer(NOT_OWED_REASONS);
+  /** The shapes behind `NOT_OWED.noSurface`, in the pump's own spelling (`factTurnShape`); emptied by `clear()`. */
+  readonly #noSurfaceByShape: Record<string, number> = {};
   /**
    * Which producer put each WAITING fact here, by slot key.
    *
@@ -2149,6 +2211,7 @@ export class CompanionEventPump {
     for (const reason of Object.keys(this.#deliveryLost)) delete this.#deliveryLost[reason];
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
     for (const reason of NOT_OWED_REASONS) this.#notOwedByReason[reason] = 0;
+    for (const shape of Object.keys(this.#noSurfaceByShape)) delete this.#noSurfaceByShape[shape];
     for (const reason of TURN_OPENINGS)
       for (const producer of FACT_PRODUCERS) this.#openedByProducer[reason][producer] = 0;
     for (const reason of NOT_OWED_REASONS)
@@ -2192,6 +2255,7 @@ export class CompanionEventPump {
       openedByProducer: freezeProducerHistograms(this.#openedByProducer, TURN_OPENINGS),
       notOwed: Object.freeze({ ...this.#notOwedByReason }),
       notOwedByProducer: freezeProducerHistograms(this.#notOwedByProducer, NOT_OWED_REASONS),
+      noSurface: Object.freeze({ ...this.#noSurfaceByShape }),
       // COUNTED WHERE THE BATCH IS COMPOSED (`takeBatch`), not derived from the two histograms beside it: a count that is
       // the sum of its own terms cannot witness a batch that was assembled and then discarded, which is the defect this
       // number exists to make impossible.
@@ -2664,15 +2728,71 @@ export class CompanionEventPump {
   #opening(): FlushDecision<TurnOpening> | undefined {
     // A person's word is not a fact, so it has no producer: the opener's own count carries it, and every producer stays
     // at zero for this decision instead of one of them being credited with a turn it did not cause.
+    //
+    // ITS LEASE IS THE INGRESS'S, not this opener's: `HostService.acceptPlayerInput` refuses a `sourceEventId` that is not an
+    // opaque token, so a player turn always has a surface. A fact has no such gate between the Mod and this window, which is
+    // why the loop below asks.
     if (this.#inputs.length > 0) return Object.freeze({ decision: TURN_OPENING.playerInput, producedBy: undefined });
     for (const fact of this.#ordinaryFacts()) {
-      if (!this.#owesTurn(fact) || this.#isRestatement(fact)) continue;
+      if (!this.#opensTurn(fact)) continue;
       return Object.freeze({
         decision: isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
       });
     }
     return undefined;
+  }
+
+  /**
+   * Whether this fact may OPEN a turn: it states something she must decide on, she has not already been told it, and the
+   * player's surface can show her answer - or it is a wake the Host mints to make her LOOK (`TURN_OPENING.due`).
+   *
+   * <p>
+   * THE WAKE IS THE ONE DECLARED EXCEPTION, and it is a liveness rule rather than a hole. A stale reading, a refused refresh,
+   * a body that stalled and a run of narration are facts whose whole purpose is that the model looks again: what the turn has
+   * to produce is the look, not a line, and a wake that waits for something else to present is a wake that never fires. They
+   * are the `due` opener, their population is `PUMP_MINTED_WAKE_KINDS` (every member named with the path that publishes it),
+   * and the account prints how many turns they opened - so the exception is measured rather than assumed. Making one of them
+   * PRESENT would mean teaching the Game side a new salient identity, which is `integrations/**` and not this layer's to
+   * mint (`host-service.ts:GameTurnLineageTracker` refuses an id the Game did not register).
+   * </p>
+   */
+  #opensTurn(fact: WorldFact): boolean {
+    if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
+    return isDueFact(fact) || this.#canPresent(fact);
+  }
+
+  /**
+   * Whether this fact can reach the player's surface at all: one of the loop's lease kinds, carrying the opaque identity it
+   * requires (`presentation-lease.ts#presentationSourceOf`).
+   *
+   * <p>
+   * A DECISION FACT THAT CANNOT PRESENT STILL OWES HER THE NEWS, so it is not suppressed: `#owesTurn` keeps it, `takeBatch`
+   * renders it into the next batch's model-facing text, and it is answered `NOT_OWED.noSurface` with a `CarryTicket` that
+   * proves where it went. What it does not do is open a turn of its own, because a turn whose batch carries no presentation
+   * source attaches no projection: she would decide, act and speak, and the player would see nothing
+   * (`round66`: `lost 8 → 12 {no_presentation_lease}`, and every one of those batches carried exactly
+   * `["execution_receipt","snapshot"]`).
+   * </p>
+   * <p>
+   * WHAT BOUNDS THE HOLD, since nothing here hands a fact to a deadline:
+   * </p>
+   * <ul>
+   *   <li>IT COALESCES RATHER THAN ACCUMULATES. The windows this reads are the pump's own - one slot per moving state and a
+   *       cap per window - so a thousand arrivals hold at most a windowful, and the newest of each slot is the one that
+   *       travels. The hold cannot grow with the session.</li>
+   *   <li>EVERY PRESENTABLE FACT DRAINS IT, ALL OF IT. `takeBatch` empties every window on the next turn that opens, so a
+   *       carried fact waits exactly as long as the next thing the player can see: the game's own HUD lines (`native_notice`
+   *       rides the receipt it appeared in), the five clock marks a day (`time_milestone`, `AllowedMilestones`), the day's
+   *       boundary and her own arrival, and every settlement - which is presentable by construction, because the digest
+   *       carries an opaque `sourceEventId` of its own. In `round66` 15 of 21 windows already had one of those.</li>
+   *   <li>IF NOTHING EVER PRESENTS, NOTHING NEW IS HAPPENING EITHER. The facts that would drain the hold are the game's own
+   *       traffic; a world that produces none produces no reason to act, and the next player word opens a turn regardless
+   *       (the branch above).</li>
+   * </ul>
+   */
+  #canPresent(fact: WorldFact): boolean {
+    return presentationSourceOf(fact) !== undefined;
   }
 
   /**
@@ -2763,18 +2883,36 @@ export class CompanionEventPump {
    * than a promise. A reading is not ticketed: it is rendered into every batch by `#worldStateReading`, so it does not need
    * a slot of its own to arrive.
    */
-  #notOwed(): Readonly<{ reason: NotOwedReason; producedBy: FactProducer | undefined; carry: CarryTicket }> {
+  #notOwed(): Readonly<{
+    reason: NotOwedReason;
+    producedBy: FactProducer | undefined;
+    shape: string | undefined;
+    carry: CarryTicket;
+  }> {
     const decision = this.#notOwedReason();
     return Object.freeze({
       reason: decision.decision,
       producedBy: decision.producedBy,
+      shape: decision.shape,
       carry: this.#takeCarryTicket(),
     });
   }
 
   /** The reason half of `#notOwed`: the one question "why did nothing owe a turn", answered once per call. */
-  #notOwedReason(): FlushDecision<NotOwedReason> {
+  #notOwedReason(): NotOwedCause {
     const facts = this.#ordinaryFacts();
+    // THE SURFACE FIRST, because it is the one answer here that changed WHICH turn exists: a decision fact that cannot present
+    // is not a fact she has already been told (the re-statement below) and not a step of a programme she dispatched (the two
+    // reviews after it) - it is news the surface has nowhere to put, and `#opening` declined it for exactly that reason.
+    for (const fact of facts) {
+      if (this.#opensTurn(fact)) continue;
+      if (!this.#owesTurn(fact) || this.#isRestatement(fact) || this.#canPresent(fact)) continue;
+      return Object.freeze({
+        decision: NOT_OWED.noSurface,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+        shape: noSurfaceShape(fact),
+      });
+    }
     // The step first, because it is the answer `#opening` skipped the fact for (`#owesTurn`); the re-statement below is
     // the older reason and means the same flush was already told this once.
     for (const fact of facts) {
@@ -2819,10 +2957,17 @@ export class CompanionEventPump {
    * examined`, `turns opened`, `carried`, and this one) are read together.
    */
   #noteNotOwed(
-    notOwed: Readonly<{ reason: NotOwedReason; producedBy: FactProducer | undefined; carry: CarryTicket }>,
+    notOwed: Readonly<{
+      reason: NotOwedReason;
+      producedBy: FactProducer | undefined;
+      shape: string | undefined;
+      carry: CarryTicket;
+    }>,
   ): FlushOutcome {
     this.#notOwedByReason[notOwed.reason] += 1;
     if (notOwed.producedBy !== undefined) this.#notOwedByProducer[notOwed.reason][notOwed.producedBy] += 1;
+    if (notOwed.reason === NOT_OWED.noSurface && notOwed.shape !== undefined)
+      this.#noSurfaceByShape[notOwed.shape] = (this.#noSurfaceByShape[notOwed.shape] ?? 0) + 1;
     this.#lastTurnDecision = Object.freeze({ kind: "not_owed", reason: notOwed.reason });
     return Object.freeze({ kind: "not_owed" as const, reason: notOwed.reason, carry: notOwed.carry });
   }
@@ -3951,6 +4096,21 @@ export function factTurnShape(fact: WorldFact): string {
   if (fact.kind === "world_fact" && fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND)
     return `settled:${settledProgramOutcome(fact)}`;
   return fact.kind;
+}
+
+/**
+ * The shape a `no_surface_for` answer is filed under: `factTurnShape`, except that a plain world fact is named by its OWN
+ * semantic kind - `world_fact:modal_presented`.
+ *
+ * `world_fact` alone would collapse every kind that cannot present into one word, and the kind is the thing a fix has to
+ * move: `round66`'s twelve lost turns were all one shape, and a reader of `no_surface_for 12 {world_fact: 12}` could not
+ * tell that from twelve undrawn HUD lines. The classification's own key stays `world_fact` (`factTurnShape`), because that
+ * is the shape's consequence; this is the finer spelling the ACCOUNT needs, and nowhere else.
+ */
+function noSurfaceShape(fact: WorldFact): string {
+  const shape = factTurnShape(fact);
+  if (shape !== "world_fact") return shape;
+  return fact.semanticKind === undefined ? shape : `world_fact:${fact.semanticKind}`;
 }
 
 /**

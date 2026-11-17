@@ -215,36 +215,39 @@ test("a step the programme is still working through is PROGRESS: it opens no tur
   }
 });
 
-test("a finished node is an outcome: it opens the turn that states it", async () => {
+test("a finished node is an outcome: it is carried into the turn that can state it", async () => {
   // THE DEFECT THIS CLOSES, and it is the opposite direction to `round57`. Fifty-seven of that run's sixty-six turns were
   // one adapter fact opening a turn per finished NODE; the suppressor that answered them said "a programme is in flight",
   // which is a judgement about the TURN, not a statement about the fact - so it also silenced facts nothing else would
-  // ever state. A node that ran is a change of the world: its receipt is the one fact that says so.
+  // ever state. A node that ran is a change of the world: its receipt is the one fact that says so. What it is NOT is a
+  // turn: `protocol/bridge-v1.schema.json#receipt` carries no event identity, so a turn opened on it attaches no projection
+  // and its words are never presented (`round66`: `lost 12 {no_presentation_lease}`). It waits in its window and the next
+  // turn the surface can show states it.
   const pump = new CompanionEventPump();
   const turns = recorder();
 
   pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
-  await pump.flush(turns.sink);
-
-  assert.equal(
-    pump.turnAccount.opened,
-    1,
-    "a node that ran is a change of the world, and its receipt is the fact that states it",
-  );
-  assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u, "in the Mod's own words");
+  const refused = await pump.flush(turns.sink);
+  assert.equal(refused.kind, "not_owed", `a terminal receipt cannot present, so it opens no turn (${refused.kind})`);
+  assert.equal(pump.turnAccount.opened, 0, "no turn is invited where nothing can be shown");
   assert.equal(
     pump.turnAccount.notOwed[NOT_OWED.inFlightProgress],
     0,
-    "and nothing was suppressed on the way: no shape is filed as `in_flight_progress` any more",
+    "and nothing was suppressed as a step of a programme: no shape is filed as `in_flight_progress`",
   );
   assert.equal(
     pump.turnAccount.executionProvenance.facts.programme,
     1,
     "while the fact's own statement of its programme is still counted - that is what the account is for",
   );
+
+  pump.enqueueFact(milestoneFact(), FACT_PRODUCER.adapterIngress);
+  await pump.flush(turns.sink);
+  assert.equal(pump.turnAccount.opened, 1, "and the next fact the surface can show opens the turn that states it");
+  assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u, "in the Mod's own words: the node is not silent");
 });
 
-test("two answers, two turns: a step's receipt and the programme's settlement are each stated once", async () => {
+test("one answer: the settlement's turn states the step that led to it", async () => {
   const pump = new CompanionEventPump();
   const turns = recorder();
 
@@ -255,15 +258,15 @@ test("two answers, two turns: a step's receipt and the programme's settlement ar
 
   assert.equal(
     pump.turnAccount.opened,
-    2,
-    "the step's receipt and the programme's settlement are each the answer to one call, so neither is silent",
+    1,
+    "the programme's settlement is the DECISION, and the node's receipt rides it: one call, one answer",
   );
-  assert.equal(turns.batches.length, 2, "and one flush is one turn: each fact is the opener of its own");
-  assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u, "the receipt arrives in its own turn");
+  assert.equal(turns.batches.length, 1, "and one flush is one turn");
+  assert.match(turns.batches[0]!.text, /1\/1 步做成了/u, "the settlement's counts are stated");
   assert.match(
-    turns.batches[1]!.text,
-    /1\/1 步做成了/u,
-    "and the settlement in the next, with the counts it was read from",
+    turns.batches[0]!.text,
+    /harvest_crop 做成了/u,
+    "and the node's own receipt arrives in the same turn, so neither answer is silent",
   );
 });
 
@@ -308,15 +311,18 @@ test("a settlement that only PARTIALLY did a node opens the turn too", async () 
   assert.match(turns.batches[0]!.text, /move_to_tile 没做成（partially_watered）/u);
 });
 
-test("a plan still running states its finished steps in the turn they open, and no in-flight block is written", async () => {
+test("a plan still running carries its finished steps, and no in-flight block is written", async () => {
   const pump = new CompanionEventPump();
   const turns = recorder();
 
   pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(nodeSucceeded("60,11", 61), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
+  // Both nodes are waiting: two finished steps in one window are not two turns, and they are not a turn of their own either.
+  pump.enqueueFact(milestoneFact(), FACT_PRODUCER.adapterIngress);
+  await pump.flush(turns.sink);
 
-  assert.equal(pump.turnAccount.opened, 1, "two finished nodes in one flush are one turn, not two");
+  assert.equal(pump.turnAccount.opened, 1, "two finished nodes in one window are one turn, not two");
   const batch = turns.batches[0]!;
   // THE BLOCK IS GONE. A plan in flight is not narrated: its settlement states the nodes, with their bounded evidence,
   // and a turn that opened for another reason carries no progress line (measured `round64`: 8 turns for 401 facts).
@@ -327,29 +333,47 @@ test("a plan still running states its finished steps in the turn they open, and 
     2,
     "and so do both finished nodes: one turn, both answers",
   );
+  assert.match(batch.text, /harvest_crop 做成了/u, "stated in the Mod's own words");
 });
 
-test("a lone action's success is news: no programme owns it, so its own receipt is the only fact that states it", async () => {
+test("a lone action's success is news, and it reaches her in the next turn that can be shown", async () => {
   const pump = new CompanionEventPump();
   const turns = recorder();
 
   pump.enqueueFact(loneSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+  const refused = await pump.flush(turns.sink);
+  assert.equal(refused.kind, "not_owed", `a lone receipt has no surface either (${refused.kind})`);
+  assert.equal(
+    pump.turnAccount.executionProvenance.facts.standalone,
+    1,
+    "and the account counted it as what it is: an execution no programme owns",
+  );
+  pump.enqueueFact(milestoneFact(), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "a single action that finished is the only fact that will ever say so");
+  assert.equal(pump.turnAccount.opened, 1, "the next presentable fact states it, so nothing is lost");
   assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u);
-  assert.equal(pump.turnAccount.executionProvenance.facts.standalone, 1, "and the account counted it as what it is");
 });
 
-test("a refusal inside a running programme is a decision, not progress", async () => {
+test("a refusal inside a running programme is a decision, not progress - and it is carried, not dropped", async () => {
+  assert.equal(
+    factTurnConsequence(nodeRejected("60,10", 60)),
+    "decision",
+    "a rejected node is the one thing mid-plan she can act on, so its shape is a decision",
+  );
   const pump = new CompanionEventPump();
   const turns = recorder();
 
   pump.enqueueFact(nodeRejected("60,10", 60), FACT_PRODUCER.adapterIngress);
+  const refused = await pump.flush(turns.sink);
+  assert.equal(refused.kind, "not_owed");
+  assert.equal(
+    pump.turnAccount.notOwed[NOT_OWED.progress],
+    0,
+    "filed as the surface's refusal, never as progress: the classification says decision and the reason must agree",
+  );
+  pump.enqueueFact(milestoneFact(), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "a rejected node is the one thing mid-plan she can act on");
-  assert.match(turns.batches[0]!.text, /harvest_crop 没做成：tool_not_held/u);
+  assert.match(turns.batches[0]!.text, /harvest_crop 没做成：tool_not_held/u, "and the refusal is stated to her");
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -519,7 +543,7 @@ test("the shape the ingress delivers is classified once, in the table the pump r
   assert.equal(
     factTurnConsequence(nodeSucceeded("60,10", 60)),
     "decision",
-    "a finished node is an outcome: its receipt is the one fact that says the node ran, so it opens its turn",
+    "a finished node is an outcome: its receipt is the one fact that says the node ran, so no liveness rule may file it as progress - it is carried into the next turn that can show it (`event-pump.turn-surface.test.ts`)",
   );
   assert.equal(
     factTurnConsequence(programSettled()),

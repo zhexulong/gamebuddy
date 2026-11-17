@@ -15,6 +15,7 @@ import {
   type WorldFact,
 } from "./event-pump.js";
 import { EXECUTION_STATES, newEnvelope, type Scope, validateBridgeMessage } from "./protocol.js";
+import { presentationSourceOf } from "./presentation-lease.js";
 
 /**
  * `receipt_without_its_programme:<execution>:<kind>` - a receipt was filed by something other than the programme its
@@ -195,6 +196,11 @@ type CaseReadings = Readonly<{
   origin: WireOrigin | undefined;
   /** The pump's classification of the shape: the consequence the fact owes her when nothing else speaks. */
   consequence: string | undefined;
+  /**
+   * Whether the player's surface can show a turn opened on this fact - the shared reading (`presentation-lease.ts`), not a
+   * second copy of the pump's rule. A receipt cannot: `protocol/bridge-v1.schema.json#receipt` carries no event identity.
+   */
+  presents: boolean;
   /** The filing of this fact, and the same fact filed again a moment later: TIME must not change the answer. */
   filing: Filing;
   filedLater: Filing;
@@ -209,6 +215,7 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
         executionId: entry.executionId,
         origin: entry.origin,
         consequence: FACT_TURN_CONSEQUENCE[entry.shape],
+        presents: presentationSourceOf(entry.fact) !== undefined,
         filing: await filingOf(entry.fact),
         filedLater: await filingOf(entry.fact),
       }),
@@ -228,8 +235,16 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
  * `IN_FLIGHT_RECEIPT_PROGRESS_STATES` is judged by the same three lines rather than by a fourth hand-written rule.
  */
 function expectedFiling(reading: CaseReadings): Readonly<{ opened: number; reason: string }> | undefined {
-  if (reading.consequence === "decision") return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
   if (reading.consequence === "progress") return Object.freeze({ opened: 0, reason: NOT_OWED.progress });
+  if (reading.consequence === "decision") {
+    // THE SURFACE IS PART OF THE ANSWER. A decision fact opens its turn only where the player's surface can show it; every
+    // receipt shape is one the surface has nowhere to put, so its filing is `no_surface_for` and the fact is carried into
+    // the next turn that can present. This asks the shared predicate rather than restating the pump's rule, so the two
+    // cannot drift (`presentation-lease.ts`).
+    return reading.presents
+      ? Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact })
+      : Object.freeze({ opened: 0, reason: NOT_OWED.noSurface });
+  }
   // NOTHING IS FILED AGAINST ANOTHER OBJECT'S LIVENESS ANY MORE (`IN_FLIGHT_RECEIPT_PROGRESS_STATES` is empty by ruling),
   // and this gate does not assume it: a shape that came back would be UNCLASSIFIED here and red by name, rather than
   // silently agreeing with the pump about a rule nobody can state from the fact alone. That is the same direction the
@@ -284,10 +299,15 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
       violations.push(
         `${RECEIPT_WITHOUT_ITS_PROGRAMME}:${shape}:${String(reading.filing.opened)}:${String(reading.filing.reason)}`,
       );
-    // The step's own provenance, in the direction the window got wrong. A lone outcome must still speak: silencing it
-    // hides the only fact that says the execution happened, and the fix for that is a different one from the generic
-    // disagreement above - so the log names it with its own token.
-    if (reading.origin?.kind === "standalone" && expected.opened === 1 && reading.filing.opened === 0)
+    // The step's own provenance, in the direction the window got wrong. A lone outcome must still be DELIVERED: filing it
+    // as progress hides the only fact that says the execution happened, because progress is a state the next turn may state
+    // and a carried fact is one the next turn will state. `no_surface_for` is the second kind and the carry ticket proves
+    // it; anything else on a standalone outcome is the token below.
+    if (
+      reading.consequence === "decision" &&
+      reading.origin?.kind === "standalone" &&
+      (reading.filing.reason === NOT_OWED.progress || reading.filing.reason === NOT_OWED.inFlightProgress)
+    )
       violations.push(`standalone_outcome_swallowed:${shape}:${String(reading.filing.reason)}`);
     // TIME: the same fact, filed at two instants. The reading a receipt used to be filed against is gone with the port, so
     // the only variation left is the moment it is driven at - which is exactly what this token asks about.
@@ -423,6 +443,7 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
       executionId: "exec_round62_tail",
       origin: PROGRAMME,
       consequence: FACT_TURN_CONSEQUENCE["receipt:succeeded"],
+      presents: false,
       filing: { opened: 0, reason: NOT_OWED.progress },
       filedLater: { opened: 1, reason: TURN_OPENING.worldFact },
     },
@@ -448,6 +469,7 @@ test("receipt_without_its_programme: a lone outcome silenced while a programme r
       executionId: "exec_lone_action",
       origin: STANDALONE,
       consequence: FACT_TURN_CONSEQUENCE["receipt:partially_succeeded"],
+      presents: false,
       filing: { opened: 0, reason: NOT_OWED.progress },
       filedLater: { opened: 0, reason: NOT_OWED.progress },
     },
@@ -479,16 +501,18 @@ test("receipt_without_its_programme: zero population is blocked, never green", (
  * - and the account says so, in the one line a run's log already carries.
  * </p>
  */
-test("unattributed_execution: an execution the journal could not attribute is named, counted, and still owes its turn", async () => {
+test("unattributed_execution: an execution the journal could not attribute is named, counted, and still reaches her", async () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(receiptFact("succeeded", "exec_unattributed", UNATTRIBUTED), FACT_PRODUCER.adapterIngress);
+  const receipt = receiptFact("succeeded", "exec_unattributed", UNATTRIBUTED);
+  pump.enqueueFact(receipt, FACT_PRODUCER.adapterIngress);
   const turns = recorder();
-  await pump.flush(turns.sink);
+  const refused = await pump.flush(turns.sink);
 
+  assert.equal(refused.kind, "not_owed", `a receipt has no surface to speak into (${refused.kind})`);
   assert.equal(
-    pump.turnAccount.opened,
+    pump.turnAccount.notOwed[NOT_OWED.noSurface],
     1,
-    "an execution nobody can attribute is still an outcome she has not been told",
+    "and the answer is the surface, not a suppression: an execution nobody can attribute is still an outcome she has not been told",
   );
   assert.equal(pump.turnAccount.executionProvenance.facts.unattributed, 1, "and the account counts the defect");
   assert.deepEqual(pump.turnAccount.executionProvenance.unattributedExecutions, ["exec_unattributed"], "and names it");
@@ -525,12 +549,13 @@ test("receipt_without_its_programme: a receipt that states NOTHING is filed as a
   // - must not read the absence as "a programme's step": that reading is exactly the guess this field replaced.
   const pump = new CompanionEventPump();
   pump.enqueueFact(receiptFact("succeeded", "exec_unstated", undefined), FACT_PRODUCER.adapterIngress);
-  await pump.flush(recorder().sink);
+  const refused = await pump.flush(recorder().sink);
 
+  assert.equal(refused.kind, "not_owed", `a receipt with no provenance has no surface either (${refused.kind})`);
   assert.equal(
-    pump.turnAccount.opened,
+    pump.turnAccount.notOwed[NOT_OWED.noSurface],
     1,
-    "a receipt with no provenance owes a turn: erring toward a turn cannot lose an outcome",
+    "and it is carried rather than silenced: erring toward a carry cannot lose an outcome",
   );
   assert.equal(
     pump.turnAccount.executionProvenance.facts.unstated,

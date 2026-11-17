@@ -120,6 +120,26 @@ function queuedObservation(eventId: string): WorldFact {
   };
 }
 
+/**
+ * The fact that opens the batch a release is delivered in: the game's own HUD line, a kind the surface can show.
+ *
+ * A RELEASE FACT CANNOT OPEN ONE. A refusal, the owner's terminal receipt and a snapshot are all shapes with no presentation
+ * source (`presentation-lease.ts`), so a turn opened on them would be answered into nothing (`round66`: `lost 12`). What this
+ * fixture holds is unchanged: the release ends the hold, and everything that waited is delivered with it.
+ */
+function queuedNotice(eventId: string): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId,
+    sourceEventId: eventId,
+    correlationId: eventId,
+    revision: 1,
+    semanticKind: "native_notice",
+    payload: Object.freeze({ message: "It is getting late." }),
+  };
+}
+
 function collector(batches: PendingBatch[]): { deliver(batch: PendingBatch): Promise<void> } {
   return {
     async deliver(batch) {
@@ -136,6 +156,7 @@ async function holdThenRelease(code: string, detail: string, release: WorldFact)
 
   // Something happens in the world while the body is held: it QUEUES, and the hold must not let it through.
   pump.enqueueFact(queuedObservation("observation_during_hold"), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(queuedNotice("notice_during_hold"), FACT_PRODUCER.adapterIngress);
   const duringHold: PendingBatch[] = [];
   await pump.flush(collector(duringHold));
 

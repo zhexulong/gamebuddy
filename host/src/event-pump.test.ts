@@ -20,7 +20,29 @@ function worldFact(eventId: string, observedTick: number): WorldFact {
     correlationId: eventId,
     observedTick,
     revision: 1,
+    semanticKind: "time_milestone",
     payload: { kind: "time_milestone", text: `第 ${String(observedTick)} 次时间里程碑` },
+  };
+}
+
+/**
+ * The game's own HUD line: a fact the player's surface CAN show, which is what opens a turn (`presentation-lease.ts`).
+ *
+ * A receipt cannot: `protocol/bridge-v1.schema.json#receipt` carries no event identity, so a turn opened on one attaches no
+ * projection and its words are never presented (`round66`: `lost 12 {no_presentation_lease}`). A fixture that wants a turn
+ * beside a receipt therefore needs one of these in the window - which is what the product itself does.
+ */
+function noticeFact(index: number): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: `notice_${String(index)}`,
+    sourceEventId: `notice_${String(index)}`,
+    correlationId: `notice_${String(index)}`,
+    observedTick: index,
+    revision: 1,
+    semanticKind: "native_notice",
+    payload: { message: "It is getting late." },
   };
 }
 
@@ -183,17 +205,7 @@ test("event pump holds snapshot and meaningful progress until an ordinary trigge
   });
   assert.equal(delivered.length, 0);
 
-  pump.enqueueFact(
-    {
-      source: "stardew_mod",
-      kind: "semantic_event",
-      eventId: "event_1",
-      correlationId: "event",
-      revision: 5,
-      payload: { kind: "location_changed" },
-    },
-    FACT_PRODUCER.adapterIngress,
-  );
+  pump.enqueueFact(noticeFact(1), FACT_PRODUCER.adapterIngress);
   await pump.flush({
     async deliver(batch) {
       delivered.push(batch);
@@ -201,19 +213,20 @@ test("event pump holds snapshot and meaningful progress until an ordinary trigge
   });
   assert.equal(delivered[0]?.disposition, "follow_up");
   const batch = delivered[0]!;
-  assert.deepEqual(batch.triggerEventIds, ["event_1"]);
+  assert.deepEqual(batch.triggerEventIds, ["notice_1"]);
   assert.deepEqual(
     batch.facts.map((fact) => [fact.kind, fact.payload.state ?? "", fact.revision]),
     [
       ["snapshot", "", 4],
       ["execution_receipt", "running", 4],
-      ["semantic_event", "", 5],
+      ["world_fact", "", 1],
     ],
   );
 });
 
 test("event pump follows up ordinary facts and preserves an exact failed batch retry", async () => {
   const pump = new CompanionEventPump();
+  pump.enqueueFact(noticeFact(1), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(
     {
       source: "stardew_mod",
@@ -252,7 +265,7 @@ test("event pump follows up ordinary facts and preserves an exact failed batch r
   assert.equal(delivered[0]?.disposition, "follow_up");
   assert.deepEqual(
     delivered[0]?.facts.map((item) => item.correlationId),
-    ["execution_a", "execution_b"],
+    ["execution_a", "execution_b", "notice_1"],
   );
 });
 
@@ -384,9 +397,11 @@ test("event pump clear revokes an in-flight rejected fact delivery and preserves
       source: "stardew_mod",
       kind: "world_fact",
       eventId: "stale_event",
+      sourceEventId: "stale_event",
       correlationId: "stale_delivery",
       revision: 1,
       observedTick: 10,
+      semanticKind: "native_notice",
       payload: { value: "stale" },
     },
     FACT_PRODUCER.adapterIngress,
@@ -410,9 +425,11 @@ test("event pump clear revokes an in-flight rejected fact delivery and preserves
       source: "stardew_mod",
       kind: "world_fact",
       eventId: "fresh_event",
+      sourceEventId: "fresh_event",
       correlationId: "fresh_delivery",
       revision: 2,
       observedTick: 11,
+      semanticKind: "native_notice",
       payload: { value: "fresh" },
     },
     FACT_PRODUCER.adapterIngress,
@@ -460,7 +477,7 @@ test("event pump holds every nonterminal progress receipt state", async () => {
   }
 });
 
-test("event pump follows up a blocked terminal receipt without waiting for an unrelated trigger", async () => {
+test("a blocked terminal receipt is carried, and the next turn that can present states it", async () => {
   const pump = new CompanionEventPump();
   pump.enqueueFact(
     {
@@ -473,15 +490,29 @@ test("event pump follows up a blocked terminal receipt without waiting for an un
     FACT_PRODUCER.adapterIngress,
   );
   const delivered: PendingBatch[] = [];
+  const refused = await pump.flush({
+    async deliver(batch) {
+      delivered.push(batch);
+    },
+  });
+  // THE SURFACE IS THE ONLY THING IT WAITS FOR. A receipt carries no event identity on the wire, so a turn opened on it
+  // attaches no projection: `round66` paid for twelve such turns and the player saw none of the words. The block is still
+  // owed to her - it is carried, not dropped - and the very next fact the surface can show states it.
+  assert.equal(delivered.length, 0, "no turn is invited where nothing can be shown");
+  assert.equal(refused.kind, "not_owed");
+  assert.equal(refused.kind === "not_owed" ? refused.reason : "", "no_surface_for");
+  pump.enqueueFact(noticeFact(1), FACT_PRODUCER.adapterIngress);
   await pump.flush({
     async deliver(batch) {
       delivered.push(batch);
     },
   });
   assert.equal(delivered.length, 1);
+  // AND IT DOES NOT EXPIRE: a receipt's terminal state is the result, so the turn that carries it is a follow-up rather than
+  // a steer that interrupts running work.
   assert.equal(delivered[0]?.disposition, "follow_up");
   assert.deepEqual(
-    delivered[0]?.facts.map((fact) => fact.payload.state),
+    delivered[0]?.facts.filter((fact) => fact.kind === "execution_receipt").map((fact) => fact.payload.state),
     ["blocked"],
   );
 });
@@ -752,6 +783,10 @@ test("event pump delivers an npc_dialogue_presented world fact to the Agent's co
   // Same dialogue identity (identical Mod eventId) re-emitted on a new transport
   // correlation is still one fact; only the Host's world-fact key decides identity.
   pump.enqueueFact({ ...fact, correlationId: "transport_retry" }, FACT_PRODUCER.adapterIngress);
+  // THE TURN THAT CARRIES IT. A dialogue is a fact the surface has no projection for (`npc_dialogue_presented` is not a
+  // lease kind), so it is stated by the next turn that CAN present rather than opening one of its own - the same rule that
+  // took `round66`'s `lost 12` to zero. What this test pins is unchanged: the Mod's payload reaches the model verbatim.
+  pump.enqueueFact(noticeFact(1), FACT_PRODUCER.adapterIngress);
 
   const delivered: PendingBatch[] = [];
   await pump.flush({
@@ -762,7 +797,7 @@ test("event pump delivers an npc_dialogue_presented world fact to the Agent's co
 
   assert.equal(delivered.length, 1);
   const batch = delivered[0]!;
-  assert.deepEqual(batch.triggerEventIds, ["npc_dialogue_marnie_7"]);
+  assert.deepEqual(batch.triggerEventIds, ["notice_1", "npc_dialogue_marnie_7"]);
   // The Mod's payload IS the model-facing content: the Host keeps the readable
   // speaker/pages/isQuestion/choices verbatim and adds no reinterpretation, so
   // these assertions are on agent-visible content, not on an internal code.
@@ -865,19 +900,7 @@ test("a time milestone steers into a running turn while flush is blocked by it",
   });
 
   // A turn is genuinely running: the first delivery does not resolve until released.
-  pump.enqueueFact(
-    {
-      source: "stardew_mod",
-      kind: "execution_receipt",
-      eventId: "receipt_before_milestone",
-      sourceEventId: "receipt_before_milestone",
-      correlationId: "receipt_before_milestone",
-      revision: 1,
-      observedTick: 899,
-      payload: Object.freeze({ state: "succeeded" }),
-    } as never,
-    FACT_PRODUCER.adapterIngress,
-  );
+  pump.enqueueFact(milestone("0900"), FACT_PRODUCER.adapterIngress);
 
   const delivered: Array<{ disposition: string; kinds: string[] }> = [];
   let releaseFirst: () => void = () => undefined;
