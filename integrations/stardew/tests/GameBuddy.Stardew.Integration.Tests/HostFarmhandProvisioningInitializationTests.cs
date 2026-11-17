@@ -22,9 +22,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// attempting anything. So a save whose Cabin was created by a run that did not finish initializing could never bind:
 /// every later request named the identity the Cabin already owned and was refused on the precondition. These tests drive
 /// the seam that decides (the same <c>PrepareTargetFarmhand</c> <c>HandleRequest</c> calls) against a headless world
-/// built from the engine's own types, and assert both outcomes: an owned uncustomized Farmhand is INITIALIZED and the
-/// binding proceeds, and an initialization that throws is refused with its own code while the identity the save already
-/// had is left alone.
+/// built from the engine's own types. The initialization itself is now the ENGINE'S OWN (`SaveGame.loadDataToFarmer`,
+/// `SaveGame.cs:1325`), and that method cannot run in a headless process: it builds a `FarmerRenderer` out of
+/// `Game1.content`, and this process has loaded no content. So the fixture drives what it can - the profile seam
+/// (`WriteCompanionProfile`, the four writes the engine's OK branch performs), the refusal when the initialization cannot
+/// run, and the rollback - and the other half is pinned by `FarmhandConstructionInitializationGateTests`, which requires
+/// every Farmhand this Mod constructs to be handed to the engine's initialization.
 /// </para>
 /// <para>
 /// WHAT IS NOT MEASURED HERE, SAID PLAINLY. The request handler's host-state gate sits above this seam and requires a
@@ -82,21 +85,19 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
     }
 
     /// <summary>
-    /// THE PROOF THAT MATTERS. The Cabin already owns this Farmhand and nobody has customized it: the request names that
-    /// id, the profile is written by the one initializer, and the answer is the identity to bind - not a refusal.
+    /// THE PROFILE SEAM. The Cabin already owns this Farmhand and nobody has customized it: the four writes the engine's
+    /// own customization performs are made by the one method that owns them, and the Farmhand the Cabin owns is the
+    /// Farmhand that carries them.
     /// </summary>
     [Fact]
-    public void AnOwnedUncustomizedFarmhand_IsInitializedAndTheBindingProceeds()
+    public void AnOwnedUncustomizedFarmhand_GetsTheProfileTheEngineCustomizationWrites()
     {
         Farmer farmhand = this.NewFarmhand(customized: false);
         Cabin cabin = CabinOwning(farmhand);
         this.UseSdk(throws: false);
 
-        (Farmer? target, bool created, string refusal) = Prepare(this.provisioner, cabin, NativeId(FarmhandId));
+        InvokeWith(this.provisioner, "WriteCompanionProfile", farmhand);
 
-        refusal.Should().BeEmpty("an owned Farmhand with no profile is a state this Host can repair, not a refusal");
-        created.Should().BeFalse("the Farmhand was already in the save, so this request created nothing to roll back");
-        target.Should().BeSameAs(farmhand, "the binding targets the identity the Cabin already owns");
         farmhand.isCustomized.Value.Should().BeTrue(
             "the initializer is the one the created path uses, and `isCustomized` is what the native client needs");
         farmhand.Name.Should().Be("GameBuddy", "the profile is the companion's, from the Host's own config");
@@ -108,15 +109,18 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
     }
 
     /// <summary>
-    /// The falsifier for the same path: the initializer itself fails. The refusal must be the initialization's own code -
-    /// not the not-initialized name the pre-fix code used - and the Farmhand the save already owned must survive it.
+    /// The falsifier for the binding path: the initialization cannot run. In this process it cannot, for the reason the
+    /// engine's own initialization always fails here - `SaveGame.loadDataToFarmer` needs the loaded content
+    /// (`Game1.content` -> `new FarmerRenderer`) that no headless process has - so this is the real failure shape and not
+    /// a synthetic one. The refusal must be the initialization's own code - never the not-initialized name the pre-fix
+    /// code used - and the Farmhand the save already owned must survive it.
     /// </summary>
     [Fact]
-    public void WhenInitializationThrows_TheInitializationRefusalIsNamedAndTheIdentityIsLeftAlone()
+    public void WhenTheInitializationCannotRun_TheRefusalIsNamedAndTheIdentityIsLeftAlone()
     {
         Farmer farmhand = this.NewFarmhand(customized: false);
         Cabin cabin = CabinOwning(farmhand);
-        this.UseSdk(throws: true);
+        this.UseSdk(throws: false);
 
         (Farmer? target, bool created, string refusal) = Prepare(this.provisioner, cabin, NativeId(FarmhandId));
 
@@ -229,6 +233,11 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         typeof(HostFarmhandProvisioner)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!
             .Invoke(provisioner, null);
+
+    private static void InvokeWith(object provisioner, string name, params object?[] arguments) =>
+        typeof(HostFarmhandProvisioner)
+            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(Farmer) }, null)!
+            .Invoke(provisioner, arguments);
 
     private static void SetField(object instance, string name, object? value) =>
         typeof(HostFarmhandProvisioner)

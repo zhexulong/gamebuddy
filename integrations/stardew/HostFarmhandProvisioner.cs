@@ -765,24 +765,71 @@ internal sealed class HostFarmhandProvisioner
     }
 
     /// <summary>
-    /// Gives a Farmhand the profile this Host is configured for: name, favourite thing, customization, clothing, and the
-    /// version it was written by.
+    /// Hands a Farmhand to the engine's own initialization, then writes the profile the engine's own customization
+    /// writes, then re-derives the Farmhand's state through the engine. After this the Farmhand is not "an object in
+    /// the save": it is the same state a loaded, playable player has.
     ///
     /// <para>
-    /// It makes no assumption that this process created the Farmer. Everything it writes is a plain field or a NetField
-    /// on an instance that is ALREADY in the save, which is why the same call is the answer for both a Farmhand created a
-    /// moment ago and one an earlier run left without a profile (<see cref="PrepareTargetFarmhand"/>). A Farmhand that is
-    /// not customized is exactly the state in which the native client would otherwise open CharacterCustomization.
+    /// WHY <c>SaveGame.loadDataToFarmer</c> AND NOT A LIST OF FIELDS. The engine runs that method over EVERY Farmhand in
+    /// the save on every load (<c>StardewValley/SaveGame.cs:867-870</c>, the method at <c>StardewValley/SaveGame.cs:1325</c>): it builds the
+    /// renderer, applies gender, accessory, shirt, pants colour, skin, hair colour, hair style, shoes and eyes through
+    /// the Farmer's own setters, pads the toolbox to `maxItems`, calls `ConvertClothingOverrideToClothesItems` and
+    /// `UpdateClothing`, and parks the player beside the bed. A Farmhand that <c>Cabin.CreateFarmhand()</c> built at
+    /// runtime is the ONLY Farmer in the game that has never been through it - which is exactly the difference between
+    /// "exists as an object" and "initialised player". Calling it here means this Host inherits whatever the engine's
+    /// own initialization does to a Farmer, instead of keeping a second, hand-maintained copy of that work.
+    /// </para>
+    /// <para>
+    /// WHY THE FOUR WRITES AFTER IT, AND WHY THEY CANNOT BE A CALL. The engine writes a name, a display name, a
+    /// favourite thing and `isCustomized` in exactly one place - `CharacterCustomization.optionButtonClick("OK")`,
+    /// <c>StardewValley.Menus/CharacterCustomization.cs:1696-1699</c> - which is private, acts on `Game1.player` of the process that
+    /// shows the menu, and only runs from a human's click. There is no public engine entry point for it, so this Host
+    /// performs those four writes itself. It is not optional and it is not cosmetic: a Farmhand with
+    /// `isCustomized == false` is the engine's own UNCLAIMED Farmhand (`StardewValley/Farmer.cs:1558`), `GameServer.authCheck`
+    /// refuses it (`StardewValley.Network/GameServer.cs:490`), `Client.setUpGame` answers it by opening
+    /// `CharacterCustomization` (`StardewValley.Network/Client.cs:226-229`), and `Game1` gates its own input on the same flag
+    /// (`StardewValley/Game1.cs:6458`) - a native menu and an input gate a non-UI client can never pass.
+    /// </para>
+    /// <para>
+    /// WHY THE LAST <c>ResetFarmhandState</c>. It is the engine's own state derivation for a Farmhand whose profile has
+    /// just arrived, and the engine runs it on exactly that event: `NetWorldState.SaveFarmhand` clones the arriving
+    /// profile into the world-state slot and then resets the state (`StardewValley.Network/NetWorldState.cs:748-755`). Running it last
+    /// re-derives home, wake-up position and per-day state from the profile written above, rather than leaving the
+    /// Farmhand on the state `Cabin.CreateFarmhand` derived before any profile existed.
+    /// </para>
+    /// <para>
+    /// It makes no assumption that this process created the Farmer: everything it does is the engine's own work on an
+    /// instance that is ALREADY in the save, which is why the same call is the answer for both a Farmhand created a
+    /// moment ago and one an earlier run left without a profile (<see cref="PrepareTargetFarmhand"/>).
     /// </para>
     /// </summary>
     private void InitializeFarmhandProfile(Farmer farmhand)
+    {
+        SaveGame.loadDataToFarmer(farmhand);
+        this.WriteCompanionProfile(farmhand);
+        Game1.netWorldState.Value.ResetFarmhandState(farmhand);
+    }
+
+    /// <summary>
+    /// The four writes the engine's own customization performs, and nothing else: name, display name, favourite thing,
+    /// <c>isCustomized</c>.
+    ///
+    /// <para>
+    /// They are their own method because they are one seam with one authority - the engine's OK branch
+    /// (<c>StardewValley.Menus/CharacterCustomization.cs:1696-1699</c>) - and because the engine's own initialization cannot run in a
+    /// process with no loaded content, so this half is the half the headless suite drives. `gameVersion`,
+    /// `gameVersionLabel` and an empty `userID` ride along: they are what makes the save record this Farmhand as
+    /// created by THIS game version rather than by the migration path, and what keeps an unclaimed Farmhand claimable
+    /// by the platform user that joins it.
+    /// </para>
+    /// </summary>
+    private void WriteCompanionProfile(Farmer farmhand)
     {
         string filteredName = Utility.FilterDirtyWords(this.config.FarmhandName);
         farmhand.Name = filteredName;
         farmhand.displayName = filteredName;
         farmhand.favoriteThing.Value = Utility.FilterDirtyWords(this.config.FavoriteThing);
         farmhand.isCustomized.Value = true;
-        farmhand.ConvertClothingOverrideToClothesItems();
         farmhand.gameVersion = Game1.version;
         farmhand.gameVersionLabel = Game1.versionLabel;
         farmhand.userID.Value = string.Empty;
