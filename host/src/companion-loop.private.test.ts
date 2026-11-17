@@ -1938,6 +1938,10 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
     suppressedBubbles: {},
     messages: { count: 3, ids: ["assistant_1", "assistant_2", "assistant_3"] },
     bubble: { chars: `${sound} 先出门去农场。 花椰菜给她了。`.length, truncatedChars: 0, sentencesDropped: 0 },
+    // The turn's own reason beside its delivery answer: the player's words are what admitted this turn, and the batch
+    // carried no fact at all, so `carried` is empty rather than a list this test invented.
+    lease: { admitted: true },
+    carried: [],
   });
   // The three populations add up, so the turn states no mismatch: 2 presented + 1 withheld is 3 produced.
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
@@ -2161,6 +2165,9 @@ test("a turn with no presentation source accounts for its text instead of leavin
     messages: { count: 2, ids: ["assistant_1", "assistant_2"] },
     // THE BUBBLE'S ANSWER, not an absence: no lease means no projection, and the turn says which way it ended.
     withheld: "no_presentation_lease",
+    // `carried` names what the turn was made of: a receipt with nothing beside it, which is the class that has no lease.
+    lease: { admitted: false },
+    carried: ["execution_receipt"],
   });
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
 });
@@ -2254,6 +2261,9 @@ test("a part no layer could account for fails the turn's delivery identity, by n
       truncatedChars: 0,
       sentencesDropped: 0,
     },
+    // The turn's own reason beside its answer: the player's words admitted it, and it carried no fact.
+    lease: { admitted: true },
+    carried: [],
   });
   assert.match(printed, /^delivery_mismatch:produced=2;presented=1;suppressed=0;missing=1$/mu);
 });
@@ -2387,6 +2397,8 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     suppressedBubbles: {},
     messages: { count: 1, ids: ["assistant_settlement"] },
     bubble: { chars: text.length, truncatedChars: 0, sentencesDropped: 0 },
+    lease: { admitted: true },
+    carried: ["world_fact"],
   });
 });
 
@@ -2473,6 +2485,10 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
     withheld: "no_presentation_lease",
+    // The turn's own reason, beside the loss: a semantic event is not a presentation source, so this turn carried only
+    // the verdict and had no surface to speak into - which is what the model is now told before it answers.
+    lease: { admitted: false },
+    carried: ["semantic_event"],
   });
 });
 
@@ -2555,6 +2571,10 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
     withheld: "no_presentation_lease",
+    // The turn's own reason, beside the loss: a semantic event is not a presentation source, so this turn carried only
+    // the verdict and had no surface to speak into - which is what the model is now told before it answers.
+    lease: { admitted: false },
+    carried: ["semantic_event"],
   });
 });
 
