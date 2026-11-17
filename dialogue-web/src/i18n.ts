@@ -744,7 +744,6 @@ const en = {
   // request impossible - a step the player was promised and cannot take is worse than this.
   problemStepElsewhere: "The step is the control this sentence names. GameBuddy has no second one for it.",
   problemStepSelfHealsHostRetries: "Nothing to press: GameBuddy finishes what it is doing, and this clears on its own.",
-  problemStepSelfHealsNextRead: "Nothing to press: this clears on its own when the page reads again.",
   problemStepSelfHealsStreamResumes: "Nothing to press: GameBuddy reconnects on its own and the page catches up.",
   problemStepOpenSettings: "The step is in Settings: open Settings from the bar and change it there.",
   problemStepRetryBootstrap: "The step is a fresh start: open GameBuddy again.",
@@ -823,8 +822,6 @@ const en = {
   problemNoSuchItemTitle: "That is not there any more",
   problemNoSuchItemDetail:
     "What this names is gone - it was removed or replaced. Reload the page and choose again from what is shown.",
-  problemTurnNotRunningTitle: "There is nothing to stop",
-  problemTurnNotRunningDetail: "That reply had already finished, or had not started yet, so there was nothing to stop.",
   problemServiceUnavailableTitle: "GameBuddy is not available right now",
   problemServiceUnavailableDetail:
     "One of GameBuddy's own services could not be used just now, so the chat could not go on. Try again in a moment.",
@@ -1951,7 +1948,6 @@ const zh: Messages = {
   problemRetryRead: "重新读取",
   problemStepElsewhere: "下一步就是这句话里点名的那个控件，GameBuddy 没有第二个。",
   problemStepSelfHealsHostRetries: "不用点：GameBuddy 会把手上的事做完，这个状态自己就消失了。",
-  problemStepSelfHealsNextRead: "不用点：页面再读一次时就自己恢复了。",
   problemStepSelfHealsStreamResumes: "不用点：GameBuddy 会自己重连，页面随后跟上。",
   problemStepOpenSettings: "下一步在设置里：从上方进入设置，在那里改。",
   problemStepRetryBootstrap: "下一步是重新开始：再次打开 GameBuddy。",
@@ -2006,8 +2002,6 @@ const zh: Messages = {
   problemNoSuchItemTitle: "那一项已经不在了",
   problemNoSuchItemDetail:
     "这次操作指向的内容已经不在了——它被删除或被替换了。请重新加载页面，从当前显示的内容里重新选择。",
-  problemTurnNotRunningTitle: "没有可以停止的回复",
-  problemTurnNotRunningDetail: "那条回复已经结束，或者还没有开始，所以没有需要停止的内容。",
   problemServiceUnavailableTitle: "GameBuddy 现在不可用",
   problemServiceUnavailableDetail: "GameBuddy 自己的某个服务现在用不了，聊天无法继续。请稍后再试。",
   problemStreamResyncTitle: "实时更新断开了",

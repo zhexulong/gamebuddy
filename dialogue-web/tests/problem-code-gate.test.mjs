@@ -514,7 +514,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // `turn_already_terminal` left it 70 to 69: the word moved into the ANSWER - `CancelTurnResultV1Schema`
   // dispositions are `cancelled`/`completion_won`/`already_terminal` - because Stop projects a turn that is
   // already terminal instead of refusing it (`chat-pipeline-service.ts` cancel).
-  assert.equal(tavern.size, 69, `the tavern problem union should have 69 members, read ${tavern.size}`);
+  // `turn_not_active` left it 69 to 68: "nothing to stop" is not a refusal the route can send - a terminal
+  // turn is projected as the success disposition above, and a handle that names no live turn fails closed as
+  // the deliberately non-disclosing service code.
+  assert.equal(tavern.size, 68, `the tavern problem union should have 68 members, read ${tavern.size}`);
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no

@@ -188,8 +188,8 @@ describe("check-fail-closed-forward-path", () => {
 
   test("a reason this gate cannot read fails closed rather than passing on union membership", () => {
     const problemView = mutated(SOURCES.problemView, "unread-reason.ts", [
-      'const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };',
-      'const NEXT_READ: ProblemStep = { kind: "self_heals", because: "stream_resumes" };',
+      'const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "host_retries" };',
+      'const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "stream_resumes" };',
     ]);
     const findings = checkForwardPathOf({ problemView }).findings;
     assert.ok(
@@ -222,10 +222,9 @@ describe("check-fail-closed-forward-path", () => {
     assert.ok(states.holding.includes("running"), states.holding.join(","));
     for (const status of states.holding)
       assert.ok(states.reaches.get(status).length > 0, `${status} reaches no terminal`);
-    // The twelve `host_retries` codes and the two `next_read` ones are each held to their own evidence,
-    // so a reader that stopped finding the settlement cannot leave both silently green.
+    // The `host_retries` codes are each held to their own evidence, so a reader that stopped finding the
+    // settlement cannot leave them silently green.
     assert.ok(selfHealsEvidence().evidence.has("host_retries"));
-    assert.ok(selfHealsEvidence().evidence.has("next_read"));
   });
 
   test("a Game phase whose derivation offers nothing to press is named", () => {

@@ -377,7 +377,6 @@ export const PROBLEM_CODES = [
   "idempotency_expired",
   "turn_busy",
   "stream_resync_required",
-  "turn_not_active",
   "runtime_unavailable",
   "presentation_unavailable",
   "storage_unavailable",

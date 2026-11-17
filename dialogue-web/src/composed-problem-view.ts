@@ -80,8 +80,8 @@ export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail
  *  - `outside_surface` - the step is off this page entirely: a saved connection in Settings, a fresh
  *    bootstrap handoff, a fresh GameBuddy. The card says which one.
  *  - `self_heals` - there is nothing to press because the condition ends by itself: the Host
- *    finishes the turn it is on (`host_retries`), the next read shows the state the page is owed
- *    (`next_read`), or the event stream reconnects and catches the page up (`stream_resumes`).
+ *    finishes the turn it is on (`host_retries`), or the event stream reconnects and catches the page
+ *    up (`stream_resumes`).
  *  - `no_step` - the intent is refused for good: no control anywhere changes it and nothing will
  *    resolve by waiting. `because` is the reason, and the family's `detail` has to state the
  *    constraint that makes it so (`over_a_ceiling`, `already_true`, `not_this_artifact`).
@@ -94,7 +94,7 @@ export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail
 export type ProblemStep =
   | Readonly<{ kind: "control"; id: string; elsewhere?: Readonly<{ said_as: string }> }>
   | Readonly<{ kind: "outside_surface"; step: "open_settings" | "retry_bootstrap" | "restart_gamebuddy" }>
-  | Readonly<{ kind: "self_heals"; because: "host_retries" | "next_read" | "stream_resumes" }>
+  | Readonly<{ kind: "self_heals"; because: "host_retries" | "stream_resumes" }>
   | Readonly<{ kind: "no_step"; because: "over_a_ceiling" | "already_true" | "not_this_artifact" }>;
 
 /**
@@ -111,8 +111,6 @@ const RETRY_READ: ProblemStep = { kind: "control", id: PROBLEM_RETRY_READ };
 const RESTART_GAMEBUDDY: ProblemStep = { kind: "outside_surface", step: "restart_gamebuddy" };
 /** Waiting is the whole step: the Host is working, and it ends its own work. */
 const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "host_retries" };
-/** Nothing is in flight; the page is simply behind, and its next read is the state it is owed. */
-const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };
 
 /**
  * What the card shows for this step: its sentence, or its own control - never both.
@@ -155,7 +153,6 @@ function stepSentence(step: ProblemStep, labels: Messages): string {
     case "self_heals":
       return {
         host_retries: labels.problemStepSelfHealsHostRetries,
-        next_read: labels.problemStepSelfHealsNextRead,
         stream_resumes: labels.problemStepSelfHealsStreamResumes,
       }[step.because];
     case "no_step":
@@ -305,10 +302,6 @@ const repeatNotMatched: ProblemSentence = (labels) =>
 /** Five "the handle names nothing any more" refusals: a companion, connection, Chat, entry, import. */
 const noSuchItem: ProblemSentence = (labels) =>
   sentence(labels.problemNoSuchItemTitle, labels.problemNoSuchItemDetail, RETRY_READ);
-
-/** Stopping a turn that had already finished or never started: there was nothing to stop. */
-const turnNotRunning: ProblemSentence = (labels) =>
-  sentence(labels.problemTurnNotRunningTitle, labels.problemTurnNotRunningDetail, NEXT_READ);
 
 /** The runtime, the presentation path or the store could not be used just now: retry is the answer. */
 const serviceUnavailable: ProblemSentence = (labels) =>
@@ -537,8 +530,6 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   chat_not_found: noSuchItem,
   world_info_not_found: noSuchItem,
   character_import_not_found: noSuchItem,
-
-  turn_not_active: turnNotRunning,
 
   runtime_unavailable: serviceUnavailable,
   presentation_unavailable: serviceUnavailable,

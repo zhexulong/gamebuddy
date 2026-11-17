@@ -36,11 +36,10 @@
  *      action, and every action it offers is a member of the declared `GameSessionForwardAction`
  *      union - the same zero-forward-path rule, read off the derivation's own `build(...)` calls.
  *   6. a `self_heals` step's REASON is held to its own evidence. Union membership is not evidence: the
- *      reason is a claim about the Host ("it ends its own work", "the next read shows the state owed",
- *      "the stream catches the page up") and a claim nobody can read is the alibi this item exists for.
- *      So `host_retries` is accepted only when the Chat turn ledger really does reach a terminal from a
- *      level where no live turn is held - a settlement that rereads the turn durably and names the
- *      holding statuses - and `next_read` only when the state a page reads carries the turn status.
+ *      reason is a claim about the Host ("it ends its own work", "the stream catches the page up") and a
+ *      claim nobody can read is the alibi this item exists for. So `host_retries` is accepted only when
+ *      the Chat turn ledger really does reach a terminal from a level where no live turn is held - a
+ *      settlement that rereads the turn durably and names the holding statuses.
  *      Absent evidence is `self_heals_without_evidence`, naming the step and the thing not found. This
  *      was the hole that certified two shipped defects: `turn_busy` said "the Host is working, and it
  *      ends its own work" over a crashed turn nothing settled, and the gate printed `passed`.
@@ -125,7 +124,7 @@ export function checkForwardPathOf(overrides) {
 
 const STEP_KINDS = Object.freeze(["control", "outside_surface", "self_heals", "no_step"]);
 const OUTSIDE_SURFACE_STEPS = Object.freeze(["open_settings", "retry_bootstrap", "restart_gamebuddy"]);
-const SELF_HEALS_REASONS = Object.freeze(["host_retries", "next_read", "stream_resumes"]);
+const SELF_HEALS_REASONS = Object.freeze(["host_retries", "stream_resumes"]);
 const NO_STEP_REASONS = Object.freeze(["over_a_ceiling", "already_true", "not_this_artifact"]);
 
 /**
@@ -135,7 +134,6 @@ const NO_STEP_REASONS = Object.freeze(["over_a_ceiling", "already_true", "not_th
 const MISSING_EVIDENCE = Object.freeze({
   host_retries:
     "no settlement rereads the turn durably and names a holding status, so nothing the Host does ends a turn whose owner is gone",
-  next_read: "the state a page reads carries no turn status, so its next read cannot show the state it is owed",
   stream_resumes: "this gate reads no event-stream resume path, so the claim cannot be checked here",
 });
 
@@ -650,29 +648,6 @@ function durableTurnRereadSettlements(sourceFile, holding) {
 }
 
 /**
- * The read a page takes: `ChatThreadState.turnLedger`, typed by the same union as the ledger itself.
- *
- * `next_read` says the page is simply behind and its next read is the state it is owed. That is true
- * only while the read carries the turn status, so the property is what the reason is held to.
- */
-function stateReadCarriesTurn(sourceFile) {
-  let carries = false;
-  const visit = (node) => {
-    if (
-      typescript.isPropertySignature(node) &&
-      node.name !== undefined &&
-      node.name.getText() === "turnLedger" &&
-      node.type !== undefined &&
-      node.type.getText().includes("ChatTurnLedger")
-    )
-      carries = true;
-    typescript.forEachChild(node, visit);
-  };
-  visit(typeAliasTypes(sourceFile).get("ChatThreadState") ?? sourceFile);
-  return carries;
-}
-
-/**
  * What each `self_heals` reason is worth, read from the tree rather than from the reason's wording.
  *
  * A reason in the union with no reader here is absent from the map on purpose: a step that waits on it
@@ -690,8 +665,6 @@ function selfHealsEvidence() {
         `${settlements.flatMap((entry) => entry.statuses).join("/")}; ${released.length} of ${states.holding.length} holding ` +
         `statuses reach a terminal (${states.states.length} states read)`,
     );
-  if (stateReadCarriesTurn(parseFile(SOURCES.turnLedger)))
-    evidence.set("next_read", "ChatThreadState.turnLedger carries the turn status a fresh read returns");
   return { states, settlements, evidence };
 }
 
