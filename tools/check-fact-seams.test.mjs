@@ -148,6 +148,32 @@ test("the derived population spans two packages, and the game problem codes are 
   }
 });
 
+test("a code only a test file mentions is not a code some host source produces", () => {
+  // The hole this closes: `game_compatibility_error` was declared, mirrored, produced by nothing - and hidden for as
+  // long as it was, because the contract's own test listed it. A third copy certifying the declaration it was copied
+  // from is not production evidence, so a `*.test.ts` file is not a producer.
+  const root = temporaryRoot("producer");
+  try {
+    const write = (path, text) => {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+    write(
+      "host/src/shapes.ts",
+      'const Codes = Type.Union([Type.Literal("produced"), Type.Literal("test_only"), Type.Literal("sent")]);\n',
+    );
+    write("host/src/producer.ts", 'export const FIRST = "produced";\nexport const SECOND = "sent";\n');
+    write("host/src/shapes.private.test.ts", 'const EXPECTED = ["test_only"];\n');
+    assert.deepEqual(
+      scanUnproducedCodes(root).unproduced.map((entry) => entry.code),
+      ["test_only"],
+      "the two codes a host source produces are produced; the one only a test names is not",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the key-list scan joins a reader to the side that writes its frame", () => {
   const sites = scanKeySequences(REPO);
   assert.ok(sites.length >= 50, `the key-list scan should read the tree's validators, read ${sites.length}`);
@@ -172,10 +198,11 @@ test("the tree carries no unrecorded crossing", async (t) => {
       finding.startsWith("fact_declared_twice:") ||
       finding.startsWith("fact_seam_drift:") ||
       finding.startsWith("fact_seam_underived:") ||
-      finding.startsWith("fact_declared_unproduced:"),
+      finding.startsWith("fact_declared_unproduced:") ||
+      finding.startsWith("stale_fact_seam:"),
   );
   t.diagnostic(
-    `measured: facts ${report.readings.facts} · one authority ${report.readings.derived} · recorded debt ${report.readings.debt} · key crossings ${report.readings.crossings} · unproduced ${report.readings.unproduced}`,
+    `measured: facts ${report.readings.facts} · one authority ${report.readings.derived} · recorded debt ${report.readings.debt} · key crossings ${report.readings.crossings} · unproduced ${report.readings.unproduced} (recorded ${report.readings.unproducedRecorded})`,
   );
   assert.deepEqual(
     unrecorded,
@@ -230,7 +257,7 @@ test("red proof: the two game.create refusals are declared and unproduced at 25d
   }
 });
 
-test("red proof: the same two codes are produced on this tree, and no tavern code is unproduced any more", () => {
+test("red proof: the same two codes are produced on this tree, and no unrecorded code is unproduced any more", () => {
   const report = evaluate(REPO);
   const unproduced = report.codes.unproduced.map((entry) => entry.code);
   assert.deepEqual(
@@ -239,10 +266,54 @@ test("red proof: the same two codes are produced on this tree, and no tavern cod
     "the fix that gave the create route its two arms is what moved these out of the finding",
   );
   assert.deepEqual(
-    unproduced,
+    findingsOf(report).filter((entry) => entry.startsWith("fact_declared_unproduced:")),
     [],
-    "a declared code no host source produces is the finding this gate exists for: produce it, or delete the word",
+    "a declared code no host source produces is the finding this gate exists for: produce it, delete the word, or record it in UNPRODUCED with its owner and its expiry",
   );
+  assert.ok(
+    report.readings.unproducedRecorded > 0 && report.readings.unproducedRecorded <= report.readings.unproduced,
+    "every recorded code must be one of the unproduced codes, and a run with no recorded code would say this rule holds nothing",
+  );
+});
+
+test("a recorded unproduced code expires the moment a host source produces it", () => {
+  const root = temporaryRoot("unproduced-produced");
+  try {
+    materialise(root, "host/src/game-browser-contract/index.ts", "HEAD");
+    const path = join(root, "host/src/game-browser/attachment-projection.ts");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'export const DETACHING = "detaching";\n');
+    const finding = findingsOf(evaluate(root)).find((entry) =>
+      entry.startsWith("stale_fact_seam:unproduced code detaching"),
+    );
+    assert.notEqual(finding, undefined, "a produced code makes its record a lie: it has to be removed");
+    assert.match(finding, /produces it now/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a recorded unproduced code expires the moment its declaration stops carrying it", () => {
+  const root = temporaryRoot("unproduced-deleted");
+  try {
+    materialise(root, "host/src/game-browser-contract/index.ts", "HEAD");
+    const path = join(root, "host/src/game-browser-contract/index.ts");
+    const source = readFileSync(path, "utf8");
+    const withoutDetaching = source.replace('  Type.Literal("detaching"),\n', "");
+    assert.notEqual(withoutDetaching, source, "the contract must carry `detaching` for this proof to mean anything");
+    writeFileSync(path, withoutDetaching);
+    const finding = findingsOf(evaluate(root)).find((entry) =>
+      entry.startsWith("stale_fact_seam:unproduced code detaching"),
+    );
+    assert.notEqual(
+      finding,
+      undefined,
+      "a record for a word the declaration no longer carries is the same lie the other way",
+    );
+    assert.match(finding, /no declaration carries it/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("mutation: one member added to a mirrored list is a drift, not a silent difference", () => {

@@ -53,6 +53,10 @@
  *                           authority today and the owner who owes it. Debt is printed, never silent, and it EXPIRES -
  *                           a recorded crossing whose declarations have moved apart is `fact_seam_drift`, and one whose
  *                           declarations are gone is `stale_fact_seam`. So the list can shrink but never rot.
+ *   recorded, unproduced    a declared code no shipping host source sends, in `UNPRODUCED`: printed on every run with
+ *                           its reason and its owner, and it EXPIRES in both directions - the projector starts sending
+ *                           the word, or the word leaves its declaration. A `*.test.ts` file is never a producer, so a
+ *                           list in a test cannot certify the declaration it was copied from.
  *
  * The same three resolutions and the same debt apply to a KEY SEQUENCE's record in KEY_SEQUENCES, and the two
  * populations are COUNTED APART on the reading's last slot: `over a frame another side writes K (one authority X ·
@@ -97,6 +101,9 @@
  *   produced by no host source, so the create route answered `state_unavailable`.
  * red-proof: inject `tools/check-fact-seams.test.mjs` adds one member to a mirrored vocabulary in a copy of the tree and
  *   requires `fact_seam_drift:<fact>` to name that member.
+ * red-proof: inject A code only a `*.test.ts` file mentions is `fact_declared_unproduced:<code>`; before that rule a
+ *   third copy could certify the declaration it was copied from, which is how `game_compatibility_error` sat in the
+ *   game contract with no producer at all until the copy beside it was deleted.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -191,17 +198,6 @@ export const SEAMS = Object.freeze([
       kind: "asserted-by",
       assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
       symbols: ["Outcome", "OUTCOMES"],
-    },
-    owner: "the composed game client lane",
-  },
-  {
-    fact: "compatibility statuses",
-    authority: { file: "host/src/game-browser-contract/index.ts", name: "CompatibilityStatus" },
-    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "COMPATIBILITY_STATUSES" }],
-    derives: {
-      kind: "asserted-by",
-      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
-      symbols: ["CompatibilityStatus", "COMPATIBILITY_STATUSES"],
     },
     owner: "the composed game client lane",
   },
@@ -386,6 +382,51 @@ export const DEBT = Object.freeze([
       owner: "the chat live-run lane",
     },
   ),
+]);
+
+/** The owner who owes the four words below: the lane that declares the game browser contract. */
+const UNPRODUCED_OWNER = "the game browser contract lane";
+
+/**
+ * The declared codes the gate has READ and not resolved.
+ *
+ * Each is a word a contract declares and no shipping host source sends - the defect class `fact_declared_unproduced`
+ * exists for. It is recorded rather than waived: printed on every run with its reason and its owner, and it EXPIRES in
+ * exactly two directions, both `stale_fact_seam` because a record of a code that is sent (or gone) describes a tree
+ * that no longer exists: the projector starts publishing the word, or the word leaves its declaration.
+ *
+ * The rule that put them here is the reason the first one hid for months: a `*.test.ts` file is never a producer, so a
+ * list in a test can no longer certify the declaration it was copied from.
+ */
+export const UNPRODUCED = Object.freeze([
+  {
+    code: "unmet",
+    reason:
+      "`PrerequisiteStatus` beside `missingItems: []`, which is always empty: the projector publishes only `met` and `unknown` (`host/src/game-browser/game-browser-state-provider.ts:233-234`), so the missing-items vocabulary is unbuilt, not unused",
+    expires: "produced, or deleted with its declaration",
+    owner: UNPRODUCED_OWNER,
+  },
+  {
+    code: "checking",
+    reason:
+      "the same `PrerequisiteStatus` read while a prerequisites check is in flight: nothing in the projector is asynchronous, so there is no moment to publish it",
+    expires: "produced, or deleted with its declaration",
+    owner: UNPRODUCED_OWNER,
+  },
+  {
+    code: "detected",
+    reason:
+      "`InstanceStatus` for a game that was found and is not this product's: the launch readiness the projector reads (`none`, `launching`, `running`, `stopped`, `crashed`, `unread`) has no member for it",
+    expires: "produced, or deleted with its declaration",
+    owner: UNPRODUCED_OWNER,
+  },
+  {
+    code: "detaching",
+    reason:
+      "`AttachmentStatus` for a detach in flight: the projector observes only `none` and `attached`, and detach is synchronous there",
+    expires: "produced, or deleted with its declaration",
+    owner: UNPRODUCED_OWNER,
+  },
 ]);
 
 // ---------------------------------------------------------------------------
@@ -670,6 +711,11 @@ const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/u;
 const SKIPPED_DIRECTORY = /^(?:node_modules|dist|build|\.)/u;
 /** A scratch artefact (`tools/.soft-suite.tmp.test.mjs`) is not a declaration the tree owns. */
 const TEMPORARY_FILE = /\.tmp\.|\.tmp$/u;
+/**
+ * A test file. Its literals are expectations of what some other file does, so it is never production evidence: a code
+ * its own list mentions is a code its own list mentions.
+ */
+const TEST_FILE = /\.test\.[cm]?[jt]sx?$/u;
 
 /**
  * Every source file under the gate's roots, depth-first, in a stable order.
@@ -962,6 +1008,10 @@ export function scanKeySequences(root) {
  * Defect 3's shape exactly: the contract declared the code and the browser mirrored it, and the route that had to answer
  * it had a `default` arm, so the code was unreachable and the panel read `state_unavailable`. A declaration whose only
  * appearance in the tree is the file that declares it is a code nobody can send.
+ *
+ * A TEST file is never a producer. Its literals are what that test expects some other file to do, so a code a test's own
+ * list mentions is a third copy, not a sender - and counting it as one let `game_compatibility_error` sit in the union
+ * with no producer at all, certified by the contract test that had copied it. The rule reads files that ship.
  */
 export function scanUnproducedCodes(root) {
   const declarations = [];
@@ -984,7 +1034,7 @@ export function scanUnproducedCodes(root) {
   for (const declaration of declarations) {
     for (const code of declaration.members) {
       const produced = [...texts.entries()].some(
-        ([file, text]) => file !== declaration.file && text.includes(`"${code}"`),
+        ([file, text]) => file !== declaration.file && !TEST_FILE.test(file) && text.includes(`"${code}"`),
       );
       if (!produced)
         unproduced.push({
@@ -1170,7 +1220,30 @@ export function evaluate(root) {
     if (!derivation.holds) findings.push(`fact_seam_underived:${record.fact} (${derivation.why})`);
   }
 
+  // A recorded unproduced code is a reading with an owner, not a waiver: it stays out of the findings only while BOTH
+  // halves of its record are true - the declaration still carries the word, and no shipping host source sends it. Either
+  // one changing expires the record, because a record of a code that is produced (or gone) describes a tree that is not
+  // this one, which is the same lie the record exists to prevent in the other direction.
+  const declaredCodes = new Set(codes.declarations.flatMap((declaration) => declaration.members));
+  const stillUnproduced = new Set(codes.unproduced.map((entry) => entry.code));
+  const recordedUnproduced = new Set();
+  for (const record of UNPRODUCED) {
+    if (!declaredCodes.has(record.code)) {
+      findings.push(
+        `stale_fact_seam:unproduced code ${record.code} (no declaration carries it any more: remove the record and its reason)`,
+      );
+      continue;
+    }
+    if (!stillUnproduced.has(record.code)) {
+      findings.push(
+        `stale_fact_seam:unproduced code ${record.code} (a host source produces it now: remove the record)`,
+      );
+      continue;
+    }
+    recordedUnproduced.add(record.code);
+  }
   for (const entry of codes.unproduced) {
+    if (recordedUnproduced.has(entry.code)) continue;
     findings.push(`fact_declared_unproduced:${entry.code} (declared ${entry.declaredIn})`);
   }
 
@@ -1191,6 +1264,7 @@ export function evaluate(root) {
       crossingAuthority: KEY_SEQUENCES.filter((entry) => entry.derives.kind !== "debt").length,
       crossingDebt: KEY_SEQUENCES.filter((entry) => entry.derives.kind === "debt").length,
       unproduced: codes.unproduced.length,
+      unproducedRecorded: recordedUnproduced.size,
       codes: codes.declarations.length,
     },
   };
@@ -1332,7 +1406,7 @@ function main(argv) {
 
   const { readings } = report;
   console.log(
-    `facts examined ${readings.facts} · one authority ${readings.derived} · recorded debt ${readings.debt} · key sequences examined ${readings.sequences} · over a frame another side writes ${readings.crossings} (one authority ${readings.crossingAuthority} · recorded debt ${readings.crossingDebt}) · declared codes examined ${readings.codes} · unproduced ${readings.unproduced}`,
+    `facts examined ${readings.facts} · one authority ${readings.derived} · recorded debt ${readings.debt} · key sequences examined ${readings.sequences} · over a frame another side writes ${readings.crossings} (one authority ${readings.crossingAuthority} · recorded debt ${readings.crossingDebt}) · declared codes examined ${readings.codes} · unproduced ${readings.unproduced}${readings.unproducedRecorded === 0 ? "" : ` (recorded ${readings.unproducedRecorded})`}`,
   );
   for (const finding of report.findings) console.log(`  ${finding}`);
 
@@ -1361,6 +1435,7 @@ function main(argv) {
       keyCrossingsRecorded: readings.crossingDebt,
       codes: readings.codes,
       unproduced: readings.unproduced,
+      unproducedRecorded: readings.unproducedRecorded,
     }),
   );
   return report.findings.length === 0 ? EXIT.agreed : EXIT.drift;
