@@ -332,6 +332,20 @@ export const SEAMS = Object.freeze([
     },
     owner: "the preset assembly lane",
   },
+  {
+    fact: "connection failures",
+    authority: { file: TAVERN_CONTRACT, name: "ConnectionFailure" },
+    readers: [
+      { file: "host/src/tavern/connection-store.ts", name: "PROBE_FAILURES" },
+      { file: MANAGEMENT_CLIENT, name: "CONNECTION_FAILURES" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["ConnectionFailure", "CONNECTION_FAILURES"],
+    },
+    owner: "the connection panel lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -367,10 +381,6 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
-  mirrorDebt("connection failures", `${TAVERN_CONTRACT}:ConnectionFailure`, [
-    "host/src/tavern/connection-store.ts:PROBE_FAILURES",
-    `${MANAGEMENT_CLIENT}:CONNECTION_FAILURES`,
-  ]),
   mirrorDebt("connection readiness", "host/src/tavern/connection-store.ts:READINESS", [
     `${MANAGEMENT_CLIENT}:CONNECTION_READINESS`,
   ]),

@@ -100,7 +100,8 @@ export const GAME_MIRROR_FILES = [join(WEB, "composed-reference-game-browser-api
  *
  * Two optional fields move a vocabulary off the two request/response mirrors: `file` on the locator
  * names the Host module that OWNS the list when the contract only restates it, and `mirrorFile` on
- * the entry names the one browser module that declares it.
+ * the entry names the one module that restates it - a browser surface, or a Host module that checks an
+ * untrusted value against its own copy.
  */
 export const MIRRORED_VOCABULARIES = [
   { mirror: "MESSAGE_ROLES", contract: { name: "BrowserMessageV1Schema", property: "role" } },
@@ -147,6 +148,15 @@ export const MIRRORED_VOCABULARIES = [
     mirror: "PRESET_NOT_APPLIED_CODES",
     mirrorFile: join(WEB, "preset-assembly-surface.ts"),
     contract: { file: "host/src/tavern/preset-sampling.ts", name: "PRESET_NOT_APPLIED_CODES" },
+  },
+  // The probe's closed failure vocabulary has a Host-side restatement too: `connection-store.ts` checks
+  // an untrusted record's `failure` against its own set before it is projected. `mirrorFile` names it,
+  // because the rule is the same one - a declaration that restates a fact is compared to the
+  // declaration that owns it, wherever the two live.
+  {
+    mirror: "PROBE_FAILURES",
+    mirrorFile: join(REPO, "host/src/tavern/connection-store.ts"),
+    contract: { name: "ConnectionFailure" },
   },
 ];
 
@@ -337,9 +347,11 @@ export function vocabularyDrift(where, mirrored, authority) {
   ];
 }
 
-/** The mirror's file name as a finding names it. */
+/** The mirror's file name as a finding names it: relative to the checkout, so a failure reads the same everywhere. */
 function mirrorName(file) {
-  return file.replace(/\\/gu, "/").split("/dialogue-web/").pop();
+  const portable = file.replace(/\\/gu, "/");
+  const root = `${REPO.replace(/\\/gu, "/")}/`;
+  return portable.startsWith(root) ? portable.slice(root.length) : portable;
 }
 
 test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t) => {
