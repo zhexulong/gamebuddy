@@ -362,6 +362,21 @@ test("the Desktop launcher's generation pointer is the declaration beside the pu
     );
 });
 
+const declaredAdmissionKeys = JSON.parse(
+  readFileSync(new URL("../host/scripts/host-runtime-admission.keys.json", import.meta.url), "utf8"),
+);
+
+test("the Desktop launcher's runtime admission is the declaration beside the publisher", () => {
+  assert.deepEqual(
+    csharpDeclaredKeys(
+      "desktop/GameBuddy.Desktop/InstalledHostRuntimeAdmission.cs",
+      "InstalledGenerationPaths.ExactProperties(value, ",
+    ),
+    declaredAdmissionKeys,
+    "InstalledHostRuntimeAdmission reads the sidecar with a key sequence of its own",
+  );
+});
+
 test("composition launch validates the child IPC ready fact and composes the child environment", () => {
   assert.deepEqual(
     validateCompositionReadyMessage(compositionReadyFrom("http://127.0.0.1:4444/#profile=reference&boot=t")),

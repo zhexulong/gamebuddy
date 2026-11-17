@@ -91,6 +91,13 @@ const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
 const POINTER_KEYS = Object.freeze(
   JSON.parse(readFileSync(new URL("../host/scripts/host-generation-pointer.keys.json", import.meta.url), "utf8")),
 );
+/**
+ * The runtime admission sidecar's key sequence, read from the declaration beside the publisher that writes it, and
+ * compared below with the Desktop launcher's own C# list of the same frame.
+ */
+const RUNTIME_ADMISSION_KEYS = Object.freeze(
+  JSON.parse(readFileSync(new URL("../host/scripts/host-runtime-admission.keys.json", import.meta.url), "utf8")),
+);
 
 export const COMPOSITION_SURFACES = Object.freeze(["composed-reference-game", "chat-only", "management"]);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -444,19 +451,7 @@ export async function admitDesktopCompositionGeneration({ outputRoot, pointer })
     throw new Error("desktop_compose_runtime_admission_invalid");
   }
   if (
-    !exactKeysInOrder(admission, [
-      "schema",
-      "inventoryDigest",
-      "generation",
-      "runtimePath",
-      "runtimeSha256",
-      "bootstrapPath",
-      "bootstrapSha256",
-      "runtimeVersion",
-      "runtimePlatform",
-      "runtimeArch",
-      "runtimeClosure",
-    ]) ||
+    !exactKeysInOrder(admission, RUNTIME_ADMISSION_KEYS) ||
     admission.schema !== RUNTIME_ADMISSION_SCHEMA ||
     admission.inventoryDigest !== pointer.inventoryDigest ||
     admission.generation !== pointer.generation ||

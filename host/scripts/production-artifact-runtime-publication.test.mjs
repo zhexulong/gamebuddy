@@ -153,6 +153,12 @@ test("production-private runtime publisher emits canonical admission/current bin
       const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
       const sidecarBytes = await readFile(sidecarPath);
       const sidecar = JSON.parse(sidecarBytes);
+      // First, the authority: the sidecar's key sequence is declared beside this writer, and the gate launcher and
+      // the Desktop launcher's `InstalledHostRuntimeAdmission` are held to that same declaration.
+      assert.deepEqual(
+        Object.keys(sidecar),
+        JSON.parse(await readFile(new URL("./host-runtime-admission.keys.json", import.meta.url), "utf8")),
+      );
       const expectedSidecar = {
         schema: "host-runtime-admission/v1",
         inventoryDigest: published.digest,

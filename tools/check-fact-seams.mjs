@@ -1263,9 +1263,10 @@ export const KEY_SEQUENCES = Object.freeze([
       schema: "host-runtime-admission/v1",
     },
     authority: "host/scripts/production-artifact.mjs",
-    derives: { kind: "debt" },
-    reason:
-      "the publisher writes the admission sidecar and the launcher spells its eleven keys inline; `desktop/GameBuddy.Desktop/InstalledHostRuntimeAdmission.cs` spells the same shape again",
+    derives: {
+      kind: "json",
+      file: "host/scripts/host-runtime-admission.keys.json",
+    },
     owner: "the release publication lane",
   },
   {
