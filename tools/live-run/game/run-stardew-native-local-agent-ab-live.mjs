@@ -4574,7 +4574,13 @@ client.programSubmit = async (program) => {
       ),
     }),
   );
-  console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId, code: submit?.code }));
+  // How much work one request bought, printed rather than derived: the nodes are the only log-side reading of
+  // "scripts per turn" against "nodes per script", and without it a run's throughput can only be counted from a session
+  // that a disposable runtime root may already have deleted.
+  console.error(
+    "AGENT_PROGRAM_SUBMIT",
+    JSON.stringify({ programId, code: submit?.code, nodes: program?.nodes?.length ?? 0 }),
+  );
   return submit;
 };
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
@@ -4592,6 +4598,9 @@ const disposableParent = join(fileURLToPath(new URL("../../..", import.meta.url)
 await mkdir(disposableParent, { recursive: true });
 const root = usesDisposableRoot ? await mkdtemp(join(disposableParent, "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
 runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
+// Printed because the session files live under it (`contexts/*/surface-sessions/game-*/sessions/*.jsonl`) and a disposable
+// root is the difference between a run whose conversation can be read afterwards and one whose conversation never existed.
+console.error("RUN_ROOT", JSON.stringify({ runtimeRoot, disposable: usesDisposableRoot }));
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // The reviewed live-run persona, provisioned by the product's own file convention
 // (<runtimeRoot>/card.json + worldbook.json), byte for byte and with no preprocessing, and then
