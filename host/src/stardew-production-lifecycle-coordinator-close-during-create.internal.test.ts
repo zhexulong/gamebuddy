@@ -13,6 +13,7 @@ import {
   startEndgameLifecycle,
   containedGuardianSessionRecorder,
   installLifecycleTestHooks,
+  waitFor,
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -21,6 +22,10 @@ import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
 } from "./composition/stardew/stardew-guardian-platform.js";
+import {
+  createStardewWorldCreationBindingSeam,
+  STARDEW_WORLD_CREATION_MANIFEST_ABSENT,
+} from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 
 installLifecycleTestHooks();
 
@@ -62,6 +67,16 @@ test("close during create settles the interrupted create through the same durabl
     // before any teardown and the post-close state is terminal + failed, never a
     // registered binding with resumable metadata behind.
     const closing = fixture.coordinator.close();
+    let closeSettled = false;
+    void closing.then(() => {
+      closeSettled = true;
+    });
+    await new Promise<void>((resolveSleep) => setTimeout(resolveSleep, 50));
+    // The other direction of the same rule: this phase is ONE durable transaction
+    // the cancel cannot interrupt, so the exit must WAIT for it instead of
+    // settling without it. Nothing was resolved above, so the only thing that
+    // can settle close is the create reaching its own end.
+    assert.equal(closeSettled, false, "the exit must not settle while a phase it cannot cancel is still running");
     completionGate.resolve();
     await assert.rejects(creating, /stardew_lifecycle_closing/);
     await closing;
@@ -82,6 +97,87 @@ test("close during create settles the interrupted create through the same durabl
       status: "failed",
       revision: 3,
     });
+    assert.deepEqual(fake.listResumable(), []);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "none",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("close cancels a create parked in the world-creation manifest wait instead of waiting out the join", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  let manifestReads = 0;
+  // The fixture carries no player Mods, so this create's join deadline is the
+  // Farmhand base budget (150 s). A regression that waits it out fails this test
+  // in 150 s (measured: 149 882 ms) instead of the ten minutes a modded world can
+  // reach - the exit's own bound is what the assertion below pins.
+  const fixture = await prepareCabinCoordinator(undefined, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      // The real seam over a Player Host that never publishes the manifest: this
+      // is phase 2b, the wait that owns the join budget, and the only one in the
+      // create path that `isClosing` cannot end (its check runs after the seam
+      // returns). Nothing but the create's own cancel epoch can end it early.
+      createWorldBindingSeam: ({ deadlineMs, isCancelled }) =>
+        createStardewWorldCreationBindingSeam({
+          manifestSource: Object.freeze({
+            readIssuedJoinManifest: async (): Promise<unknown> => {
+              manifestReads += 1;
+              throw new Error(STARDEW_WORLD_CREATION_MANIFEST_ABSENT);
+            },
+          }),
+          deadlineMs,
+          isCancelled,
+          pollIntervalMs: 5,
+        }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(fixture.broker.issue("game_create"), {
+      apiVersion: 1,
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+      integrationId: "stardew",
+      continuityIdentityId: null,
+    });
+    creating.catch(() => undefined);
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // Parked in phase 2b: the binding intent is written, the cabin handoff is
+    // admitted, and the seam is polling for a manifest that never arrives.
+    await waitFor(() => manifestReads >= 2);
+    const sessionId = fake.sessions()[0]!.gameSessionId;
+    assert.equal(fake.readMetadata(sessionId)?.status, "pending");
+    assert.equal(fake.readBinding(sessionId), null);
+    const startedAtMs = Date.now();
+    await fixture.coordinator.close();
+    const waitedMs = Date.now() - startedAtMs;
+    // The exit asked the create to stop and joined it. The same create settles on
+    // its own only when its join deadline expires - the Farmhand base budget here
+    // (150 s), up to 600 s for a modded world - so a wait anywhere near that means
+    // the cancel never reached the wait.
+    assert.ok(
+      waitedMs < 1_000,
+      `the exit waited ${waitedMs} ms for a cancelled create; it must not wait the join (measured: the same create ` +
+        "ends on its own only at its join deadline, 150 s for a world with no player Mods)",
+    );
+    await assert.rejects(creating, /stardew_lifecycle_closing/);
+    // Phase 2b owns no durable row of its own: the pending intent is failed and
+    // no binding row exists, which is the shape a create that failed before
+    // registration has always had. The world the game may have started is the
+    // player's and is never removed here.
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId,
+      integrationId: "stardew",
+      continuityIdentityId: null,
+      status: "failed",
+      revision: 2,
+    });
+    assert.equal(fake.readBinding(sessionId), null);
     assert.deepEqual(fake.listResumable(), []);
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none",

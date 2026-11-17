@@ -111,6 +111,7 @@ import {
 import {
   createStardewIssuedJoinManifestSource,
   createStardewWorldCreationBindingSeam,
+  STARDEW_GAME_CREATE_CANCELLED,
 } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type {
@@ -239,13 +240,17 @@ export type StardewGameSessionCreationAuthority = Readonly<{
  * owner that manifest belongs to, and returns the seam for that one create: the
  * coordinator can never hand it a caller-supplied world identity, and a create
  * that has no admitted manifest has no seam to call. The returned seam is
- * bounded by the coordinator's own create deadline.
+ * bounded by the coordinator's own create deadline and by `isCancelled`, the
+ * create attempt's cancel epoch: the wait for the manifest is the longest thing
+ * a create does, so it is also the one a cancelled create must not finish.
  */
 export type StardewWorldCreationSeamFactory = (
   input: Readonly<{
     owner: StardewOwnedPlayerHostBootstrap;
     joinRequestId: string;
     deadlineMs: number;
+    /** The create attempt's cancel epoch, read inside the manifest wait. */
+    isCancelled: () => boolean;
   }>,
 ) => CreateWorldBindingSeam;
 
@@ -1096,6 +1101,10 @@ function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
  * before its own bridge listener can exist, so the count of player Mods is the cheap, already-measured evidence of how
  * long the join itself takes: an empty `Mods` folder and a 100-Mod SVE world are not the same wait, and a constant
  * sized for the first one reports the second as a hang.
+ *
+ * The join is a CEILING for a whole attach, not the budget of any single attempt inside it:
+ * `STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS` below is what one authenticated connect/`hello` attempt may spend, so a
+ * single hung attempt can no longer consume the join the workload term bought.
  */
 export const STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS = 150_000;
 export const STARDEW_FARMHAND_JOIN_PER_PLAYER_MOD_MS = 1_000;
@@ -1105,6 +1114,32 @@ export function stardewFarmhandJoinBudgetMs(playerModCount: number): number {
   if (!Number.isSafeInteger(playerModCount) || playerModCount < 0)
     throw new Error("stardew_farmhand_join_mod_count_invalid");
   return STARDEW_FARMHAND_JOIN_BASE_BUDGET_MS + playerModCount * STARDEW_FARMHAND_JOIN_PER_PLAYER_MOD_MS;
+}
+
+/**
+ * What ONE authenticated bridge connect attempt may spend.
+ *
+ * The join budget above already counts it: "the authenticated pipe connect plus
+ * `hello` handshake owns the last 45 s". Until this constant existed the code
+ * passed the WHOLE remaining join deadline to `NamedPipeTransport.connect` and to
+ * `hello`, so a Mod whose game thread stopped answering owned the entire join - a
+ * budget the docblock stated and the code never passed, which is the defect this
+ * number removes. The retry loop around the attempt keeps the join deadline
+ * (`waitForFarmhandBridgeRetry`), so a bridge that is merely late is still
+ * retried for the whole join; only one hung attempt stops owning it.
+ */
+export const STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS = 45_000;
+
+/**
+ * The deadline one connect attempt gets: its own budget, never more than the join
+ * still allows.
+ *
+ * Exported because it is the number the exit's own step bound is derived from: a
+ * close that joins an attempt can be waiting on at most this, so
+ * `drain_game_lifecycle` must cover it and nothing wider.
+ */
+export function stardewFarmhandBridgeConnectDeadlineMs(joinDeadlineMs: number, nowMs: number): number {
+  return Math.min(joinDeadlineMs, nowMs + STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS);
 }
 
 /**
@@ -1425,6 +1460,19 @@ function createCoordinator(
     }>
   >();
   let createPromise: Promise<GameCreateResultV1> | undefined;
+  /**
+   * Create cancel epoch (lane CREATECANCEL): set by the exit before it joins an
+   * in-flight create, reset when a genuinely new create attempt starts. It is
+   * the same shape the resume cancel epoch has, and it ends the attempt at the
+   * same kind of place: every phase boundary reads it (`assertCreateNotCancelled`),
+   * and the two waits that own the join budget read it inside the wait - the
+   * world-creation seam's manifest poll and the attach's bridge retry loop.
+   *
+   * The epoch itself writes nothing: a cancelled create runs the attempt's ONE
+   * durable failure closure (`settleFailedCreateAttempt`), so it ends in the
+   * same durable state a create that ran to its end would, only sooner.
+   */
+  let createCancelRequested = false;
   /**
    * Coordinator-owned record of the AI-client bridge profile it materialized
    * for its exact owner. The composition materializes that profile at most
@@ -2235,7 +2283,11 @@ function createCoordinator(
             try {
               farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
                 handle.owner,
-                (connection) => materializeFarmhandGameSession(connection, handle.expiresAtMs),
+                (connection) =>
+                  materializeFarmhandGameSession(
+                    connection,
+                    stardewFarmhandBridgeConnectDeadlineMs(handle.expiresAtMs, Date.now()),
+                  ),
               );
             } catch (error) {
               if (!isTransientFarmhandBridgeConnectError(error)) throw error;
@@ -2630,9 +2682,14 @@ function createCoordinator(
    * (ending the previous activation's AI, never reusing its connection,
    * callback, lease, or attachment), then relaunches the AI client under the
    * existing launch authority before consuming the freshly armed connection.
-   * `isCancelRequested` lets a resume cancel epoch terminate the retry loop at
-   * every safe point and prevent any stale reconnect from completing; the
-   * create path passes a never-requested check (create is not cancellable).
+   * `isCancelRequested` lets an attempt's own cancel epoch terminate the retry
+   * loop at every safe point and prevent any stale reconnect from completing,
+   * and `cancelledCode` is the bounded code that epoch reports. Both callers now
+   * pass a live epoch: a resume its `game.resume.cancel` epoch, a create the
+   * epoch the exit sets before it joins (`assertCreateNotCancelled` reads the
+   * same one at the phase boundaries). The create used to pass a never-requested
+   * check, which is what made the exit wait out a whole join for a world nobody
+   * would attach to.
    * `aiClientActivation` selects which of the two legal activation shapes runs:
    * a resume (`re_arm`) arms a fresh one-shot launch/connection generation first
    * because a resume is only admitted over an activation that already ended,
@@ -2648,6 +2705,7 @@ function createCoordinator(
     deadlineMs: number,
     isCancelRequested: () => boolean,
     aiClientActivation: FreshAiClientActivation,
+    cancelledCode: string,
   ): Promise<boolean> => {
     const owner = exactOwner;
     if (owner === undefined) return false;
@@ -2663,30 +2721,33 @@ function createCoordinator(
         // single catch below.
         if (aiClientActivation === "re_arm") {
           await internal.prepareFreshFarmhandAiClientActivation(owner);
-          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+          if (isCancelRequested()) throw new Error(cancelledCode);
         } else {
           await beginFarmhandAiClientActivation(owner);
         }
         try {
           await withFreshRegisteredInstallation((installation) => aiClientLaunch(owner, installation));
-          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+          if (isCancelRequested()) throw new Error(cancelledCode);
           while (farmhandGameRuntimeFacade === undefined) {
             if (isClosing()) throw new Error("stardew_lifecycle_closing");
-            if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+            if (isCancelRequested()) throw new Error(cancelledCode);
             try {
               farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(owner, (connection) =>
-                materializeFarmhandGameSession(connection, deadlineMs),
+                materializeFarmhandGameSession(
+                  connection,
+                  stardewFarmhandBridgeConnectDeadlineMs(deadlineMs, Date.now()),
+                ),
               );
             } catch (error) {
               if (!isTransientFarmhandBridgeConnectError(error)) throw error;
               // Cancel epoch check before every retry wait (card D3.3): a cancel
               // terminates the retry loop instead of letting it continue.
-              if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+              if (isCancelRequested()) throw new Error(cancelledCode);
               await waitForFarmhandBridgeRetry(deadlineMs);
             }
           }
         } catch (error) {
-          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+          if (isCancelRequested()) throw new Error(cancelledCode);
           // ONE rollback for the whole started activation, so no exit can leave
           // the core partially consumed: a failed launch, a refused or failed
           // bridge connection, a deferred error and an expired retry wait alike.
@@ -2707,7 +2768,7 @@ function createCoordinator(
         }
         if (isCancelRequested()) {
           await closePartialAttachment();
-          throw new Error("stardew_game_resume_cancelled");
+          throw new Error(cancelledCode);
         }
       }
     } catch (error) {
@@ -2727,7 +2788,7 @@ function createCoordinator(
       // The reconnect epoch is terminated before its ingress commits; only a
       // partial facade (never a committed attachment) is closed here.
       await closePartialAttachment();
-      throw new Error("stardew_game_resume_cancelled");
+      throw new Error(cancelledCode);
     }
     enteredLease.host.attachVoiceStopper(async () => undefined);
     enteredLease.activateCommittedIngress();
@@ -2811,7 +2872,12 @@ function createCoordinator(
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
           publishGameFact("attachment");
-          const attached = await attachResumedWorld(resumeDeadlineMs, () => resumeCancelRequested, "re_arm");
+          const attached = await attachResumedWorld(
+            resumeDeadlineMs,
+            () => resumeCancelRequested,
+            "re_arm",
+            "stardew_game_resume_cancelled",
+          );
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           // A cancel epoch that terminated the attempt (deferred path) must
           // never surface as a successful accepted result.
@@ -2862,6 +2928,24 @@ function createCoordinator(
       );
       return attempt;
     });
+
+  /**
+   * The create attempt's phase boundary, in the one place every phase hands
+   * control to the next.
+   *
+   * `isClosing` comes first and keeps its own code, so an ordinary close still
+   * reports `stardew_lifecycle_closing` exactly as before; the create cancel
+   * epoch is the second reader of the same boundary. Both end the attempt
+   * BEFORE the next phase starts anything, and both are then settled by the
+   * attempt's own catch, which is the only place that decides the durable end
+   * state. Cancelling between phases is therefore not a new mechanism: it is the
+   * same stop the exit already performed through `isClosing`, made reachable for
+   * the one wait that outlives the exit.
+   */
+  const assertCreateNotCancelled = (): void => {
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    if (createCancelRequested) throw new Error(STARDEW_GAME_CREATE_CANCELLED);
+  };
 
   /**
    * Coordinator-owned start-new-game seam (boundary card D1/D2). Admitted
@@ -2938,6 +3022,10 @@ function createCoordinator(
       // started with, after the attempt's own block scope has unwound.
       const creationAuthority = gameSessionCreationAuthority;
       const createWorldBindingSeamFactory = createWorldBindingSeam;
+      // A genuinely new attempt resets the cancel epoch: only the exit sets it,
+      // and a stale flag must never cancel an attempt it did not start (the same
+      // reset the resume epoch has).
+      createCancelRequested = false;
       let attempt!: Promise<GameCreateResultV1>;
       attempt = (async (): Promise<GameCreateResultV1> => {
         let metadata: ProductionGameSessionMetadata | null = null;
@@ -2955,7 +3043,7 @@ function createCoordinator(
           // failure is terminal for the exact owner (quarantine + failed launch)
           // and no binding intent is written.
           await correlatePlayerHostAttestation();
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 1: persist the binding intent (pending rev1 + store-minted
           // gameSessionId). The id is opaque; every later durable step re-verifies
           // it through the store's own CAS checks. It is written first, before the
@@ -2966,7 +3054,7 @@ function createCoordinator(
             integrationId: command.integrationId,
             continuityIdentityId: command.continuityIdentityId,
           });
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2a: admit THIS create's own manifest handoff before the
           // integration-private world-binding seam. The seam's only authority for
           // the observed slot is the signed join manifest the exact launched
@@ -2985,7 +3073,7 @@ function createCoordinator(
           const choice = choices[0];
           if (choice === undefined) throw new Error("stardew_game_create_cabin_unavailable");
           const manifestAdmission = await handoffCoordinator.confirmAndAdmit(choice.selection, { confirmed: true });
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2b: the selected integration creates the actual world and only
           // then returns an opaque bindingRef. The seam is built per create from
           // the same production composition, closed over the exact owner and the
@@ -2996,6 +3084,7 @@ function createCoordinator(
             owner: handoffOwner,
             joinRequestId: handoffCoordinator.readAdmittedJoinRequestId(handoffOwner, manifestAdmission),
             deadlineMs: createDeadlineMs,
+            isCancelled: () => createCancelRequested,
           });
           const world = await worldCreationSeam.createWorldBinding({
             gameSessionId: metadata.gameSessionId,
@@ -3004,7 +3093,7 @@ function createCoordinator(
             // generic seam consumes it as an opaque payload for later tasks.
             worldRequest: Object.freeze({}),
           });
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2c-pre (world-slot crash-recovery trigger): the slot this create
           // is about to register on may still be held by an attempt that never
           // closed out. No holder changes nothing - this create then behaves
@@ -3013,7 +3102,7 @@ function createCoordinator(
           // bounded code. The world slot is never released here: it is the
           // player's to keep. See `recoverLeftoverWorldBindingSlotHolder`.
           await recoverLeftoverWorldBindingSlotHolder(creationAuthority, command.integrationId, world.bindingRef);
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2c: register the world binding under the coordinator-minted
           // operation identity (registered rev1), carrying the attempt's own
           // opaque correlation as the holder handle. A read that cannot produce a
@@ -3021,7 +3110,7 @@ function createCoordinator(
           // `stardew_game_create_holder_unavailable`, settled by the same failure
           // closure below) instead of registering a guessed or empty handle.
           const holderHandle = await readWorldBindingHolderHandle();
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           await creationAuthority.registerGameSessionWorldBinding({
             gameSessionId: metadata.gameSessionId,
             integrationId: command.integrationId,
@@ -3030,14 +3119,14 @@ function createCoordinator(
             holderHandle,
           });
           bindingRegistered = true;
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2d: complete the session (resumable rev2).
           await creationAuthority.completeGameSessionBinding({
             creationRequestId,
             gameSessionId: metadata.gameSessionId,
             expectedRevision: 1,
           });
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // Phase 2e (owner ruling (c)): the first activation builds a fresh
           // authenticated AI-client connection, which requires the owner's
           // AI-client bridge profile to be materialized first. A Player Host that
@@ -3055,7 +3144,7 @@ function createCoordinator(
           if (!aiClientProfileMaterialized) {
             await internal.materializeAiClientProfileAfterManifestAdmission(handoffOwner, manifestAdmission);
             aiClientProfileMaterialized = true;
-            if (isClosing()) throw new Error("stardew_lifecycle_closing");
+            assertCreateNotCancelled();
           }
           // Phase 2f: first activation (generation 1 from a clean surface, else
           // strictly incrementing). This is a new world session, not a resume:
@@ -3069,7 +3158,7 @@ function createCoordinator(
           resumedGameSessionId = undefined;
           publishGameFact("selectedWorld");
           await closeStaleAttachment();
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          assertCreateNotCancelled();
           // The world this create just bound is now the world this lifecycle owns,
           // so the browser read resolves it through the same integration-private
           // resolver the resume seam uses. Without this the binding was durable but
@@ -3081,8 +3170,13 @@ function createCoordinator(
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
           publishGameFact("attachment");
-          const attached = await attachResumedWorld(createDeadlineMs, () => false, "core_admitted");
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          const attached = await attachResumedWorld(
+            createDeadlineMs,
+            () => createCancelRequested,
+            "core_admitted",
+            STARDEW_GAME_CREATE_CANCELLED,
+          );
+          assertCreateNotCancelled();
           return Object.freeze({
             apiVersion: 1,
             status: attached ? "attached" : "accepted",
@@ -3524,7 +3618,11 @@ function createCoordinator(
           try {
             farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
               ownerForHandoff,
-              (connection) => materializeFarmhandGameSession(connection, handoffExpiry),
+              (connection) =>
+                materializeFarmhandGameSession(
+                  connection,
+                  stardewFarmhandBridgeConnectDeadlineMs(handoffExpiry, Date.now()),
+                ),
             );
           } catch (error) {
             if (!isTransientFarmhandBridgeConnectError(error)) throw error;
@@ -3608,15 +3706,30 @@ function createCoordinator(
 
   const closeAttempt = async (): Promise<void> => {
     if (activationState !== "closed") transition("closing");
-    // Join the in-flight create before ANY return below can skip it, including
-    // the terminal endgame branch. Joining it is what makes close drive the
-    // create path's own durable failure closure: an interrupted create settles
-    // its rows (no registered binding with resumable metadata may survive a
-    // close) before this close starts tearing anything down -- and before this
-    // close can RESOLVE. An endgame does not end the admissibility of a create:
-    // its body changes neither `activationState` nor `exactOwner`, so the
-    // admission guards still pass afterwards and a create really can be
-    // outstanding on the endgame path.
+    // Both in-flight attempts are asked to STOP at their next safe point before
+    // they are joined, and the join stays for the one await no epoch can
+    // interrupt (a bridge connect already in flight: abandoning it is exactly
+    // the race this join exists to prevent, because the attempt can still
+    // assign `farmhandGameRuntimeFacade` after the teardown below).
+    //
+    // The create's epoch is its own; the resume's is the one its
+    // `game.resume.cancel` seam already sets, used here for the same purpose -
+    // an exit is not going to read a reconnect's result either. The two epochs
+    // say "stop" through the door each attempt already has, which is what reaches
+    // the waits a phase boundary cannot: the create's manifest poll (the wait that
+    // owns the join budget, and the only one in that path with no `isClosing`
+    // inside it), and the resume's retry wait plus its activation rollback. Both
+    // were reachable before only at the NEXT phase boundary, which is the join.
+    //
+    // Joining is what makes close drive the create path's own durable failure
+    // closure: an interrupted create settles its rows (no registered binding with
+    // resumable metadata may survive a close) before this close starts tearing
+    // anything down -- and before this close can RESOLVE. An endgame does not end
+    // the admissibility of a create: its body changes neither `activationState`
+    // nor `exactOwner`, so the admission guards still pass afterwards and a
+    // create really can be outstanding on the endgame path.
+    if (createPromise !== undefined) createCancelRequested = true;
+    if (resumePromise !== undefined) resumeCancelRequested = true;
     const create = createPromise;
     if (create !== undefined) await create.catch(() => undefined);
     // An explicit endgame is terminal: it already drained both role Jobs,
@@ -3958,13 +4071,14 @@ export function createStardewProductionLifecycleCoordinator(
    *   from that manifest and fails closed with bounded codes otherwise. It
    *   never reads worldRequest, never names a slot, and never writes a save.
    */
-  const createWorldBindingSeam: StardewWorldCreationSeamFactory = ({ owner, joinRequestId, deadlineMs }) =>
+  const createWorldBindingSeam: StardewWorldCreationSeamFactory = ({ owner, joinRequestId, deadlineMs, isCancelled }) =>
     createStardewWorldCreationBindingSeam({
       manifestSource: createStardewIssuedJoinManifestSource({
         attachmentFlow: internal.createOwnedPlayerHostAttachmentFlow(owner),
         requestId: joinRequestId,
       }),
       deadlineMs,
+      isCancelled,
     });
   return createCoordinator(
     manifest,

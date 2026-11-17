@@ -233,6 +233,74 @@ test("game.resume.cancel terminates the reconnect epoch, keeps the armed generat
   }
 });
 
+test("close stops an in-flight resume at its next safe point and settles without waiting out the join", async () => {
+  let allowAttach = false;
+  let connectChainCalls = 0;
+  let resumeConnectCalls = 0;
+  const transientError = Object.assign(new Error("bridge-not-ready"), { code: "ECONNREFUSED" });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({
+        gameSessionId: "session-abc",
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        status: "registered" as const,
+        revision: 1,
+      }),
+      connectFarmhandGameRuntimeFacade: async () => {
+        connectChainCalls += 1;
+        // The cabin attach (the first connect of this lifecycle) must succeed, or
+        // there is no attachment to disconnect; only the resume's connects fail.
+        if (connectChainCalls > 1) {
+          resumeConnectCalls += 1;
+          if (!allowAttach) throw transientError;
+        }
+        return Object.freeze({
+          authority: "SEMANTIC" as const,
+          runEnter: async () => connectedSemanticGameLeaseFixture(),
+          recoverDeadOwner: async () => undefined,
+          close: async () => undefined,
+        });
+      },
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), {
+      apiVersion: 1,
+      idempotencyKey: "close-resume-disconnect",
+      expectedAttachmentGeneration: 1,
+    });
+    const resuming = fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+      apiVersion: 1,
+      gameSessionId: "session-abc",
+      idempotencyKey: "close-resume-attempt",
+      expectedAttachmentGeneration: 2,
+    });
+    resuming.catch(() => undefined);
+    await waitFor(() => resumeConnectCalls >= 1);
+    // The exit sets the resume's own cancel epoch before it joins, so the attempt
+    // stops at its next safe point instead of retrying until the join deadline.
+    const startedAtMs = Date.now();
+    await fixture.coordinator.close();
+    const waitedMs = Date.now() - startedAtMs;
+    assert.ok(waitedMs < 1_000, `the exit waited ${waitedMs} ms for an in-flight resume; it must not wait the join`);
+    await assert.rejects(resuming, /stardew_lifecycle_closing/);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "none",
+    });
+    // The Player's world is untouched: an ordinary close stops AI authority only.
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+  } finally {
+    allowAttach = true;
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
 test("headless operational admission consumes one fresh registered installation through the existing lifecycle core", async () => {
   let runtimeRootForSession = "";
   const fixture = await createFixture({

@@ -57,6 +57,19 @@ const OBSERVED_SAVE_SLOT_PATTERN = /^[A-Za-z0-9]{1,64}_[0-9]{1,32}$/;
 export const STARDEW_WORLD_CREATION_MANIFEST_ABSENT = "stardew_world_creation_manifest_absent";
 
 /**
+ * The create attempt's own cancel epoch reached this seam while it was still
+ * waiting for the manifest.
+ *
+ * It lives here because the seam is the only place that can observe a cancel
+ * INSIDE that wait: the manifest arrives when the game has finished creating
+ * the world, which is the whole join budget away, and a cancelled create must
+ * not keep the exit waiting for a world nobody will attach to. The coordinator
+ * reports the same code at the create's phase boundaries and in its attach, so
+ * one string names one fact: this create was cancelled, not failed.
+ */
+export const STARDEW_GAME_CREATE_CANCELLED = "stardew_game_create_cancelled";
+
+/**
  * Bounded machine-readable failures. The create path turns every throw into its
  * terminal `unavailable` outcome (never a fabricated success, never a bare
  * `accepted`), so these codes are the only thing a caller may match on.
@@ -111,14 +124,18 @@ export function createStardewIssuedJoinManifestSource(
 /**
  * Integration-private create seam over an exact-owner-bound manifest source.
  *
- * `deadlineMs` is the coordinator's own create deadline; the seam never extends
- * it and never waits past it. Every success path returns the observed slot
- * unchanged; every other path throws one of the bounded codes above.
+ * `deadlineMs` is the coordinator's own create deadline and `isCancelled` is
+ * the create's own cancel epoch: the seam waits past neither. Both bound the
+ * same wait from the two ends it has - the join budget while the attempt is
+ * wanted, and the cancel the instant nobody will read its result - so the wait
+ * is never ended by one of them alone. Every success path returns the observed
+ * slot unchanged; every other path throws one of the bounded codes above.
  */
 export function createStardewWorldCreationBindingSeam(
   options: Readonly<{
     manifestSource: StardewIssuedJoinManifestSource;
     deadlineMs: number;
+    isCancelled: () => boolean;
     nowMs?: () => number;
     pollIntervalMs?: number;
   }>,
@@ -128,6 +145,8 @@ export function createStardewWorldCreationBindingSeam(
     throw new Error("invalid_stardew_world_creation_manifest_source");
   const deadlineMs = options.deadlineMs;
   if (!Number.isSafeInteger(deadlineMs)) throw new Error("invalid_stardew_world_creation_deadline");
+  const isCancelled = options.isCancelled;
+  if (typeof isCancelled !== "function") throw new Error("invalid_stardew_world_creation_cancellation");
   const nowMs = options.nowMs ?? Date.now;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1)
@@ -143,7 +162,7 @@ export function createStardewWorldCreationBindingSeam(
         throw new Error(STARDEW_GAME_WORLD_CREATION_INTEGRATION_CONFLICT);
       // `input.worldRequest` stays a verbatim passthrough: it is never read,
       // never consulted for identity, and never written into the returned ref.
-      const manifest = await awaitIssuedManifest(source, deadlineMs, nowMs, pollIntervalMs);
+      const manifest = await awaitIssuedManifest(source, deadlineMs, nowMs, pollIntervalMs, isCancelled);
       return Object.freeze({ bindingRef: readObservedSaveSlot(manifest) });
     },
   });
@@ -154,8 +173,13 @@ async function awaitIssuedManifest(
   deadlineMs: number,
   nowMs: () => number,
   pollIntervalMs: number,
+  isCancelled: () => boolean,
 ): Promise<unknown> {
   for (;;) {
+    // Read at the poll cadence, so a cancelled create stops waiting within one
+    // poll interval instead of at the create deadline: the world this seam is
+    // waiting for is the player's either way, and nothing registered it.
+    if (isCancelled()) throw new Error(STARDEW_GAME_CREATE_CANCELLED);
     try {
       return await source.readIssuedJoinManifest();
     } catch (error) {

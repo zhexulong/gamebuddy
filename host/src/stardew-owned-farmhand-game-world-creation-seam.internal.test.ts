@@ -8,6 +8,7 @@ import { StardewAttachmentFlow } from "./stardew-attachment.js";
 import {
   createStardewIssuedJoinManifestSource,
   createStardewWorldCreationBindingSeam,
+  STARDEW_GAME_CREATE_CANCELLED,
   STARDEW_GAME_WORLD_CREATION_INTEGRATION_CONFLICT,
   STARDEW_GAME_WORLD_CREATION_MANIFEST_UNAVAILABLE,
   STARDEW_GAME_WORLD_CREATION_SLOT_INVALID,
@@ -15,6 +16,9 @@ import {
   STARDEW_WORLD_CREATION_MANIFEST_ABSENT,
   type StardewIssuedJoinManifestSource,
 } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
+
+/** The epoch of an attempt nobody cancelled: the ordinary create every other case here is. */
+const neverCancelled = (): boolean => false;
 
 const SESSION_TOKEN = "world-creation-seam-token-012345";
 const REQUEST_ID = "request_world_creation_01";
@@ -113,6 +117,7 @@ function seamOver(directory: string, clock: () => number, deadlineMs: number, re
   return createStardewWorldCreationBindingSeam({
     manifestSource: createStardewIssuedJoinManifestSource({ attachmentFlow, requestId }),
     deadlineMs,
+    isCancelled: neverCancelled,
     nowMs: clock,
     pollIntervalMs: 5,
   });
@@ -171,6 +176,7 @@ test("(b) keeps polling the issued manifest until the create deadline instead of
   const seam = createStardewWorldCreationBindingSeam({
     manifestSource: source,
     deadlineMs: Date.now() + 30,
+    isCancelled: neverCancelled,
     nowMs: Date.now,
     pollIntervalMs: 1,
   });
@@ -235,6 +241,32 @@ test("(d) never fabricates a slot from the manifest's other identity fields", as
   }
 });
 
+test("a cancelled create stops waiting for the manifest at the poll cadence, not at the create deadline", async () => {
+  // The wait this ends is the longest thing a create does: the manifest only
+  // arrives once the game has finished creating the world, which is the whole
+  // join budget away. The deadline here is a full minute out, so the rejection
+  // below can only be the cancel.
+  let attempts = 0;
+  let cancelled = false;
+  const source: StardewIssuedJoinManifestSource = Object.freeze({
+    readIssuedJoinManifest: async (): Promise<unknown> => {
+      attempts += 1;
+      cancelled = true;
+      throw new Error(STARDEW_WORLD_CREATION_MANIFEST_ABSENT);
+    },
+  });
+  const seam = createStardewWorldCreationBindingSeam({
+    manifestSource: source,
+    deadlineMs: Date.now() + 60_000,
+    isCancelled: () => cancelled,
+    pollIntervalMs: 1,
+  });
+  const startedAtMs = Date.now();
+  await assert.rejects(() => seam.createWorldBinding(CREATE_INPUT), rejectsWith(STARDEW_GAME_CREATE_CANCELLED));
+  assert.equal(attempts, 1);
+  assert.ok(Date.now() - startedAtMs < 5_000, "the cancel must end the wait, not the minute-long deadline");
+});
+
 test("a terminal manifest read failure fails closed without retrying", async () => {
   let attempts = 0;
   const terminal = new Error("stardew_manifest_authentication_failed");
@@ -246,6 +278,7 @@ test("a terminal manifest read failure fails closed without retrying", async () 
       },
     }),
     deadlineMs: Date.now() + 60_000,
+    isCancelled: neverCancelled,
     pollIntervalMs: 1,
   });
   await assert.rejects(
@@ -265,6 +298,7 @@ test("the seam rejects a foreign integration before it ever reads a manifest", a
       },
     }),
     deadlineMs: Date.now() + 60_000,
+    isCancelled: neverCancelled,
     pollIntervalMs: 1,
   });
   await assert.rejects(
@@ -297,5 +331,6 @@ function seamWithRawManifest(manifest: unknown) {
   return createStardewWorldCreationBindingSeam({
     manifestSource: Object.freeze({ readIssuedJoinManifest: async (): Promise<unknown> => manifest }),
     deadlineMs: Date.now() + 60_000,
+    isCancelled: neverCancelled,
   });
 }

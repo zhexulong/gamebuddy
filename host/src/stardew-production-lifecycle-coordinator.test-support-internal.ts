@@ -61,6 +61,14 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   createWorldBinding?(
     input: Readonly<{ gameSessionId: string; integrationId: string; worldRequest: unknown }>,
   ): Promise<Readonly<{ bindingRef: string }>>;
+  /**
+   * The full per-create seam builder, for the one thing the fixed fake above
+   * cannot model: the create attempt's own cancel epoch, which the builder
+   * receives and the production seam reads INSIDE its manifest wait. A test that
+   * wires the real `createStardewWorldCreationBindingSeam` here exercises the
+   * wait the exit must be able to end.
+   */
+  createWorldBindingSeam?: StardewWorldCreationSeamFactory;
   connectFarmhandGameRuntimeFacade?(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
@@ -155,9 +163,10 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
   // production composition instead, so this override never models the Stardew
   // world-creation implementation itself.
   const createWorldBindingSeam: StardewWorldCreationSeamFactory | undefined =
-    overrides.createWorldBinding === undefined
+    overrides.createWorldBindingSeam ??
+    (overrides.createWorldBinding === undefined
       ? undefined
-      : () => Object.freeze({ createWorldBinding: overrides.createWorldBinding! });
+      : () => Object.freeze({ createWorldBinding: overrides.createWorldBinding! }));
   const aiClientLaunch: StardewLifecycleAiClientLaunch =
     overrides.runtimeLaunchContained === undefined
       ? (owner, installation) => internal.launchMaterializedAiClient(owner, installation)

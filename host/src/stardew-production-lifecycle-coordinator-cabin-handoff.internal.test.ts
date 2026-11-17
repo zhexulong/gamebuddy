@@ -14,7 +14,10 @@ import {
   identityChainFor,
   ownerRecord,
 } from "./stardew-production-lifecycle-coordinator.test-support.js";
-import { stardewFarmhandJoinBudgetMs } from "./stardew-production-lifecycle-coordinator.internal.js";
+import {
+  STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+  stardewFarmhandJoinBudgetMs,
+} from "./stardew-production-lifecycle-coordinator.internal.js";
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -145,7 +148,21 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(bridgeConnection.pipeName, "gamebuddy-stardew-coordinator-bridge");
     assert.equal(bridgeConnection.token, "coordinator-bridge-token-0123456789");
     assert.equal(bridgeConnection.launchGeneration, "ai-generation-1");
-    assert.equal(bridgeConnection.deadlineMs, choices.choices[0]!.expiresAtMs);
+    // The choice's deadline is the JOIN wait (the retry loop keeps it); the attempt
+    // itself may spend at most the connect budget, so one hung pipe no longer owns
+    // the join the player's Mods bought.
+    assert.ok(
+      bridgeConnection.deadlineMs < choices.choices[0]!.expiresAtMs,
+      "the connect must own its own budget, not the whole join",
+    );
+    assert.ok(
+      bridgeConnection.deadlineMs >= readCompletedAt + STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+      "the connect must get its whole budget, not less",
+    );
+    assert.ok(
+      bridgeConnection.deadlineMs <= Date.now() + STARDEW_FARMHAND_BRIDGE_CONNECT_BUDGET_MS,
+      "the connect must not be granted more than its budget",
+    );
     assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
       state: "awaiting_attestation",
       ownership: "gamebuddy_direct_spawn",
