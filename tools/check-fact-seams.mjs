@@ -371,6 +371,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the management surface lane",
   },
+  {
+    fact: "management label keys",
+    authority: { file: TAVERN_CONTRACT, name: "LabelKey" },
+    readers: [{ file: MANAGEMENT_CLIENT, name: "MANAGEMENT_LABEL_KEYS" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["LabelKey", "MANAGEMENT_LABEL_KEYS"],
+    },
+    owner: "the management surface lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -409,7 +420,6 @@ export const DEBT = Object.freeze([
   mirrorDebt("connection readiness", "host/src/tavern/connection-store.ts:READINESS", [
     `${MANAGEMENT_CLIENT}:CONNECTION_READINESS`,
   ]),
-  mirrorDebt("management label keys", `${TAVERN_CONTRACT}:LabelKey`, [`${MANAGEMENT_CLIENT}:MANAGEMENT_LABEL_KEYS`]),
   mirrorDebt("navigation item ids", `${TAVERN_CONTRACT}:NavigationItemId`, [
     `${TAVERN_CONTRACT}:contractDeclaredNavigationItemIds`,
     "host/src/tavern-management-dialogue-web.ts:MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY",
