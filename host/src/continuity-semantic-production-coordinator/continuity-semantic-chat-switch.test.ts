@@ -25,7 +25,11 @@
  * - a Chat the player archived while it was selected, before the shell could move
  *   the selection, is not re-selected by the next start: the durable transcript
  *   authority owns "is this Chat live", so the mount lands on the Chat it still
- *   holds (ADR-0011's 2026-11-16 mediation).
+ *   holds (ADR-0011's 2026-11-16 mediation);
+ * - archiving the selected Chat through the management route leaves the semantic
+ *   catalog saying `active` while the transcript authority says `archived`, and the
+ *   selection request for that Chat is therefore still admitted while no list offers
+ *   it (the divergence ADR-0011 pins, read from both files).
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -57,8 +61,8 @@ function cleanup(root: string): void {
 }
 
 const switchScript = `
-  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, contentPortUrl, providerStartUrl, manifestPath, scenario] =
-    process.argv.slice(1);
+  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, contentPortUrl, providerStartUrl, managementUrl, contractUrl, manifestPath, scenario] =
+    process.argv.slice(2);
   const { bindWindowsStaleLockReclaimer } = await import(pathLockUrl);
   const { createBuildWindowsStaleLockReclaimer } = await import(reclaimerUrl);
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -125,12 +129,12 @@ const switchScript = `
     const db = new DatabaseSync(semanticDbPath, { readOnly: true });
     const threads = db
       .prepare(
-        "SELECT chat_surface_session_id, chat_thread_id, lifecycle, content_receipt_json IS NOT NULL AS verified FROM production_continuity_thread ORDER BY chat_surface_session_id",
+        "SELECT t.chat_surface_session_id, t.chat_thread_id, t.lifecycle, t.content_receipt_json IS NOT NULL AS verified, m.management_revision FROM production_continuity_thread t LEFT JOIN production_chat_lifecycle_metadata m ON m.chat_surface_session_id = t.chat_surface_session_id ORDER BY t.chat_surface_session_id",
       )
       .all();
     const active = db
       .prepare(
-        "SELECT chat_thread_id, chat_surface_session_id, expected_selection_json FROM production_active_selection WHERE singleton=1",
+        "SELECT chat_thread_id, chat_surface_session_id, selection_revision, expected_selection_json FROM production_active_selection WHERE singleton=1",
       )
       .get();
     db.close();
@@ -141,6 +145,14 @@ const switchScript = `
     try {
       await work();
       return "accepted";
+    } catch (error) {
+      return error?.message ?? String(error);
+    }
+  };
+  /** The status a selection answered, or the refusal it raised - never a bare "did not throw". */
+  const selectionOutcome = async (work) => {
+    try {
+      return (await work()).status;
     } catch (error) {
       return error?.message ?? String(error);
     }
@@ -328,6 +340,100 @@ const switchScript = `
     const after = readDurable();
     out.afterThreads = after.threads;
     out.afterActive = after.active;
+  } else if (scenario === "archive-selected-through-route") {
+    // Item 1 of the double-authority settlement: the production management route's own
+    // service archives the Chat the player is looking at, and both authorities are then
+    // read from their own files and reported side by side. The Chat is created and
+    // selected for real first, so this is the mounted-and-selected shape the panel's own
+    // archive button produces, not an idle one.
+    const target = await createSecondChat();
+    const selection = await authority.requestChatSelection({
+      kind: "select",
+      selectionGeneration: firstGeneration,
+      chatThreadId: target.chatThreadId,
+      chatSurfaceSessionId: target.chatSurfaceSessionId,
+    });
+    const mounted = await authority.startMountedChatRuntime();
+    out.selectionStatus = selection.status;
+    out.mountedThread = mounted.chatThreadId;
+    out.mountedSurface = mounted.chatSurfaceSessionId;
+    out.mountedIsTarget = mounted.chatThreadId === target.chatThreadId;
+    out.createdThread = target.chatThreadId;
+    out.createdSurface = target.chatSurfaceSessionId;
+    const { createChatManagementService } = await import(managementUrl);
+    const { composeTavernProfile, TAVERN_BROWSER_API_VERSION } = await import(contractUrl);
+    const profile = composeTavernProfile({
+      profileId: "gamebuddy.tavern-management.chat-list-title",
+      releaseTier: "tavern_management",
+      routeIds: ["bootstrap", "chat.list", "chat.rename", "draft.read", "draft.save", "draft.discard"],
+      operationIds: ["draft.save", "draft.discard", "chat.rename"],
+      navigationItemIds: ["chat", "characters"],
+    });
+    const service = createChatManagementService({ manifest, lease: mounted, profile });
+    const handle = mounted.browserProjection.projectChatHandle(target.chatThreadId, target.chatSurfaceSessionId);
+    out.listedBeforeArchive = (await service.listChats({ apiVersion: TAVERN_BROWSER_API_VERSION })).chats.map(
+      (chat) => chat.handle,
+    );
+    out.archived = await service.transitionLifecycle({
+      apiVersion: TAVERN_BROWSER_API_VERSION,
+      chatHandle: handle,
+      expectedManagementRevision: 1,
+      operation: "archive",
+    });
+    out.targetHandle = handle;
+    // (c) The panel's own report: the list the player was reading no longer offers it.
+    // Read on the same lease, before any migration - this service is bound to the lease it
+    // was constructed with, and a superseded lease answers chat_management_service_unavailable.
+    out.listedAfterArchive = (await service.listChats({ apiVersion: TAVERN_BROWSER_API_VERSION })).chats.map(
+      (chat) => chat.handle,
+    );
+    // Side by side. The transcript row comes from the durable authority's own readback;
+    // the semantic rows come from a separate read-only connection to its own file, so
+    // neither number is what the other authority reports about itself.
+    const durableRow = (await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId)).thread;
+    out.transcriptAfterArchive = {
+      lifecycleStatus: durableRow.lifecycleStatus,
+      managementRevision: durableRow.managementRevision,
+    };
+    const semantic = readDurable();
+    const semanticRow = semantic.threads.find((row) => row.chat_thread_id === target.chatThreadId);
+    out.semanticAfterArchive = {
+      lifecycle: semanticRow.lifecycle,
+      managementRevision: semanticRow.management_revision,
+      selectedThreadId: semantic.active.chat_thread_id,
+      selectionRevision: semantic.active.selection_revision,
+    };
+    // (a) The Shell's own migration from ADR-0011: the selection moves to the Chat the
+    // durable authority still holds, and the mount succeeds there.
+    out.shellMigration = await selectionOutcome(() =>
+      authority.requestChatSelection({
+        kind: "select",
+        selectionGeneration: mounted.browserProjection.selectionGeneration,
+        chatThreadId: firstThread,
+        chatSurfaceSessionId: firstSurface,
+      }),
+    );
+    const migrated = await authority.startMountedChatRuntime();
+    out.afterMigrationMountedThread = migrated.chatThreadId;
+    // (a)/(b) The player's next request for the archived Chat, after the migration moved the
+    // selection away. One call shows both halves of the divergence: the pre-mount settlement
+    // admits the target (its semantic row still reads active) and commits its select_chat,
+    // and then the mount refuses the conversation the settlement just selected.
+    out.selectionOfArchived = await selectionOutcome(() =>
+      authority.requestChatSelection({
+        kind: "select",
+        selectionGeneration: migrated.browserProjection.selectionGeneration,
+        chatThreadId: target.chatThreadId,
+        chatSurfaceSessionId: target.chatSurfaceSessionId,
+      }),
+    );
+    const refused = readDurable();
+    out.semanticAfterRefusedSelection = {
+      selectedThreadId: refused.active.chat_thread_id,
+      selectionRevision: refused.active.selection_revision,
+      expectedSelection: refused.active.expected_selection_json,
+    };
+    service.close();
   } else if (scenario === "in-flight" || scenario === "in-flight-created") {
     // In the created variant the target is a Chat the product's New Chat wrote and
     // the authority never registered. It is created before the turn starts, so
@@ -671,7 +777,8 @@ async function runSwitchScenario(
     | "select-created-create-only"
     | "select-created-after-restart"
     | "archive-selected-create-only"
-    | "archive-selected-after-restart",
+    | "archive-selected-after-restart"
+    | "archive-selected-through-route",
 ): Promise<Record<string, unknown>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -685,12 +792,15 @@ async function runSwitchScenario(
       authorityGeneration: 1,
     }),
   );
+  // The scenario script is handed to the child as a FILE, not through `--eval`: with eleven
+  // module URLs after it the command line sat within ~10% of Windows' 32767-character limit,
+  // and one more scenario crossed it (`spawn ENAMETOOLONG`). A file has no such ceiling.
+  const scriptPath = join(root, "switch-scenario.mjs");
+  await writeFile(scriptPath, switchScript);
   const child = spawn(
     process.execPath,
     [
-      "--input-type=module",
-      "--eval",
-      switchScript,
+      scriptPath,
       new URL("./continuity-semantic-production-coordinator.internal.js", import.meta.url).href,
       new URL("../deployment-manifest.js", import.meta.url).href,
       new URL("../path-lock.js", import.meta.url).href,
@@ -701,6 +811,8 @@ async function runSwitchScenario(
       new URL("../tavern/provider-attempt-claim.js", import.meta.url).href,
       new URL("../tavern/initial-chat-exact-content-port.js", import.meta.url).href,
       new URL("../tavern/p4-provider-start-execution.js", import.meta.url).href,
+      new URL("../tavern/chat-management/chat-management-service.js", import.meta.url).href,
+      new URL("../tavern/browser-contract/index.js", import.meta.url).href,
       manifestPath,
       scenario,
     ],
@@ -988,10 +1100,12 @@ type DurableThreadRow = Readonly<{
   chat_surface_session_id: string;
   lifecycle: string;
   verified: number | boolean;
+  management_revision: number;
 }>;
 type DurableActiveRow = Readonly<{
   chat_thread_id: string;
   chat_surface_session_id: string;
+  selection_revision: number;
   expected_selection_json: string | null;
 }>;
 
@@ -1207,6 +1321,87 @@ test(
       // against - and the store refuses to transition the Chat it selects (ADR-0011's
       // 2026-11-16 mediation records that bound and why it is harmless here).
       assert.equal((restarted.afterActive as DurableActiveRow).chat_thread_id, String(archived.firstThread));
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * Item 1 of the double-authority settlement, driven on a real archive: the production
+ * management route's own service archives the Chat the player is looking at, and both
+ * authorities are read from their own files afterwards.
+ *
+ * The two rows disagree, and the test says so rather than asserting them into agreement:
+ * - `tavern.sqlite` `tavern_threads.lifecycle_status` = `archived`, `management_revision` = 2
+ *   (the route's own CAS advanced once);
+ * - `gamebuddy-continuity-v1.sqlite` `production_continuity_thread.lifecycle` = `active`,
+ *   `production_chat_lifecycle_metadata.management_revision` = 1 (write-once, at registration).
+ *
+ * With that in hand the three questions the ADR's mediation rests on are answered by
+ * driving the real Host, not by reading the store:
+ * (a) the semantic store still ACCEPTS `select_chat` for the archived Chat: its admission
+ *     is the lifecycle row, which still reads `active`, so the settlement commits the
+ *     selection onto the archived Chat (asserted from the file afterwards, revision 3);
+ * (b) the mount REFUSES it: the same `requestChatSelection` call answers
+ *     `chat_runtime_exact_content_unavailable`, because `prepareExactChatRuntimeConstruction`
+ *     reads the transcript authority's `lifecycle_status` and nothing else
+ *     (`continuity-semantic-chat-runtime-construction.private.test.ts` gates that refusal
+ *     on its own real archive);
+ * (c) no player-pressable affordance offers the archived Chat at all: `chat.list` drops it
+ *     (asserted here) and `chat.select` resolves a target only among durably active Chats
+ *     (`desktop-presentation-admission-owner.ts` `chatSelectProvisioner`), so the only
+ *     pressable next step is the Shell's migration - which is asserted here to succeed.
+ */
+test(
+  "archiving the selected Chat through the route leaves the two authorities disagreeing, and the selection still works",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-archive-selected-through-route-");
+    try {
+      const observed = await runSwitchScenario(root, "archive-selected-through-route");
+      const targetThread = String(observed.createdThread);
+      const targetSurface = String(observed.createdSurface);
+      // The shape the panel's own archive button produces: the Chat is mounted and selected.
+      assert.equal(observed.selectionStatus, "switched");
+      assert.equal(observed.mountedIsTarget, true);
+      assert.equal(observed.mountedThread, targetThread);
+      assert.equal(observed.mountedSurface, targetSurface);
+      const handle = String(observed.targetHandle);
+      assert.ok((observed.listedBeforeArchive as readonly string[]).includes(handle));
+
+      // The route's own service answered the archive on the mounted Chat.
+      const archived = observed.archived as Readonly<Record<string, unknown>>;
+      assert.equal(archived.status, "archived");
+      assert.equal(archived.managementRevision, 2);
+      assert.equal(archived.handle, handle);
+
+      // Side by side, each read from its own authority.
+      const transcript = observed.transcriptAfterArchive as Readonly<Record<string, unknown>>;
+      assert.equal(transcript.lifecycleStatus, "archived");
+      assert.equal(transcript.managementRevision, 2);
+      const semantic = observed.semanticAfterArchive as Readonly<Record<string, unknown>>;
+      assert.equal(semantic.lifecycle, "active");
+      assert.equal(semantic.managementRevision, 1);
+      // ...and the semantic selection still names the Chat the player archived.
+      assert.equal(semantic.selectedThreadId, targetThread);
+      assert.equal(semantic.selectionRevision, 2);
+
+      // (a)+(b) One request shows both halves of the divergence. The pre-mount settlement
+      // admits the target - its semantic row still reads active - and commits its
+      // select_chat; the mount then refuses the conversation it just selected.
+      assert.equal(observed.shellMigration, "switched");
+      assert.equal(observed.afterMigrationMountedThread, String(observed.firstThread));
+      assert.equal(observed.selectionOfArchived, "chat_runtime_exact_content_unavailable");
+      // The selection was really moved onto the archived Chat before the refusal: the
+      // divergence is a committed semantic fact, not a plan that failed first.
+      const afterRefusal = observed.semanticAfterRefusedSelection as Readonly<Record<string, unknown>>;
+      assert.equal(afterRefusal.selectedThreadId, targetThread);
+      assert.equal(afterRefusal.selectionRevision, 4);
+      assert.equal(afterRefusal.expectedSelection, null);
+
+      // (c) No list offers it, so no player gesture can press it.
+      assert.equal((observed.listedAfterArchive as readonly string[]).includes(handle), false);
     } finally {
       cleanup(root);
     }

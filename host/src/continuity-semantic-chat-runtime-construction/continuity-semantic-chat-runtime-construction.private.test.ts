@@ -586,6 +586,41 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
   }
 });
 
+test("Chat construction refuses a Chat the transcript authority archived", async () => {
+  // ADR-0011's 2026-11-16 mediation says the transcript authority (`tavern.sqlite`
+  // `lifecycle_status`) alone answers "is this Chat live". This is the refusal that
+  // sentence names, driven on a real archive of a real thread: the mount does not
+  // consult the semantic catalog here at all, so a semantic `lifecycle` row that still
+  // reads `active` (the divergence the ADR records) cannot resurrect the conversation.
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const transitionLifecycle = value.threads.transitionLifecycle;
+    if (transitionLifecycle === undefined) throw new Error("the fixture's store serves no lifecycle transition");
+    const archived = await transitionLifecycle({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "chat_session_01",
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      expectedManagementRevision: 1,
+      operation: "archive",
+    });
+    assert.equal(archived.lifecycleStatus, "archived");
+    assert.equal(archived.managementRevision, 2);
+    await assert.rejects(
+      value.binding.executeWithBinding((token) =>
+        withConsumedChatRuntimeBinding(token, (execution) =>
+          prepareExactChatRuntimeConstruction(execution, permit(execution)),
+        ),
+      ),
+      /chat_runtime_exact_content_unavailable/,
+    );
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
 test("Chat construction takes the companion language from the player's stored preference", async () => {
   // The runtime must not carry a locale of its own: the same root read by the
   // management surface is what decides what the companion speaks, and the prompt's
