@@ -892,6 +892,21 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         terminal.ReasonCode.Should().Be("destination_locked");
         harness.Manager.IsBodySettled.Should().BeTrue("an owner that can hold the body must have a way out");
 
+        // The way out NAMES ITSELF. MEASURED round68: this terminal read
+        // `destination=Town;phase=awaiting_warp;grace_expired=true;actionable=false;never_retry=true` and the run ended,
+        // because nothing in it said what held her or what to do next. The hold comes from the one vocabulary that
+        // describes a held body, the window states its own length, and the ledger's `never_retry` is not published as if
+        // it were an instruction about the world.
+        terminal.Evidence.Should().Contain("held_by=", "a refusal has to say WHAT holds the actor");
+        terminal.Evidence.Should().Contain("grace_expired=true");
+        terminal.Evidence.Should().Contain("window_ticks=180", "the wait that ended states its own length");
+        terminal.Evidence.Should().NotContain("never_retry=true", "nothing was mutated by ending the wait");
+        (terminal.Evidence!.Contains("next_step=", StringComparison.Ordinal)
+            || terminal.Evidence!.Contains("admissible_actions=", StringComparison.Ordinal))
+            .Should().BeTrue($"and what to do next, from the hold's own countermeasure ({terminal.Evidence})");
+
+        // And the way out is single: further ticks do not mint a second terminal.
+
         // And the way out is single: further ticks do not mint a second terminal.
         for (int i = 0; i < 10; i++)
             harness.Manager.Update();

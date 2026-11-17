@@ -772,7 +772,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (this.active is not null)
                     this.slots.Active.Clear();
                 this.revision++;
-                LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
+                LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", NavigationNextStep.Describe("navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true"));
                 return cancelledAfterWarpReceipt;
             }
 
@@ -985,7 +985,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (specification.Phase == LocalNavigatePhase.AwaitingWarp)
             {
                 this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", NavigationNextStep.Describe("navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true"));
             }
             else
             {
@@ -2991,8 +2991,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
         this.slots.ClearWarpReplan();
-        this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={evidence ?? "none"}", LogLevel.Trace);
-        this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
+        // Every navigation terminal leaves the caller a next step, from the one table that classifies them. A site that
+        // already published one (a body hold's own countermeasure) keeps it: that sentence names the game's condition.
+        string? stated = NavigationNextStep.Describe(reasonCode, evidence);
+        this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={stated ?? "none"}", LogLevel.Trace);
+        this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={stated ?? "none"}");
         this.slots.Active.Clear();
         this.slots.Navigate.Clear();
         this.slots.NavigationCoordinator.Clear();
@@ -3001,7 +3004,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             state == ExecutionState.Succeeded && reasonCode == "navigation_completed"
                 ? this.TryCreatePiggybackedScene()
                 : null;
-        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, evidence, PiggybackedScene: piggybackedScene);
+        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, stated, PiggybackedScene: piggybackedScene);
         this.ledger.Remember(receipt);
         this.AddTrace(receipt);
         this.ledger.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);
@@ -3148,7 +3151,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.slots.NavigationCoordinator.Clear();
             this.revision++;
             this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Uncertain, "navigation_multi_hop_arm_failed",
-                $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true",
+                NavigationNextStep.Describe("navigation_multi_hop_arm_failed", $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true"),
                 hint: approachHint);
             return;
         }
