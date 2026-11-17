@@ -123,13 +123,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// would be a second spelling of it.
     /// </para>
     /// <para>
-    /// `Clears` IS THE OTHER HALF OF THE QUESTION. `TargetFamily` alone names the rows an action addresses, and
-    /// `machine_load` addresses `machineTargets` without finishing anything - "how many machines are left" is not a
-    /// chore anyone gave her. A declaration that says what the swing REMOVES says the tile is one piece of work done,
-    /// and the family says which reading counts the rest of them.
+    /// IT READS THE DESCRIPTOR'S <c>Chore</c> AND NOTHING ELSE - not `Clears`, which answers a ROUTING question and is
+    /// declared only on the nine actions that open a route, and not `TargetFamily`, which says which family SUPPLIES the
+    /// targets and is true of actions that finish nothing (`machine_inspect`, `ship_item`). Measured `round70`: the
+    /// `Clears` form answered `未测` for 14 of 14 delivered batches, because a harvest never stood in anybody's way.
     /// </para>
     /// <para>
-    /// IT COSTS NO WORLD READ: both halves are descriptor facts the catalogue already publishes, so the settlement's
+    /// IT COSTS NO WORLD READ: the claim is a descriptor fact the catalogue already publishes, so the settlement's
     /// evidence is minted from declarations rather than from a second look at the farm.
     /// </para>
     /// </summary>
@@ -138,7 +138,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         if (actionId is null) return null;
         FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
             .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
-        if (descriptor?.Clears is null) return null;
+        if (descriptor?.Chore is not { Consumes: true }) return null;
         return descriptor.TargetFamily is { Length: > 0 } family ? family : null;
     }
 
