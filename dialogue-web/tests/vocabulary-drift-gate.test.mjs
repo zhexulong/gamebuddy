@@ -143,6 +143,7 @@ const SOURCE_CACHE = new Map();
  */
 export const GAME_MIRRORED_VOCABULARIES = [
   { mirror: "ACTION_AUTHORITY_STATUSES", contract: { name: "ActionAuthority" } },
+  { mirror: "OUTCOMES", contract: { name: "Outcome" } },
 ];
 
 function sourceOf(file) {
