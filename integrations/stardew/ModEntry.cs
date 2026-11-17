@@ -2005,19 +2005,6 @@ public sealed partial class ModEntry : Mod
         "player_control_receipt",
     };
 
-    /// <summary>
-    /// The ingress marker each dequeued request type reports, keyed by wire type. One table rather than an `if` per type
-    /// in the drain: the drain is the multiplexer, so a comparison there is a cost every new message type pays. The three
-    /// strings are phase codes `tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs` reads out of
-    /// these sources, so a rename has to reach both.
-    /// </summary>
-    private static readonly Dictionary<string, string> DequeuedIngressMarkers = new(StringComparer.Ordinal)
-    {
-        ["observe_request"] = "navigation_observe_dequeued",
-        ["observe_scene_request"] = "scene_observe_dequeued",
-        ["execution_request"] = "navigation_execution_dequeued",
-    };
-
     private void DrainLocalPipeBridge(ScreenEmbodimentState state)
     {
         if (state.LocalPipeBridge is null || state.BridgeSession is null)
@@ -2042,8 +2029,12 @@ public sealed partial class ModEntry : Mod
                 // handler call (and the execute/publish spans under it) and the response enqueue. It is created
                 // before the mailbox answers as well, because those are dispatch outcomes too.
                 using Activity? dispatchSpan = ModTrace.StartBridgeDispatch(requestType, correlationId);
-                if (requestType is not null && DequeuedIngressMarkers.TryGetValue(requestType, out string? dequeuedMarker))
-                    this.MonitorNativeChatIngress(dequeuedMarker);
+                if (requestType == "observe_request")
+                    this.MonitorNativeChatIngress("navigation_observe_dequeued");
+                if (requestType == "observe_scene_request")
+                    this.MonitorNativeChatIngress("scene_observe_dequeued");
+                if (requestType == "execution_request")
+                    this.MonitorNativeChatIngress("navigation_execution_dequeued");
 
                 if (requestType is not null && LocalBridgeMailboxAnswerTypes.Contains(requestType))
                 {
