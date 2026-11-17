@@ -14,10 +14,12 @@
  *   ⑥ the three zeroes: a named log that is absent is BLOCKED (exit 2), a named log with no fact line is BLOCKED, and a
  *      checkout with no run at all prints the skip marker and exits 0 (`not_measured`, never `passed`)
  *   ⑦ `--expect` is an assertion that can be wrong: the pinned reading passes and a pin that drops a survivor fails
+ *   ⑧ the transcription of the document expires: a document that declares one more kind is red by that member's name
+ *   ⑨ with no `--log` the gate reads the newest run log it can find and names it, which is the runner's half
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -200,4 +202,21 @@ test("⑧ the transcription expires: a document that declares one more kind is r
     /declared-by-doc 6/u,
     "the document is the authority, so the parsed member enters the population whether or not the transcription knows it",
   );
+});
+
+test("⑨ with no --log it reads the newest run log it can find, and it says which", () => {
+  const directory = scratch("newest");
+  const older = join(directory, "_multiday_routine-round65-live-runner.log");
+  const newer = join(directory, "_multiday_routine-round66-live-runner.log");
+  writeFileSync(older, "TRACE nothing\n");
+  writeFileSync(newer, readFileSync(ROUND66));
+  // The OLDER log is made to look older on disk, so "newest" is a fact of the fixture and not of the order two writes
+  // happened to land in.
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(older, past, past);
+
+  const { status, stdout, stderr } = run("--log-dir", directory);
+  assert.equal(status, 1, stderr);
+  assert.match(stdout, /declared-deleted facts: log .*_multiday_routine-round66-live-runner\.log/u);
+  assert.match(stdout, /still produced 3/u);
 });
