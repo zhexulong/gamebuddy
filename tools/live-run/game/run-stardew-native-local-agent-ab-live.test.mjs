@@ -355,7 +355,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   // held the full Chinese reply). Only the VOICE lane stays ladder-scoped.
   assert.match(
     RUNNER_SOURCE,
-    /presentationPieces\.push\(\s*Object\.freeze\(\{ index: presentationPieces\.length, text, locale, \.\.\.pieceTime\.piece \}\),\s*\)/u,
+    /presentationPieces\.push\(Object\.freeze\(\{ index: presentationPieces\.length, text, locale, \.\.\.pieceTime\.piece \}\)\)/u,
   );
   assert.match(RUNNER_SOURCE, /if \(SCENARIO !== "npc_social_and_presence"\) return;\n {2}if \(voiceStarted\) return;/);
   assert.doesNotMatch(
