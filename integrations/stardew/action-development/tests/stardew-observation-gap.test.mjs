@@ -1052,6 +1052,71 @@ test("a family the per-turn text names is not red", () => {
   );
 });
 
+/**
+ * THE POPULATION THE CONSUMPTION SECTION EXAMINES IS THE RECORD'S, AND THAT MEANS THE SCALARS TOO.
+ *
+ * Two defects met here, both measured 2026-11-24 on this checkout.
+ *
+ * - `snapshotParameterOrder` cut each parameter at its first `=`, so a field declaring an attribute with a
+ *   default (`[property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null`)
+ *   ended at `Condition`: the real field left the population and a family no record declares took its place.
+ *   `modRowFields` already stripped the brackets, so the two readers of one declaration disagreed.
+ * - The section then filtered the population to `row !== null`, so the 36 scalar fields the same record
+ *   publishes were examined by no section at all: a scalar the Mod computed and nothing read could not be
+ *   reported, while the Host's `WITHHELD_SCALAR_KEYS` - its list of exactly those fields - was the only reason
+ *   the ambiguity stayed invisible.
+ */
+const ATTRIBUTED_MODELS = `
+public sealed record BridgeSnapshot(
+    IReadOnlyList<BridgeWorldObjectTarget>? WorldObjectTargets = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null
+);
+
+public sealed record BridgeWorldObjectTarget(string TargetId, string Location, int X, int Y);
+`;
+
+test("a field that declares an attribute with a default is named by its own name, not by the attribute's last word", () => {
+  assert.deepEqual(
+    snapshotParameterOrder(ATTRIBUTED_MODELS).map((parameter) => parameter.name),
+    ["WorldObjectTargets", "SleepAdmitsHere"],
+    "cutting at the first `=` leaves `[property: JsonIgnore(Condition `, whose last word is `Condition`",
+  );
+  assert.deepEqual(snapshotParameterOrder(ATTRIBUTED_MODELS)[1].row, null, "it is a scalar, so it has no row type");
+});
+
+test("a published scalar no consumer reads is red, exactly as a family would be", () => {
+  const report = observe({ models: ATTRIBUTED_MODELS });
+
+  assert.deepEqual(
+    report.consumption.rows.map((row) => row.family),
+    ["WorldObjectTargets", "SleepAdmitsHere"],
+    "the scalars the record publishes are in the population the section prints",
+  );
+  assert.deepEqual(
+    report.findings.filter((finding) => finding.kind === "consumption").map((finding) => finding.code),
+    ["family_unclassified_by_consumer_inventory:SleepAdmitsHere"],
+    "the fixture's inventory names neither projection nor withholding for it, so it is a decision nobody made",
+  );
+  const unclassified = report.findings.find((finding) => finding.kind === "consumption");
+  assert.match(unclassified.detail, /host\/src\/snapshot-projection-coverage\.ts/);
+  assert.equal(unclassified.id, null, "an unclassified field cannot be baselined away");
+
+  // The same field, declared withheld, is classified and stops reding - so the check is about the decision, not
+  // about the field being a scalar.
+  const declared = observe({
+    models: ATTRIBUTED_MODELS,
+    consumption: {
+      ...CONSUMPTION_FIXTURE,
+      inventory: CONSUMPTION_FIXTURE.inventory.replace(
+        `  acceptedDailyQuest:`,
+        `  sleepAdmitsHere:\n    "withheld on purpose",\n  acceptedDailyQuest:`,
+      ),
+    },
+  });
+  assert.deepEqual(declared.findings.filter((finding) => finding.kind === "consumption"), []);
+  assert.deepEqual(declared.consumption.rows.map((row) => row.declared), ["UNPROJECTED_OBSERVED_FAMILIES", "WITHHELD_SCALAR_KEYS"]);
+});
+
 test("an inventory whose tables cannot be read is reported instead of classifying nothing", () => {
   const coverage = consumptionCoverage({
     families: ["WorldObjectTargets"],
