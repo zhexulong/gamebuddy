@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { CompanionLoop } from "./companion-loop.js";
 import type { WorldFact } from "./event-pump.js";
 import { CompanionHostService } from "./host-service.js";
+import { programStatusProgress } from "./program-status-wait.js";
 import { createRunTrace, RUN_SPAN_NAMES } from "./run-trace.js";
 import { RUN_BETWEEN_CALL_SPANS, RUN_WAIT_NAMES } from "./run-trace-budget.js";
 
@@ -284,4 +285,54 @@ test("the falsifier: a declared span nothing emits is reported by name", () => {
   // The guard above is only a guard if it can go red on the shape it exists to catch.
   const sources = sourceFiles(HOST_SRC);
   assert.deepEqual(namesWithNoEmitter([...RUN_BETWEEN_CALL_SPANS, "wait.invented"], sources), ["wait.invented"]);
+});
+
+/**
+ * THE WIRED READING: the idle span asks the journal's ledger, and names the executor when her own plan has nodes left.
+ *
+ * <p>
+ * The pure decision is gated in `program-status-wait.idle-reason.test.ts`; this is the one case that proves the span is
+ * built from it rather than from a literal. It is the last case in this file because it fills the process-wide ledger
+ * every earlier case here runs without, and a case that ran after it would be reading a state it did not create.
+ * </p>
+ */
+test("the idle wait names her own executor when the journal still shows a node to run", async () => {
+  const clock = { now: 0 };
+  const trace = createRunTrace("run_body_idle", { now: () => clock.now });
+  const harness = eventHarness();
+  const serviceUnderTest = service(serviceLoop(), harness.events, trace);
+
+  const now = Date.now();
+  programStatusProgress.observe(
+    {
+      code: "found",
+      snapshot: {
+        programId: "plan_body_idle",
+        state: "active",
+        catalogRevision: 3,
+        stopEpoch: 0,
+        eventHighWater: 7,
+        nodes: [
+          { nodeId: "n001", state: "succeeded", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
+          { nodeId: "n002", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
+        ],
+      },
+    },
+    now,
+  );
+
+  clock.now = 1_000;
+  serviceUnderTest.acceptHostMintedFact(fact("world_fact", 11), "stall_watch");
+  await tick();
+  clock.now = 1_400;
+  serviceUnderTest.close();
+
+  const idle = trace.spans().filter((span) => span.name === RUN_WAIT_NAMES.idle);
+  assert.equal(idle.length, 1, "the flush owed no turn, so it opened one wait");
+  assert.equal(
+    idle[0]!.attributes.reason,
+    "body_still_working",
+    `the wait was ours, not the world's: ${JSON.stringify(idle[0]!.attributes)}`,
+  );
+  assert.equal(idle[0]!.attributes.remaining, 1, "and the run says how many nodes it was waiting on");
 });
