@@ -23,6 +23,16 @@
  * importing is what lets the gate see `NavigationItemId`/`WorldInfoBindingState`,
  * which the contract does not export.
  *
+ * THE GAME CONTRACT IS THE SECOND MIRROR of the same kind, and this gate holds it the same way.
+ * The composed game client spells the `game_browser_api/v1` status vocabularies by hand, because
+ * the same bundle cannot import `host/src/game-browser-contract`, and it validates every one of
+ * them before it renders a stage: a member the mirror does not know turns a legal `/game` snapshot
+ * into `invalid_game_state`, and the panel has nothing to say. A shared JSON declaration would be
+ * the one-file answer and cannot be used here - a JSON import types as `string[]`, so
+ * `Type.Literal(value)` would widen every status in the Host's own schemas to `string`. So the two
+ * ends are held by EQUALITY, asserted in `vocabulary-drift.4`/`.5` and recorded by
+ * `tools/check-fact-seams.mjs` as `asserted-by` this file.
+ *
  * Scope, stated honestly:
  *  - `PROBLEM_CODES`/`TURN_PROBLEM_CODES` are `problem-code.7`'s subject, against a
  *    wider authority (the contract union plus the router's transport-only
@@ -59,12 +69,22 @@ import ts from "typescript";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WEB = join(REPO, "dialogue-web", "src");
 const CONTRACT = join(REPO, "host", "src", "tavern", "browser-contract", "index.ts");
+const GAME_CONTRACT = join(REPO, "host", "src", "game-browser-contract", "index.ts");
 
 /** The hand-written browser mirrors whose closed vocabularies must equal the contract's. */
 export const MIRROR_FILES = [
   join(WEB, "reference-pipeline-api.ts"),
   join(WEB, "management-pipeline-api.ts"),
 ];
+
+/**
+ * The composed game client's mirrors of `game_browser_api/v1`.
+ *
+ * Two modules, because the companion Mod's outcome vocabulary is declared in both: the client's own
+ * validator list and the presentation module's label list are one fact with two spellings, and a
+ * token one of them does not know refuses the whole registration reply.
+ */
+export const GAME_MIRROR_FILES = [join(WEB, "composed-reference-game-browser-api.ts"), join(WEB, "game-presentation.ts")];
 
 /**
  * Each mirrored vocabulary: the mirror's own declaration name, and the contract
@@ -115,6 +135,15 @@ export const MIRRORED_VOCABULARIES = [
 export const EXCLUDED_VOCABULARIES = ["LABEL_KEYS", "REFERENCE_PIPELINE_OPERATION_IDS"];
 
 const SOURCE_CACHE = new Map();
+
+/**
+ * Each game vocabulary: the mirror's own declaration name and the contract declaration it restates.
+ * The locator reads the members exactly as `MIRRORED_VOCABULARIES` does - a `Type.Union([Type.Literal(...)])`
+ * named by the locator itself.
+ */
+export const GAME_MIRRORED_VOCABULARIES = [
+  { mirror: "ACTION_AUTHORITY_STATUSES", contract: { name: "ActionAuthority" } },
+];
 
 function sourceOf(file) {
   const cached = SOURCE_CACHE.get(file);
@@ -316,4 +345,54 @@ test("vocabulary-drift.3 (mutation): a short mirror and an invented member are b
   ]);
   assert.deepEqual(vocabularyDrift("mutation.ts NAVIGATION_ITEM_IDS", new Set(authority), authority), []);
   t.diagnostic("vocabulary-drift.3: a missing member and an invented member are each reported by member, not by position");
+});
+
+test("vocabulary-drift.4: the game contract's declarations are read, not assumed", (t) => {
+  const derived = new Map(
+    GAME_MIRRORED_VOCABULARIES.map((entry) => [entry.mirror, contractVocabulary(entry.contract, GAME_CONTRACT)]),
+  );
+  // The anchor: one vocabulary read back member for member, so a reader that silently derived a wrong
+  // union cannot pass the counts below.
+  assert.deepEqual(
+    [...derived.get("ACTION_AUTHORITY_STATUSES")].sort(),
+    ["active", "paused", "unavailable"],
+    "ActionAuthority is the coordinator's three-member authority union",
+  );
+  for (const entry of GAME_MIRRORED_VOCABULARIES) {
+    assert.ok(derived.get(entry.mirror).size >= 2, `${entry.mirror} derived an empty or single-member union`);
+    assert.ok(
+      GAME_MIRROR_FILES.some((file) => mirrorVocabulary(file, entry.mirror) !== null),
+      `no game mirror declares ${entry.mirror}, so this rule holds nothing for it`,
+    );
+  }
+  t.diagnostic(
+    `vocabulary-drift.4: ${GAME_MIRRORED_VOCABULARIES.length} game contract vocabulary/vocabularies derived from the game contract source; ${GAME_MIRROR_FILES.map((file) => `${mirrorName(file)}:${GAME_MIRRORED_VOCABULARIES.filter((entry) => mirrorVocabulary(file, entry.mirror) !== null).length}`).join(", ")}`,
+  );
+});
+
+test("vocabulary-drift.5: every game mirror IS the game contract's vocabulary, not a stale copy of it", (t) => {
+  const failures = [];
+  let mirrored = 0;
+  for (const file of GAME_MIRROR_FILES) {
+    for (const entry of GAME_MIRRORED_VOCABULARIES) {
+      const declared = mirrorVocabulary(file, entry.mirror);
+      if (declared === null) continue;
+      mirrored += declared.size;
+      failures.push(
+        ...vocabularyDrift(
+          `${mirrorName(file)} ${entry.mirror}`,
+          declared,
+          contractVocabulary(entry.contract, GAME_CONTRACT),
+        ),
+      );
+    }
+  }
+  t.diagnostic(
+    `vocabulary-drift.5: ${mirrored} mirrored member(s) across ${GAME_MIRROR_FILES.length} game mirror(s) checked for equality against ${GAME_MIRRORED_VOCABULARIES.length} game contract declaration(s), ${failures.length} drifted`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "a game mirror that does not know a declared member refuses a legal /game snapshot as protocol corruption for the whole panel",
+  );
 });

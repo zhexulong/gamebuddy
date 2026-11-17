@@ -165,6 +165,24 @@ export const SEAMS = Object.freeze([
     },
     owner: "the problem-catalogue lane",
   },
+  // ─── The game contract's status vocabularies, held to the contract by the drift gate ───
+  //
+  // The bundle cannot import the Host package, so these lists exist on both sides and cannot be derived one from the
+  // other. `dialogue-web/tests/vocabulary-drift-gate.test.mjs` reads both ends for each and reports the symmetric
+  // difference by member and by file, so a member added to the union alone is a named failure there rather than a
+  // snapshot the panel refuses. A shared shape file would be the shorter answer and is not available: a JSON import
+  // types as `string[]`, so `Type.Literal(value)` would widen every status in the contract to `string`.
+  {
+    fact: "action authority statuses",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "ActionAuthority" },
+    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "ACTION_AUTHORITY_STATUSES" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["ActionAuthority", "ACTION_AUTHORITY_STATUSES"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
@@ -207,9 +225,6 @@ export const DEBT = Object.freeze([
   ]),
   mirrorDebt("attachment statuses", `${GAME_CONTRACT}:AttachmentStatus`, [`${GAME_CLIENT}:ATTACHMENT_STATUSES`]),
   mirrorDebt("connection statuses", `${GAME_CONTRACT}:ConnectionStatus`, [`${GAME_CLIENT}:CONNECTION_STATUSES`]),
-  mirrorDebt("action authority statuses", `${GAME_CONTRACT}:ActionAuthority`, [
-    `${GAME_CLIENT}:ACTION_AUTHORITY_STATUSES`,
-  ]),
   mirrorDebt("command outcomes", `${GAME_CONTRACT}:Outcome`, [`${GAME_CLIENT}:OUTCOMES`]),
   mirrorDebt("companion mod outcomes", `${GAME_CONTRACT}:CompanionModOutcome`, [
     `${GAME_CLIENT}:COMPANION_MOD_OUTCOMES`,
