@@ -10,7 +10,7 @@ import {
   MAX_NAMED_UNATTRIBUTED_EXECUTIONS,
   type PendingBatch,
   TURN_OPENING,
-  TURN_SUPPRESSION,
+  NOT_OWED,
   turnAccountLine,
   type WorldFact,
 } from "./event-pump.js";
@@ -275,12 +275,11 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
  */
 function expectedFiling(reading: CaseReadings): Readonly<{ opened: number; reason: string }> | undefined {
   if (reading.consequence === "decision") return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
-  if (reading.consequence === "progress") return Object.freeze({ opened: 0, reason: TURN_SUPPRESSION.progress });
+  if (reading.consequence === "progress") return Object.freeze({ opened: 0, reason: NOT_OWED.progress });
   if (reading.consequence !== "in_flight_progress") return undefined;
   // The step's own provenance decides: a programme's step is progress whatever else is running, and a lone outcome is
   // news because nothing else will ever state it.
-  if (reading.origin?.kind === "programme")
-    return Object.freeze({ opened: 0, reason: TURN_SUPPRESSION.inFlightProgress });
+  if (reading.origin?.kind === "programme") return Object.freeze({ opened: 0, reason: NOT_OWED.inFlightProgress });
   return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
 }
 
@@ -496,9 +495,9 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
       consequence: FACT_TURN_CONSEQUENCE["receipt:succeeded"],
       filings: {
         nothing: { opened: 1, reason: TURN_OPENING.worldFact },
-        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
+        itsProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        anotherProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        itsProgrammeJustStopped: { opened: 0, reason: NOT_OWED.inFlightProgress },
         itsProgrammeStoppedLongAgo: { opened: 1, reason: TURN_OPENING.worldFact },
       },
     },
@@ -512,7 +511,7 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
   );
   assert.ok(
     recorded.violations.includes(
-      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${TURN_SUPPRESSION.inFlightProgress}->${TURN_OPENING.worldFact}`,
+      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${NOT_OWED.inFlightProgress}->${TURN_OPENING.worldFact}`,
     ),
     `the violation must name the execution and the shape, got ${JSON.stringify(recorded.violations)}`,
   );
@@ -534,17 +533,17 @@ test("receipt_without_its_programme: a lone outcome silenced while a programme r
       origin: STANDALONE,
       consequence: FACT_TURN_CONSEQUENCE["receipt:partially_succeeded"],
       filings: {
-        nothing: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeStoppedLongAgo: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
+        nothing: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        itsProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        anotherProgrammeRunning: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        itsProgrammeJustStopped: { opened: 0, reason: NOT_OWED.inFlightProgress },
+        itsProgrammeStoppedLongAgo: { opened: 0, reason: NOT_OWED.inFlightProgress },
       },
     },
   ]);
   assert.ok(
     swallowed.violations.includes(
-      `standalone_outcome_swallowed:exec_lone_action:receipt:partially_succeeded:${TURN_SUPPRESSION.inFlightProgress}`,
+      `standalone_outcome_swallowed:exec_lone_action:receipt:partially_succeeded:${NOT_OWED.inFlightProgress}`,
     ),
     `a lone outcome that never spoke must be named, got ${JSON.stringify(swallowed.violations)}`,
   );

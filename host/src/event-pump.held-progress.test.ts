@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import {
+  FACT_PRODUCER,
+  CompanionEventPump,
+  HELD_SEMANTIC_PROGRESS_KINDS,
+  type PendingBatch,
+  type WorldFact,
+} from "./event-pump.js";
 
 /**
  * A held PROGRESS fact that has not changed says nothing the model does not already have.
@@ -17,8 +23,13 @@ import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } 
  * are not content; the tile, the location, the kind and the execution are.
  */
 
-/** The three semantic kinds the pump treats as progress (`isProgressSemanticEvent`). */
-const PROGRESS_KINDS = ["execution_started", "route_progress", "body_idle"];
+/**
+ * The semantic kinds the pump treats as progress: the PRODUCTION table, not a copy of it kept here.
+ *
+ * A hand-written list in a test is a second authority that agrees on the day it is written: a kind the pump adds would
+ * leave this copy behind, and every case below would stop covering it without failing.
+ */
+const PROGRESS_KINDS = Object.keys(HELD_SEMANTIC_PROGRESS_KINDS);
 
 /** The two things these tests read off a delivered batch: its text, and the facts it carries. */
 type DeliveredBatch = Pick<PendingBatch, "text" | "facts">;

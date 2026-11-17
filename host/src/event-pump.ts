@@ -232,7 +232,7 @@ export const FACT_PRODUCERS = Object.freeze(Object.values(FACT_PRODUCER));
 
 export type FactProducer = (typeof FACT_PRODUCERS)[number];
 
-/** One examined flush's decision, with the producer of the fact that made it. `undefined` means no fact decided it. */
+/** One decision, with the producer of the fact that made it. `undefined` means no fact decided it. */
 type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; producedBy: FactProducer | undefined }>;
 
 /**
@@ -264,7 +264,23 @@ type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; pro
  * (`IN_FLIGHT_RECEIPT_PROGRESS_STATES`). What makes it a step is the fact's own `origin`, not what the ledger happens to
  * be naming - see `factExecutionOrigin`.
  */
-export const TURN_SUPPRESSION = Object.freeze({
+/**
+ * Why a flush CALL owed no turn, in the closed list the account prints.
+ *
+ * <p>
+ * THESE ARE NOT FLUSHES. Before this list had its own name, every call to `flush()` was counted as an examined flush and
+ * then answered with one of these - so `round64` printed `flushes examined 134 · turns opened 8 · suppressed 126
+ * {in_flight_progress 125}`, and 93% of the pump's work was: assemble a batch, decide it owes no turn, drop it. A fact
+ * that cannot open a turn must not become a flush in the first place: it waits in its window and the next turn that opens
+ * for a decision carries it (`CarryTicket` proves it arrived). So these reasons now count CALLS THAT WERE NEVER FLUSHES.
+ * </p>
+ * <p>
+ * The members are unchanged because the states are: the reading was one she already held, the fact was one she had already
+ * been told, the fact was a step of a programme she dispatched, the fact was progress she has not been shown, or there was
+ * nothing at all. What changed is the unit, and the unit was the defect.
+ * </p>
+ */
+export const NOT_OWED = Object.freeze({
   /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
   observationRestated: "observation_restated",
   /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
@@ -289,14 +305,47 @@ export const TURN_SUPPRESSION = Object.freeze({
   nothingPending: "nothing_pending",
 });
 
-export const TURN_SUPPRESSIONS = Object.freeze(Object.values(TURN_SUPPRESSION));
+export const NOT_OWED_REASONS = Object.freeze(Object.values(NOT_OWED));
 
-export type TurnSuppression = (typeof TURN_SUPPRESSIONS)[number];
+export type NotOwedReason = (typeof NOT_OWED_REASONS)[number];
 
-/** How the most recent examined flush was decided. */
+/** How the most recent flush call was decided. */
 export type TurnDecision =
   | Readonly<{ kind: "opened"; index: number; reason: TurnOpening }>
-  | Readonly<{ kind: "suppressed"; reason: TurnSuppression }>;
+  | Readonly<{ kind: "not_owed"; reason: NotOwedReason }>;
+
+/**
+ * The proof that a fact which opened no turn did not vanish: the slot keys it waits under, and the batch that carried them.
+ *
+ * <p>
+ * THIS EXISTS BECAUSE A BOOLEAN COULD NOT SAY IT. `#owesTurn` answered yes or no about one fact, so "this fact owes no turn"
+ * and "this fact has nowhere to go" were the same value - and the second one is the defect that lost 126 flushes in
+ * `round64`. A ticket names the facts (their window slot keys, the one spelling `factSlotKey` gives), and
+ * `carriedInto(ticket)` answers the batch id that consumed them, or `undefined` while they are still waiting. The two are
+ * different states and they are now spelled differently.
+ * </p>
+ */
+export type CarryTicket = Readonly<{ ticketId: string; facts: readonly string[] }>;
+
+/**
+ * What one call to `flush` DID, as a closed union - never `undefined`.
+ *
+ * <p>
+ * `opened` - a turn was owed, a batch was composed, and that exact batch reached delivery.
+ * `not_owed` - nothing owed a turn: NO batch was composed, and the ticket proves where the facts went instead.
+ * `held` - the call could not be answered at all (a world transition, or a delivery already in flight); the facts stay
+ *   where they are and the next call decides them.
+ * </p>
+ * <p>
+ * The three are separate members because a caller has to treat them differently, which is the whole reason the old return
+ * type (`CompanionTurnOutcome | undefined`) was wrong: "no turn was owed" and "a delivery is in flight" both arrived as
+ * `undefined`, and neither said whether anything had been dropped.
+ * </p>
+ */
+export type FlushOutcome =
+  | Readonly<{ kind: "opened"; batchId: string; opener: TurnOpening; turn: CompanionTurnOutcome }>
+  | Readonly<{ kind: "not_owed"; reason: NotOwedReason; carry: CarryTicket }>
+  | Readonly<{ kind: "held"; reason: "world_transition" | "delivery_in_flight" }>;
 
 /**
  * Why a turn that spoke and ran no tool closed with nothing done, in the three conditions the pump can tell apart.
@@ -398,6 +447,20 @@ export const ASSISTANT_TURNS_TOOL_ONLY = "tool-only";
 export const PER_DELIVERED_BATCH = "per delivered batch:";
 
 /**
+ * The four labels the flush/delivery reading prints, named once so the printer and its reader cannot disagree.
+ *
+ * `flushes examined` is the batches the pump assembled, and it must equal `turns opened`: a call that owed no turn is
+ * counted under `not owed` instead, and the facts it declined to deliver are proved under `carried`.
+ */
+export const FLUSHES_EXAMINED = "flushes examined";
+export const NOT_OWED_LABEL = "not owed";
+export const CARRIED = "carried";
+/** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
+export const TRACES = "traces";
+export const BUBBLES_DELIVERED = "bubbles delivered";
+export const LOST = "lost";
+
+/**
  * The label of the provenance reading: every fact that stated which programme its execution belongs to.
  *
  * MEASURED, THRICE. `round57` `turns opened 66 {adapter_ingress: 57}`, `round59` `88 {adapter_ingress: 79}`, `round62`
@@ -464,10 +527,29 @@ export type TurnAccount = Readonly<{
    * for the count; this says which entrance the fact came in through.
    */
   openedByProducer: Readonly<Record<TurnOpening, Readonly<Record<FactProducer, number>>>>;
-  suppressed: Readonly<Record<TurnSuppression, number>>;
-  /** Which producer's fact decided each suppressed flush: the re-stated fact, or the reading held as state. */
-  suppressedByProducer: Readonly<Record<TurnSuppression, Readonly<Record<FactProducer, number>>>>;
+  /**
+   * Flush CALLS that owed no turn, one count per `NOT_OWED_REASONS` member.
+   *
+   * These are the calls the pump declined to treat as flushes: no batch was composed for them, so they are not in
+   * `examined` and the arithmetic `examined === opened` holds by construction rather than by subtraction.
+   */
+  notOwed: Readonly<Record<NotOwedReason, number>>;
+  /** Which producer's fact answered each such call: the re-stated fact, the step, or the reading held as state. */
+  notOwedByProducer: Readonly<Record<NotOwedReason, Readonly<Record<FactProducer, number>>>>;
+  /**
+   * The batches this pump assembled, counted where the batch is composed.
+   *
+   * INDEPENDENTLY OF `opened`, deliberately: if a future change composes a batch and then finds it owes no turn, this
+   * number grows while `opened` does not, and `event-pump.flushed-then-discarded.test.ts` fails by name. A derived
+   * `examined = opened + notOwed` - which is what this field used to be - can never disagree with itself.
+   */
   examined: number;
+  /** Facts that opened no turn and were consumed by a later batch, and the ones still waiting (see `CarryTicket`). */
+  carry: Readonly<{ carried: number; pending: number }>;
+  /** Facts admitted whose shape is a body trace: not news, never a turn, never counted as a fact that arrived. */
+  traces: number;
+  /** What happened to the words a turn produced: the bubbles that committed, and the text that never arrived, by reason. */
+  delivery: Readonly<{ bubbles: number; lost: Readonly<Record<string, number>>; lostTotal: number }>;
   /**
    * The assistant turns Pi wrote, per production member: the unit silence is counted in, beside the batch counters that
    * cannot see it - see `AssistantTurnTally`.
@@ -498,11 +580,25 @@ export type TurnAccount = Readonly<{
  * THE LINE IS TWO READING GROUPS, AND EACH GROUP'S HEAD NAMES ITS UNIT. First the ASSISTANT TURNS - one assistant record
  * Pi wrote: `assistant turns examined N {worked: count, worked_silently: count, spoke: count, said_nothing: count}`, then
  * the two headline readings derived from those members, `with text T` and `tool-only O`. Then the DELIVERED BATCHES, from
- * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · suppressed M {reason: count} · flushes
- * examined F` (F derived, so the arithmetic closes) `· turn_closed_without_action E {opener:reason: count}` `·
- * turn_settled_silent S {opener: count}` `· turn_settled_with_execution_in_flight I` `· aged readings A ·
- * auto_observe_on_stale R {ageTurns}` `· auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason:
- * count}`.
+ * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · flushes examined F · not owed M
+ * {reason: count} · carried C {pending: P} · bubbles delivered B · lost L {reason: count} ·
+ * turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
+ * turn_settled_with_execution_in_flight I` `· aged readings A · auto_observe_on_stale R {ageTurns}` `·
+ * auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason: count}`.
+ * </p>
+ * <p>
+ * `flushes examined F` AND `turns opened O` ARE ONE NUMBER, PRINTED TWICE, and that is the invariant this line exists to
+ * make readable: a batch is composed only when a turn is owed, so there is no code path that assembles one and discards
+ * it. The calls that owe no turn are a different population entirely (`not owed M`), and the facts they declined to
+ * deliver are proved under `carried C` - consumed by a later batch - with `pending: P` naming the ones still waiting.
+ * Measured 2026-11-16 (`round64`), before this split: `flushes examined 134 · turns opened 8 · suppressed 126
+ * {in_flight_progress 125}`, i.e. 93% of the pump's work was assembling a batch and dropping it.
+ * </p>
+ * <p>
+ * `bubbles delivered B · lost L {reason: count}` IS THE DELIVERY HALF, and it exists because a bubble that was delivered
+ * but never presented (`no_presentation_lease`: the turn carried no presentation source, so no projection ever saw its
+ * text) was counted per turn on stderr and nowhere a run's account could be read. A loss has to be a number a reader can
+ * see, not a zero that means "nobody looked".
  * </p>
  * <p>
  * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
@@ -542,10 +638,11 @@ export function turnAccountLine(account: TurnAccount): string {
   const opened = TURN_OPENINGS.map(
     (reason) => `${reason}: ${String(account.byReason[reason])}${producerBlock(account.openedByProducer[reason])}`,
   ).join(", ");
-  const suppressed = TURN_SUPPRESSIONS.map(
-    (reason) =>
-      `${reason}: ${String(account.suppressed[reason])}${producerBlock(account.suppressedByProducer[reason])}`,
+  const notOwed = NOT_OWED_REASONS.map(
+    (reason) => `${reason}: ${String(account.notOwed[reason])}${producerBlock(account.notOwedByProducer[reason])}`,
   ).join(", ");
+  // The loss reading's population is the reasons the delivery layer REPORTED, so a reason the projection adds appears here
+  // without a second table to extend. Sorted, so two runs' lines can be compared.
   const empty = emptyTurnShapes()
     .map((shape) => `${shape}: ${String(account.emptyTurns.byShape[shape])}`)
     .join(", ");
@@ -587,7 +684,11 @@ export function turnAccountLine(account: TurnAccount): string {
       provenance.facts.unattributed +
       provenance.facts.unstated,
   )} {programme: ${String(provenance.facts.programme)}, standalone: ${String(provenance.facts.standalone)}, unattributed: ${String(provenance.facts.unattributed)}, unstated: ${String(provenance.facts.unstated)}}`;
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+  const lostReading = Object.keys(account.delivery.lost)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .map((reason) => `${reason}: ${String(account.delivery.lost[reason])}`)
+    .join(", ");
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${TRACES} ${String(account.traces)} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
 /**
@@ -615,8 +716,8 @@ function freezeProducerHistograms<Reason extends string>(
   return Object.freeze(frozen);
 }
 
-function suppressedTotal(account: TurnAccount): number {
-  return TURN_SUPPRESSIONS.reduce((total, reason) => total + account.suppressed[reason], 0);
+function notOwedTotal(account: TurnAccount): number {
+  return NOT_OWED_REASONS.reduce((total, reason) => total + account.notOwed[reason], 0);
 }
 
 /**
@@ -837,6 +938,15 @@ export const MAX_PENDING_WORLD_FACTS = 32;
  * the safe direction: it costs a turn rather than a fact.
  */
 export const MAX_DELIVERED_FACT_IDENTITIES = 512;
+
+/**
+ * How many carry tickets the pump remembers.
+ *
+ * A ticket's only job is to answer "which batch consumed these facts", so a bound on them is a bound on the answer's
+ * window rather than on the facts: resolved tickets are evicted first, and a ticket whose answer has aged out is a name a
+ * reader can see missing rather than a fact nobody can prove.
+ */
+export const MAX_CARRY_TICKETS = 512;
 
 /**
  * The semantic kinds whose CONTENT is a moment rather than a thing: the clock, the day, a pass-out.
@@ -1408,7 +1518,7 @@ export class CompanionEventPump {
    * with it - because it is a property of the reading being held, not of the session.
    * </p>
    * <p>
-   * What reads it is the suppressed-flush reason: `#suppressionReason` names a re-statement of the held reading
+   * What reads it is the suppressed-flush reason: `#notOwed` names a re-statement of the held reading
    * (`observation_restated`) apart from a reading that moved (`observation_moved`), which is the difference between "the
    * watcher asked again and the world had not spoken" and "the world spoke and a reading still opens no turn".
    * </p>
@@ -1592,12 +1702,33 @@ export class CompanionEventPump {
     [TURN_OPENING.due]: 0,
   };
   #openedTurns = 0;
-  /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member - DERIVED, so a reason added to that
+  /**
+   * Batches this pump COMPOSED, counted at `takeBatch`.
+   *
+   * The field `examined` was `opened + suppressed`, i.e. the sum of its own terms, so it could never disagree with
+   * itself while a call that owed no turn was counted as an examined flush. It is counted here instead, at the one place
+   * a batch exists, and `event-pump.flushed-then-discarded.test.ts` asserts `examined === opened` over every
+   * `NOT_OWED_REASONS` member.
+   */
+  #examinedFlushes = 0;
+  /**
+   * Facts admitted whose shape is a BODY TRACE rather than an event (`isHeldProgressFact`).
+   *
+   * <p>
+   * The distinction the flood needed: `round64` produced 401 "facts", of which 260 were `tile_advanced` and its second
+   * spelling `route_progress` - her body moving one tile, stated twice. A trace is not news and never opens a turn, so it
+   * is counted as a trace the moment it is admitted, and the gate asserts that every member of this population classifies
+   * as progress (`event-pump.flushed-then-discarded.test.ts`). What this counter must never do is grow with something that
+   * was a decision.
+   * </p>
+   */
+  #traceFacts = 0;
+  /** Flush calls that owed no turn, one count per `NOT_OWED_REASONS` member - DERIVED, so a reason added to that
    * list is counted here without a second table to extend. */
-  readonly #suppressedByReason: Record<TurnSuppression, number> = initializedByReason(TURN_SUPPRESSIONS);
+  readonly #notOwedByReason: Record<NotOwedReason, number> = initializedByReason(NOT_OWED_REASONS);
   /** The nested half of both histograms above: which `FACT_PRODUCER` entrance the deciding fact came in through. */
   readonly #openedByProducer = initializedByProducer(TURN_OPENINGS);
-  readonly #suppressedByProducer = initializedByProducer(TURN_SUPPRESSIONS);
+  readonly #notOwedByProducer = initializedByProducer(NOT_OWED_REASONS);
   /**
    * Which producer put each WAITING fact here, by slot key.
    *
@@ -1606,6 +1737,23 @@ export class CompanionEventPump {
    * record's population is the windows', not the run's - `#pruneProducedBy` drains it with them.
    */
   readonly #producedBy = new Map<string, FactProducer>();
+  /**
+   * The facts that arrived while no turn was owed, by window slot key, waiting for the batch that carries them.
+   *
+   * <p>
+   * THIS IS THE PROOF THAT NOTHING VANISHED. A `not_owed` answer and "the fact has nowhere to go" used to be one value
+   * (`#owesTurn` is a boolean, and a boolean has no third answer), so the 126 progress calls of `round64` dropped their
+   * facts silently. Here a fact that opened no turn is named, and `takeBatch` moves it to `#carriedFacts` when the batch
+   * that consumed it is composed - so `carried` is how many of those facts arrived, and `pending` is how many have not.
+   * </p>
+   */
+  readonly #carryPending = new Set<string>();
+  /** The same facts, by ticket, with the batch that carried them - what `carriedInto` answers. */
+  readonly #carryTickets = new Map<string, { facts: readonly string[]; carriedInto: string | undefined }>();
+  #carriedFacts = 0;
+  /** Bubbles a delivered turn committed to the player, and the text no projection ever saw, by reason. */
+  #deliveryBubbles = 0;
+  readonly #deliveryLost: Record<string, number> = {};
   /** Which producer put the reading in the snapshot slot. The one slot whose key is not a fact slot. */
   #snapshotProducedBy: FactProducer | undefined;
   #lastTurnDecision: TurnDecision | undefined;
@@ -1705,6 +1853,11 @@ export class CompanionEventPump {
     this.#observeWorldTransition(frozen);
     this.#observeExecutionProgress(frozen);
     this.#observeExecutionProvenance(frozen);
+    // A BODY TRACE IS COUNTED AS ONE, not as a fact that arrived: `tile_advanced` and `route_progress` are the same step
+    // stated twice and neither can open a turn, so they are named here rather than in the population a delivery is measured
+    // against. The watch bookkeeping above still sees them - a moving body is how the stall watch knows she is NOT stalled
+    // - which is exactly why a trace can be counted and still not be a fact.
+    if (isHeldProgressFact(frozen)) this.#traceFacts += 1;
     if (fact.kind === "snapshot") {
       const previous = this.#lastSnapshot;
       // An OLDER reading describes an older world (`takeBatch` applies the same rule to a batch that is too large), so
@@ -1770,6 +1923,8 @@ export class CompanionEventPump {
       // flight (a turn here thinks for 60+ s). The window is what makes a long turn safe; closing the whole bridge on it
       // is not what "bounded" has to mean, and it ended that run short of its night.
       if (isSupersededFact(fact)) {
+        // A fact the bound refused is not waiting for anything, so its carry ticket must not outlive it.
+        this.#carryPending.delete(key);
         this.#droppedFacts += 1;
         return;
       }
@@ -1794,6 +1949,7 @@ export class CompanionEventPump {
       // The producer leaves with the fact it was recorded for, or the record grows with the session instead of with the
       // windows it describes.
       this.#producedBy.delete(evictedKey);
+      this.#carryPending.delete(evictedKey);
       this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
@@ -1903,12 +2059,19 @@ export class CompanionEventPump {
     // no run, and carrying either across it would let one session's turns answer for another's.
     this.#deliveredFactIdentities.clear();
     this.#openedTurns = 0;
+    this.#examinedFlushes = 0;
+    this.#traceFacts = 0;
+    this.#carryPending.clear();
+    this.#carryTickets.clear();
+    this.#carriedFacts = 0;
+    this.#deliveryBubbles = 0;
+    for (const reason of Object.keys(this.#deliveryLost)) delete this.#deliveryLost[reason];
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
-    for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
+    for (const reason of NOT_OWED_REASONS) this.#notOwedByReason[reason] = 0;
     for (const reason of TURN_OPENINGS)
       for (const producer of FACT_PRODUCERS) this.#openedByProducer[reason][producer] = 0;
-    for (const reason of TURN_SUPPRESSIONS)
-      for (const producer of FACT_PRODUCERS) this.#suppressedByProducer[reason][producer] = 0;
+    for (const reason of NOT_OWED_REASONS)
+      for (const producer of FACT_PRODUCERS) this.#notOwedByProducer[reason][producer] = 0;
     for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
     this.#emptyTurns = 0;
     for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
@@ -1942,14 +2105,23 @@ export class CompanionEventPump {
    * `turn_without_new_content` so "fewer turns" and "lost turns" are different answers instead of one number.
    */
   public get turnAccount(): TurnAccount {
-    const suppressed = TURN_SUPPRESSIONS.reduce((total, reason) => total + this.#suppressedByReason[reason], 0);
     return Object.freeze({
       opened: this.#openedTurns,
       byReason: Object.freeze({ ...this.#openedByReason }),
       openedByProducer: freezeProducerHistograms(this.#openedByProducer, TURN_OPENINGS),
-      suppressed: Object.freeze({ ...this.#suppressedByReason }),
-      suppressedByProducer: freezeProducerHistograms(this.#suppressedByProducer, TURN_SUPPRESSIONS),
-      examined: this.#openedTurns + suppressed,
+      notOwed: Object.freeze({ ...this.#notOwedByReason }),
+      notOwedByProducer: freezeProducerHistograms(this.#notOwedByProducer, NOT_OWED_REASONS),
+      // COUNTED WHERE THE BATCH IS COMPOSED (`takeBatch`), not derived from the two histograms beside it: a count that is
+      // the sum of its own terms cannot witness a batch that was assembled and then discarded, which is the defect this
+      // number exists to make impossible.
+      examined: this.#examinedFlushes,
+      carry: Object.freeze({ carried: this.#carriedFacts, pending: this.#carryPending.size }),
+      traces: this.#traceFacts,
+      delivery: Object.freeze({
+        bubbles: this.#deliveryBubbles,
+        lost: Object.freeze({ ...this.#deliveryLost }),
+        lostTotal: Object.values(this.#deliveryLost).reduce((total, count) => total + count, 0),
+      }),
       assistantTurns: Object.freeze({
         examined: TURN_PRODUCTIONS.reduce(
           (total, production) => total + this.#assistantTurnsByProduction[production],
@@ -2265,7 +2437,7 @@ export class CompanionEventPump {
    *
    * <p>
    * Counted HERE and not where the filing happens, because the filing asks the same question more than once per flush
-   * (`#opening` skims the window, `#suppressionReason` explains it) and a fact is admitted once. The population is
+   * (`#opening` skims the window, `#notOwed` explains it) and a fact is admitted once. The population is
    * "facts that state an execution's provenance", which is every `execution_receipt` and every body trace - the two
    * spellings of one step.
    * </p>
@@ -2360,19 +2532,34 @@ export class CompanionEventPump {
     return hold.ownerAction ?? "day_started";
   }
 
-  public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
+  /**
+   * Answer one flush call: open the turn it owes, or name why no turn is owed - never `undefined`.
+   *
+   * <p>
+   * THE DECISION COMES BEFORE THE BATCH, and that order is the invariant: `takeBatch` is reached only on the `opened`
+   * branch, so a call that owes no turn composes nothing to throw away. `round64` measured the other shape - `flushes
+   * examined 134 · turns opened 8 · suppressed 126 {in_flight_progress 125}` - because every admission of a programme step
+   * called this method and the method then decided the step owed no turn.
+   * </p>
+   * <p>
+   * THE CURE STILL RUNS ON EVERY CALL. An aged reading is not a turn and costs no batch: it is one pipe round-trip that
+   * replaces the reading a later turn will state (`#beginAgedReadingAsk`), so a call that owes no turn still refreshes the
+   * world rather than returning the reading it was handed. What a `not_owed` call must never do is assemble a batch.
+   * </p>
+   */
+  public async flush(sink: CompanionTurnSink): Promise<FlushOutcome> {
     // HELD, NOT DROPPED. A companion whose body is inside a transition does not get woken to read the runtime's
     // bookkeeping; the facts wait for the transition to end and arrive together with the fact that ended it. A hold is
     // not a decision this gate owns, so it is neither examined nor named - and the previous decision is cleared so a
     // caller cannot read a hold as the answer to this flush.
     if (this.isWorldTransition) {
       this.#lastTurnDecision = undefined;
-      return undefined;
+      return Object.freeze({ kind: "held" as const, reason: "world_transition" as const });
     }
     // A delivery already in flight is the same turn, not another one.
     if (this.#delivering) {
       this.#lastTurnDecision = undefined;
-      return undefined;
+      return Object.freeze({ kind: "held" as const, reason: "delivery_in_flight" as const });
     }
     const retry = this.#retry;
     this.#delivering = true;
@@ -2398,25 +2585,28 @@ export class CompanionEventPump {
           // opened on the other side of a teardown is a delivery nobody asked for.
           if (this.#generation !== generation) {
             this.#lastTurnDecision = undefined;
-            return undefined;
+            return Object.freeze({ kind: "held" as const, reason: "delivery_in_flight" as const });
           }
         }
       }
       opening = retry === undefined ? this.#opening() : retry.opening;
-      if (opening === undefined) {
-        this.#suppress(this.#suppressionReason());
-        return undefined;
-      }
+      if (opening === undefined) return this.#noteNotOwed(this.#notOwed());
+      // FROM HERE A TURN IS OWED, and this is the only branch that composes a batch.
       pending = retry?.batch ?? this.takeBatch();
       this.#retry = undefined;
       this.#openedTurns += 1;
       this.#openedByReason[opening.decision] += 1;
       if (opening.producedBy !== undefined) this.#openedByProducer[opening.decision][opening.producedBy] += 1;
       this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening.decision });
-      const outcome = (await sink.deliver(pending)) ?? undefined;
+      const outcome = (await sink.deliver(pending)) ?? "unobserved";
       this.#deliveredBatches += 1;
       this.#observeTurnProduction(outcome, opening.decision, pending.broughtObservation);
-      return outcome;
+      return Object.freeze({
+        kind: "opened" as const,
+        batchId: pending.batchId,
+        opener: opening.decision,
+        turn: outcome,
+      });
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.
@@ -2433,7 +2623,7 @@ export class CompanionEventPump {
    *
    * ONE place: `hasPendingDelivery`, `flush` and the account all ask this, so "is a turn owed" and "was one taken"
    * cannot disagree. The snapshot slot is deliberately not asked: a reading is standing state (`TURN_OPENING`), so the
-   * flush that holds only a reading suppresses and names which reading it held (`TURN_SUPPRESSION.observationRestated` /
+   * flush that holds only a reading suppresses and names which reading it held (`NOT_OWED.observationRestated` /
    * `observationMoved`).
    */
   #opening(): FlushDecision<TurnOpening> | undefined {
@@ -2522,7 +2712,7 @@ export class CompanionEventPump {
   }
 
   /**
-   * Which member a suppressed flush was answered by absence of.
+   * Which member a call that owed no turn was answered by absence of, AND the carry ticket that proves where its facts went.
    *
    * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
    * skipped it for that reason). A step of a programme is its own reason (`in_flight_progress`):
@@ -2532,22 +2722,37 @@ export class CompanionEventPump {
    * `observation_restated` - the world's last statement, asked about again - and a reading that says something else is
    * `observation_moved`, which is standing state she has not been handed rather than a wake (`TURN_OPENING`).
    * `nothing_pending` is the rest.
+   *
+   * THE TICKET IS TAKEN HERE, at the moment the pump says "no turn is owed", and it names every waiting fact slot. Those
+   * slots leave the ledger only when `takeBatch` consumes them, which is what makes `carriedInto` a measurement rather
+   * than a promise. A reading is not ticketed: it is rendered into every batch by `#worldStateReading`, so it does not need
+   * a slot of its own to arrive.
    */
-  #suppressionReason(): FlushDecision<TurnSuppression> {
+  #notOwed(): Readonly<{ reason: NotOwedReason; producedBy: FactProducer | undefined; carry: CarryTicket }> {
+    const decision = this.#notOwedReason();
+    return Object.freeze({
+      reason: decision.decision,
+      producedBy: decision.producedBy,
+      carry: this.#takeCarryTicket(),
+    });
+  }
+
+  /** The reason half of `#notOwed`: the one question "why did nothing owe a turn", answered once per call. */
+  #notOwedReason(): FlushDecision<NotOwedReason> {
     const facts = this.#ordinaryFacts();
     // The step first, because it is the answer `#opening` skipped the fact for (`#owesTurn`); the re-statement below is
     // the older reason and means the same flush was already told this once.
     for (const fact of facts) {
       if (!this.#isInFlightProgress(fact)) continue;
       return Object.freeze({
-        decision: TURN_SUPPRESSION.inFlightProgress,
+        decision: NOT_OWED.inFlightProgress,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
       });
     }
     for (const fact of facts) {
       if (isHeldFact(fact) || !this.#isRestatement(fact)) continue;
       return Object.freeze({
-        decision: TURN_SUPPRESSION.worldFactRestated,
+        decision: NOT_OWED.worldFactRestated,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
       });
     }
@@ -2559,25 +2764,80 @@ export class CompanionEventPump {
     for (const fact of facts) {
       if (factTurnConsequence(fact) !== "progress") continue;
       return Object.freeze({
-        decision: TURN_SUPPRESSION.progress,
+        decision: NOT_OWED.progress,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
       });
     }
     if (this.#snapshot !== undefined)
       return Object.freeze({
-        decision: this.#snapshotRestatesPrevious
-          ? TURN_SUPPRESSION.observationRestated
-          : TURN_SUPPRESSION.observationMoved,
+        decision: this.#snapshotRestatesPrevious ? NOT_OWED.observationRestated : NOT_OWED.observationMoved,
         producedBy: this.#snapshotProducedBy,
       });
-    return Object.freeze({ decision: TURN_SUPPRESSION.nothingPending, producedBy: undefined });
+    return Object.freeze({ decision: NOT_OWED.nothingPending, producedBy: undefined });
   }
 
-  #suppress(suppression: FlushDecision<TurnSuppression>): void {
-    this.#suppressedByReason[suppression.decision] += 1;
-    if (suppression.producedBy !== undefined)
-      this.#suppressedByProducer[suppression.decision][suppression.producedBy] += 1;
-    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason: suppression.decision });
+  /**
+   * Record a call that owed no turn, and hand the caller the ticket that proves its facts are still on their way.
+   *
+   * THE COUNTER IS NOT A FLUSH COUNTER: this is not an examined flush, because no batch was composed and none was
+   * discarded. It is the population of calls that were answered "not yet", and the four segments beside it (`flushes
+   * examined`, `turns opened`, `carried`, and this one) are read together.
+   */
+  #noteNotOwed(
+    notOwed: Readonly<{ reason: NotOwedReason; producedBy: FactProducer | undefined; carry: CarryTicket }>,
+  ): FlushOutcome {
+    this.#notOwedByReason[notOwed.reason] += 1;
+    if (notOwed.producedBy !== undefined) this.#notOwedByProducer[notOwed.reason][notOwed.producedBy] += 1;
+    this.#lastTurnDecision = Object.freeze({ kind: "not_owed", reason: notOwed.reason });
+    return Object.freeze({ kind: "not_owed" as const, reason: notOwed.reason, carry: notOwed.carry });
+  }
+
+  /**
+   * Name the facts that are waiting because no turn is owed, and return them as one ticket.
+   *
+   * The ledger is keyed by the SAME slot key `enqueueFact`, `#readmit` and the delivered-progress record use
+   * (`factSlotKey`), so a fact cannot be ticketed under one identity and consumed under another. Bounded by the windows
+   * themselves plus `MAX_CARRY_TICKETS`, and a ticket older than that is dropped with its facts still counted as pending
+   * - a bound that forgets is visible, where a bound that lies is not.
+   */
+  #takeCarryTicket(): CarryTicket {
+    for (const fact of this.#ordinaryFacts()) this.#carryPending.add(factSlotKey(fact));
+    const facts = Object.freeze([...this.#carryPending]);
+    const ticketId = `carry_${String(this.#carryTickets.size + 1)}`;
+    this.#carryTickets.set(ticketId, { facts, carriedInto: undefined });
+    for (const [oldest, held] of this.#carryTickets) {
+      if (this.#carryTickets.size <= MAX_CARRY_TICKETS) break;
+      if (held.carriedInto === undefined) continue;
+      this.#carryTickets.delete(oldest);
+    }
+    return Object.freeze({ ticketId, facts });
+  }
+
+  /**
+   * The batch that consumed the facts of one carry ticket, or `undefined` while they are still waiting.
+   *
+   * `undefined` is a STATE here, not a collapse: it says "not yet", and `turnAccount.carry.pending` counts the same
+   * facts from the same ledger. A caller can therefore tell "it went into turn 4" from "nobody has carried it yet".
+   */
+  public carriedInto(ticket: CarryTicket): string | undefined {
+    return this.#carryTickets.get(ticket.ticketId)?.carriedInto;
+  }
+
+  /**
+   * Record what happened to the words a delivered turn produced: how many bubbles committed, and what was lost by reason.
+   *
+   * <p>
+   * THE DELIVERY LAYER OWNS THIS READING (it is the only layer that sees a projection's own answers), and the pump owns
+   * the ACCOUNT it has to appear in: a bubble that was delivered but never presented was counted on stderr per turn and
+   * nowhere a run's account could be read, so `round64`'s batch 6 arrived and nobody was told. The reason vocabulary is the
+   * delivery layer's - each key is a reason it actually reported - rather than a second list kept here that could drift
+   * from the projection's own enum.
+   * </p>
+   */
+  public noteDelivery(reading: Readonly<{ bubbles: number; lost: Readonly<Record<string, number>> }>): void {
+    this.#deliveryBubbles += reading.bubbles;
+    for (const [reason, count] of Object.entries(reading.lost))
+      if (count > 0) this.#deliveryLost[reason] = (this.#deliveryLost[reason] ?? 0) + count;
   }
 
   /**
@@ -2723,12 +2983,22 @@ export class CompanionEventPump {
   }
 
   private takeBatch(): PendingBatch {
+    // THE ONLY PLACE A BATCH EXISTS. `examined` is counted here rather than derived from the decision histograms, so a
+    // batch composed by a path that then decides it owes no turn grows `examined` without growing `opened` - which is
+    // exactly the reading `round64` printed as `flushes examined 134 · turns opened 8`.
+    this.#examinedFlushes += 1;
     const inputs = this.#inputs.splice(0);
     const snapshot = this.#snapshot;
     const broughtObservation = this.#snapshotBringsObservation();
     this.#snapshot = undefined;
     this.#snapshotRestatesPrevious = false;
     this.#snapshotProducedBy = undefined;
+    const carriedSlots = [
+      ...this.#receipts.keys(),
+      ...this.#semanticEvents.keys(),
+      ...this.#lifecycle.keys(),
+      ...this.#worldFacts.keys(),
+    ];
     const receipts = [...this.#receipts.values()];
     this.#receipts.clear();
     const semanticEvents = [...this.#semanticEvents.values()];
@@ -2830,6 +3100,21 @@ export class CompanionEventPump {
     const dropped = facts.slice(0, facts.length - chosen.length);
     for (const fact of dropped) this.#readmit(fact);
     this.#pruneProducedBy();
+    // THE CARRY LEDGER IS SETTLED HERE, against what actually left the windows: every ticketed slot this batch consumed is
+    // a fact that arrived, and the ones the byte bound pushed back stay pending. This is the proof `round64`'s 126 dropped
+    // flushes never had - `carried` counts facts, not calls, so the fact count cannot fall to make the arithmetic look
+    // right.
+    const readmitted = new Set(dropped.map(factSlotKey));
+    for (const slot of carriedSlots) {
+      if (readmitted.has(slot)) continue;
+      if (!this.#carryPending.delete(slot)) continue;
+      this.#carriedFacts += 1;
+    }
+    for (const [ticketId, ticket] of this.#carryTickets) {
+      if (ticket.carriedInto !== undefined) continue;
+      if (!ticket.facts.every((slot) => !this.#carryPending.has(slot))) continue;
+      this.#carryTickets.set(ticketId, { facts: ticket.facts, carriedInto: batchId });
+    }
 
     // This batch was shown the observation, so the next one counts its age from here. Recorded at composition, not at
     // acceptance: a rejected batch is retried with this exact text ("刚刚更新"), and the only error this can make is

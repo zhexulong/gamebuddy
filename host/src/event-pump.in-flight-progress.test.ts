@@ -11,7 +11,7 @@ import {
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
   type SettledProgramOutcome,
-  TURN_SUPPRESSION,
+  NOT_OWED,
   type WorldFact,
 } from "./event-pump.js";
 import { programSettledDigest } from "./program-settlement-digest.js";
@@ -202,16 +202,16 @@ test("a node's success inside a still-running programme does not open a turn", a
   assert.equal(turns.batches.length, 0, "and no turn means no delivery");
   assert.equal(
     pump.turnAccount.lastDecision?.kind,
-    "suppressed",
+    "not_owed",
     `the flush must still be decided and named, got ${JSON.stringify(pump.turnAccount.lastDecision)}`,
   );
   assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
+    pump.turnAccount.notOwed[NOT_OWED.inFlightProgress],
     1,
     "and named as a step, so a rerun's account can count how many turns this rule removed",
   );
   assert.equal(
-    pump.turnAccount.suppressedByProducer[TURN_SUPPRESSION.inFlightProgress][FACT_PRODUCER.adapterIngress],
+    pump.turnAccount.notOwedByProducer[NOT_OWED.inFlightProgress][FACT_PRODUCER.adapterIngress],
     1,
     "with the entrance the fact came in by, or a suppressed fact has no record of where it arrived",
   );
@@ -239,7 +239,7 @@ test("a turn that only carries 'programme N succeeded' opens none, and the next 
   );
   assert.equal(turns.batches.length, 0, "and no turn means no delivery yet");
   assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+    pump.turnAccount.notOwed[NOT_OWED.progress],
     1,
     "the flush is COUNTED as progress, not as a re-stated reading: a reading is re-stated before every flush",
   );
@@ -349,7 +349,7 @@ test("the step that CLOSES a programme is progress: the boundary receipt does no
     "the last node of a plan still named by the journal is a step: the settlement is what states it",
   );
   assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
+    pump.turnAccount.notOwed[NOT_OWED.inFlightProgress],
     1,
     "and it is COUNTED as that step, so a rerun can see how many boundary turns the rule removed",
   );
@@ -420,7 +420,7 @@ test("a standalone outcome speaks while ANOTHER programme is in flight, and a pr
     0,
     "and with NOTHING read, a programme's step is still a step: the receipt states its programme, the ledger is not asked",
   );
-  assert.equal(step.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress], 1);
+  assert.equal(step.turnAccount.notOwed[NOT_OWED.inFlightProgress], 1);
 });
 
 test("a refusal inside a running programme is a decision, not progress", async () => {

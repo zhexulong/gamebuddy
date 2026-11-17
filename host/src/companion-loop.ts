@@ -5,7 +5,6 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
-  TURN_SUPPRESSION,
   turnAccountLine,
   turnProductionOf,
   type CompanionTurnOutcome,
@@ -216,7 +215,7 @@ export class CompanionLoop {
    * </p>
    */
   public async flush(): Promise<CompanionTurnOutcome | undefined> {
-    const outcome = await this.#pump.flush({
+    const flushed = await this.#pump.flush({
       deliver: async (batch) => {
         // Only the real Pi-consumed batch may activate presentation lineage.
         const sourceEventId = canonicalPresentationSource(batch);
@@ -236,22 +235,42 @@ export class CompanionLoop {
         }
       },
     });
-    this.#reportTurnDecision();
-    return outcome;
+    // THE THREE ANSWERS ARE SWITCHED ON, not collapsed into `undefined`. A call that owed no turn is not a delivery and is
+    // not printed; the facts it declined to deliver are carried into the next batch, and `carriedInto` proves where they
+    // went. A hold is neither, and a caller that read it as "nothing happened" would be reading the same value as "no turn
+    // was owed" - the collapse this union exists to remove.
+    switch (flushed.kind) {
+      case "opened":
+        this.#reportTurnDecision();
+        return flushed.turn;
+      case "not_owed":
+        this.#carryDecisions += 1;
+        return undefined;
+      case "held":
+        return undefined;
+    }
+  }
+
+  /** How many flush calls this loop saw answered "not owed": one reading of the only-new-shape traffic in a run's log. */
+  #carryDecisions = 0;
+
+  public get carriedDecisions(): number {
+    return this.#carryDecisions;
   }
 
   /**
-   * One line per examined turn decision, in the shape the invariant is read back in.
+   * One line per OPENED turn, in the shape the invariant is read back in.
    *
-   * An OPENED turn prints the account alone; a suppression prints its own reason first, because the reason is the only
-   * thing that tells "she had nothing new" from "a turn was lost".
+   * A call that owed no turn prints nothing: it is not a decision the run paid for, and a run's log no longer carries one
+   * line per programme STEP saying "there was nothing to do" (the `GAME_TURN_SUPPRESSED` line, which `round64` printed
+   * 126 times). What those calls did is counted in the account (`not owed N {reason: count}`), printed with the next turn
+   * that opens, and the facts they declined are proved under `carried`.
    */
   #reportTurnDecision(): void {
     const account = this.#pump.turnAccount;
     const decision = account.lastDecision;
-    if (decision === undefined || decision.reason === TURN_SUPPRESSION.nothingPending) return;
-    const marker = decision.kind === "opened" ? "GAME_TURN_ACCOUNT" : `GAME_TURN_SUPPRESSED ${decision.reason}`;
-    process.stderr.write(`${marker} ${turnAccountLine(account)}\n`);
+    if (decision === undefined || decision.kind !== "opened") return;
+    process.stderr.write(`GAME_TURN_ACCOUNT ${turnAccountLine(account)}\n`);
   }
 
   /**
@@ -843,6 +862,12 @@ export class CompanionLoop {
             `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
           );
       }
+      // THE DELIVERY READING REACHES THE ACCOUNT. That line above is per turn and per process; a run's account is where
+      // "a bubble was delivered and nobody was told" has to be visible, so the same two measurements are handed to the
+      // pump that prints it. `no_presentation_lease` is one of the reasons: a turn that carried no presentation source had
+      // its text counted by this loop and seen by no projection (measured 2026-11-16, `round64`: batch 6's bubble was
+      // delivered and withheld, and nothing in the account said so).
+      this.pump.noteDelivery({ bubbles: presentedTextPieces, lost: Object.fromEntries(suppressedByReason) });
       if (batchId !== undefined) {
         try {
           this.volatileContext?.clear(batchId);
