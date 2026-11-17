@@ -1883,7 +1883,16 @@ export function snapshotParameterOrder(models) {
   const close = matchingBracket(code, open);
   if (close < 0) return [];
   return splitTopLevel(code.slice(open + 1, close)).map((parameter) => {
-    const declared = parameter.replace(/=[\s\S]*$/u, "").trim();
+    // THE ATTRIBUTE COMES OFF FIRST, or its own last word is read as the field's name: an
+    // `[property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null`
+    // cut at its first `=` ends in `Condition`, so the field left the population and a family no record
+    // declares took its place - `family_unclassified_by_consumer_inventory:Condition` named a key that does
+    // not exist while `SleepAdmitsHere` was examined by nobody. `modRowFields` already strips the brackets;
+    // one reader doing it and the other not is how the two populations drifted apart.
+    const declared = parameter
+      .replace(/\[[^\]]*\]/gu, "")
+      .replace(/=[\s\S]*$/u, "")
+      .trim();
     return {
       name: /([A-Za-z_]\w*)\s*$/u.exec(declared)?.[1] ?? null,
       row: /IReadOnlyList<(Bridge\w+)>\??/u.exec(declared)?.[1] ?? null,
@@ -3067,9 +3076,16 @@ export function observeActionGaps({
     });
   }
   // F - consumption
-  const publishedParameters = parameters.filter((parameter) => parameter.row !== null);
+  //
+  // EVERY PUBLISHED KEY, not only the row families. The section used to hand `consumptionCoverage` the
+  // parameters carrying a `Bridge*` row type, so the 36 scalars the same record publishes - `weather`,
+  // `sleepAdmitsHere`, `artifactSpotFarmSourceCount`, and the paired omission counts - were examined by no
+  // section at all: a scalar the Mod computed and nobody read could not be reported here, and
+  // `WITHHELD_SCALAR_KEYS` (the Host's own list of them) was the only reason the ambiguity stayed invisible.
+  // The inventory this classifies against is keyed by the wire's snapshot key, scalars included, so the
+  // narrowing at the call site handed the function less than its own contract.
   const consumptionRows = consumptionCoverage({
-    families: publishedParameters.map((parameter) => parameter.name),
+    families: parameters.map((parameter) => parameter.name),
     ...consumption,
     targetField,
   });
@@ -3077,7 +3093,7 @@ export function observeActionGaps({
 
   // G - quadrants
   const quadrantScan = observationQuadrants({
-    families: publishedParameters,
+    families: parameters.filter((parameter) => parameter.row !== null),
     discoveries: parseDiscoveries(sources),
     bodies: modMethodBodies(sources),
     perTurnFields: consumption.perTurnFields,
