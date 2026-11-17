@@ -5,45 +5,34 @@ import {
   FACT_PRODUCER,
   FACT_TURN_CONSEQUENCE,
   factTurnConsequence,
+  HELD_RECEIPT_PROGRESS_STATES,
   HELD_SEMANTIC_PROGRESS_KINDS,
   HOST_MINTED_WAKE_KINDS,
+  IN_FLIGHT_RECEIPT_PROGRESS_STATES,
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
   type SettledProgramOutcome,
   TURN_SUPPRESSION,
   type WorldFact,
 } from "./event-pump.js";
-import { programSettledDigest } from "./program-settlement-digest.js";
+import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, programSettledDigest } from "./program-settlement-digest.js";
 import { type InFlightProgrammeReading, type PlanAnswerNode } from "./program-status-wait.js";
 import { EXECUTION_STATES } from "./protocol.js";
 
 /**
- * A step of a programme the journal still shows running is PROGRESS, not a decision.
+ * ONE CALL, ONE ANSWER - and the two halves of that sentence, because they are different questions.
  *
  * <p>
- * MEASURED 2026-11-15 (`round57`, `GAME_TURN_ACCOUNT`): `turns opened 66 {player_input: 4, world_fact: 62
- * {adapter_ingress: 57, companion_arrival: 1, program_settlement: 4}}`. Fifty-seven of sixty-six turns were opened by
- * one adapter fact, and the run's own transcript shows what they were: she submitted `builder.harvest_crop` for three
- * cauliflowers, and every node that finished arrived as its own terminal receipt and opened its own turn -
- * `#68`, `#70`, `#72`, `#76`, `#78`: five utterances for one micro-action.
+ * THE ANSWER: a settlement is the programme's one answer, so it opens exactly one turn and that turn carries the verdict
+ * (`ok`, `reason`) and its bounded evidence. THE STEP: a state the programme is still working through is progress - it
+ * opens no turn, and the settlement carries it.
  * </p>
  * <p>
- * The fact is not the news. `program_settled` is: it states the plan's outcome, per node, in `<execution-result>`. A
- * node's `succeeded` receipt arriving while the journal still lists the plan is the pump re-stating work in flight that
- * she already dispatched - the same rule `TURN_OPENING` states for a reading, applied to a step.
- * </p>
- * <p>
- * NOTHING IS LOST: the receipt keeps its place in the window and travels in the turn the settlement opens, and a
- * `<in-flight>` still running at that moment is rendered into the same block.
- * </p>
- * <p>
- * THE EXPECTED READING ON A RERUN. `round57` printed `turns opened 66 {player_input: 4, world_fact: 62 {adapter_ingress:
- * 57, companion_arrival: 1, program_settlement: 4}}`. With a step silent, `adapter_ingress` can only fall to the
- * refusals it carried, so `turns opened` should move toward `player_input 4 + program_settlement 4 + companion_arrival 1
- * + refusals` - nine plus whatever the run actually refused - and the flushes those steps arrived on must appear as a
- * new segment, `suppressed N {… in_flight_progress: k …}`, with `opened + Σ suppressed` still equal to `flushes
- * examined`. A run whose `adapter_ingress` count stays near 57 while `in_flight_progress` stays at 0 has not exercised
- * this path at all, and that is a different answer from "the fix did not work".
+ * NEITHER HALF IS `round57`'s SHAPE. That run opened 57 of 66 turns on one adapter fact because every finished NODE was
+ * silent-then-counted against a liveness question, and every settlement bought one more utterance on top: `turns opened
+ * 66 {player_input: 4, world_fact: 62 {adapter_ingress: 57, …}}` for one three-cauliflower harvest. What produced those
+ * turns was the body traces and the per-node receipts as separate facts; `04598eda` removed the traces, `round64`
+ * measures about 16 receipts and 22 settlements in a run, and this file pins the classification that follows from it.
  * </p>
  */
 
@@ -186,7 +175,88 @@ function recorder(): { batches: PendingBatch[]; sink: { deliver(batch: PendingBa
   };
 }
 
-test("a node's success inside a still-running programme does not open a turn", async () => {
+/**
+ * THE RULING THIS FILE PINS, and the two falsifiers it is written for.
+ *
+ * A settlement is the ONE answer a programme gives - one call, one answer, and the answer has to be READABLE when it
+ * arrives (`design/fact-authority.md` §1c) - so it opens exactly one turn, and that turn carries the verdict (`ok`,
+ * `reason`) and its bounded evidence. A step the programme is still working through is PROGRESS: it opens none, and the
+ * settlement that closes the programme carries it.
+ *
+ * WHAT CHANGED FROM THE OLD SHAPE, and why it is not a return to `round57`: that run opened 57 of 66 turns on one adapter
+ * fact because every finished NODE opened a turn of its own while its programme ran, and the settlement then opened one
+ * more. `04598eda` removed the body traces (per-tile advance, execution start, settled restatements), and `round64`
+ * measures what is left: about 16 real receipts and 22 settlements in a run - a settlement per plan, not a turn per node.
+ */
+test("a settlement is the programme's ONE answer: exactly one turn, carrying its verdict and its bounded evidence", async () => {
+  // FALSIFIER 1a, derived over every outcome the pump declares so an outcome added to SETTLED_PROGRAM_OUTCOMES is
+  // examined rather than remembered.
+  const outcomes = Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[];
+  assert.ok(outcomes.length > 0, "an empty population proves nothing");
+  for (const outcome of outcomes) {
+    const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
+    const turns = recorder();
+
+    pump.enqueueFact(settledFactOf(outcome), FACT_PRODUCER.programSettlement);
+    await pump.flush(turns.sink);
+
+    assert.equal(
+      pump.turnAccount.opened,
+      1,
+      `a settlement (${outcome}) is the answer to one call, and an answer nobody is handed is a description`,
+    );
+    assert.equal(turns.batches.length, 1, `and ONE settlement is exactly one turn (${outcome}), never two`);
+    const batch = turns.batches[0]!;
+    const delivered = batch.facts.find((fact) => fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND);
+    assert.ok(delivered !== undefined, `the turn carries the settlement itself, not a reference to it (${outcome})`);
+    assert.equal(typeof delivered.payload.ok, "boolean", `and its verdict, \`ok\` (${outcome})`);
+    assert.equal(
+      delivered.payload.reason === null || typeof delivered.payload.reason === "string",
+      true,
+      `and \`reason\`, which is null exactly when the plan did what it was told (${outcome})`,
+    );
+    assert.equal(typeof delivered.payload.total, "number", "with the population its evidence is counted over");
+    assert.equal(delivered.payload.omitted, 0, "and the bound's own count beside the rows it did not carry");
+    assert.match(batch.text, /<execution-result>\n/u, `which is what she reads (${outcome})`);
+
+    // One call, one answer: the same settlement is never a second turn.
+    await pump.flush(turns.sink);
+    assert.equal(pump.turnAccount.opened, 1, `the same settlement never buys a second turn (${outcome})`);
+  }
+});
+
+test("a step the programme is still working through is PROGRESS: it opens no turn, and the settlement carries it", async () => {
+  // FALSIFIER 1b. The population is the pump's own held set, so a state added there is examined here rather than
+  // forgotten - and this is the half the old suppressor got wrong: these states are standing state, not suppressed facts.
+  const states = Object.keys(HELD_RECEIPT_PROGRESS_STATES);
+  assert.ok(states.length > 0, "an empty population agrees with itself");
+  for (const state of states) {
+    const pump = new CompanionEventPump(() => harvestPlan(1));
+    const turns = recorder();
+
+    pump.enqueueFact(receiptOf(state), FACT_PRODUCER.adapterIngress);
+    await pump.flush(turns.sink);
+
+    assert.equal(
+      pump.turnAccount.opened,
+      0,
+      `a programme still working through ${state} states standing state inside work already answered: it is not news`,
+    );
+    assert.equal(turns.batches.length, 0, `and no turn means no delivery (${state})`);
+    assert.equal(
+      pump.turnAccount.lastDecision?.kind,
+      "suppressed",
+      `the flush is still decided and named, got ${JSON.stringify(pump.turnAccount.lastDecision)}`,
+    );
+    assert.equal(
+      pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+      1,
+      `and COUNTED as progress - not as in_flight_progress, which no shape is filed as any more (${state})`,
+    );
+  }
+});
+
+test("a finished node is an outcome: it opens the turn that states it", async () => {
   const pump = new CompanionEventPump(() => harvestPlan(2));
   const turns = recorder();
 
@@ -195,191 +265,75 @@ test("a node's success inside a still-running programme does not open a turn", a
 
   assert.equal(
     pump.turnAccount.opened,
-    0,
-    "the first cauliflower finishing is a step of a plan she already dispatched: it opened a turn in round57 (#69), and that is the defect",
-  );
-  assert.equal(turns.batches.length, 0, "and no turn means no delivery");
-  assert.equal(
-    pump.turnAccount.lastDecision?.kind,
-    "suppressed",
-    `the flush must still be decided and named, got ${JSON.stringify(pump.turnAccount.lastDecision)}`,
-  );
-  assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
     1,
-    "and named as a step, so a rerun's account can count how many turns this rule removed",
+    "a node that ran is a change of the world, and its receipt is the fact that states it - the settlement restates it once more, as the programme's answer",
   );
-  assert.equal(
-    pump.turnAccount.suppressedByProducer[TURN_SUPPRESSION.inFlightProgress][FACT_PRODUCER.adapterIngress],
-    1,
-    "with the entrance the fact came in by, or a suppressed fact has no record of where it arrived",
-  );
+  assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u, "in the Mod's own words");
 });
 
-test("a turn that only carries 'programme N succeeded' opens none, and the next turn carries its outcome", async () => {
-  // THE DEFECT THIS CLOSES. MEASURED 2026-11-15 (`round59`): `turns opened 88 {player_input: 4, world_fact: 84
-  // {adapter_ingress: 79, companion_arrival: 1, program_settlement: 4}}` against 72 submissions, and every one of the 42
-  // settled turns the audit read carried text. The shape was: programme N settles, nothing else is in flight, it opens a
-  // turn, she submits N+1 and writes a line - one utterance bought with one plan.
-  //
-  // A programme that did what it was told states work she already dispatched. Nothing in it changes what she does next,
-  // so it belongs in the next turn's block with every other progress fact - and the property below is that it is still
-  // THERE, in `<execution-result>`, when that turn comes.
-  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
-  const turns = recorder();
-
-  pump.enqueueFact(settledFact([{ nodeId: "n001", state: "succeeded" }]), FACT_PRODUCER.programSettlement);
-  await pump.flush(turns.sink);
-
-  assert.equal(
-    pump.turnAccount.opened,
-    0,
-    "a turn that only carries 'programme N succeeded, nothing else' must not open one - that is the turn round59 bought 72 times",
-  );
-  assert.equal(turns.batches.length, 0, "and no turn means no delivery yet");
-  assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
-    1,
-    "the flush is COUNTED as progress, not as a re-stated reading: a reading is re-stated before every flush",
-  );
-
-  pump.enqueuePlayerInput({
-    source: "player_text",
-    inputId: "player_1",
-    text: "收完了吗？",
-    locale: "zh-CN",
-    timestampMs: 1_000,
-  });
-  await pump.flush(turns.sink);
-
-  const batch = turns.batches[0]!;
-  assert.match(batch.text, /<execution-result>\n/u, "the outcome still arrives, in the next turn's own block");
-  assert.match(batch.text, /1\/1 步做成了/u, "in the producer's own counts, not a paraphrase");
-});
-
-test("at a programme's boundary the receipt and its settlement travel together into the next turn", async () => {
-  // The shape `round59` produced 79 times: the last node's `succeeded` receipt arrives while the journal still names the
-  // plan (every node terminal, `remaining` `0`), and the settlement follows it within a second. Neither is a turn; both
-  // are carried by the next one that opens for a decision, so the outcome and the receipts it summarises arrive together.
-  const pump = new CompanionEventPump(() => harvestPlan(0));
-  const turns = recorder();
-
-  pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(settledFact([{ nodeId: "n001", state: "succeeded" }]), FACT_PRODUCER.programSettlement);
-  await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 0, "a boundary receipt and a successful settlement state work she dispatched");
-
-  pump.enqueuePlayerInput({
-    source: "player_text",
-    inputId: "player_1",
-    text: "收完了吗？",
-    locale: "zh-CN",
-    timestampMs: 1_000,
-  });
-  await pump.flush(turns.sink);
-
-  const batch = turns.batches[0]!;
-  assert.deepEqual(
-    batch.facts.filter((fact) => fact.kind === "execution_receipt").map((fact) => fact.payload.reasonCode),
-    ["crop_harvested"],
-    "the receipt the settlement summarises is delivered: the change moves WHERE it arrives, never whether",
-  );
-  assert.match(batch.text, /harvest_crop 做成了：crop_harvested/u, "in the Mod's own words");
-  assert.match(batch.text, /<execution-result>\n/u, "beside the settlement that states it");
-  assert.match(batch.text, /1\/1 步做成了/u);
-});
-
-test("a settlement that REFUSED a node still opens the turn: a refusal is a decision, and this change must not silence it", async () => {
-  // THE FALSIFIER THAT MATTERS. If this direction is not proven, the change does not remove narration - it removes bad
-  // news. A refused node is the one thing inside a plan she can act on, so the settlement states it and opens.
-  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
-  const turns = recorder();
-
-  pump.enqueueFact(
-    settledFact([
-      { nodeId: "n001", state: "succeeded" },
-      { nodeId: "n002", state: "rejected", rejectionCode: "tool_not_held" },
-    ]),
-    FACT_PRODUCER.programSettlement,
-  );
-  await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "a plan that was refused has to reach her, whatever else is quiet");
-  const batch = turns.batches[0]!;
-  assert.match(batch.text, /<execution-result>\n/u);
-  assert.match(batch.text, /1\/2 步做成了/u, "the count says one of two done, not 'done'");
-  assert.match(batch.text, /move_to_tile 没做成（tool_not_held）/u, "and the refusal is named with the Mod's own code");
-});
-
-test("a settlement that only PARTIALLY did a node opens the turn too", async () => {
-  // `partially_succeeded` is the polite lie the state exists to refuse (`settledSummary`): it did part of its work, so it
-  // is not success, and a settlement carrying one is not progress.
-  const pump = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
-  const turns = recorder();
-
-  pump.enqueueFact(
-    settledFact([
-      { nodeId: "n001", state: "succeeded" },
-      { nodeId: "n002", state: "partially_succeeded", failureCode: "partially_watered" },
-    ]),
-    FACT_PRODUCER.programSettlement,
-  );
-  await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "a partial node is not a programme that did what it was told");
-  assert.match(turns.batches[0]!.text, /move_to_tile 没做成（partially_watered）/u);
-});
-
-test("the step that CLOSES a programme is progress: the boundary receipt does not open a turn", async () => {
-  // THE OTHER HALF OF THE 79. `in_flight_progress` caught 290 receipts while the journal showed the plan running; the ones
-  // that arrived after its last node went terminal did not match `remaining > 0`, so each opened a turn - and the plan was
-  // still ACTIVE in the journal, which is why `harvestPlan(0)` (every node terminal, programme still named) is the reading
-  // this test drives. Those are the boundary receipts of round59: 79 ingress-opened turns against 72 submissions.
+test("two answers, two turns: a step's receipt and the programme's settlement are each stated once", async () => {
   const pump = new CompanionEventPump(() => harvestPlan(0));
   const turns = recorder();
 
   pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
+  pump.enqueueFact(settledFact([{ nodeId: "n001", state: "succeeded" }]), FACT_PRODUCER.programSettlement);
+  await pump.flush(turns.sink);
 
   assert.equal(
     pump.turnAccount.opened,
-    0,
-    "the last node of a plan still named by the journal is a step: the settlement is what states it",
+    2,
+    "the step's receipt and the programme's settlement are each the answer to one call, so neither is silent",
   );
-  assert.equal(
-    pump.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress],
-    1,
-    "and it is COUNTED as that step, so a rerun can see how many boundary turns the rule removed",
+  assert.equal(turns.batches.length, 2, "and one flush is one turn: each fact is the opener of its own");
+  assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u, "the receipt arrives in its own turn");
+  assert.match(
+    turns.batches[1]!.text,
+    /1\/1 步做成了/u,
+    "and the settlement in the next, with the counts it was read from",
   );
 });
 
-test("a plan still running when a turn opens for another reason states the programme AND its finished steps", async () => {
+test("a refusal inside a running programme is an outcome like any other", async () => {
+  const pump = new CompanionEventPump(() => harvestPlan(2));
+  const turns = recorder();
+
+  pump.enqueueFact(nodeRejected("60,10", 60), FACT_PRODUCER.adapterIngress);
+  await pump.flush(turns.sink);
+
+  assert.equal(pump.turnAccount.opened, 1, "a rejected node is the one thing mid-plan she can act on");
+  assert.match(turns.batches[0]!.text, /harvest_crop 没做成：tool_not_held/u);
+});
+
+test("a programme still running is stated in the turn its finished step opens", async () => {
   const pump = new CompanionEventPump(() => harvestPlan(1));
   const turns = recorder();
 
   pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(nodeSucceeded("60,11", 61), FACT_PRODUCER.adapterIngress);
   await pump.flush(turns.sink);
-  assert.equal(turns.batches.length, 0, "two finished nodes, no turn");
-
-  pump.enqueuePlayerInput({
-    source: "player_text",
-    inputId: "player_1",
-    text: "还有一颗呢？",
-    locale: "zh-CN",
-    timestampMs: 1_000,
-  });
-  await pump.flush(turns.sink);
 
   const batch = turns.batches[0]!;
-  assert.match(batch.text, /<in-flight>\n/u, "the programme in flight reaches the turn that follows");
+  assert.match(batch.text, /<in-flight>\n/u, "the programme in flight reaches the turn that follows it");
   assert.match(batch.text, /in_flight:settled=2;total=3;remaining=1/u);
   assert.equal(
     batch.facts.filter((fact) => fact.kind === "execution_receipt").length,
     2,
-    "and so do both finished nodes",
+    "and so do both finished nodes: one turn, both answers",
   );
+});
+
+test("the filing is a function of the FACT: the ledger changes neither the turn nor the account", async () => {
+  // The property the provenance gate exists for, stated once for this pump: the same receipt is filed the same way
+  // whatever the journal says is running. Now that no shape asks the ledger, both readings agree by construction - and the
+  // fact's own statement of its programme is still counted, which is what the account is for.
+  for (const ledger of [NOTHING_IN_FLIGHT, harvestPlan(1), harvestPlan(0)]) {
+    const pump = new CompanionEventPump(() => ledger);
+    pump.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
+    await pump.flush(recorder().sink);
+    assert.equal(pump.turnAccount.opened, 1, "one finished node, one turn, whatever the ledger says");
+    assert.equal(pump.turnAccount.executionProvenance.facts.programme, 1, "and its own programme is still counted");
+  }
 });
 
 test("a lone action's success is news: no programme owns it, so its own receipt is the only fact that states it", async () => {
@@ -392,45 +346,6 @@ test("a lone action's success is news: no programme owns it, so its own receipt 
   assert.equal(pump.turnAccount.opened, 1, "a single action that finished is the only fact that will ever say so");
   assert.match(turns.batches[0]!.text, /harvest_crop 做成了/u);
   assert.equal(pump.turnAccount.executionProvenance.facts.standalone, 1, "and the account counted it as what it is");
-});
-
-/**
- * THE SAME FACT, TWICE, WITH ONLY THE PROGRAMME IN FLIGHT CHANGED.
- *
- * This is the pair that the ten-second window could not answer and that no timer can: a standalone receipt is a lone
- * outcome whether or not another programme happens to be running. Both directions are asserted here because they fail
- * differently - silencing the first hides work nothing else will state, and opening the second restores the 82 turns.
- */
-test("a standalone outcome speaks while ANOTHER programme is in flight, and a programme's own step stays silent", async () => {
-  const lone = new CompanionEventPump(() => harvestPlan(1));
-  lone.enqueueFact(loneSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
-  await lone.flush(recorder().sink);
-  assert.equal(
-    lone.turnAccount.opened,
-    1,
-    "a programme in flight is not this execution's programme: its receipt is the only statement of a lone outcome",
-  );
-
-  const step = new CompanionEventPump(() => NOTHING_IN_FLIGHT);
-  step.enqueueFact(nodeSucceeded("60,10", 60), FACT_PRODUCER.adapterIngress);
-  await step.flush(recorder().sink);
-  assert.equal(
-    step.turnAccount.opened,
-    0,
-    "and with NOTHING read, a programme's step is still a step: the receipt states its programme, the ledger is not asked",
-  );
-  assert.equal(step.turnAccount.suppressed[TURN_SUPPRESSION.inFlightProgress], 1);
-});
-
-test("a refusal inside a running programme is a decision, not progress", async () => {
-  const pump = new CompanionEventPump(() => harvestPlan(2));
-  const turns = recorder();
-
-  pump.enqueueFact(nodeRejected("60,10", 60), FACT_PRODUCER.adapterIngress);
-  await pump.flush(turns.sink);
-
-  assert.equal(pump.turnAccount.opened, 1, "a rejected node is the one thing mid-plan she can act on");
-  assert.match(turns.batches[0]!.text, /harvest_crop 没做成：tool_not_held/u);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -577,27 +492,34 @@ test("the shape the ingress delivers is classified once, in the table the pump r
   );
   assert.equal(
     factTurnConsequence(nodeSucceeded("60,10", 60)),
-    "in_flight_progress",
-    "and the fact the measured run opened fifty-seven turns with is the one the table calls a step",
+    "decision",
+    "a finished node is an outcome: nothing in the table asks which programme is running, so it opens the turn that states it",
   );
   assert.equal(
     factTurnConsequence(programSettled()),
-    "progress",
-    "a programme that did every node is work restated: round59's 72 settlements each bought one utterance",
+    "decision",
+    "and a programme that did every node is the programme's ONE answer: the turn it opens carries the verdict and its evidence",
   );
   assert.equal(
     factTurnConsequence(settledFactOf("refused")),
     "decision",
-    "while a settlement with a refusal in it is the one thing she has to find out",
+    "a settlement that refused a node is the same answer with a different reason, so the same shape",
   );
-  assert.equal(factTurnConsequence(nodeRejected("60,10", 60)), "decision", "and so does every refusal receipt");
+  assert.equal(factTurnConsequence(nodeRejected("60,10", 60)), "decision", "and so is every refusal receipt");
+  // THE SUPPRESSOR IS EMPTY, and that is the ruling rather than a gap: nothing is discarded because a programme is in
+  // flight. `tools/check-fact-authority.mjs` reads this table by name, so the place a future author would write such a
+  // suppressor into is still read - and it fails the gate by name the moment a Mod fact kind appears in it.
+  assert.deepEqual(
+    Object.keys(IN_FLIGHT_RECEIPT_PROGRESS_STATES),
+    [],
+    "no receipt state is suppressed by a programme being in flight: the answer opens its turn, and the steps are progress",
+  );
 });
 
 test("the classification table, printed with its population", () => {
   // The table itself, as the reading a commit message and a run audit quote. Names and counts only: a shape the pump
   // classifies is one a rerun's account can attribute a turn to.
   const rows = Object.entries(FACT_TURN_CONSEQUENCE).sort(([left], [right]) => left.localeCompare(right));
-  const shapeStartsWithSettled = ([shape]: readonly [string, string]): boolean => shape.startsWith("settled:");
   const byConsequence: Record<string, number> = {};
   for (const [, consequence] of rows) byConsequence[consequence] = (byConsequence[consequence] ?? 0) + 1;
   const family = (prefix: string): number => rows.filter(([shape]) => shape.startsWith(prefix)).length;
@@ -613,11 +535,14 @@ test("the classification table, printed with its population", () => {
     "the table and the population the gate drives are the same set: a shape the ingress delivers and the table has no row for would take the silent `decision` default",
   );
   assert.deepEqual(
-    rows.filter((row) => row[1] === "progress" && shapeStartsWithSettled(row)).map(([shape]) => shape),
+    rows
+      .filter((row) => row[0].startsWith("settled:"))
+      .map(([shape, consequence]) => `${shape}=${consequence}`)
+      .sort(),
     (Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
-      .filter((outcome) => SETTLED_PROGRAM_OUTCOMES[outcome].consequence === "progress")
-      .map((outcome) => `settled:${outcome}`),
-    "the settlement rows the table calls progress are exactly the outcomes that DECLARE it, so a second spelling cannot drift",
+      .map((outcome) => `settled:${outcome}=decision`)
+      .sort(),
+    "every settlement outcome is a DECISION: one answer per call, and the turn that carries it is not optional - so an outcome added to SETTLED_PROGRAM_OUTCOMES is examined here rather than remembered",
   );
 });
 

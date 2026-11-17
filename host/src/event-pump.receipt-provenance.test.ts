@@ -237,12 +237,11 @@ async function readEveryCase(): Promise<readonly CaseReadings[]> {
 function expectedFiling(reading: CaseReadings): Readonly<{ opened: number; reason: string }> | undefined {
   if (reading.consequence === "decision") return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
   if (reading.consequence === "progress") return Object.freeze({ opened: 0, reason: TURN_SUPPRESSION.progress });
-  if (reading.consequence !== "in_flight_progress") return undefined;
-  // The step's own provenance decides: a programme's step is progress whatever else is running, and a lone outcome is
-  // news because nothing else will ever state it.
-  if (reading.origin?.kind === "programme")
-    return Object.freeze({ opened: 0, reason: TURN_SUPPRESSION.inFlightProgress });
-  return Object.freeze({ opened: 1, reason: TURN_OPENING.worldFact });
+  // NOTHING IS FILED AGAINST ANOTHER OBJECT'S LIVENESS ANY MORE (`IN_FLIGHT_RECEIPT_PROGRESS_STATES` is empty by ruling),
+  // and this gate does not assume it: a shape that came back would be UNCLASSIFIED here and red by name, rather than
+  // silently agreeing with the pump about a rule nobody can state from the fact alone. That is the same direction the
+  // pump's own `decision` default takes - the cost is a red gate, never a lost outcome.
+  return undefined;
 }
 
 export type ProvenanceGate = Readonly<{
@@ -298,12 +297,6 @@ export function receiptWithoutItsProgrammeGate(readings: readonly CaseReadings[]
           `${RECEIPT_WITHOUT_ITS_PROGRAMME}:${shape}:${ledger}:${String(filing.opened)}:${String(filing.reason)}`,
         );
     }
-    // The step's own provenance, in the two directions the window got wrong. A receipt whose execution belongs to a
-    // programme must be filed as that programme's step even while ANOTHER programme is the one in flight, and a lone
-    // outcome must still speak while a programme is in flight - silencing it hides the only fact that says it happened.
-    const inFlightProgress = reading.consequence === "in_flight_progress";
-    if (inFlightProgress && reading.origin?.kind !== "programme" && reading.filings.nothing.opened === 0)
-      violations.push(`standalone_outcome_swallowed:${shape}:${String(reading.filings.nothing.reason)}`);
     // TIME: the same fact, the same ledger, one window apart.
     if (
       reading.filings.itsProgrammeJustStopped.opened !== reading.filings.itsProgrammeStoppedLongAgo.opened ||
@@ -446,9 +439,10 @@ test("receipt_without_its_programme: no receipt is filed by the clock or by some
 });
 
 test("receipt_without_its_programme: the gate is red on the ordering the tree produced before the field existed", () => {
-  // THE FALSIFIER, in the direction that matters: the readings the CURRENT tree produces. The same `succeeded` receipt,
-  // the same execution, and the only difference between the two drives is how long ago the journal reported its
-  // programme stopped - 2 s and 120 s. A window makes those two answers disagree, and that disagreement IS the defect.
+  // THE FALSIFIER, in the direction that matters: the readings the OLD tree produced. The same `succeeded` receipt, the
+  // same execution, and the only difference between the two drives is how long ago the journal reported its programme
+  // stopped - 2 s and 120 s. A window makes those two answers disagree, and that disagreement IS the defect. It is also
+  // the shape the ruling removed: "a programme is in flight" may not decide this fact's turn.
   const recorded = receiptWithoutItsProgrammeGate([
     {
       shape: "receipt:succeeded",
@@ -457,9 +451,9 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
       consequence: FACT_TURN_CONSEQUENCE["receipt:succeeded"],
       filings: {
         nothing: { opened: 1, reason: TURN_OPENING.worldFact },
-        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
+        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.progress },
         itsProgrammeStoppedLongAgo: { opened: 1, reason: TURN_OPENING.worldFact },
       },
     },
@@ -473,21 +467,21 @@ test("receipt_without_its_programme: the gate is red on the ordering the tree pr
   );
   assert.ok(
     recorded.violations.includes(
-      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${TURN_SUPPRESSION.inFlightProgress}->${TURN_OPENING.worldFact}`,
+      `receipt_filed_by_time:exec_round62_tail:receipt:succeeded:${TURN_SUPPRESSION.progress}->${TURN_OPENING.worldFact}`,
     ),
     `the violation must name the execution and the shape, got ${JSON.stringify(recorded.violations)}`,
   );
   assert.ok(
     recorded.violations.includes(
-      `${RECEIPT_WITHOUT_ITS_PROGRAMME}:exec_round62_tail:receipt:succeeded:nothing:1:${TURN_OPENING.worldFact}`,
+      `${RECEIPT_WITHOUT_ITS_PROGRAMME}:exec_round62_tail:receipt:succeeded:itsProgrammeRunning:0:${TURN_SUPPRESSION.progress}`,
     ),
     "and it must name the drive it fired on, or the next reader is told 'expected true, got false'",
   );
 });
 
 test("receipt_without_its_programme: a lone outcome silenced while a programme runs is red too", () => {
-  // The other direction, which "fewer turns" alone can never detect: an execution no programme owns is the only fact that
-  // will ever say it happened, so it must open its turn whatever else is in flight.
+  // The direction "fewer turns" alone can never detect: this execution's receipt is the only fact that will ever say it
+  // happened, so silencing it on ANY ledger is a receipt filed by somebody else's liveness.
   const swallowed = receiptWithoutItsProgrammeGate([
     {
       shape: "receipt:partially_succeeded",
@@ -495,17 +489,17 @@ test("receipt_without_its_programme: a lone outcome silenced while a programme r
       origin: STANDALONE,
       consequence: FACT_TURN_CONSEQUENCE["receipt:partially_succeeded"],
       filings: {
-        nothing: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
-        itsProgrammeStoppedLongAgo: { opened: 0, reason: TURN_SUPPRESSION.inFlightProgress },
+        nothing: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        itsProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        anotherProgrammeRunning: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        itsProgrammeJustStopped: { opened: 0, reason: TURN_SUPPRESSION.progress },
+        itsProgrammeStoppedLongAgo: { opened: 0, reason: TURN_SUPPRESSION.progress },
       },
     },
   ]);
   assert.ok(
     swallowed.violations.includes(
-      `standalone_outcome_swallowed:exec_lone_action:receipt:partially_succeeded:${TURN_SUPPRESSION.inFlightProgress}`,
+      `${RECEIPT_WITHOUT_ITS_PROGRAMME}:exec_lone_action:receipt:partially_succeeded:anotherProgrammeRunning:0:${TURN_SUPPRESSION.progress}`,
     ),
     `a lone outcome that never spoke must be named, got ${JSON.stringify(swallowed.violations)}`,
   );

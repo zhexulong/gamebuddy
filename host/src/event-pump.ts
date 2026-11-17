@@ -3438,69 +3438,60 @@ export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
 });
 
 /**
- * Receipt states that say a STEP of a programme DID what it was told, when the receipt's own `origin` says a programme owns
- * the execution.
+ * Receipt states a programme's step is suppressed by - and therefore the reasons a step receipt must not open a turn.
  *
  * <p>
- * THE STEP IS NOT THE OUTCOME. Measured 2026-11-15 (`round57`, `tools/_multiday_routine-round57-live-runner.log`):
- * `turns opened 66 {player_input: 4, world_fact: 62 {adapter_ingress: 57, companion_arrival: 1, program_settlement: 4}}`.
- * Fifty-seven of sixty-six turns were one adapter fact. The run's transcript says what they were: she submitted
- * `builder.harvest_crop` for three cauliflowers, and every node that finished arrived as its own `succeeded` receipt
- * and opened its own turn - five utterances for one micro-action (#68, #70, #72, #76, #78).
+ * EMPTY BY RULING. A receipt's own state cannot say whether a programme is in flight, and "a programme is in flight" is a
+ * judgement about TURNS, never a suppressor of a fact (`design/fact-authority.md`): the classification is a property of
+ * the fact's shape, and a step that did run opens its own turn like any other outcome. What kept this table populated was
+ * a shape question wearing a liveness name - `round57` opened 57 of 66 turns on one adapter fact because every finished
+ * node was declared silent while its programme ran, and `round64` shows what is actually left once the body traces are
+ * gone: about 16 real receipts and 22 settlements in one run, not 66 turns.
  * </p>
  * <p>
- * ONLY THE STATES THAT MEAN "IT RAN AND WORKED". A `rejected`, `failed`, `cancelled`, `blocked` or `uncertain` step is
- * the one thing mid-plan she can act on, and a refusal is a decision (`TURN_OPENING`), so those states stay ordinary
- * facts. Nothing here is suppressed when the journal names NO programme: a lone action's terminal receipt is the only fact
- * that will ever say it happened - the 816.5 s silence of 2026-11-07 was a terminal outcome nothing delivered.
+ * THE DECLARATION STAYS, AND IT IS THE GATE'S READING. `tools/check-fact-authority.mjs` refuses a fact suppressed
+ * because a programme is in flight, and it finds the suppressors by THIS NAME - so the place a future author would have to
+ * write one into is still read, still empty, and still fails the gate by name the moment a Mod fact kind appears here. A
+ * deleted declaration would make that check unmeasurable rather than passing.
  * </p>
  * <p>
- * THE SETTLEMENT IS THE STATEMENT, AND IT DECIDES WHETHER THAT IS A TURN. `program_settled` states the plan's outcome per
- * node in `<execution-result>`, so nothing is lost by moving where these receipts are delivered - they wait in the window
- * and travel in the next turn's `<world-facts>`. Whether that turn exists is the settlement's own outcome
- * (`SETTLED_PROGRAM_OUTCOMES`): a programme she was told to run and ran is progress, and one that refused something opens
- * the turn its receipts arrive in.
+ * WHAT IS STILL HELD, and it is not suppression: the per-node states a programme is still working through
+ * (`accepted`, `running`, `meaningful_progress`) are PROGRESS (`HELD_RECEIPT_PROGRESS_STATES`) - they never open a flush,
+ * and the settlement that closes the programme carries them as its evidence.
  * </p>
  */
-export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({
-  succeeded:
-    "the programme's own settlement states this node in <execution-result>, and the next turn that opens carries the receipt in <world-facts>",
-  partially_succeeded:
-    "the programme's own settlement states this node in <execution-result> and opens a turn, because a node that did part of its work is a settlement this pump classifies as refused",
-});
+export const IN_FLIGHT_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({});
 
 /**
  * What a SETTLEMENT states about the programme it closes, as the one classification its fact SHAPE is built from.
  *
  * <p>
- * A settlement is the only fact that states a programme's outcome per node, and its outcome is what decides whether it
- * can change what she does next. `succeeded` means every node did what it was told - work she dispatched, restated with
- * its receipts, which belongs in the next turn's block and not in a turn of its own. `refused` covers everything else a
- * node can end as, and the direction is deliberate: a refusal, a failure, a cancellation, a partial row and a row the
- * journal could not be read for all say the same thing to her - the plan did NOT do what it was told - and folding those
- * into "done" is the polite lie `settledSummary` exists to refuse.
+ * ONE CALL, ONE ANSWER, AND THE ANSWER OPENS ITS TURN. A settlement is the only fact that states a programme's outcome per
+ * node, and the answer is only an answer if she can read it when it arrives (`design/fact-authority.md` §1c), so BOTH
+ * outcomes are `decision`: the turn it opens carries the verdict and its bounded evidence (`ok`, `reason`, `total`,
+ * `counts`, `nodes`, `omitted` from `program-settlement-digest.ts`), and a programme whose answer nobody was handed does
+ * not exist. Which of the two it is stays its own reading - it is what `settledSummary` names and what the account can
+ * count - but it no longer decides whether the answer is delivered.
  * </p>
  * <p>
- * MEASURED 2026-11-15 (`round59`): `turns opened 88 {player_input: 4, world_fact: 84 {adapter_ingress: 79,
- * companion_arrival: 1, program_settlement: 4}}` against 72 submissions, and all 42 settled turns the audit read carried
- * text. A programme that succeeds is followed by another programme, so the settlement opened a turn whose only content was
- * "that worked" - one utterance per plan. The 4 settlement-opened turns that remain in that reading are the ones this
- * table keeps: the ones something was refused in.
+ * NOT THE SHAPE `round59` MEASURED. That run opened 88 turns, 79 of them on one adapter fact, because the stop that
+ * produced them was every finished NODE opening a turn of its own; a programme that succeeded then bought one utterance
+ * per plan on top. Those turn sources are gone (`04598eda` removed the body traces, and a step receipt is now the
+ * programme's own row in `<execution-result>`), and `round64` measures what is left: about 16 real receipts and 22
+ * settlements in a run - a settlement per plan, not a turn per node.
  * </p>
  * <p>
  * THE READING IS THE DIGEST'S OWN, NOT A SECOND ONE. `counts` and `total` are what `program-settlement-digest.ts`
- * publishes and what `settlementLine` renders, so the line she reads and the classification this pump makes cannot
- * disagree about whether a plan worked.
+ * publishes (`settledProgramOk`) and what `settlementLine` renders, so the line she reads and the classification this pump
+ * makes cannot disagree about whether a plan worked.
  * </p>
  */
 export const SETTLED_PROGRAM_OUTCOMES = Object.freeze({
   succeeded: Object.freeze({
-    consequence: "progress" as const,
-    why: "every node did what it was told: the settlement restates work she already dispatched, and the next turn that opens for a decision carries it in <execution-result>",
+    why: "every node did what it was told: the answer states it with its counts and rows, and it opens the turn that hands her the answer",
   }),
   refused: Object.freeze({
-    consequence: "decision" as const,
-    why: "at least one node was refused, failed, stopped, only partially done or unreadable - that is the one thing in a plan she can act on, so the settlement opens a turn",
+    why: "at least one node was refused, failed, stopped, only partially done or unreadable - the answer names it in `reason`, and that is the one thing in a plan she can act on",
   }),
 });
 
@@ -3527,26 +3518,29 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
  * What one fact SHAPE owes her, as the one classification this pump and its gate read.
  *
  * <ul>
- *   <li>`decision` - it can change what she does next, so it may open a turn.</li>
- *   <li>`progress` - standing state inside work already answered: never a turn, always delivered by the next one.</li>
- *   <li>`in_flight_progress` - a step of a programme, as the fact's OWN provenance states it: progress WHILE it runs or
- *       while its programme is still settling (its settlement is the turn that carries it), and a decision when the fact
- *       states no programme owns the execution, because a lone outcome is news nobody else will state.</li>
+ *   <li>`decision` - it can change what she does next, so it may open a turn. Every OUTCOME is one: a finished step, a
+ *       refusal, a settlement and the world speaking.</li>
+ *   <li>`progress` - standing state inside work already answered: never a turn, always delivered by the next one. The
+ *       per-node states a programme is still working through, a held body trace, and the reading.</li>
+ *   <li>`in_flight_progress` - a step of a programme whose delivery depends on WHICH programme owns its execution. No shape
+ *       is one today (`IN_FLIGHT_RECEIPT_PROGRESS_STATES` is empty by ruling); the member stays because the mechanism that
+ *       reads it (`#owesTurn`, `factExecutionOrigin`) is the one that must exist if such a fact ever returns, and because
+ *       its emptiness is what the fact-authority gate measures.</li>
  * </ul>
  *
  * <p>
- * A SETTLEMENT IS SPLIT BY ITS OUTCOME, because that is the one thing about it she can act on: `settled:succeeded` is
- * `progress` and `settled:refused` is a `decision` (`SETTLED_PROGRAM_OUTCOMES`). Every other world fact is one shape -
- * `world_fact` - because the world speaking, a clock mark and a notice are all news nothing else will state.
+ * A SETTLEMENT IS ONE ANSWER, SO BOTH OF ITS OUTCOMES ARE DECISIONS: `settled:succeeded` and `settled:refused` differ in
+ * what she reads (`ok`/`reason`), not in whether she is handed it (`SETTLED_PROGRAM_OUTCOMES`). Every other world fact is
+ * one shape - `world_fact` - because the world speaking, a clock mark and a notice are all news nothing else will state.
  * </p>
  *
  * <p>
  * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, every settlement
  * outcome the pump declares is classified as a settlement, and every kind the
- * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `HOST_MINTED_WAKE_KINDS`) is classified as a semantic
- * event. A state the protocol adds, an outcome or kind added to one of those tables, appears here or fails
- * `event-pump.in-flight-progress.test.ts` by name - which is also why the table is built by code rather than typed out:
- * two hand-written copies of one vocabulary disagree eventually.
+ * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `HOST_MINTED_WAKE_KINDS`, and the empty
+ * `IN_FLIGHT_RECEIPT_PROGRESS_STATES`) is classified as a semantic event. A state the protocol adds, an outcome or kind
+ * added to one of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also why
+ * the table is built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
  * </p>
  */
 function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence>> {
@@ -3563,7 +3557,7 @@ function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence
   for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
   for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
   for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
-    table[`settled:${outcome}`] = SETTLED_PROGRAM_OUTCOMES[outcome].consequence;
+    table[`settled:${outcome}`] = "decision";
   return Object.freeze(table);
 }
 
