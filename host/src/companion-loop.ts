@@ -20,6 +20,7 @@ import {
   type NativeCompanionContentObserver,
   type NativeCompanionPartSuppression,
   type NativeCompanionTurnBubble,
+  type TurnWithheldReason,
   readAssistantMessageFacts,
 } from "./native-companion-content.js";
 
@@ -29,18 +30,36 @@ export type NativeGameCompanionContent = Readonly<{
 }>;
 
 /**
- * Why one of a turn's assistant text parts never reached the player.
+ * The text no projection ever saw, because this turn carried no presentation source.
  *
  * <p>
- * Two layers can withhold a part, and each one names its own: the projection says what it
-deliberately withheld (`NativeCompanionPartSuppression`, carried on `onMessageText`), and this loop
-names the text no projection ever saw. `no_presentation_lease` is that second family's only member
-today - the turn carried no presentation source, so no projection was attached and nothing else could
-report its parts. It is declared here rather than in the projection's own enum because the projection
-can never produce it, and a member no code path sets is decoration.
+ * A world fact opens a presentation lease only when the fact is one of the salient kinds (`opensPresentationLease`), so a
+ * turn opened by any other fact is answered with no projection attached at all. It is declared here rather than in the
+ * projection's own enum because the projection can never produce it, and a member no code path sets is decoration.
  * </p>
  */
-export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | "no_presentation_lease";
+export const NO_PRESENTATION_LEASE = "no_presentation_lease" as const;
+
+export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | typeof NO_PRESENTATION_LEASE;
+
+/**
+ * Every name a turn's bubble can be withheld under, as this loop can see them: the projection's closed list plus the one
+ * cause only this layer knows (a turn that carried no presentation lease).
+ */
+export type CompanionTurnWithheldReason = TurnWithheldReason | typeof NO_PRESENTATION_LEASE;
+
+/**
+ * What one turn's bubble did, as this loop answers it: the bubble it handed over, or the named reason there was none.
+ *
+ * <p>
+ * THE TURN ENDS EITHER WAY. `delivered: 0` is not "nothing happened, keep waiting" - it is the turn's answer, and the
+ * reason is what a caller switches on to say why the player saw no bubble. The projection's `deliverTurn` answers the same
+ * shape for the turns it covers; this type adds the cause it cannot see.
+ * </p>
+ */
+export type CompanionTurnDelivery = Readonly<
+  { delivered: 1; bubble: NativeCompanionTurnBubble } | { delivered: 0; reason: CompanionTurnWithheldReason }
+>;
 
 /**
  * The ending of a turn whose assistant message carried neither text nor a tool call.
@@ -172,6 +191,22 @@ export class CompanionLoop {
 
   public get pump(): CompanionEventPump {
     return this.#pump;
+  }
+
+  /**
+   * What the LAST turn that reached delivery answered: its bubble, or the name of what withheld it.
+   *
+   * <p>
+   * `undefined` means the last turn never reached delivery at all - it was stopped, refused, unaccepted or never settled -
+   * which is a different fact from "it reached delivery and produced no bubble". It is published because a caller (a run's
+   * evidence, a preview harness, the acceptance gate) has to be able to read a turn's delivery as a value it can switch
+   * on; a delivered turn whose bubble never arrived used to be visible only as `bubbles 0` in a stderr line.
+   * </p>
+   */
+  #lastTurnDelivery: CompanionTurnDelivery | undefined;
+
+  public get lastTurnDelivery(): CompanionTurnDelivery | undefined {
+    return this.#lastTurnDelivery;
   }
 
   /** A player request is accepted but has not yet emitted Pi's exact message_start. */
@@ -382,12 +417,12 @@ export class CompanionLoop {
     let presentedTextParts = 0;
     const suppressedByReason = new Map<CompanionTurnPartSuppression, number>();
     /**
-     * What this turn's delivery took, in the unit the player experiences: the BUBBLE.
+     * What this turn's delivery took, in the unit the player experiences: the BUBBLE, and the name when there was none.
      *
      * <p>
      * MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49 bubbles - one
      * every 13 seconds, 2.04 messages per turn - because every assistant message was presented as a reply of its own.
-     * The surface's unit is now the turn (`native-companion-content.ts` `deliverTurn`), so `presentedTextPieces` counts
+     * The surface's unit is now the turn (`native-companion-content.ts` `deliverTurn`), so `turnDelivery.delivered` counts
      * the bubbles this turn committed (0 or 1) and `textMessageIds` names the messages those bubbles rolled up. A part is
      * a block of model text, a bubble is one commit the player saw; publishing both is what lets a run's own
      * `presentation.pieceCount` reconcile against this record instead of reading the difference as missing turns.
@@ -400,13 +435,19 @@ export class CompanionLoop {
      * sounds are now inside the turn's bubble and a split is a second bubble, which is why the record carries one bubble
      * count rather than a text/ahead pair.
      * </p>
+     * <p>
+     * ONE ANSWER, SET ONCE: `deliverTurn` is called at exactly one point in this method, and `undefined` here means the
+     * turn never reached it (a stopped, refused or unsettled turn), which is a different fact from "it reached delivery
+     * and produced nothing". Every consumer below reads this field rather than reconstructing an answer of its own.
+     * </p>
      */
-    let presentedTextPieces = 0;
+    let turnDelivery: CompanionTurnDelivery | undefined;
+    // The field answers the turn being delivered now, so a turn that never reaches delivery cannot leave the previous
+    // turn's answer standing as if it belonged to this one.
+    this.#lastTurnDelivery = undefined;
     /** The assistant messages whose text this turn's bubble rolled up, in arrival order. */
     let textMessages = 0;
     const textMessageIds: string[] = [];
-    /** What the turn's one bubble cost when it was presented, or `null` when the turn presented none. */
-    let turnBubble: NativeCompanionTurnBubble | null = null;
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     /**
@@ -507,8 +548,8 @@ export class CompanionLoop {
         // in a settlement-driven turn that this loop counted and no projection ever saw).
         if (assistantFacts.textParts > 0 && nativeContentObserver === undefined)
           suppressedByReason.set(
-            "no_presentation_lease",
-            (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
+            NO_PRESENTATION_LEASE,
+            (suppressedByReason.get(NO_PRESENTATION_LEASE) ?? 0) + assistantFacts.textParts,
           );
         if (assistantFacts.hasText) {
           producedText = true;
@@ -595,10 +636,7 @@ export class CompanionLoop {
                 }
                 const content = Object.freeze({ sourceEventId, text });
                 const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                if (presentation !== undefined) {
-                  presentedTextPieces += 1;
-                  nativeContentFinal = presentation;
-                }
+                if (presentation !== undefined) nativeContentFinal = presentation;
                 await presentation;
               },
               onMessageText: (outcome) => {
@@ -757,7 +795,14 @@ export class CompanionLoop {
       // unaccepted or unsettled turn): a stopped or uncertain turn does not speak after the fact. The
       // final observer callback is serialized independently of Pi's settlement notification, so
       // `close()` below drains the bubble's own presentation before the lineage closes.
-      turnBubble = nativeContentObserver?.deliverTurn() ?? null;
+      //
+      // EVERY TURN THAT GETS HERE ANSWERS, and the answer is a result: the bubble it committed, or the name of what
+      // withheld it. A turn with no projection attached at all - no presenter, or no presentation lease for the fact that
+      // opened it - is the loop's own case, and it names itself here instead of leaving `undefined` to read as silence.
+      turnDelivery =
+        nativeContentObserver === undefined
+          ? Object.freeze({ delivered: 0 as const, reason: NO_PRESENTATION_LEASE })
+          : nativeContentObserver.deliverTurn();
       try {
         await nativeContentObserver?.close();
       } catch (error) {
@@ -814,7 +859,7 @@ export class CompanionLoop {
       // What this turn DID, in the four states the pump acts on separately: a turn that worked clears the narration run,
       // a turn that only spoke extends it, and the two silent members end it - of which `workedSilently` is the one that
       // makes an acting-and-quiet turn landable, because `worked` alone collapsed "did the work and said what it did"
-      // with "did the work and said nothing about it". `producedText` and not `presentedTextPieces` is the second half: a
+      // with "did the work and said nothing about it". `producedText` and not the bubble count is the second half: a
       // part the surface withheld is a delivery gap with its own accounting (`delivery_mismatch`, `suppressed{...}`), and
       // reading it as her silence would name a defect in the pipeline as a choice she made.
       this.pump.turnProduction = turnProductionOf(producedWork, producedText);
@@ -831,7 +876,9 @@ export class CompanionLoop {
       // player saw - and publishing both is what lets a run reconcile its own `presentation.pieceCount` against this
       // account instead of reading the difference as missing turns. `messages` is the roll-up's own input: the messages
       // whose text the bubble had to fit, named so "28 messages arrived as 27 bubbles" is visible rather than inferred.
-      if (assistantTextParts > 0 || presentedTextPieces > 0) {
+      // The bubble's own answer rides here: the bubble when one left, and the NAME of the withholding when none did, so a
+      // turn that produced nothing presentable is a stated ending in the run's own log rather than `bubbles: 0`.
+      if (assistantTextParts > 0 || (turnDelivery?.delivered ?? 0) > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
         process.stderr.write(
@@ -839,9 +886,13 @@ export class CompanionLoop {
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
-            bubbles: presentedTextPieces,
+            bubbles: turnDelivery?.delivered ?? 0,
             messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
-            ...(turnBubble === null ? {} : { bubble: turnBubble }),
+            ...(turnDelivery === undefined
+              ? {}
+              : turnDelivery.delivered === 1
+                ? { bubble: turnDelivery.bubble }
+                : { withheld: turnDelivery.reason }),
           })}\n`,
         );
         const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
@@ -855,9 +906,12 @@ export class CompanionLoop {
         // would have refused outright, and the loss is named on the bubble record the run's account reads. A non-zero count
         // of characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
         // landed inside a sentence.
-        if (turnBubble !== null && (turnBubble.truncatedChars > 0 || turnBubble.sentencesDropped > 0))
+        if (
+          turnDelivery?.delivered === 1 &&
+          (turnDelivery.bubble.truncatedChars > 0 || turnDelivery.bubble.sentencesDropped > 0)
+        )
           process.stderr.write(
-            `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
+            `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnDelivery.bubble.truncatedChars)}:${String(turnDelivery.bubble.sentencesDropped)}\n`,
           );
       }
       // THE DELIVERY READING REACHES THE ACCOUNT. That line above is per turn and per process; a run's account is where
@@ -865,7 +919,8 @@ export class CompanionLoop {
       // pump that prints it. `no_presentation_lease` is one of the reasons: a turn that carried no presentation source had
       // its text counted by this loop and seen by no projection (measured 2026-11-16, `round64`: batch 6's bubble was
       // delivered and withheld, and nothing in the account said so).
-      this.pump.noteDelivery({ bubbles: presentedTextPieces, lost: Object.fromEntries(suppressedByReason) });
+      this.pump.noteDelivery({ bubbles: turnDelivery?.delivered ?? 0, lost: Object.fromEntries(suppressedByReason) });
+      this.#lastTurnDelivery = turnDelivery;
       if (batchId !== undefined) {
         try {
           this.volatileContext?.clear(batchId);

@@ -154,6 +154,45 @@ export type NativeCompanionTurnBubble = Readonly<{
   sentencesDropped: number;
 }>;
 
+/**
+ * Why the turn's one bubble did not leave.
+ *
+ * <p>
+ * A CLOSED LIST, because the alternative is `null`. `deliverTurn` used to answer `null` for five different situations -
+ * a turn that said nothing, a turn already delivered, a stopped turn, a surface whose unit is the message, and a surface
+ * that is not opened yet - and a caller could not tell "this turn produced no bubble" from "hold on, one may still
+ * come". That collapse is how a hang hides: whoever awaits the bubble has nothing to switch on, so it waits. Each
+ * member here is a turn ENDING, and the caller reads it.
+ * </p>
+ */
+export const TURN_WITHHELD = Object.freeze({
+  /** Every text part of the turn projected away: there is no speech to put in a bubble, so the turn is silent. */
+  nothingToSay: "nothing_to_say",
+  /** The turn's one bubble was already handed to `onFinalText`; one turn is one bubble. */
+  alreadyDelivered: "already_delivered",
+  /** The surface was revoked or closed before the turn ended: a stopped turn does not speak after the fact. */
+  stopped: "stopped",
+  /** This observer's unit is the message, so it owes no turn bubble at all. */
+  messageUnit: "message_unit",
+});
+
+export type TurnWithheldReason = (typeof TURN_WITHHELD)[keyof typeof TURN_WITHHELD];
+
+/** Every member of the closed list, derived - the population of every reader and test over it. */
+export const TURN_WITHHELD_REASONS = Object.freeze(Object.values(TURN_WITHHELD));
+
+/**
+ * What one `deliverTurn` call answers: the bubble it handed over, or the named reason there is none.
+ *
+ * <p>
+ * The count is the field the caller switches on, so "a bubble reached the player" and "nothing did" cannot be read as the
+ * same value. `delivered` is 0 or 1 because the unit is the turn and the channel is `onFinalText`.
+ * </p>
+ */
+export type NativeCompanionTurnDelivery = Readonly<
+  { delivered: 1; bubble: NativeCompanionTurnBubble } | { delivered: 0; reason: TurnWithheldReason }
+>;
+
 export type NativeCompanionContentOptions = Readonly<{
   stageDirection: StageDirectionPresentation;
   scaffolding: ScaffoldingPresentation;
@@ -307,10 +346,11 @@ export type NativeCompanionContentObserver = Readonly<{
    * gently.
    * </p>
    *
-   * @returns `null` when the turn said nothing (absent, not an empty bubble), when the unit is the
-   * message, or when the observer is no longer delivering.
+   * @returns the bubble it committed, or the named reason there is none (`TURN_WITHHELD`). The answer is a
+   * RESULT either way: a turn that ends without speech has ended, and the caller switches on `delivered` rather
+   * than waiting on a value that means "nothing happened".
    */
-  deliverTurn(): NativeCompanionTurnBubble | null;
+  deliverTurn(): NativeCompanionTurnDelivery;
 }>;
 
 /**
@@ -525,6 +565,10 @@ export function attachNativeCompanionContent(
     dispatch(async () => await sinks.onMessageText?.(outcome));
   };
 
+  /** One named withholding: the answer a turn that ends without a bubble gives, in the same shape as the bubble. */
+  const withheld = (reason: TurnWithheldReason): NativeCompanionTurnDelivery =>
+    Object.freeze({ delivered: 0 as const, reason });
+
   /**
    * The turn's one bubble: its reaction sound, then every message's presented text in arrival order, cut at the
    * presentation transport's own ceiling.
@@ -538,10 +582,15 @@ export function attachNativeCompanionContent(
    * `deliverTurn` reports on the bubble's own record (`truncatedChars`, `sentencesDropped`).
    * </p>
    */
-  const deliverTurn = (): NativeCompanionTurnBubble | null => {
-    if (!turnUnit || turnDelivered || revoked || closed) return null;
-    // A turn that said nothing has no bubble: the sound is a head on speech, never a line of its own.
-    if (turnParagraphs.length === 0) return null;
+  const deliverTurn = (): NativeCompanionTurnDelivery => {
+    // EACH WAY A TURN ENDS WITHOUT A BUBBLE HAS ITS OWN NAME, in the order the reasons outrank each other: a surface that
+    // owes no turn bubble at all, then one that already spoke, then one that was stopped, then a turn with nothing to say.
+    if (!turnUnit) return withheld(TURN_WITHHELD.messageUnit);
+    if (turnDelivered) return withheld(TURN_WITHHELD.alreadyDelivered);
+    if (revoked || closed) return withheld(TURN_WITHHELD.stopped);
+    // A turn that said nothing has no bubble: the sound is a head on speech, never a line of its own. It has still ENDED,
+    // and the answer says so.
+    if (turnParagraphs.length === 0) return withheld(TURN_WITHHELD.nothingToSay);
     turnDelivered = true;
     const speech = turnParagraphs.join(" ");
     // The sound is spent from the same ceiling: a bubble that is nothing but the interjection would spend the player's
@@ -555,9 +604,12 @@ export function attachNativeCompanionContent(
     const text = sound === null ? head.text : `${sound} ${head.text}`;
     dispatch(async () => await sinks.onFinalText(text, turnStopReason));
     return Object.freeze({
-      chars: text.length,
-      truncatedChars: head.truncatedChars,
-      sentencesDropped: head.sentencesDropped,
+      delivered: 1 as const,
+      bubble: Object.freeze({
+        chars: text.length,
+        truncatedChars: head.truncatedChars,
+        sentencesDropped: head.sentencesDropped,
+      }),
     });
   };
 
