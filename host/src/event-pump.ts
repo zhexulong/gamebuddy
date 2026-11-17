@@ -8,6 +8,10 @@ import {
   worldStateStaleThreshold,
 } from "./fact-brief.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
+// The programme's own state is one of the two authorities that decide whether her work is alive
+// (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
+// call already write, so the pump asks it rather than keeping a second account of what is running.
+import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
 import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
@@ -173,7 +177,10 @@ export const TURN_OPENING = Object.freeze({
   playerInput: "player_input",
   /** A fact whose content she has not received before: a settlement, a refusal, a notice, a clock mark. */
   worldFact: "world_fact",
-  /** A Host-owned schedule came due: the stall watch, a stale reading, a narration run (`HOST_MINTED_WAKE_KINDS`). */
+  /**
+   * A Host-owned statement came due: a stale reading, a narration run - and the stall verdict the Host mints from the
+   * Mod's own (`PUMP_MINTED_WAKE_KINDS`).
+   */
   due: "due",
 });
 
@@ -458,6 +465,15 @@ export const CARRIED = "carried";
 export const TRACES = "traces";
 export const BUBBLES_DELIVERED = "bubbles delivered";
 export const LOST = "lost";
+/**
+ * The label of the stall reading: how many `execution_stalled` facts this run minted, by the Mod's own reason.
+ *
+ * IT EXISTS BECAUSE THE OLD READING WAS A ZERO THAT MEANT NOTHING. A run with `lost 0` and no stall segment cannot say
+ * whether no execution stalled or whether nothing was measuring - and the measurement was the thing being replaced. With
+ * the segment, `stalled 0` means the two authorities never said so, and `stalled 2 {entity_block: 2}` names what the body
+ * was blocked on. The braces print ONLY when a fact carried a reason: an empty `{}` would read as an unnamed stall.
+ */
+export const STALLED = "stalled";
 
 /**
  * The label of the provenance reading: every fact that stated which programme its execution belongs to.
@@ -547,6 +563,13 @@ export type TurnAccount = Readonly<{
   carry: Readonly<{ carried: number; pending: number }>;
   /** Facts admitted whose shape is a body trace: not news, never a turn, never counted as a fact that arrived. */
   traces: number;
+  /**
+   * The stall facts this run minted, by the Mod's own reason - the `stalled N {reason: count}` reading.
+   *
+   * Counted where the fact is minted (`takeStallFact`), so it cannot be derived from anything else and cannot agree with
+   * itself about a stall that was never announced.
+   */
+  stalled: Readonly<{ total: number; byReason: Readonly<Record<string, number>> }>;
   /** What happened to the words a turn produced: the bubbles that committed, and the text that never arrived, by reason. */
   delivery: Readonly<{ bubbles: number; lost: Readonly<Record<string, number>>; lostTotal: number }>;
   /**
@@ -580,7 +603,7 @@ export type TurnAccount = Readonly<{
  * Pi wrote: `assistant turns examined N {worked: count, worked_silently: count, spoke: count, said_nothing: count}`, then
  * the two headline readings derived from those members, `with text T` and `tool-only O`. Then the DELIVERED BATCHES, from
  * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · flushes examined F · not owed M
- * {reason: count} · carried C {pending: P} · bubbles delivered B · lost L {reason: count} ·
+ * {reason: count} · carried C {pending: P} · bubbles delivered B · lost L {reason: count} · stalled N {reason: count} ·
  * turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
  * turn_settled_with_execution_in_flight I` `· aged readings A · auto_observe_on_stale R {ageTurns}` `·
  * auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason: count}`.
@@ -598,6 +621,14 @@ export type TurnAccount = Readonly<{
  * but never presented (`no_presentation_lease`: the turn carried no presentation source, so no projection ever saw its
  * text) was counted per turn on stderr and nowhere a run's account could be read. A loss has to be a number a reader can
  * see, not a zero that means "nobody looked".
+ * </p>
+ * <p>
+ * `stalled N {reason: count}` IS THE LIVENESS READING, and it is the segment the replaced measurement could not produce.
+ * Liveness used to be a wall-clock bound on how long an execution had gone without a fact, so that reading could only ever
+ * say "how long since anything happened" - and a run whose Mod had stopped emitting traces read as one long stall. Every
+ * fact counted here was minted from the body controller's own verdict, so `N` counts announcements and the braces name the
+ * Mod's reasons (`entity_block`). The braces are omitted when no fact carried a reason, and printing the number at all is
+ * the point: `stalled 0` says the two authorities never said so, rather than a zero that might mean nobody asked.
  * </p>
  * <p>
  * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
@@ -687,7 +718,15 @@ export function turnAccountLine(account: TurnAccount): string {
     .sort((left, right) => left.localeCompare(right, "en"))
     .map((reason) => `${reason}: ${String(account.delivery.lost[reason])}`)
     .join(", ");
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${TRACES} ${String(account.traces)} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+  // The stall reading's population is the reasons the FACTS carried, so a reason the body controller adds appears here
+  // without a second table to extend - and the braces are printed only when one did, because `stalled 3 {}` would name a
+  // stall whose reason nobody wrote down.
+  const stalledReading = Object.keys(account.stalled.byReason)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .map((reason) => `${reason}: ${String(account.stalled.byReason[reason])}`)
+    .join(", ");
+  const stalledSegment = `${STALLED} ${String(account.stalled.total)}${stalledReading === "" ? "" : ` {${stalledReading}}`}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${TRACES} ${String(account.traces)} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
 /**
@@ -1244,21 +1283,27 @@ type FreshObservationAsk = Readonly<{ declined: AutoObserveUnavailableReason } |
 export const NARRATION_WITHOUT_WORK_SEMANTIC_KIND = "narration_without_work";
 
 /**
- * How long an in-flight execution may go without a fact before the Host says so.
+ * The Mod's own word for "this execution is waiting, and I have said so": the body controller's `stalled_waiting`
+ * receipt.
  *
- * Below the measured 180 s, so the fact arrives while the silence is still news, and above the gaps a live action leaves
- * between its own `route_progress` observations, so ordinary work never reads as a stall.
+ * <p>
+ * MINTED WHERE THE BODY CONTROLLER KNOWS IT (`StardewBodyController.cs:1174`), and read here INSTEAD of counted as
+ * traffic: a receipt that carries this reason is the one statement in the product that says an execution is not making
+ * progress. Counting its arrival as liveness was the defect - the Mod shouting "I am stuck" re-armed the clock that
+ * existed to notice the silence, so the stuckest execution was the one that looked healthiest.
+ * </p>
  */
-export const EXECUTION_STALL_BOUND_MS = 120_000;
+export const MOD_STALL_VERDICT_CODE = "stalled_waiting";
 
 /**
- * Each further stall fact for the SAME execution waits this many bounds of the same silence.
+ * The engine's own step, for the one place a duration crosses from the Mod to the Host.
  *
- * One per bound would spend the run on one refusal being re-read: an hour of silence would be thirty model turns. Four
- * bounds gives 120 s, 480 s, 840 s, ... - eight facts for an hour - which keeps the fact alive without paying for it
- * thirty times.
+ * The body controller measures its wait in TICKS (`stalled_ticks`, `StardewBodyController.cs:1174`) and the Host speaks
+ * milliseconds, so exactly one conversion exists and it lives here with its rate named once: Stardew's update loop is the
+ * 60 Hz step the Mod's own suite states (`StageLogSamplerTests.cs:23`, "one engine tick at 60 fps, so a simulated second
+ * is exactly 60 ticks").
  */
-export const EXECUTION_STALL_REARM_MULTIPLE = 4;
+export const STARDEW_TICKS_PER_SECOND = 60;
 
 /**
  * One delivered turn, at the cadence this product measured.
@@ -1272,31 +1317,26 @@ export const MEASURED_TURN_CADENCE_MS = 42_324;
 /**
  * Consecutive narration turns that make `narration_without_work` due.
  *
- * DERIVED, NOT CHOSEN. The bound this file already treats as "this is no longer progress" is
- * `EXECUTION_STALL_BOUND_MS`, and at the measured cadence that is 2.84 turns - so the first whole turn past it is 3. A
- * companion who speaks once and then works (the ordinary shape, and the reason the retired bound was 2) is never named;
- * one who speaks three turns running is. Later facts re-arm by `EXECUTION_STALL_REARM_MULTIPLE`, so forty narration
- * turns are five facts (3, 12, 21, 30, 39) rather than forty.
+ * <p>
+ * CHOSEN BETWEEN TWO MEASURED SHAPES. It used to be derived from `EXECUTION_STALL_BOUND_MS` - the ms bound this file no
+ * longer has, because a wall-clock distance cannot answer whether an execution is alive - and a THRESHOLD may not hang
+ * off an authority the product has stopped keeping. So it is stated, and bounded by what was measured: the ordinary
+ * "speak, then act" shape is ONE spoken turn (a companion who speaks once and then works is never named), and
+ * `round45`'s defect was five consecutive turns of pure narration while her body stood still. Three sits between them, at
+ * `MEASURED_TURN_CADENCE_MS` 127 s of the run spent speaking and doing nothing - past a minute, and short of the five the
+ * defect took.
+ * </p>
  */
-export const NARRATION_WITHOUT_WORK_TURNS = Math.ceil(EXECUTION_STALL_BOUND_MS / MEASURED_TURN_CADENCE_MS);
+export const NARRATION_WITHOUT_WORK_TURNS = 3;
 
 /**
- * Executions one pump times at once.
+ * Each further narration fact waits this many bounds of the same run.
  *
- * The Mod serializes native mutation on one embodied actor, so the live count is one; the bound exists because the
- * record is a collection a run appends to, and its drain is the terminal receipt. An execution that never settles is
- * therefore evicted and NAMED (`stallWatch.unmeasured`), never silently forgotten.
+ * One per bound would spend the run on one reading re-stated: forty narration turns would be forty facts. Four bounds
+ * gives 3, 12, 21, 30, 39 - five facts for the same forty turns - which keeps the reading alive without paying for it
+ * every turn.
  */
-export const MAX_WATCHED_EXECUTIONS = 8;
-
-/**
- * How many unmeasured executions one stall fact carries.
- *
- * The fact is model context, not an audit log: the FIRST few name what the watch could not date, and `omitted` says how
- * many more there were. A list that grows with the run would put the whole receipt window into a prompt, which is the
- * 2026-10-27 context blow-up this pump bounds everywhere else.
- */
-export const MAX_STALL_UNMEASURED_SHOWN = 8;
+export const NARRATION_REARM_MULTIPLE = 4;
 
 export const HISTORIAN_CHUNK_FALLBACK_TOKENS = 22_879;
 
@@ -1377,38 +1417,51 @@ export const MAX_BATCH_BYTES = deriveMaxBatchBytes(HISTORIAN_CHUNK_FALLBACK_TOKE
  */
 const DEFAULT_BRIEF_LOCALE = "zh-CN";
 
-/** What the stall watch knows about one execution: when it last spoke, and what it said. */
-export type WatchedExecution = Readonly<{
+/**
+ * One standing stall verdict: the Mod's own statement that an execution is waiting, in its own words.
+ *
+ * <p>
+ * NOTHING HERE IS A HOST MEASUREMENT. `reason` and `waitedMs` are the body controller's own - `reason=entity_block` from
+ * the verdict's evidence, and `stalled_ticks` converted once at `STARDEW_TICKS_PER_SECOND` - and the fact minted from it
+ * carries them verbatim, so the model reads what the Mod decided rather than how long the Host has heard nothing.
+ * </p>
+ */
+export type ModStallVerdict = Readonly<{
   executionId: string;
   /** The Mod's own action label, when the receipt carried one. */
   actionId?: string;
-  /** Milliseconds since the last REAL fact for this execution. A stall fact never resets this. */
-  elapsedMs: number;
-  /** The last real fact's label, e.g. `execution_receipt:running`. */
-  lastFactKind: string;
-  /** Stall facts already minted for this execution. */
-  published: number;
+  /** Why the body is not moving, in the Mod's own word (`entity_block`), else the verdict's own code. */
+  reason: string;
+  /** How long the Mod says it has waited, converted from its own ticks. */
+  waitedMs: number;
+  /** Whether the stall fact for THIS verdict has already been minted. One verdict is announced once. */
+  published: boolean;
 }>;
 
-/** Everything one reading of the stall watch can say. */
-export type StallWatchReading = Readonly<{
-  /** Executions being timed, soonest due first. */
-  watched: readonly WatchedExecution[];
-  /** Milliseconds until `takeStallFact` has something to say; `undefined` when nothing is in flight. */
-  nextStallInMs: number | undefined;
-  /** The world transition holding the body, as the Mod's own `body_owned_by_*` code, when one is in progress. */
-  owner: string | undefined;
-  /** What ends that ownership - see `#stallEndsOwnershipWith`. */
-  endsOwnershipWith: string | undefined;
+/**
+ * Everything one reading of an execution's liveness can say, from the two authorities that can say it.
+ *
+ * <p>
+ * `programmesInFlight` is the programme's own state (`readInFlightProgrammes`): work the journal still shows running, and
+ * a running programme is not stalled. `verdicts` is the Mod's statement that the body of that work is waiting. The two
+ * answer different questions and that is the point - state answers "is anything alive", the verdict answers "is the
+ * live thing stuck" - so neither can stand in for the other.
+ * </p>
+ */
+export type ExecutionLivenessReading = Readonly<{
+  /** The verdicts standing now, in the order they arrived. */
+  verdicts: readonly ModStallVerdict[];
+  /** Programmes the Mod's journal still shows in flight (`readInFlightProgrammes`). */
+  programmesInFlight: number;
+  /** Whether `takeStallFact` has something to say now. */
+  due: boolean;
   /**
-   * In-flight executions the watch cannot time, each with its reason: `not_measured`, never silence.
+   * Standing verdicts this reading will NOT announce, each with its reason: `not_measured`, never silence.
    *
-   * Two causes: a receipt that names no execution (`execution_id_absent`), and an execution whose record the bound
-   * evicted while it was still running (`stall_watch_evicted:<executionId>`).
+   * One cause: a verdict whose execution no programme is running (`verdict_without_programme_in_flight`) - the journal
+   * says the work is over, so a verdict left behind it is a statement about nothing this Host can act on.
    */
   unmeasured: readonly Readonly<{ executionId?: string; reason: string }>[];
-  /** How many executions `MAX_WATCHED_EXECUTIONS` evicted while the pump was running: the `evicted K` reading. */
-  evicted: number;
 }>;
 
 /**
@@ -1462,13 +1515,15 @@ type WorldTransition = Readonly<{
   entrySnapshotRevision: number;
 }>;
 
-/** One execution being timed. Mutable in place: the pump owns it and nothing else holds a reference. */
-type ExecutionWatch = {
+/** One standing verdict. Mutable in place: the pump owns it and nothing else holds a reference. */
+type StandingStallVerdict = {
   executionId: string;
   actionId?: string;
-  lastFactKind: string;
-  lastFactAtMs: number;
-  published: number;
+  /** The identity of the Mod fact that stated it, so the same statement re-admitted is not a second episode. */
+  verdictId: string;
+  reason: string;
+  waitedMs: number;
+  published: boolean;
 };
 
 export interface CompanionTurnSink {
@@ -1481,6 +1536,10 @@ export interface CompanionTurnSink {
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
+  public constructor(readInFlight: () => InFlightProgrammeReading = readInFlightProgrammes) {
+    this.#readInFlight = readInFlight;
+  }
+
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
   /**
@@ -1765,14 +1824,26 @@ export class CompanionEventPump {
    */
   readonly #assistantTurnsByProduction: Record<TurnProduction, number> = initializedByReason(TURN_PRODUCTIONS);
   /**
-   * One timing record per execution the pump has seen and not seen settle.
+   * The standing stall verdicts, one per execution: the Mod's own statement that a body is waiting.
    *
-   * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery
-   * - so the receipt window can answer "is an execution in flight" only until the next turn, while the stall question
-   * spans turns by definition.
+   * <p>
+   * A record of its own rather than a reading of `#receipts`, because `takeBatch` empties that window on every delivery -
+   * so the receipt window can answer "what did the Mod just say" only until the next turn, while a verdict outlives the
+   * turn it was announced in. It is bounded by the executions in flight and its drain is the same receipt that ends them.
+   * </p>
    */
-  readonly #watch = new Map<string, ExecutionWatch>();
-  #evictedExecutions = 0;
+  readonly #stallVerdicts = new Map<string, StandingStallVerdict>();
+  /**
+   * The programme's own state, asked only where the answer decides something (`executionLiveness`, `takeStallFact`).
+   *
+   * A port with the real journal ledger as its default, not a field the composition fills in: the question is asked of the
+   * one ledger every status call already writes, and a test that had to stand up a bridge to answer it would not be the
+   * same question.
+   */
+  readonly #readInFlight: () => InFlightProgrammeReading;
+  #stallFacts = 0;
+  /** Stall facts by the Mod's own reason (`entity_block`, ...): the account's `stalled N {reason: count}`. */
+  readonly #stallReasons: Record<string, number> = {};
   /**
    * The exact batch a rejected delivery owned, WITH the reason it asked for its turn.
    *
@@ -1826,7 +1897,7 @@ export class CompanionEventPump {
       throw new Error("invalid_local_transport_fact");
     const frozen = Object.freeze({ ...fact });
     this.#observeWorldTransition(frozen);
-    this.#observeExecutionProgress(frozen);
+    this.#observeExecutionLiveness(frozen);
     this.#observeExecutionProvenance(frozen);
     // A BODY TRACE IS COUNTED AS ONE, not as a fact that arrived: `tile_advanced` and `route_progress` are the same step
     // stated twice and neither can open a turn, so they are named here rather than in the population a delivery is measured
@@ -2023,8 +2094,7 @@ export class CompanionEventPump {
     this.#producedBy.clear();
     this.#inputs.length = 0;
     this.#deliveredProgress.clear();
-    this.#watch.clear();
-    this.#evictedExecutions = 0;
+    this.#stallVerdicts.clear();
     this.#worldTransition = null;
     this.#retry = undefined;
     this.#turnsWithoutWork = 0;
@@ -2036,6 +2106,8 @@ export class CompanionEventPump {
     this.#openedTurns = 0;
     this.#examinedFlushes = 0;
     this.#traceFacts = 0;
+    this.#stallFacts = 0;
+    for (const reason of Object.keys(this.#stallReasons)) delete this.#stallReasons[reason];
     this.#carryPending.clear();
     this.#carryTickets.clear();
     this.#carriedFacts = 0;
@@ -2092,6 +2164,7 @@ export class CompanionEventPump {
       examined: this.#examinedFlushes,
       carry: Object.freeze({ carried: this.#carriedFacts, pending: this.#carryPending.size }),
       traces: this.#traceFacts,
+      stalled: Object.freeze({ total: this.#stallFacts, byReason: Object.freeze({ ...this.#stallReasons }) }),
       delivery: Object.freeze({
         bubbles: this.#deliveryBubbles,
         lost: Object.freeze({ ...this.#deliveryLost }),
@@ -2288,121 +2361,101 @@ export class CompanionEventPump {
   }
 
   /**
-   * What the stall watch can say right now: which executions it is timing, and when the next stall fact is due.
+   * Whether her work is alive right now, said by the two authorities that can say it.
    *
    * <p>
-   * THE SPLIT THIS IMPLEMENTS: the pump measures, the Host owns liveness. Reading this enqueues, mints and delivers
-   * nothing. The Host arms ONE timer from `nextStallInMs` while an execution is in flight and asks `takeStallFact` when
-   * it fires, so starting a turn stays where every other turn start already lives (`HostService.#turnOwesAnother`).
+   * THE SPLIT THIS IMPLEMENTS: the pump measures NOTHING about time. `programmesInFlight` is the programme's own state
+   * (`readInFlightProgrammes`) - a running programme is not stalled - and `verdicts` is the Mod's own statement that the
+   * body of that work is waiting, with the reason and the wait beside it. Reading this enqueues, mints and delivers
+   * nothing; `takeStallFact` announces one verdict, and starting the turn stays where every other turn start lives.
    * </p>
    * <p>
-   * An execution the watch cannot date is reported in `unmeasured` with its reason rather than omitted: a silent zero
-   * would read as "nothing is stuck", which is the one answer this reading must never invent.
+   * A verdict with no programme in flight is reported in `unmeasured` rather than omitted: the journal says that work is
+   * over, so a stall would be news about something that is not running - the one answer this reading must never invent
+   * either way.
    * </p>
    */
-  public get stallWatch(): StallWatchReading {
-    const nowMs = Date.now();
-    const watched: WatchedExecution[] = [];
-    for (const watch of this.#watch.values()) {
-      watched.push(
-        Object.freeze({
-          executionId: watch.executionId,
-          ...(watch.actionId === undefined ? {} : { actionId: watch.actionId }),
-          elapsedMs: nowMs - watch.lastFactAtMs,
-          lastFactKind: watch.lastFactKind,
-          published: watch.published,
-        }),
-      );
-    }
-    watched.sort(
-      (left, right) =>
-        stallThresholdMs(left.published) - left.elapsedMs - (stallThresholdMs(right.published) - right.elapsedMs) ||
-        left.executionId.localeCompare(right.executionId),
-    );
+  public get executionLiveness(): ExecutionLivenessReading {
+    const programmesInFlight = this.#readInFlight().programmes.length;
+    const verdicts: ModStallVerdict[] = [];
     const unmeasured: Array<Readonly<{ executionId?: string; reason: string }>> = [];
-    for (const fact of this.#receipts.values()) {
-      if (isTerminalExecutionFact(fact)) continue;
-      const executionId = fact.executionId;
-      if (executionId !== undefined && executionId.length > 0 && this.#watch.has(executionId)) continue;
-      const named = executionId !== undefined && executionId.length > 0;
-      unmeasured.push(
+    for (const verdict of this.#stallVerdicts.values()) {
+      verdicts.push(
         Object.freeze({
-          ...(named ? { executionId } : {}),
-          reason: named ? `stall_watch_evicted:${executionId}` : "execution_id_absent",
+          executionId: verdict.executionId,
+          ...(verdict.actionId === undefined ? {} : { actionId: verdict.actionId }),
+          reason: verdict.reason,
+          waitedMs: verdict.waitedMs,
+          published: verdict.published,
         }),
       );
+      if (programmesInFlight === 0)
+        unmeasured.push(
+          Object.freeze({ executionId: verdict.executionId, reason: "verdict_without_programme_in_flight" }),
+        );
     }
-    const first = watched[0];
     return Object.freeze({
-      watched: Object.freeze(watched),
-      nextStallInMs: first === undefined ? undefined : Math.max(0, stallThresholdMs(first.published) - first.elapsedMs),
-      owner: this.#worldTransition?.code,
-      endsOwnershipWith: this.#stallEndsOwnershipWith(),
+      verdicts: Object.freeze(verdicts),
+      programmesInFlight,
+      due: programmesInFlight > 0 && verdicts.some((verdict) => !verdict.published),
       unmeasured: Object.freeze(unmeasured),
-      evicted: this.#evictedExecutions,
     });
   }
 
   /**
-   * The fact that says an execution has stopped making progress, or `undefined` when none is due yet.
+   * The fact that says the Mod is waiting for something, or `undefined` when no authority says so.
    *
    * <p>
-   * Minted here rather than composed by the caller so the payload has ONE spelling, and counted here so a long stall is
-   * bounded: `published` is what moves the next threshold out (`EXECUTION_STALL_REARM_MULTIPLE`). The threshold itself
-   * is measured from the last REAL fact, so a stall fact never silences the next one.
+   * ONE FACT PER VERDICT, EVER. `published` is the whole re-arm: a verdict the body controller states once is announced
+   * once, where the retired wall-clock threshold re-armed itself and announced the same silence again every four bounds.
+   * The pump announces it only while the programme's own state still shows its work in flight - the other authority's
+   * half of the question - so a verdict left behind a finished programme is named in `unmeasured` instead.
    * </p>
    * <p>
    * No prose: the pump holds no presentation locale (the notice ledger reads one from the snapshot), and these keys say
-   * the same thing in any language - which execution, how long it has been silent, what it last said, and what would
-   * release it.
+   * the same thing in any language - which execution, WHY the body is waiting, how long the Mod says it has waited, and
+   * what would release it.
    * </p>
    */
   public takeStallFact(): WorldFact | undefined {
+    const reading = this.executionLiveness;
+    if (!reading.due) return undefined;
+    const announced = reading.verdicts.find((verdict) => !verdict.published);
+    if (announced === undefined) return undefined;
+    const standing = this.#stallVerdicts.get(announced.executionId);
+    if (standing === undefined) return undefined;
+    standing.published = true;
+    this.#stallFacts += 1;
+    this.#stallReasons[announced.reason] = (this.#stallReasons[announced.reason] ?? 0) + 1;
     const nowMs = Date.now();
-    let due: ExecutionWatch | undefined;
-    for (const watch of this.#watch.values()) {
-      if (nowMs - watch.lastFactAtMs < stallThresholdMs(watch.published)) continue;
-      if (due === undefined || watch.lastFactAtMs < due.lastFactAtMs) due = watch;
-    }
-    if (due === undefined) return undefined;
-    due.published += 1;
-    const reading = this.stallWatch;
-    const elapsedMs = nowMs - due.lastFactAtMs;
-    const eventId = `${EXECUTION_STALL_SEMANTIC_KIND}_${due.executionId}_${String(due.published)}`;
-    const shown = reading.unmeasured.slice(0, MAX_STALL_UNMEASURED_SHOWN);
+    // The Mod's own statement is the identity, so a second episode of the same execution is a second fact and the same
+    // episode re-admitted is the same one.
+    const eventId = `${EXECUTION_STALL_SEMANTIC_KIND}_${announced.executionId}_${standing.verdictId}`;
     return Object.freeze({
       source: HOST_MINTED_FACT_SOURCE,
       kind: "world_fact" as const,
       eventId,
       sourceEventId: eventId,
-      correlationId: due.executionId,
-      revision: due.published,
+      correlationId: announced.executionId,
+      revision: 1,
       occurredAtMs: nowMs,
-      executionId: due.executionId,
+      executionId: announced.executionId,
       semanticKind: EXECUTION_STALL_SEMANTIC_KIND,
       payload: Object.freeze({
         kind: EXECUTION_STALL_SEMANTIC_KIND,
-        executionId: due.executionId,
-        actionId: due.actionId ?? null,
-        elapsedMs,
-        lastFactKind: due.lastFactKind,
-        stallFactsSoFar: due.published,
-        owner: reading.owner ?? null,
-        endsOwnershipWith: reading.endsOwnershipWith ?? null,
+        executionId: announced.executionId,
+        actionId: announced.actionId ?? null,
+        reason: announced.reason,
+        waitedMs: announced.waitedMs,
+        programmesInFlight: reading.programmesInFlight,
+        owner: this.#worldTransition?.code ?? null,
+        endsOwnershipWith: this.#stallEndsOwnershipWith() ?? null,
         // A null owner on its own reads as "nobody holds the body". What this fact actually knows when it is null is
         // narrower: no body-owning transition is in progress, so nothing beyond this execution's own terminal receipt
         // would release it. Naming that is the difference between "nobody holds it" and "this fact cannot say who does".
-        ...(reading.owner === undefined
+        ...(this.#worldTransition === null
           ? { ownershipAbsentReason: "no_body_owning_transition_in_progress" as const }
           : {}),
-        watched: reading.watched.length,
-        evicted: reading.evicted,
-        ...(reading.unmeasured.length === 0
-          ? {}
-          : {
-              unmeasured: shown,
-              omitted: reading.unmeasured.length - shown.length,
-            }),
       }),
     });
   }
@@ -2439,56 +2492,29 @@ export class CompanionEventPump {
   }
 
   /**
-   * Keep the stall timing for whichever execution this fact belongs to.
+   * Record the Mod's standing verdict for the execution this fact is about, and drop it when that execution ends.
    *
    * <p>
-   * Every fact carrying an `executionId` is evidence its execution is still moving; only the terminal receipt ends it.
-   * The arrival clock is the pump's own (`Date.now()`), not the Mod's `occurredAtMs`: two processes' clocks disagree, and
-   * a silence measured across them would be an argument between clocks rather than a duration.
+   * NO CLOCK IS READ HERE. The record this replaces wrote "a fact arrived at T" for every fact that named an execution,
+   * which is what made an arrival look like liveness; this records only what the Mod SAID. A later verdict replaces the
+   * one standing before it (the body controller re-states its wait as the wait grows), an identical re-admission is not a
+   * new episode (`verdictId`), and a terminal receipt drains the entry - so the record is bounded by the executions in
+   * flight and its drain is the same receipt that ends them.
    * </p>
    */
-  #observeExecutionProgress(fact: WorldFact): void {
+  #observeExecutionLiveness(fact: WorldFact): void {
     const executionId = fact.executionId;
     if (executionId === undefined || executionId.length === 0) return;
     if (isTerminalExecutionFact(fact)) {
-      this.#watch.delete(executionId);
+      this.#stallVerdicts.delete(executionId);
       return;
     }
-    // The pump's OWN stall fact is not progress: counting it would push the next threshold out by a re-arm multiple and
-    // let one stall silence the next.
-    if (fact.semanticKind === EXECUTION_STALL_SEMANTIC_KIND) return;
-    const nowMs = Date.now();
-    const existing = this.#watch.get(executionId);
-    const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : undefined;
-    if (existing === undefined) {
-      if (this.#watch.size >= MAX_WATCHED_EXECUTIONS) this.#evictLeastRecentWatch();
-      this.#watch.set(executionId, {
-        executionId,
-        ...(actionId === undefined ? {} : { actionId }),
-        lastFactKind: factLabel(fact),
-        lastFactAtMs: nowMs,
-        published: 0,
-      });
-      return;
-    }
-    existing.lastFactKind = factLabel(fact);
-    existing.lastFactAtMs = nowMs;
-    if (actionId !== undefined) existing.actionId = actionId;
-  }
-
-  /** Drop the record whose execution has been quiet longest, and keep its id among `unmeasured`. */
-  #evictLeastRecentWatch(): void {
-    let victim: string | undefined;
-    let oldest = Number.POSITIVE_INFINITY;
-    for (const [executionId, watch] of this.#watch) {
-      if (watch.lastFactAtMs < oldest) {
-        oldest = watch.lastFactAtMs;
-        victim = executionId;
-      }
-    }
-    if (victim === undefined) return;
-    this.#watch.delete(victim);
-    this.#evictedExecutions += 1;
+    const verdictId = fact.eventId ?? fact.sourceEventId ?? `${fact.correlationId}:${String(fact.revision)}`;
+    const existing = this.#stallVerdicts.get(executionId);
+    if (existing?.verdictId === verdictId) return;
+    const verdict = modStallVerdictOf(fact);
+    if (verdict === undefined) return;
+    this.#stallVerdicts.set(executionId, { executionId, verdictId, published: false, ...verdict });
   }
 
   /**
@@ -3458,7 +3484,7 @@ export class CompanionEventPump {
    * What the pump can say about a companion who is speaking without acting, right now.
    *
    * <p>
-   * The measurement, split from the publication exactly as `stallWatch` is split from `takeStallFact`: reading this
+   * The measurement, split from the publication exactly as `executionLiveness` is split from `takeStallFact`: reading this
    * enqueues, mints and delivers nothing. The Host owns the wake (`HostService.wakeReason`), so a narration fact cannot
    * become a second way to start a turn.
    * </p>
@@ -3684,21 +3710,46 @@ export const HELD_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Ob
 });
 
 /**
- * Semantic kinds the HOST mints itself, each with the path that turns it into a turn.
+ * Semantic kinds the HOST mints on a schedule it keeps itself, each with the path that turns it into a turn.
  *
  * Same defect class as the held tables above, with the trap that makes it worse: no adapter will ever publish one of
  * these, so "a later fact from the Mod arrives" is not an available answer. The wake source has to be a Host path, and
  * naming it here is what makes an unclassifiable kind fail loudly instead of sitting in the pump unwatched.
  */
 export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
-  [EXECUTION_STALL_SEMANTIC_KIND]:
-    "the Host's stall timer arms from stallWatch.nextStallInMs, and hands this fact to acceptHostMintedFact, which enqueues it and flushes a turn immediately",
   [WORLD_STATE_STALE_SEMANTIC_KIND]:
     "the Host asks takeWorldStateStaleFact after every adapter fact it admits, and hands the fact to acceptHostMintedFact",
   [WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND]:
     "the pump's own refresh probe rejects, and the port the composition attached publishes this fact through acceptHostMintedFact - the same route the stale fact takes, so a bridge that will not answer wakes a turn instead of waiting one out",
   [NARRATION_WITHOUT_WORK_SEMANTIC_KIND]:
     "the Host reads wakeReason when a flush settles, and when it answers narration_without_work it mints the fact with takeNarrationWithoutWorkFact and hands it to acceptHostMintedFact, which enqueues it and flushes a turn",
+});
+
+/**
+ * Semantic kinds whose VERDICT comes from the Mod, each with the path that turns it into a turn.
+ *
+ * <p>
+ * A separate table from `HOST_MINTED_WAKE_KINDS` because the authority is the whole difference: a HOST-MINTED kind is a
+ * schedule the Host keeps coming due (`world_state_stale`, a narration run), while a MOD VERDICT is the body controller
+ * deciding something about the body it owns - the Host only gives it the model-facing shape. `execution_stalled` belongs
+ * to the second: its reason and its wait are the body controller's (`stalled_waiting`), and a Host that timed instead was
+ * answering a question with the wrong authority.
+ * </p>
+ */
+export const MOD_VERDICT_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  [EXECUTION_STALL_SEMANTIC_KIND]:
+    "the body controller states `stalled_waiting` on the execution's own receipt (reason=..., stalled_ticks=...), the Host asks takeStallFact after admitting it, and the fact that mints travels acceptHostMintedFact, which enqueues it and flushes a turn immediately",
+});
+
+/**
+ * Every kind the pump can deliver ITSELF, from the two tables that say which authority decides it.
+ *
+ * The population the turn classification below and the wake-classification gate read, so a kind added to either table is
+ * classified without anyone remembering a third list.
+ */
+export const PUMP_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  ...HOST_MINTED_WAKE_KINDS,
+  ...MOD_VERDICT_WAKE_KINDS,
 });
 
 /**
@@ -3818,8 +3869,9 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
  * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, every settlement
  * outcome the pump declares is classified as a settlement, and every kind the
  * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`,
- * `HOST_MINTED_WAKE_KINDS`) is classified as a semantic event. A state the protocol adds, an outcome or kind added to one
- * of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also why the table is
+ * `HOST_MINTED_WAKE_KINDS`, `MOD_VERDICT_WAKE_KINDS`) is classified as a semantic event. A state the protocol adds, an
+ * outcome or kind added to one of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name -
+ * which is also why the table is
  * built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
  * </p>
  */
@@ -3837,6 +3889,7 @@ function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence
   for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
   for (const kind of Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "in_flight_progress";
   for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
+  for (const kind of Object.keys(MOD_VERDICT_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
   for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
     table[`settled:${outcome}`] = SETTLED_PROGRAM_OUTCOMES[outcome].consequence;
   return Object.freeze(table);
@@ -3980,14 +4033,42 @@ function isRestatementEligible(fact: WorldFact): boolean {
 }
 
 /**
- * Is this fact one the HOST minted on its own schedule - the stall watch, a stale reading, a narration run?
+ * Is this fact one the HOST itself minted - a stale reading, a narration run, or the stall verdict it gives the Mod's own
+ * decision its model-facing shape in?
  *
- * The population is `HOST_MINTED_WAKE_KINDS`, which already names every such kind and the Host path that publishes it,
- * so a kind added there is classified without editing this predicate.
+ * The population is `PUMP_MINTED_WAKE_KINDS`, which names every such kind and the path that publishes it, so a kind added
+ * to either authority's table is classified without editing this predicate.
  */
 function isDueFact(fact: WorldFact): boolean {
   const kind = fact.semanticKind;
-  return fact.kind === "world_fact" && kind !== undefined && kind in HOST_MINTED_WAKE_KINDS;
+  return fact.kind === "world_fact" && kind !== undefined && kind in PUMP_MINTED_WAKE_KINDS;
+}
+
+/**
+ * The Mod's stall verdict this fact states, in the Mod's own words - or `undefined` when it states none.
+ *
+ * <p>
+ * THE ONE PLACE THE VERDICT IS READ. The body controller mints it where it knows the answer
+ * (`StardewBodyController.cs:1174`: `transition(Running, "stalled_waiting", "reason=entity_block;...;stalled_ticks=N")`),
+ * so the reason and the wait are its own fields and this reader only names them. `waitedMs` is the Mod's own tick count at
+ * the engine's own step (`STARDEW_TICKS_PER_SECOND`), never the Host's distance since a fact: a verdict that carries no
+ * wait is not a measured stall, and says so by being absent here rather than by being announced with a zero.
+ * </p>
+ */
+function modStallVerdictOf(
+  fact: WorldFact,
+): Readonly<{ actionId?: string; reason: string; waitedMs: number }> | undefined {
+  if (fact.kind !== "execution_receipt") return undefined;
+  if (fact.payload.reasonCode !== MOD_STALL_VERDICT_CODE) return undefined;
+  const detail = evidenceDetailOf(fact.payload.evidence);
+  const ticks = evidenceField(detail, "stalled_ticks");
+  if (ticks === null || !/^\d+$/u.test(ticks)) return undefined;
+  const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : undefined;
+  return Object.freeze({
+    ...(actionId === undefined ? {} : { actionId }),
+    reason: evidenceField(detail, "reason") ?? MOD_STALL_VERDICT_CODE,
+    waitedMs: Math.round((Number(ticks) * 1000) / STARDEW_TICKS_PER_SECOND),
+  });
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
@@ -4111,23 +4192,13 @@ function canonicalFactJson(value: unknown): string {
 }
 
 /**
- * The silence the `published`-th stall fact waits for.
- *
- * The first waits one bound; each later one waits a re-arm multiple more, so a stall that lasts an hour is eight facts
- * rather than thirty (see `EXECUTION_STALL_REARM_MULTIPLE`).
- */
-function stallThresholdMs(published: number): number {
-  return EXECUTION_STALL_BOUND_MS * (1 + published * (EXECUTION_STALL_REARM_MULTIPLE - 1));
-}
-
-/**
  * The narration run the `published`-th narration fact waits for.
  *
- * The first waits `NARRATION_WITHOUT_WORK_TURNS`; each later one waits `EXECUTION_STALL_REARM_MULTIPLE` more of the same
- * run, for the same reason the stall watch re-arms: saying the same thing every turn spends the run on one reading.
+ * The first waits `NARRATION_WITHOUT_WORK_TURNS`; each later one waits `NARRATION_REARM_MULTIPLE` more of the same
+ * run, for the same reason the stall re-arms: saying the same thing every turn spends the run on one reading.
  */
 function narrationWithoutWorkThreshold(published: number): number {
-  return NARRATION_WITHOUT_WORK_TURNS * (1 + published * (EXECUTION_STALL_REARM_MULTIPLE - 1));
+  return NARRATION_WITHOUT_WORK_TURNS * (1 + published * (NARRATION_REARM_MULTIPLE - 1));
 }
 
 /**
@@ -4160,15 +4231,6 @@ function locationOf(payload: Readonly<Record<string, unknown>>): string | undefi
   const traced = trace !== null && typeof trace === "object" ? (trace as { location?: unknown }).location : undefined;
   const location = typeof traced === "string" ? traced : payload.location;
   return typeof location === "string" && location.length > 0 ? location : undefined;
-}
-
-/** One stable label for what a fact SAID, which is what a stall answer has to name as its last progress. */
-function factLabel(fact: WorldFact): string {
-  if (fact.kind === "execution_receipt" && typeof fact.payload.state === "string")
-    return `${fact.kind}:${fact.payload.state}`;
-  if (fact.kind === "semantic_event" && typeof fact.payload.kind === "string")
-    return `${fact.kind}:${fact.payload.kind}`;
-  return fact.kind;
 }
 
 function factEventId(fact: WorldFact): string {

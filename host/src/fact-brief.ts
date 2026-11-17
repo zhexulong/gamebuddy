@@ -689,13 +689,17 @@ function worldFactLine(fact: WorldFact, at: string): string {
       return `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`;
     }
     case "execution_stalled": {
-      // The fact exists to say WHICH execution stopped moving and for how long, so the Mod's own identity and labels are
-      // printed verbatim beside the words - the same rule a receipt's `reasonCode` follows.
+      // WHICH execution, WHY the body is waiting, and FOR HOW LONG are all the Mod's own statements (`reason=
+      // entity_block` and `stalled_ticks` on its `stalled_waiting` verdict), printed verbatim beside the action they are
+      // about - the same rule a receipt's `reasonCode` follows. Nothing here is a duration the Host measured.
       const action = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "动作";
-      const elapsed = Number(fact.payload.elapsedMs);
-      const seconds = Number.isFinite(elapsed) ? Math.round(elapsed / 1000) : undefined;
-      const last = typeof fact.payload.lastFactKind === "string" ? `，最后一条 ${fact.payload.lastFactKind}` : "";
-      return `- ${at}${action} 卡住不动了${seconds === undefined ? "" : `（已 ${String(seconds)} 秒没有消息${last}）`}`;
+      const reason = typeof fact.payload.reason === "string" ? fact.payload.reason : "";
+      const waited = Number(fact.payload.waitedMs);
+      const seconds = Number.isFinite(waited) ? Math.round(waited / 1000) : undefined;
+      const parts: string[] = [];
+      if (seconds !== undefined) parts.push(`已等 ${String(seconds)} 秒`);
+      if (reason !== "") parts.push(`原因 ${reason}`);
+      return `- ${at}${action} 卡住不动了${parts.length === 0 ? "" : `（${parts.join("，")}）`}`;
     }
     default:
       return genericWorldFactLine(fact, at, kind);

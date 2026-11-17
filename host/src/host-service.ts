@@ -409,23 +409,6 @@ export class CompanionHostService {
    */
   #runTermination: HostRunTermination | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
-  /**
-   * The single timer that notices an execution has stopped making progress.
-   *
-   * <p>
-   * MEASURED 2026-11-08 (`round43`): the Mod owned an execution and then published nothing for more than 180 s while the
-   * receipt the Host still held said `running`, the companion's session record aged past three minutes, and no turn was
-   * created - a frozen-looking game and a silent companion for the rest of the run. Every other turn start in this file
-   * needs a fact to ARRIVE, and the whole shape of a stall is that none does.
-   * </p>
-   * <p>
-   * ONE timer, not one per execution, armed only while the pump is timing something: `#armStallWatch` clears it when the
-   * last in-flight execution settles (`stallWatch.nextStallInMs` becomes `undefined`), when admission seals, and on
-   * close. THE SPLIT: the pump measures and speaks, and this file owns liveness - so the fact still starts its turn
-   * through the one path every other turn start uses. See `#publishStallFact`.
-   * </p>
-   */
-  #stallTimer: ReturnType<typeof setTimeout> | undefined;
   /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
   readonly #baseRetryDelayMs = 50;
   #retryDelayMs = this.#baseRetryDelayMs;
@@ -540,7 +523,6 @@ export class CompanionHostService {
     if (detachVoice !== undefined) void detachVoice();
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
-    this.#disarmStallWatch();
     // A closed session owes nothing and its reading is no longer waited on: ending both here is what keeps the export
     // free of spans that look like a stage the run never left.
     this.#endIdle();
@@ -681,7 +663,6 @@ export class CompanionHostService {
           : "no_active_turn";
     if (!admission.accepted) return Object.freeze({ admission, outcome, settled: Promise.resolve() });
     this.#integrationAdmissionOpen = false;
-    this.#disarmStallWatch();
     this.turnTracker.revoke();
     // Evidence is observational only: a congested/closed append or parent IPC
     // must make this run unverifiable, never prevent the already accepted STOP
@@ -943,7 +924,7 @@ export class CompanionHostService {
   public acceptHostMintedFact(fact: WorldFact, producedBy: FactProducer): void {
     if (this.#closed) return;
     this.loop.pump.enqueueFact(fact, producedBy);
-    this.#armStallWatch();
+    this.#publishStallFact();
     // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
     // whatever else is queued and starts no turn of its own.
     void this.flushSoon().catch(() => undefined);
@@ -1038,9 +1019,10 @@ export class CompanionHostService {
       if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
       this.loop.pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
       this.#publishWorldStateStaleFact();
-      // The one call that re-arms (or clears) the stall watch: this fact is the freshest thing the pump has been told
-      // about its execution, so it is also what moves that execution's next stall threshold.
-      this.#armStallWatch();
+      // THE OTHER HOST-MINTED FACT THAT CAN ONLY BE ASKED FOR HERE. A stall verdict is the Mod's, and the fact that says
+      // so is minted from the receipt this call just admitted - there is no timer to fire, because a wall-clock distance
+      // since the last fact is not an answer to whether the work is alive.
+      this.#publishStallFact();
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
       this.#containIntegrationOverflow();
@@ -1181,7 +1163,6 @@ export class CompanionHostService {
     if (!this.#integrationAdmissionOpen) return;
     this.#integrationAdmissionOpen = false;
     this.turnTracker.revoke();
-    this.#disarmStallWatch();
     if (this.#retryTimer !== undefined) {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = undefined;
@@ -1425,55 +1406,32 @@ export class CompanionHostService {
   public get wakeReason(): HostWakeReason | undefined {
     if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return undefined;
     if (this.loop.pump.hasPendingDelivery) return HOST_WAKE_REASON.pendingDelivery;
-    // `?.` for the same reason `stallWatch` is read that way: the Host's own test doubles provide a partial pump, while
-    // the TYPE still requires the getter - so a real pump that loses it fails the build instead of quietly going silent.
+    // `?.` for the same reason `narrationWithoutWork` is read that way: the Host's own test doubles provide a partial pump,
+    // while the TYPE still requires the getter - so a real pump that loses it fails the build instead of quietly going
+    // silent.
     if (this.loop.pump.narrationWithoutWork?.due === true) return HOST_WAKE_REASON.narrationWithoutWork;
     return undefined;
   }
 
   /**
-   * Arm, re-arm or clear the stall watch from the pump's own next-due reading.
+   * Say that the Mod is waiting for something, and let the fact start a turn.
    *
    * <p>
-   * Called after every fact the Host admits, because a fact is the only thing that changes the answer: a new fact for an
-   * execution pushes its threshold out, and its terminal receipt removes it from the watch entirely - which is what
-   * clears this timer when the last execution settles. No execution in flight means no timer.
-   * </p>
-   */
-  #armStallWatch(): void {
-    this.#disarmStallWatch();
-    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
-    // `?.` and not `stallWatch.`: the Host's own test doubles provide a partial pump, while the TYPE still requires the
-    // getter - so a real pump that loses it fails the build instead of quietly disarming the watch.
-    const dueInMs = this.loop.pump.stallWatch?.nextStallInMs;
-    if (dueInMs === undefined) return;
-    this.#stallTimer = setTimeout(() => {
-      this.#stallTimer = undefined;
-      this.#publishStallFact();
-    }, dueInMs);
-  }
-
-  #disarmStallWatch(): void {
-    if (this.#stallTimer === undefined) return;
-    clearTimeout(this.#stallTimer);
-    this.#stallTimer = undefined;
-  }
-
-  /**
-   * Say that an execution has stopped making progress, and let the fact start a turn.
-   *
-   * <p>
-   * The fact is MINTED by the pump (`takeStallFact`) and travels the one path every other Host-minted fact uses, so a
-   * stall cannot become a second way to start a turn. The threshold is re-armed BEFORE the turn is requested: a flush
-   * may spend minutes at the provider, and the next bound belongs to the silence, not to the turn.
+   * ASKED, NOT TIMED. Every other stall mechanism this file had needed a clock to fire on - and a clock is what could not
+   * tell "running", "waiting for the engine", "stalled" and "gone" apart. The verdict is the body controller's own
+   * (`takeStallFact` reads it, with its reason and its wait), so this is called exactly where such a verdict can arrive: on
+   * the fact that carried it (`acceptIntegrationFact`) and on any Host-minted fact beside it. The pump answers `undefined`
+   * for every execution whose verdict has already been announced, so one verdict is one turn.
    * </p>
    */
   #publishStallFact(): void {
-    const fact = this.loop.pump.takeStallFact();
-    this.#armStallWatch();
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
+    // `?.` and not `takeStallFact(`: the Host's own test doubles provide a partial pump, while the TYPE still requires the
+    // method - so a real pump that loses it fails the build instead of quietly never announcing a stall.
+    const fact = this.loop.pump.takeStallFact?.();
     if (fact === undefined) return;
-    // Named where an operator and a bundle reader can both date it: what was watched, what the bound evicted, and what
-    // is stuck - including the ownership that would release it, when the Mod said.
+    // Named where an operator and a bundle reader can both date it: what the Mod says it is waiting for, how long it says
+    // it has waited, and what would release it.
     process.stderr.write(`EXECUTION_STALL ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
     this.acceptHostMintedFact(fact, FACT_PRODUCER.stallWatch);
   }

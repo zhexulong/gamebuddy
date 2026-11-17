@@ -7,6 +7,7 @@ import {
   factTurnConsequence,
   HELD_SEMANTIC_PROGRESS_KINDS,
   HOST_MINTED_WAKE_KINDS,
+  MOD_VERDICT_WAKE_KINDS,
   IN_FLIGHT_SEMANTIC_PROGRESS_KINDS,
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
@@ -507,6 +508,7 @@ function semanticKindPopulation(): readonly string[] {
       ...Object.keys(HELD_SEMANTIC_PROGRESS_KINDS),
       ...Object.keys(IN_FLIGHT_SEMANTIC_PROGRESS_KINDS),
       ...Object.keys(HOST_MINTED_WAKE_KINDS),
+      ...Object.keys(MOD_VERDICT_WAKE_KINDS),
     ]),
   ].sort();
 }
