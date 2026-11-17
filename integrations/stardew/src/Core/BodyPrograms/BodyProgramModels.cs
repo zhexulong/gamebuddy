@@ -668,6 +668,68 @@ internal static class BodyProgramValidation
         _ => new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue)
     };
     internal static bool IsValidSelector(BodyProgramDestinationSelector? selector) => selector is not null && ((selector.Kind == "label" && IsPlayerText(selector.Label) && selector.Ref is null) || (selector.Kind == "ref" && selector.Label is null && IsNavigationRef(selector.Ref)));
+
+    /// <summary>
+    /// The closed SHAPE of a destination selector on the wire: `kind` names the arm, that arm carries the value, and the
+    /// arm that does not apply is either absent or explicitly `null` - because this product writes it BOTH ways.
+    ///
+    /// <para>
+    /// MEASURED (round42, round60, round67): the navigation result publishes a selector through
+    /// `BridgeNavigationDestinationSelector`, whose arms are `JsonIgnoreCondition.Never`, so a label selector is on the
+    /// wire as `{"kind":"label","label":"Mine","ref":null}`; every reader of the same closed shape demanded exactly
+    /// the two keys of the arm that is present, and refused it. The companion copied the object `find_destination` had
+    /// just handed it and was answered `destination_selector[one_of:label,ref]`. So the absent arm's spelling is NOT a
+    /// fact any reader may key on: absent and `null` mean the same thing, and there is exactly one place that says so.
+    /// </para>
+    /// <para>
+    /// What is still refused, deliberately: an unknown key (a selector never carries `route`, `tile`, `x` or a legacy
+    /// `destinationRef`), a key that is not a string or `null`, a duplicate key, and BOTH arms present - a selector names
+    /// one destination one way. The content of the named arm is the caller's rule, not this one's.
+    /// </para>
+    /// </summary>
+    internal static bool TryReadSelectorShape(JsonElement value, out string? kind, out string? label, out string? reference)
+    {
+        kind = null;
+        label = null;
+        reference = null;
+        if (value.ValueKind != JsonValueKind.Object) return false;
+        bool kindSeen = false, labelSeen = false, refSeen = false, wellFormed = true;
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            bool isString = property.Value.ValueKind == JsonValueKind.String;
+            bool isAbsentArm = isString || property.Value.ValueKind == JsonValueKind.Null;
+            switch (property.Name)
+            {
+                case "kind":
+                    wellFormed &= !kindSeen && isString;
+                    kindSeen = true;
+                    kind = isString ? property.Value.GetString() : null;
+                    break;
+                case "label":
+                    wellFormed &= !labelSeen && isAbsentArm;
+                    labelSeen = true;
+                    label = isString ? property.Value.GetString() : null;
+                    break;
+                case "ref":
+                    wellFormed &= !refSeen && isAbsentArm;
+                    refSeen = true;
+                    reference = isString ? property.Value.GetString() : null;
+                    break;
+                default:
+                    wellFormed = false;
+                    break;
+            }
+        }
+        return wellFormed && kindSeen;
+    }
+
+    /// <summary>The selector a closed shape names, or null when the arm it names is not the arm it has.</summary>
+    internal static BodyProgramDestinationSelector? SelectorFromShape(string? kind, string? label, string? reference) => kind switch
+    {
+        "label" when reference is null => new BodyProgramDestinationSelector("label", label, null),
+        "ref" when label is null => new BodyProgramDestinationSelector("ref", null, reference),
+        _ => null,
+    };
     internal static bool IsValidArrival(BodyProgramDestinationArrival? arrival)
     {
         if (arrival is null || (arrival.Reason is not ("destination_arrived" or "already_at_destination")) || arrival.Destination is null)
@@ -675,7 +737,19 @@ internal static class BodyProgramValidation
         return IsPlayerText(arrival.Destination.Label)
             && (arrival.Destination.ContextLabel is null || IsPlayerText(arrival.Destination.ContextLabel));
     }
-    private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.Trim().Length > 0 && value.Normalize(System.Text.NormalizationForm.FormC) == value;
+    /// <summary>
+    /// The ONE label rule: a bounded, self-trimmed, NFC name.
+    ///
+    /// <para>
+    /// There were three spellings of it - the execution door checked the length alone, the candidate adapter checked
+    /// trimming, and the journal readers checked NFC - so a label one door accepted was refused by the next. A label
+    /// that does not equal its own `Trim()` is not a location name (`find_destination` normalizes its query and would
+    /// match it), and a label that is not NFC has two byte sequences for one name in an ORDINAL comparison. One rule
+    /// answers all three readers, and `CandidateAdapterRejectsSelectorBoundaryWhitespace` pins it.
+    /// </para>
+    /// </summary>
+    private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128
+        && value.Trim().Length > 0 && value == value.Trim() && value.Normalize(System.Text.NormalizationForm.FormC) == value;
     private static bool IsNavigationRef(string? value)
     {
         if (value is null || !value.StartsWith("dr1_", StringComparison.Ordinal) || value.Length != 26) return false;

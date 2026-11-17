@@ -436,26 +436,18 @@ public static class BridgeProtocol
         || (selector.Kind == "ref" && selector.Label is null
             && (selector.Ref is null || IsNavigationHandle(selector.Ref, "dr1_")));
 
-    private static bool IsExactNavigationDestinationSelector(JsonElement destination)
-    {
-        if (destination.ValueKind != JsonValueKind.Object
-            || !destination.TryGetProperty("kind", out JsonElement kind)
-            || kind.ValueKind != JsonValueKind.String)
-            return false;
-
-        return kind.GetString() switch
-        {
-            "label" => HasExactProperties(destination, "kind", "label")
-                && destination.TryGetProperty("label", out JsonElement label)
-                && label.ValueKind == JsonValueKind.String
-                && label.GetString() is { Length: >= 1 and <= 128 },
-            "ref" => HasExactProperties(destination, "kind", "ref")
-                && destination.TryGetProperty("ref", out JsonElement reference)
-                && reference.ValueKind == JsonValueKind.String
-                && IsNavigationHandle(reference.GetString(), "dr1_"),
-            _ => false,
-        };
-    }
+    /// <summary>
+    /// Whether an execution argument names a destination the closed shape admits.
+    ///
+    /// <para>
+    /// The shape (which keys may be present, and that the absent arm may be written out as `null`) and the content of
+    /// the arm it names both belong to <see cref="BodyProgramValidation"/>; this door adds no rule of its own, because
+    /// a door with its own rule is a second spelling of the same fact.
+    /// </para>
+    /// </summary>
+    private static bool IsExactNavigationDestinationSelector(JsonElement destination) =>
+        BodyProgramValidation.TryReadSelectorShape(destination, out string? kind, out string? label, out string? reference)
+        && BodyProgramValidation.IsValidSelector(BodyProgramValidation.SelectorFromShape(kind, label, reference));
 
     private static bool IsNavigationHandle(string? value, string prefix)
     {
@@ -1317,12 +1309,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static bool TryReadBodyProgramSelector(JsonElement value, out BodyProgramDestinationSelector? selector)
     {
-        selector = null;
-        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String) return false;
-        if (kind.GetString() == "label" && HasExactProperties(value, "kind", "label") && ReadPlayerText(value.GetProperty("label"), out string? label))
-            selector = new BodyProgramDestinationSelector("label", label, null);
-        else if (kind.GetString() == "ref" && HasExactProperties(value, "kind", "ref") && ReadNavigationRef(value.GetProperty("ref"), out string? reference))
-            selector = new BodyProgramDestinationSelector("ref", null, reference);
+        selector = BodyProgramValidation.TryReadSelectorShape(value, out string? kind, out string? label, out string? reference)
+            ? BodyProgramValidation.SelectorFromShape(kind, label, reference)
+            : null;
         if (selector is not null && !BodyProgramValidation.IsValidSelector(selector)) selector = null;
         return selector is not null;
     }
@@ -1380,8 +1369,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         return IsOpaqueId(result) || BodyProgramValidation.IsResourceClaimKey(result);
     }
-    private static bool ReadPlayerText(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is { Length: >= 1 and <= 128 } && result.Trim().Length > 0 && result == result.TrimStart() && result == result.TrimEnd() && result.Normalize(System.Text.NormalizationForm.FormC) == result; }
-    private static bool ReadNavigationRef(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is not null && result.StartsWith("dr1_", StringComparison.Ordinal) && result.Length == 26; }
     private static bool IsBoundedString(string? value, int maximum) => value is not null && value.Length <= maximum;
     /// <summary>
     /// The `correlationId` of a frame whose typed parse FAILED, so a refusal can still be attached to the call it
