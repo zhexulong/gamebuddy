@@ -2477,8 +2477,10 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_machine_target",
   );
-  // A machine load is the load the machine's own rows offered. The row is where `slot` and the item come from, so the
-  // request must name that pair; two different machines prove the rule is the ROW's, not one hard-coded Keg.
+  // A machine load travels: which inputs the machine takes, how many it consumes and WHICH backpack slot holds one are
+  // all live native facts. Discovery publishes the FIRST acceptable slot and only while the machine is idle, so the Host
+  // refusing any OTHER slot would refuse a load `ResolveLoadInput` performs. `MachineLoadRefusal` answers from the live
+  // machine - `machine_load_unsupported_input` naming the inputs its own `Data/Machines` rows declare.
   const machineLoadCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] };
   const machineLoadSnapshot = {
     ...machineLoadCapability,
@@ -2522,28 +2524,33 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     null,
     "a furnace's own row is as loadable as a Keg's",
   );
-  // ...and each machine REFUSES the other's pair: what decides is the row, not a list of items this Host knows.
-  assert.equal(
-    validateExecutionRequest(
+  // ...and each machine is free to take the other's input: what decides is the machine's own data on the game thread,
+  // not a list of items this Host knows. A snapshot that published a pair is not evidence about what the machine takes
+  // NOW, so the same payloads the row used to refuse above must reach the Mod.
+  for (const [probe, why] of [
+    [
       { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)378" } },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-    "the Keg row does not publish the furnace's input",
-  );
-  assert.equal(
-    validateExecutionRequest(
+      "the Keg row published the Keg's input, not the furnace's",
+    ],
+    [
       {
         ...machineLoad,
         args: { slot: 2, x: 11, y: 12, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_fumacedeed" },
       },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-    "the furnace row does not publish the Keg's input",
-  );
+      "the furnace row published the furnace's input, not the Keg's",
+    ],
+    [
+      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
+      "an item no published row offered",
+    ],
+    [{ ...machineLoad, args: { ...machineLoad.args, slot: 4 } }, "a slot other than the one discovery published"],
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest(probe, machineLoadSnapshot, now),
+      null,
+      `${why} is \`machine_load_unsupported_input\`'s answer from the live machine, not a cached row's`,
+    );
+  }
   // A malformed identity never travels into a native call, whatever the row says.
   assert.equal(
     validateExecutionRequest(
@@ -2552,20 +2559,6 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       now,
     ),
     "invalid_machine_load_target",
-  );
-  // ...and a well-formed item that the row did not publish is refused rather than reconciled onto the slot.
-  assert.equal(
-    validateExecutionRequest(
-      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-  );
-  assert.equal(
-    validateExecutionRequest({ ...machineLoad, args: { ...machineLoad.args, slot: 4 } }, machineLoadSnapshot, now),
-    "machine_load_input_not_published",
-    "the slot the action loads is the slot the row published, not one the caller chose",
   );
   // A machine the snapshot no longer lists is the Mod's to refuse from the live world: an already-loaded machine is
   // "busy", and a re-sent request must reach the Mod so it can replay the receipt of the load that already ran.

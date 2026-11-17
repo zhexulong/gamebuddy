@@ -46,7 +46,6 @@ import {
   isItemTargetFact,
   isLanternSlotFact,
   isLevelUpChoiceFact,
-  isMachineInputCount,
   isMachineTargetFact,
   isMailboxTargetFact,
   isMineElevatorFloorFact,
@@ -4300,16 +4299,13 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     ...tileAndTarget("invalid_machine_target"),
   ],
+  // The machine's own `Data/Machines` rows decide which inputs it takes and how many it consumes, and `ResolveLoadInput`
+  // accepts ANY backpack slot holding the named item - not only the first slot discovery published a row for. So neither
+  // the slot nor the pair is a Host-side question: `MachineLoadRefusal` answers from the live machine and names the inputs
+  // it does take (`machine_load_unsupported_input`).
   machine_load: [
     exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
     ...toolTileItemAndTarget("invalid_machine_load_target", qualifiedItemRow("invalid_machine_load_target")),
-    requirement(
-      "args.slot, args.expectedQualifiedItemId",
-      "the load the machine's own published row offers",
-      "machine_load_input_not_published",
-      (reading) => validateMachineLoadAgainstPublishedRow(reading.args, reading.snapshot) === null,
-      withArg("slot", 3),
-    ),
   ],
   machine_collect_output: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
@@ -5978,28 +5974,6 @@ function isReasonCode(value: unknown): value is string {
 }
 function validToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value);
-}
-/**
- * A machine load must be the load the machine's own data offered: when the dispatched snapshot publishes that machine,
- * `slot` and `expectedQualifiedItemId` must be the pair on its row (`loadInputSlot`/`loadInputQualifiedItemId`), and the
- * row must name a positive `loadInputStack`. The Mod re-derives all three from the live machine on the game thread, so a
- * request that CONTRADICTS the row it copied is refused before the write instead of being reconciled onto whatever now
- * stands there.
- *
- * A machine the snapshot no longer lists is NOT refused here. It is either busy now or gone, and both are refusals the
- * Mod already names from the live world - including the one that matters: a request re-sent with the identity of a load
- * that already happened must reach the Mod, which replays that request's own receipt instead of letting the Host turn a
- * stale snapshot into a failure for an action the world already performed.
- */
-function validateMachineLoadAgainstPublishedRow(args: Record<string, unknown>, snapshot: Snapshot): string | null {
-  const targets = snapshot.machineTargets;
-  if (!Array.isArray(targets)) return null;
-  const match = targets.find((target) => target.targetId === args.expectedTargetId);
-  if (match === undefined) return null;
-  if (match.loadInputSlot !== args.slot) return "machine_load_input_not_published";
-  if (match.loadInputQualifiedItemId !== args.expectedQualifiedItemId) return "machine_load_input_not_published";
-  if (!isMachineInputCount(match.loadInputStack)) return "machine_load_input_not_published";
-  return null;
 }
 
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [

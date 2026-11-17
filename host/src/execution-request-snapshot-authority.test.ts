@@ -14,6 +14,7 @@ import {
   type ExecutionRequestRequirement,
   executionRequestReading,
   type Snapshot,
+  validateExecutionRequest,
 } from "./protocol.js";
 
 /**
@@ -311,6 +312,67 @@ test("every world fact the Host stopped deciding is answered by a code this suit
     "every handoff is judged once: a table that repeated an action and a field would hide the one it left out",
   );
   assert.deepEqual(offenders, [], "a deleted Host refusal must hand off to a game-thread refusal that exists");
+});
+
+test("a malformed envelope is still refused by the Host, before the game sees it", () => {
+  // The other half of the falsifier. Deleting a world-fact row must not delete the envelope: a bad argument set, an
+  // off-map tile, a bad slot or a malformed opaque id is a claim about the SHAPE of a request, which the Host owns and
+  // which needs no view of the world at all. Each case below names an action whose world fact was handed to the game, and
+  // each must still come back refused - with a code the game does not produce, because the Mod never saw it.
+  const cases: readonly (readonly [string, Readonly<Record<string, unknown>>, string])[] = [
+    ["ride_minecart", { x: 10, y: 11, expectedTargetId: "minecart_0123456789abcdef", extra: 1 }, "invalid_args"],
+    ["ride_minecart", { x: 10, y: 11, expectedTargetId: "not_a_selector" }, "invalid_args"],
+    ["ride_minecart", { x: -1, y: 11, expectedTargetId: "minecart_0123456789abcdef" }, "invalid_minecart_station"],
+    ["use_raft", { slot: 99, x: 10, y: 11 }, "invalid_raft_target"],
+    ["mount_transport", { x: 10, y: 11, expectedTargetId: "not an id" }, "invalid_horse_target"],
+    ["enter_mine", { x: 10, y: 11 }, "invalid_args"],
+    ["use_mine_ladder", { x: 10, y: 11, expectedTargetId: "not an id" }, "invalid_mine_exit_ladder"],
+    ["machine_load", { slot: 0, x: 10, y: 11, expectedQualifiedItemId: "(O)433" }, "invalid_args"],
+    [
+      "machine_load",
+      { slot: 0, x: 10, y: 11, expectedQualifiedItemId: "coffee beans", expectedTargetId: "machine_1" },
+      "invalid_machine_load_target",
+    ],
+  ];
+  for (const [action, args, refusal] of cases) {
+    assert.equal(
+      validateExecutionRequest(
+        {
+          requestId: "request_probe_1",
+          idempotencyKey: "idempotency_probe_1",
+          action,
+          args,
+          expectedRevision: PROBE_SNAPSHOT.revision,
+          deadlineMs: NOW + 30_000,
+        },
+        { ...PROBE_SNAPSHOT, capabilities: [action] },
+        NOW,
+      ),
+      refusal,
+      `${action}: ${JSON.stringify(args)} is malformed, so the Host must refuse it before the game`,
+    );
+    assert.ok(
+      !EXECUTION_REQUEST_WORLD_FACTS_OWED_TO_THE_GAME.some((fact) => fact.gameRefusal === refusal),
+      `${action}: \`${refusal}\` is an envelope code, not one of the game-thread refusals this Host handed off`,
+    );
+  }
+
+  // And a race the envelope can decide without any snapshot: an EXPIRED deadline is refused here, by name.
+  assert.equal(
+    validateExecutionRequest(
+      {
+        requestId: "request_probe_1",
+        idempotencyKey: "idempotency_probe_1",
+        action: "ride_minecart",
+        args: { x: 10, y: 11, expectedTargetId: "minecart_0123456789abcdef" },
+        expectedRevision: PROBE_SNAPSHOT.revision,
+        deadlineMs: NOW - 1,
+      },
+      { ...PROBE_SNAPSHOT, capabilities: ["ride_minecart"] },
+      NOW,
+    ),
+    "invalid_deadline",
+  );
 });
 
 test("the trace sees a world-fact read, so a green run is a measurement and not a hole", () => {
