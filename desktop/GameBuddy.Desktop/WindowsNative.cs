@@ -252,4 +252,19 @@ internal sealed class GuardianLaunchUnavailableException : Exception
     /// a single generic code.
     /// </summary>
     internal string Category => Message;
+
+    /// <summary>
+    /// The bootstrap step the launched child had last announced, or <c>null</c> when no child ever
+    /// announced one. It is the structured half of the diagnostic line: the player's window names the
+    /// step, and the record carries it, without either of them re-reading the operator's sentence.
+    /// </summary>
+    internal string? BootstrapStage { get; set; }
+
+    /// <summary>
+    /// The launched child's own bounded, redacted stderr excerpt, or <c>null</c> when no child was ever
+    /// created or nothing was captured. When it is already one bounded code it is the child naming its
+    /// own refusal - <c>semantic_chat_liveness_unrecoverable</c> was exactly that - and it is the code
+    /// both the window and the record quote.
+    /// </summary>
+    internal string? ChildStderr { get; set; }
 }

@@ -290,9 +290,14 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private static async Task AttachBootstrapDiagnosticsAsync(GuardianLaunchUnavailableException exception, ChildStderrCapture? capture, string? lastStage)
     {
         if (exception.Diagnostic is not null || (capture is null && lastStage is null)) return;
+        var excerpt = capture is null ? null : await capture.ExcerptAsync().ConfigureAwait(false);
+        // The two facts are kept structured as well as formatted: the entry's player-facing window and
+        // its record name the step and the child's own code, and neither re-parses this line.
+        exception.BootstrapStage = lastStage;
+        exception.ChildStderr = excerpt;
         var parts = new List<string>(2);
         if (lastStage is not null) parts.Add($"{BootstrapStageLabel}: {lastStage}");
-        if (capture is not null) parts.Add(ChildStderrExcerpt.Format(await capture.ExcerptAsync().ConfigureAwait(false)));
+        if (excerpt is not null) parts.Add(ChildStderrExcerpt.Format(excerpt));
         exception.Diagnostic = string.Join(' ', parts);
     }
 

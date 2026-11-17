@@ -74,10 +74,15 @@ internal static class Program
 
         try
         {
-            var outcomeCode = OutcomeCode(await RunProductionAsync(CancellationToken.None).ConfigureAwait(false));
+            var outcome = await RunProductionAsync(CancellationToken.None).ConfigureAwait(false);
+            var outcomeCode = OutcomeCode(outcome);
             // A launch that named no failure keeps today's behaviour: silent, 0.
             if (outcomeCode is null) return 0;
             Console.Error.WriteLine(outcomeCode);
+            // The player's own half of the same failure, BEFORE the entry returns: a process that has
+            // returned leaves nothing on screen, and a double click on an `Exe` leaves a console window
+            // that closes - so a failure the player cannot see is a failure nobody was told about.
+            LaunchFailureWindow.Show(Record(outcome.Result, outcome.Reason, outcome.Stage, outcome.ChildStderr, TryOperationalRoot()));
             return 1;
         }
         catch (Exception)
@@ -86,8 +91,41 @@ internal static class Program
             // report would be a stack trace, which can carry installed paths onto
             // the one channel the launcher reads, so it is replaced by one code.
             Console.Error.WriteLine(UnattributedLaunchFailureCode);
+            LaunchFailureWindow.Show(Record(DesktopLaunchResult.Unavailable, reason: null, stage: null, childCode: null, operationalRoot: TryOperationalRoot()));
             return 1;
         }
+    }
+
+    /// <summary>
+    /// The two halves of telling the player a launch failed: the record written beside the ones the
+    /// Host child writes, and the statement the window shows.
+    ///
+    /// The code the record carries is the most specific one the failure produced - the Host child's own
+    /// when it named one, otherwise the category this launch step refused with - and the step is the one
+    /// the child had announced. Neither is invented here: both are codes the Host already emits.
+    /// </summary>
+    internal static LaunchFailureNotice Record(
+        DesktopLaunchResult result,
+        string? reason,
+        string? stage,
+        string? childCode,
+        string? operationalRoot)
+    {
+        var recordCode = DesktopLaunchFailureRecord.Bounded(childCode) ?? DesktopLaunchFailureRecord.Bounded(reason);
+        var recordPath = DesktopLaunchFailureRecord.Write(operationalRoot, recordCode, stage, childCode);
+        return LaunchFailureNotice.For(result, stage, childCode).WithRecord(recordPath);
+    }
+
+    /// <summary>
+    /// The operational root a failed launch's record belongs in, or <c>null</c> when this machine cannot
+    /// derive one - an account with nothing registered, or a layout that cannot be read. It is the same
+    /// authority the production path uses and it runs only on a failure, where deriving it can never be
+    /// allowed to become a second failure of its own.
+    /// </summary>
+    private static string? TryOperationalRoot()
+    {
+        try { return CurrentUserRootLayout.DeriveForCurrentUser().OperationalRoot; }
+        catch (Exception) { return null; }
     }
 
     /// <summary>
@@ -229,7 +267,12 @@ internal static class Program
     /// code keeps matching - so it is carried beside it and only appended to the
     /// line.
     /// </summary>
-    private readonly record struct LaunchOutcome(DesktopLaunchResult Result, string? Reason, string? Diagnostic)
+    private readonly record struct LaunchOutcome(
+        DesktopLaunchResult Result,
+        string? Reason,
+        string? Diagnostic,
+        string? Stage = null,
+        string? ChildStderr = null)
     {
         /// <summary>The no-claim value: the admitted session ran to its end unnamed.</summary>
         internal static readonly LaunchOutcome NoClaim = new(DesktopLaunchResult.Unavailable, null, null);
@@ -561,8 +604,10 @@ internal static class Program
             };
             // The launch stage names where the launch was; the exception's own
             // category names which blocker refused there, and the diagnostic carries
-            // what the refused child itself wrote about it. All three survive.
-            return new LaunchOutcome(named, exception.Category, exception.Diagnostic);
+            // what the refused child itself wrote about it. All three survive, and the two
+            // structured facts ride beside them so the player's window and the record can name the
+            // step and the child's own code without re-parsing the operator's one line.
+            return new LaunchOutcome(named, exception.Category, exception.Diagnostic, exception.BootstrapStage, exception.ChildStderr);
         }
         catch (RootRegistrationUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootRegistrationUnavailable); }
         catch (RootLayoutUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootLayoutUnavailable); }

@@ -25,8 +25,8 @@ internal static class DesktopHostTeardownRecord
     internal const string TimeoutOutcome = "host_teardown_timeout";
 
     // The child's own diagnostic, in the directory it writes and this reads back.
-    private const string RecordDirectoryName = "host-exit";
-    private const string HostExitRecordSchema = "gamebuddy-desktop-host-exit-record/v1";
+    internal const string HostExitRecordDirectory = "host-exit";
+    internal const string HostExitRecordSchema = "gamebuddy-desktop-host-exit-record/v1";
 
     /// <summary>
     /// The one shape a reason, a step name or a failure code may have: a bounded lowercase token.
@@ -48,7 +48,7 @@ internal static class DesktopHostTeardownRecord
     {
         try
         {
-            var directory = Path.Combine(operationalRoot, RecordDirectoryName);
+            var directory = Path.Combine(operationalRoot, HostExitRecordDirectory);
             Directory.CreateDirectory(directory);
             var recordedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var record = new
