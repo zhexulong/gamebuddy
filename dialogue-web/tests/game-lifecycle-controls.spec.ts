@@ -8,6 +8,7 @@
  * could be ended.
  */
 import { expect, test } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 import {
   token,
   csrfToken,
@@ -105,6 +106,58 @@ test("a launch refused as not staged names activation as the reason instead of a
   await expect.poll(() => launchRequests).toBe(1);
   await expect(panel).toContainText("Companion play is not ready yet. Enable companion play, then try again.");
   await expect(panel).not.toContainText("The game launch result is uncertain");
+});
+
+/**
+ * A launch refused behind a reported exit is that ending, not an uncertain launch.
+ *
+ * After a known Player Host exit the coordinator answers the next launch with
+ * `stardew_player_host_exited` (`launchEndedRefusal` in
+ * `stardew-production-lifecycle-coordinator.internal.ts`): the Guardian watched the game end and said
+ * with what code, so nothing about this attempt is in doubt. The composed route had no case for that
+ * code, so it crossed as `state_unavailable` + cause and the panel read it as *unsettled* - the player
+ * was told the launch's result was uncertain about a game that was gone.
+ *
+ * The projection stays the staged one here because this is the only screen the refusal's own line is
+ * drawn on: the launch was offered by the read the player saw, and the ending arrives before that read
+ * is refreshed. The screen the refresh produces - `stopped` with the exit code, and nothing left to
+ * press - is the other half, in `game-end-or-recover.spec.ts`.
+ */
+test("a launch refused behind a reported exit names the ending instead of an uncertain launch", async ({ page }) => {
+  let launchRequests = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: stagedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/launch", async (route) => {
+    launchRequests += 1;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "stardew_player_host_exited" }),
+    });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: stagedGame }) }),
+  );
+  await stubGameRead(page, stagedGame);
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  await panel.getByRole("button", { name: "Start the game" }).click();
+  await expect.poll(() => launchRequests).toBe(1);
+
+  // The ending in the state's own words: the game ended, the attempt is over, and the step is the
+  // restart of GameBuddy - which no control on this page carries out.
+  await expect(panel).toContainText(messages("en").gameProblemPlayerHostExitedDetail);
+  await expect(panel).not.toContainText("The game launch result is uncertain");
+  await expect(panel).not.toContainText("still running, close it");
 });
 
 

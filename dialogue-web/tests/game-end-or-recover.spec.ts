@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 /**
  * The end-or-recover half of the Game surface, driven the way a player drives it.
@@ -544,6 +545,50 @@ test("a launch that failed for good names the only step out of it instead of a g
   await expect(panel.getByTestId("game-activate")).toHaveCount(0);
   await expect(panel.getByTestId("game-setup")).toHaveCount(0);
   await expect(panel.getByTestId("game-launch")).toHaveCount(0);
+});
+
+/* ==========================================================================
+   5b. A game the player ended. The same dead end as a failed launch, selected by
+       the exit the Host published - and the one clause that is false here is
+       the one asking the player to close a game that is already gone.
+   ========================================================================== */
+
+test("a game the player ended names the ending, shows the code it ended with, and offers nothing to press", async ({
+  page,
+}) => {
+  await stubHost(page, {
+    ...ATTACHED_CONNECTED,
+    instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0, playerHostExitCode: 0 },
+    attachment: { status: "none", generation: 0 },
+    connectionStatus: "none",
+    actionAuthority: "unavailable",
+  });
+
+  await page.goto(`#profile=composed-reference-game&boot=${token}`);
+  await openGame(page);
+  const panel = panelOf(page);
+  const en = messages("en");
+
+  // The fact that selects this sentence is the exit the Host published: `stopped` is the OS's
+  // normal termination reported by the Guardian, so the state says the game ended rather than
+  // telling the player their launch failed.
+  const ended = panel.getByTestId("game-launch-quarantined");
+  await expect(ended).toBeVisible();
+  await expect(ended).toHaveText(en.gameEndedQuarantined);
+  // …and it does not ask for work that cannot be done: a reported exit is a game that is gone, so
+  // the clause the unknown-outcome sentence carries (an attempt that may still be running) has no
+  // place here.
+  await expect(ended).not.toContainText("still running");
+  await expect(ended).not.toContainText("failed");
+
+  // The state's own facts, on screen: the instance ended, with the code the OS gave.
+  await expect(panel).toContainText("Ended (exit code 0)");
+
+  // And no control that could only fail: the launch is refused for the rest of this Host's process,
+  // so the guide is held back and nothing else on the panel is pressable either.
+  await expect(panel.getByTestId("game-start-guide")).toHaveCount(0);
+  await expect(panel.getByTestId("game-launch")).toHaveCount(0);
+  await expect(panel.getByRole("button")).toHaveCount(0);
 });
 
 /* ==========================================================================
