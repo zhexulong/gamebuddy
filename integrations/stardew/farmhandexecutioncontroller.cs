@@ -33,14 +33,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly IMonitor monitor;
     private readonly ExecutionReceiptStore ledger;
     private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
-    private readonly List<ExecutionTrace> trace = new();
     private readonly GroundItemPickupLedger groundItemTargets = new();
     private readonly StardewBodyController controller;
     private readonly ActiveBodySlots slots;
     private readonly ExecutionAdmission admission;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
-    private readonly Action<ExecutionTrace>? tracePublished;
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
     private LocalMoveSpec? active => this.slots.Active.Peek();
@@ -232,23 +230,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IMonitor monitor,
         Func<FarmhandCapabilityPublication> capabilityPublicationProvider,
         Action<LocalExecutionReceipt>? receiptPublished = null,
-        Action<ExecutionTrace>? tracePublished = null,
         FarmhandExecutionJournal? executionJournal = null,
         BridgeScope? executionScope = null)
     {
         this.monitor = monitor;
         this.capabilityPublicationProvider = capabilityPublicationProvider ?? throw new ArgumentNullException(nameof(capabilityPublicationProvider));
         this.receiptPublished = receiptPublished;
-        this.tracePublished = tracePublished;
         if ((executionJournal is null) != (executionScope is null))
             throw new ArgumentException("Durable execution journal and scope must be supplied together.");
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
         this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         this.slots = new ActiveBodySlots(this.controller);
-        this.ledger = new ExecutionReceiptStore(
-            this.slots,
-            publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
+        this.ledger = new ExecutionReceiptStore(this.slots);
         this.admission = new ExecutionAdmission(this.slots, this.controller, this.ledger, this, this.executionJournal, this.executionScope);
         WorldModel.ModalActionOwnedCheck = () =>
             WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.admission.IsExecutionActive);
@@ -282,7 +276,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public long CurrentRevision => this.revision;
     public bool IsBodyBusy => !this.IsBodySettled;
-    public IReadOnlyList<ExecutionTrace> Trace => this.trace;
 
     /// <summary>The journal admission of a navigation request, which is the only one with a destination lineage.</summary>
     internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode) =>
@@ -1315,10 +1308,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <para>
     /// It exists because the event path obtained this single field by calling CreateBridgeSnapshot(), which is
     /// the whole world: roughly seventy Discover* radar sources, each walking map objects and minting SHA-256
-    /// target ids, plus warps, capabilities and dispositions - on the game thread, once per observation, and
-    /// route_progress is published per tile. The active execution needs none of that: one spec field, one
-    /// receipt lookup and the body-owner describer. The snapshot and the events both read THIS, so they cannot
-    /// describe the occupant differently.
+    /// target ids, plus warps, capabilities and dispositions - on the game thread, once per observation. It was paid
+    /// once per tile while a progress trace was published for every step of a walk; that channel is gone, and the
+    /// projection is still what the snapshot reads for the occupant. The active execution needs none of the world: one
+    /// spec field, one receipt lookup and the body-owner describer. The snapshot and the events both read THIS, so they
+    /// cannot describe the occupant differently.
     /// </para>
     ///
     /// <para>Null when there is no world to describe, which is what a snapshot already reported through
@@ -3226,16 +3220,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             receipt = persistedReceipt;
         if (receipt.ActionId is null && this.ledger.TryGetActionId(receipt.RequestId, out string boundActionId))
             receipt = receipt with { ActionId = boundActionId };
-        string? category = receipt.State switch
-        {
-            ExecutionState.Accepted => "execution_started",
-            ExecutionState.MeaningfulProgress => "route_progress",
-            ExecutionState.Succeeded => "execution_settled_succeeded",
-            ExecutionState.Cancelled => "execution_settled_cancelled",
-            ExecutionState.Invalidated => "execution_invalidated",
-            ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain => "execution_settled_failed",
-            _ => null,
-        };
         if (this.admission.TryGetDurableAdmission(receipt.RequestId, out FarmhandExecutionAdmission admission)
             && this.executionJournal is not null)
         {
@@ -3282,26 +3266,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
-        if (category is not null && !this.ledger.IsNavigationExecution(published.ExecutionId))
-            this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
         this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
         return published;
     }
 
     private bool HasOwnership(string executionId) => this.slots.OwnsAny(executionId);
-
-    private void AddPublicTrace(string category, string executionId, string requestId)
-    {
-        Farmer? player = Game1.player;
-        ExecutionTrace entry = new(category, executionId, requestId, this.tick, this.revision,
-            player?.currentLocation?.NameOrUniqueName, player?.Tile);
-        this.trace.Add(entry);
-        if (this.trace.Count > ExecutionReceiptStore.MaximumRememberedReceipts)
-            this.trace.RemoveAt(0);
-        this.monitor.Log($"GameBuddy body trace={category} execution={executionId} request={requestId} tick={this.tick} revision={this.revision}", LogLevel.Trace);
-        this.tracePublished?.Invoke(entry);
-    }
 
     private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
 

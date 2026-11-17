@@ -327,10 +327,10 @@ internal sealed class ActiveBodySlots : IActiveBodyOwnership
     /// Whether an execution still holds the body, asked of the slots the idle drain has always asked.
     ///
     /// <para>
-    /// This is deliberately NARROWER than <see cref="IsSettled"/>: the drain publishes an execution's <c>body_idle</c>
+    /// This is deliberately NARROWER than <see cref="IsSettled"/>: the idle drain retires an execution's transition
     /// once that execution no longer owns the actor, and the mount, bus-ride, day-advance and tool-approach slots have
     /// never been part of that question (HoldsIdle is true for nine of the thirteen settled slots). Widening it in a
-    /// refactor would change when an execution announces that the actor came back.
+    /// refactor would change when an execution is treated as having come back.
     /// </para>
     /// </summary>
     internal bool OwnsAny(string executionId)

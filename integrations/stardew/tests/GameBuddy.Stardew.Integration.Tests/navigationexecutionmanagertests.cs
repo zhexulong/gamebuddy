@@ -43,9 +43,10 @@ public sealed class NavigationExecutionManagerTests
         // The approach was armed through the fake seam, but no primitive LocalMove/
         // Travel receipt was generated: the ledger holds exactly this one lineage.
         harness.Armed.Should().NotBeEmpty();
-        // Navigation receipt state remains public, but route/progress traces may
-        // carry live location/tile and are intentionally never published.
-        harness.Manager.Trace.Should().BeEmpty();
+        // The body-trace channel that used to carry route/progress per tile is gone: the executor publishes the answer
+        // and nothing about the body on the way to it, so there is no field here that could expose a live location.
+        // What remains observable is the lineage's receipt, and arming the approach does not change it.
+        harness.Stored("req_admit").State.Should().Be(ExecutionState.Accepted);
     }
 
     [Fact]
@@ -273,9 +274,8 @@ public sealed class NavigationExecutionManagerTests
         harness.CompleteWarp(SourceFarm, "Mine", 20, 20);
         harness.Stored("req_term").State.Should().Be(ExecutionState.Failed);
 
-        // Exactly one execution lineage is present; Navigation never publishes
-        // body traces (including terminal/idle), which could expose route state.
-        harness.Manager.Trace.Should().BeEmpty();
+        // Exactly one execution lineage is present. There is no body-trace channel left to carry route state: the
+        // executor publishes the settlement and nothing about the body on the way to it.
         LocalExecutionReceipt replay = harness.Manager.RequestNavigate("req_term", Label("Mine"), Deadline());
         replay.Should().Be(harness.Stored("req_term"));
     }
@@ -297,8 +297,7 @@ public sealed class NavigationExecutionManagerTests
         harness.Manager.TryGetReceipt("req_nosafe", out LocalExecutionReceipt? stored).Should().BeTrue();
         stored!.State.Should().Be(ExecutionState.Rejected);
         stored.ExecutionId.Should().Be(receipt.ExecutionId);
-        // No accepted lineage, no execution_started trace, no active ownership.
-        harness.Manager.Trace.Any(t => t.Category == "execution_started").Should().BeFalse();
+        // No accepted lineage and no active ownership.
         harness.Manager.CancelActiveForFixture("teardown").ReasonCode.Should().Be("no_active_execution");
     }
 
@@ -333,18 +332,21 @@ public sealed class NavigationExecutionManagerTests
         running.State.Should().Be(ExecutionState.Running);
         running.Evidence.Should().Be("navigation=running;phase=approaching");
         running.Evidence!.Should().NotContain("10,10").And.NotContain("target=").And.NotContain("tile=");
-        harness.Manager.Trace.Should().BeEmpty();
     }
 
     [Fact]
-    public void NavigationLineage_NeverPublishesPositionBearingBodyTrace()
+    public void NavigationLineage_ApproachProgressCarriesNoPositionInItsReceipt()
     {
         var harness = new ManagerHarness(NotAtFarm());
         harness.Manager.RequestNavigate("req_no_trace", Label("Mine"), Deadline());
         harness.Emit(ExecutionState.MeaningfulProgress, "controller_progress", "target=10,10");
         harness.Emit(ExecutionState.Failed, "native_path_ended", "route_broken");
 
-        harness.Manager.Trace.Should().BeEmpty();
+        // The only statement the bridge now receives about the approach is this lineage's receipt, and it must carry
+        // neither the private target coordinate nor a tile from the body's own progress.
+        LocalExecutionReceipt settled = harness.Stored("req_no_trace");
+        settled.State.Should().Be(ExecutionState.Failed);
+        settled.Evidence!.Should().NotContain("10,10").And.NotContain("target=").And.NotContain("tile=");
     }
 
     [Fact]
@@ -401,7 +403,6 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         receipt.ReasonCode.Should().Be("navigation_completed");
         receipt.ExecutionId.Should().Be(accepted.ExecutionId);
         harness.Manager.IsBodySettled.Should().BeTrue();
-        harness.Manager.Trace.Should().BeEmpty();
     }
 
     [Fact]
@@ -692,7 +693,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
     }
 
     [Fact]
-    public void MultiHop_NoPublicBodyTrace()
+    public void MultiHop_PublishesOnlyItsOneSettlement()
     {
         NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
         NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
@@ -715,7 +716,11 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.Manager.Update();
         harness.CompleteWarp("Mountain", "Mine", 4, 4);
 
-        harness.Manager.Trace.Should().BeEmpty();
+        // Two hops, two warps and two settled approaches reach the bridge as ONE statement: the lineage's settlement.
+        LocalExecutionReceipt settled = harness.Stored("req_mt_trace");
+        settled.State.Should().Be(ExecutionState.Succeeded);
+        settled.ReasonCode.Should().Be("navigation_completed");
+        harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
     [Fact]

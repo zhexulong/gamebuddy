@@ -69,7 +69,7 @@ public sealed class MoveLocationChangeReleaseTests
 
         NavigationWarpLifecycle.Settle(executions, true, "Farm", "Mountain", 2, 2);
 
-        executions.Trace.Should().BeEmpty("a warp with no owned body settles nothing");
+        executions.IsBodySettled.Should().BeTrue("a warp with no owned body settles nothing");
     }
 
     [Fact]
