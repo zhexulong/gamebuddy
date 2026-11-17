@@ -167,7 +167,7 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
     /// The save trigger's own findings: the site that opens the engine's save menu must be armed by the
     /// production provisioning config and must consult the binding's own request, not a fixture switch.
     /// </summary>
-    internal static IReadOnlyList<string> TriggerFindingsFor(string fixturesSource)
+    internal static IReadOnlyList<string> TriggerFindingsFor(string fixturesSource, string provisionerSource)
     {
         var findings = new List<string>();
         int site = fixturesSource.IndexOf("new SaveGameMenu()", StringComparison.Ordinal);
@@ -178,9 +178,19 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         }
         string trigger = EnclosingMethod(fixturesSource, site);
         if (!trigger.Contains("RequestsNativeSave", StringComparison.Ordinal))
+        {
             findings.Add("save_trigger_not_armed_by_the_binding: the trigger never consults the binding's own request");
-        if (!trigger.Contains("TriggerNativeSaveAfterBinding", StringComparison.Ordinal))
-            findings.Add("save_trigger_reads_no_production_option: the trigger is armed by something other than the Host's own provisioning config");
+        }
+        else
+        {
+            // The trigger asks one question, and the answer belongs to the owner of the binding: a
+            // request that does not read the production option is a request armed by something else.
+            Match declaration = Regex.Match(provisionerSource, @"RequestsNativeSave\s*=>[^;]*;");
+            if (!declaration.Success)
+                findings.Add("save_request_has_no_owner: nothing declares why the binding requests a save");
+            else if (!declaration.Value.Contains("TriggerNativeSaveAfterBinding", StringComparison.Ordinal))
+                findings.Add("save_trigger_reads_no_production_option: the request is armed by something other than the Host's own provisioning config");
+        }
         if (trigger.Contains("HostAutomation is not { Enable: true }", StringComparison.Ordinal))
             findings.Add("save_trigger_gated_by_a_fixture: a binding that is waiting for its save is skipped unless the fixture is armed");
         return findings;
@@ -312,7 +322,9 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
     [Fact]
     public void TheSaveTrigger_IsArmedByTheProductionProvisioningConfig()
     {
-        var findings = TriggerFindingsFor(ReadFixturesPartials());
+        var findings = TriggerFindingsFor(
+            ReadFixturesPartials(),
+            ReadRepositoryFile("integrations", "stardew", "HostFarmhandProvisioner.cs"));
         this.output.WriteLine($"save trigger findings {findings.Count}: {string.Join(" | ", findings)}");
         findings.Should().BeEmpty();
     }
@@ -369,7 +381,7 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
                 Game1.activeClickableMenu = new SaveGameMenu();
             }
             ";
-        var trigger = TriggerFindingsFor(FixturesBefore);
+        var trigger = TriggerFindingsFor(FixturesBefore, ProvisionerBefore);
         this.output.WriteLine($"planted trigger -> {string.Join(" | ", trigger)}");
         trigger.Should().Contain("save_trigger_not_armed_by_the_binding: the trigger never consults the binding's own request");
         trigger.Should().Contain("save_trigger_gated_by_a_fixture: a binding that is waiting for its save is skipped unless the fixture is armed");

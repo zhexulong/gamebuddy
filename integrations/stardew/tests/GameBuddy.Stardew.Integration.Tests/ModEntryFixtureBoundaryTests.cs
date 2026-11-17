@@ -122,7 +122,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeFertilizeTileFixture", "InitializeNativeFeedAnimalFixture",
         "InitializeNativeAnimalProductFixture",
         "InstallSharedWorldTalkToNpcFixture", "VerifySharedWorldTalkToNpcJoin",
-        "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
+        "TryObserveNativeAutomationClientExit", "TryTriggerNativeSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
         "FindNativeMineEntranceFixtureTarget", "FindNativeRaftFixtureWaterEdge",
         "InstallWiaEatInterruptionFixture",

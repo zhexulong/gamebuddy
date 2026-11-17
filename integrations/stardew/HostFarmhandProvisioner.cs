@@ -60,6 +60,17 @@ internal sealed class HostFarmhandProvisioner
 
     internal bool IsAwaitingSave => this.pendingSaveRequest is not null && !this.pendingSaveObserved;
 
+    /// <summary>
+    /// Whether this Host must ask the engine to save the binding it has just staged.
+    ///
+    /// The engine raises <c>Saving</c>/<c>Saved</c> only from its own save cycle, and a Mod's save data
+    /// lands with that cycle: a binding staged outside one is not durable, and the manifest that lets the
+    /// companion join is only issued once it is. So the precondition is real, and who creates it is not
+    /// the player - the Host asks, through the same native <c>SaveGameMenu</c> the player's own save
+    /// uses, and the engine performs it.
+    /// </summary>
+    internal bool RequestsNativeSave => this.IsAwaitingSave && this.config.TriggerNativeSaveAfterBinding;
+
     /// <summary>Publishes only Host-owned fixture readiness diagnostics.</summary>
     internal bool PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
     {

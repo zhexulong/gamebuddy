@@ -45,6 +45,7 @@
     "IntegrationVersion": "0.1.0",
     "FarmhandName": "GameBuddy",
     "ManifestLifetimeSeconds": 120,
+    "TriggerNativeSaveAfterBinding": true,
     "AuthorizedCompanionIds": ["companion_01"]
   },
   "FarmhandProvisioner": {
@@ -59,7 +60,6 @@
     "FixtureScenario": "",
     "SaveName": "A_445094166",
     "TimeoutSeconds": 120,
-    "TriggerNativeSaveAfterAttachment": false,
     "TriggerNativeSaveAfterClientExit": false
   },
   "FarmhandProvisioningProbe": {

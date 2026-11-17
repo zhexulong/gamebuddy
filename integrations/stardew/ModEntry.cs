@@ -129,7 +129,7 @@ public sealed partial class ModEntry : Mod
     private long hostAutomationDeadlineUnixMs;
     private LiveGameLocaleWait? hostAutomationLocaleWait;
     private long nextFarmhandProvisionerAttemptAtMs;
-    private bool hostAutomationSaveMenuOpened;
+    private bool nativeSaveMenuOpened;
     private bool hostAutomationObservedAiClient;
     private bool hostAutomationObservedAiClientExit;
     private bool nativeLocalPlayerFixtureStarted;
@@ -1407,7 +1407,7 @@ public sealed partial class ModEntry : Mod
         this.TryStartFarmhandProvisioner();
         this.hostFarmhandProvisioner?.Update();
         this.TryObserveNativeAutomationClientExit();
-        this.TryTriggerNativeAutomationSave();
+        this.TryTriggerNativeSave();
         this.VerifySharedWorldTalkToNpcJoin();
         this.TryInitializeNativeFixtureScenario();
         // A co-op night has one lifecycle per farmer: the Host process arms one
@@ -1834,9 +1834,9 @@ public sealed partial class ModEntry : Mod
             savedState.Executions!.ObserveDayAdvanceSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
-        // still settling. Release the fixture latch at the authoritative Saved
+        // still settling. Release the latch at the authoritative Saved
         // edge so a newly pending attachment can request its own native save.
-        this.hostAutomationSaveMenuOpened = false;
+        this.nativeSaveMenuOpened = false;
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
@@ -1845,7 +1845,7 @@ public sealed partial class ModEntry : Mod
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.companionSessionHosting?.End();
         this.worldCreationBootstrap?.OnReturnedToTitle();
-        this.hostAutomationSaveMenuOpened = false;
+        this.nativeSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
         this.farmhandProvisioner = null;
         this.nativeLocalPlayerFixtureStarted = false;
