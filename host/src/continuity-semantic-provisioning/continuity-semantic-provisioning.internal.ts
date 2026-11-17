@@ -9,13 +9,17 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   type ProductionPrincipal as AuthenticatedContinuityPrincipal,
+  migrateProductionContinuityStoreSchema,
   openProductionContinuityStore,
+  productionStoreSchemaAdmission,
+  productionStoreSchemaDrops,
   PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS,
   PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
   type ProductionBootstrapInput,
@@ -27,6 +31,17 @@ import {
 const AUTHORITY_DIRECTORY_NAME = ".gamebuddy-semantic-continuity-v1";
 const DATABASE_NAME = "gamebuddy-continuity-v1.sqlite";
 const AUTHORITY_MARKER_NAME = "production-authority-marker.json";
+/**
+ * Where the marker lands while the upgrade rewrites it, and where the upgrade says what it did.
+ *
+ * The marker is renamed into place rather than truncated in place, because a half-written identity record
+ * is a root nobody can open. The temporary name is allowed by the known-root shape check, so a crash
+ * between the write and the rename leaves a root that still opens and is finished by the next launch.
+ * The upgrade record sits beside the deployment identity record, outside the authority directory, which is
+ * the place an operator already looks at a root without entering it.
+ */
+const AUTHORITY_MARKER_UPGRADE_NAME = `${AUTHORITY_MARKER_NAME}.upgrade`;
+const AUTHORITY_UPGRADE_RECORD_NAME = "production-authority-upgrade.json";
 /**
  * The launcher's two records beside the authority, in the same runtime root it names as
  * `runtimeRoot`. The Host reads them; the Desktop writes them
@@ -188,6 +203,7 @@ export function openKnownProductionContinuityFromCanonicalAdmission(
   inspectRuntimeAdmission(runtimeCwd);
   const authorityRoot = knownAuthorityRoot(runtimeCwd);
   assertKnownAuthorityRoot(authorityRoot, options, authorityRootIdentity);
+  upgradeKnownAuthoritySchema(authorityRoot, runtimeCwd);
   let control: ProductionContinuityStore | undefined;
   try {
     control = openProductionStore(authorityRoot);
@@ -279,6 +295,10 @@ function openProductionStore(authorityRoot: string): ProductionContinuityStore {
   } catch (error) {
     if (error instanceof Error && error.message === "unsupported_production_store_schema")
       throw failure("production_store_schema_invalid");
+    // A schema refusal carries the version it is about, and the version is the one thing an operator has to
+    // know: it says whether the root can be upgraded at all. Passing the name through is what keeps a
+    // refused root readable instead of flattening it into `production_store_not_admitted`.
+    if (error instanceof Error && error.message.startsWith("production_store_schema_")) throw failure(error.message);
     throw failure("production_store_not_admitted");
   }
 }
@@ -656,7 +676,10 @@ function assertKnownAuthorityRoot(
   authorityRootIdentity: string,
 ): void {
   if (!isDirectory(root)) throw failure("production_authority_root_changed");
-  assertAuthorityRootContainsOnly(root, (entry) => databaseFamilyEntry(entry) || entry === AUTHORITY_MARKER_NAME);
+  assertAuthorityRootContainsOnly(
+    root,
+    (entry) => databaseFamilyEntry(entry) || entry === AUTHORITY_MARKER_NAME || entry === AUTHORITY_MARKER_UPGRADE_NAME,
+  );
   if (!isRegularFile(databasePath(root))) throw failure("production_store_not_admitted");
   validateAuthorityMarker(root, options, authorityRootIdentity);
 }
@@ -684,15 +707,71 @@ function writeFreshAuthorityMarker(
   }
 }
 /**
- * Marker identity is valid only when it exactly matches the store ID verified
- * from both `store_meta` and the production bootstrap row in this opening flow.
+ * The one write the Host performs on a root it did not mint: a store written by an older version of this
+ * build is taken to this build's schema before any reader opens it.
+ *
+ * The order is the crash-safety argument. The store migration commits first, so the data is this build's
+ * even if nothing else happens. The upgrade record is written next, so a launch that cannot publish the
+ * fact about an upgrade does not leave the root claiming a version it no longer holds. The marker moves
+ * last, and it is the authority transition: from then on the root reads as an ordinary current root.
+ *
+ * Every step is idempotent, so a crash between any two is finished by the next launch: a store already at
+ * this build's version migrates nothing, and a marker still behind it is rewritten from the migration table.
  */
-function validateAuthorityMarker(
-  root: string,
-  options: FreshContinuityProvisionOptions,
-  authorityRootIdentity: string,
-  expectedStoreId?: string,
-): void {
+function upgradeKnownAuthoritySchema(root: string, runtimeCwd: string): void {
+  const markerVersion = authorityMarkerSchemaVersion(root);
+  const upgrade = migrateProductionContinuityStoreSchema({ runtimeRoot: root });
+  if (upgrade === null && markerVersion === PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION) return;
+  if (markerVersion !== PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION) {
+    recordAuthorityUpgrade(runtimeCwd, markerVersion);
+    writeAuthorityMarkerSchemaVersion(root);
+  }
+}
+/**
+ * Publishes the upgrade by name, where an operator looking at the root can read it: which version the root
+ * came from, which one it holds now, and everything the step deleted. `drops` comes from the migration
+ * table rather than from the call, so the record states the step's own contract even for the launch that
+ * finds the store already migrated and only has to finish the marker.
+ */
+function recordAuthorityUpgrade(runtimeCwd: string, fromVersion: number): void {
+  try {
+    writeFileSync(
+      join(runtimeCwd, AUTHORITY_UPGRADE_RECORD_NAME),
+      JSON.stringify(
+        Object.freeze({
+          authority: "SEMANTIC",
+          fromVersion,
+          toVersion: PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
+          drops: productionStoreSchemaDrops(fromVersion),
+        }),
+      ),
+      { encoding: "utf8" },
+    );
+  } catch {
+    throw failure("production_authority_upgrade_record_failed");
+  }
+}
+function authorityMarkerSchemaVersion(root: string): number {
+  const version = readAuthorityMarker(root).schemaVersion;
+  if (typeof version !== "number" || !Number.isSafeInteger(version))
+    throw failure("production_authority_artifact_present");
+  return version;
+}
+/** Rewrites the one field the upgrade moved, and keeps every other field byte-identical. */
+function writeAuthorityMarkerSchemaVersion(root: string): void {
+  const marker = {
+    ...readAuthorityMarker(root),
+    schemaVersion: PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
+  };
+  const temporary = join(root, AUTHORITY_MARKER_UPGRADE_NAME);
+  try {
+    writeFileSync(temporary, JSON.stringify(marker), { encoding: "utf8" });
+    renameSync(temporary, join(root, AUTHORITY_MARKER_NAME));
+  } catch {
+    throw failure("production_authority_marker_write_failed");
+  }
+}
+function readAuthorityMarker(root: string): Record<string, unknown> {
   let value: unknown;
   try {
     const source = new TextDecoder("utf-8", { fatal: true }).decode(
@@ -705,7 +784,24 @@ function validateAuthorityMarker(
   }
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw failure("production_authority_artifact_present");
-  const marker = value as Record<string, unknown>,
+  return value as Record<string, unknown>;
+}
+/**
+ * Marker identity is valid only when it exactly matches the store ID verified
+ * from both `store_meta` and the production bootstrap row in this opening flow.
+ *
+ * `schemaVersion` is the one field that is not exact: it records the version the root was MINTED at, and a
+ * root minted by an older build is openable exactly when the migration table has a path from that version.
+ * The population therefore comes from `productionStoreSchemaAdmission` - the same answer the store's own
+ * open path and its coverage gate use - and never from a number written here.
+ */
+function validateAuthorityMarker(
+  root: string,
+  options: FreshContinuityProvisionOptions,
+  authorityRootIdentity: string,
+  expectedStoreId?: string,
+): void {
+  const marker = readAuthorityMarker(root),
     fields = [
       "version",
       "schemaVersion",
@@ -717,11 +813,17 @@ function validateAuthorityMarker(
       "playerId",
       "storeId",
     ];
+  // The version is answered first, and by name. A root minted at a version this build has no migration from
+  // cannot be upgraded at all, so the one useful thing to say about it is which version it is - folding that
+  // into `production_authority_artifact_present` would be a refusal an operator cannot act on.
+  if (typeof marker.schemaVersion !== "number" || !Number.isSafeInteger(marker.schemaVersion))
+    throw failure("production_authority_artifact_present");
+  if (productionStoreSchemaAdmission(marker.schemaVersion).status === "unopenable")
+    throw failure(`production_authority_schema_unopenable:${marker.schemaVersion}`);
   if (
     Object.keys(marker).length !== fields.length ||
     !fields.every((field) => Object.hasOwn(marker, field)) ||
     marker.version !== 21 ||
-    marker.schemaVersion !== PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION ||
     marker.bootstrapOperationId !== options.bootstrapOperationId ||
     marker.authorityGeneration !== options.authorityGeneration ||
     marker.authorityRootIdentity !== authorityRootIdentity ||

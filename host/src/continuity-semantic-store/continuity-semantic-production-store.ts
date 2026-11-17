@@ -11,7 +11,15 @@ import {
   type ProductionChatRuntimeDeadlineCancellationInput,
 } from "./continuity-semantic-deadline-cancellation.internal.js";
 
-/** Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports. */
+/**
+ * Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports.
+ *
+ * Raising this number is half a change: a store written by the previous version must still open, so the
+ * bump needs a step in `PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS` beside it, applied by
+ * `migrateProductionContinuityStoreSchema`. `productionStoreSchemaCoverage` is that gate - it reads this
+ * constant and the migration table and fails naming the version nobody can come from
+ * (design/adr/0011, the migration-policy section).
+ */
 export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 46;
 export type ProductionPrincipal = Readonly<{ continuityId: string; companionId: string; playerId: string }>;
 export type ProductionBootstrapInput = Readonly<{
@@ -1210,6 +1218,14 @@ function admit(db: DatabaseSync, existed: boolean): void {
       );
     });
   }
+  // The recorded version is answered BEFORE the physical walk, and the order is the point: a store
+  // written by an older build fails the column signature at its first difference, so asking there would
+  // report "unknown schema" about a file whose only problem is that nothing has migrated it yet - a
+  // refusal that names no cause and offers no next step.
+  const recorded = recordedSchemaVersion(db);
+  const admission = productionStoreSchemaAdmission(recorded);
+  if (admission.status === "unopenable") throw new Error(admission.code);
+  if (admission.status === "migrate") throw new Error(`production_store_schema_migration_required:${String(recorded)}`);
   validatePhysicalSignature(db);
   validateMaterialization(db);
 }
@@ -1358,6 +1374,241 @@ function metadata(db: DatabaseSync): ProductionStoreMetadata | null {
     Number.isSafeInteger(rows[0].schema_version)
     ? Object.freeze({ storeId: rows[0].store_id, schemaVersion: rows[0].schema_version })
     : null;
+}
+/** The version the file records, or null when it holds no readable `production_store_meta` row. */
+function recordedSchemaVersion(db: DatabaseSync): number | null {
+  try {
+    const rows = db.prepare("SELECT schema_version FROM production_store_meta").all() as any[];
+    return rows.length === 1 && Number.isSafeInteger(rows[0].schema_version)
+      ? (rows[0].schema_version as number)
+      : null;
+  } catch {
+    return null;
+  }
+}
+/**
+ * One step of this store's schema history: the objects it deletes, and the work that turns a file written
+ * by `from` into the file this build's `schema` describes exactly.
+ *
+ * `drops` is what an operator reads after an upgrade, so it names the removed objects the way they were
+ * written, not the DDL that removed them.
+ */
+export type ProductionStoreMigration = Readonly<{
+  from: number;
+  to: number;
+  drops: readonly string[];
+  apply(db: DatabaseSync): void;
+}>;
+/**
+ * The schema history this build can open. The population is derived from here and from
+ * `PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION` - never from a hand list of versions - by
+ * `productionStoreSchemaCoverage`, `productionStoreSchemaAdmission` and the provisioning marker check.
+ */
+export const PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS: readonly ProductionStoreMigration[] = Object.freeze([
+  Object.freeze({
+    from: 45,
+    to: 46,
+    drops: Object.freeze([
+      "production_continuity_thread.lifecycle",
+      "production_chat_lifecycle_metadata",
+      "production_continuity_command.command_kind=transition_chat_lifecycle",
+    ]),
+    apply: migrateChatLifecycleMirrorAway,
+  }),
+]);
+/**
+ * What this build does with a store that records `version`: open it, run the steps that take it to this
+ * build's schema first, or refuse by name.
+ *
+ * A version with a registered step is NOT opened backwards into - `migrate` is an answer for the
+ * authority step that owns writing the root, and the open path turns it into
+ * `production_store_schema_migration_required:<version>` rather than pretending the file is unreadable.
+ */
+export type ProductionStoreSchemaAdmission =
+  | Readonly<{ status: "current" }>
+  | Readonly<{ status: "migrate"; steps: readonly ProductionStoreMigration[] }>
+  | Readonly<{ status: "unopenable"; code: string }>;
+export function productionStoreSchemaAdmission(version: number | null): ProductionStoreSchemaAdmission {
+  if (version === PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION) return Object.freeze({ status: "current" as const });
+  if (version !== null) {
+    const steps = productionStoreSchemaSteps(version);
+    if (steps) return Object.freeze({ status: "migrate" as const, steps });
+  }
+  return Object.freeze({
+    status: "unopenable" as const,
+    code: `production_store_schema_unopenable:${version === null ? "unknown" : String(version)}`,
+  });
+}
+/** Every step from `from` to this build's version, or null when the chain does not reach it. */
+function productionStoreSchemaSteps(from: number): readonly ProductionStoreMigration[] | null {
+  const byFrom = new Map(PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS.map((step) => [step.from, step]));
+  const steps: ProductionStoreMigration[] = [];
+  let cursor = from;
+  while (cursor !== PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION) {
+    const step = byFrom.get(cursor);
+    if (!step) return null;
+    steps.push(step);
+    cursor = step.to;
+  }
+  return steps.length ? Object.freeze(steps) : null;
+}
+/** What a store recorded at `version` loses when it becomes this build's: the upgrade record's `drops`. */
+export function productionStoreSchemaDrops(version: number): readonly string[] {
+  const admission = productionStoreSchemaAdmission(version);
+  return admission.status === "migrate"
+    ? Object.freeze(admission.steps.flatMap((step) => [...step.drops]))
+    : Object.freeze([]);
+}
+/**
+ * The gate for this defect class: every version this build's migration table claims to cover must have a
+ * step to the next one, and the chain must end exactly at `PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION`.
+ *
+ * Empty means the bump and its migration landed together. A version raised without a step - the defect
+ * that made every root on this machine unopenable - comes back here naming the version nobody can come
+ * from and the exact registration that is missing.
+ */
+export function productionStoreSchemaCoverage(): readonly string[] {
+  const steps = PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS;
+  const current = PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION;
+  if (!steps.length)
+    return Object.freeze([
+      `schema version ${current} has no migration history: add { from: ${current - 1}, to: ${current} } to PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS beside the bump, or a store written by version ${current - 1} cannot open`,
+    ]);
+  const problems: string[] = [];
+  for (const step of steps) {
+    if (step.to !== step.from + 1) problems.push(`migration ${step.from}->${step.to} must move one version at a time`);
+    if (step.to > current) problems.push(`migration ${step.from}->${step.to} leads past schema version ${current}`);
+  }
+  const froms = steps.map((step) => step.from).sort((left, right) => left - right);
+  if (new Set(froms).size !== froms.length)
+    problems.push(`two migrations start from the same version: ${froms.join(",")}`);
+  for (let version = froms[0]!; version < current; version += 1)
+    if (!froms.includes(version))
+      problems.push(
+        `schema version ${version + 1} has no migration registered: add { from: ${version}, to: ${version + 1} } to PRODUCTION_CONTINUITY_STORE_SCHEMA_MIGRATIONS beside the bump, or a store written by version ${version} cannot open`,
+      );
+  return Object.freeze(problems);
+}
+export type ProductionStoreSchemaUpgrade = Readonly<{ fromVersion: number; toVersion: number }>;
+/**
+ * Takes a store written by an older version of this build to this build's schema.
+ *
+ * This is a WRITE, and it is deliberately not reachable from `openProductionContinuityStore`: the open path
+ * is a pure read that refuses a stale file by name, and this runs in the authority step that owns writing
+ * the root (provisioning, under the root mutex, before any reader opens it). Both ends validate the result
+ * with the same physical signature, and this one does so INSIDE the transaction - a step that did not
+ * produce exactly this build's shape rolls back, leaving the file at the version it was.
+ *
+ * It answers null when the file already records this build's version.
+ */
+export function migrateProductionContinuityStoreSchema(
+  options: Readonly<{ runtimeRoot: string }>,
+): ProductionStoreSchemaUpgrade | null {
+  const path = join(options.runtimeRoot, DB);
+  if (!existsSync(path)) throw new Error("production_store_schema_migration_target_absent");
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`);
+    const recorded = recordedSchemaVersion(db);
+    const admission = productionStoreSchemaAdmission(recorded);
+    if (admission.status === "current") return null;
+    if (admission.status === "unopenable") throw new Error(admission.code);
+    // `foreign_keys` is a no-op inside a transaction, and a rebuild renames its table aside before the
+    // replacement exists. That is the procedure SQLite documents for reshaping a table: enforce nothing
+    // while the shape moves, then prove it with `foreign_key_check` (inside `validatePhysicalSignature`)
+    // before committing.
+    //
+    // MEASURED 2026-11-18 on node:sqlite 24: with `foreign_keys=OFF` alone, `ALTER TABLE ... RENAME TO`
+    // still rewrote every child's `REFERENCES production_continuity_thread(...)` to
+    // `REFERENCES "production_continuity_thread__pre_migration"(...)` - four tables came out of the rebuild
+    // pointing at the name that was about to be dropped, and the signature check refused the result.
+    // `legacy_alter_table=ON` is what turns the reference rewriting off; it is the second half of the
+    // documented table-reshape procedure and not an optimisation.
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec("PRAGMA legacy_alter_table=ON");
+    try {
+      transaction(db, () => {
+        for (const step of admission.steps) step.apply(db);
+        validatePhysicalSignature(db);
+      });
+    } finally {
+      db.exec("PRAGMA legacy_alter_table=OFF");
+      db.exec("PRAGMA foreign_keys=ON");
+    }
+    return Object.freeze({ fromVersion: recorded!, toVersion: PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION });
+  } finally {
+    db.close();
+  }
+}
+/**
+ * The v45 shape differs from v46 in exactly the Chat lifecycle mirror: a column on the thread table, the
+ * table that carried its CAS, and the `transition_chat_lifecycle` member of a `command_kind` CHECK.
+ *
+ * SQLite cannot drop a CHECK, so the two tables that carry one - `production_continuity_command` and the
+ * version CHECK in `production_store_meta` - are rebuilt from this build's own DDL and their rows copied
+ * column by column. A rebuild is a copy, not a re-derivation: every row of every surviving table is
+ * carried over.
+ */
+function migrateChatLifecycleMirrorAway(db: DatabaseSync): void {
+  if (!tableExists(db, "production_chat_lifecycle_metadata")) throw new Error("production_store_schema_unopenable:45");
+  db.exec("DROP TABLE production_chat_lifecycle_metadata");
+  rebuildTableAsApproved(db, "production_continuity_thread", ["lifecycle"]);
+  rebuildTableAsApproved(db, "production_continuity_command", []);
+  rebuildStoreMetaAsApproved(db);
+}
+/**
+ * Rebuilds one table into this build's exact shape, copying the columns both shapes share.
+ *
+ * The pre-image is checked first: a column this build does not have and the step does not declare would be
+ * silently dropped by the copy, so the file is refused instead. No version is refused quietly.
+ */
+function rebuildTableAsApproved(db: DatabaseSync, table: string, droppedColumns: readonly string[]): void {
+  const approved = columnSignature(table).map((column) => String(column[1]));
+  const present = (db.prepare(`PRAGMA table_info(${table})`).all() as any[]).map((column) => column.name as string);
+  const extra = present.filter((column) => !approved.includes(column));
+  if (canonical(extra) !== canonical([...droppedColumns]) || present.length !== approved.length + droppedColumns.length)
+    throw new Error("production_store_schema_unopenable:45");
+  const aside = `${table}__pre_migration`;
+  db.exec(`ALTER TABLE ${table} RENAME TO ${aside}`);
+  db.exec(approvedSchemaDdl(table));
+  db.prepare(`INSERT INTO ${table}(${approved.join(",")}) SELECT ${approved.join(",")} FROM ${aside}`).run();
+  db.exec(`DROP TABLE ${aside}`);
+  // Dropping the old table dropped its indexes with it; this build's copies come back verbatim. The set is
+  // derived from `indexNames`/`indexTable`, so a future index on a rebuilt table is recreated without a
+  // second hand list to keep in step.
+  for (const index of indexNames.filter((name) => indexTable(name) === table)) db.exec(approvedSchemaDdl(index));
+}
+/** `production_store_meta` is the one table a rebuild cannot copy verbatim: the step's output is its version. */
+function rebuildStoreMetaAsApproved(db: DatabaseSync): void {
+  const aside = "production_store_meta__pre_migration";
+  db.exec(`ALTER TABLE production_store_meta RENAME TO ${aside}`);
+  db.exec(approvedSchemaDdl("production_store_meta"));
+  db.prepare(
+    "INSERT INTO production_store_meta(singleton,store_id,schema_version) SELECT singleton,store_id,? FROM production_store_meta__pre_migration",
+  ).run(PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION);
+  db.exec(`DROP TABLE ${aside}`);
+}
+function tableExists(db: DatabaseSync, name: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+}
+const approvedDdl = new Map<string, string>();
+/** The exact `CREATE` text this build runs for one object, so a rebuild is identical to a fresh store. */
+function approvedSchemaDdl(name: string): string {
+  const cached = approvedDdl.get(name);
+  if (cached) return cached;
+  const temp = new DatabaseSync(":memory:");
+  try {
+    temp.exec(schema);
+    const row = temp
+      .prepare("SELECT sql FROM sqlite_master WHERE name=? AND type IN ('table','index')")
+      .get(name) as any;
+    if (typeof row?.sql !== "string") throw new Error("unsupported_production_store_schema");
+    const ddl: string = row.sql;
+    approvedDdl.set(name, ddl);
+    return ddl;
+  } finally {
+    temp.close();
+  }
 }
 function validateBootstrapInput(input: ProductionBootstrapInput): void {
   if (
