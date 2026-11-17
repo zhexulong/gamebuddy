@@ -622,6 +622,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:host-production-import-boundary",
   },
   {
+    path: "tools/check-host-source-directories.mjs",
+    reason:
+      "elsewhere: static scan of `host/src` directories and the modules they quote, install-free, and it lands in the " +
+      "derived CI gates job by being named `check:*`",
+    runsIn: "pnpm check:host-source-directories",
+  },
+  {
     path: "tools/check-host-windows-test-preflight.mjs",
     reason: "elsewhere: static preflight over the Windows Host test entry, runs on every push",
     runsIn: "pnpm check:host-windows-test-preflight",
