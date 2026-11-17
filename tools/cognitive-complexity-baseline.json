@@ -1146,8 +1146,8 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4546,
-      "reason": "recorded 4543 at 11e7cc9b; 4546 at HEAD. `c4519440` (`[forage] a distance is a walk, not a verdict: pickup_forage closes the native click radius`) added `ExecutePickupForage(...)` to `farmhandexecutioncontroller.gatheringactions.cs` - one method whose in-place, on-arrival and no-standable-approach arms are three branches - so the class reads three points higher over the SAME 52 partials. The points are the new method's; no other member of the type moved."
+      "value": 4556,
+      "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
     },
     {
       "id": "cs:ModEntry",
@@ -1267,9 +1267,9 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 24208,
-      "methods": 837,
-      "reason": "parts 51 -> 52 and files 50 -> 51 in `287e227a`, which added this type's 51st partial declaration: `integrations/stardew/ExecutionEvidence.cs`, +182 lines there and +55/-41 in `farmhandexecutioncontroller.tailoringactions.cs` where the code it absorbed came from. `2f037eed` then rewrote two comment lines of the new partial (+9/-7). Lines 24058 -> 24181 over the SAME 838 methods and the class complexity FELL 4553 -> 4552: a re-partition of one declaration, not a member and not a branch. Then `04598eda` (the executor stops narrating its body) removed this type's half of the trace channel: from the 83ae46f0 reading of 24181/838 the type read 24195/838 at `04598eda^` (+14 lines of intervening work) and 24165/836 at that commit, its value 4553 -> 4543. THE LAST MOVE IS ONE METHOD: `c4519440` (`[forage] a distance is a walk, not a verdict`) added `ExecutePickupForage(...)` to `farmhandexecutioncontroller.gatheringactions.cs` (+63/-13 there, and the two lines its neighbours lost), so the type reads 837 methods and 24208 lines over the SAME 52 partials and 51 files, and its complexity 4543 -> 4546 are that method's three arms. This record was stale, not grown: the 836 was taken at 11e7cc9b, before that commit."
+      "lines": 24349,
+      "methods": 840,
+      "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
     },
     {
       "id": "cs:FarmhandActionCatalog",
