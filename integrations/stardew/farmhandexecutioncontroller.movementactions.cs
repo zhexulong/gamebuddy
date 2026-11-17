@@ -1114,6 +1114,20 @@ internal sealed partial class ExecutionManager
 
         this.revision++;
         bool locationMatches = string.Equals(Game1.player.currentLocation.NameOrUniqueName, specification.TargetLocation, StringComparison.Ordinal);
+        // THE ARRIVAL IS THE POSTCONDITION, AND THE ENGINE CHOOSES WHERE.
+        //
+        // A warp's declared target tile (`Warp.TargetX/TargetY`, the map asset's own number) is not where the engine
+        // puts the farmer. `Game1.warpFarmer` rewrites the tile before the body moves (Game1.cs:9801-9936): a `Farm`
+        // entry from `BusStop` is replaced by the Farm map's own `BusStopEntry` (:9864), `FarmCave`/`Forest`/`Backwoods`
+        // entries the same way (:9818, :9843, :9873), `BusStop` and `IslandSouth` clamp it (:9804, :9883), `Trailer` and
+        // `Club` land in a different location (:9892, :9933), a mount adds `nextFarmerWarpOffset` (:10000), and
+        // `performWarpFarmer` slides a right-edge tile one column left (:10009-10012).
+        //
+        // MEASURED round68: `travel` from `BusStop` was accepted for `Farm:79,17` and the engine landed her on
+        // `(78,17)` - the Farm map's `BusStopEntry` - so a tile-exact postcondition refused an arrival that WAS the
+        // arrival, twice. The tile is reported (it is in the evidence below, and in every later snapshot) but it is not
+        // a promise the engine ever made, so it is not a postcondition. The mine arms keep theirs because a mine level
+        // is the location's identity, not a tile the engine is free to move.
         bool tileMatches = specification.Action switch
         {
             "enter_mine" => Game1.player.currentLocation is StardewValley.Locations.MineShaft mine
@@ -1124,11 +1138,14 @@ internal sealed partial class ExecutionManager
                     && elevatorMine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
             "use_mine_ladder" => locationMatches,
             "use_obelisk" => locationMatches,
-            // A warp totem's landing tile is also chosen inside the game's own delayed
-            // callback (Object.totemWarpForReal), and Game1.warpFarmer may nudge it, so the
-            // destination LOCATION is the only legal postcondition here too.
+            // A warp totem's landing tile is also chosen inside the game's own delayed callback
+            // (Object.totemWarpForReal) and Game1.warpFarmer may nudge it, so the destination LOCATION is the only legal
+            // postcondition here too.
             "use_warp_item" => locationMatches,
-            _ => Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY,
+            // Every remaining arm is an ordinary warp the engine performs - `travel`, `enter_exit`, `ride_minecart` - and
+            // the engine rewrites the declared tile before the body moves (see the block above), so the arrival location
+            // is the only postcondition any of them can have.
+            _ => locationMatches,
         };
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = locationMatches && tileMatches
