@@ -2044,7 +2044,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
             configuredFarmhandId = 0;
         long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
+        if (farmhandId == 0)
             throw new InvalidOperationException("fixture_farmhand_id_invalid");
         return farmhandId;
     }

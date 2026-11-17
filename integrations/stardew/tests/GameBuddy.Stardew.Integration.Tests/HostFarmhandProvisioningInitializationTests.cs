@@ -22,9 +22,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// attempting anything. So a save whose Cabin was created by a run that did not finish initializing could never bind:
 /// every later request named the identity the Cabin already owned and was refused on the precondition. These tests drive
 /// the seam that decides (the same <c>PrepareTargetFarmhand</c> <c>HandleRequest</c> calls) against a headless world
-/// built from the engine's own types, and assert both outcomes: an owned uncustomized Farmhand is INITIALIZED and the
-/// binding proceeds, and an initialization that throws is refused with its own code while the identity the save already
-/// had is left alone.
+/// built from the engine's own types. The initialization itself is now the ENGINE'S OWN (`SaveGame.loadDataToFarmer`,
+/// `SaveGame.cs:1325`), and that method cannot run in a headless process: it builds a `FarmerRenderer` out of
+/// `Game1.content`, and this process has loaded no content. So the fixture drives what it can - the profile seam
+/// (`WriteCompanionProfile`, the four writes the engine's OK branch performs), the refusal when the initialization cannot
+/// run, and the rollback - and the other half is pinned by `FarmhandConstructionInitializationGateTests`, which requires
+/// every Farmhand this Mod constructs to be handed to the engine's initialization.
 /// </para>
 /// <para>
 /// WHAT IS NOT MEASURED HERE, SAID PLAINLY. The request handler's host-state gate sits above this seam and requires a
@@ -82,41 +85,71 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
     }
 
     /// <summary>
-    /// THE PROOF THAT MATTERS. The Cabin already owns this Farmhand and nobody has customized it: the request names that
-    /// id, the profile is written by the one initializer, and the answer is the identity to bind - not a refusal.
+    /// THE PROFILE SEAM. The Cabin already owns this Farmhand and nobody has customized it: the four writes the engine's
+    /// own customization performs are made by the one method that owns them, and the Farmhand the Cabin owns is the
+    /// Farmhand that carries them.
     /// </summary>
     [Fact]
-    public void AnOwnedUncustomizedFarmhand_IsInitializedAndTheBindingProceeds()
+    public void AnOwnedUncustomizedFarmhand_GetsTheProfileTheEngineCustomizationWrites()
     {
         Farmer farmhand = this.NewFarmhand(customized: false);
         Cabin cabin = CabinOwning(farmhand);
         this.UseSdk(throws: false);
 
-        (Farmer? target, bool created, string refusal) = Prepare(this.provisioner, cabin, NativeId(FarmhandId));
+        InvokeWith(this.provisioner, "WriteCompanionProfile", farmhand);
 
-        refusal.Should().BeEmpty("an owned Farmhand with no profile is a state this Host can repair, not a refusal");
-        created.Should().BeFalse("the Farmhand was already in the save, so this request created nothing to roll back");
-        target.Should().BeSameAs(farmhand, "the binding targets the identity the Cabin already owns");
         farmhand.isCustomized.Value.Should().BeTrue(
             "the initializer is the one the created path uses, and `isCustomized` is what the native client needs");
         farmhand.Name.Should().Be("GameBuddy", "the profile is the companion's, from the Host's own config");
         farmhand.displayName.Should().Be("GameBuddy");
         farmhand.favoriteThing.Value.Should().Be("GameBuddy");
         cabin.OwnerId.Should().Be(FarmhandId, "the identity is repaired in place, never replaced");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0,
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull(
             "nothing was created, so the save-timeout and generic-failure paths have nothing of theirs to delete");
     }
 
     /// <summary>
-    /// The falsifier for the same path: the initializer itself fails. The refusal must be the initialization's own code -
-    /// not the not-initialized name the pre-fix code used - and the Farmhand the save already owned must survive it.
+    /// THE ID SPACE THE ENGINE ACTUALLY USES. `Cabin.CreateFarmhand` draws a Farmhand's id with `Utility.RandomLong`
+    /// (`StardewValley.Locations/Cabin.cs:52-59` -> `StardewValley/Utility.cs:7735-7742`), which is a SIGNED 64-bit draw:
+    /// half of the Farmhands the engine creates carry a negative id, and nothing reassigns it afterwards. The binding
+    /// therefore has to name such an id, carry it into the manifest, and find the Cabin's owner by it - the state is
+    /// named, not refused. The one value that is not an id is zero, and the same protocol refuses it, which is what keeps
+    /// this assertion from being true by accepting everything.
     /// </summary>
     [Fact]
-    public void WhenInitializationThrows_TheInitializationRefusalIsNamedAndTheIdentityIsLeftAlone()
+    public void AnEngineAllocatedNegativeId_IsABindableFarmhandId()
+    {
+        const long engineId = -8070450532247903136;
+        engineId.ToString(CultureInfo.InvariantCulture).Should().StartWith("-", "this is the engine's negative half, not a typo");
+
+        FarmhandProvisioningProtocol.TryParseNativeId(engineId.ToString(CultureInfo.InvariantCulture), out long parsed)
+            .Should().BeTrue("the engine's own draw is negative for half of all values, so a negative id is a Farmhand id");
+        parsed.Should().Be(engineId, "the id is carried through unchanged, signs and all");
+
+        FarmhandProvisioningProtocol.TryParseNativeId("0", out _)
+            .Should().BeFalse("zero is the one value that is not a Farmhand id, and it stays refused");
+
+        Farmer farmhand = SeedFarmer(engineId, "GameBuddy", customized: true);
+        Game1.netWorldState.Value.farmhandData[engineId] = farmhand;
+        Cabin cabin = CabinOwning(farmhand);
+
+        cabin.OwnerId.Should().Be(engineId, "the Cabin owns the identity the engine allocated, whatever its sign");
+        cabin.owner.Should().BeSameAs(farmhand, "`NetFarmerRef` resolves by equality, not by sign");
+    }
+
+    /// <summary>
+    /// The falsifier for the binding path: the initialization cannot run. In this process it cannot, for the reason the
+    /// engine's own initialization always fails here - `SaveGame.loadDataToFarmer` needs the loaded content
+    /// (`Game1.content` -> `new FarmerRenderer`) that no headless process has - so this is the real failure shape and not
+    /// a synthetic one. The refusal must be the initialization's own code - never the not-initialized name the pre-fix
+    /// code used - and the Farmhand the save already owned must survive it.
+    /// </summary>
+    [Fact]
+    public void WhenTheInitializationCannotRun_TheRefusalIsNamedAndTheIdentityIsLeftAlone()
     {
         Farmer farmhand = this.NewFarmhand(customized: false);
         Cabin cabin = CabinOwning(farmhand);
-        this.UseSdk(throws: true);
+        this.UseSdk(throws: false);
 
         (Farmer? target, bool created, string refusal) = Prepare(this.provisioner, cabin, NativeId(FarmhandId));
 
@@ -126,7 +159,7 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         farmhand.isCustomized.Value.Should().BeFalse("the attempt failed before it wrote the profile");
         cabin.OwnerId.Should().Be(FarmhandId,
             "a Farmhand that existed before the request is never deleted by the request's failure");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0);
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull("nothing is tracked, so nothing is deleted");
 
         // Every path that rolls a CREATED Farmhand back - save timeout, save write failure, a thrown request, returning
         // to title - runs this method. With nothing tracked it must not touch the identity the save already had.
@@ -156,7 +189,7 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
         cabin.OwnerId.Should().Be(0, "the created Farmhand is released through the engine's own Cabin.DeleteFarmhand");
         Game1.netWorldState.Value.farmhandData.ContainsKey(FarmhandId).Should().BeFalse(
             "the created Farmhand was released through the engine's own FarmerTeam.DeleteFarmhand");
-        PendingCreatedFarmhandId(this.provisioner).Should().Be(0);
+        PendingCreatedFarmhandId(this.provisioner).Should().BeNull("nothing is tracked, so nothing is deleted");
     }
 
     // ---- the fixture ---------------------------------------------------------
@@ -220,15 +253,20 @@ public sealed class HostFarmhandProvisioningInitializationTests : IDisposable
             (string)type.GetProperty("RefusalReason")!.GetValue(target)!);
     }
 
-    private static long PendingCreatedFarmhandId(object provisioner) =>
-        (long)typeof(HostFarmhandProvisioner)
+    private static long? PendingCreatedFarmhandId(object provisioner) =>
+        typeof(HostFarmhandProvisioner)
             .GetField("pendingCreatedFarmhandId", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(provisioner)!;
+            .GetValue(provisioner) as long?;
 
     private static void Invoke(object provisioner, string name) =>
         typeof(HostFarmhandProvisioner)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!
             .Invoke(provisioner, null);
+
+    private static void InvokeWith(object provisioner, string name, params object?[] arguments) =>
+        typeof(HostFarmhandProvisioner)
+            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(Farmer) }, null)!
+            .Invoke(provisioner, arguments);
 
     private static void SetField(object instance, string name, object? value) =>
         typeof(HostFarmhandProvisioner)
