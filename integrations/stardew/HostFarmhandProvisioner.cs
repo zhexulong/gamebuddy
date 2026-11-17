@@ -582,20 +582,22 @@ internal sealed class HostFarmhandProvisioner
         }
 
         string expectedName = Utility.FilterDirtyWords(this.config.FarmhandName);
-        if (farmhand.UniqueMultiplayerID <= 0 || !farmhand.isCustomized.Value || farmhand.Name != expectedName || farmhand.displayName != expectedName)
+        string? firstBindingRejection = FirstBindingRejection(
+            farmhand.UniqueMultiplayerID,
+            farmhand.isCustomized.Value,
+            farmhand.Name,
+            farmhand.displayName,
+            expectedName,
+            request.ExpectedFarmhandId);
+        if (firstBindingRejection is not null)
         {
             if (createdFarmhand)
                 this.RollbackCreatedFarmhand(cabin, farmhand);
-            this.monitor.Log(
-                $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
-                LogLevel.Error);
-            return new("rejected", "farmhand_not_initialized");
-        }
-        if (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != farmhand.UniqueMultiplayerID.ToString())
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "expected_farmhand_mismatch");
+            if (firstBindingRejection == "farmhand_not_initialized")
+                this.monitor.Log(
+                    $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
+                    LogLevel.Error);
+            return new("rejected", firstBindingRejection);
         }
         if (cabin.OwnerId != farmhand.UniqueMultiplayerID)
         {
@@ -635,6 +637,29 @@ internal sealed class HostFarmhandProvisioner
             this.pendingCreatedFarmhandId = 0;
         }
         return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
+    }
+
+    /// <summary>
+    /// Why the first binding refuses a Farmhand, or <c>null</c> when it accepts it.
+    /// A Farmhand id is SMAPI's 64-bit snowflake, so its sign is part of the value
+    /// and only <c>0</c> means "no identity assigned yet" — the rule
+    /// <see cref="FarmhandProvisioningProtocol.TryParseNativeId"/> already applies to
+    /// every id on the wire. Only the id, the customization and the two names decide
+    /// here; the expected id is compared as an equality, which is sign-neutral.
+    /// </summary>
+    internal static string? FirstBindingRejection(
+        long farmhandId,
+        bool isCustomized,
+        string? name,
+        string? displayName,
+        string expectedName,
+        string expectedFarmhandId)
+    {
+        if (farmhandId == 0 || !isCustomized || name != expectedName || displayName != expectedName)
+            return "farmhand_not_initialized";
+        if (expectedFarmhandId.Length > 0 && expectedFarmhandId != farmhandId.ToString())
+            return "expected_farmhand_mismatch";
+        return null;
     }
 
     /// <summary>
@@ -746,7 +771,7 @@ internal sealed class HostFarmhandProvisioner
 
     private void RollbackCreatedFarmhand()
     {
-        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId <= 0)
+        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId == 0)
             return;
         Farmer? farmhand = Game1.GetPlayer(this.pendingCreatedFarmhandId, onlyOnline: false);
         this.RollbackCreatedFarmhand(this.pendingCreatedCabin, farmhand);
