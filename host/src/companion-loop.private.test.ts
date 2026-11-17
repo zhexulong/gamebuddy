@@ -15,7 +15,7 @@ import {
   TURN_OPENING,
   TURN_PRODUCTION,
   TURN_SETTLED_SILENT,
-  TURN_SUPPRESSION,
+  NOT_OWED,
   turnAccountLine,
 } from "./event-pump.js";
 
@@ -2415,7 +2415,7 @@ test("a succeeded settlement opens no turn, and the NEXT turn still delivers and
 
   assert.equal(loop.pump.turnAccount.opened, 0, "a programme that did its work opens no turn of its own");
   assert.equal(
-    loop.pump.turnAccount.suppressed[TURN_SUPPRESSION.progress],
+    loop.pump.turnAccount.notOwed[NOT_OWED.progress],
     1,
     `the flush is counted as progress rather than as nothing: ${turnAccountLine(loop.pump.turnAccount)}`,
   );

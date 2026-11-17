@@ -550,21 +550,23 @@ test("suppression leaves the settlement observer alone: it runs on its own timer
   const readsAfterTurn = reads;
   assert.ok(readsAfterTurn > 0, "a delivered batch states the programme in flight");
 
-  // A suppressed flush is not an observation of the journal, and must not consume or clear its reading.
+  // A call that owes no turn is not an observation of the journal, and must not consume or clear its reading.
   pump.enqueueFact(readingFact(1), FACT_PRODUCER.adapterIngress);
   pump.enqueueFact(
     settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 1_000),
     FACT_PRODUCER.adapterIngress,
   );
   await pump.flush(recorder.sink);
-  assert.equal(pump.turnAccount.lastDecision?.kind, "suppressed");
+  // NOT A FLUSH AT ALL: the same content arrived twice, so nothing owed a turn and no batch was composed. The answer is
+  // its own member (`not_owed`), which is the state the old `suppressed` spelling collapsed together with a lost turn.
+  assert.equal(pump.turnAccount.lastDecision?.kind, "not_owed");
   assert.equal(
     reads,
     readsAfterTurn,
     "the ledger is read when a batch is composed, never to decide whether to compose",
   );
 
-  // The next turn that opens still carries it: suppression neither starved the observer nor hid its result.
+  // The next turn that opens still carries it: a call that owed no turn neither starved the observer nor hid its result.
   pump.enqueueFact(milestoneFact(1200, WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
   await pump.flush(recorder.sink);
   assert.match(recorder.batches.at(-1)!.text, /<in-flight>\n/u, "the programme in flight reaches the next turn");
@@ -1160,7 +1162,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /assistant turns examined, with text, tool-only, per delivered batch: turns opened, suppressed, flushes examined, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
+    /per delivered batch: turns opened, flushes examined, not owed, carried, traces, bubbles delivered, lost, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });
@@ -1455,10 +1457,12 @@ test("turn_closed_without_action: a speaking turn with a stale reading is counte
   );
 });
 
-test("turn_closed_without_action: the same flush suppressed rather than opened counts nothing", async () => {
-  // The other half of the red proof: the SAME flush that produced a count above, suppressed, leaves the count at zero
-  // and names the reason. A counter that incremented on every examined flush would pass the test above and be blind to
-  // the difference between a turn that happened and one that did not.
+test("turn_closed_without_action: a call that owes no turn has no turn to close, and no count to move", async () => {
+  // The other half of the red proof, re-derived from the three-state outcome: `turn_closed_without_action` was "a turn
+  // OPENED and closed on speech alone". A call answered `not_owed` opened nothing, so there is no turn to close - the
+  // counter must not move, and the reason it did not is the account's `not owed` member beside it. A counter that
+  // incremented on every `flush()` call would pass the test above and be blind to the difference between a turn that
+  // happened and one that never existed.
   const pump = new CompanionEventPump();
   const sink = speakingSink(pump);
   pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
@@ -1484,13 +1488,17 @@ test("turn_closed_without_action: the same flush suppressed rather than opened c
   await suppressed.flush(speakingSink(suppressed));
 
   const account = suppressed.turnAccount;
-  assert.equal(account.lastDecision?.kind, "suppressed");
-  assert.equal(account.emptyTurns.total, before, "a suppressed flush moved no count");
+  assert.equal(account.lastDecision?.kind, "not_owed");
+  assert.equal(
+    account.emptyTurns.total,
+    before,
+    "no turn opened, so nothing closed: the empty-turn counter is a reading of delivered turns, not of calls",
+  );
   const parsed = readTurnAccountLine(turnAccountLine(account));
   assert.equal(
     parsed.notOwed.counts[NOT_OWED.worldFactRestated],
     1,
-    "and the line says which reason answered the flush instead",
+    "and the line says which reason answered the call instead",
   );
 });
 

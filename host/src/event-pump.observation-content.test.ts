@@ -482,7 +482,7 @@ test("the flush that holds only a reading is counted against the reading, never 
     "a reading that arrived and decided nothing is its own named condition",
   );
   const line = turnAccountLine(pump.turnAccount);
-  assert.match(line, /suppressed 2 \{/u, line);
+  assert.match(line, /not owed 2 \{/u, line);
   assert.match(
     line,
     /observation_restated: 0/u,

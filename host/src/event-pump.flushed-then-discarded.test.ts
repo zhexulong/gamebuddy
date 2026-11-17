@@ -107,17 +107,17 @@ function programmeStep(state: string, revision: number): WorldFact {
   };
 }
 
-/** A clock mark: a world fact whose content is the moment, stated once per moment. */
-function milestoneFact(revision: number): WorldFact {
+/** A native notice: the game said something about the hour, and two copies of it say it once. */
+function noticeFact(published: number): WorldFact {
   return {
     source: "stardew_mod",
     kind: "world_fact",
-    eventId: `milestone_600_${String(revision)}`,
-    sourceEventId: `milestone_600_${String(revision)}`,
-    correlationId: `milestone_600_${String(revision)}`,
-    revision,
-    semanticKind: "time_milestone",
-    payload: { milestone: 600, revision },
+    eventId: `notice_night_${String(published)}`,
+    sourceEventId: `notice_night_${String(published)}`,
+    correlationId: `notice_night_${String(published)}`,
+    revision: 1,
+    semanticKind: "native_notice",
+    payload: { message: "It is getting late." },
   };
 }
 
@@ -223,11 +223,12 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
     {
       reason: NOT_OWED.worldFactRestated,
       drive: async (pump, sink) => {
-        const mark = milestoneFact(10);
-        pump.enqueueFact(mark, FACT_PRODUCER.adapterIngress);
+        pump.enqueueFact(noticeFact(0), FACT_PRODUCER.adapterIngress);
         await pump.flush(sink);
-        // The same statement published again under a fresh event id: `round46b`'s 07:30:43 turn, in one call.
-        pump.enqueueFact(milestoneFact(11), FACT_PRODUCER.adapterIngress);
+        // The same statement published again under a fresh event id: `round46b`'s 07:30:43 turn, in one call. A clock
+        // mark cannot demonstrate this - a moment is news every time it is stated (`DAY_BOUNDARY_SEMANTIC_KINDS`) - so
+        // the notice is the shape that can be re-stated.
+        pump.enqueueFact(noticeFact(1), FACT_PRODUCER.adapterIngress);
         await pump.flush(sink);
       },
     },
