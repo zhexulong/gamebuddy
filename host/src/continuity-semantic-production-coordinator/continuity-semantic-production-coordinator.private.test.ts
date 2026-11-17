@@ -268,6 +268,7 @@ test("v38 coordinator Chat request boundary reaches the actual store with an exa
 test("production coordinator exports only the known Game constructor and its safe authority surface", () => {
   assert.deepEqual(Object.keys(publicCoordinator).sort(), [
     "SemanticProductionCoordinatorError",
+    "abortMountedTurnThroughCancelSeam",
     "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
@@ -290,6 +291,7 @@ test("production coordinator exports only the known Game constructor and its saf
   assert.deepEqual(Object.keys(internalCoordinator).sort(), [
     "PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS",
     "SemanticProductionCoordinatorError",
+    "abortMountedTurnThroughCancelSeam",
     "acceptMountedDurableTurn",
     "claimMountedAttempt",
     "consumeMountedAttemptAdmission",

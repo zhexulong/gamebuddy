@@ -590,6 +590,57 @@ function waitForMountedPromptSettlement(record: MountedChatRuntimeLeaseRecord): 
   return new Promise<void>((resolve) => record.promptSettlementWaiters.add(resolve));
 }
 
+/**
+ * Exactly the durable states the mounted cancel seam can terminalize: an armed prompt, or a
+ * generating/presented turn. `accepted_queued` and a claim whose attempt never reached an
+ * observation are not cancellable as they stand - the seam's exact-attempt CAS needs a durable
+ * `armed` observation - so a focus transfer prepares those two to `armed` first instead of
+ * leaving the mount held by a turn with nothing running. A claim that recorded a pre-invocation
+ * `not_started` is not cancellable here either, but it is already terminalized directly by the
+ * same preparation.
+ */
+async function isMountedTurnCancellable(record: MountedChatRuntimeLeaseRecord): Promise<boolean> {
+  const ledger = (await record.store().resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
+  if (ledger === null) return false;
+  if (ledger.status === "running" || ledger.status === "presentation_committed") return true;
+  return ledger.status === "attempt_starting" && ledger.observation?.phase === "armed";
+}
+
+/**
+ * The one cancel path, used both by a focus transfer (ADR-0010, class A abort) and by the Chat
+ * runtime's exit. It revokes the presentation epoch, wins the exact durable cancel CAS, aborts
+ * the one mounted Pi prompt, and then waits only for that prompt's own runner to settle the
+ * ledger, because the transition authority is revoked when the mount is released and a revoked
+ * authority can no longer terminalize the turn. Whatever the turn had already committed stays
+ * durably stored as the interrupted turn's presentation; only never-committed preview deltas are
+ * discarded.
+ *
+ * The exit is the caller that most needs it. The exit reclamation closes the presentation port
+ * before the Chat runtime's step, so an in-flight turn's stream has no reader left: waiting for
+ * that stream to finish is waiting for output nobody can see. Aborting ends the turn in
+ * milliseconds and the ledger records it as the interrupted turn it was.
+ *
+ * A lease that is already closed has nothing to abort and nothing to wait for.
+ */
+export async function abortMountedTurnThroughCancelSeam(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  reasonCode: "player_chat_select" | "host_exit",
+): Promise<void> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (record === undefined || !record.active) return;
+  if (await isMountedTurnCancellable(record))
+    await stopMountedChatPresentationEpoch(manifest, lease, {
+      stopId: `${reasonCode}_stop_${randomUUID().replaceAll("-", "")}`,
+      sourceEventId: `${reasonCode}_source_${randomUUID().replaceAll("-", "")}`,
+      reasonCode,
+    });
+  // A turn already terminalized above can still have its prompt draining, and the exact prompt
+  // the cancel claim won is settled by its own runner; the release revokes the transition
+  // authority, so wait for that settlement before the mount is torn down under it.
+  await waitForMountedPromptSettlement(record);
+}
+
 type MountedAttemptInvocationAdmission = Readonly<{
   readonly __mountedAttemptInvocationAdmission: unique symbol;
 }>;
@@ -2757,23 +2808,6 @@ async function createFreshChatRuntimeAuthority(
   };
 
   /**
-   * Exactly the durable states the mounted cancel seam can terminalize: an
-   * armed prompt, or a generating/presented turn. `accepted_queued` and a claim
-   * whose attempt never reached an observation are not cancellable as they
-   * stand - the seam's exact-attempt CAS needs a durable `armed` observation -
-   * so a focus transfer prepares those two to `armed` first instead of leaving
-   * the mount held by a turn with nothing running. A claim that recorded a
-   * pre-invocation `not_started` is not cancellable here either, but it is
-   * already terminalized directly by the same preparation.
-   */
-  const isMountedTurnCancellable = async (record: MountedChatRuntimeLeaseRecord): Promise<boolean> => {
-    const ledger = (await record.store().resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
-    if (ledger === null) return false;
-    if (ledger.status === "running" || ledger.status === "presentation_committed") return true;
-    return ledger.status === "attempt_starting" && ledger.observation?.phase === "armed";
-  };
-
-  /**
    * ADR-0010. A durable mounted turn with nothing running must not hold the
    * mount, and exactly three shapes reach that state: a turn the player's message
    * made durable but that was never scheduled (no attempt at all), a durable
@@ -2839,33 +2873,6 @@ async function createFreshChatRuntimeAuthority(
     } finally {
       operationAuthority.revoke();
     }
-  };
-
-  /**
-   * Class A abort for a focus transfer (ADR-0010). It reuses the one existing
-   * cancel path - the same seam an authenticated browser Stop reaches - so the
-   * presentation epoch is revoked, the exact durable cancel CAS wins, and the
-   * one mounted Pi prompt is aborted. It then waits only for that prompt's own
-   * runner to settle the ledger, because the transition authority is revoked
-   * when the mount is released and a revoked authority can no longer terminalize
-   * the turn. Whatever the turn had already committed stays durably stored as
-   * the interrupted turn's presentation; only never-committed preview deltas are
-   * discarded.
-   */
-  const abortMountedTurnForChatSelection = async (record: MountedChatRuntimeLeaseRecord): Promise<void> => {
-    const lease = mountedLease;
-    if (lease === undefined) return;
-    if (await isMountedTurnCancellable(record))
-      await stopMountedChatPresentationEpoch(manifest, lease, {
-        stopId: `chat_select_stop_${randomUUID().replaceAll("-", "")}`,
-        sourceEventId: `chat_select_source_${randomUUID().replaceAll("-", "")}`,
-        reasonCode: "player_chat_select",
-      });
-    // A turn already terminalized above can still have its prompt draining, and
-    // the exact prompt the cancel claim won is settled by its own runner; the
-    // release revokes the transition authority, so wait for that settlement
-    // before the mount is torn down under it.
-    await waitForMountedPromptSettlement(record);
   };
 
   /**
@@ -3205,7 +3212,8 @@ async function createFreshChatRuntimeAuthority(
         return Object.freeze({ status: "switched" as const, ...target });
       if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord))) {
         await prepareMountedTurnForChatSelection(mountedRecord);
-        await abortMountedTurnForChatSelection(mountedRecord);
+        const lease = mountedLease;
+        if (lease !== undefined) await abortMountedTurnThroughCancelSeam(manifest, lease, "player_chat_select");
       }
       if ((await releaseMountedChatRuntime()) === "turn_in_flight")
         return Object.freeze({ status: "turn_in_flight" as const, ...target });

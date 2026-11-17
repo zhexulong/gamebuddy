@@ -13,6 +13,7 @@ export type {
   SemanticGameProductionAuthority,
 } from "./continuity-semantic-production-coordinator.internal.js";
 export {
+  abortMountedTurnThroughCancelSeam,
   createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
