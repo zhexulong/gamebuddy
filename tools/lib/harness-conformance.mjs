@@ -1312,6 +1312,16 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   // `{gate, checks[]}` report this suite parses, so neither can be run here; each names its own falsifier instead of
   // sharing one reason, because the reason is the only thing that says what the gate catches.
   {
+    gate: "check-body-owner-hold-bounds.mjs",
+    reason:
+      "prints `a_body_can_be_held_with_no_way_out: owners examined N · bounded B · stop-ended S · silent X` and one line " +
+      "per owner, so its reading is lines and not a `{gate, checks[]}` report; its falsifier is " +
+      "tools/check-body-owner-hold-bounds.test.mjs: a new hold kind with no declared end is named, a bound naming a token " +
+      "the Mod no longer declares is unsupported and named with the token it lost, a stop claimed for an owner whose own " +
+      "row publishes `CancelSafe: false` fails, a declaration left behind by a removed owner expires, and a tree that " +
+      "declares no hold kind is blocked rather than passed over nothing",
+  },
+  {
     gate: "check-refusal-action-names.mjs",
     reason:
       "prints `refusal action names: N files · codes examined M · name an action A · exists E · missing K · unmeasured U` " +
