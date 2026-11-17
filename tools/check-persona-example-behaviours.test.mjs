@@ -12,11 +12,12 @@
  *                     said -> exit 1 with the two findings below, and the second finding shape
  *                     `behaviour_claim_unmatched:comforts_with_her_own_scar:…` on the same run
  *                     (tools/check-persona-example-behaviours.test.mjs)
- * red-proof: inject   the incident replayed: the clause `对手头东西的评价、对工具的嫌弃不用回执，直接说` removed from a
- *                     copied `card.json`'s `data.system_prompt` -> exit 1 with
- *                     `example_demonstrates_a_behaviour_no_claim_permits:这泥巴比水泥还黏靴子:evaluates_the_thing_in_hand`
- *                     and `:震得我手腕生疼:complains_about_a_tool`, and writing the bytes back -> exit 0. A `{{char}}`
- *                     turn appended to a copied `mes_example`, carrying no declared sample ->
+ * red-proof: inject   the incident replayed, twice, because the 2026-11-17 reversal left the two rows tied to two
+ *                     different sentences: the clause `但对手头东西的评价不用回执，直接说` removed from a copied
+ *                     `card.json`'s `data.system_prompt` -> exit 1 naming all three demonstrations of
+ *                     `evaluates_the_thing_in_hand`; the clause `只用来调侃活计和工具` removed -> exit 1 naming both
+ *                     demonstrations of `complains_about_a_tool`; writing the bytes back after either -> exit 0. A
+ *                     `{{char}}` turn appended to a copied `mes_example`, carrying no declared sample ->
  *                     `example_unclassified:早啊，粥在锅里温着，自己盛。`, which is the population being derived rather
  *                     than listed (tools/check-persona-example-behaviours.test.mjs)
  */
@@ -45,8 +46,20 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PRESETS = "assets/tavern/presets";
 const CARD = `${PRESETS}/default-companion/card.json`;
 
-/** The clause the card gained on 2026-11-12 and an uncommitted edit deleted: the permission, not a receipt, for these. */
-const PERMISSION = "；但对手头东西的评价、对工具的嫌弃不用回执，直接说";
+/**
+ * The two behaviours whose permitting sentence lives in the shipped card's `system_prompt`. Each arm removes the row's
+ * OWN `claim` - the same string the gate reads - so the removal and the expected finding cannot disagree, and a row
+ * re-tied to a clause that reds the wrong behaviour's demonstrations is caught rather than accommodated. The two rows
+ * shared one sentence until 2026-11-17, when the complaint licence was deleted and the evaluation half kept.
+ */
+const CARD_CLAIMS = Object.freeze(["evaluates_the_thing_in_hand", "complains_about_a_tool"]);
+
+/** One declared row by behaviour, or a named refusal - rather than `undefined` reaching an assertion and passing it. */
+function rowFor(behaviour) {
+  const row = BEHAVIOURS.find((candidate) => candidate.behaviour === behaviour);
+  assert.ok(row !== undefined, `the vocabulary no longer declares ${behaviour}`);
+  return row;
+}
 
 /** A copy of the shipped presets outside the repository, so a rewrite of the card is a real rewrite and never a real one. */
 function copiedCorpus(context) {
@@ -86,32 +99,38 @@ test("the shipped card's 15 example turns are all claimed by the shipped vocabul
   assert.ok(BEHAVIOURS.length > 0 && BEHAVIOURS.length <= 12, `vocabulary has ${BEHAVIOURS.length} rows`);
 });
 
-test("the incident: deleting the permission reds every example that demonstrated it, restoring it is green", (context) => {
+test("the incident: deleting a permission reds every example that demonstrated it, restoring it is green", (context) => {
   const { root, path, original } = copiedCorpus(context);
-  assert.ok(original.includes(PERMISSION), `the shipped card no longer carries ${PERMISSION}`);
-  writeFileSync(path, original.replace(PERMISSION, ""));
+  for (const behaviour of CARD_CLAIMS) {
+    const row = rowFor(behaviour);
+    assert.ok(original.includes(row.claim), `the shipped card no longer carries ${row.claim}`);
+    writeFileSync(path, original.replace(row.claim, ""));
 
-  const deleted = runGate(root);
-  assert.equal(deleted.status, 1, deleted.stdout);
-  assert.match(deleted.lines.at(-1) ?? "", /^\{"gate":"persona_example_behaviour_claim/u);
-  assert.ok(deleted.lines.some((line) => line.startsWith("persona_example_behaviour_uncovered:")));
+    const deleted = runGate(root);
+    assert.equal(deleted.status, 1, deleted.stdout);
+    assert.match(deleted.lines.at(-1) ?? "", /^\{"gate":"persona_example_behaviour_claim/u);
+    assert.ok(deleted.lines.some((line) => line.startsWith("persona_example_behaviour_uncovered:")));
 
-  // The finding names the example fragment, the behaviour and the sentence that went missing - all three, because a
-  // reader who sees only one of them has to go and find the other two.
-  const expected = [
-    `${VIOLATION}:这泥巴比水泥还黏靴子:evaluates_the_thing_in_hand:对手头东西的评价、对工具的嫌弃不用回执，直接说`,
-    `${VIOLATION}:震得我手腕生疼:complains_about_a_tool:对手头东西的评价、对工具的嫌弃不用回执，直接说`,
-  ];
-  for (const finding of expected) assert.ok(deleted.lines.includes(finding), `missing ${finding}`);
-  const findings = deleted.lines.filter((line) => line.startsWith(`${VIOLATION}:`));
-  assert.equal(findings.length, 5, "every anchored demonstration of the deleted permission is named");
-  assert.ok(findings.every((line) => line.endsWith("对手头东西的评价、对工具的嫌弃不用回执，直接说")));
-  // The gate reds on the deleted permission and on nothing else: a finding is not a count that always fires.
-  assert.equal(
-    deleted.lines.filter((line) => line.startsWith("behaviour_claim_") || line.startsWith("example_unclassified"))
-      .length,
-    0,
-  );
+    // The finding names the example fragment, the behaviour and the sentence that went missing - all three, because a
+    // reader who sees only one of them has to go and find the other two.
+    for (const sample of row.samples) {
+      const finding = `${VIOLATION}:${sample}:${behaviour}:${row.claim}`;
+      assert.ok(deleted.lines.includes(finding), `missing ${finding}`);
+    }
+    const findings = deleted.lines.filter((line) => line.startsWith(`${VIOLATION}:`));
+    assert.equal(
+      findings.length,
+      row.samples.length,
+      `${behaviour} names exactly its own demonstrations: ${findings.join(" | ")}`,
+    );
+    assert.ok(findings.every((line) => line.endsWith(row.claim)));
+    // The gate reds on the deleted clause and on nothing else: a finding is not a count that always fires.
+    assert.equal(
+      deleted.lines.filter((line) => line.startsWith("behaviour_claim_") || line.startsWith("example_unclassified"))
+        .length,
+      0,
+    );
+  }
 
   writeFileSync(path, original);
   const restored = runGate(root);
@@ -253,9 +272,15 @@ test("red (history): the card that shipped before the permission wrote examples 
   }
   const result = runGate(root);
   assert.equal(result.status, 1, result.stdout);
-  const missing = "对手头东西的评价、对工具的嫌弃不用回执，直接说";
+  // The expected sentence comes from the row that owns it, not from a second copy written here: the historical card has
+  // no permitting sentence at all, so the gate prints the row's current `claim` and this reading must agree with it.
+  const missing = rowFor("evaluates_the_thing_in_hand").claim;
   assert.ok(result.lines.includes(`${VIOLATION}:这泥巴比水泥还黏靴子:evaluates_the_thing_in_hand:${missing}`));
-  assert.ok(result.lines.includes(`${VIOLATION}:震得我手腕生疼:complains_about_a_tool:${missing}`));
+  assert.ok(
+    result.lines.includes(
+      `${VIOLATION}:震得我手腕生疼:complains_about_a_tool:${rowFor("complains_about_a_tool").claim}`,
+    ),
+  );
   // The second finding shape is reachable on real history too, so it is not a branch that only a fixture can enter.
   assert.ok(result.lines.some((line) => line.startsWith("behaviour_claim_unmatched:comforts_with_her_own_scar:")));
 });
