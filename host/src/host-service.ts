@@ -23,6 +23,7 @@ import {
   classifyProviderFailure,
   type ProviderFailureClass,
 } from "./provider-failure-classification.js";
+import { idleWaitReading } from "./program-status-wait.js";
 import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
 import type { RunTrace, RunTraceSpanHandle } from "./run-trace.js";
 import {
@@ -1475,10 +1476,16 @@ export class CompanionHostService {
     this.#staleSnapshotSpan = undefined;
   }
 
-  /** The idle wait: the pump was empty and the next turn needs a fact the world has not published yet. */
+  /**
+   * The idle wait: the pump owed no turn, and the reason is one of two - the world said nothing, or her own executor
+   * still had nodes to run (`idleWaitReading`).
+   *
+   * The reason used to be the literal `nothing_owed`, which was true of both and therefore told a reader of the bundle
+   * nothing: round65's `turns opened 26` at a median 35 s could not be attributed by anything the run wrote down.
+   */
   #beginIdle(): void {
     if (this.runTrace === undefined || this.#idleSpan !== undefined || this.#closed) return;
-    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { reason: "nothing_owed" });
+    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { ...idleWaitReading() });
   }
 
   #endIdle(): void {

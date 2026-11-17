@@ -460,6 +460,57 @@ export function readInFlightProgrammes(nowMs: number = Date.now()): InFlightProg
 }
 
 /**
+ * Why the Host is waiting, in the two conditions it can tell apart.
+ *
+ * <p>
+ * `nothing_owed` was the ONLY idle reason, and it answered two different situations with one word: the pump held nothing
+ * that owed a turn (a quiet world), or her own body still had nodes the settlement had not answered yet (her own
+ * executor). Measured 2026-11-17 (`round65`, the run's own account line): `turns opened 26` over a median 35 s, every one
+ * of them `adapter_ingress` - so the run could say she decided once per 35 s and could not say WHAT she was waiting on.
+ * A reader joining that bundle by hand could not separate "the world said nothing" from "our executor was still working",
+ * and those are the two halves of "the work is too little" that need different answers.
+ * </p>
+ * <p>
+ * `body_still_working` claims nothing about time and nothing about progress: it is the journal's own statement that a
+ * plan has nodes that have not happened (`InFlightProgramme.remaining`, filled by the settlement watch and every status
+ * call). The reading expires (`IN_FLIGHT_READING_MAX_AGE_MS`), so a watch that died does not keep saying this.
+ * </p>
+ */
+export const IDLE_WAIT_REASON = Object.freeze({
+  /** The pump owed no turn and the journal shows no plan with a node left: the wait is the world's. */
+  nothingOwed: "nothing_owed",
+  /** The pump owed no turn while her own plan still had nodes left: the wait is our executor's. */
+  bodyStillWorking: "body_still_working",
+});
+
+export const IDLE_WAIT_REASONS = Object.freeze(Object.values(IDLE_WAIT_REASON));
+
+export type IdleWaitReason = (typeof IDLE_WAIT_REASONS)[number];
+
+/** One idle wait: which of the two it was, and the population the answer was taken on. */
+export interface IdleWaitReading {
+  readonly reason: IdleWaitReason;
+  readonly programmes: number;
+  readonly remaining: number;
+}
+
+/**
+ * The idle reason for one ledger reading, so the span and any test asking the same question cannot disagree.
+ *
+ * `remaining` is summed over the programmes the reading shows; `programmes` is that same population's size. Both are
+ * printed beside the reason because a wait of 35 s behind one node and one behind four plans are different facts, and a
+ * bare word would answer neither.
+ */
+export function idleWaitReading(reading: InFlightProgrammeReading = readInFlightProgrammes()): IdleWaitReading {
+  const programmes = reading.programmes.length;
+  const remaining = reading.programmes.reduce((total, programme) => total + programme.remaining, 0);
+  // A plan whose last node has happened is not work left to wait for: its settlement is one watch interval away, and
+  // `body_still_working` would say the executor had something in front of it when the only thing left is the answer.
+  if (remaining === 0) return Object.freeze({ reason: IDLE_WAIT_REASON.nothingOwed, programmes, remaining });
+  return Object.freeze({ reason: IDLE_WAIT_REASON.bodyStillWorking, programmes, remaining });
+}
+
+/**
  * One node of a plan, answered where the caller wrote it: at its index, with the Mod's own state and reason.
  *
  * `state` is the Mod's node-state token VERBATIM (`BodyProgramNodeState` -> `BridgeSession.ToWire`), not a Host
