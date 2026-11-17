@@ -1742,16 +1742,31 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     null,
   );
+  // The arm a selector does not use may be written OUT as `null`: `find_destination` publishes its selector that way
+  // (`{"kind":"label","label":"Mine","ref":null}`), so the object the model copies straight out of that answer has
+  // to be sendable. The absent arm's spelling is not a fact (`readDestinationSelector`).
   for (const destination of [
     { kind: "label", label: "Mine", ref: null },
+    { kind: "ref", label: null, ref: canonicalUrlSafeRef },
+  ])
+    assert.equal(
+      validateExecutionRequest({ ...navigateByLabel, args: { destination } }, navigationSnapshot, now),
+      null,
+      JSON.stringify(destination),
+    );
+  for (const destination of [
     { kind: "label", label: "" },
+    { kind: "label", label: " Mine" },
+    { kind: "label", label: "Mine " },
     { kind: "ref", ref: "destinationRef" },
     { kind: "ref", ref: null },
     { kind: "ref", ref: "dr1_mine" },
     { kind: "ref", ref: "dr1_aaaaaaaaaaaaaaaaaaaaaaa" },
     { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAA!" },
     { kind: "ref", ref: nonCanonicalSixteenByteRef },
-    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA", label: null },
+    // Both arms present names two destinations at once, and an unknown key is not part of the closed shape.
+    { kind: "label", label: "Mine", ref: canonicalUrlSafeRef },
+    { kind: "label", label: "Mine", tile: "10,11" },
   ]) {
     assert.equal(
       validateExecutionRequest({ ...navigateByLabel, args: { destination } }, navigationSnapshot, now),
