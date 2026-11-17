@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4555, largest ExecutionManager at 24385 lines / 840 members across 52 partial(s).",
-  "revision": "930eedc5",
+  "revision": "4549af73",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -388,7 +388,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildExecutionRequest(IReadOnlyDictionary<string, BodyProgramCanonicalValue>,string,string,string,long,BridgeExecutionRequest?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 163,
+      "line": 225,
       "value": 43,
       "reason": "recorded at 604844a6: 41 -> 43, and `line` -> 163. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charged-use request fields it builds. 43 is the ceiling now."
     },
@@ -397,7 +397,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 658,
+      "line": 720,
       "value": 40
     },
     {
@@ -642,7 +642,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 665,
+      "line": 672,
       "value": 40,
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
@@ -1181,7 +1181,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "value": 203,
+      "value": 222,
       "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
@@ -1384,8 +1384,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "lines": 1111,
-      "methods": 38,
+      "lines": 1173,
+      "methods": 41,
       "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {
