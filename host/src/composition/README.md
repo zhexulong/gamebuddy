@@ -23,5 +23,7 @@ So `composition` is the one generic layer that may reach a game adapter (it is t
 ## Placement and move rule
 Put generic Host lifetime assembly and the platform-binding modules here (for example `composition/stardew/stardew-guardian-platform.ts`, which encodes typed game facts into the native Guardian frame). Do not place reusable protocol or game policy in this directory: a module belongs here only when its job is binding generic infrastructure to a selected adapter.
 
+The launch preparation is one of those bindings: `prepareDesktopHostLaunch` brings the player's installation to what this generation ships, and it lives here because this layer is the one that knows which adapter a launch selects. Bootstrap wire publishes the stage and the outcome it returns as two opaque tokens (`bootstrap/** ─/→ any game, Mod, action or game recipe` above), so the wire that must stay game-free never names the game it prepares.
+
 ## Required verification
 Bootstrap wire imports only this generic seam, `bootstrap` and `containment` have no game imports, the game side imports only the containment contract, and composition remains unreachable from public entry APIs. `node tools/check-host-game-physical-seam.mjs` enforces all of it.
