@@ -1212,6 +1212,14 @@ test("GameBrowserFixtureV1 produces a connected state", () => {
 // ─── Contract exports ───────────────────────────────────────────────────────
 
 test("GameBrowserContractV1 preserves the exact versioned aggregate schema boundary", () => {
+  // The aggregate's membership has no derived authority in this module, so this list cannot be derived either: the
+  // schemas it serves are `const`s and not all of them are exported (`GameCompatibilityV1Schema` is private), so an
+  // export-surface scan cannot see the population, and `GameBrowserValidatorsV1` is built FROM this object - checking
+  // the two against each other would be the object checked against itself. What would close it: export every schema
+  // the aggregate serves, or declare the population as a descriptor this object and this list both read. Until then
+  // this is a checked-in snapshot of a versioned wire boundary, and it is why the list drifted: the event stream, the
+  // fact patch and the event itself were added to v1's aggregate without it, and the test was red until they were
+  // named here.
   assert.deepEqual(Object.keys(GameBrowserContractV1.schemas).sort(), [
     "GameAttachCommandV1Schema",
     "GameAttachmentStateV1Schema",
@@ -1227,6 +1235,9 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GameDiscoveryReadResultV1Schema",
     "GameEndgameCommandV1Schema",
     "GameEndgameResultV1Schema",
+    "GameEventStreamV1Schema",
+    "GameEventV1Schema",
+    "GameFactPatchV1Schema",
     "GameInstanceV1Schema",
     "GameLaunchCommandV1Schema",
     "GamePrerequisiteStateV1Schema",
