@@ -44,6 +44,25 @@
  *        property: a production concept is declared in production code, not only inside a test file.
  *        print: `concepts examined N · in-production P · test-only T`; `T > 0` fails, naming `file:line`.
  *
+ *   6 `a_trace_is_produced_as_its_own_fact:<kind>`
+ *        population: the wire's `$defs/executionState` union, partitioned by the TWO authorities that already
+ *        declare which receipt states are progress - the Mod's own `IsTerminal` and the Host's own
+ *        `HELD_RECEIPT_PROGRESS_STATES` - crossed with the Mod's receipt publish seam (`receiptPublished?.Invoke`).
+ *        property: a receipt state is either an OUTCOME (published once) or FOLDED into the evidence of the
+ *        receipt that settles its execution. A state neither authority calls settled must never reach the fact
+ *        stream, because the request's own response already carried it and the settlement will say what the
+ *        execution did.
+ *        print: `states examined N · outcomes O · evidence E · own-fact F · seams S`; `O + E = N` and `F > 0`
+ *        fails, naming each state and the emitting `file:line`.
+ *
+ *   7 `settlement_evidence_still_carries_them:<kind>`
+ *        population: the same folded states.
+ *        property: the fold is not a deletion - the seam RECORDS the step, CARRIES it on the settled receipt,
+ *        BOUNDS it, and COUNTS what did not fit (`steps_omitted`), so "walked 40 tiles then chopped" survives as
+ *        evidence instead of as its own message.
+ *        print: `folded states examined N · recorded R · carried C · bounded B · counted K`; anything short of N
+ *        fails, naming the state and the half that is missing.
+ *
  * ZERO POPULATION IS BLOCKED, NEVER GREEN. A derivation that finds no wire union and no transition call site agrees
  * with itself over a source tree it never opened, so an empty population prints `fact_authority_no_population: <what
  * could not be derived>` and exits 2.
@@ -117,17 +136,25 @@ for (const kind of population) {
   const bodySite = traceByBodyUnion.get(kind);
   if (bodySite !== undefined) {
     traces.push(
-      finding("progress_reported_as_a_fact", kind, `${bodySite} publishes \`${kind}\`, which the wire itself files under ` +
-        "`$defs/bodyTrace` - a trace of the body, not a change of the world. The receipt for the same execution is the answer."),
+      finding(
+        "progress_reported_as_a_fact",
+        kind,
+        `${bodySite} publishes \`${kind}\`, which the wire itself files under ` +
+          "`$defs/bodyTrace` - a trace of the body, not a change of the world. The receipt for the same execution is the answer.",
+      ),
     );
     continue;
   }
   const transitionSite = traceByTransition.get(kind);
   if (transitionSite !== undefined) {
     traces.push(
-      finding("progress_reported_as_a_fact", kind, `${transitionSite.file}:${transitionSite.line} emits \`${kind}\` on a ` +
-        `non-terminal state (${transitionSite.state}) - the body is still going, and that is body state, not news. ` +
-        "Walking belongs in the settlement's evidence or in the next snapshot, never in the fact stream."),
+      finding(
+        "progress_reported_as_a_fact",
+        kind,
+        `${transitionSite.file}:${transitionSite.line} emits \`${kind}\` on a ` +
+          `non-terminal state (${transitionSite.state}) - the body is still going, and that is body state, not news. ` +
+          "Walking belongs in the settlement's evidence or in the next snapshot, never in the fact stream.",
+      ),
     );
     continue;
   }
@@ -165,9 +192,7 @@ for (const settlement of settlements) {
   if (oneAnswer && bounded && shaped) continue;
   const failures = [
     oneAnswer ? null : "no exactly-once claim keyed by program id, so a second read answers twice",
-    settlement.hasBound
-      ? null
-      : `the row list is not bounded by a named constant${settlementOverflow(settlement)}`,
+    settlement.hasBound ? null : `the row list is not bounded by a named constant${settlementOverflow(settlement)}`,
     settlement.hasCountedRemainder
       ? null
       : `what did not fit is not COUNTED (\`omitted\`), so a long plan reads as a complete one${settlementOverflow(settlement)}`,
@@ -252,7 +277,7 @@ for (const concept of progressConcepts) {
       "progress_kinds_declared_only_in_a_test",
       concept.name,
       `${concept.test[0].file}:${concept.test[0].line} is the only declaration of \`${concept.name}\` in this tree, so ` +
-        "the production notion of \"progress\" exists nowhere the product can read it - a concept a test owns is a " +
+        'the production notion of "progress" exists nowhere the product can read it - a concept a test owns is a ' +
         "concept production cannot enforce.",
     ),
   );
@@ -265,6 +290,119 @@ const checkFive = {
 report.checks.progress_kinds_declared_only_in_a_test = checkFive;
 if (progressConcepts.length === 0) blocked("no progress concept could be derived from the tree");
 if (checkFive.testOnly > 0) findings.push(...testOnly);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Check 6 · a_trace_is_produced_as_its_own_fact
+// ---------------------------------------------------------------------------------------------------------------
+const receiptStates = readReceiptStates();
+const seam = readReceiptPublishSeam();
+const ownFacts = [];
+for (const state of receiptStates.partition.disagreed)
+  ownFacts.push(
+    finding(
+      "a_trace_is_produced_as_its_own_fact",
+      state,
+      receiptStates.partition.disagreement(state) +
+        " - two authorities disagree about whether this state is a settled receipt, and a state that is progress in " +
+        "one of them and an outcome in the other is a flood waiting for the day the two are read by different modules.",
+    ),
+  );
+for (const state of receiptStates.partition.progress) {
+  if (seam.everyPublishIsGuarded) continue;
+  ownFacts.push(
+    finding(
+      "a_trace_is_produced_as_its_own_fact",
+      state,
+      seam.unguarded.file +
+        ":" +
+        String(seam.unguarded.line) +
+        " hands every receipt to the fact stream, `" +
+        state +
+        "` included. That state is a body trace in both authorities that declare one, the request's own response " +
+        "already carried it, and the receipt that SETTLES the execution is the answer - so this is one execution " +
+        "answered twice, which the pump then holds latest-only and never uses.",
+    ),
+  );
+}
+if (seam.count !== 1)
+  ownFacts.push(
+    finding(
+      "a_trace_is_produced_as_its_own_fact",
+      "publish_seam",
+      String(seam.count) +
+        " receipt publish seams were found in " +
+        MOD_ROOT +
+        " (" +
+        seam.sites.map((site) => site.file + ":" + String(site.line)).join(", ") +
+        "). One funnel is what makes the fold drainable; a second path around it publishes receipts nothing folds.",
+    ),
+  );
+const checkSix = {
+  examined: receiptStates.wire.length,
+  outcomes: receiptStates.partition.terminal.length,
+  evidence: receiptStates.partition.progress.length,
+  ownFact: ownFacts.length,
+  seams: seam.count,
+};
+report.checks.a_trace_is_produced_as_its_own_fact = checkSix;
+if (receiptStates.wire.length === 0) blocked("the wire declares no `$defs/executionState` union to partition");
+if (checkSix.outcomes + checkSix.evidence !== checkSix.examined)
+  findings.push(
+    finding(
+      "a_trace_is_produced_as_its_own_fact",
+      "partition",
+      String(checkSix.examined) +
+        " wire states, " +
+        String(checkSix.outcomes) +
+        " outcomes and " +
+        String(checkSix.evidence) +
+        " folded states, which does not add up - a state in neither half is a state " +
+        "nobody decided about.",
+    ),
+  );
+if (ownFacts.length > 0) findings.push(...ownFacts);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Check 7 · settlement_evidence_still_carries_them
+// ---------------------------------------------------------------------------------------------------------------
+const fold = readTraceFold();
+const unfolded = [];
+for (const state of receiptStates.partition.progress) {
+  const missing = [
+    fold.recorded ? null : "the trace is not RECORDED against its execution (`RecordTraceStep`)",
+    fold.carried ? null : "the settled receipt does not CARRY the recorded steps (`CarryTraceSteps`)",
+    fold.bounded
+      ? null
+      : "the fold is unbounded, so one long walk can overflow the receipt frame and lose the settlement (" +
+        fold.boundReading +
+        ")",
+    fold.counted ? null : "what did not fit is not COUNTED (`steps_omitted`), so a truncated walk reads as a whole one",
+    fold.named ? null : "the settlement does not say how many steps it folded (`steps=N`)",
+  ].filter((entry) => entry !== null);
+  if (missing.length === 0) continue;
+  unfolded.push(
+    finding(
+      "settlement_evidence_still_carries_them",
+      state,
+      fold.file +
+        " does not carry `" +
+        state +
+        "` into the settlement that settles its execution: " +
+        missing.join("; ") +
+        ". A deletion that loses the information is not the fix; a deletion that moves it into evidence is.",
+    ),
+  );
+}
+const checkSeven = {
+  examined: receiptStates.partition.progress.length,
+  recorded: fold.recorded ? checkSix.evidence : 0,
+  carried: fold.carried ? checkSix.evidence : 0,
+  bounded: fold.bounded ? checkSix.evidence : 0,
+  counted: fold.counted && fold.named ? checkSix.evidence : 0,
+};
+report.checks.settlement_evidence_still_carries_them = checkSeven;
+if (checkSeven.examined === 0) blocked("no receipt state is folded, so there is no evidence fold to read");
+if (unfolded.length > 0) findings.push(...unfolded);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Verdict
@@ -475,6 +613,149 @@ function readDeliveryAccount() {
   return { file: COMPANION_LOOP, line: lineOf(text, at), counted };
 }
 
+/**
+ * Which receipt states the wire admits, and which of them are settled - asked of the TWO authorities that already answer.
+ *
+ * Neither answer is restated here. The MOD's `IsTerminal` names the states that have not ended; the HOST's
+ * `HELD_RECEIPT_PROGRESS_STATES` names the ones its pump holds latest-only because they never open a turn. A state one
+ * of them calls progress and the other calls an outcome is the defect this check exists for, so the disagreement is a
+ * finding of its own rather than a tie broken silently.
+ */
+function readReceiptStates() {
+  const wireStates = readWire().receiptStates;
+  const modProgress = [...readNonTerminalStates()].map(toWireStateToken).sort();
+  const hostHeld = readHostHeldReceiptStates();
+  const progress = unionSorted([...modProgress, ...hostHeld]);
+  const terminal = wireStates.filter((state) => !progress.includes(state));
+  const disagreed = progress.filter((state) => !(modProgress.includes(state) && hostHeld.includes(state)));
+  return {
+    wire: wireStates,
+    partition: {
+      progress,
+      terminal,
+      disagreed,
+      disagreement(state) {
+        const inMod = modProgress.includes(state);
+        const inHost = hostHeld.includes(state);
+        const sides = [
+          inMod ? null : `${EXECUTION_STATES} IsTerminal calls it settled`,
+          inHost ? null : `${EVENT_PUMP} HELD_RECEIPT_PROGRESS_STATES does not know it`,
+        ].filter((entry) => entry !== null);
+        return (
+          "`" +
+          state +
+          "` is progress in " +
+          (inMod ? "the Mod" : "the Host") +
+          " but not in " +
+          (inMod ? "the Host" : "the Mod") +
+          ": " +
+          sides.join("; ")
+        );
+      },
+    },
+  };
+}
+
+/** The Host's own declaration of "this receipt state never opens a turn": the table `TRACE_KINDS` is derived from. */
+function readHostHeldReceiptStates() {
+  const path = join(ROOT, EVENT_PUMP);
+  if (!existsSync(path)) blocked(`${EVENT_PUMP} does not exist`);
+  const text = readFileSync(path, "utf8");
+  const at = text.indexOf("export const HELD_RECEIPT_PROGRESS_STATES");
+  if (at < 0) blocked(`${EVENT_PUMP} no longer declares which receipt states it holds as progress`);
+  const end = text.indexOf("});", at);
+  if (end < 0) blocked(`${EVENT_PUMP} declares HELD_RECEIPT_PROGRESS_STATES without a table body`);
+  return [...text.slice(at, end).matchAll(/(?:^|\n)\s{2}([a-z0-9_]+):/gu)].map((match) => match[1]).sort();
+}
+
+/** `ExecutionState.MeaningfulProgress` -> `meaningful_progress`, which is how the wire spells the same member. */
+function toWireStateToken(name) {
+  return name.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase();
+}
+
+/**
+ * Where a receipt leaves the Mod, and whether the terminality predicate is what decides.
+ *
+ * Population: every `receiptPublished?.Invoke(...)` in the Mod's production sources. Property: each one is guarded by
+ * a branch whose condition is the producer's OWN `IsTerminal()`, either inline or through a local assigned from it.
+ */
+function readReceiptPublishSeam() {
+  const files = walkProductionFiles(MOD_ROOT, (name) => name.endsWith(".cs"));
+  const terminalityLocals = new Set();
+  const sites = [];
+  for (const file of files) {
+    const text = readFileSync(join(ROOT, file), "utf8");
+    for (const match of text.matchAll(/(\w+)\s*=\s*[\w.?]*\.IsTerminal\(\)/gu))
+      terminalityLocals.add(`${file}:${match[1]}`);
+    for (const match of text.matchAll(/receiptPublished\??\.Invoke\(/gu))
+      sites.push({ file, index: match.index, line: lineOf(text, match.index), text });
+  }
+  let guardedCount = 0;
+  let unguarded = null;
+  for (const site of sites) {
+    if (publishIsGuardedByTerminality(site, terminalityLocals)) guardedCount += 1;
+    else if (unguarded === null) unguarded = { file: site.file, line: site.line };
+  }
+  return {
+    count: sites.length,
+    sites,
+    unguarded: unguarded ?? sites.at(0) ?? { file: `${MOD_ROOT}/farmhandexecutioncontroller.cs`, line: 0 },
+    everyPublishIsGuarded: sites.length > 0 && guardedCount === sites.length,
+  };
+}
+
+/** The lines above a publish: `if (settled)` where `settled` came from `IsTerminal()`, or the call inline. */
+function publishIsGuardedByTerminality(site, terminalityLocals) {
+  const before = site.text
+    .slice(Math.max(0, site.index - 400), site.index)
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  for (const line of before.slice(-3)) {
+    if (/\.IsTerminal\(\)/u.test(line)) return true;
+    const guard = /if\s*\(\s*!?\s*(\w+)\s*\)/u.exec(line);
+    if (guard !== null && terminalityLocals.has(`${site.file}:${guard[1]}`)) return true;
+  }
+  return false;
+}
+
+/**
+ * The fold that has to replace the traces: recorded against the execution, carried on the settled receipt, BOUNDED and
+ * COUNTED. A deletion without this half loses the walk it was meant to move.
+ */
+function readTraceFold() {
+  const files = walkProductionFiles(MOD_ROOT, (name) => name.endsWith(".cs"));
+  let text = "";
+  let file = `${MOD_ROOT}/farmhandexecutioncontroller.cs`;
+  for (const candidate of files) {
+    const body = readFileSync(join(ROOT, candidate), "utf8");
+    if (!body.includes("receiptPublished")) continue;
+    text = body;
+    file = candidate;
+    break;
+  }
+  const stepsBound = /MaximumFoldedTraceSteps\s*=\s*\d+/u.test(text);
+  const charsBound = /MaximumFoldedTraceChars\s*=\s*\d+/u.test(text);
+  const consultsSteps = /steps\.Count\s*==\s*MaximumFoldedTraceSteps/u.test(text);
+  const consultsChars = /characters\s*\+\s*step\.Length\s*>\s*MaximumFoldedTraceChars/u.test(text);
+  return {
+    file,
+    recorded: /RecordTraceStep\(/u.test(text),
+    carried: /=\s*this\.CarryTraceSteps\(/u.test(text),
+    bounded: stepsBound && charsBound && consultsSteps && consultsChars,
+    boundReading:
+      "steps: " +
+      (stepsBound ? "named" : "absent") +
+      ", chars: " +
+      (charsBound ? "named" : "absent") +
+      ", steps consulted: " +
+      (consultsSteps ? "yes" : "no") +
+      ", chars consulted: " +
+      (consultsChars ? "yes" : "no"),
+    counted: /Omitted\+\+/u.test(text) && /steps_omitted=/u.test(text),
+    named: /\bfolded=/u.test(text),
+  };
+}
+
 /** Every `*PROGRESS*` set declaration in this tree, split by whether production code declares it. */
 function readProgressConcepts() {
   const files = walkProductionFiles("host/src", (name) => /\.ts$|\.mts$/u.test(name));
@@ -547,7 +828,9 @@ function settlementOverflow(settlement) {
   const shown = Math.min(rows, settlement.boundValue);
   return (
     `: over ${rows} rows it shows ${shown}` +
-    (rows > shown ? ` and ${rows - shown} must be COUNTED (\`… ${rows} shown ${shown}\`), never dropped in silence` : "")
+    (rows > shown
+      ? ` and ${rows - shown} must be COUNTED (\`… ${rows} shown ${shown}\`), never dropped in silence`
+      : "")
   );
 }
 

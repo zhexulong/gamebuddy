@@ -41,6 +41,27 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
+
+    /// <summary>
+    /// How many body-trace steps one settled receipt carries.
+    ///
+    /// Bounded because a receipt is ONE frame and a frame over <see cref="BridgeProtocol.MaximumMessageBytes"/> is
+    /// dropped, so an unbounded fold would lose the settlement it was folded into. What does not fit is COUNTED
+    /// (<c>steps_omitted</c>), never dropped in silence.
+    /// </summary>
+    internal const int MaximumFoldedTraceSteps = 8;
+
+    /// <summary>How many characters the folded field may spend, for the same reason as <see cref="MaximumFoldedTraceSteps"/>.</summary>
+    internal const int MaximumFoldedTraceChars = 1024;
+
+    /// <summary>
+    /// The body-trace transitions each live execution has produced, waiting for the receipt that settles it.
+    ///
+    /// Drained by <see cref="CarryTraceSteps"/> on the execution's terminal and by eviction on the store's own bound, because
+    /// an execution that never settles (a request whose dispatch was abandoned) must not accumulate forever.
+    /// </summary>
+    private readonly Dictionary<string, FoldedTraceSteps> traceStepsByExecutionId = new(StringComparer.Ordinal);
+    private readonly Queue<string> traceStepOrder = new();
     private LocalMoveSpec? active => this.slots.Active.Peek();
     private LocalTravelSpec? activeTravel => this.slots.Travel.Peek();
     private LocalPettingSpec? activePet => this.slots.Pet.Peek();
@@ -3214,12 +3235,54 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<string> nativeNotices) =>
         this.ledger.AttachNativeNotices(receipt, nativeNotices);
 
+    /// <summary>
+    /// The ONE place a receipt leaves this Mod, and the ONE decision about which receipts are news.
+    ///
+    /// <para>
+    /// ONE RECEIPT PER EXECUTION, AND IT IS THE SETTLED ONE. A progress transition (<c>Accepted</c>,
+    /// <c>Running</c>, <c>MeaningfulProgress</c>) is the body narrating itself: the request's own response already
+    /// carried it on the wire (<see cref="BridgeSession.TryExecute"/> answers the dispatch with the receipt it just
+    /// minted), and the settlement will say what the execution DID. Publishing it again is the same execution
+    /// answered twice - the flood the pump then holds latest-only and never uses.
+    /// </para>
+    /// <para>
+    /// So a progress transition is FOLDED into the settlement's evidence instead of published. That is also the only
+    /// way a progress transition can no longer arrive AFTER the terminal it belongs to: measured 2026-11-17
+    /// (<c>round66</c>, <c>cut_weeds</c>, execution <c>6a9da5e0…-exec-r1c3</c>) a <c>rejected</c> at revision 840 was
+    /// followed by <c>tool_approach_completed</c> at 842 for the same execution, and the Host's receipt-order audit
+    /// ended the whole session with <c>execution_receipt_replay_rejected:terminal_state_rewritten</c>. A receipt that
+    /// is never published cannot be a second state.
+    /// </para>
+    /// <para>
+    /// The stored receipt still passes through every other step of this funnel - durability, the ledger, the revision
+    /// bookkeeping - because the ledger is what a replay, an exact receipt query and a held request read, and folding
+    /// the step into the SETTLED receipt happens before it is stored, so what is published and what is stored are the
+    /// same bytes.
+    /// </para>
+    /// <para>
+    /// AND A SETTLED EXECUTION IS NEVER ANSWERED AGAIN. The progress transition in <c>round66</c> did not merely follow
+    /// the terminal in the fact stream, it would also have OVERWRITTEN the ledger: the same funnel stores every receipt
+    /// it is handed, so a late <c>running</c> replaces a stored <c>rejected</c> and every later reader - an exact
+    /// receipt query, an idempotent replay, a held request - answers with a state the execution already left. So a
+    /// progress transition for a request that already settled is dropped here, and the settled receipt is what the
+    /// caller gets back.
+    /// </para>
+    /// </summary>
     private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
         if (receipt.ActionId is null && this.ledger.TryGetActionId(receipt.RequestId, out string boundActionId))
             receipt = receipt with { ActionId = boundActionId };
+        if (!receipt.State.IsTerminal()
+            && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? answered)
+            && answered.State.IsTerminal())
+            return answered;
+        bool settled = receipt.State.IsTerminal();
+        if (settled)
+            receipt = this.CarryTraceSteps(receipt);
+        else
+            this.RecordTraceStep(receipt);
         if (this.admission.TryGetDurableAdmission(receipt.RequestId, out FarmhandExecutionAdmission admission)
             && this.executionJournal is not null)
         {
@@ -3266,9 +3329,87 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
-        this.receiptPublished?.Invoke(published);
+        if (settled)
+            this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
         return published;
+    }
+
+    /// <summary>
+    /// Records one body-trace transition against its execution, to be carried by the receipt that settles it.
+    ///
+    /// <para>
+    /// The step names WHAT the body did and where, in the producer's own words: <c>accepted@route_revision=1,target=3,11</c>,
+    /// <c>tool_approach_completed@tile=9,22</c>. The separators inside a step are commas so that one step stays one
+    /// token in the `;`-separated evidence the receipt already carries - a step that carried its own `;` would read as
+    /// two fields of the settlement.
+    /// </para>
+    /// </summary>
+    private void RecordTraceStep(LocalExecutionReceipt trace)
+    {
+        if (!this.traceStepsByExecutionId.TryGetValue(trace.ExecutionId, out FoldedTraceSteps? folded))
+        {
+            this.traceStepsByExecutionId[trace.ExecutionId] = folded = new FoldedTraceSteps();
+            this.traceStepOrder.Enqueue(trace.ExecutionId);
+            while (this.traceStepOrder.Count > ExecutionReceiptStore.MaximumRememberedReceipts)
+                this.traceStepsByExecutionId.Remove(this.traceStepOrder.Dequeue());
+        }
+        folded.Add(DescribeTraceStep(trace));
+    }
+
+    /// <summary>
+    /// Spends this execution's folded steps on the receipt that settles it: COUNTED, bounded, and named.
+    ///
+    /// A settled receipt's own evidence is what the settlement says happened; the folded steps are the walk that got
+    /// there. <c>steps=3;folded=accepted@…|tool_approach_completed@…</c> is the sentence the fold owes the reader, and
+    /// <c>steps_omitted</c> is the part of it that did not fit - an omitted count of zero is absent rather than
+    /// spelled, so a settlement inside the bound says nothing about a bound.
+    /// </summary>
+    private LocalExecutionReceipt CarryTraceSteps(LocalExecutionReceipt settled)
+    {
+        if (!this.traceStepsByExecutionId.Remove(settled.ExecutionId, out FoldedTraceSteps? folded) || folded.IsEmpty)
+            return settled;
+        string carried = folded.Render();
+        return settled with
+        {
+            Evidence = string.IsNullOrEmpty(settled.Evidence) ? carried : $"{settled.Evidence};{carried}",
+        };
+    }
+
+    private static string DescribeTraceStep(LocalExecutionReceipt trace) =>
+        trace.Evidence is null ? trace.ReasonCode : $"{trace.ReasonCode}@{trace.Evidence.Replace(';', ',')}";
+
+    /// <summary>
+    /// One execution's body-trace transitions, bounded by <see cref="MaximumFoldedTraceSteps"/> and
+    /// <see cref="MaximumFoldedTraceChars"/>, with the overflow COUNTED so a long walk still reads as a long walk.
+    /// </summary>
+    private sealed class FoldedTraceSteps
+    {
+        private readonly List<string> steps = new(MaximumFoldedTraceSteps);
+        private int characters;
+
+        internal bool IsEmpty => this.steps.Count == 0 && this.Omitted == 0;
+
+        internal int Omitted { get; private set; }
+
+        internal void Add(string step)
+        {
+            if (this.steps.Count == MaximumFoldedTraceSteps || this.characters + step.Length > MaximumFoldedTraceChars)
+            {
+                this.Omitted++;
+                return;
+            }
+            this.characters += step.Length;
+            this.steps.Add(step);
+        }
+
+        internal string Render()
+        {
+            string counted = $"steps={this.steps.Count + this.Omitted}";
+            string listed = this.steps.Count == 0 ? string.Empty : $";folded={string.Join("|", this.steps)}";
+            string omitted = this.Omitted == 0 ? string.Empty : $";steps_omitted={this.Omitted}";
+            return $"{counted}{listed}{omitted}";
+        }
     }
 
     private bool HasOwnership(string executionId) => this.slots.OwnsAny(executionId);
