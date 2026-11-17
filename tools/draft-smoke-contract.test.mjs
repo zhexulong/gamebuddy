@@ -101,13 +101,19 @@ test("the population is the directory, so a runner written tomorrow is measured 
 });
 
 test("a drafted contract is written to a directory, and a complete runner refuses nothing", async () => {
-  const toolsRoot = toolsDirectory({ "run-stardew-native-local-player-shake-tree-smoke.mjs": DERIVABLE });
+  const runner = "run-stardew-native-local-player-shake-tree-smoke.mjs";
+  const toolsRoot = toolsDirectory({ [runner]: DERIVABLE });
   const outDir = mkdtempSync(join(tmpdir(), "draft-out-"));
   const reading = await draftAll({ toolsRoot, outDir });
   assert.equal(reading.blocked, null);
   assert.equal(reading.examined, 1, "one runner examined");
   assert.equal(reading.refusals.length, 0, "this runner derives completely");
-  assert.equal(readdirSync(outDir).length, 1, "one contract written to the directory");
+  // The file the write produced, named against the action the draft itself read out of the runner.
+  assert.deepEqual(
+    readdirSync(outDir),
+    [`${draftContract(join(toolsRoot, runner)).action}.json`],
+    "one contract written to the directory, named for the action it drafts",
+  );
 });
 
 test("a field the converter cannot read is refused by name, and the mode exits non-zero", async () => {

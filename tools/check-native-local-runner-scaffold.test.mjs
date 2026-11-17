@@ -47,6 +47,7 @@ import {
 } from "./check-native-local-runner-scaffold.mjs";
 import { defineSmokeScenario, projectSnapshotForBlockedReport } from "./lib/native-local-runner-scaffold.mjs";
 import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
+import { describeMemberDiff } from "./lib/member-diff.mjs";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
 const MIGRATED = "tools/run-stardew-native-local-player-sweep-scythe-smoke.mjs";
@@ -164,11 +165,21 @@ test("the population excludes the template, the template's own home, and every f
 
 test("the baseline records the runners that predate the template, each with its reason, and nothing else", () => {
   const baseline = readBaseline({ root: REPOSITORY_ROOT });
-  assert.equal(baseline.length, 130, "the measured number of runners that predate the template");
+  // Both sides derived: the directory scan names the runners, and the gate's own reading of each one says whether it still
+  // conforms. The baseline is the conforming population's complement, so a runner that migrates - or a hand-written one
+  // that arrives - is a named member here instead of a count that moved.
+  const handWritten = runnerFiles({ root: REPOSITORY_ROOT }).filter(
+    (file) => !readRunner(readFileSync(resolve(REPOSITORY_ROOT, file), "utf8")).conforming,
+  );
+  const baselined = baseline.map((entry) => entry.file);
+  assert.deepEqual(
+    new Set(baselined),
+    new Set(handWritten),
+    describeMemberDiff("the baseline's runners", baselined, handWritten) ||
+      "the baseline is exactly the runners that do not conform to the template, and nothing else",
+  );
   for (const entry of baseline) assert.equal(entry.reason, BASELINE_REASON, `${entry.file} carries ${entry.reason}`);
   assert.ok(!baseline.some((entry) => entry.file === MIGRATED), "the migrated runner left the baseline");
-  const population = new Set(runnerFiles({ root: REPOSITORY_ROOT }));
-  for (const entry of baseline) assert.ok(population.has(entry.file), `${entry.file} is baselined but not a runner`);
   assert.equal(BASELINE_PATH, "tools/baselines/native-local-runner-scaffold.json");
 });
 

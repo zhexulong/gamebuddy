@@ -49,24 +49,6 @@
       "reason": "[not-a-population] a character count of `process.env.GAMEBUDDY_STARDEW_GAME_PATH`; it asks whether an environment variable is set, and a string has no members for `new Set(actual)` to name."
     },
     {
-      "file": "host/src/body-program-for-each.test.ts",
-      "authority": "rules",
-      "literal": "3",
-      "shape": "unresolved",
-      "sites": 1,
-      "line": 179,
-      "reason": "[derivable-now] the `assert.deepEqual(rules.map((rule) => rule.do), [three entries])` two lines below already pins the cardinality. Deleting this count loses nothing; it is the `redundant-count` shape closed three times tonight."
-    },
-    {
-      "file": "host/src/body-program-for-each.test.ts",
-      "authority": "forEachRules(loopOf(node))",
-      "literal": "1",
-      "shape": "call_result",
-      "sites": 1,
-      "line": 200,
-      "reason": "[derivable-now] inside a loop over the two parsed nodes: `deepEqual(forEachRules(loopOf(node)).map((rule) => rule.do), [<the one rule>])` names the rule per node, which is the fact the count restates."
-    },
-    {
       "file": "host/src/bootstrap/entry/desktop-host-entry.internal.test.ts",
       "authority": "line",
       "literal": "0",

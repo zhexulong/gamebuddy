@@ -113,8 +113,11 @@ function verdictOf({ selectors = [], declaration, sources = 1 }) {
 
 test("the shape that shipped is a numeric selector over action ids, and the gate calls it a name list", async () => {
   const selectors = await selectorsOf(NAME_LIST_SOURCE);
-  assert.equal(selectors.length, 1, "the ternary must be read");
-  assert.deepEqual(selectors[0]?.ids.sort(), ["navigate_to_destination", "sleep"]);
+  assert.deepEqual(
+    selectors.map((selector) => [...selector.ids].sort()),
+    [["navigate_to_destination", "sleep"]],
+    "the ternary must be read, and both actions it chooses between are named",
+  );
   assert.equal(selectors[0]?.yieldsWindow, true, "it chooses 600_000 / 60_000, so it is a deadline ceiling by name");
 
   const verdict = verdictOf({
@@ -155,7 +158,11 @@ test("the declaration that replaced it is read as a table, and yields no name li
 
 test("a selector that chooses a STRING is not a deadline ceiling, and is counted apart", async () => {
   const selectors = await selectorsOf(STRING_SELECTOR_SOURCE);
-  assert.equal(selectors.length, 1);
+  assert.deepEqual(
+    selectors.map((selector) => [...selector.ids].sort()),
+    [["observe_scene"]],
+    "the string chooser is read as one selector, naming the action it chooses a label for",
+  );
   assert.equal(selectors[0]?.yieldsWindow, false);
   const verdict = verdictOf({ declaration: await declaredOf(), selectors });
   assert.equal(verdict.status, "passed", "a label chooser must not be reported as a deadline ceiling");

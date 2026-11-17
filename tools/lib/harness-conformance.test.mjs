@@ -234,10 +234,13 @@ test("two files deriving one classification key are named, not judged by one led
 // the path compared against the ledger, every `gates/<domain>/` gate was `gate_without_falsifier` AND every ledger
 // row for one was `falsifier_entry_stale`. Two of the fourteen were in neither table at all, so the classification was
 // only half the fix - the rows for them are the other half.
-test("the fourteen gates filed under a domain directory are classified, and no row for them is stale", () => {
+test("every gate filed under a domain directory is classified, and no row for them is stale", () => {
   const names = harnessGateNames(repoRoot);
   const moved = names.filter((name) => name.startsWith("gates/"));
-  assert.equal(moved.length, 14, "the `meta` domain's gates");
+  assert.ok(
+    moved.length > 0,
+    "a domain directory with no gate would make the finding below vacuous: it is empty, so this test proved nothing",
+  );
   const report = '{"gate":"stub","status":"passed","examined":1,"checks":[{"id":"a","status":"passed"}]}';
   assert.deepEqual(
     checkGateFalsifiers({ gateNames: moved, root: repoRoot, run: () => ({ status: 0, stdout: report }) }),

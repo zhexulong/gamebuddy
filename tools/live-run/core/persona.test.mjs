@@ -26,6 +26,17 @@ import {
 } from "./persona.mjs";
 
 /**
+ * A preset that declares no surface at all: as many surfaces as an empty list. The model-named card this unit was built
+ * for is one of these, so every assertion about that bucket reads the same predicate instead of spelling `length === 0`.
+ */
+const NO_SURFACES = Object.freeze([]);
+const declaresNothing = (entry) => entry.surfaces.length === NO_SURFACES.length;
+
+/** What each preset in a population says about itself, for a failure message that names members rather than a count. */
+const censusOf = (declarations) =>
+  declarations.map((entry) => `${entry.file}: ${entry.surfaces.join("+") || "no surface"}`).join("; ");
+
+/**
  * The persona is COMPILED by the product's own modules, so every test that provisions needs a built
  * Host — the same precondition the live-run loops themselves have. The assertion that catches a
  * placeholder identity needs no build: it reads the two files it compares.
@@ -81,22 +92,24 @@ test("the generation preset is the one whose own declaration is this surface's -
     "an empty preset population agrees with itself; the binding must be read from real declarations",
   );
   const declaring = declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE));
-  assert.equal(
-    declaring.length,
-    1,
-    `examined ${declarations.length} preset(s): ${declaring.length} declare ${LIVE_RUN_SURFACE}`,
-  );
+  // Named, not counted. The binding refuses an ambiguous or a missing surface by naming every preset and what it declares,
+  // so both directions of drift read as members: two declarers are the refusal's candidate list, none is its census.
   const resolved = resolveLiveRunGenerationPreset();
-  assert.equal(resolved.file, declaring[0].file);
+  assert.deepEqual(
+    declaring.map((entry) => entry.file),
+    [resolved.file],
+    `examined ${declarations.length} preset(s): the run mounts ${resolved.file}, so that file alone may declare ` +
+      `${LIVE_RUN_SURFACE} - declaring: [${declaring.map((entry) => entry.file).join(", ")}]`,
+  );
   assert.equal(resolved.surface, LIVE_RUN_SURFACE);
   // The file provisioning copies IS the resolved one - the same fact, read through the path the run uses.
   assert.equal(path.basename(liveRunPersonaPaths().presetPath), resolved.file);
   // A preset that names no surface must exist in the population, and must not be the binding: that pairing is the
   // whole unit, and without it this test would pass on a directory where every preset declared the same thing.
   assert.ok(
-    declarations.some((entry) => entry.surfaces.length === 0),
+    declarations.filter(declaresNothing).length > 0,
     `examined ${declarations.length} preset(s) and found none that declares no surface, so the model-named case this \
-unit was built for is no longer represented`,
+unit was built for is no longer represented: [${censusOf(declarations)}]`,
   );
   assert.ok(
     declarations.some((entry) => entry.surfaces.length > 0 && !entry.surfaces.includes(LIVE_RUN_SURFACE)),
@@ -422,17 +435,22 @@ test("the gate on the real tree: the run mounts the preset whose own declaration
   const resolved = resolveLiveRunGenerationPreset();
   assert.equal(assessment.binding, resolved.file);
   assert.equal(assessment.bindingSurface, LIVE_RUN_SURFACE);
-  assert.equal(assessment.declaredNone, declarations.filter((entry) => entry.surfaces.length === 0).length);
+  const declaringNothing = declarations.filter(declaresNothing);
+  assert.equal(assessment.declaredNone, declaringNothing.length, "the gate's own census of the surfaceless presets");
   // The file that produced the defect is IN the "declares none" bucket, classified by its own text, so a reader of the
   // census sees the model-named preset rather than a number that hides it.
-  assert.ok(
-    declarations.filter((entry) => entry.surfaces.length === 0).some((entry) => entry.name !== null),
-    `examined ${declarations.length} preset(s): every one that declares no surface must still carry the name that says why`,
+  assert.deepEqual(
+    declaringNothing.filter((entry) => entry.name === null).map((entry) => entry.file),
+    [],
+    `examined ${declarations.length} preset(s): every one that declares no surface must still carry the name that says ` +
+      `why, and these do not: [${censusOf(declaringNothing)}]`,
   );
-  assert.equal(
-    declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE)).length,
-    1,
-    `exactly one preset may declare ${LIVE_RUN_SURFACE}`,
+  const declaringSurface = declarations.filter((entry) => entry.surfaces.includes(LIVE_RUN_SURFACE));
+  assert.deepEqual(
+    declaringSurface.map((entry) => entry.file),
+    [resolved.file],
+    `exactly one preset may declare ${LIVE_RUN_SURFACE}, and the run must mount it - declaring: ` +
+      `[${declaringSurface.map((entry) => entry.file).join(", ")}]`,
   );
 });
 
