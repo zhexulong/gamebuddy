@@ -72,7 +72,7 @@ public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
         }
 
         var firstSettlement = await first.SettleAsync();
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, firstSettlement.Exit);
+        Assert.True(firstSettlement.SettledAsGone, $"attempt-1 pid {first.Pid} was not proven gone by its own settlement");
         Assert.True(firstSettlement.Gone, $"attempt-1 pid {first.Pid} still exists after settlement");
         Assert.False(NamedObjectProbe.LeaseExists(first.Identity.LeaseName), $"attempt-1 lease mutex outlived its Guardian: {first.Identity.LeaseName}");
         Assert.False(NamedObjectProbe.JobExists(first.Identity.PlayerJobName), $"attempt-1 player Job outlived its Guardian: {first.Identity.PlayerJobName}");
@@ -84,7 +84,7 @@ public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
         Assert.False(NamedObjectProbe.LeaseExists(first.Identity.LeaseName), $"attempt-2 still sees attempt-1's lease mutex: {first.Identity.LeaseName}");
 
         var secondSettlement = await second.SettleAsync();
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, secondSettlement.Exit);
+        Assert.True(secondSettlement.SettledAsGone, $"attempt-2 pid {second.Pid} was not proven gone by its own settlement");
         Assert.True(secondSettlement.Gone, $"attempt-2 pid {second.Pid} still exists after settlement");
         Assert.False(NamedObjectProbe.LeaseExists(second.Identity.LeaseName), $"attempt-2 lease mutex outlived its Guardian: {second.Identity.LeaseName}");
         Assert.False(NamedObjectProbe.JobExists(second.Identity.PlayerJobName), $"attempt-2 player Job outlived its Guardian: {second.Identity.PlayerJobName}");
@@ -222,13 +222,14 @@ public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
         internal async Task<AttemptSettlement> SettleAsync()
         {
             var clock = Stopwatch.StartNew();
-            await lease.CloseControlAsync(CancellationToken.None);
-            var exit = await lease.WaitForExitAsync(CancellationToken.None);
+            var settledAsGone = await lease.SettleAsync();
             var wait = clock.Elapsed;
             var exitCode = await WaitForExitCodeAsync(processHandle, TimeSpan.FromSeconds(30));
+            // The lease's own answer is cross-checked against the process table, which knows nothing
+            // about the handle the launcher holds.
             var gone = !LivePid(Pid);
-            var settlement = new AttemptSettlement(exit, exitCode, gone, wait);
-            output.WriteLine($"{Label}: exit={settlement.Exit} exit-code={settlement.ExitCode} gone={settlement.Gone} wait-for-exit={settlement.Wait.TotalMilliseconds:F0}ms");
+            var settlement = new AttemptSettlement(settledAsGone, exitCode, gone, wait);
+            output.WriteLine($"{Label}: settled-as-gone={settledAsGone} exit-code={settlement.ExitCode} gone={settlement.Gone} settle={settlement.Wait.TotalMilliseconds:F0}ms");
             return settlement;
         }
 
@@ -266,7 +267,7 @@ public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
         }
     }
 
-    private sealed record AttemptSettlement(GuardianSupervisorExit Exit, uint ExitCode, bool Gone, TimeSpan Wait);
+    private sealed record AttemptSettlement(bool SettledAsGone, uint ExitCode, bool Gone, TimeSpan Wait);
 
     /// <summary>
     /// A read-only query handle on one pid, opened while the process is alive so its exit code

@@ -193,6 +193,8 @@ internal sealed record GuardianProcessResources(WindowsNative.SafeProcessHandle 
 internal sealed class GuardianSupervisorLease : IAsyncDisposable
 {
     private const int MaxNativeFrameBytes = 16_384;
+    // FILETIME's zero point is 1601-01-01; the Unix epoch is this many 100 ns ticks after it.
+    private const long UnixEpochFileTimeTicks = 116_444_736_000_000_000;
     private SafeFileHandle? controlWriter;
     private SafeFileHandle? publicOutput;
     private readonly WindowsNative.SafeProcessHandle process;
@@ -211,9 +213,22 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         privateIngress = resources.PrivateIngress;
         controlClosedForTesting = resources.ControlClosedForTesting;
         ExecutablePath = resources.ExecutablePath;
+        Pid = WindowsNative.GetProcessId(process);
+        StartedAtUnixMs = ReadStartedAtUnixMs(process);
     }
 
     internal string ExecutablePath { get; }
+
+    /// <summary>The one pid this lease owns. A pid is never identity on its own: see <see cref="StartedAtUnixMs"/>.</summary>
+    internal uint Pid { get; }
+
+    /// <summary>
+    /// This process's own start instant in Unix milliseconds, as the OS reports it for the exact
+    /// handle this lease holds - or 0 when the OS would not say. Together with the pid and
+    /// <see cref="ExecutablePath"/> it is what a record left behind by this launch can be held against
+    /// later: a reused pid starts at a different instant, so the record can never name the wrong process.
+    /// </summary>
+    internal long StartedAtUnixMs { get; }
 
     internal async Task<GuardianRelayResult> RelayResidentAsync(GuardianRelayCommand command, CancellationToken cancellationToken)
     {
@@ -273,6 +288,35 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Ends this resident Guardian and answers whether the exact process is GONE.
+    ///
+    /// The exit code is deliberately not part of the answer. On control EOF the native Guardian
+    /// leaves with a failure code on every path, the legitimate one included (ADR-0015 §2.4,
+    /// measured through the launcher's own anonymous pipes), so a code - or the absence of one -
+    /// proves nothing. What does prove something is the process object this lease holds: signalled at
+    /// WAIT_OBJECT_0, which no later process that reuses the pid can imitate.
+    ///
+    /// The sequence is the same one this class has always run at teardown, now with its verdict named:
+    /// control EOF first, because the native leaves on it by itself; then this launcher's own bounded
+    /// wait; then the kill as the watchdog over that wait; then the process object read once more.
+    /// Nothing here answers for a role: a settlement that is not an explicit endgame never reaches the
+    /// player world (ADR-0007), and closing control is exactly what a Guardian is designed to survive.
+    /// </summary>
+    internal async Task<bool> SettleAsync()
+    {
+        await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
+        if (await WaitForExitAsync(CancellationToken.None, 30_000).ConfigureAwait(false) is GuardianSupervisorExit.ControlClosed) return true;
+        _ = WindowsNative.TerminateProcess(process, 1);
+        _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+        return WindowsNative.WaitForSingleObject(process, 0) == WindowsNative.WaitObject0 && WindowsNative.GetExitCodeProcess(process, out _);
+    }
+
+    private static long ReadStartedAtUnixMs(WindowsNative.SafeProcessHandle process) =>
+        WindowsNative.GetProcessTimes(process, out var creationTime, out _, out _, out _) && creationTime > UnixEpochFileTimeTicks
+            ? (creationTime - UnixEpochFileTimeTicks) / 10_000
+            : 0;
+
     internal Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken) =>
         WaitForExitAsync(cancellationToken, 30_000);
 
@@ -294,12 +338,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
-        if (await WaitForExitAsync(CancellationToken.None).ConfigureAwait(false) is GuardianSupervisorExit.Unavailable)
-        {
-            _ = WindowsNative.TerminateProcess(process, 1);
-            _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
-        }
+        await SettleAsync().ConfigureAwait(false);
         publicInputStream?.Dispose();
         publicOutputStream?.Dispose();
         privateIngress.Dispose();

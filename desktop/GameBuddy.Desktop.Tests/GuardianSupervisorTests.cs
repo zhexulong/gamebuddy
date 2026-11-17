@@ -32,16 +32,23 @@ public sealed class GuardianSupervisorTests
     }
 
     [Fact]
-    public void Guardian_lease_source_terminates_after_eof_timeout_before_releasing_process_handle()
+    public void Guardian_lease_settles_by_the_process_object_after_a_bounded_wait_and_a_kill()
     {
         var source = File.ReadAllText(Source());
-        var dispose = source.IndexOf("public async ValueTask DisposeAsync()", StringComparison.Ordinal);
-        var unavailable = source.IndexOf("is GuardianSupervisorExit.Unavailable", dispose, StringComparison.Ordinal);
-        var terminate = source.IndexOf("WindowsNative.TerminateProcess(process, 1)", dispose, StringComparison.Ordinal);
-        var wait = source.IndexOf("WindowsNative.WaitForSingleObject(process, 30_000)", terminate, StringComparison.Ordinal);
-        var release = source.IndexOf("process.Dispose()", wait, StringComparison.Ordinal);
+        var settle = source.IndexOf("internal async Task<bool> SettleAsync()", StringComparison.Ordinal);
+        var dispose = source.IndexOf("public async ValueTask DisposeAsync()", settle, StringComparison.Ordinal);
+        var control = source.IndexOf("await CloseControlAsync(CancellationToken.None)", settle, StringComparison.Ordinal);
+        var wait = source.IndexOf("WaitForExitAsync(CancellationToken.None, 30_000)", control, StringComparison.Ordinal);
+        var terminate = source.IndexOf("WindowsNative.TerminateProcess(process, 1)", wait, StringComparison.Ordinal);
+        var proof = source.IndexOf("WindowsNative.WaitForSingleObject(process, 0) == WindowsNative.WaitObject0", terminate, StringComparison.Ordinal);
+        var release = source.IndexOf("process.Dispose()", dispose, StringComparison.Ordinal);
 
-        Assert.True(dispose >= 0 && unavailable > dispose && terminate > unavailable && wait > terminate && release > wait);
+        // Control EOF first (the native leaves on it by itself), then this launcher's own bounded
+        // wait, then the kill as the watchdog over that wait, then the process object read once more.
+        Assert.True(settle >= 0 && dispose > settle && control > settle && wait > control && terminate > wait && proof > terminate && release > proof);
+        // And the verdict is the process object, never an exit code: on control EOF the native
+        // Guardian leaves with a failure code on every path, the legitimate one included.
+        Assert.DoesNotContain("ExitCode != 0", source[settle..dispose], StringComparison.Ordinal);
     }
 
     [Fact]

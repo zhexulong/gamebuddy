@@ -118,6 +118,13 @@ internal static class WindowsNative
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint exitCode);
 
+    // The exact process's own creation time, read through the handle that names it. A pid can be
+    // reused by a later process, so a pid alone never identifies one; the creation time instant is
+    // what a record written by an earlier launch has to match before this launcher may act on it.
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetProcessTimes(SafeProcessHandle process, out long creationTime, out long exitTime, out long kernelTime, out long userTime);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, char[] executablePath, ref uint size);
 
