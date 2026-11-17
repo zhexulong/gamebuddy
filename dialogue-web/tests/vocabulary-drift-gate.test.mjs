@@ -130,6 +130,10 @@ export const MIRRORED_VOCABULARIES = [
   // mirror does not list is refused (`setupFields.every(isOneOf)`), so a Host that admits `apiKeyRequired`
   // while the panel knows four fields reads a legal projection as protocol corruption.
   { mirror: "CONNECTION_SETUP_FIELDS", contract: { name: "TavernConnectionSetupFieldV1Schema" } },
+  // The escape hatch's shape list. The chain is closed at both ends: the contract's union is pinned to
+  // `TAVERN_PI_API_SHAPES` by `host/src/tavern/browser-contract/index.private.test.ts` (a shape Pi cannot
+  // speak must never reach the runtime's provider entry), and the mirror is pinned to the contract here.
+  { mirror: "CONNECTION_API_SHAPES", contract: { name: "TavernConnectionApiShapeV1Schema" } },
 ];
 
 /**

@@ -305,6 +305,20 @@ export const SEAMS = Object.freeze([
     },
     owner: "the connection panel lane",
   },
+  {
+    fact: "connection api shapes",
+    authority: { file: "host/src/tavern/provider-catalog.ts", name: "TAVERN_PI_API_SHAPES" },
+    readers: [
+      { file: TAVERN_CONTRACT, name: "TavernConnectionApiShapeV1Schema" },
+      { file: MANAGEMENT_CLIENT, name: "CONNECTION_API_SHAPES" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "host/src/tavern/browser-contract/index.private.test.ts",
+      symbols: ["TAVERN_PI_API_SHAPES", "TavernConnectionApiShapeV1Schema"],
+    },
+    owner: "the connection panel lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -340,10 +354,6 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
-  mirrorDebt("connection api shapes", `${TAVERN_CONTRACT}:TavernConnectionApiShapeV1Schema`, [
-    "host/src/tavern/provider-catalog.ts:TAVERN_PI_API_SHAPES",
-    `${MANAGEMENT_CLIENT}:CONNECTION_API_SHAPES`,
-  ]),
   mirrorDebt("connection failures", `${TAVERN_CONTRACT}:ConnectionFailure`, [
     "host/src/tavern/connection-store.ts:PROBE_FAILURES",
     `${MANAGEMENT_CLIENT}:CONNECTION_FAILURES`,
