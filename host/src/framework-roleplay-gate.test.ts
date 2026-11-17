@@ -5,17 +5,16 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
-
-import { buildGameCompanionSystemPrompt, GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
-import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
 import {
   buildChatCompanionSystemPrompt,
   COMPANION_FORMAT_TEMPLATES,
   fillTemplate,
   renderIdentityProfile,
 } from "./companion-prompt-assembly.js";
-import { renderMacros } from "./tavern/macro-engine.js";
+import { buildGameCompanionSystemPrompt, GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
+import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { renderMacros } from "./tavern/macro-engine.js";
 
 /**
  * THE FRAMEWORK EMITS NO INPUT AT ALL, AND THIS FILE HOLDS THAT STRUCTURALLY - BESIDE THE TWO LEDGERS THE
@@ -284,7 +283,7 @@ export function frameworkInstructionFindings(strings: readonly SourceString[]): 
     if (string.profileValue) continue;
     const withoutSlots = string.text.replace(/\{\d+\}/gu, "");
     const core = withoutSlots
-      .replace(/[\[\]<>【】（）()「」"'`]/gu, "")
+      .replace(/[[\]<>【】（）()「」"'`]/gu, "")
       .replace(/[:：]/gu, "")
       .trim();
     if (core.length === 0) continue;
@@ -944,4 +943,172 @@ test("the shipped card is the profile's single authority for the facts the head 
     shipped.characterVoice?.text,
     "the profile's directive must be the card's `data.system_prompt`, byte for byte",
   );
+});
+
+/**
+ * GATE THREE: THE WRAPPER ON THE TAIL STATES A POSITION - AND THE POPULATION IS THE ASSEMBLY, NOT A FILE LIST.
+ *
+ * <p>
+ * THE DEFECT THIS EXISTS FOR. The framework gate above reads two Host modules, so when the vendored
+ * post-history wrapper carried a disposition ("Your author's direction for how you answer.") and a lane proposed
+ * replacing it with a conduct rule ("During routine chores, stay focused on work without running commentary or
+ * micro-step narration."), NOTHING IN THIS FILE COULD SEE IT. The block rides at the last position of the request, and
+ * a wrapper that writes behaviour there is the product speaking conduct at the strongest position there is - which is
+ * the preset's job and the card's, never a wrapper's. A gate whose population is a hand-written file list is a gate
+ * that stays green while the thing it exists to judge moves one layer down.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS ONE REAL ASSEMBLY. The block below is produced by the product's own appender
+ * (`appendPostHistoryInstructions`, the same function the vendor's context handler calls at its single success exit),
+ * over the tail the SHIPPED Game preset declares. Its lines are then ATTRIBUTED to the declared writers: a line no
+ * writer owns is a finding (`tail_block_line_has_no_writer`), so a writer nobody declared reds instead of passing.
+ * </p>
+ *
+ * <p>
+ * THE PROPERTY, PER TIER. A `framework` writer may name the slot, the addressee and the scope - a POSITION. It may not
+ * state a rule about her conduct: no imperative, no modal, and at most ONE sentence terminator. A clause of conduct is
+ * prose, and prose is what the two periods in the option-A frame above are. `authority` writers (the card, the preset's
+ * tail, the surface blocks) may and do state the rules, which is why the same reading is not applied to them.
+ * </p>
+ *
+ * <p>
+ * AND THE RULE IT MOVED HERE MUST STILL BE SOMEWHERE: the tail is asserted to state the condition on speaking, so a
+ * deletion reds rather than passing as a tidy-up. Zero population is BLOCKED, never passed: a block that yielded no
+ * line means the appender never ran, and an appender that never ran cannot be said to have said nothing.
+ * </p>
+ */
+
+/** One module or document that can put text into the finished request, with the tier its text is judged at. */
+const ASSEMBLY_WRITERS: readonly Readonly<{ id: string; tier: "framework" | "authority"; path: string }>[] =
+  Object.freeze([
+    Object.freeze({
+      id: "vendor-post-history-frame",
+      tier: "framework",
+      path: "vendor/magic-context/packages/pi-plugin/src/post-history-instructions-pi.ts",
+    }),
+    Object.freeze({ id: "identity-profile", tier: "framework", path: "host/src/identity-profile.ts" }),
+    Object.freeze({
+      id: "companion-prompt-assembly",
+      tier: "framework",
+      path: "host/src/companion-prompt-assembly.ts",
+    }),
+    Object.freeze({ id: "card-system-prompt", tier: "authority", path: DEFAULT_CARD }),
+    Object.freeze({ id: "game-preset-tail", tier: "authority", path: "assets/tavern/presets/amber-game.json" }),
+  ]);
+
+/** The Game surface's generation preset, DERIVED from the surface's own declaration (`tools/live-run/core/persona.mjs`). */
+const SHIPPED_GAME_PRESET = "assets/tavern/presets/amber-game.json";
+
+/**
+ * A rule about her conduct, as distinct from a position. Deliberately NOT the full `INSTRUCTION_KINDS`: a precedence
+ * claim is what the wrapper's one-clause floor IS ("Nothing here overrides what already holds."), so including it would
+ * red the scope line this block is allowed to carry. What a position may never carry is a command or a modal, and a
+ * position is at most one phrase plus one closing sentence - two or more terminators means a clause of prose.
+ */
+const CONDUCT_KINDS: readonly Readonly<{ id: string; pattern: RegExp }>[] = Object.freeze([
+  Object.freeze({
+    id: "modal-rule",
+    pattern:
+      /\b(?:never|always|must|should|do not|don't|only|unless|instead|keep|avoid|stay)\b|不要|不准|绝不|严禁|一律|始终|必须|不得|千万别/iu,
+  }),
+  Object.freeze({
+    id: "imperative-verb",
+    pattern:
+      /(?:^|[.!?:;]\s*)(?:reply|speak|write|say|think|reason|answer|render|produce|perform|remember|keep|stay|address|describe|consider|maintain|follow)\b/iu,
+  }),
+  Object.freeze({ id: "more-than-one-sentence", pattern: /[.!?;。！？；].*[.!?;。！？；]/u }),
+]);
+
+/** The framework-tier reading: every way a "position" turns into conduct, as a named finding. */
+export function conductFindings(
+  lines: readonly Readonly<{ writer: string; text: string }>[],
+): readonly { readonly id: string; readonly writer: string; readonly text: string }[] {
+  const findings: { id: string; writer: string; text: string }[] = [];
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (text.length === 0) continue;
+    const kind = CONDUCT_KINDS.find((candidate) => candidate.pattern.test(text));
+    if (kind !== undefined) findings.push({ id: `framework_emits_conduct:${kind.id}`, writer: line.writer, text });
+  }
+  return findings;
+}
+
+test("the tail wrapper states a position and no conduct, and every writer on the assembly is named", async () => {
+  const presetDocument = JSON.parse(readFileSync(join(REPOSITORY_ROOT, SHIPPED_GAME_PRESET), "utf8")) as {
+    prompts: readonly { identifier: string; content: string }[];
+  };
+  const tail = presetDocument.prompts.find((prompt) => prompt.identifier === "jailbreak")?.content;
+  assert.ok(
+    typeof tail === "string" && tail.trim().length > 0,
+    "the Game preset declares no tail entry, so the block this gate reads was never assembled",
+  );
+
+  // THE REAL APPENDER, over the tail the shipped preset declares: the same call the product makes at its single success
+  // exit, so this is the text the model receives and not a rendering of it written here.
+  const messages: { role: string; content: unknown }[] = [{ role: "user", content: "早上好。" }];
+  const { appendPostHistoryInstructions } = await import("@cortexkit/pi-magic-context/tavern");
+  assert.equal(appendPostHistoryInstructions(messages as never, tail), true);
+  const last = messages.at(-1)?.content as readonly { text: string }[];
+  const block = last.map((part) => part.text).join("");
+  const lines = block.split("\n").filter((line) => line.trim().length > 0 && !line.startsWith("</"));
+
+  // Every line is attributed to a declared writer, and an unattributed line is a finding rather than a silence.
+  const attributed = lines.map((text) => {
+    const writers = ASSEMBLY_WRITERS.filter((writer) => {
+      const source = readFileSync(join(REPOSITORY_ROOT, writer.path), "utf8");
+      return source.includes(text.trim());
+    });
+    return { text, writers };
+  });
+  const unattributed = attributed.filter((line) => line.writers.length === 0);
+  assert.deepEqual(
+    unattributed.map((line) => `tail_block_line_has_no_writer:${line.text}`),
+    [],
+    "a line of the assembled tail belongs to no declared writer, so the population this gate reads is incomplete",
+  );
+
+  // The framework tier: the wrapper's own two lines. Zero of them would mean the wrapper vanished, which is a reading
+  // that was not taken rather than a clean one.
+  const frameworkLines = attributed
+    .filter((line) => line.writers.every((writer) => writer.tier === "framework"))
+    .flatMap((line) => line.writers.map((writer) => ({ writer: writer.id, text: line.text })));
+  const authorityLines = attributed.filter((line) => line.writers.some((writer) => writer.tier === "authority"));
+  const violations = conductFindings(frameworkLines);
+  process.stdout.write(
+    `writers examined ${String(ASSEMBLY_WRITERS.length)} · framework ${String(frameworkLines.length)} · authority ${String(authorityLines.length)} · violation ${String(violations.length)}\n`,
+  );
+  assert.ok(
+    frameworkLines.length > 0,
+    "the assembled tail carried no framework line, so 'the wrapper states a position' was never measured",
+  );
+  assert.deepEqual(
+    violations.map((violation) => `${violation.id}\n    ${violation.writer}: "${violation.text}"`),
+    [],
+  );
+
+  // THE RULE MOVED HERE IS NOT DELETED: the condition on speaking still rides the tail, in the document that owns
+  // conduct. This is the assertion that makes the change a move - deleting it from the preset reds here.
+  assert.match(tail, /专心干活/u, "the tail no longer states that work is done without narration");
+  assert.match(tail, /不做旁白式的解说/u, "the tail no longer forbids running commentary");
+  // And the condition is a PERMISSION, not an obligation: it says nothing about the reply's length or pace, which is
+  // the property `design/input-authority.md` gives the preset rather than the card.
+  assert.equal(
+    /字数|句数|段落/u.test(tail),
+    false,
+    "the tail must not turn the silence condition into a length budget",
+  );
+});
+
+test("the conduct classifier reds a rule-shaped wrapper and passes the position this tree ships", () => {
+  // THE FALSIFIER. The first three are SHAPES, written here so the reading is driven on text the product does not
+  // carry; the last is the position the product ships, which must pass or the gate would be a wall rather than a gate.
+  const shapes = [
+    "Guidelines when speaking to your partner: speak naturally as a gaming co-op buddy. During routine chores, stay focused on work without running commentary or micro-step narration.",
+    "Your author's direction for how you answer. Stay quiet unless spoken to.",
+    "Do not narrate your chores.",
+  ];
+  for (const text of shapes) assert.notEqual(conductFindings([{ writer: "shape", text }]).length, 0, text);
+  assert.deepEqual(conductFindings([{ writer: "shipped", text: "Guidelines when speaking to your partner:" }]), []);
+  assert.deepEqual(conductFindings([{ writer: "shipped", text: "Nothing here overrides what already holds." }]), []);
 });

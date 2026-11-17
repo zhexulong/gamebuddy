@@ -158,7 +158,18 @@ test("the card's stored closing direction reaches the compiled Chat prompt", asy
     // It is the tail, not the head: the block is appended after everything, and it is framed as
     // her author's direction rather than dropped in bare.
     assert.match(trailing, /<character-closing-direction>/u);
-    assert.match(trailing, /Your author's direction for how you answer\./u);
+    // The frame states the CONDITION the direction applies to, not a disposition ("there is a direction about
+    // answering, so answer") and not conduct. The conditional part is what is pinned: a wrapper is free to be reworded,
+    // and a test that pinned the whole paragraph would go red on every rewording while teaching nobody which property it
+    // protects. What it may never carry is a rule about her behaviour - that belongs to the preset and to the card, and
+    // `framework-roleplay-gate.test.ts` measures the same line from the assembled tail.
+    assert.match(trailing, /Guidelines when speaking to your partner:/u);
+    assert.match(trailing, /when speaking/u);
+    assert.equal(
+      /routine chores|running commentary|micro-step narration|stay focused on work/iu.test(trailing),
+      false,
+      "the vendor's wrapper must carry no conduct: a rule about chores and narration at the last position of the request is the preset's to state, not a wrapper's",
+    );
     assert.ok(
       !catalog.stableSources.some((source) => source.content.includes(SENTINEL_POST_HISTORY)),
       "the closing direction is not an authored stable source; it renders after the transcript",
