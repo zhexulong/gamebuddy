@@ -44,7 +44,10 @@ internal sealed partial class ExecutionManager
                 && this.IsPlayerActionableNow()
                 && !graceExpired)
             {
-                this.slots.ClearWarpReplan();
+                // NOT CLEARED HERE. The window belongs to the warp that opened it, and clearing it before each retry is
+                // what let the retry restart its own bound: every attempt re-read the same lock and re-armed from the
+                // next tick, so the window could never expire. `TryContinueNavigationAfterWarp` clears it when the leg
+                // it was waiting for is armed, and the warp's own settlement clears it on the way in.
                 // Log through a local so this diagnostic cannot seed method-level
                 // Game1.player null-state for the later native postconditions.
                 Farmer? diagnosticPlayer = Game1.player;
@@ -56,12 +59,18 @@ internal sealed partial class ExecutionManager
         string postPhase = this.activeNavigate?.Phase.ToString() ?? "none";
         this.monitor.Log($"[nav-retry-marker] post_active={postActive};post_phase={postPhase}", LogLevel.Trace);
             }
-            else if (graceExpired && !this.IsPlayerActionableNow())
+            else if (graceExpired)
             {
+                // THE WINDOW'S ENDING IS TOTAL. It used to settle only while the actor was NOT actionable, so a window
+                // that expired with the manager's own probe answering "actionable" fell through both branches and the
+                // navigation kept the body with no terminal and no fact. Both halves of the real question have already
+                // been asked inside the window - the replan ran on every tick - so expiry is the answer either way; the
+                // evidence says which reading it expired under rather than leaving the caller to infer it.
+                bool actionable = this.IsPlayerActionableNow();
                 this.slots.ClearWarpReplan();
-                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity}");
+                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity};actionable={actionable}");
                 this.SettleNavigationTerminal(deferredNavigation, ExecutionState.Rejected, "destination_locked",
-                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;never_retry=true");
+                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;actionable={actionable.ToString().ToLowerInvariant()};never_retry=true");
             }
         }
         if (this.activeTravel is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeTravel.DeadlineMs)

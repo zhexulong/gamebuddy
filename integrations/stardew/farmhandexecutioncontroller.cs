@@ -3142,6 +3142,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.slots.Active.Assign(approach);
         if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
+            this.slots.ClearWarpReplan();
             this.slots.Active.Clear();
             this.slots.Navigate.Clear();
             this.slots.NavigationCoordinator.Clear();
@@ -3153,6 +3154,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         this.revision++;
+        // The deferred window ended when the leg it was waiting for was armed: it belongs to the warp that produced it,
+        // and a window left open across a healthy leg would bound the NEXT warp by the previous one's clock.
+        this.slots.ClearWarpReplan();
         this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Running, "navigation_multi_hop_leg_armed", "navigation=multi_hop;phase=approaching");
     }
 
