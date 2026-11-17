@@ -50,12 +50,29 @@
  * nothing here binds, and a local helper that loads a product artifact (`const seams = loadSeams()`) all read as
  * TEST_BUILT or PRODUCT by the rules above and not by what they mean. That is the `unresolved` residual below.
  *
- * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-15, this tree):
+ * THE COUNT WAS NOT THE WHOLE PREDICATE EITHER (2026-11-16). The class is an ASSERTION whose expected side is a frozen
+ * number, so a comparison is read only where it is one: `assert.equal`/`assert.strictEqual`, or a bare `===`/`==`
+ * written INSIDE an `assert`/`t` call (`assert.ok(list.length === 15)`). The unscoped reading flagged every bare
+ * comparison, and 29 of the 30 it found were the population's BUILDER rather than its frozen size:
  *
- *   examined 1001 · sites 72 · findings 0 · baseline 64 entries · unread 0
- *   residual by shape: 5 declaration_site · 23 call_result · 44 unresolved
- *   residual by verdict: 25 derivable-now · 39 not-a-population · 0 needs-a-decision
- *   set aside: 1116 test-built · 24 not-members
+ *   lines.filter((line) => line.writers.length === 0);      the filter that decides WHICH members a later
+ *                                                          `assert.deepEqual(members, [])` reports
+ *   if (appeared.length === 0) continue;                   a paging loop's branch condition
+ *   m.parameters?.length === 1 && ...                      a predicate inside `.find(...)`
+ *
+ * Every one of those already carried a `[not-a-population] ... a control-flow guard ... not an assertion` reason in
+ * the baseline, so the record and the reading disagreed about the same 29 sites. Flagging them did not teach a fix: the
+ * cheapest way to green one is `!line.writers.length`, which is worse code than the line it replaces, and the one real
+ * assertion among the 30 (`assert.ok(finals.length === 1)`) sat in the baseline as debt. A comparison inside a callback
+ * handed to an assertion stays out of scope too - `assert.throws(() => ...)` takes the code under test, not an
+ * assertion's own expression.
+ *
+ * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-16, this tree):
+ *
+ *   examined 1112 · sites 39 · findings 0 · baseline 32 entries · unread 0
+ *   residual by shape: 0 declaration_site · 19 call_result · 20 unresolved
+ *   residual by verdict: 19 derivable-now · 13 not-a-population · 0 needs-a-decision
+ *   set aside: 1137 test-built · 4 not-members
  *
  * Each shape is closeable, and each failure message says which one it is:
  *
@@ -122,11 +139,23 @@
  *            `literal_population_assertion` - and before this lane the first run read `status passed`, because an unread
  *            file used to leave the run green. Measured 2026-11-15.
  *
+ * red-proof: history  the scoping lane replayed the finding this checkout actually carried. Before it,
+ *            `node tools/check-derived-population.mjs` read `sites 68 findings 1 status failed`, the finding being
+ *            `literal_population_assertion:host/src/framework-roleplay-gate.test.ts:1064:0 — use line.writers.length`,
+ *            on a `filter((line) => line.writers.length === 0)` whose asserted members three lines below already read
+ *            `assert.deepEqual(members, [])` - the gate red on a line doing the right thing. After it the same command
+ *            reads `examined 1112 sites 39 findings 0 baseline 32 unread 0 status passed`, exit 0, and the reading did
+ *            not go blind: with the `finals` entry dropped from the baseline in memory, the assertion form still reds as
+ *            `literal_population_assertion:host/src/native-companion-pacing-delivery.test.ts:130:1 — use finals.length`
+ *            (an `assert.ok(finals.length === 1)`). Measured 2026-11-16 on this checkout.
+ *
  * Also injected, each seen red once (tools/check-derived-population.test.mjs): `assert.equal(list.length, 15)` on a
- * test file's own array, the same literal on the left of the assertion, a bare `list.length === 15`, two derived sides
- * reported as a literal, every file in a directory treated as a test, an unsorted member diff, an empty population
- * treated as a pass, a raw-text sweep in place of the syntax tree, a count of a test's own recorder, a count of a
- * string, a new site, a stale baseline entry, and a file the grammar cannot read.
+ * test file's own array, the same literal on the left of the assertion, an `assert.ok(list.length === 15)` beside a
+ * `filter((line) => line.writers.length === 0)` that builds the population a correct `assert.deepEqual` reads, the same
+ * pair inside/around `assert.throws`'s callback, two derived sides reported as a literal, every file in a directory
+ * treated as a test, an unsorted member diff, an empty population treated as a pass, a raw-text sweep in place of the
+ * syntax tree, a count of a test's own recorder, a count of a string, a new site, a stale baseline entry, and a file the
+ * grammar cannot read.
  */
 
 export const gateDeclaration = {
@@ -650,8 +679,23 @@ function literalComparison([left, right], operator) {
   return null;
 }
 
-/** The literal comparison a node makes, if it is one: an assertion call, or a bare `===`/`==`. */
-function comparisonIn(node) {
+/**
+ * The surfaces an assertion is spelled on: `node:assert`'s `assert`, called or through a method, and `node:test`'s test
+ * context `t` (`t.ok`, `t.equal`). A comparison anywhere else is a predicate.
+ */
+const ASSERTION_RECEIVERS = new Set(["assert", "t"]);
+
+/** Whether a call expression is one of those, so what it compares is an assertion and not a branch condition. */
+function isAssertionCall(node) {
+  if (node.type !== "call_expression") return false;
+  const callee = node.childForFieldName("function");
+  if (callee === null) return false;
+  const receiver = callee.type === "member_expression" ? callee.childForFieldName("object") : callee;
+  return receiver?.type === "identifier" && ASSERTION_RECEIVERS.has(receiver.text);
+}
+
+/** The literal comparison a node makes, if it is one: an assertion call, or a bare `===`/`==` inside one. */
+function comparisonIn(node, asserting) {
   if (node.type === "call_expression") {
     const callee = node.childForFieldName("function");
     if (callee?.type !== "member_expression") return null;
@@ -660,22 +704,33 @@ function comparisonIn(node) {
     if (!isAssertObject(callee.childForFieldName("object"))) return null;
     return literalComparison(node.childForFieldName("arguments")?.namedChildren ?? [], method);
   }
-  if (node.type !== "binary_expression") return null;
+  if (node.type !== "binary_expression" || !asserting) return null;
   const operator = operatorOf(node);
   if (!COMPARING_OPERATORS.has(operator)) return null;
   return literalComparison([node.childForFieldName("left"), node.childForFieldName("right")], operator);
 }
 
-/** Every literal comparison in a file, in source order. */
+/**
+ * Every literal comparison in a file, in source order.
+ *
+ * A bare `===`/`==` counts only INSIDE an assertion. `assert.ok(list.length === 15)` freezes a count, but
+ * `lines.filter((line) => line.writers.length === 0)` decides WHICH members a later assertion reads - it is the
+ * population's builder, not its frozen size, so it is the opposite of this class and the gate that flagged it was
+ * cheaper to satisfy by writing `!line.writers.length` than by fixing anything. Measured on this tree: of the 30 bare
+ * comparisons the unscoped reading found, 29 were predicates (a `filter`, an `if (x.length === 0) return`, a ternary)
+ * and 1 was an assertion. A callback handed to an assertion is the code under test, so the scope stops where a body
+ * begins.
+ */
 function literalComparisons(tree) {
   const found = [];
-  const visit = (node) => {
+  const visit = (node, asserting) => {
     if (OPAQUE.has(node.type)) return;
-    const comparison = comparisonIn(node);
+    const comparison = comparisonIn(node, asserting);
     if (comparison !== null) found.push(comparison);
-    for (const child of node.namedChildren) visit(child);
+    const inner = asserting || isAssertionCall(node);
+    for (const child of node.namedChildren) visit(child, inner && !entersBody(child));
   };
-  visit(tree.rootNode);
+  visit(tree.rootNode, false);
   return found;
 }
 
