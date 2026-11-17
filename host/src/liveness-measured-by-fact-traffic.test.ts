@@ -146,11 +146,22 @@ const TRAFFIC_SPELLING =
  */
 const EXECUTION_SUBJECT = /\bexecutionId\b/u;
 
+/** Whether this initializer is a body rather than a value: only a body could have read an authority. */
+function hasFunctionBody(node: ts.Node | undefined): boolean {
+  return node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+}
+
+/** Whether one class member carries a body. */
+function memberHasBody(member: ts.ClassElement): boolean {
+  if (ts.isMethodDeclaration(member) || ts.isGetAccessor(member) || ts.isSetAccessor(member)) return true;
+  return ts.isPropertyDeclaration(member) && hasFunctionBody(member.initializer);
+}
+
 /** Every declaration the compiler sees in one source, with class members as members rather than as their class. */
 function declarationsOf(file: string, text: string): Declaration[] {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
   const found: Declaration[] = [];
-  const record = (node: ts.Node, name: string, behavioural: boolean): void => {
+  const add = (node: ts.Node, name: string, behavioural: boolean): void => {
     found.push({
       site: `${file}:${name}`,
       name,
@@ -159,37 +170,25 @@ function declarationsOf(file: string, text: string): Declaration[] {
       behavioural,
     });
   };
-  const hasFunctionBody = (node: ts.Node | undefined): boolean =>
-    node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+  const addClassMembers = (node: ts.ClassDeclaration): void => {
+    for (const member of node.members) {
+      const name = member.name;
+      if (name === undefined) continue;
+      if (!(ts.isIdentifier(name) || ts.isPrivateIdentifier(name))) continue;
+      add(member, name.getText(source), memberHasBody(member));
+    }
+  };
+  const addVariables = (node: ts.VariableStatement): void => {
+    for (const declaration of node.declarationList.declarations)
+      if (ts.isIdentifier(declaration.name))
+        add(declaration, declaration.name.text, hasFunctionBody(declaration.initializer));
+  };
   const visit = (node: ts.Node): void => {
-    if (ts.isClassDeclaration(node)) {
-      for (const member of node.members) {
-        if (member.name === undefined) continue;
-        if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
-        const behavioural =
-          ts.isMethodDeclaration(member) ||
-          ts.isGetAccessor(member) ||
-          ts.isSetAccessor(member) ||
-          (ts.isPropertyDeclaration(member) && hasFunctionBody(member.initializer));
-        record(member, member.name.getText(source), behavioural);
-      }
-      return;
-    }
-    if (ts.isFunctionDeclaration(node) && node.name !== undefined) {
-      record(node, node.name.text, true);
-      return;
-    }
-    if (ts.isVariableStatement(node)) {
-      for (const declaration of node.declarationList.declarations)
-        if (ts.isIdentifier(declaration.name))
-          record(declaration, declaration.name.text, hasFunctionBody(declaration.initializer));
-      return;
-    }
-    if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
-      record(node, node.name.text, false);
-      return;
-    }
-    ts.forEachChild(node, visit);
+    if (ts.isClassDeclaration(node)) addClassMembers(node);
+    else if (ts.isFunctionDeclaration(node) && node.name !== undefined) add(node, node.name.text, true);
+    else if (ts.isVariableStatement(node)) addVariables(node);
+    else if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) add(node, node.name.text, false);
+    else ts.forEachChild(node, visit);
   };
   ts.forEachChild(source, visit);
   return found;
