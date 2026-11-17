@@ -142,8 +142,7 @@ export function ownerHoldGate(sources, table) {
   const shipped = new Map([...sources].map(([file, text]) => [file, stripComments(text)]));
   const kindsFile = shipped.get(SOURCES.holdKinds) ?? "";
   const kinds = [...kindsFile.matchAll(HOLD_KIND_CONSTANT)].map((match) => match[1]);
-  if (kinds.length === 0)
-    return { blocked: "no_hold_kind_declared", owners: [], silent: [], unsupported: [], expired: [] };
+  if (kinds.length === 0) return { blocked: "no_hold_kind_declared", owners: [], silent: [], unsupported: [], expired: [] };
 
   // `<constant name> -> <hold kind>`, from the declaration itself, so a row's `Code:` resolves through the one table.
   const codeOf = new Map(
@@ -195,10 +194,7 @@ export function ownerHoldGate(sources, table) {
       // `CancelSafe: false` and a table claiming a stop are the one pair of answers a refusal must never give at once.
       const refusing = rows.filter((row) => row.code === kind && cancelSafeOf(row.ownerMethod) === "false");
       if (refusing.length > 0)
-        unsupported.push({
-          owner: kind,
-          missing: [`CancelSafe: false on ${refusing.map((row) => row.slot).join(",")}`],
-        });
+        unsupported.push({ owner: kind, missing: [`CancelSafe: false on ${refusing.map((row) => row.slot).join(",")}`] });
     }
     owners.push({
       owner: kind,
@@ -236,8 +232,7 @@ function main() {
   }
   for (const entry of finding.silent) console.error(`silent: ${entry.owner} - ${entry.why}`);
   for (const entry of finding.unsupported) console.error(`unsupported: ${entry.owner} - ${entry.missing.join(", ")}`);
-  for (const kind of finding.expired)
-    console.error(`expired: ${kind} - declared a hold end for an owner the Mod no longer declares`);
+  for (const kind of finding.expired) console.error(`expired: ${kind} - declared a hold end for an owner the Mod no longer declares`);
   process.exit(finding.silent.length === 0 && finding.unsupported.length === 0 && finding.expired.length === 0 ? 0 : 1);
 }
 

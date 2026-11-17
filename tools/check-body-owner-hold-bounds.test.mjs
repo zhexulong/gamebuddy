@@ -58,10 +58,7 @@ test("falsifier: a bound the source no longer carries is unsupported, and the ow
       'internal const string BodyOwnedByActivity = "body_owned_by_activity";\n    internal const string BodyOwnedBySitting = "body_owned_by_sitting";',
     ),
   );
-  const table = {
-    ...OWNER_HOLD_ENDS,
-    body_owned_by_sitting: { bound: ["SittingWindowTicks"], why: "a window that no longer exists in this source" },
-  };
+  const table = { ...OWNER_HOLD_ENDS, body_owned_by_sitting: { bound: ["SittingWindowTicks"], why: "a window that no longer exists in this source" } };
   const finding = ownerHoldGate(tree, table);
   console.log(findingLine(finding));
   assert.deepEqual(
