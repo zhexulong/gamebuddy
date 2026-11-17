@@ -5,13 +5,12 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
-  turnAccountLine,
-  turnProductionOf,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
+  turnAccountLine,
+  turnProductionOf,
 } from "./event-pump.js";
-import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_DELIVERY_UNIT,
@@ -20,9 +19,10 @@ import {
   type NativeCompanionContentObserver,
   type NativeCompanionPartSuppression,
   type NativeCompanionTurnBubble,
-  type TurnWithheldReason,
   readAssistantMessageFacts,
+  type TurnWithheldReason,
 } from "./native-companion-content.js";
+import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 
 export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;

@@ -199,7 +199,7 @@ test("a_turn_that_cannot_present_its_text_invites_it_anyway", async () => {
   for (const state of decisionReceiptStates()) readings.push(await turnOf(receiptOf(state), undefined));
 
   const admitted = readings.filter((reading) => reading.admitted);
-  const spokeUnadmitted = readings.filter((reading) => !reading.admitted && !reading.toldCannotSpeak);
+  const spokeUnadmitted = readings.filter((reading) => !(reading.admitted || reading.toldCannotSpeak));
   const silencedButAdmitted = readings.filter((reading) => reading.admitted && reading.toldCannotSpeak);
 
   const tally = `turns examined ${String(readings.length)} · invited-and-admitted ${String(admitted.length)} · spoke-unadmitted ${String(spokeUnadmitted.length)}`;
@@ -262,9 +262,8 @@ test("the gate's two halves are what they say: an outcome alone cannot present, 
   await loop.flush();
 
   assert.equal(presented.length, 1, "the game's own line is what the player reads, so her answer to it is shown");
-  assert.equal(
-    received[0]?.includes(`<${NO_SPEECH_SURFACE_BLOCK}>`) ?? true,
-    false,
+  assert.ok(
+    !(received[0] ?? "").includes(`<${NO_SPEECH_SURFACE_BLOCK}>`),
     "and an admitted turn is never told it cannot speak",
   );
   assert.equal(outcomeAlone.bubbles, 0, "the unadmitted turn committed no bubble");
