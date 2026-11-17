@@ -1464,7 +1464,6 @@ const PROBLEM_CODES = [
   "turn_busy",
   "stream_resync_required",
   "runtime_unavailable",
-  "presentation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",

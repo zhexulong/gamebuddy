@@ -303,7 +303,7 @@ const repeatNotMatched: ProblemSentence = (labels) =>
 const noSuchItem: ProblemSentence = (labels) =>
   sentence(labels.problemNoSuchItemTitle, labels.problemNoSuchItemDetail, RETRY_READ);
 
-/** The runtime, the presentation path or the store could not be used just now: retry is the answer. */
+/** The runtime or the store could not be used just now: retry is the answer. */
 const serviceUnavailable: ProblemSentence = (labels) =>
   sentence(labels.problemServiceUnavailableTitle, labels.problemServiceUnavailableDetail, RETRY_READ);
 
@@ -532,7 +532,6 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   character_import_not_found: noSuchItem,
 
   runtime_unavailable: serviceUnavailable,
-  presentation_unavailable: serviceUnavailable,
   storage_unavailable: serviceUnavailable,
 
   stream_resync_required: streamResyncRequired,

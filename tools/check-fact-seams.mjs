@@ -1141,14 +1141,8 @@ export function evaluate(root) {
     if (!derivation.holds) findings.push(`fact_seam_underived:${record.fact} (${derivation.why})`);
   }
 
-  const recordedCodes = new Set(UNPRODUCED_DEBT.map((entry) => entry.code));
   for (const entry of codes.unproduced) {
-    if (recordedCodes.has(entry.code)) continue;
     findings.push(`fact_declared_unproduced:${entry.code} (declared ${entry.declaredIn})`);
-  }
-  for (const entry of UNPRODUCED_DEBT) {
-    if (codes.unproduced.some((found) => found.code === entry.code)) continue;
-    findings.push(`stale_fact_seam:${entry.code} (a host source produces it now, so the record is paid)`);
   }
 
   return {
@@ -1271,22 +1265,6 @@ export const KEY_SEQUENCES = Object.freeze([
     reason:
       "the guardian bridge in C# writes the hello answer and this broker validates it against `HELLO_KEYS`, a list of its own; the same file also spells the command and role-exit shapes",
     owner: "the desktop guardian lane",
-  },
-]);
-
-/**
- * The declared codes a host source never produces, recorded so the gate can be green on the tree it was written against.
- *
- * Each entry is a code the contract declares and nothing sends: the shape defect 3 took, still present in the tavern
- * vocabulary. Resolving one (producing the code, or deleting it) makes the entry stale, which is the ratchet.
- */
-export const UNPRODUCED_DEBT = Object.freeze([
-  {
-    code: "presentation_unavailable",
-    declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason:
-      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route",
-    owner: "the tavern contract lane",
   },
 ]);
 

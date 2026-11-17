@@ -517,7 +517,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // `turn_not_active` left it 69 to 68: "nothing to stop" is not a refusal the route can send - a terminal
   // turn is projected as the success disposition above, and a handle that names no live turn fails closed as
   // the deliberately non-disclosing service code.
-  assert.equal(tavern.size, 68, `the tavern problem union should have 68 members, read ${tavern.size}`);
+  // `presentation_unavailable` left it 68 to 67: a turn that cannot present anything fails with the turn's own
+  // `problemCode` `no_visible_presentation`, and a presentation epoch that cannot be used is the invariant path
+  // (`semantic_chat_runtime_p5_presentation_epoch_unavailable`), never a per-request refusal.
+  assert.equal(tavern.size, 67, `the tavern problem union should have 67 members, read ${tavern.size}`);
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no
