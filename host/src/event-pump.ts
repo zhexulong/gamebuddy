@@ -342,7 +342,9 @@ export const NOT_OWED = Object.freeze({
    * nobody is shown. MEASURED 2026-11-17 (`round66`, ten minutes): 21 turns opened, 15 admitted; the six `admitted:false`
    * turns each carried exactly `["execution_receipt","snapshot"]`, and the run counted `lost 8 {no_presentation_lease: 8}`
    * for text it had paid a provider turn to write. The fact keeps its place in its window and the next turn that CAN present
-   * carries it - which is what `no_surface_for` counts and what the `CarryTicket` beside it proves.
+   * carries it - which is what `no_surface_for` counts and what the `CarryTicket` beside it proves. If no such turn comes
+   * within `CARRY_HOLD_BOUND_MS`, that promise is over and the fact is counted under `carried`'s `lost` braces, by the same
+   * shape - `round68`'s 347 seconds are the run that made the second half necessary.
    * </p>
    * <p>
    * The reason's own braces in the account name the SHAPES (`factTurnShape`: `receipt:succeeded`, `world_fact`, ...) rather
@@ -532,6 +534,18 @@ export const PER_DELIVERED_BATCH = "per delivered batch:";
 export const FLUSHES_EXAMINED = "flushes examined";
 export const NOT_OWED_LABEL = "not owed";
 export const CARRIED = "carried";
+/**
+ * The three outcomes a carried fact can have, printed beside `carried` so the ledger's arithmetic is readable.
+ *
+ * <p>
+ * `consumed` is proof by ARRIVAL (a batch took the fact), `lost` is a fact no turn took within
+ * `CARRY_HOLD_BOUND_MS` - named by the shape that could not present - and `held` is the ones still inside that bound.
+ * `round68` printed `carried 2` for two settlements nobody ever delivered and had no word for the third state; a reader
+ * could not tell a promise that was kept from one that had quietly been abandoned.
+ * </p>
+ */
+export const CONSUMED = "consumed";
+export const HELD = "held";
 /** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
 export const TRACES = "traces";
 
@@ -650,8 +664,24 @@ export type TurnAccount = Readonly<{
    * `examined = opened + notOwed` - which is what this field used to be - can never disagree with itself.
    */
   examined: number;
-  /** Facts that opened no turn and were consumed by a later batch, and the ones still waiting (see `CarryTicket`). */
-  carry: Readonly<{ carried: number; pending: number }>;
+  /**
+   * What happened to the facts that opened no turn: the population, and the three states it can leave in.
+   *
+   * <p>
+   * THIS LEDGER HAS ONE DOOR AND THREE EXITS. Every fact a `not_owed` answer ticketed is counted in `carried`; it leaves
+   * as `consumed` (a batch took it), as `lost` (its promise expired, or a window bound dropped it, named by the shape that
+   * could not present), and `held` is what is still inside the bound. `carried === consumed + lostTotal + held` is the
+   * invariant, and it is the reading `round68` could not make: that run printed `carried 2` for two settlements nothing
+   * ever delivered, and `carried` meant "consumed" there, so the same word described a kept promise and a broken one.
+   * </p>
+   */
+  carry: Readonly<{
+    carried: number;
+    consumed: number;
+    lost: Readonly<Record<string, number>>;
+    lostTotal: number;
+    held: number;
+  }>;
   /**
    * Facts admitted whose shape is a body trace, one count per trace KIND: not news, never a turn, never counted as a fact
    * that arrived.
@@ -705,7 +735,8 @@ export type TurnAccount = Readonly<{
  * Pi wrote: `assistant turns examined N {worked: count, worked_silently: count, spoke: count, said_nothing: count}`, then
  * the two headline readings derived from those members, `with text T` and `tool-only O`. Then the DELIVERED BATCHES, from
  * `per delivered batch:` to the end of the line: `turns opened N {opener: count} · flushes examined F · not owed M
- * {reason: count} · carried C {pending: P} · bubbles delivered B · lost L {reason: count} · stalled N {reason: count} ·
+ * {reason: count} · carried C · consumed X · lost L {shape: count} · held H · bubbles delivered B · lost L {reason: count} ·
+ * stalled N {reason: count} ·
  * turn_closed_without_action E {opener:reason: count}` `· turn_settled_silent S {opener: count}` `·
  * turn_settled_with_execution_in_flight I` `· aged readings A · auto_observe_on_stale R {ageTurns}` `·
  * auto_observe_unavailable U {reason: count}` `· refresh_rearmed W {reason: count}`.
@@ -714,7 +745,9 @@ export type TurnAccount = Readonly<{
  * `flushes examined F` AND `turns opened O` ARE ONE NUMBER, PRINTED TWICE, and that is the invariant this line exists to
  * make readable: a batch is composed only when a turn is owed, so there is no code path that assembles one and discards
  * it. The calls that owe no turn are a different population entirely (`not owed M`), and the facts they declined to
- * deliver are proved under `carried C` - consumed by a later batch - with `pending: P` naming the ones still waiting.
+ * deliver are proved under `carried C` - of which `consumed X` arrived in a later batch, `lost L` never did (named by the
+ * shape that could not present) and `held H` is still inside `CARRY_HOLD_BOUND_MS`. The three must add up to the
+ * population, which is what stops a carried fact disappearing between them.
  * Measured 2026-11-16 (`round64`), before this split: `flushes examined 134 · turns opened 8 · suppressed 126
  * {in_flight_progress 125}`, i.e. 93% of the pump's work was assembling a batch and dropping it.
  * </p>
@@ -839,7 +872,17 @@ export function turnAccountLine(account: TurnAccount): string {
   // the zeros answer.
   const tracesReading = TRACE_KINDS.map((kind) => `${kind}: ${String(account.traces[kind] ?? 0)}`).join(", ");
   const tracesSegment = `${TRACES} ${String(tracedFacts(account.traces))} {${tracesReading}}`;
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${CARRIED} ${String(account.carry.carried)} {pending: ${String(account.carry.pending)}} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+  // THE CARRY LEDGER, IN THE SHAPE THAT MAKES ITS ARITHMETIC READABLE: `carried C · consumed X · lost L {shape: n} ·
+  // held H`, where `C === X + L + H` always. `round68` printed `carried 2 {pending: 0}` for two settlements nothing ever
+  // delivered, and no reader could tell that from two that arrived. The loss's braces name the fact SHAPES that could not
+  // present - the same vocabulary `no_surface_for` uses - because that is what a fix has to move; the braces are omitted
+  // when nothing was lost, like `stalled`.
+  const carryLostReading = Object.keys(account.carry.lost)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .map((shape) => `${shape}: ${String(account.carry.lost[shape])}`)
+    .join(", ");
+  const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
 /**
@@ -1441,6 +1484,29 @@ export const STARDEW_TICKS_PER_SECOND = 60;
 export const MEASURED_TURN_CADENCE_MS = 42_324;
 
 /**
+ * How long a carried fact may wait for the turn that will consume it before it is named LOST.
+ *
+ * <p>
+ * MEASURED 2026-11-18 (`round68`): the last two settlements were judged unpresentable (`no_surface_for: 2
+ * {receipt:succeeded: 2}`), handed a `CarryTicket`, and then the run sat idle for **347 seconds** with `turns opened 8`
+ * and nothing else. A carry is a promise that the next turn will take the fact; the promise had no holder, and the account
+ * could only say `carried 2` - a number that reads the same whether the fact arrived or vanished.
+ * </p>
+ * <p>
+ * THE BOUND IS TWO TURNS, at the cadence this product measured (`MEASURED_TURN_CADENCE_MS`, 42.3 s per delivered turn), so
+ * a fact that has outlived two ordinary turns has outlived the next turn twice over. It is stated here rather than derived
+ * from a per-run number because a bound that moved with the run could not be compared between two runs - and 347 s is an
+ * order of magnitude past it, which is why the reading is unambiguous rather than marginal.
+ * </p>
+ * <p>
+ * WHAT EXPIRY IS NOT. It is not a turn: `a_turn_is_opened_where_no_surface_can_present` refuses a turn whose batch carries
+ * no presentation source, and that refusal is right - `round66` paid for twelve turns whose words nobody saw. A fact nobody
+ * can show and nobody carried is a LOSS, and the only honest thing left to do with it is count it under its own shape.
+ * </p>
+ */
+export const CARRY_HOLD_BOUND_MS = MEASURED_TURN_CADENCE_MS * 2;
+
+/**
  * Consecutive narration turns that make `narration_without_work` due.
  *
  * <p>
@@ -1662,8 +1728,13 @@ export interface CompanionTurnSink {
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
-  public constructor(readInFlight: () => InFlightProgrammeReading = readInFlightProgrammes) {
+  public constructor(
+    readInFlight: () => InFlightProgrammeReading = readInFlightProgrammes,
+    now: () => number = Date.now,
+  ) {
     this.#readInFlight = readInFlight;
+    this.#now = now;
+    this.#lastWorkTurnAtMs = now();
   }
 
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
@@ -1909,16 +1980,24 @@ export class CompanionEventPump {
    * The facts that arrived while no turn was owed, by window slot key, waiting for the batch that carries them.
    *
    * <p>
-   * THIS IS THE PROOF THAT NOTHING VANISHED. A `not_owed` answer and "the fact has nowhere to go" used to be one value
-   * (`#owesTurn` is a boolean, and a boolean has no third answer), so the 126 progress calls of `round64` dropped their
-   * facts silently. Here a fact that opened no turn is named, and `takeBatch` moves it to `#carriedFacts` when the batch
-   * that consumed it is composed - so `carried` is how many of those facts arrived, and `pending` is how many have not.
+   * THIS IS THE PROOF THAT NOTHING VANISHED - or, since `round68`, the proof that what vanished is NAMED. A `not_owed`
+   * answer and "the fact has nowhere to go" used to be one value (`#owesTurn` is a boolean, and a boolean has no third
+   * answer), so the 126 progress calls of `round64` dropped their facts silently. Then a fact that opened no turn was
+   * named and `takeBatch` moved it to `#carriedFacts` - but `round68` showed the other half: two settlements were ticketed
+   * and no batch ever came to take them, so "carried" was the shopping list of a turn that never opened. Each entry now
+   * carries the moment it started waiting, so the wait itself is bounded (`CARRY_HOLD_BOUND_MS`): it ends as consumed, or
+   * it ends as a named loss, and `held` is only ever the facts still inside that bound.
    * </p>
    */
-  readonly #carryPending = new Set<string>();
+  readonly #carryHeld = new Map<string, Readonly<{ sinceMs: number; shape: string }>>();
   /** The same facts, by ticket, with the batch that carried them - what `carriedInto` answers. */
   readonly #carryTickets = new Map<string, { facts: readonly string[]; carriedInto: string | undefined }>();
+  /** Facts a batch actually took (`consumed`); the population they came from is `#carryFacts`. */
   #carriedFacts = 0;
+  /** Every fact a `not_owed` answer ever ticketed: the head of the ledger, `consumed + lost + held`. */
+  #carryFacts = 0;
+  /** The carried facts nobody took, by the shape that could not present (`factShapeName`). */
+  readonly #carryLostByShape: Record<string, number> = {};
   /** Bubbles a delivered turn committed to the player, and the text no projection ever saw, by reason. */
   #deliveryBubbles = 0;
   readonly #deliveryLost: Record<string, number> = {};
@@ -1975,6 +2054,13 @@ export class CompanionEventPump {
    * same question.
    */
   readonly #readInFlight: () => InFlightProgrammeReading;
+  /**
+   * The pump's clock, injected so a duration is a measurement rather than a sleep.
+   *
+   * The one thing this pump times is how long a fact has waited (`CARRY_HOLD_BOUND_MS`, the reading a stale snapshot is
+   * aged against): a bound nobody can move in a test can only be proved by waiting it out, which is not a test.
+   */
+  readonly #now: () => number;
   #stallFacts = 0;
   /** Stall facts by the Mod's own reason (`entity_block`, ...): the account's `stalled N {reason: count}`. */
   readonly #stallReasons: Record<string, number> = {};
@@ -2005,7 +2091,7 @@ export class CompanionEventPump {
    */
   #turnsWithoutWork = 0;
   /** When the last delivered turn produced work; the pump's own start when none has, so the age is never undefined. */
-  #lastWorkTurnAtMs = Date.now();
+  #lastWorkTurnAtMs: number;
   /** Narration facts already published for this run: the re-arm, and the fact's own `narrationFactsSoFar`. */
   #narrationWithoutWorkPublished = 0;
   /** Facts the bounds dropped instead of closing the bridge (see the full-queue branch of `enqueueFact`). */
@@ -2056,7 +2142,7 @@ export class CompanionEventPump {
       this.#snapshotRestatesPrevious = !changes;
       this.#snapshotProducedBy = producedBy;
       if (changes) {
-        this.#lastSnapshotArrivedAtMs = Date.now();
+        this.#lastSnapshotArrivedAtMs = this.#now();
         this.#worldStateStalePublished = 0;
         this.#worldChangesSinceReading = 0;
         this.#lastWorldChange = undefined;
@@ -2105,8 +2191,9 @@ export class CompanionEventPump {
       // flight (a turn here thinks for 60+ s). The window is what makes a long turn safe; closing the whole bridge on it
       // is not what "bounded" has to mean, and it ended that run short of its night.
       if (isSupersededFact(fact)) {
-        // A fact the bound refused is not waiting for anything, so its carry ticket must not outlive it.
-        this.#carryPending.delete(key);
+        // A fact the bound refused is not waiting for anything, so its carry promise ends here - named, because a fact that
+        // leaves the ledger by a door nobody counted breaks the arithmetic the account's carry segment prints.
+        this.#loseCarriedSlot(key);
         this.#droppedFacts += 1;
         return;
       }
@@ -2131,7 +2218,7 @@ export class CompanionEventPump {
       // The producer leaves with the fact it was recorded for, or the record grows with the session instead of with the
       // windows it describes.
       this.#producedBy.delete(evictedKey);
-      this.#carryPending.delete(evictedKey);
+      this.#loseCarriedSlot(evictedKey);
       this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
@@ -2234,7 +2321,7 @@ export class CompanionEventPump {
     this.#worldTransition = null;
     this.#retry = undefined;
     this.#turnsWithoutWork = 0;
-    this.#lastWorkTurnAtMs = Date.now();
+    this.#lastWorkTurnAtMs = this.#now();
     this.#narrationWithoutWorkPublished = 0;
     // The turn account and the delivered-content memory are this session's own measurements: a cleared pump belongs to
     // no run, and carrying either across it would let one session's turns answer for another's.
@@ -2244,9 +2331,11 @@ export class CompanionEventPump {
     for (const kind of TRACE_KINDS) this.#tracesByKind[kind] = 0;
     this.#stallFacts = 0;
     for (const reason of Object.keys(this.#stallReasons)) delete this.#stallReasons[reason];
-    this.#carryPending.clear();
+    this.#carryHeld.clear();
     this.#carryTickets.clear();
     this.#carriedFacts = 0;
+    this.#carryFacts = 0;
+    for (const shape of Object.keys(this.#carryLostByShape)) delete this.#carryLostByShape[shape];
     this.#deliveryBubbles = 0;
     for (const reason of Object.keys(this.#deliveryLost)) delete this.#deliveryLost[reason];
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
@@ -2289,6 +2378,11 @@ export class CompanionEventPump {
    * `turn_without_new_content` so "fewer turns" and "lost turns" are different answers instead of one number.
    */
   public get turnAccount(): TurnAccount {
+    // THE READING IS THE SECOND MOMENT A CARRIED FACT IS ANSWERED, and the one where a SILENT run is answered at all: a pump
+    // with nothing owed opens no turn and therefore prints no line, so the 347 seconds of `round68` produced no reading in
+    // which its two stuck settlements could appear as anything but `carried`. Asking for the account asks the question the
+    // expiry answers.
+    this.#expireStaleCarries();
     return Object.freeze({
       opened: this.#openedTurns,
       byReason: Object.freeze({ ...this.#openedByReason }),
@@ -2300,7 +2394,13 @@ export class CompanionEventPump {
       // the sum of its own terms cannot witness a batch that was assembled and then discarded, which is the defect this
       // number exists to make impossible.
       examined: this.#examinedFlushes,
-      carry: Object.freeze({ carried: this.#carriedFacts, pending: this.#carryPending.size }),
+      carry: Object.freeze({
+        carried: this.#carryFacts,
+        consumed: this.#carriedFacts,
+        lost: Object.freeze({ ...this.#carryLostByShape }),
+        lostTotal: Object.values(this.#carryLostByShape).reduce((total, count) => total + count, 0),
+        held: this.#carryHeld.size,
+      }),
       traces: Object.freeze({ ...this.#tracesByKind }),
       stalled: Object.freeze({ total: this.#stallFacts, byReason: Object.freeze({ ...this.#stallReasons }) }),
       delivery: Object.freeze({
@@ -2565,7 +2665,7 @@ export class CompanionEventPump {
     standing.published = true;
     this.#stallFacts += 1;
     this.#stallReasons[announced.reason] = (this.#stallReasons[announced.reason] ?? 0) + 1;
-    const nowMs = Date.now();
+    const nowMs = this.#now();
     // The Mod's own statement is the identity, so a second episode of the same execution is a second fact and the same
     // episode re-admitted is the same one.
     const eventId = `${EXECUTION_STALL_SEMANTIC_KIND}_${announced.executionId}_${standing.verdictId}`;
@@ -2811,8 +2911,10 @@ export class CompanionEventPump {
    * plus a presentable milestone ⇒ <b>1 turn</b>. Adding a node buys no turn, and the settlement's turn states the nodes.
    * The wake for a plan is therefore ONE HOP, and it is the settlement - a presentable fact, so it opens its own turn. A
    * terminal receipt belonging to NO programme has no settlement: it waits for the next presentable fact (the Mod's five
-   * clock marks a day, the day boundary, her arrival, a native notice, any player word), and the pump imposes no bound of
-   * its own - `event-pump.node-batch-turns.test.ts` holds this reading red-able so it is not re-derived.
+   * clock marks a day, the day boundary, her arrival, a native notice, any player word), and that wait is now BOUNDED -
+   * `CARRY_HOLD_BOUND_MS`, past which the receipt is named lost rather than still described as on its way. `round68` is the
+   * run that made the bound necessary: two such receipts, 347 seconds with no turn, and an account that could only say
+   * `carried 2`. `event-pump.node-batch-turns.test.ts` holds the turn half of this reading red-able so it is not re-derived.
    * </p>
    * <p>
    * AND THE PLAN'S OWN WORK IS THE LAST QUESTION, not the first: `#waitsForThePlanToAnswer` declines a turn while the
@@ -2896,7 +2998,8 @@ export class CompanionEventPump {
    * `["execution_receipt","snapshot"]`).
    * </p>
    * <p>
-   * WHAT BOUNDS THE HOLD, since nothing here hands a fact to a deadline:
+   * WHAT BOUNDS THE HOLD: `CARRY_HOLD_BOUND_MS`, and nothing here hands a fact to a deadline. Three properties keep it honest,
+   * and the third is the one `round68` added.
    * </p>
    * <ul>
    *   <li>IT COALESCES RATHER THAN ACCUMULATES. The windows this reads are the pump's own - one slot per moving state and a
@@ -2907,9 +3010,11 @@ export class CompanionEventPump {
    *       rides the receipt it appeared in), the five clock marks a day (`time_milestone`, `AllowedMilestones`), the day's
    *       boundary and her own arrival, and every settlement - which is presentable by construction, because the digest
    *       carries an opaque `sourceEventId` of its own. In `round66` 15 of 21 windows already had one of those.</li>
-   *   <li>IF NOTHING EVER PRESENTS, NOTHING NEW IS HAPPENING EITHER. The facts that would drain the hold are the game's own
-   *       traffic; a world that produces none produces no reason to act, and the next player word opens a turn regardless
-   *       (the branch above).</li>
+   *   <li>AND WHEN NOTHING EVER PRESENTS, THE HOLD IS NAMED LOST. The old third bullet said "if nothing ever presents, nothing
+   *       new is happening either" - true of the world and false of her answer: `round68` sat 347 seconds with two
+   *       settlements it had been told about and never read. So the wait has an end that is a READING
+   *       (`#expireStaleCarries`), not a hope: past the bound the fact is counted under the shape that could not present,
+   *       and the account's `held` stops describing it.</li>
    * </ul>
    */
   #canPresent(fact: WorldFact): boolean {
@@ -3041,7 +3146,7 @@ export class CompanionEventPump {
       return Object.freeze({
         decision: NOT_OWED.noSurface,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
-        shape: noSurfaceShape(fact),
+        shape: factShapeName(fact),
       });
     }
     // The step first, because it is the answer `#opening` skipped the fact for (`#owesTurn`); the re-statement below is
@@ -3100,6 +3205,9 @@ export class CompanionEventPump {
     if (notOwed.reason === NOT_OWED.noSurface && notOwed.shape !== undefined)
       this.#noSurfaceByShape[notOwed.shape] = (this.#noSurfaceByShape[notOwed.shape] ?? 0) + 1;
     this.#lastTurnDecision = Object.freeze({ kind: "not_owed", reason: notOwed.reason });
+    // THIS CALL IS THE FIRST OF THE TWO MOMENTS THE PUMP ANSWERS "is any of this going to arrive": it just said no turn is
+    // owed, so a contrary carried fact whose bound has passed is gone rather than still on its way.
+    this.#expireStaleCarries();
     return Object.freeze({ kind: "not_owed" as const, reason: notOwed.reason, carry: notOwed.carry });
   }
 
@@ -3110,10 +3218,19 @@ export class CompanionEventPump {
    * (`factSlotKey`), so a fact cannot be ticketed under one identity and consumed under another. Bounded by the windows
    * themselves plus `MAX_CARRY_TICKETS`, and a ticket older than that is dropped with its facts still counted as pending
    * - a bound that forgets is visible, where a bound that lies is not.
+   *
+   * A SLOT ENTERS THE LEDGER ONCE, and that is what makes the count a population rather than a sum of calls: three facts
+   * behind one running plan are three carried facts whether they were declined once or forty times (`round64` flushed the
+   * same window 126 times). The moment it entered is kept beside it, because the promise it stands for is now bounded.
    */
   #takeCarryTicket(): CarryTicket {
-    for (const fact of this.#ordinaryFacts()) this.#carryPending.add(factSlotKey(fact));
-    const facts = Object.freeze([...this.#carryPending]);
+    for (const fact of this.#ordinaryFacts()) {
+      const slot = factSlotKey(fact);
+      if (this.#carryHeld.has(slot)) continue;
+      this.#carryHeld.set(slot, Object.freeze({ sinceMs: this.#now(), shape: factShapeName(fact) }));
+      this.#carryFacts += 1;
+    }
+    const facts = Object.freeze([...this.#carryHeld.keys()]);
     const ticketId = `carry_${String(this.#carryTickets.size + 1)}`;
     this.#carryTickets.set(ticketId, { facts, carriedInto: undefined });
     for (const [oldest, held] of this.#carryTickets) {
@@ -3125,10 +3242,61 @@ export class CompanionEventPump {
   }
 
   /**
+   * End the promise of every carried fact no turn has taken within `CARRY_HOLD_BOUND_MS`, by name.
+   *
+   * <p>
+   * THE HALF `round68` WAS MISSING. A `CarryTicket` proves a fact was handed to the next batch; it does not make a batch
+   * come. That run's last two settlements were ticketed and then the run sat idle for 347 seconds - so "carried" described
+   * a fact nothing would ever deliver, which is the same disappearance as `fact_flushed_then_discarded` in a newer
+   * spelling. Here the wait is bounded and its end is a READ: the loss is counted under the shape that could not present
+   * (`receipt:succeeded`, the vocabulary `no_surface_for` already prints), and the fact leaves its window with it - because
+   * a fact kept past its bound and a fact consumed are the two readings this ledger exists to tell apart.
+   * </p>
+   * <p>
+   * ONLY WHERE NO TURN IS OWED, and that condition is not decoration: a flush that is about to open a turn is about to
+   * CONSUME these facts (`takeBatch` empties the windows), so expiring them first would destroy a fact whose consumer had
+   * already arrived. Called from the two moments the pump answers that question - a flush that owed nothing, and a reading
+   * of the account - so a run that goes silent still names its losses at the moment somebody asks what happened.
+   * </p>
+   */
+  #expireStaleCarries(): void {
+    if (this.#carryHeld.size === 0) return;
+    if (this.#opening() !== undefined) return;
+    const nowMs = this.#now();
+    for (const [slot, held] of [...this.#carryHeld]) {
+      if (nowMs - held.sinceMs < CARRY_HOLD_BOUND_MS) continue;
+      this.#forgetCarriedFact(slot);
+      this.#carryHeld.delete(slot);
+      this.#nameCarryLoss(held.shape);
+    }
+  }
+
+  /** One carried fact nobody took: counted under the shape that could not present, which is what a fix has to move. */
+  #nameCarryLoss(shape: string): void {
+    this.#carryLostByShape[shape] = (this.#carryLostByShape[shape] ?? 0) + 1;
+  }
+
+  /** Take a lost or expired fact out of the window that was holding it, so it cannot arrive after being named gone. */
+  #forgetCarriedFact(slot: string): void {
+    for (const pendingWindow of [this.#receipts, this.#semanticEvents, this.#lifecycle, this.#worldFacts])
+      pendingWindow.delete(slot);
+    this.#producedBy.delete(slot);
+  }
+
+  /** A window bound took a carried fact before any turn could: the same loss as an expired promise, counted the same way. */
+  #loseCarriedSlot(slot: string): void {
+    const held = this.#carryHeld.get(slot);
+    if (held === undefined) return;
+    this.#carryHeld.delete(slot);
+    this.#nameCarryLoss(held.shape);
+  }
+
+  /**
    * The batch that consumed the facts of one carry ticket, or `undefined` while they are still waiting.
    *
-   * `undefined` is a STATE here, not a collapse: it says "not yet", and `turnAccount.carry.pending` counts the same
-   * facts from the same ledger. A caller can therefore tell "it went into turn 4" from "nobody has carried it yet".
+   * `undefined` is a STATE here, not a collapse: it says "not yet", and `turnAccount.carry.held` counts the same
+   * facts from the same ledger. A caller can therefore tell "it went into turn 4" from "nobody has carried it yet" - and a
+   * ticket that is never resolved is a fact the account will name as lost, not one this method has to guess about.
    */
   public carriedInto(ticket: CarryTicket): string | undefined {
     return this.#carryTickets.get(ticket.ticketId)?.carriedInto;
@@ -3483,12 +3651,12 @@ export class CompanionEventPump {
     const readmitted = new Set(dropped.map(factSlotKey));
     for (const slot of carriedSlots) {
       if (readmitted.has(slot)) continue;
-      if (!this.#carryPending.delete(slot)) continue;
+      if (!this.#carryHeld.delete(slot)) continue;
       this.#carriedFacts += 1;
     }
     for (const [ticketId, ticket] of this.#carryTickets) {
       if (ticket.carriedInto !== undefined) continue;
-      if (!ticket.facts.every((slot) => !this.#carryPending.has(slot))) continue;
+      if (!ticket.facts.every((slot) => !this.#carryHeld.has(slot))) continue;
       this.#carryTickets.set(ticketId, { facts: ticket.facts, carriedInto: batchId });
     }
 
@@ -3542,7 +3710,7 @@ export class CompanionEventPump {
       snapshot: fact.payload as unknown as Snapshot,
       revision: fact.revision,
       ageTurns: this.#readingIsNews(fact) === false ? Math.max(1, age) : 0,
-      ageMs: Math.max(0, Date.now() - this.#lastSnapshotArrivedAtMs),
+      ageMs: Math.max(0, this.#now() - this.#lastSnapshotArrivedAtMs),
     });
   }
 
@@ -3683,7 +3851,7 @@ export class CompanionEventPump {
       sourceEventId: eventId,
       correlationId: eventId,
       revision: reading.revision,
-      occurredAtMs: Date.now(),
+      occurredAtMs: this.#now(),
       semanticKind: WORLD_STATE_STALE_SEMANTIC_KIND,
       payload: Object.freeze({
         kind: WORLD_STATE_STALE_SEMANTIC_KIND,
@@ -3831,7 +3999,7 @@ export class CompanionEventPump {
       sourceEventId: eventId,
       correlationId: eventId,
       revision,
-      occurredAtMs: Date.now(),
+      occurredAtMs: this.#now(),
       semanticKind: WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
       payload: Object.freeze({
         kind: WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
@@ -3873,7 +4041,7 @@ export class CompanionEventPump {
     const boundTurns = narrationWithoutWorkThreshold(this.#narrationWithoutWorkPublished);
     return Object.freeze({
       turns: this.#turnsWithoutWork,
-      lastWorkTurnAgoMs: Math.max(0, Date.now() - this.#lastWorkTurnAtMs),
+      lastWorkTurnAgoMs: Math.max(0, this.#now() - this.#lastWorkTurnAtMs),
       boundTurns,
       due:
         this.#turnsWithoutWork >= boundTurns &&
@@ -3905,7 +4073,7 @@ export class CompanionEventPump {
       sourceEventId: eventId,
       correlationId: eventId,
       revision: this.#lastSnapshot?.revision ?? 0,
-      occurredAtMs: Date.now(),
+      occurredAtMs: this.#now(),
       semanticKind: NARRATION_WITHOUT_WORK_SEMANTIC_KIND,
       payload: Object.freeze({
         kind: NARRATION_WITHOUT_WORK_SEMANTIC_KIND,
@@ -3985,7 +4153,7 @@ export class CompanionEventPump {
     }
     if (producedWork) {
       this.#turnsWithoutWork = 0;
-      this.#lastWorkTurnAtMs = Date.now();
+      this.#lastWorkTurnAtMs = this.#now();
       return;
     }
     this.#turnsWithoutWork =
@@ -4299,15 +4467,22 @@ export function factTurnShape(fact: WorldFact): string {
 }
 
 /**
- * The shape a `no_surface_for` answer is filed under: `factTurnShape`, except that a plain world fact is named by its OWN
+ * The shape a fact is NAMED by in an account's braces: `factTurnShape`, except that a plain world fact is named by its OWN
  * semantic kind - `world_fact:modal_presented`.
  *
+ * <p>
  * `world_fact` alone would collapse every kind that cannot present into one word, and the kind is the thing a fix has to
  * move: `round66`'s twelve lost turns were all one shape, and a reader of `no_surface_for 12 {world_fact: 12}` could not
  * tell that from twelve undrawn HUD lines. The classification's own key stays `world_fact` (`factTurnShape`), because that
  * is the shape's consequence; this is the finer spelling the ACCOUNT needs, and nowhere else.
+ * </p>
+ * <p>
+ * IT NAMES TWO READINGS AND MUST STAY ONE SPELLING: `no_surface_for`'s braces (the fact the surface refused) and
+ * `carried`'s `lost` braces (the fact nobody carried). They are the same facts on the same path - the shape that could not
+ * present is the shape that has no consumer - so a reader can join the two segments by name.
+ * </p>
  */
-function noSurfaceShape(fact: WorldFact): string {
+export function factShapeName(fact: WorldFact): string {
   const shape = factTurnShape(fact);
   if (shape !== "world_fact") return shape;
   return fact.semanticKind === undefined ? shape : `world_fact:${fact.semanticKind}`;

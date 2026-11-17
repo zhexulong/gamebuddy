@@ -222,11 +222,17 @@ test("follow_up_tracks_work_not_traffic: three facts behind a running plan are o
   assert.match(stated, /600/u, "the answer's batch states the clock mark that arrived mid-plan");
   assert.match(stated, /1200/u, "and the second one");
   assert.match(stated, /notice 1/u, "and the notice the game showed");
+  // THE LEDGER IS READ WHOLE: the population is the three facts, all three arrived in the answer's batch, and the loss is
+  // the reading that must stay zero - a fact that was consumed is not a loss.
+  const carry = pump.turnAccount.carry;
+  assert.equal(carry.carried, 3, "three facts were ticketed while the plan ran");
+  assert.equal(carry.consumed, 3, "and all three arrived in the answer's batch");
+  assert.equal(carry.lostTotal, 0, "so nothing was lost");
+  assert.equal(carry.held, 0, "and nothing is still waiting");
   console.log(
     `follow_up_tracks_work_not_traffic: arrive-during-plan ${String(arrivals.length)} · turns-while-running ` +
-      `${String(1)} · turns-with-answer ${String(pump.turnAccount.opened - 1)} · carried ${String(
-        pump.turnAccount.carry.carried,
-      )}`,
+      `${String(1)} · turns-with-answer ${String(pump.turnAccount.opened - 1)} · carried ${String(carry.carried)} · ` +
+      `consumed ${String(carry.consumed)} · lost ${String(carry.lostTotal)} · held ${String(carry.held)}`,
   );
 });
 
