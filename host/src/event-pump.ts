@@ -7,7 +7,7 @@ import {
   worldStateStaleCode,
   worldStateStaleThreshold,
 } from "./fact-brief.js";
-import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
+import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./program-settlement-digest.js";
 import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
 import { EXECUTION_STATES, type ExecutionOrigin, type ExecutionState, type Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
@@ -3518,7 +3518,9 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
   const total = fact.payload.total;
   const counts = fact.payload.counts;
   if (typeof total !== "number" || total <= 0 || typeof counts !== "object" || counts === null) return "refused";
-  return (counts as Readonly<Record<string, unknown>>).succeeded === total ? "succeeded" : "refused";
+  // The digest's own verdict function, not a second spelling of "every node succeeded": the sentence she reads
+  // (`settledSummary`) and the classification here are the same arithmetic over the same counts.
+  return settledProgramOk(counts as Readonly<Record<string, number>>, total) ? "succeeded" : "refused";
 }
 
 /**

@@ -92,6 +92,24 @@ export interface SettledProgramAnswer {
   /** The population every count is over: the nodes this Host submitted, not the rows the journal happened to list. */
   readonly total: number;
   readonly counts: Readonly<Record<string, number>>;
+  /**
+   * The verdict, and - when it is not `ok` - the Mod's own reason for it: the two fields every tool result has.
+   *
+   * <p>
+   * AN ANSWER WITH NO VERDICT IS A DESCRIPTION. `summary` states the counts in a sentence and the rows state the work;
+   * neither says whether the plan DID what it was told, which is the one thing a reader acts on - and this object is
+   * answered by `stardew_action_program_status` for a stopped programme
+   * (`continuity-semantic-game-runtime-materializer.ts`), so it IS a tool result and must have a tool result's shape.
+   * </p>
+   * <p>
+   * BOTH COME FROM THE ROWS, NOT FROM A SECOND COUNT: `ok` is the `succeeded` count against `total` (`settledProgramOk`)
+   * and `reason` is the FIRST row that is not `succeeded`, read before the row list is bounded - a plan whose
+   * twenty-fifth node was refused still names it, and a bounded answer that lost the reason would be a verdict nobody can
+   * act on. `reason` is the Mod's own tokens, never a Host paraphrase: `#2 move_to_tile:rejected:tool_not_held`.
+   * </p>
+   */
+  readonly ok: boolean;
+  readonly reason: string | null;
   /** The one line a reader can take without parsing twenty rows: `.settledSummary`. */
   readonly summary: string;
   /** The rows, bounded; each carries its terminal state and, where the Mod said one, its own code. */
@@ -110,13 +128,43 @@ export function settledProgramAnswer(answer: ReturnType<typeof planBatchAnswer>)
   const counts: Record<string, number> = {};
   for (const node of answer.nodes) counts[node.state] = (counts[node.state] ?? 0) + 1;
   const nodes = answer.nodes.slice(0, MAX_SETTLED_DIGEST_NODES);
+  // Read over EVERY row, before the bound: the reason a plan is not ok is the first step that did not do what it was
+  // told, and a `nodes` list cut at twenty could not name a twenty-fifth.
+  const firstRefusal = answer.nodes.find((node) => node.state !== "succeeded");
   return Object.freeze({
     total: answer.nodes.length,
     counts: Object.freeze(counts),
+    ok: settledProgramOk(counts, answer.nodes.length),
+    reason: firstRefusal === undefined ? null : settledProgramReason(firstRefusal),
     summary: settledSummary(counts, answer.nodes.length),
     nodes: Object.freeze(nodes),
     omitted: answer.nodes.length - nodes.length,
   });
+}
+
+/**
+ * Did every node do what it was told?
+ *
+ * The ONE reading of a plan's outcome from its counts: the digest's verdict, the settlement's turn consequence
+ * (`event-pump.ts` `settledProgramOutcome`) and the summary's own `done` count all read this, so the sentence she is
+ * shown and the classification that decides whether it opens a turn cannot disagree about whether a plan worked.
+ */
+export function settledProgramOk(counts: Readonly<Record<string, number>>, total: number): boolean {
+  return (counts.succeeded ?? 0) === total;
+}
+
+/**
+ * Why one step did not do what it was told, in the Mod's own tokens: `#<index> <actionId>:<state>[:<reasonCode>]`.
+ *
+ * `<index>` is the plan's own position among the nodes it carries (`PlanNodeAnswer.index`, the number the script and
+ * the journal both count from), and it is read BEFORE the row list is bounded, so the reason always names the step that
+ * caused it. `reasonCode` is the Mod's rejection or failure code when the row carried one; its absence is named by the
+ * state alone - a `partially_succeeded` row is the polite lie the state exists to refuse, and `skipped_dependency` names
+ * its own producers in `skippedBecause`.
+ */
+export function settledProgramReason(node: SettledDigestNode): string {
+  const code = node.reasonCode === undefined ? "" : `:${node.reasonCode}`;
+  return `#${String(node.index)} ${node.actionId}:${node.state}${code}`;
 }
 
 export interface SettledDigestInput {
