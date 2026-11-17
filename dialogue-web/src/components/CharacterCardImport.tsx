@@ -10,11 +10,16 @@ import {
   type StageStCardImportCommandV1,
 } from "../management-pipeline-api";
 import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { fieldError } from "./field-error";
 import { canonicalBase64Of, isPngCardFile } from "./png-character-card";
 import { useDraft, useRecordDraft } from "./surface-drafts";
 
 /** The JSON arm's own ceiling: the decoder's text input bound (StageStCardImportCommandV1). */
 const MAX_CARD_TEXT_LENGTH = 2_097_152;
+
+/** The paste box's own id, and the id of the line that says what belongs in it. */
+const CARD_IMPORT_PASTE_ID = "card-import-paste";
+const CARD_IMPORT_PASTE_PROBLEM_ID = "card-import-paste-problem";
 
 /**
  * The Host's own staged facts for one card, in the one shape both the
@@ -404,6 +409,33 @@ export function CharacterCardImport({
     await stageCard(read.command);
   };
 
+  /**
+   * The paste box's own press.
+   *
+   * This is not a form of fields, so the honest analogue of the world book's "name every field that
+   * is missing something" is one line about the one thing the press needs: the box says it is empty
+   * and what belongs in it (the card's JSON, or the file chooser above), rather than the control
+   * being greyed out and explaining nothing. The box is marked and takes the keyboard for the same
+   * reason every other marked field does - the sentence is announced, not just painted.
+   */
+  const [pasteProblem, setPasteProblem] = useState<string | null>(null);
+  const [focusPaste, setFocusPaste] = useState(false);
+  useEffect(() => {
+    if (!focusPaste) return;
+    document.getElementById(CARD_IMPORT_PASTE_ID)?.focus();
+    setFocusPaste(false);
+  }, [focusPaste]);
+  const tryPaste = (): void => {
+    if (pasted.value.trim().length > 0) {
+      setPasteProblem(null);
+      void stageCard({ apiVersion: 1, cardSource: "json", card: pasted.value.trim() });
+      return;
+    }
+    setPasteProblem(labels.importPasteRequired);
+    setFocusPaste(true);
+  };
+  const pasteField = fieldError(pasteProblem, CARD_IMPORT_PASTE_PROBLEM_ID);
+
   const stagedReport = stagedCard === null ? null : reportOf(stagedCard);
 
   return (
@@ -448,20 +480,28 @@ export function CharacterCardImport({
         </summary>
         <p className="management-settings-hint">{labels.importPasteHint}</p>
         <textarea
+          id={CARD_IMPORT_PASTE_ID}
           className="form-textarea"
           aria-label={labels.importPasteLabel}
+          aria-invalid={pasteField.invalid}
+          aria-describedby={pasteField.describedBy}
           rows={4}
           placeholder='{"spec":"chara_card_v3","data":{"name":"…"}}'
           value={pasted.value}
-          onChange={(event) => pasted.type(event.target.value)}
+          onChange={(event) => {
+            pasted.type(event.target.value);
+            // The sentence is derived from the box, so it clears as the player pastes - not on the
+            // next press, which would leave a red edge on a box that is no longer empty.
+            if (event.target.value.trim().length > 0) setPasteProblem(null);
+          }}
         />
+        {pasteProblem === null ? null : (
+          <p role="status" className="error-banner" id={pasteField.id} data-card-import-paste-problem>
+            {pasteProblem}
+          </p>
+        )}
         <div className="composer-actions">
-          <button
-            type="button"
-            className="small-button"
-            disabled={busy || pasted.value.trim().length === 0}
-            onClick={() => void stageCard({ apiVersion: 1, cardSource: "json", card: pasted.value.trim() })}
-          >
+          <button type="button" className="small-button" disabled={busy} onClick={tryPaste}>
             {busy ? labels.importBusy : labels.importSubmit}
           </button>
         </div>

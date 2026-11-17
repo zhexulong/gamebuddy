@@ -27,6 +27,8 @@ export type CharacterLabels = Readonly<{
   importChooseFile: string;
   importPasteLabel: string;
   importPasteHint: string;
+  /** What the paste box's press says when there is nothing in it, and what to put there. */
+  importPasteRequired: string;
   importSubmit: string;
   importBusy: string;
   importCreated: string;
@@ -531,6 +533,7 @@ const en: CharacterLabels = Object.freeze({
   importChooseFile: "Choose card file",
   importPasteLabel: "Paste card text",
   importPasteHint: "SillyTavern V2/V3 JSON.",
+  importPasteRequired: "There is nothing to import yet: paste the card's JSON here, or choose a file above.",
   importSubmit: "Import card",
   importBusy: "Importing…",
   importCreated: "Imported {{name}}.",
@@ -878,6 +881,7 @@ const zh: CharacterLabels = Object.freeze({
   importChooseFile: "选择角色卡文件",
   importPasteLabel: "粘贴角色卡文本",
   importPasteHint: "SillyTavern V2/V3 JSON。",
+  importPasteRequired: "这里还没有可导入的内容：把角色卡的 JSON 粘贴进来，或在上方选择文件。",
   importSubmit: "导入角色卡",
   importBusy: "正在导入…",
   importCreated: "已导入 {{name}}。",
