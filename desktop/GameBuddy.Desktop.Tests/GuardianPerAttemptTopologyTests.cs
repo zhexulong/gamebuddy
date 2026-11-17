@@ -25,16 +25,15 @@ namespace GameBuddy.Desktop.Tests;
 /// this test draws the same way. No role is launched, so no game process exists at any point.
 ///
 /// What it answers (§2.4, §4.1-§4.3 and §6 U1 of the ADR):
-///  * settlement is "the process is gone", observed on a handle the test opened itself;
-///  * a second attempt in the same process re-arms on fresh names;
-///  * the first attempt's lease mutex and both Job objects are UNREACHABLE afterwards;
+///  * settlement means the process is GONE, read from the process table, not "exit 0";
+///  * a second attempt in the same process re-arms on fresh names while the first is still resident;
+///  * a settled attempt's lease mutex and both Job objects are UNREACHABLE afterwards;
 ///  * the exit code is quoted, and deliberately not asserted: the Desktop never reads it
 ///    (<see cref="GuardianSupervisorLease.WaitForExitAsync(CancellationToken)"/> answers
 ///    <see cref="GuardianSupervisorExit.ControlClosed"/> once <c>GetExitCodeProcess</c> succeeds).
 /// </summary>
 public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
 {
-
     [Fact]
     public async Task Two_resident_guardians_arm_settle_and_rearm_inside_one_desktop_process()
     {
