@@ -161,7 +161,7 @@ const playerInput = {
 function richBrief(): string {
   return composeFactBrief({
     inputs: [playerInput],
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: richBatchFacts(),
     locale: "zh-CN",
   });
@@ -292,9 +292,9 @@ test("bare_json_in_model_text: the composed text is prose, not an envelope", () 
 });
 
 test("the world block names its revision and its freshness, and never claims to be the world", () => {
-  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(fresh, /^<world-state>\n世界（revision 1205，刚刚更新）$/mu);
-  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3, ageMs: 90_000 });
+  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3, ageMs: 0, contentAgeMs: 90_000 });
   assert.match(stale, /^<world-state>\n世界（revision 1205，本轮无新观察）$/mu);
   assert.match(stale, /（这是 3 轮之前看到的，世界已经不一样了）/u, "and how old the reading is, in words");
   const nothing = composeWorldState(undefined);
@@ -305,7 +305,14 @@ test("the stale note states how old the reading is, and states no order beside i
   // Past the declared bound the age becomes the token itself, and the sentence inside it shipped a second clause —
   // `；先看一眼再动手`. That clause is an order, which the census's `fact_block_issues_an_instruction` owns and a fact
   // block has no authority to give: the note reports the age and what the age means, and stops there.
-  const stale = { ageTurns: WORLD_STATE_STALE_TURNS, revision: 1205, ageMs: 900_000 };
+  const stale = { ageTurns: WORLD_STATE_STALE_TURNS, revision: 1205, ageMs: 1_000, contentAgeMs: 900_000 };
+  // THE TOKEN CARRIES THE CONTENT'S AGE, and the reading's own age travels beside it: a picture re-read a second ago is as
+  // invalid as it was before the re-read, and a token keyed on the re-read would have said "one second old" here.
+  assert.equal(
+    worldStateStaleCode(stale),
+    `world_state_stale:${String(WORLD_STATE_STALE_TURNS)};1205;900000`,
+    "the stale token must state how old the PICTURE is, not how long ago it was re-read",
+  );
   const text = composeWorldState({ snapshot: world, ...stale });
   // The note is the token and the parenthetical that says what it means, wherever the block puts them.
   const at = text.indexOf(worldStateStaleCode(stale));
@@ -325,7 +332,7 @@ test("the stale note states how old the reading is, and states no order beside i
 });
 
 test("the world block names the objects she acts on, with their tiles", () => {
-  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(text, /手持: 锄头/u, "the held tool is said in words");
   assert.match(text, /待浇水的作物 \(63,14\)/u, "the nearest dry crop is named with its tile, nearest first");
   assert.match(text, /杂草 \(64,15\)/u, "the nearest weed tile is named");
@@ -333,7 +340,8 @@ test("the world block names the objects she acts on, with their tiles", () => {
 });
 
 test("own_health_in_the_world_block: her hit points are in the text she reads, bare and never completed", () => {
-  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
 
   // The fact, in the shape the stamina beside it uses. Before this line `health` was exempted by a rendering into
   // `contextProjection.hud`, a block nothing in the tree reads (`host/src/host-service.ts:1235` is its only consumer).
@@ -354,7 +362,8 @@ test("own_health_in_the_world_block: her hit points are in the text she reads, b
 });
 
 test("can_water_beside_the_held_tool: the can's own water reaches the prose, and an absent reading says nothing", () => {
-  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   const can = {
     slot: 2,
     qualifiedItemId: "(T)WateringCan",
@@ -420,7 +429,7 @@ test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
 
   /** The one sentence of `<world-state>` that answers "what is in my pack". */
   const packSentence = (snapshot: Snapshot): string =>
-    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 })
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 })
       .split("\n")
       .flatMap((line) => line.split("；"))
       .find((part) => part.includes("身上带着")) ?? "";
@@ -477,7 +486,7 @@ test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
 test("a reading that has not changed is one line, not the whole world again", () => {
   const answer = unchangedWorldAnswer(1205);
   assert.equal(answer, "自 revision 1205 以来世界没有变化");
-  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   // The reading is stated as the two lengths, so a future change that quietly returns the dump cannot pass by
   // looking like a sentence.
   assert.ok(
@@ -531,7 +540,7 @@ test("prose_cost_per_batch: what one delivery costs, against the envelope it rep
   const inputs = [playerInput];
   const prose = composeFactBrief({
     inputs,
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: facts,
     locale: "zh-CN",
   });
@@ -663,7 +672,8 @@ function wireNamedRowFamilies(): readonly string[] {
  * RED AT `beef49e8` (the commit this unit started from): every family below printed bare coordinates.
  */
 test("named_rows: a tile row that carries a kind prints its own displayName beside the tile", () => {
-  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   const families = wireNamedRowFamilies();
   // Refuse to pass on nothing: an empty population agrees with every assertion below.
   assert.ok(families.length >= 2, `examined ${String(families.length)} named row families, too few to be the wire`);
@@ -711,7 +721,7 @@ test("target_family_labels: every tile family the wire publishes has a word, or 
     [],
     `the wire publishes these tile families and SNAPSHOT_KEYS does not admit them: ${unpublished.join(", ")}`,
   );
-  const unaccounted = families.filter((family) => !(family in TARGET_FAMILY_LABELS) && !(family in NON_ROW_FAMILIES));
+  const unaccounted = families.filter((family) => !(family in TARGET_FAMILY_LABELS || family in NON_ROW_FAMILIES));
   assert.deepEqual(
     unaccounted,
     [],
@@ -756,7 +766,7 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
   assert.equal(family?.label, "可锄的地块");
   assert.equal(family?.total, 2);
   assert.equal(family?.rendered, "可锄的地块 (65,15) (66,15)");
-  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(text, /可锄的地块 \(65,15\) \(66,15\)/u);
   assert.match(text, /可清的地块 \(67,15\)/u, "the family `till_soil` refuses keeps its own sentence");
   // A measured empty family is the answer "there is no ground to hoe here", not silence.
@@ -765,6 +775,7 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
     revision: 1205,
     ageTurns: 0,
     ageMs: 0,
+    contentAgeMs: 0,
   });
   assert.match(none, /这一带没有：[^\n]*可锄的地块/u);
 });
@@ -793,7 +804,8 @@ function seedWorld(overrides: Readonly<Record<string, unknown>> = {}): Snapshot 
 }
 
 /** The world block for one snapshot of that morning. */
-const seedText = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+const seedText = (snapshot: Snapshot): string =>
+  composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
 
 /**
  * A TRUE FACT THAT IS NOT ACTIONABLE: "these sixty-two tiles can be hoed" and no word about seeds.
@@ -932,7 +944,7 @@ test("target_family_cap: with thirteen families in reach, the line names the one
     families.length,
     "thirteen families are in reach, so the cap has something to leave out",
   );
-  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   const printed = text.split("\n").filter((line) => /\(-?\d+,-?\d+\)/u.test(line) && !line.includes("未列出"));
   assert.equal(printed.length, MAX_TARGET_FAMILIES_SHOWN, "the cap prints twelve families and counts the rest");
   assert.match(

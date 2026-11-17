@@ -117,13 +117,20 @@ export function worldStateStaleThreshold(published: number): number {
 }
 
 /**
- * The one spelling of the stale token: `world_state_stale:<turns>;<revision>;<ageMs>`.
+ * The one spelling of the stale token: `world_state_stale:<turns>;<revision>;<contentAgeMs>`.
  *
  * The block, the `<world-facts>` line and the Host's published line all carry this exact string, so a reader - a model,
  * a log grep, a run audit - never has to reconcile two renderings of one number.
+ *
+ * THE NUMBER IS THE CONTENT'S AGE, not the reading's: the token says "this picture is invalid", and a picture re-read a
+ * second ago is exactly as invalid as it was before the re-read. The reading's own age travels beside it on the fact
+ * (`ageMs`), because "nobody has looked for five minutes" and "we looked and the world still says what we cannot see" are
+ * different conditions that a run has to tell apart.
  */
-export function worldStateStaleCode(reading: Readonly<{ ageTurns: number; revision: number; ageMs: number }>): string {
-  return `world_state_stale:${String(reading.ageTurns)};${String(reading.revision)};${String(reading.ageMs)}`;
+export function worldStateStaleCode(
+  reading: Readonly<{ ageTurns: number; revision: number; contentAgeMs: number }>,
+): string {
+  return `world_state_stale:${String(reading.ageTurns)};${String(reading.revision)};${String(reading.contentAgeMs)}`;
 }
 
 /** One node row of a settled programme, as `program-settlement-digest.ts` publishes it. */
@@ -158,13 +165,21 @@ export type WorldStateReading = Readonly<{
   revision: number;
   ageTurns: number;
   /**
-   * Milliseconds since the reading's own revision was admitted.
+   * Milliseconds since the world was last READ, by any caller and whether or not it said anything new.
    *
-   * The turn age is what the block is judged by, and this is the wall-clock half of the same fact: a turn can take a
-   * minute, so fifty turns is thirty minutes or three hours, and only one of those numbers is about the world she is
-   * describing. Measured from the revision, so a re-stated copy of one reading never looks fresher than it is.
+   * The reading half of the freshness question: a world re-read every thirty seconds is a world nobody has lost sight of,
+   * and a run that reported otherwise told the model its picture was old when the Mod had answered seconds ago
+   * (`round66`, `round67`).
    */
   ageMs: number;
+  /**
+   * Milliseconds since this reading's CONTENT was first admitted: how old the picture is.
+   *
+   * The turn age (`ageTurns`) and this one say the same thing in two units, and both are about the content because that
+   * is what the stale token invalidates. A re-read that finds the world unchanged refreshes `ageMs` and leaves this
+   * running - which is the difference between "nobody looked" and "we looked, and it still says this".
+   */
+  contentAgeMs: number;
 }>;
 
 /** What one delivered batch shows the model. The snapshot is state, everything else is news. */
@@ -275,7 +290,7 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
-      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了）`,
+      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.contentAgeMs / 1000))} 秒之前，世界已经不是这样了）`,
     );
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);

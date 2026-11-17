@@ -256,7 +256,7 @@ function deliveredBatch(
   snapshot: Readonly<Record<string, unknown>>,
   arrival: WorldFact | undefined,
 ): Readonly<{ block: string; arrival: string }> {
-  const reading = { snapshot, revision: 1, ageTurns: 0, ageMs: 0 } as never;
+  const reading = { snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 } as never;
   const block = composeFactBrief({ inputs: [], snapshot: reading, events: [], locale: ARRIVAL_PROBE_LOCALE });
   const whole = composeFactBrief({
     inputs: [],
