@@ -74,6 +74,15 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     /// </summary>
     internal LocalExecutionReceipt Remember(LocalExecutionReceipt receipt)
     {
+        // A SETTLED RECEIPT IS NEVER REWRITTEN BY A LATER PROGRESS TRANSITION. The one funnel stores every receipt it
+        // is handed, and a body controller can still report a step of an execution that was already answered (round66:
+        // `rejected` at revision 840 for the request, then `tool_approach_completed` for the walk underneath it). Storing
+        // the second would leave every reader - exact receipt query, idempotent replay, held request - answering with a
+        // state the execution already left, so the settled receipt stands and the late one is refused.
+        if (!receipt.State.IsTerminal()
+            && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? settled)
+            && settled.State.IsTerminal())
+            return settled;
         if (!this.receiptsByRequestId.ContainsKey(receipt.RequestId))
         {
             this.receiptOrder.Enqueue(receipt.RequestId);
