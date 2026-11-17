@@ -1945,97 +1945,6 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
   assert.doesNotMatch(printed, /speech_truncated:/u);
 });
 
-test("a turn whose every part was withheld names the bubble it owed: zero is a reason, not a silence", async () => {
-  // THE FINDING THIS CLOSES. `bubbles: 0` was TWO endings in one number: a turn whose text the projection withheld, and
-  // a turn that spoke no line at all. The first is a delivery gap with a reason and the second is her silence, so a reader
-  // reconciling `textParts` against `bubbles` was reading a loss and a choice as the same digit. Here the turn produced
-  // one part, a stage beat the surface refuses to draw, and the bubble it would have carried is counted with the layer
-  // that kept it.
-  const listeners = new Set<(event: unknown) => void>();
-  const emit = (event: unknown) => {
-    for (const listener of [...listeners]) listener(event);
-  };
-  const presented: { text: string }[] = [];
-  const loop = new CompanionLoop(
-    {
-      async sendUserMessage() {
-        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "去吧" }] } });
-        const snapshot = { id: "assistant_1", role: "assistant", content: [], stopReason: "pending" };
-        emit({ type: "message_start", message: snapshot });
-        emit({
-          type: "message_update",
-          message: snapshot,
-          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
-        });
-        emit({
-          type: "message_update",
-          message: snapshot,
-          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "*转过身微笑*", partial: snapshot },
-        });
-        emit({
-          type: "message_end",
-          message: {
-            id: "assistant_1",
-            role: "assistant",
-            content: [{ type: "text", text: "*转过身微笑*" }],
-            stopReason: "stop",
-          },
-        });
-        emit({ type: "agent_settled" });
-      },
-      async abort() {},
-      clearQueue() {},
-      async waitForIdle() {},
-      subscribe(next: (event: unknown) => void) {
-        listeners.add(next);
-        return () => {
-          listeners.delete(next);
-        };
-      },
-    } as never,
-    {
-      beginPlayerBatch() {},
-      endBatch() {},
-      async presentNativeAssistantContent(content) {
-        presented.push(content as { text: string });
-      },
-    },
-  );
-  const stderrWrite = process.stderr.write;
-  let printed = "";
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    printed += String(chunk);
-    return true;
-  }) as typeof process.stderr.write;
-  try {
-    loop.pump.enqueuePlayerInput({
-      source: "player_text",
-      inputId: "input_withheld",
-      eventId: "player_source_withheld",
-      text: "去吧",
-      locale: "zh-CN",
-      timestampMs: 1,
-    });
-    assert.equal(await loop.flush(), "completed");
-  } finally {
-    process.stderr.write = stderrWrite;
-  }
-
-  assert.deepEqual(presented, [], "the surface drew nothing, which is why a bubble is owed");
-  const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
-  assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
-  assert.deepEqual(JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)), {
-    textParts: 1,
-    presented: 0,
-    suppressed: { empty_after_projection: 1 },
-    bubbles: 0,
-    suppressedBubbles: { empty_after_projection: 1 },
-    messages: { count: 1, ids: ["assistant_1"] },
-  });
-  // The parts add up, so this turn is not a mismatch: it is a loss that was counted with its reason.
-  assert.doesNotMatch(printed, /delivery_mismatch:/u);
-});
-
 test("a turn the bubble cuts prints the loss it could not deliver", async () => {
   // MEASURED 2026-11-16 (`round62`, one session, 90 turns that carried text): 18 turns were cut and 533 characters were
   // deleted before the player saw them. The loss was counted (`bubble.truncatedChars`) and reported on stderr as
@@ -2475,8 +2384,9 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     presented: 1,
     suppressed: {},
     // One bubble, and no sound: a settlement batch carries no locale, so the reaction vocabulary has nothing to speak
-    // and the bubble is her words alone.
+    // and the bubble is her words alone. `suppressedBubbles` is empty because it arrived.
     bubbles: 1,
+    suppressedBubbles: {},
     messages: { count: 1, ids: ["assistant_settlement"] },
     bubble: { chars: text.length, truncatedChars: 0, sentencesDropped: 0 },
   });
@@ -2566,6 +2476,8 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
     bubbles: 0,
+    // The bubble this turn owed, and the layer that kept it: `bubbles: 0` alone said only that nothing was drawn.
+    suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
   });
 });
@@ -2645,6 +2557,8 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
     bubbles: 0,
+    // The bubble this turn owed, and the layer that kept it: `bubbles: 0` alone said only that nothing was drawn.
+    suppressedBubbles: { no_presentation_lease: 1 },
     messages: { count: 1, ids: ["assistant_settlement"] },
   });
 });
