@@ -1184,11 +1184,11 @@ export class CompanionHostService {
   }
 
   /**
-   * Deliver the expiring facts into the running turn.
+   * Deliver the steerable facts into the running turn.
    *
    * Kept out of `flushSoon`'s body so the two never share a guard: a steer must not set `#flushScheduled`
    * (nothing about a steer schedules a turn) and must not touch `#retryBatch` (a batch that could not be steered is
-   * still owed to the next turn, and `EventPump` only removes expiring facts once it has handed them over).
+   * still owed to the next turn, and `EventPump` only removes steerable facts once it has handed them over).
    */
   async #steer(): Promise<void> {
     await this.loop.steer();
@@ -1225,7 +1225,12 @@ export class CompanionHostService {
     // the model, because `flushSoon` returned on `#flushScheduled` and the steer branch inside `flush` was never
     // reached - a turn-scoped lock guarding a turn-internal event.
     if (this.#flushScheduled) {
-      if (this.loop.pump.hasExpiringFact) void this.#steer().catch(() => undefined);
+      const pump = this.loop.pump;
+      // TWO QUESTIONS, TWO NAMES, and the second one is why a blocked step no longer waits out the turn: a milestone
+      // expires against the world's own clock, while a receipt that STOPS the plan is already worth nothing to a turn
+      // that keeps thinking about a body that has stopped. `hasExpiringFact` alone is the defect this line replaces -
+      // measured `round66`, a 26 s turn spent on a step that had been rejected seconds into it.
+      if (pump.hasExpiringFact || pump.hasPreemptingFact) void this.#steer().catch(() => undefined);
       return;
     }
     this.#flushScheduled = true;
