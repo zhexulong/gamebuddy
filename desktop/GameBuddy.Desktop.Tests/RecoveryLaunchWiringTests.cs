@@ -26,7 +26,7 @@ public sealed class RecoveryLaunchWiringTests
         // The field must not stay readonly, or the mount could not take effect.
         Assert.DoesNotContain("private readonly Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery;", broker, StringComparison.Ordinal);
         // The command loop still starts in exactly one place.
-        Assert.Contains("commandLoop = Task.Run(() => ServeCommandsAsync(cancellationToken), CancellationToken.None);", broker, StringComparison.Ordinal);
+        Assert.Contains("commandLoop = Task.Run(() => ServeSessionsAsync(host, cancellationToken), CancellationToken.None);", broker, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public sealed class RecoveryLaunchWiringTests
 
         var start = productionPath.IndexOf("await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
         var mount = productionPath.IndexOf("host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));", StringComparison.Ordinal);
-        var loop = productionPath.IndexOf("await host.AttachResidentGuardianAsync(resident, cancellationToken)", StringComparison.Ordinal);
+        var loop = productionPath.IndexOf("await host.AttachResidentGuardianFactory(", StringComparison.Ordinal);
 
         // Host start, then the recovery mount, then the resident attach that
         // starts the broker's command loop.

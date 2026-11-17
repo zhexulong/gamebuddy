@@ -910,7 +910,7 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     private AdmittedRuntimeFile? runtime;
     private AdmittedRuntimeFile? bootstrap;
     private DesktopHostBootstrapBroker? broker;
-    private GuardianSupervisorLease? residentGuardian;
+    private bool guardianFactoryMounted;
     // The admitted operational root: where this launcher writes its own teardown fact, beside the
     // child's own exit records.
     private readonly string operationalRoot;
@@ -929,21 +929,28 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
 
     internal HostBootstrapResult Result { get; }
 
-    /// <summary>Attaches the Desktop-owned resident Guardian to the authenticated Host broker.</summary>
-    internal async Task AttachResidentGuardianAsync(GuardianSupervisorLease lease, CancellationToken cancellationToken)
+    /// <summary>
+    /// Mounts the Desktop-owned resident Guardian factory on the authenticated Host broker.
+    ///
+    /// A factory, not a lease: the broker creates the Guardian an attempt needs and settles it when that
+    /// attempt ends, so this lease neither holds a Guardian nor has anything to refuse a SECOND attempt
+    /// with. What it still owns is the ordering - the mount is what starts the broker's command loop -
+    /// and the liveness of the exact child it is mounting onto.
+    /// </summary>
+    internal async Task AttachResidentGuardianFactory(Func<CancellationToken, Task<GuardianSupervisorLease>> startGuardian, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(lease);
+        ArgumentNullException.ThrowIfNull(startGuardian);
         cancellationToken.ThrowIfCancellationRequested();
         await guardianGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var child = process;
-            if (Volatile.Read(ref closed) != 0 || residentGuardian is not null || child is null ||
+            if (Volatile.Read(ref closed) != 0 || guardianFactoryMounted || child is null ||
                 !WindowsNative.GetExitCodeProcess(child, out _) || WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout)
                 throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
             var currentBroker = broker ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-            await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken).ConfigureAwait(false);
-            residentGuardian = lease;
+            await currentBroker.AttachResidentGuardianFactory(startGuardian, cancellationToken).ConfigureAwait(false);
+            guardianFactoryMounted = true;
         }
         finally { guardianGate.Release(); }
     }

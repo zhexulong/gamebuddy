@@ -513,17 +513,12 @@ internal static class Program
                 // happen before the resident Guardian starts the broker's command
                 // loop, which is what serves a recovery request.
                 host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));
-                GuardianSupervisorLease? resident = null;
-                try
-                {
-                    resident = await guardianSupervisor.StartResidentAsync(image, cancellationToken).ConfigureAwait(false);
-                    await host.AttachResidentGuardianAsync(resident, cancellationToken).ConfigureAwait(false);
-                    resident = null;
-                }
-                finally
-                {
-                    if (resident is not null) await resident.DisposeAsync().ConfigureAwait(false);
-                }
+                // The broker creates the resident Guardian an attempt needs and settles it when that attempt
+                // ends, so the launcher hands over the FACTORY and keeps no lease of its own: a Guardian this
+                // entry never created is one it can never have to settle, and the second attempt in this
+                // Desktop process is the broker's to give a fresh one.
+                await host.AttachResidentGuardianFactory(
+                    token => guardianSupervisor.StartResidentAsync(image, token), cancellationToken).ConfigureAwait(false);
                 using var quit = new CancellationTokenSource();
                 tray = TrayShell.Start(new ShellIntentRouter(
                     () => runtimeSupervisor.Presentation.Open(),

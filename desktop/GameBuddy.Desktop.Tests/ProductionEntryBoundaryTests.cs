@@ -45,13 +45,16 @@ public sealed class ProductionEntryBoundaryTests
 
         var admit = productionPath.IndexOf("AdmitGuardianAsync(selection, cancellationToken)", StringComparison.Ordinal);
         var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
-        var resident = productionPath.IndexOf("guardianSupervisor.StartResidentAsync(image, cancellationToken)", StringComparison.Ordinal);
-        var attach = productionPath.IndexOf("host.AttachResidentGuardianAsync(resident, cancellationToken)", StringComparison.Ordinal);
-        Assert.True(admit >= 0 && host > admit && resident > host && attach > resident);
+        var mount = productionPath.IndexOf("host.AttachResidentGuardianFactory(", StringComparison.Ordinal);
+        Assert.True(admit >= 0 && host > admit && mount > host);
+        // The entry hands over HOW to create the attempt's Guardian and keeps no lease of its own: a lease
+        // held here would be one this entry has to settle, which is exactly the ownership ADR-0015 §3 moves
+        // to the broker.
+        Assert.DoesNotContain("GuardianSupervisorLease resident", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("resident.DisposeAsync()", source, StringComparison.Ordinal);
         // The acknowledged Host session owns the entry from here: the only wait that ends this
         // flow is the exact child exiting or the player's tray quit.
         Assert.Contains("if (!await WaitForSessionEndAsync(host, quit.Token, cancellationToken).ConfigureAwait(false))", source, StringComparison.Ordinal);
-        Assert.Contains("if (resident is not null) await resident.DisposeAsync()", source, StringComparison.Ordinal);
         Assert.Contains("return LaunchOutcome.NoClaim;", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("StartRecoveryAsync", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("GuardianStarted", productionPath, StringComparison.Ordinal);

@@ -3,25 +3,33 @@ using Xunit.Sdk;
 
 namespace GameBuddy.Desktop.Tests;
 
+/// <summary>
+/// The broker owns the resident Guardian, so these are the facts about WHO owns it (ADR-0015 §3, §7):
+/// the launcher mounts a factory and holds no lease, a session that never arms creates no Guardian at
+/// all, the mount is refused twice or after the Host is gone, and a refused mount never creates one.
+/// </summary>
 public sealed class RuntimeSupervisorGuardianResidentIntegrationTests
 {
     [Fact]
-    public async Task Host_eof_closes_the_broker_and_resident_guardian_exits_cleanly_from_control_eof()
+    public async Task A_host_session_that_never_arms_creates_no_resident_guardian()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await StartedFixture.CreateAsync();
         await using var guardianSupervisor = new GuardianSupervisor();
         await using var image = await fixture.AdmitGuardianAsync();
-        await using var guardian = await guardianSupervisor.StartResidentAsync(image, CancellationToken.None);
-        await fixture.Host.AttachResidentGuardianAsync(guardian, CancellationToken.None);
+        var created = 0;
 
+        await fixture.Host.AttachResidentGuardianFactory(async token => { _ = Interlocked.Increment(ref created); return await guardianSupervisor.StartResidentAsync(image, token); }, CancellationToken.None);
+
+        // A Chat-only Host run, and a Game run whose player never started a game, both look like this: the
+        // broker serves, and no Guardian exists because no attempt was ever armed.
         fixture.RequestHostExit();
         Assert.True(await fixture.Host.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, await guardian.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, Volatile.Read(ref created));
     }
 
     [Fact]
-    public async Task Host_eof_while_native_role_is_queued_prevents_role_activation_and_cleanly_closes_guardian()
+    public async Task Host_eof_while_native_role_is_queued_prevents_role_activation_and_settles_the_attempts_guardian()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await StartedFixture.CreateAsync();
@@ -33,25 +41,34 @@ public sealed class RuntimeSupervisorGuardianResidentIntegrationTests
         await using var image = new AdmittedGuardianImage(executable, fixture.Generation.TestGuardianExePath, "test", identity);
         var controlClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var guardianSupervisor = new GuardianSupervisor { TestBarrierDirectory = barrierDirectory, TestBarrierPhase = "after-create", ControlClosedForTesting = controlClosed };
-        await using var guardian = await guardianSupervisor.StartResidentAsync(image, CancellationToken.None);
-        await fixture.Host.AttachResidentGuardianAsync(guardian, CancellationToken.None);
+        var attemptGuardianPid = 0u;
+        await fixture.Host.AttachResidentGuardianFactory(async token =>
+        {
+            var created = await guardianSupervisor.StartResidentAsync(image, token);
+            attemptGuardianPid = created.Pid;
+            return created;
+        }, CancellationToken.None);
 
         File.WriteAllText(Path.Combine(fixture.Layout.DataRoot, "broker-eof-race.trigger"), "trigger");
         var queued = Path.Combine(fixture.Layout.DataRoot, "broker-eof-race.queued");
         var queuedDeadline = DateTimeOffset.UtcNow.AddSeconds(10);
         while (!File.Exists(queued) && DateTimeOffset.UtcNow < queuedDeadline) await Task.Delay(10);
         Assert.True(File.Exists(queued));
+        Assert.NotEqual(0u, attemptGuardianPid);
         fixture.RequestHostExit();
 
         await controlClosed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         File.WriteAllText(Path.Combine(barrierDirectory, "after-create.release"), "release");
         Assert.True(await fixture.Host.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.True(File.Exists(Path.Combine(barrierDirectory, "after-create.ready")));
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, await guardian.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        // The attempt's Guardian is the broker's to end, and the settlement proves that exact process gone.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (LivePid(attemptGuardianPid) && DateTimeOffset.UtcNow < deadline) await Task.Delay(25);
+        Assert.False(LivePid(attemptGuardianPid), $"the attempt's Guardian (pid {attemptGuardianPid}) outlived its session");
     }
 
     [Fact]
-    public async Task Attach_failure_when_host_has_exited_closes_the_unattached_guardian_without_timeout_kill()
+    public async Task Mounting_the_guardian_factory_after_the_host_exited_is_refused_and_creates_no_guardian()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await StartedFixture.CreateAsync();
@@ -59,36 +76,43 @@ public sealed class RuntimeSupervisorGuardianResidentIntegrationTests
         Assert.True(await fixture.Host.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
         await using var guardianSupervisor = new GuardianSupervisor();
         await using var image = await fixture.AdmitGuardianAsync();
-        await using var guardian = await guardianSupervisor.StartResidentAsync(image, CancellationToken.None);
+        var created = 0;
 
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => fixture.Host.AttachResidentGuardianAsync(guardian, CancellationToken.None));
-        await guardian.CloseControlAsync(CancellationToken.None);
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, await guardian.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() =>
+            fixture.Host.AttachResidentGuardianFactory(async token => { _ = Interlocked.Increment(ref created); return await guardianSupervisor.StartResidentAsync(image, token); }, CancellationToken.None));
+        Assert.Equal(0, Volatile.Read(ref created));
     }
 
     [Fact]
-    public async Task Duplicate_and_cancelled_attach_failures_clean_up_unattached_guardians_with_control_eof()
+    public async Task Duplicate_and_cancelled_guardian_factory_mounts_are_refused_and_create_no_guardian()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await StartedFixture.CreateAsync();
         await using var guardianSupervisor = new GuardianSupervisor();
-        await using var firstImage = await fixture.AdmitGuardianAsync();
-        await using var first = await guardianSupervisor.StartResidentAsync(firstImage, CancellationToken.None);
-        await fixture.Host.AttachResidentGuardianAsync(first, CancellationToken.None);
+        await using var image = await fixture.AdmitGuardianAsync();
+        var created = 0;
 
-        await using var duplicateImage = await fixture.AdmitGuardianAsync();
-        await using var duplicate = await guardianSupervisor.StartResidentAsync(duplicateImage, CancellationToken.None);
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => fixture.Host.AttachResidentGuardianAsync(duplicate, CancellationToken.None));
-        await duplicate.CloseControlAsync(CancellationToken.None);
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, await duplicate.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        Func<CancellationToken, Task<GuardianSupervisorLease>> factory = async token => { _ = Interlocked.Increment(ref created); return await guardianSupervisor.StartResidentAsync(image, token); };
+        await fixture.Host.AttachResidentGuardianFactory(factory, CancellationToken.None);
 
-        await using var cancelledImage = await fixture.AdmitGuardianAsync();
-        await using var cancelled = await guardianSupervisor.StartResidentAsync(cancelledImage, CancellationToken.None);
+        // The mount is what starts the command loop, so it is the one thing that may happen once: a second
+        // mount would be a second loop over one pipe.
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => fixture.Host.AttachResidentGuardianFactory(factory, CancellationToken.None));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Host.AttachResidentGuardianAsync(cancelled, cancellation.Token));
-        await cancelled.CloseControlAsync(CancellationToken.None);
-        Assert.Equal(GuardianSupervisorExit.ControlClosed, await cancelled.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Host.AttachResidentGuardianFactory(factory, cancellation.Token));
+        Assert.Equal(0, Volatile.Read(ref created));
+    }
+
+    private static bool LivePid(uint pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(checked((int)pid));
+            return !process.HasExited;
+        }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
     }
 
     private sealed class StartedFixture : IAsyncDisposable

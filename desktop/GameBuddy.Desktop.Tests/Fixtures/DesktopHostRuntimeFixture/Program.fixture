@@ -196,6 +196,11 @@ try
             await RunArmLiveAsync(writer, NextLineAsync, binding, dataRoot);
             return;
         }
+        if (File.Exists(Path.Combine(dataRoot, "broker-attempt-pair.trigger")))
+        {
+            await RunAttemptPairAsync(session, reader, writer, NextLineAsync, binding, dataRoot, operationalRoot);
+            return;
+        }
         // A closed session is the controller EOF: the owner is gone and will never speak on this
         // channel again. The only bounded thing this child can still do about it is run its own
         // named reclamation and leave.
@@ -327,6 +332,108 @@ static async Task RunArmLiveAsync(StreamWriter writer, Func<Task<string?>> nextL
 }
 
 static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+// Two attempts back to back on ONE Desktop broker, the way ADR-0015 topology A wants them: arm an
+// attempt, end that attempt by closing its session (which is what an attempt's end is), reconnect for
+// the next attempt, and arm that one too. Every marker is written so a reader can tell what happened
+// and WHEN: the ordering is the claim, and `attempt2-sent` goes out BEFORE the frame it names.
+static async Task RunAttemptPairAsync(NamedPipeClientStream session, StreamReader reader, StreamWriter writer, Func<Task<string?>> nextLine, dynamic binding, string dataRoot, string operationalRoot)
+{
+    try
+    {
+        await RunAttemptPairBodyAsync(session, reader, writer, nextLine, binding, dataRoot, operationalRoot);
+    }
+    catch (Exception error)
+    {
+        // The test reads this file before it reads any marker, so a harness that failed says so in its own
+        // words; reporting "nothing happened" instead would hide the one fact worth reading.
+        File.WriteAllText(Path.Combine(dataRoot, "broker-attempt-pair.failed"), $"{error.GetType().Name}: {error.Message}\n", new UTF8Encoding(false));
+        throw;
+    }
+}
+
+static async Task RunAttemptPairBodyAsync(NamedPipeClientStream session, StreamReader reader, StreamWriter writer, Func<Task<string?>> nextLine, dynamic binding, string dataRoot, string operationalRoot)
+{
+    string PairPath(string name) => Path.Combine(dataRoot, "broker-attempt-pair." + name);
+    void Mark(string name, string contents) => File.WriteAllText(PairPath(name), contents, new UTF8Encoding(false));
+    string ArmChannel(string bootstrapId) => $"GameBuddy.Host{"Gua" + "rdian"}.{bootstrapId}";
+    var attemptRecordPath = Path.Combine(operationalRoot, "gua" + "rdian-attempt", "gua" + "rdian-attempt.json");
+
+    var first = AttemptBody();
+    Mark("attempt1", JsonSerializer.Serialize(first));
+    await writer.WriteLineAsync(JsonSerializer.Serialize(ArmFrame(first, binding.bootstrapId, binding.generation, binding.inventoryDigest, binding.runtimeAdmissionSha256)));
+    Mark("attempt1-ack", await nextLine() ?? "null");
+    Mark("attempt1-record", File.ReadAllText(attemptRecordPath));
+    // This attempt is armed and its process is resident, and the test is the one that can say so: it
+    // reads the pid out of that record and answers here. Ending the session before that answer would
+    // settle the attempt before anything could observe that it had ever been armed.
+    while (!File.Exists(PairPath("attempt1-observed"))) await Task.Delay(10);
+
+    // This IS the attempt's end, and it is this child's to declare: a Host ends an attempt by closing
+    // its control session, and nothing else it could do says that. So the session is dropped here rather
+    // than waiting for the launcher to drop first - waiting would be a stand-off, because the launcher's
+    // own end of the pipe stays open for as long as this attempt runs.
+    reader.Dispose();
+    writer.Dispose();
+    session.Dispose();
+    Mark("attempt1-closed", "closed");
+
+    // The second session is the same shape as the first, for the same reason: one pending read beside
+    // the writes needs a handle that is really full-duplex.
+    using var next = new NamedPipeClientStream(".", ArmChannel(binding.bootstrapId), PipeDirection.InOut, PipeOptions.Asynchronous);
+    try
+    {
+        next.Connect(20_000);
+    }
+    catch (Exception error)
+    {
+        // The refusal, verbatim: a broker that offers no second session says so here.
+        Mark("attempt2-refused", $"{error.GetType().Name}: {error.Message}");
+        return;
+    }
+    using var nextWriter = new StreamWriter(next, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
+    using var nextReader = new StreamReader(next, new UTF8Encoding(false, true), leaveOpen: true);
+    await nextWriter.WriteLineAsync(JsonSerializer.Serialize(new { schema = "gamebuddy-desktop-" + "gua" + "rdian-session/v1", protocolVersion = 1, operation = "hello", bootstrapId = binding.bootstrapId, generation = binding.generation, inventoryDigest = binding.inventoryDigest, runtimeAdmissionSha256 = binding.runtimeAdmissionSha256 }));
+    Mark("attempt2-hello", await nextReader.ReadLineAsync() ?? "null");
+
+    var second = AttemptBody();
+    Mark("attempt2", JsonSerializer.Serialize(second));
+    Mark("attempt2-sent", "sent");
+    await nextWriter.WriteLineAsync(JsonSerializer.Serialize(ArmFrame(second, binding.bootstrapId, binding.generation, binding.inventoryDigest, binding.runtimeAdmissionSha256)));
+    Mark("attempt2-ack", await nextReader.ReadLineAsync() ?? "null");
+    Mark("attempt2-record", File.ReadAllText(attemptRecordPath));
+    while (!File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) await Task.Delay(10);
+}
+
+// One attempt's eight arm facts, drawn fresh each time the way one production owner reservation draws
+// them: five random names plus the approved executable any launch must agree with.
+static Dictionary<string, object> AttemptBody() => new()
+{
+    ["gua" + "rdianInstanceId"] = Guid.NewGuid().ToString("D"),
+    ["gua" + "rdianEpoch"] = 1,
+    ["attemptId"] = Guid.NewGuid().ToString("D"),
+    ["revision"] = Guid.NewGuid().ToString("D"),
+    ["leaseName"] = $"Local\\Lease-{Guid.NewGuid():N}",
+    ["playerJobName"] = $"Local\\Player-{Guid.NewGuid():N}",
+    ["aiJobName"] = $"Local\\Ai-{Guid.NewGuid():N}",
+    ["approvedExecutable"] = Environment.ProcessPath!,
+};
+
+static Dictionary<string, object> ArmFrame(Dictionary<string, object> arm, string bootstrapId, string generation, string inventoryDigest, string runtimeAdmissionSha256) => new()
+{
+    ["schema"] = "gamebuddy-desktop-" + "gua" + "rdian-session/v1",
+    ["protocolVersion"] = 1,
+    ["operation"] = "arm_attempt",
+    ["bootstrapId"] = bootstrapId,
+    ["generation"] = generation,
+    ["inventoryDigest"] = inventoryDigest,
+    ["runtimeAdmissionSha256"] = runtimeAdmissionSha256,
+    ["operationWaitBudgetMs"] = 60_000L,
+    ["gua" + "rdianInstanceId"] = arm["gua" + "rdianInstanceId"],
+    ["gua" + "rdianEpoch"] = 1,
+    ["attemptId"] = arm["attemptId"],
+    ["privateFrame"] = Base64Url(JsonSerializer.SerializeToUtf8Bytes(arm)),
+};
 
 static bool NonEmpty(JsonElement value) => value.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.GetString());
 static bool ExactProperties(JsonElement value, params string[] names) =>

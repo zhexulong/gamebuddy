@@ -25,17 +25,30 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     // admitted Guardian image, and the broker exists before that assembler can
     // hand it over. Mounting after construction is safe because the command
     // loop that can ask for a recovery does not start until
-    // AttachResidentGuardianAsync, and AttachRecoveryLaunch refuses late mounts.
+    // AttachResidentGuardianFactory, and AttachRecoveryLaunch refuses late mounts.
     private Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery;
-    private GuardianSupervisorLease? guardian;
+    // The factory this broker creates its own resident Guardian from - one process per attempt, and the
+    // attempt's Guardian is what the slot below holds. Mounted the same way, and once.
+    private Func<CancellationToken, Task<GuardianSupervisorLease>>? startGuardian;
+    // Borrowed, never owned: the runtime lease disposes this broker before it releases the child handle,
+    // so the child this broker authenticated its first session against is still open for every later one.
+    private WindowsNative.SafeProcessHandle? host;
     private bool accepted;
     private bool closed;
+    private Task? commandLoop;
+    private CancellationTokenSource? sessionClosing;
+    private readonly SemaphoreSlim attemptGate = new(1, 1);
+
+    // The one attempt at a time this broker serves, and everything that belongs to it. The Guardian is
+    // the resource: it is created when the attempt arms, settled when the attempt ends, and the slot is
+    // free again only after the settlement has proven its process gone.
+    private GuardianSupervisorLease? guardian;
+    private GuardianProcessIdentity? guardianIdentity;
+    private string? attemptId;
     private bool armed;
     private readonly HashSet<string> launchedRoles = new(StringComparer.Ordinal);
     private readonly HashSet<string> containedRoles = new(StringComparer.Ordinal);
     private GuardianCorrelation? correlation;
-    private Task? commandLoop;
-    private readonly CancellationTokenSource sessionClosing = new();
 
     private DesktopHostBootstrapBroker(string bootstrapId, InstalledGenerationSelection selection, CurrentUserRootLayout layout, Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery)
     {
@@ -54,12 +67,29 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(selection);
         ArgumentNullException.ThrowIfNull(layout);
         if (!IsHex(bootstrapId)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        // Before anything of this launch exists: a Guardian an earlier Desktop left behind still holds its
+        // lease mutex and the player Job, and it is the only artifact that can name that process.
+        DesktopGuardianAttemptRecord.Recover(layout.OperationalRoot);
         return new DesktopHostBootstrapBroker(bootstrapId, selection, layout, startRecovery);
     }
 
+    /// <summary>
+    /// Authenticates the Host child this broker belongs to, and serves it. This first session is the
+    /// bootstrap's own: the runtime lease awaits it before the acknowledged launch may continue. Every
+    /// later session is the same child re-authenticating on the same one-instance pipe, which is how one
+    /// attempt ends and the next one begins (ADR-0015 §3: attempt = session).
+    /// </summary>
     internal async Task AuthenticateHostAsync(WindowsNative.SafeProcessHandle child, CancellationToken cancellationToken)
     {
         EnsureLayoutBinding();
+        host = child;
+        await AcceptSessionAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AcceptSessionAsync(CancellationToken cancellationToken)
+    {
+        var child = host ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        accepted = false;
         await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
         if (!WindowsNative.GetNamedPipeClientProcessId(server.SafePipeHandle, out var clientPid) || clientPid != WindowsNative.GetProcessId(child) ||
             !WindowsNative.ProcessIdToSessionId(clientPid, out var clientSession) || !WindowsNative.ProcessIdToSessionId(WindowsNative.GetCurrentProcessId(), out var currentSession) || clientSession != currentSession)
@@ -92,87 +122,226 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         this.startRecovery = startRecovery;
     }
 
-    internal Task AttachResidentGuardianAsync(GuardianSupervisorLease lease, CancellationToken cancellationToken)
+    /// <summary>
+    /// Mounts the factory this broker creates its own resident Guardian from, and starts serving. This is
+    /// the mount, not an attach: the launcher hands over HOW to create a Guardian and keeps no lease, so a
+    /// Guardian exists exactly while an attempt is armed and is settled by this broker when that attempt
+    /// ends. Mounting twice is refused, because the command loop it starts is the one thing here that runs
+    /// for the broker's whole life.
+    /// </summary>
+    internal Task AttachResidentGuardianFactory(Func<CancellationToken, Task<GuardianSupervisorLease>> startGuardian, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(startGuardian);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!accepted || closed || guardian is not null) throw new GuardianLaunchUnavailableException();
-        guardian = lease;
-        commandLoop = Task.Run(() => ServeCommandsAsync(cancellationToken), CancellationToken.None);
+        if (!accepted || closed || this.startGuardian is not null || host is null) throw new GuardianLaunchUnavailableException();
+        this.startGuardian = startGuardian;
+        commandLoop = Task.Run(() => ServeSessionsAsync(host, cancellationToken), CancellationToken.None);
         return Task.CompletedTask;
     }
 
-    private async Task ServeCommandsAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Serves the Host one session at a time, and settles the attempt each session was driving before it
+    /// accepts the next one.
+    ///
+    /// A session that ends - the Host closed control - ends that session's attempt: its Guardian is settled
+    /// here, its pid proven gone, its record retired. Only then is the pipe offered to the Host again, so a
+    /// settled attempt can never be reachable from the next one and two Guardians are never resident at
+    /// once. Nothing of a session's correlation survives it: the next arm arrives on a connection that was
+    /// authenticated again (ADR-0015 §3, §4.2).
+    /// </summary>
+    private async Task ServeSessionsAsync(WindowsNative.SafeProcessHandle host, CancellationToken cancellationToken)
     {
         try
         {
-            byte? queuedCommandFirstByte = null;
             while (!closed)
             {
-                var command = await ReadFrameAsync(cancellationToken, queuedCommandFirstByte).ConfigureAwait(false);
-                queuedCommandFirstByte = null;
-                if (!TryParseCommand(command, out var parsed)) throw new GuardianLaunchUnavailableException();
-                using var deadline = BindCommandDeadline(parsed, cancellationToken);
-                using var commandClosing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionClosing.Token, deadline.Token);
-                var commandCancellation = commandClosing.Token;
-                if (parsed.Operation == "recover_attempt")
+                using (var attemptClosing = new CancellationTokenSource())
                 {
-                    await RelayRecoveryAsync(parsed, commandCancellation).ConfigureAwait(false);
-                    continue;
+                    sessionClosing = attemptClosing;
+                    try { await ServeSessionAsync(attemptClosing, cancellationToken).ConfigureAwait(false); }
+                    finally { sessionClosing = null; }
                 }
-                ValidateTransition(parsed);
-                var native = new GuardianRelayCommand(parsed.Operation, parsed.GuardianInstanceId, parsed.GuardianEpoch, parsed.AttemptId, parsed.Role, parsed.PrivateFrame, parsed.DeadlineUnixMs, parsed.OperationWaitBudgetMs);
-                using var relayClosing = CancellationTokenSource.CreateLinkedTokenSource(commandCancellation);
-                var relay = guardian!.RelayResidentAsync(native, commandCancellation);
-                var pipeRead = WatchForHostPipeReadAsync(relayClosing.Token);
-                if (await Task.WhenAny(relay, pipeRead).ConfigureAwait(false) == pipeRead)
-                {
-                    var firstByte = await pipeRead.ConfigureAwait(false);
-                    if (firstByte is null)
-                    {
-                        sessionClosing.Cancel();
-                        await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                        try { await relay.ConfigureAwait(false); } catch { }
-                        throw new GuardianLaunchUnavailableException();
-                    }
-                    queuedCommandFirstByte = firstByte;
-                }
-                else
-                {
-                    if (pipeRead.IsCompleted)
-                    {
-                        var firstByte = await pipeRead.ConfigureAwait(false);
-                        if (firstByte is null)
-                        {
-                            sessionClosing.Cancel();
-                            await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                            try { await relay.ConfigureAwait(false); } catch { }
-                            throw new GuardianLaunchUnavailableException();
-                        }
-                        queuedCommandFirstByte = firstByte;
-                    }
-                    else
-                    {
-                        relayClosing.Cancel();
-                        try { _ = await pipeRead.ConfigureAwait(false); } catch (OperationCanceledException) { }
-                    }
-                }
-                var result = await relay.ConfigureAwait(false);
-                if (sessionClosing.IsCancellationRequested) throw new GuardianLaunchUnavailableException();
-                parsed.ThrowIfExpired(commandCancellation);
-                AdvanceTransition(parsed);
-                parsed.ThrowIfExpired(commandCancellation);
-                await WriteAcknowledgementAsync(parsed, result.Status, commandCancellation).ConfigureAwait(false);
-                // The acknowledgement goes first, because it is the answer the Host is
-                // waiting for; the role exit the native reported travels after it as the
-                // unsolicited frame it is. Nothing about the command that just finished
-                // depends on it, and the Host reads it without consuming its own waiter.
-                if (result.RoleExit is not null) await WriteRoleExitAsync(result.RoleExit, commandCancellation).ConfigureAwait(false);
+                await SettleAttemptAsync().ConfigureAwait(false);
+                if (closed) return;
+                // Everything the finished attempt held is gone and this is the same one-instance pipe: the
+                // Host re-hellos on it for its next attempt, and is authenticated again from scratch.
+                server.Disconnect();
+                await AcceptSessionAsync(cancellationToken).ConfigureAwait(false);
             }
         }
         catch
         {
             await CloseAsync(CancellationToken.None).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Serves one Host session until the Host closes control. A closed pipe is the normal end of a session,
+    /// not a failure: the attempt it was driving is settled by the caller. Only a frame this broker cannot
+    /// accept ends the broker itself (the catch above).
+    /// </summary>
+    private async Task ServeSessionAsync(CancellationTokenSource attemptClosing, CancellationToken cancellationToken)
+    {
+        var closing = attemptClosing.Token;
+        byte? queuedCommandFirstByte = null;
+        while (!closed)
+        {
+            JsonElement command;
+            try { command = await ReadFrameAsync(cancellationToken, queuedCommandFirstByte).ConfigureAwait(false); }
+            // The Host closed control with no frame in flight: that is how an attempt ENDS, and the session
+            // ends with it. A pipe that closes while a frame is already half-read is the other thing - a
+            // truncated frame - and is refused by the throw below.
+            catch (EndOfStreamException) when (queuedCommandFirstByte is null) { return; }
+            queuedCommandFirstByte = null;
+            if (!TryParseCommand(command, out var parsed)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            using var deadline = BindCommandDeadline(parsed, cancellationToken);
+            using var commandClosing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, closing, deadline.Token);
+            var commandCancellation = commandClosing.Token;
+            if (parsed.Operation == "recover_attempt")
+            {
+                await RelayRecoveryAsync(parsed, commandCancellation).ConfigureAwait(false);
+                continue;
+            }
+            ValidateTransition(parsed);
+            if (parsed.Operation == "arm_attempt") await ArmAsync(parsed, commandCancellation).ConfigureAwait(false);
+            var native = new GuardianRelayCommand(parsed.Operation, parsed.GuardianInstanceId, parsed.GuardianEpoch, parsed.AttemptId, parsed.Role, parsed.PrivateFrame, parsed.DeadlineUnixMs, parsed.OperationWaitBudgetMs);
+            using var relayClosing = CancellationTokenSource.CreateLinkedTokenSource(commandCancellation);
+            var relay = guardian!.RelayResidentAsync(native, commandCancellation);
+            var pipeRead = WatchForHostPipeReadAsync(relayClosing.Token);
+            if (await Task.WhenAny(relay, pipeRead).ConfigureAwait(false) == pipeRead)
+            {
+                var firstByte = await pipeRead.ConfigureAwait(false);
+                if (firstByte is null)
+                {
+                    await AbandonSessionAsync(relay).ConfigureAwait(false);
+                    return;
+                }
+                queuedCommandFirstByte = firstByte;
+            }
+            else
+            {
+                if (pipeRead.IsCompleted)
+                {
+                    var firstByte = await pipeRead.ConfigureAwait(false);
+                    if (firstByte is null)
+                    {
+                        await AbandonSessionAsync(relay).ConfigureAwait(false);
+                        return;
+                    }
+                    queuedCommandFirstByte = firstByte;
+                }
+                else
+                {
+                    relayClosing.Cancel();
+                    try { _ = await pipeRead.ConfigureAwait(false); } catch (OperationCanceledException) { }
+                }
+            }
+            var result = await relay.ConfigureAwait(false);
+            if (closing.IsCancellationRequested) throw new GuardianLaunchUnavailableException();
+            parsed.ThrowIfExpired(commandCancellation);
+            AdvanceTransition(parsed);
+            parsed.ThrowIfExpired(commandCancellation);
+            await WriteAcknowledgementAsync(parsed, result.Status, commandCancellation).ConfigureAwait(false);
+            // The acknowledgement goes first, because it is the answer the Host is
+            // waiting for; the role exit the native reported travels after it as the
+            // unsolicited frame it is. Nothing about the command that just finished
+            // depends on it, and the Host reads it without consuming its own waiter.
+            if (result.RoleExit is not null) await WriteRoleExitAsync(result.RoleExit, commandCancellation).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The Host closed control while this broker was relaying. The command is given up on, the Guardian's
+    /// control channel is closed so the native leaves (and so the in-flight relay unblocks), and the session
+    /// ends normally: the caller's settlement is what proves the process gone.
+    /// </summary>
+    private async Task AbandonSessionAsync(Task<GuardianRelayResult> relay)
+    {
+        sessionClosing?.Cancel();
+        // Control EOF first: a relay waiting on the native can only finish once the native has left.
+        if (guardian is not null) await guardian.CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
+        // A relay this launcher gave up on can fail in any way; the settlement is what answers for it.
+        try { _ = await relay.ConfigureAwait(false); } catch { }
+    }
+
+    /// <summary>
+    /// Gives this attempt its own resident Guardian, once.
+    ///
+    /// The Guardian is created here because the attempt is armed here - a session that never arms never
+    /// creates one - and the record is written in the same breath, because from this instant until the
+    /// settlement proves that process gone the record is the only artifact that can name it. Nothing is
+    /// created for a second arm in the same attempt: `ValidateTransition` has already refused it, because the
+    /// native Guardian is once-only per process and this slot holds that one process.
+    /// </summary>
+    private async Task ArmAsync(BrokerCommand command, CancellationToken cancellationToken)
+    {
+        await attemptGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        (GuardianSupervisorLease? Lease, GuardianProcessIdentity? Identity, string? AttemptId) unserved;
+        try
+        {
+            if (guardian is not null || startGuardian is null) throw new GuardianLaunchUnavailableException();
+            var created = await startGuardian(cancellationToken).ConfigureAwait(false);
+            guardian = created;
+            guardianIdentity = new GuardianProcessIdentity(created.Pid, created.StartedAtUnixMs, created.ExecutablePath);
+            attemptId = command.AttemptId;
+            DesktopGuardianAttemptRecord.Armed(layout.OperationalRoot, bootstrapId, command.AttemptId, guardianIdentity.Value);
+            return;
+        }
+        catch
+        {
+            // A Guardian this broker created is this broker's to end, whatever went wrong after it.
+            unserved = TakeAttempt();
+        }
+        finally { attemptGate.Release(); }
+        await SettleTakenAsync(unserved).ConfigureAwait(false);
+        throw new GuardianLaunchUnavailableException();
+    }
+
+    /// <summary>
+    /// Empties the attempt slot and hands back what it held. Called with <see cref="attemptGate"/> held.
+    /// The slot is emptied FIRST so that, from this instant, nothing can find an attempt here - which is the
+    /// mutual exclusion: there is never a second live Guardian while the first is still being settled.
+    /// </summary>
+    private (GuardianSupervisorLease? Lease, GuardianProcessIdentity? Identity, string? AttemptId) TakeAttempt()
+    {
+        var taken = (guardian, guardianIdentity, attemptId);
+        guardian = null;
+        guardianIdentity = null;
+        attemptId = null;
+        armed = false;
+        launchedRoles.Clear();
+        containedRoles.Clear();
+        correlation = null;
+        return taken;
+    }
+
+    private async Task SettleAttemptAsync()
+    {
+        (GuardianSupervisorLease? Lease, GuardianProcessIdentity? Identity, string? AttemptId) taken;
+        await attemptGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try { taken = TakeAttempt(); }
+        finally { attemptGate.Release(); }
+        await SettleTakenAsync(taken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Settles the attempt that was in the slot: bounded wait, then the kill as the watchdog over it, then
+    /// the process object read once more - and then the record follows that answer.
+    ///
+    /// The record is retired only when the process is PROVEN gone, because that answer is the one that says
+    /// nothing was left behind. When it could not be proven, the record stays and says so, and the next
+    /// launch is what ends that exact process (see <see cref="DesktopGuardianAttemptRecord"/>). No part of
+    /// this is a player-world operation: a settlement that is not an explicit endgame never reaches the roles
+    /// (ADR-0007), and closing control is what a Guardian is designed to survive.
+    /// </summary>
+    private async Task SettleTakenAsync((GuardianSupervisorLease? Lease, GuardianProcessIdentity? Identity, string? AttemptId) taken)
+    {
+        if (taken.Lease is null) return;
+        var gone = await taken.Lease.SettleAsync().ConfigureAwait(false);
+        await taken.Lease.DisposeAsync().ConfigureAwait(false);
+        if (gone) DesktopGuardianAttemptRecord.Retire(layout.OperationalRoot);
+        else if (taken.Identity is { } identity && taken.AttemptId is { } attempt)
+            DesktopGuardianAttemptRecord.Unsettled(layout.OperationalRoot, bootstrapId, attempt, identity);
     }
 
     private async Task RelayRecoveryAsync(BrokerCommand command, CancellationToken cancellationToken)
@@ -445,7 +614,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     {
         if (closed) return;
         closed = true;
-        sessionClosing.Cancel();
+        sessionClosing?.Cancel();
         // The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
         // reclamation waits for, so a child that is reclaiming must never be waiting behind this
         // launcher's own containment. Disposing the server end closes the one instance the child is
@@ -453,15 +622,17 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         server.Dispose();
         try
         {
-            // Only then does the launcher give up the guardian it relays to. The native guardian
-            // exits on the control EOF this closes, which is how the roles it created are contained
-            // on this side even when the child never got to ask for it.
-            if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            // Only then does the launcher give up the guardian it relays to, through the same settlement
+            // every other attempt end uses: control EOF, a bounded wait, the kill as the watchdog over it,
+            // and the record that follows that answer. The native guardian exits on the control EOF this
+            // closes, which is how the roles it created are contained on this side even when the child
+            // never got to ask for it.
+            await SettleAttemptAsync().ConfigureAwait(false);
         }
         catch
         {
             // Teardown must never mask the original failure with a close error;
-            // the caller's guard-lease disposal still terminates as a fallback.
+            // the settlement's own kill already went as far as it could.
         }
     }
 
