@@ -270,6 +270,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  {
+    fact: "game fact patches",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "GameFactPatchV1Schema" },
+    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "GAME_FACTS" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["GameFactPatchV1Schema", "GAME_FACTS"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
@@ -305,14 +316,6 @@ const mirrorDebt = (fact, authority, readers, extra = {}) => ({
  */
 export const DEBT = Object.freeze([
   // ─── The game contract's vocabularies, mirrored by the composed game client ───
-  // The fact-patch vocabulary. The browser's list and the Host union's discriminant set are two spellings of "which
-  // facts can travel", and `check-switch-exhaustiveness` owns the third end of the same fact - that the mapping switch
-  // arms every member. A fourth fact added to the union and not to this list is this record's drift.
-  mirrorDebt("game fact patches", `${GAME_CONTRACT}:GameFactPatchV1Schema`, [`${GAME_CLIENT}:GAME_FACTS`], {
-    reason:
-      "the browser cannot import the host contract, so `GAME_FACTS` restates the union's discriminant set; `check-switch-exhaustiveness` pins that the patch switch arms every member, and nothing compares these two lists",
-    owner: "the composed game client lane",
-  }),
   mirrorDebt("stardew window modes", `${GAME_CONTRACT}:StardewWindowModeV1Schema`, [
     "host/src/games/stardew/stardew-player-settings.ts:WINDOW_MODES",
     "dialogue-web/src/components/GamePlayerSettings.tsx:WINDOW_MODE_KEYS",

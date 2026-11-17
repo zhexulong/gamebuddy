@@ -138,8 +138,12 @@ const SOURCE_CACHE = new Map();
 
 /**
  * Each game vocabulary: the mirror's own declaration name and the contract declaration it restates.
- * The locator reads the members exactly as `MIRRORED_VOCABULARIES` does - a `Type.Union([Type.Literal(...)])`
- * named by the locator itself.
+ *
+ * The locator reads the members the way `MIRRORED_VOCABULARIES` does - a `Type.Union([Type.Literal(...)])`
+ * named by the locator itself - plus one shape that contract uses and the tavern one does not:
+ * `discriminant` names a property of each arm schema, for a union whose members ARE the arms
+ * (`GameFactPatchV1Schema` states "which facts can travel" as three arm schemas, each carrying its own
+ * `fact: Type.Literal(...)`, so the vocabulary is those discriminants rather than a literal list).
  */
 export const GAME_MIRRORED_VOCABULARIES = [
   { mirror: "ACTION_AUTHORITY_STATUSES", contract: { name: "ActionAuthority" } },
@@ -150,6 +154,7 @@ export const GAME_MIRRORED_VOCABULARIES = [
   { mirror: "INSTANCE_STATUSES", contract: { name: "InstanceStatus" } },
   { mirror: "CONNECTION_STATUSES", contract: { name: "ConnectionStatus" } },
   { mirror: "COMPANION_MOD_OUTCOMES", contract: { name: "CompanionModOutcome" } },
+  { mirror: "GAME_FACTS", contract: { name: "GameFactPatchV1Schema", discriminant: "fact" } },
 ];
 
 function sourceOf(file) {
@@ -232,11 +237,29 @@ function declaredKeys(shape) {
   return shape.properties.filter((property) => ts.isPropertyAssignment(property)).map((property) => property.name.getText());
 }
 
+/** The arm schemas a `Type.Union([A, B, C])` names, in declaration order. */
+function unionArms(declaration) {
+  const arms = [];
+  const call = declaration.initializer;
+  if (call === undefined || !ts.isCallExpression(call)) return arms;
+  const [members] = call.arguments;
+  if (members === undefined || !ts.isArrayLiteralExpression(members)) return arms;
+  for (const element of members.elements) if (ts.isIdentifier(element)) arms.push(element.text);
+  return arms;
+}
+
 /** The contract's declared members of one vocabulary, read out of the contract's own source. */
 export function contractVocabulary(locator, contract = CONTRACT) {
   const sourceFile = sourceOf(contract);
   const members = new Set();
   for (const declaration of declarationsNamed(sourceFile, locator.name)) {
+    if (locator.discriminant !== undefined) {
+      for (const arm of unionArms(declaration))
+        for (const armDeclaration of declarationsNamed(sourceFile, arm))
+          for (const property of propertiesNamed(armDeclaration, locator.discriminant))
+            for (const value of literalValues(property)) members.add(value);
+      continue;
+    }
     if (locator.properties === true) {
       const outer = objectShapeOf(declaration);
       const shape = locator.within === undefined ? outer : outer === null ? null : objectShapeWithin(outer, locator.within);
@@ -364,6 +387,13 @@ test("vocabulary-drift.4: the game contract's declarations are read, not assumed
     [...derived.get("ACTION_AUTHORITY_STATUSES")].sort(),
     ["active", "paused", "unavailable"],
     "ActionAuthority is the coordinator's three-member authority union",
+  );
+  // The second anchor, for the reader shape the tavern contract never uses: the fact union states its members as the
+  // discriminants of three arm schemas, so a reader that looked for a literal list beside the union would read nothing.
+  assert.deepEqual(
+    [...derived.get("GAME_FACTS")].sort(),
+    ["attachment", "instance", "selectedWorld"],
+    "GameFactPatchV1Schema's members are its arms' own `fact` literals",
   );
   for (const entry of GAME_MIRRORED_VOCABULARIES) {
     assert.ok(derived.get(entry.mirror).size >= 2, `${entry.mirror} derived an empty or single-member union`);
