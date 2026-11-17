@@ -11,6 +11,7 @@ import {
   compilePlanScript,
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
+  PLAN_FORM_ACTION_IDS,
   PLAN_SCRIPT_BUDGET_MS,
   PLAN_WORK_DESCRIPTION_BUDGET_CHARS,
   type PublishedPlanAction,
@@ -3108,4 +3109,111 @@ test("every authored call is accounted for exactly once, across the whole publis
   accountOfScript("builder.move_to_tile({ x: 12, y: 8 });\nbuilder.move_to_tile({ x: 12 });", 2, "second call refused");
   assert.ok(examined > 20, `the account was measured over ${examined} answers`);
   assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * THE LOOP SHAPES THIS TOOL COULD TEACH, each named with the property it breaks.
+ *
+ * The first four are the only batch constructs the description could carry, and exactly one of them is the shape a plan
+ * is written in: `for`. The rest are the vocabulary of the form that was removed - a second way to write a loop in a
+ * script that is already JavaScript, written in our row model rather than in hers - so their return is the defect this
+ * gate exists for, whatever spelling it comes back under.
+ */
+const LOOP_SHAPES: readonly Readonly<{ name: string; pattern: RegExp }>[] = Object.freeze([
+  Object.freeze({ name: "for", pattern: /for \(/u }),
+  Object.freeze({ name: "while", pattern: /while \(/u }),
+  Object.freeze({ name: "do", pattern: /do \{/u }),
+  Object.freeze({ name: "forEach", pattern: /\.forEach\(/u }),
+  Object.freeze({ name: "for_each", pattern: /\bfor_each\b/u }),
+  Object.freeze({ name: "where", pattern: /\bwhere\b/u }),
+  Object.freeze({ name: "occupant", pattern: /\boccupant\b/u }),
+  Object.freeze({ name: "row", pattern: /\brow\b/u }),
+  Object.freeze({ name: "source", pattern: /\bsource\b/u }),
+]);
+
+function taughtLoopShapes(description: string): readonly string[] {
+  return LOOP_SHAPES.filter((shape) => shape.pattern.test(description)).map((shape) => shape.name);
+}
+
+/**
+ * `two_ways_to_write_a_loop`, as one reading both the gate and its falsifier take.
+ *
+ * THE POPULATION IS THE TWO AUTHORITIES, not a list of wishes: the plan grammar's own form list (`PLAN_FORM_ACTION_IDS`,
+ * the ids the compiler can emit that are not published actions) and the loop vocabulary the description actually carries.
+ * The property is that there is exactly one loop shape - `for` - and no form beside it.
+ */
+function twoWaysToWriteALoopFinding(description: string, forms: readonly string[]): string | undefined {
+  const taught = taughtLoopShapes(description);
+  const verdict = `forms examined ${String(LOOP_SHAPES.length + forms.length)} · loops ${String(taught.length)} · other ${String(forms.length)}`;
+  if (forms.length > 0)
+    return `two_ways_to_write_a_loop:${forms.join(",")}: a plan form is a second way to write a loop this script can already write - ${verdict}`;
+  const other = taught.filter((shape) => shape !== "for");
+  if (taught.length !== 1 || other.length > 0)
+    return `two_ways_to_write_a_loop:${other.length === 0 ? "none" : other.join(",")}: the script is JavaScript and the batch is one \`for\` loop - ${verdict}`;
+  return undefined;
+}
+
+/**
+ * `a_script_form_is_reachable_from_the_description`, as one reading both the gate and its falsifier take.
+ *
+ * The absence of this gate is why a form can live while nobody uses it: the grammar accepted `for_each` and the
+ * description taught it, and when the teaching was withdrawn the form stayed - accepted by the grammar, named nowhere a
+ * model reads. A form the compiler accepts and the description does not teach is a call nothing can learn, so it is red
+ * BY NAME here, and the day the list stops being empty it must be taught in the same edit.
+ */
+function scriptFormReachabilityFinding(description: string, forms: readonly string[]): string | undefined {
+  for (const form of forms)
+    if (!description.includes(form))
+      return `a_script_form_is_reachable_from_the_description:${form}: the grammar accepts it and the description never teaches it`;
+  return undefined;
+}
+
+test("two_ways_to_write_a_loop: exactly one loop shape is taught and accepted", () => {
+  assert.equal(
+    twoWaysToWriteALoopFinding(planWorkDescription(CATALOG_ACTIONS), PLAN_FORM_ACTION_IDS),
+    undefined,
+    "the description teaches one loop shape over a snapshot family, and the grammar accepts no form beside it",
+  );
+  assert.deepEqual(
+    taughtLoopShapes(planWorkDescription(CATALOG_ACTIONS)),
+    ["for"],
+    "and the shape it teaches is `for`, this time read back from the rendered text rather than assumed",
+  );
+});
+
+test("two_ways_to_write_a_loop is red on a second loop shape, and names it", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  // A second way to write the same batch, in the spelling a model most plausibly reaches for.
+  const second =
+    description + "\nfor (const tile of snapshot.soilTiles) snapshot.soilTiles.forEach((t) => void t); // .forEach(\n";
+  assert.match(
+    twoWaysToWriteALoopFinding(second, []) ?? "",
+    /^two_ways_to_write_a_loop:forEach: .*forms examined \d+ · loops \d+ · other 0$/u,
+    "a description that teaches two loop shapes is refused by name, with the population it examined",
+  );
+  assert.match(
+    twoWaysToWriteALoopFinding(description, ["for_each"]) ?? "",
+    /^two_ways_to_write_a_loop:for_each: /u,
+    "and a grammar that accepts a form beside the language is refused by the form's own name",
+  );
+});
+
+test("a_script_form_is_reachable_from_the_description: every accepted form is taught", () => {
+  assert.equal(
+    scriptFormReachabilityFinding(planWorkDescription(CATALOG_ACTIONS), PLAN_FORM_ACTION_IDS),
+    undefined,
+    "no plan form exists, so every node the compiler writes is an action the description already names",
+  );
+  // ZERO POPULATION IS STATED, NOT SILENT: the list is empty by decision, and a form added to it without teaching it is
+  // the defect this gate catches - which the next case proves it still does.
+  assert.deepEqual(PLAN_FORM_ACTION_IDS, [], "the declared form list is empty: a batch is a `for` loop");
+});
+
+test("a_script_form_is_reachable_from_the_description is red on a form the description never names", () => {
+  const message = scriptFormReachabilityFinding(planWorkDescription(CATALOG_ACTIONS), ["for_each"]);
+  assert.match(
+    message ?? "",
+    /^a_script_form_is_reachable_from_the_description:for_each: /u,
+    "a form the grammar accepts and the description does not teach is refused by name",
+  );
 });
