@@ -2,10 +2,11 @@
 /**
  * Isolated end-to-end sandbox for the desktop entry's pre-launch Mod step.
  *
- * The entry brings the player's own Stardew installation to the Mod package the
- * generation ships before the Host composition starts
- * (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts` ->
- * `deployCompanionGameMod`). This script proves that step against a disposable
+ * The launch brings the player's own Stardew installation to the Mod package the
+ * generation ships before the Host composition starts: `prepareDesktopHostLaunch`
+ * (`host/src/composition/desktop-host-composition.ts`) performs it and
+ * `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts` publishes the two
+ * stages it names as opaque tokens. This script proves that step against a disposable
  * generation without the real game, the real Steam library or the real GOG
  * registry:
  *
