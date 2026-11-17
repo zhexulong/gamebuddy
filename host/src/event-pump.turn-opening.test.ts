@@ -38,7 +38,9 @@ import {
   RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
   STALLED,
+  TRACE_KINDS,
   TRACES,
+  tracedFacts,
   TURN_OPENING,
   TURN_OPENINGS,
   TURN_PRODUCTION,
@@ -675,7 +677,7 @@ function readTurnAccountLine(line: string): Readonly<{
   }>;
   examined: number;
   carried: Readonly<{ total: number; pending: number }>;
-  traces: number;
+  traces: Readonly<{ total: number; counts: Record<string, number> }>;
   stalled: Readonly<{ total: number; counts: Record<string, number> }>;
   delivery: Readonly<{ bubbles: number; lostTotal: number; lost: Record<string, number> }>;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
@@ -777,7 +779,7 @@ function readTurnAccountLine(line: string): Readonly<{
     }),
     examined: examinedSegment.total,
     carried: Object.freeze({ total: carriedSegment.total, pending: carriedSegment.counts.pending ?? 0 }),
-    traces: tracesSegment.total,
+    traces: Object.freeze({ total: tracesSegment.total, counts: tracesSegment.counts }),
     delivery: Object.freeze({ bubbles: bubblesSegment.total, lostTotal: lostSegment.total, lost: lostSegment.counts }),
     stalled: Object.freeze({ total: stalledSegment.total, counts: stalledSegment.counts }),
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
@@ -808,6 +810,13 @@ function silentSettledCounts(overrides: Readonly<Record<string, number>>): Recor
 function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
+  return counts;
+}
+
+/** Every declared trace kind at zero: the population is the pump's own list, so a stopped kind is a reading. */
+function tracesAtZero(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const kind of TRACE_KINDS) counts[kind] = 0;
   return counts;
 }
 
@@ -922,7 +931,7 @@ test("the account line reads back into the account it names", () => {
       omittedUnattributed: 0,
     }),
     carry: Object.freeze({ carried: 9, pending: 2 }),
-    traces: 4,
+    traces: Object.freeze({ ...tracesAtZero(), [TRACE_KINDS[0]!]: 2, [TRACE_KINDS[1]!]: 2 }),
     stalled: Object.freeze({ total: 2, byReason: Object.freeze({ entity_block: 2 }) }),
     delivery: Object.freeze({ bubbles: 7, lost: Object.freeze({ no_presentation_lease: 1 }), lostTotal: 1 }),
     autoObserve: autoObserveAccount(
@@ -966,6 +975,20 @@ test("the account line reads back into the account it names", () => {
   );
   assert.deepEqual(parsed.notOwed.counts, account.notOwed);
   assert.equal(parsed.examined, account.examined);
+  // THE TRACE SEGMENT IS A MAP, not a total: `traces 4` could not say which four, which is the reading `round65` needed
+  // and could not get. The kinds are the pump's own declared population, so a kind that stopped reads `0` rather than
+  // vanishing from the line.
+  assert.deepEqual(parsed.traces.counts, account.traces, "every trace kind reads back with its own count");
+  assert.deepEqual(
+    Object.keys(parsed.traces.counts),
+    [...TRACE_KINDS],
+    "and the population is the pump's declared list",
+  );
+  assert.equal(
+    parsed.traces.total,
+    tracedFacts(account.traces),
+    "the total is the SUM of the kinds it names, so a count cannot move between kinds without moving the reading",
+  );
   assert.equal(
     parsed.assistantTurns.examined,
     account.assistantTurns.examined,
@@ -1074,7 +1097,7 @@ test("the account line names a member that never fired, in both histograms", () 
       omittedUnattributed: 0,
     }),
     carry: Object.freeze({ carried: 0, pending: 0 }),
-    traces: 0,
+    traces: Object.freeze(tracesAtZero()),
     stalled: Object.freeze({ total: 0, byReason: Object.freeze({}) }),
     delivery: Object.freeze({ bubbles: 0, lost: Object.freeze({}), lostTotal: 0 }),
     autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
