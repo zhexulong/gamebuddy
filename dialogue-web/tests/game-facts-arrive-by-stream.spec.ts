@@ -43,17 +43,20 @@ function attachedGame(checkpoint?: Readonly<{ epoch: string; cursor: string }>) 
  * The routes every Game journey needs before the surface can be looked at, plus the one that is the measurement.
  *
  * `/game` is counted rather than served from a constant: a read of it here is a poll, so the count is what proves
- * whether the wait was ended by a frame or by a clock.
+ * whether the wait was ended by a frame or by a clock. The arrival at the Game surface reads this same route
+ * (`use-arrival-reread`), which is why a journey that means "the WAIT read nothing" baselines the counter after the
+ * panel is open rather than at page load.
  */
 async function routeGameSurface(
   page: Page,
   options: Readonly<{
     arrival: ReturnType<typeof attachedGame>;
-    snapshot?: ReturnType<typeof attachedGame>;
+    snapshot?: ReturnType<typeof attachedGame> | (() => ReturnType<typeof attachedGame>);
     onGameRead?: () => void;
   }>,
 ): Promise<void> {
   const snapshot = options.snapshot ?? options.arrival;
+  const projection = typeof snapshot === "function" ? snapshot : () => snapshot;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({
       status: 200,
@@ -76,15 +79,16 @@ async function routeGameSurface(
   );
   await page.route("**/api/composed-reference-game/v1/game", (route) => {
     options.onGameRead?.();
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(snapshot) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projection()) });
   });
 }
 
 /** The admitted resume itself: `accepted` is a transport answer, never runtime success. */
-async function routeResumeAccepted(page: Page): Promise<void> {
+async function routeResumeAccepted(page: Page, onAdmitted?: () => void): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/game/resume", (route) => {
     expect(route.request().method()).toBe("POST");
     expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    onAdmitted?.();
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -126,6 +130,8 @@ test("a Game fact ends the resume wait with zero /game reads", async ({ page }) 
   expect((await streamUrls(page))[streamIndex]).toContain(
     encodeURIComponent(gameStreamCursor(SESSION_EPOCH, 0)),
   );
+  // The arrival's own read, which is not the wait's: the wait is what must read nothing.
+  const readsOnArrival = gameReads;
 
   await resume.click();
   // The Host's own attachment transition, published after the command was admitted: connected, same generation.
@@ -138,21 +144,28 @@ test("a Game fact ends the resume wait with zero /game reads", async ({ page }) 
 
   await expect(panel).toContainText("ConnectionConnected");
   await expect(resume).toHaveCount(0);
-  // The measurement: the frame ended the wait, so the route that used to be polled was never read at all.
-  expect(gameReads).toBe(0);
+  // The measurement: the frame ended the wait, so the route that used to be polled was never read at all - counted
+  // from the press, because the arrival at this surface reads `/game` once by design (`use-arrival-reread`).
+  expect(gameReads - readsOnArrival).toBe(0);
 });
 
 test("a Host that publishes no stream is still polled, so the same wait still converges", async ({ page }) => {
   let gameReads = 0;
   const attached = attachedGame();
+  const connected = { ...attached, game: { ...attached.game, connectionStatus: "connected_idle" } };
+  // The Host's state moves when the resume is ADMITTED - never before it. The arrival read answers `attached` like
+  // every other read made before the press, so what converges here is the wait's own polling.
+  let admitted = false;
   await routeGameSurface(page, {
     arrival: attached,
-    snapshot: { ...attached, game: { ...attached.game, connectionStatus: "connected_idle" } },
+    snapshot: () => (admitted ? connected : attached),
     onGameRead: () => {
       gameReads += 1;
     },
   });
-  await routeResumeAccepted(page);
+  await routeResumeAccepted(page, () => {
+    admitted = true;
+  });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);

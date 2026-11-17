@@ -32,6 +32,7 @@ test("a launch's own polls are the game slice's reads, and carry no conversation
   let stateReads = 0;
   let gameReads = 0;
   let cabinReads = 0;
+  let launchRequests = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk({ ...root, game: stagedGame })),
   );
@@ -41,9 +42,15 @@ test("a launch's own polls are the game slice's reads, and carry no conversation
   });
   await page.route("**/api/composed-reference-game/v1/game", (route) => {
     gameReads += 1;
-    return route.fulfill(jsonOk(launchingGame));
+    // The projection moves when the launch is ADMITTED, and the arrival at this surface reads it too
+    // (`use-arrival-reread`): before the press the Host still answers the staged projection, so what this journey
+    // measures is the wait's own polling rather than a projection that had already moved.
+    return route.fulfill(jsonOk(launchRequests === 0 ? stagedGame : launchingGame));
   });
-  await page.route("**/api/composed-reference-game/v1/game/launch", (route) => route.fulfill({ status: 204, body: "" }));
+  await page.route("**/api/composed-reference-game/v1/game/launch", (route) => {
+    launchRequests += 1;
+    return route.fulfill({ status: 204, body: "" });
+  });
   // The farm never loads, so the handoff keeps asking for as long as this journey watches it.
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) => {
     cabinReads += 1;
@@ -54,7 +61,7 @@ test("a launch's own polls are the game slice's reads, and carry no conversation
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
-  await expect.poll(() => cabinReads, "the surface reads the cabins once when it is ready").toBe(1);
+  await expect.poll(() => cabinReads, "the surface reads the cabins once the panel is shown").toBe(1);
 
   // The baseline is taken after a quiet second, so the shell's own mount and arrival reads are already
   // behind it and nothing but the launch can move either number.
