@@ -132,7 +132,7 @@ const en = {
   // process that does not exist. The clause stays in the sentence above, where the launch's
   // outcome is unknown and the game may well still be running.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in, and the lock that ending leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. Quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - restarting GameBuddy is what allows another launch of the game.",
+    "Stardew Valley ended before your companion moved in, and the lock that ending leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - restarting GameBuddy is what allows another launch of the game.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -271,6 +271,9 @@ const en = {
   memoryChapterCancel: "Cancel",
   /** What the correction's own press says when the field it cannot honour is empty. */
   memoryChapterRequired: "A chapter needs its words before it can be kept.",
+  /** …and what the two entry editors say, the player's own new memory and a row's correction. */
+  memoryCreateRequired: "Write what she should remember before keeping it.",
+  memoryItemRequired: "A memory needs its words before it can be kept.",
   // The Memory panel's origin filter. One chip, one dimension, and the two
   // origin chips reuse the row labels above: the filter never needs its own
   // vocabulary for the same split.
@@ -960,7 +963,7 @@ const en = {
   // the cabins belong to the handoff's own words, not to a launch's refusal.
   gameProblemPlayerHostExitedTitle: "The game ended",
   gameProblemPlayerHostExitedDetail:
-    "Stardew Valley ended, so this launch is over and will not be repeated. The ending stays recorded inside GameBuddy's own process: no control on this page frees it, and reloading the page does not either. Quit GameBuddy itself from its tray icon (Quit GameBuddy), open it again, and another launch can begin.",
+    "Stardew Valley ended, so this launch is over and will not be repeated. The ending stays recorded inside GameBuddy's own process, where no control on this page frees it and reloading the page does not either: quit GameBuddy itself from its tray icon (Quit GameBuddy), open it again, and another launch can begin.",
   gameInstanceExited: "Ended (exit code {{code}})",
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
@@ -1633,6 +1636,8 @@ const zh: Messages = {
   memoryChapterSave: "保存",
   memoryChapterCancel: "取消",
   memoryChapterRequired: "这一章还没有内容，存不下来。",
+  memoryCreateRequired: "先写下要她记住的内容，再保存。",
+  memoryItemRequired: "这条记忆还没有内容，存不下来。",
   memoryFilterAll: "全部",
   memorySearch: "查找一条记忆",
   memorySearchEmpty: "这里没有符合的内容。",

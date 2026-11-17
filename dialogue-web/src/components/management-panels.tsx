@@ -76,6 +76,18 @@ function memoryChapterFieldId(handle: string): string {
   return `memory-chapter-correct-${handle}`;
 }
 
+/** The id the new-memory field carries, for the same reason. */
+function memoryCreateFieldId(): string {
+  return "memory-create-content";
+}
+
+/** The id the new-memory field's own sentence carries, so the field can point at it. */
+const MEMORY_CREATE_REFUSAL_ID = "memory-create-refusal";
+/** The id one memory row's correction field carries, keyed by the row's own handle. */
+function memoryRowFieldId(handle: string): string {
+  return `memory-item-content-${handle}`;
+}
+
 /**
  * The management panels (design/26 §4.2, design/28 §2), moved out of
  * ManagementApp so the composed player shell composes the same components
@@ -1986,6 +1998,7 @@ export function MemoryPanel({
             <MemoryCreateForm
               label={labels.create}
               contentLabel={labels.memoryContent}
+              requiredLabel={labels.memoryCreateRequired}
               failureLabel={labels.failure}
               onCreate={(content) => onMutate({ operation: "create", content })}
             />
@@ -2009,11 +2022,14 @@ export function MemoryPanel({
 export function MemoryCreateForm({
   label,
   contentLabel,
+  requiredLabel,
   failureLabel,
   onCreate,
 }: Readonly<{
   label: string;
   contentLabel: string;
+  /** What the press says when there is nothing to keep yet. */
+  requiredLabel: string;
   /** What the form says when the write's own answer never arrived (a rejection, not a refusal). */
   failureLabel: string;
   onCreate: (content: string) => Promise<MemoryMutationOutcome>;
@@ -2021,28 +2037,45 @@ export function MemoryCreateForm({
   const content = useDraft("memory.new-content", "");
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const refusalError = fieldError(refusal, "memory-create-refusal");
+  /*
+   * The press is always offered, and it names the field it cannot honour instead of the control
+   * being withdrawn: a greyed button states a refusal and names nothing, which is what this form
+   * did while the field it was about sat empty with no sentence. One field, one sentence on screen
+   * at a time - what the press found missing, or what the Host answered.
+   */
+  const press = useRequiredField();
+  const problem = press.marked(content.value.trim().length === 0 ? requiredLabel : null);
+  const field = fieldError(problem ?? refusal, MEMORY_CREATE_REFUSAL_ID);
   return (
     <div className="composer-actions">
       <textarea
+        id={memoryCreateFieldId()}
         aria-label={contentLabel}
         className="form-textarea"
-        aria-invalid={refusalError.invalid}
-        aria-describedby={refusalError.describedBy}
+        aria-invalid={field.invalid}
+        aria-describedby={field.describedBy}
         value={content.value}
         onChange={(event) => content.type(event.target.value)}
         rows={2}
       />
+      {problem === null ? null : (
+        <p role="status" className="error-banner" id={field.id} data-memory-create-problem>
+          {problem}
+        </p>
+      )}
       {refusal !== null && (
-        <p role="status" className="error-banner" id={refusalError.id} data-memory-create-refusal>
+        <p role="status" className="error-banner" id={field.id} data-memory-create-refusal>
           {refusal}
         </p>
       )}
       <button
         type="button"
         className="small-button primary"
-        disabled={saving || content.value.trim().length === 0}
+        disabled={saving}
         onClick={() => {
+          // This press is a new attempt, so the last answer's sentence is not about it.
+          setRefusal(null);
+          if (!press.press(content.value.trim().length === 0 ? requiredLabel : null, memoryCreateFieldId())) return;
           const sent = content.value.trim();
           setSaving(true);
           void (async () => {
@@ -2104,9 +2137,14 @@ export function MemoryRow({
   // fact about one request, not the player's words, so it stays with the mount.
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const refusalError = fieldError(refusal, `memory-item-refusal-${item.handle}`);
+  // The same rule the form above reads: the press is offered, and it names the field it cannot honour
+  // rather than the control being withdrawn. One field, one sentence on screen at a time.
+  const press = useRequiredField();
+  const problem = press.marked(content.value.trim().length === 0 ? labels.memoryItemRequired : null);
+  const field = fieldError(problem ?? refusal, `memory-item-refusal-${item.handle}`);
   const beginEditing = (): void => {
     setRefusal(null);
+    press.reset();
     editing.type(true);
   };
   return (
@@ -2122,10 +2160,11 @@ export function MemoryRow({
       </div>
       {editing.value ? (
         <textarea
+          id={memoryRowFieldId(item.handle)}
           aria-label={`${labels.memoryContent}: ${item.title}`}
           className="form-textarea"
-          aria-invalid={refusalError.invalid}
-          aria-describedby={refusalError.describedBy}
+          aria-invalid={field.invalid}
+          aria-describedby={field.describedBy}
           value={content.value}
           onChange={(event) => content.type(event.target.value)}
           rows={2}
@@ -2133,8 +2172,13 @@ export function MemoryRow({
       ) : (
         <p>{item.content}</p>
       )}
+      {editing.value && problem !== null && (
+        <p role="status" className="error-banner" id={field.id} data-memory-item-problem>
+          {problem}
+        </p>
+      )}
       {editing.value && refusal !== null && (
-        <p role="status" className="error-banner" id={refusalError.id} data-memory-item-refusal>
+        <p role="status" className="error-banner" id={field.id} data-memory-item-refusal>
           {refusal}
         </p>
       )}
@@ -2144,8 +2188,17 @@ export function MemoryRow({
             <button
               type="button"
               className="small-button"
-              disabled={saving || content.value.trim().length === 0}
+              disabled={saving}
               onClick={() => {
+                // This press is a new attempt, so the last answer's sentence is not about it.
+                setRefusal(null);
+                if (
+                  !press.press(
+                    content.value.trim().length === 0 ? labels.memoryItemRequired : null,
+                    memoryRowFieldId(item.handle),
+                  )
+                )
+                  return;
                 const sent = content.value;
                 setSaving(true);
                 void (async () => {
