@@ -365,34 +365,37 @@ export const DEBT = Object.freeze([
 
 /** The source with its comments removed and its string literals intact, so positions and values both stay true. */
 export function withoutComments(source) {
-  let result = "";
+  const parts = [];
+  let plain = 0;
   for (let index = 0; index < source.length; ) {
     const char = source[index];
     if (char === '"' || char === "'" || char === "`") {
-      const start = index;
       index += 1;
       while (index < source.length && source[index] !== char) {
         if (source[index] === "\\") index += 1;
         index += 1;
       }
       index += 1;
-      result += source.slice(start, index);
       continue;
     }
     if (char === "/" && source[index + 1] === "/") {
+      parts.push(source.slice(plain, index));
       const close = source.indexOf("\n", index);
       index = close < 0 ? source.length : close;
+      plain = index;
       continue;
     }
     if (char === "/" && source[index + 1] === "*") {
+      parts.push(source.slice(plain, index));
       const close = source.indexOf("*/", index + 2);
       index = close < 0 ? source.length : close + 2;
+      plain = index;
       continue;
     }
-    result += char;
     index += 1;
   }
-  return result;
+  parts.push(source.slice(plain));
+  return parts.join("");
 }
 
 /**
@@ -429,13 +432,41 @@ const lineOf = (source, offset) => source.slice(0, offset).split("\n").length;
  * next declaration, so a newline anchor read one declaration per file - 43 across the whole tree instead of 1,300.
  */
 function constDeclarations(code) {
-  const found = [];
+  const candidates = [];
   for (const match of code.matchAll(/^[ \t]*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+?)?=\s*/gmu)) {
-    const at = match.index + match[0].length;
-    // Column zero is the module level in this tree (prettier), and the depth check makes the claim structural rather
-    // than a convention: a declaration nested in any block is a fixture.
-    if (braceDepthAt(code, at) !== 0) continue;
-    found.push({ name: match[1], at });
+    candidates.push({ name: match[1], at: match.index + match[0].length });
+  }
+  // One depth pass for every candidate. Asking `braceDepthAt` per declaration rescanned the file from its first byte
+  // each time, which is quadratic in declarations and was most of this gate's 5 s.
+  const depths = depthsAt(
+    code,
+    candidates.map((candidate) => candidate.at),
+  );
+  return candidates.filter((candidate) => depths.get(candidate.at) === 0);
+}
+
+/** The brace depth at each of `offsets`, in one pass over the code. Strings and comments never move the count. */
+function depthsAt(code, offsets) {
+  const wanted = new Set(offsets);
+  const found = new Map();
+  let depth = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    if (wanted.has(index)) found.set(index, depth);
+    const char = code[index];
+    if (char === '"' || char === "'" || char === "`") {
+      index += 1;
+      while (index < code.length && code[index] !== char) {
+        // A regex literal's quote (`/^[^"<>]+$/`) is not a string, so a "string" here can be a run of real code: an
+        // offset inside it still takes the depth the scan has reached. Dropping it reported a module-level declaration
+        // as nested, and the fact it declared fell out of the population.
+        if (wanted.has(index)) found.set(index, depth);
+        if (code[index] === "\\") index += 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") depth = Math.max(0, depth - 1);
   }
   return found;
 }
@@ -559,9 +590,37 @@ function matchingBracket(code, open, opener, closer) {
   return -1;
 }
 
+/**
+ * One read per file per run, comment-free.
+ *
+ * The key-list scan asks "does another side write this frame?" once per site, and answering it any other way read the same
+ * three roots again for every one of them: the gate took 7 s on this tree, which is not what a static rung costs.
+ */
+const SOURCE_CACHE = new Map();
+
+/** The raw bytes of one file, once per run: the producer filter reads every candidate before it strips any. */
+const RAW_CACHE = new Map();
+function readRaw(root, file) {
+  const key = `${root}\u0000${file}`;
+  const cached = RAW_CACHE.get(key);
+  if (cached !== undefined) return cached;
+  const raw = readFileSync(join(root, file), "utf8");
+  RAW_CACHE.set(key, raw);
+  return raw;
+}
+
+function readSource(root, file) {
+  const key = `${root}\u0000${file}`;
+  const cached = SOURCE_CACHE.get(key);
+  if (cached !== undefined) return cached;
+  const code = withoutComments(readRaw(root, file));
+  SOURCE_CACHE.set(key, code);
+  return code;
+}
+
 /** Every module-level vocabulary a file declares, with where it is and what it holds. */
 export function vocabulariesIn(root, file) {
-  const code = withoutComments(readFileSync(join(root, file), "utf8"));
+  const code = readSource(root, file);
   const found = [];
   for (const declaration of constDeclarations(code)) {
     const vocabulary = vocabularyAt(code, declaration.at) ?? discriminantUnionAt(code, declaration.at);
@@ -583,11 +642,20 @@ const SKIPPED_DIRECTORY = /^(?:node_modules|dist|build|\.)/u;
 /** A scratch artefact (`tools/.soft-suite.tmp.test.mjs`) is not a declaration the tree owns. */
 const TEMPORARY_FILE = /\.tmp\.|\.tmp$/u;
 
-/** Every source file under the gate's roots, depth-first, in a stable order. */
+/**
+ * Every source file under the gate's roots, depth-first, in a stable order.
+ *
+ * A root this checkout does not have is empty rather than fatal: a replay tree carries the files it needs and not the
+ * others, and the whole point of `--root` is to read one of those.
+ */
 export function sourceFiles(root, directory) {
-  const entries = readdirSync(join(root, directory), {
-    withFileTypes: true,
-  }).sort((left, right) => left.name.localeCompare(right.name));
+  let entries;
+  try {
+    entries = readdirSync(join(root, directory), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  entries = entries.sort((left, right) => left.name.localeCompare(right.name));
   const found = [];
   for (const entry of entries) {
     const path = `${directory}/${entry.name}`;
@@ -734,56 +802,64 @@ export function jsonDerivation(code, symbol) {
   return path === null ? null : path[1];
 }
 
-/** Does a file this reader's side does not own contain the schema literal? Those are the writers. */
+/**
+ * The files that name a schema literal, one walk for every site in the run.
+ *
+ * Asking per site read three roots again for each of the five crossings. The raw bytes are matched first, so only the
+ * handful of files that mention a frame are comment-stripped at all - the filter is a shortcut, and every hit is
+ * confirmed against the stripped text, so a frame named only in prose is still not a producer.
+ */
 function producersOf(root, readerFile, literal) {
   const producers = [];
-  for (const directory of [...VOCABULARY_ROOTS, "host/scripts", "desktop"]) {
-    let files;
+  for (const directory of [...VOCABULARY_ROOTS, "host/scripts"]) {
+    for (const file of sourceFiles(root, directory)) {
+      if (file === readerFile) continue;
+      let raw;
+      try {
+        raw = readRaw(root, file);
+      } catch {
+        continue;
+      }
+      if (!raw.includes(literal)) continue;
+      if (!readSource(root, file).includes(literal)) continue;
+      producers.push(file);
+    }
+  }
+  for (const file of desktopSources(root)) {
+    if (file === readerFile) continue;
     try {
-      files = directory === "desktop" ? desktopSources(root) : sourceFiles(root, directory);
+      if (readRaw(root, file).includes(literal)) producers.push(file);
     } catch {
       continue;
-    }
-    for (const file of files) {
-      if (file === readerFile) continue;
-      const text = readFileSync(join(root, file), "utf8");
-      if (!text.includes(literal)) continue;
-      producers.push(file);
     }
   }
   return producers;
 }
 
-/** The C# sources, read only for "does another side name this frame?" - never parsed for a shape. */
+/**
+ * The C# sources, read only for "does another side name this frame?" - never parsed for a shape.
+ *
+ * The list is memoised per run: the producer question is asked once per key-list site, and walking two thousand files
+ * once per site is how a replay of this gate turned a two-second reading into a quarter of an hour.
+ */
+const DESKTOP_CACHE = new Map();
 function desktopSources(root) {
-  const found = [];
-  const walk = (directory) => {
-    for (const entry of readdirSync(join(root, directory), {
-      withFileTypes: true,
-    })) {
-      const path = `${directory}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (SKIPPED_DIRECTORY.test(entry.name)) continue;
-        walk(path);
-      } else if (entry.name.endsWith(".cs")) found.push(path);
-    }
-  };
-  try {
-    if (statSync(join(root, "desktop")).isDirectory()) walk("desktop");
-  } catch {
-    return findCSharpUnderHost(root);
-  }
-  return found;
+  const cached = DESKTOP_CACHE.get(root);
+  if (cached !== undefined) return cached;
+  const found = collectCSharp(root, "desktop");
+  const list = found.length > 0 ? found : collectCSharp(root, "host");
+  DESKTOP_CACHE.set(root, list);
+  return list;
 }
 
-/** `desktop/` absent (a falsifier's copy): fall back to the Host's own C# so a cross-language producer is still read. */
-function findCSharpUnderHost(root) {
+/** Every `.cs` file under `directory`, or nothing when this checkout has no such directory. */
+function collectCSharp(root, directory) {
   const found = [];
-  const walk = (directory) => {
-    for (const entry of readdirSync(join(root, directory), {
+  const walk = (current) => {
+    for (const entry of readdirSync(join(root, current), {
       withFileTypes: true,
     })) {
-      const path = `${directory}/${entry.name}`;
+      const path = `${current}/${entry.name}`;
       if (entry.isDirectory()) {
         if (SKIPPED_DIRECTORY.test(entry.name)) continue;
         walk(path);
@@ -791,7 +867,7 @@ function findCSharpUnderHost(root) {
     }
   };
   try {
-    walk("host");
+    walk(directory);
   } catch {
     return found;
   }
@@ -803,7 +879,7 @@ export function scanKeySequences(root) {
   const sites = [];
   for (const directory of ["tools", "dialogue-web/src"]) {
     for (const file of sourceFiles(root, directory)) {
-      const code = withoutComments(readFileSync(join(root, file), "utf8"));
+      const code = readSource(root, file);
       for (const validator of KEY_VALIDATORS) {
         for (const match of code.matchAll(new RegExp(`\\b${validator}\\s*\\(`, "gu"))) {
           const open = match.index + match[0].length - 1;
@@ -861,7 +937,7 @@ export function scanKeySequences(root) {
 export function scanUnproducedCodes(root) {
   const declarations = [];
   const hostFiles = sourceFiles(root, "host/src");
-  const texts = new Map(hostFiles.map((file) => [file, withoutComments(readFileSync(join(root, file), "utf8"))]));
+  const texts = new Map(hostFiles.map((file) => [file, readSource(root, file)]));
   for (const [file, code] of texts) {
     for (const declaration of constDeclarations(code)) {
       const vocabulary = vocabularyAt(code, declaration.at);
@@ -901,6 +977,36 @@ function declarationAt(scan, file, name) {
   return scan.declarations.find((declaration) => declaration.file === file && declaration.name === name);
 }
 
+/**
+ * The declaration a record names, read from its own FILE whether or not the scan still groups it.
+ *
+ * The difference between the two readers is the difference between a drift and a deletion. A declaration that gained a
+ * member is no longer equal to its authority, so the group it belonged to dissolves - and a record that consulted only
+ * the population would report that as "the declaration is gone", which is the wrong sentence and sends the next reader
+ * looking for a deletion. The record pins IDENTITY; the scan pins MEMBERSHIP.
+ */
+function declarationIn(root, file, name) {
+  let code;
+  try {
+    code = readSource(root, file);
+  } catch {
+    return undefined;
+  }
+  for (const declaration of constDeclarations(code)) {
+    if (declaration.name !== name) continue;
+    const vocabulary = vocabularyAt(code, declaration.at) ?? discriminantUnionAt(code, declaration.at);
+    if (vocabulary === null) continue;
+    return {
+      file,
+      name,
+      line: lineOf(code, declaration.at),
+      kind: vocabulary.kind,
+      members: Object.freeze(vocabulary.members),
+    };
+  }
+  return undefined;
+}
+
 /** The members that disagree between two declarations of one fact. */
 function disagreements(authority, reader) {
   const left = new Set(authority.members);
@@ -919,7 +1025,7 @@ function disagreements(authority, reader) {
 function derivationHolds(root, record) {
   const { derives } = record;
   const reader = record.readers[0];
-  const readerCode = withoutComments(readFileSync(join(root, reader.file), "utf8"));
+  const readerCode = readSource(root, reader.file);
   if (derives.kind === "asserted-by") {
     let assertion;
     try {
@@ -960,6 +1066,11 @@ function derivationHolds(root, record) {
 
 /** Every finding, and the two readings the verdict prints. */
 export function evaluate(root) {
+  // One run, one reading of the tree: the caches are per run, so a caller that edits a file between two calls (the
+  // mutation proof does exactly that) reads what is on disk now rather than what it read the first time.
+  SOURCE_CACHE.clear();
+  RAW_CACHE.clear();
+  DESKTOP_CACHE.clear();
   const mirror = scanMirrors(root);
   const keys = scanKeySequences(root);
   const codes = scanUnproducedCodes(root);
@@ -971,7 +1082,9 @@ export function evaluate(root) {
   const recorded = new Set();
 
   for (const record of records) {
-    const authority = declarationAt(mirror, record.authority.file, record.authority.name);
+    const authority =
+      declarationAt(mirror, record.authority.file, record.authority.name) ??
+      declarationIn(root, record.authority.file, record.authority.name);
     if (authority === undefined) {
       findings.push(
         `stale_fact_seam:${record.fact} (${record.authority.file} no longer declares ${record.authority.name})`,
@@ -981,7 +1094,8 @@ export function evaluate(root) {
     recorded.add(`${authority.file}:${authority.name}`);
     let broke = false;
     for (const reader of record.readers) {
-      const declaration = declarationAt(mirror, reader.file, reader.name);
+      const declaration =
+        declarationAt(mirror, reader.file, reader.name) ?? declarationIn(root, reader.file, reader.name);
       if (declaration === undefined) {
         findings.push(`stale_fact_seam:${record.fact} (${reader.file} no longer declares ${reader.name})`);
         broke = true;
@@ -1056,7 +1170,7 @@ export function evaluate(root) {
 
 /** Does the reader's key list still come from the authority its record names? */
 function keyDerivationHolds(root, site, record) {
-  const code = withoutComments(readFileSync(join(root, site.file), "utf8"));
+  const code = readSource(root, site.file);
   if (record.derives.kind === "json") {
     const derived = jsonDerivation(code, site.symbol);
     if (derived === null)
@@ -1232,6 +1346,23 @@ function main(argv) {
     console.log("fact_seams_not_measured: the key-list scan read no validator call, so nothing was compared");
     return EXIT.blocked;
   }
+  // The report is what `tools/replay-gate-on-history.mjs` and `tools/check-ci-coverage.mjs` read: the population is the
+  // number of facts compared, never the number of findings, so a run over nothing cannot print a green report.
+  console.log(
+    JSON.stringify({
+      gate: "fact_seams/v1",
+      status: report.findings.length === 0 ? "passed" : "failed",
+      population: readings.facts,
+      examined: readings.facts,
+      findings: report.findings.length,
+      oneAuthority: readings.derived,
+      recordedDebt: readings.debt,
+      keySequences: readings.sequences,
+      keyCrossings: readings.crossings,
+      codes: readings.codes,
+      unproduced: readings.unproduced,
+    }),
+  );
   return report.findings.length === 0 ? EXIT.agreed : EXIT.drift;
 }
 
