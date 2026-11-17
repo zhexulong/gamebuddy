@@ -201,6 +201,17 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  {
+    fact: "compatibility statuses",
+    authority: { file: "host/src/game-browser-contract/index.ts", name: "CompatibilityStatus" },
+    readers: [{ file: "dialogue-web/src/composed-reference-game-browser-api.ts", name: "COMPATIBILITY_STATUSES" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["CompatibilityStatus", "COMPATIBILITY_STATUSES"],
+    },
+    owner: "the composed game client lane",
+  },
 ]);
 
 const GAME_CONTRACT = "host/src/game-browser-contract/index.ts";
