@@ -209,6 +209,16 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
       },
     },
     {
+      reason: NOT_OWED.noSurface,
+      drive: async (pump, sink) => {
+        // A NODE'S TERMINAL RECEIPT: a decision by shape, and a shape the surface has nowhere to show - `receipt` carries no
+        // event identity on the wire (`protocol/bridge-v1.schema.json`), so no projection can be attached to a turn opened on
+        // it. It waits in its window and the next turn that can present carries it (`event-pump.turn-surface.test.ts`).
+        pump.enqueueFact(programmeStep("succeeded", 70), FACT_PRODUCER.adapterIngress);
+        await pump.flush(sink);
+      },
+    },
+    {
       reason: NOT_OWED.progress,
       drive: async (pump, sink) => {
         pump.enqueueFact(bodyTrace("route_progress", 61), FACT_PRODUCER.adapterIngress);

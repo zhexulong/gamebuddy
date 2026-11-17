@@ -1,47 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  CompanionLoop,
-  NO_PRESENTATION_LEASE,
-  NO_SPEECH_SURFACE_BLOCK,
-  PRESENTATION_LEASE_KINDS,
-} from "./companion-loop.js";
-import { FACT_PRODUCER, FACT_TURN_CONSEQUENCE, type WorldFact } from "./event-pump.js";
-import { EXECUTION_STATES } from "./protocol.js";
+import { CompanionLoop, NO_SPEECH_SURFACE_BLOCK } from "./companion-loop.js";
+import { FACT_PRODUCER, FACT_TURN_CONSEQUENCE, NOT_OWED, type WorldFact } from "./event-pump.js";
+import { PRESENTATION_LEASE_KINDS, presentationSourceOf } from "./presentation-lease.js";
+import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
 
 /**
- * THE GATE: a turn that cannot present its text must not invite it anyway.
+ * THE DELIVERY-SEAM HALF OF THE SURFACE GATE: a turn reaches the provider only when the player's surface can show its
+ * answer, and the record says so.
  *
  * <p>
- * MEASURED 2026-11-17 (`round65`, ten minutes): 26 turns opened, EVERY ONE answered with text, 17 bubbles delivered and 10
- * lost to `no_presentation_lease`. The loss was named and the cause was not: `lost 10 {no_presentation_lease: 10}` says a
- * bubble was withheld and nothing about what the turn was. The delivered turns were not the ones the surface had admitted
- * on purpose - a receipt-opened turn presented only when the Mod's HUD happened to draw a line (`native_notice`) that rode
- * the same batch - so the same body action spoke in one batch and vanished in the next.
+ * MEASURED 2026-11-17 (`round66`, final account): `turns opened 40 · bubbles delivered 30 · lost 12
+ * {no_presentation_lease: 12}`. The old reading of this file was a biconditional on the turn - "text on a turn the surface
+ * cannot show" and "a silence order on a turn it does admit" - and it could be satisfied by the statement alone, which is
+ * what `round66` then did: every one of the twelve unadmitted turns was TOLD its words would not be shown, and it wrote them
+ * anyway. A rule that says "you may not speak" is not a delivery; the answer had to move upstream, to whether the turn is
+ * invited at all.
  * </p>
  * <p>
- * The property is a BICONDITIONAL on the turn itself, because either direction is a defect: text on a turn the surface
- * cannot show is a decision the player never sees (the members this run lost), and a silence order on a turn the surface
- * DOES admit is a bubble she was told not to speak into. Both are asserted, so neither can be fixed by moving the defect.
+ * So the property is now stated where the run measured it: for every decision shape the classification declares, the turn is
+ * EITHER delivered and admitted (the bubble the player reads) OR not delivered at all (carried into the next turn that can
+ * present, proved by `event-pump.turn-surface.test.ts`). There is no third state in which the provider is asked for words
+ * nobody will see.
  * </p>
  * <p>
- * THE POPULATION IS DERIVED. The admitted half is `PRESENTATION_LEASE_KINDS` - the loop's own declaration, not a copy - and
- * the unadmitted half is every receipt state whose consequence the pump's own table calls `decision`, i.e. every receipt
- * shape that can open a turn. A kind added to either authority appears here without this file changing; the failure names
- * the member that drifted.
+ * THE POPULATION IS DERIVED. The decision half is `FACT_TURN_CONSEQUENCE` (built from `EXECUTION_STATES`, the held and wake
+ * tables and `SETTLED_PROGRAM_OUTCOMES`), and the admitted half is `PRESENTATION_LEASE_KINDS` - both the pump's and the
+ * loop's own declarations, not copies.
  * </p>
  */
 
 type SessionEvent = { type: string; message?: unknown; assistantMessageEvent?: unknown };
 
 const SPOKEN = "我把这块地收拾了。";
-
-/** The receipt states that can open a turn: the pump's own classification, asked rather than guessed. */
-function decisionReceiptStates(): readonly string[] {
-  return Object.entries(FACT_TURN_CONSEQUENCE)
-    .filter(([shape, consequence]) => shape.startsWith("receipt:") && consequence === "decision")
-    .map(([shape]) => shape.slice("receipt:".length));
-}
 
 /** A Pi session that keeps the batch it was handed and answers it with one text part. */
 function speakingSession(received: string[]) {
@@ -91,26 +82,28 @@ function speakingSession(received: string[]) {
   };
 }
 
-/** One turn: what the model read, what the surface was allowed to show, and the loop's own delivery record. */
-type TurnReading = Readonly<{
-  kind: string;
+/**
+ * One flush of the real loop: what the model read, and the loop's own delivery record when a turn was delivered at all.
+ *
+ * `delivered: false` is a STATE, not a failure: the pump answered `not_owed` and the fact waits for a turn that can present.
+ */
+type FlushReading = Readonly<{
+  delivered: boolean;
   text: string;
   admitted: boolean;
   toldCannotSpeak: boolean;
   bubbles: number;
   withheld: string | undefined;
   carried: readonly string[];
+  noSurfaceShapes: Readonly<Record<string, number>>;
 }>;
 
-async function turnOf(fact: WorldFact | undefined, playerSource: string | undefined): Promise<TurnReading> {
+async function flushOf(fact: WorldFact | undefined, playerSource: string | undefined): Promise<FlushReading> {
   const received: string[] = [];
-  const presented: unknown[] = [];
   const loop = new CompanionLoop(speakingSession(received) as never, {
     beginPlayerBatch() {},
     endBatch() {},
-    async presentNativeAssistantContent(content) {
-      presented.push(content);
-    },
+    async presentNativeAssistantContent() {},
   });
   const stderrWrite = process.stderr.write;
   let printed = "";
@@ -135,39 +128,51 @@ async function turnOf(fact: WorldFact | undefined, playerSource: string | undefi
   } finally {
     process.stderr.write = stderrWrite;
   }
+  const noSurfaceShapes = { ...loop.pump.turnAccount.noSurface };
   const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
-  assert.notEqual(line, undefined, `every turn that produced text must print its delivery record; stderr: ${printed}`);
-  const record = JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)) as {
+  if (line === undefined) {
+    assert.deepEqual(
+      received,
+      [],
+      `a turn that printed no delivery record must not have reached the model: ${printed}`,
+    );
+    return Object.freeze({
+      delivered: false,
+      text: "",
+      admitted: false,
+      toldCannotSpeak: false,
+      bubbles: 0,
+      withheld: undefined,
+      carried: [],
+      noSurfaceShapes,
+    });
+  }
+  const record = JSON.parse(line.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)) as {
     bubbles: number;
     withheld?: string;
     lease: { admitted: boolean };
     carried: readonly string[];
   };
+  assert.equal(received.length, 1, `a delivered turn reaches the model exactly once, got ${String(received.length)}`);
   const text = received[0] ?? "";
-  assert.equal(received.length, 1, `the turn must have reached the model exactly once, got ${String(received.length)}`);
   return Object.freeze({
-    kind: fact === undefined ? String(playerSource) : factKindOf(fact),
+    delivered: true,
     text,
     admitted: record.lease.admitted,
     toldCannotSpeak: text.includes(`<${NO_SPEECH_SURFACE_BLOCK}>`),
     bubbles: record.bubbles,
     withheld: record.withheld,
     carried: record.carried,
+    noSurfaceShapes,
   });
 }
 
-function factKindOf(fact: WorldFact): string {
-  if (fact.kind === "world_fact") return String(fact.semanticKind);
-  if (fact.kind === "execution_receipt") return `receipt:${String(fact.payload.state)}`;
-  return String(fact.kind);
-}
-
-function worldFactOf(kind: string): WorldFact {
+function worldFactOf(kind: string, sourceEventId = `fact_${kind}`): WorldFact {
   return {
     source: "stardew_mod",
     kind: "world_fact",
-    eventId: `fact_${kind}`,
-    sourceEventId: `fact_${kind}`,
+    eventId: `event_${kind}`,
+    sourceEventId,
     correlationId: `fact_${kind}`,
     revision: 1,
     occurredAtMs: 5,
@@ -176,7 +181,7 @@ function worldFactOf(kind: string): WorldFact {
   };
 }
 
-function receiptOf(state: string, reasonCode = "crop_harvested"): WorldFact {
+function receiptOf(state: string): WorldFact {
   return {
     source: "stardew_mod",
     kind: "execution_receipt",
@@ -185,101 +190,177 @@ function receiptOf(state: string, reasonCode = "crop_harvested"): WorldFact {
     revision: 1,
     occurredAtMs: 5,
     executionId: `exec_${state}`,
-    payload: { state, reasonCode, executionId: `exec_${state}`, revision: 1, evidence: null },
+    requestId: `request_${state}`,
+    payload: {
+      actionId: "harvest_crop",
+      state,
+      reasonCode: "crop_harvested",
+      revision: 1,
+      evidence: null,
+      origin: { kind: "programme", programId: "plan_1", nodeId: "n001" },
+    },
   };
 }
 
-test("a_turn_that_cannot_present_its_text_invites_it_anyway", async () => {
-  const readings: TurnReading[] = [];
-  // THE ADMITTED HALF, from the loop's own declaration.
-  for (const kind of PRESENTATION_LEASE_KINDS) readings.push(await turnOf(worldFactOf(kind), undefined));
-  // The player's own words are the other admission, and they are not a fact kind at all.
-  readings.push(await turnOf(undefined, "player_source_gate"));
-  // THE UNADMITTED HALF, from the pump's own consequence table.
-  for (const state of decisionReceiptStates()) readings.push(await turnOf(receiptOf(state), undefined));
+function semanticEventOf(kind: string): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "semantic_event",
+    eventId: `semantic_${kind}`,
+    correlationId: `semantic_${kind}`,
+    revision: 1,
+    occurredAtMs: 5,
+    payload: { kind, revision: 1, reasonCode: "body_trace" },
+  };
+}
 
-  const admitted = readings.filter((reading) => reading.admitted);
-  const spokeUnadmitted = readings.filter((reading) => !(reading.admitted || reading.toldCannotSpeak));
-  const silencedButAdmitted = readings.filter((reading) => reading.admitted && reading.toldCannotSpeak);
+function settlementOf(outcome: string): WorldFact {
+  const won = outcome === "succeeded";
+  return {
+    source: "host_game_session",
+    kind: "world_fact",
+    eventId: "program_settled_plan_1",
+    sourceEventId: "program_settled_plan_1",
+    correlationId: "program_settled_plan_1",
+    revision: 0,
+    occurredAtMs: 5,
+    semanticKind: PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND,
+    payload: {
+      kind: PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND,
+      programId: "plan_1",
+      settledAtMs: 4,
+      total: 1,
+      counts: won ? { succeeded: 1 } : { rejected: 1 },
+      ok: won,
+      reason: won ? null : "#0 harvest_crop:rejected",
+      summary: won ? "1/1 完成" : "0/1 完成",
+      nodes: [],
+      omitted: 0,
+    },
+  };
+}
 
-  const tally = `turns examined ${String(readings.length)} · invited-and-admitted ${String(admitted.length)} · spoke-unadmitted ${String(spokeUnadmitted.length)}`;
-  assert.deepEqual(
-    spokeUnadmitted.map((reading) => reading.kind),
-    [],
-    `${tally}: these turns produced text on a surface that would not show it, so the model was asked to speak into a void (carried: ${spokeUnadmitted.map((reading) => JSON.stringify(reading.carried)).join(", ")})`,
-  );
-  assert.deepEqual(
-    silencedButAdmitted.map((reading) => reading.kind),
-    [],
-    `${tally}: these turns WERE admitted and were told their words would not be shown, which suppresses a bubble the player owed`,
-  );
+function lifecycleFact(): WorldFact {
+  return {
+    source: "host_transport",
+    kind: "lifecycle",
+    eventId: "lifecycle_adapter_offline",
+    correlationId: "lifecycle_adapter_offline",
+    revision: 1,
+    occurredAtMs: 5,
+    payload: { kind: "disconnected" },
+  };
+}
 
-  // The admission is the surface's, and the record says so in the same word the run's account prints.
-  for (const reading of readings) {
-    const lost = reading.bubbles === 0;
-    assert.equal(
-      reading.withheld ?? null,
-      reading.admitted ? null : NO_PRESENTATION_LEASE,
-      `${reading.kind}: the record's withholding must agree with its own admission (carried ${JSON.stringify(reading.carried)})`,
-    );
-    assert.equal(
-      lost,
-      !reading.admitted,
-      `${reading.kind}: an unadmitted turn loses its bubble and an admitted one delivers it (bubbles ${String(reading.bubbles)})`,
-    );
+function factOfShape(shape: string): WorldFact {
+  if (shape.startsWith("receipt:")) return receiptOf(shape.slice("receipt:".length));
+  if (shape.startsWith("semantic:")) return semanticEventOf(shape.slice("semantic:".length));
+  if (shape.startsWith("settled:")) return settlementOf(shape.slice("settled:".length));
+  if (shape === "lifecycle") return lifecycleFact();
+  return worldFactOf("modal_presented");
+}
+
+/** One case per decision shape, plus the presentable end of the plain `world_fact` shape (see the pump-side gate). */
+function decisionCases(): readonly Readonly<{ label: string; fact: WorldFact }>[] {
+  const shapes = Object.entries(FACT_TURN_CONSEQUENCE)
+    .filter(([, consequence]) => consequence === "decision")
+    .map(([shape]) => shape);
+  const cases = shapes.map((shape) => Object.freeze({ label: shape, fact: factOfShape(shape) }));
+  for (const kind of PRESENTATION_LEASE_KINDS)
+    if (kind !== PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND)
+      cases.push(Object.freeze({ label: `world_fact:${kind}`, fact: worldFactOf(kind) }));
+  return Object.freeze(cases);
+}
+
+test("a_turn_is_delivered_only_where_its_text_can_be_shown", async () => {
+  const cases = decisionCases();
+  assert.ok(cases.length > 0, "turns examined 0: the classification declares no decision shape");
+  assert.ok(PRESENTATION_LEASE_KINDS.length > 0, "turns examined 0: the lease list is empty");
+
+  const delivered: string[] = [];
+  const carried: string[] = [];
+  const violations: string[] = [];
+
+  // The player's own words are the other admission, and they are not a fact kind at all: their lease comes from the ingress
+  // (`HostService.acceptPlayerInput` refuses a non-opaque `sourceEventId`).
+  for (const { label, fact } of [
+    ...cases,
+    Object.freeze({ label: "player_input", fact: undefined as WorldFact | undefined }),
+  ]) {
+    const reading = await flushOf(fact, fact === undefined ? "player_source_gate" : undefined);
+    if (!reading.delivered) {
+      const shapes = Object.keys(reading.noSurfaceShapes);
+      if (!reading.admitted && fact !== undefined) carried.push(`${label} {${shapes.join(", ")}}`);
+      else violations.push(`${label}: no turn, and nothing was accounted for`);
+      continue;
+    }
+    delivered.push(label);
+    if (!reading.admitted)
+      violations.push(`${label}: delivered with no lease (carried ${JSON.stringify(reading.carried)})`);
+    if (reading.toldCannotSpeak) violations.push(`${label}: told its words would not be shown`);
+    if (reading.bubbles !== 1) violations.push(`${label}: committed ${String(reading.bubbles)} bubbles`);
+    if (reading.withheld !== undefined) violations.push(`${label}: withheld ${reading.withheld}`);
   }
+
+  const tally = `turns examined ${String(cases.length + 1)} · delivered-and-admitted ${String(delivered.length)} · carried ${String(carried.length)} · violations ${String(violations.length)}`;
+  assert.ok(delivered.length > 0, `${tally}: no case reached the model, so the admitted half proves nothing`);
+  assert.ok(carried.length > 0, `${tally}: no case was carried, so the refused half proves nothing`);
+  assert.deepEqual(
+    violations,
+    [],
+    `${tally}: these turns asked the provider for words the player's surface cannot show`,
+  );
 });
 
 /**
- * THE FALSIFIER: the same guard, red on purpose.
+ * THE HONEST STATEMENT IS KEPT, and this is the shape that still needs it: a turn with no lease at all still exists for the
+ * one ingress that bypasses the pump's surface rule - a player input enqueued without an opaque `eventId`, which no
+ * production path does (`HostService.acceptPlayerInput` refuses it) but a direct caller can.
  *
- * <p>
- * The admitted half of the population is a world fact; the unadmitted half is a receipt. A receipt batch that ALSO carries a
- * fact the game drew for the player (`native_notice` - the HUD line the Mod attaches to the receipt that put it on screen)
- * is admitted, because the thing being answered is something the player can read. Swapping the two loops below makes the
- * gate above fire on the members it names, which is what proves the gate reads the turn's own admission rather than a
- * constant this file also wrote.
- * </p>
+ * `speechSurfaceStatement` stays for exactly that turn: the model is told the truth about its own surface instead of being
+ * left to narrate into a void. It is not the fix for `round66` - the fix is that such a turn is almost never created - and
+ * removing the statement would make an unadmitted turn SILENT about its own condition.
  */
-test("the gate's two halves are what they say: an outcome alone cannot present, and one that carries the game's own line can", async () => {
-  const outcomeAlone = await turnOf(receiptOf("succeeded"), undefined);
-  assert.equal(outcomeAlone.admitted, false, "a receipt with nothing else in the batch is not a presentation source");
-  assert.equal(outcomeAlone.toldCannotSpeak, true, "and the model is told so, in the turn it reads");
-  assert.deepEqual(outcomeAlone.carried, ["execution_receipt"]);
-
-  // The Mod's own HUD line rides the receipt (`native-notice-fact.ts`), and it is what the bubble answers.
+test("the_statement_is_kept_for_the_turn_that_still_has_no_surface", async () => {
   const received: string[] = [];
-  const presented: string[] = [];
   const loop = new CompanionLoop(speakingSession(received) as never, {
     beginPlayerBatch() {},
     endBatch() {},
-    async presentNativeAssistantContent(content) {
-      presented.push((content as { text: string }).text);
-    },
+    async presentNativeAssistantContent() {},
   });
-  loop.pump.enqueueFact(worldFactOf("native_notice"), FACT_PRODUCER.nativeNotice);
-  loop.pump.enqueueFact(receiptOf("succeeded"), FACT_PRODUCER.adapterIngress);
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_without_source",
+    text: "你在做什么？",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
   await loop.flush();
-
-  assert.equal(presented.length, 1, "the game's own line is what the player reads, so her answer to it is shown");
-  assert.ok(
-    !(received[0] ?? "").includes(`<${NO_SPEECH_SURFACE_BLOCK}>`),
-    "and an admitted turn is never told it cannot speak",
+  assert.equal(
+    received.length,
+    1,
+    "a person's word still opens a turn: it is not a fact and no surface rule holds it back",
   );
-  assert.equal(outcomeAlone.bubbles, 0, "the unadmitted turn committed no bubble");
+  assert.ok(
+    (received[0] ?? "").includes(`<${NO_SPEECH_SURFACE_BLOCK}>`),
+    "and the turn is told the truth about its own surface",
+  );
 });
 
-test("EXECUTION_STATES is the population this gate reads", () => {
-  // Zero population is blocked, never green: if the derived population were empty the gate would agree with itself.
-  const states = decisionReceiptStates();
-  const declared = EXECUTION_STATES.filter((state) => FACT_TURN_CONSEQUENCE[`receipt:${state}`] === "decision");
-  assert.ok(
-    states.length > 0 && declared.length > 0,
-    `turns examined 0: the receipt population is empty (${String(states.length)})`,
-  );
-  assert.deepEqual(states, [...declared], "every receipt state the pump calls a decision is in this gate's population");
-  assert.ok(
-    PRESENTATION_LEASE_KINDS.length > 0,
-    "turns examined 0: the lease population is empty, so the admitted half of this gate checks nothing",
-  );
+/**
+ * THE FALSIFIER: the same case with the surface able to present. One opaque identity is the whole difference, so the gate
+ * above is reading the surface rather than a constant this file also wrote.
+ */
+test("the_same_fact_with_an_opaque_identity_is_delivered_and_admitted", async () => {
+  const reading = await flushOf(worldFactOf("time_milestone"), undefined);
+  assert.equal(reading.delivered, true, "a lease kind with an opaque `sourceEventId` opens its turn as today");
+  assert.equal(reading.admitted, true, "and the surface admits it, so her bubble reaches the player");
+  assert.equal(reading.toldCannotSpeak, false, "and it is never told to be quiet");
+  assert.deepEqual(reading.noSurfaceShapes, {}, "and nothing was refused for want of a surface");
+
+  const refused = await flushOf(receiptOf("succeeded"), undefined);
+  assert.equal(refused.delivered, false, "the same pump, a fact whose shape has no surface, opens no turn");
+  assert.deepEqual(refused.noSurfaceShapes, { "receipt:succeeded": 1 }, "and the account says which shape and why");
+  assert.equal(presentationSourceOf(receiptOf("succeeded")), undefined, "a receipt has no identity to present under");
+  assert.equal(NOT_OWED.noSurface, "no_surface_for", "the reason this test reads is the one the account prints");
 });

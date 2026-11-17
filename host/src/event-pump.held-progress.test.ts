@@ -99,6 +99,9 @@ function ordinaryTick(index: number): WorldFact {
     source: "stardew_mod",
     kind: "world_fact",
     eventId: `time_milestone_${String(index)}`,
+    // The wire requires it (`protocol/bridge-v1.schema.json#worldFact`) and it is what makes this fact a presentation
+    // source: a world fact without one cannot open a turn the player's surface can show (`presentation-lease.ts`).
+    sourceEventId: `time_milestone_${String(index)}`,
     correlationId: `time_milestone_${String(index)}`,
     revision: index,
     observedTick: index,

@@ -891,8 +891,10 @@ test("the account line reads back into the account it names", () => {
       [NOT_OWED.worldFactRestated]: 4,
       [NOT_OWED.inFlightProgress]: 3,
       [NOT_OWED.progress]: 6,
+      [NOT_OWED.noSurface]: 2,
       [NOT_OWED.nothingPending]: 5,
     }),
+    noSurface: Object.freeze({ "receipt:succeeded": 2 }),
     notOwedByProducer: Object.freeze(
       producerHistograms(NOT_OWED_REASONS, {
         [NOT_OWED.observationRestated]: { [FACT_PRODUCER.snapshotRestate]: 2 },
@@ -954,8 +956,10 @@ test("the account line reads back into the account it names", () => {
   for (const reason of NOT_OWED_REASONS)
     assert.deepEqual(
       parsed.notOwed.producers[reason] ?? {},
-      firedProducers(account.notOwedByProducer[reason]),
-      `the producers under \`${reason}\` read back, so \`why was this flush suppressed\` is a query and not an investigation`,
+      // `no_surface_for`'s braces name the fact SHAPES the surface refused, not the producer: every one of them comes in
+      // through the adapter, so the shape is the reading a fix has to move (`TurnAccount.noSurface`).
+      reason === NOT_OWED.noSurface ? { ...account.noSurface } : firedProducers(account.notOwedByProducer[reason]),
+      `the braces under \`${reason}\` read back, so \`why was this flush suppressed\` is a query and not an investigation`,
     );
   assert.equal(
     Object.values(account.openedByProducer[TURN_OPENING.worldFact]).reduce((total, count) => total + count, 0),
@@ -1080,8 +1084,10 @@ test("the account line names a member that never fired, in both histograms", () 
       [NOT_OWED.worldFactRestated]: 0,
       [NOT_OWED.inFlightProgress]: 0,
       [NOT_OWED.progress]: 0,
+      [NOT_OWED.noSurface]: 0,
       [NOT_OWED.nothingPending]: 0,
     }),
+    noSurface: Object.freeze({}),
     notOwedByProducer: Object.freeze(producerHistograms(NOT_OWED_REASONS)),
     examined: 1,
     assistantTurns: Object.freeze({

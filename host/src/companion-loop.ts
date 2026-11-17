@@ -22,6 +22,7 @@ import {
   readAssistantMessageFacts,
   type TurnWithheldReason,
 } from "./native-companion-content.js";
+import { isOpaqueSource, presentationSourceOf } from "./presentation-lease.js";
 import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 
 export type NativeGameCompanionContent = Readonly<{
@@ -1083,49 +1084,13 @@ function canonicalPresentationSource(batch: PendingBatch): string | undefined {
   // Bounded sensory lease: only explicitly salient world-fact kinds may open a
   // companion turn (e.g. day_started / time_milestone morning greetings). Every
   // other world-trigger batch still gets no native presentation lineage.
+  //
+  // THE ONE READING, and the pump asks the same function before it opens the turn (`presentation-lease.ts`), so "this
+  // fact can present" cannot be true one layer down and false here.
   const factSources = events
-    .filter((event) => event.kind === "world_fact" && opensPresentationLease(event.semanticKind))
-    .map((event) => event.sourceEventId)
-    .filter(isOpaqueSource);
+    .map((event) => presentationSourceOf(event))
+    .filter((source): source is string => source !== undefined);
   return factSources.length > 0 ? factSources.at(-1) : undefined;
-}
-
-/**
- * White-listed fact kinds allowed to mint a bounded presentation lease.
- *
- * DECLARED, not written inside the predicate, because a gate has to read the same population this decision reads: a test
- * that typed the kinds out again could agree with a stale copy and disagree with the loop.
- *
- * Two families qualify, and a member is added only with the sentence that justifies it.
- *
- * SENSORY. `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the
- * Host's (see `companion-arrival-fact.ts`): she has just arrived on the farm and the world clock gave its
- * first reading, the one proactive turn the product owes the player at arrival. `native_notice` is the
- * Host's too (`native-notice-fact.ts`): the game itself said something about the hour and the companion
- * may answer it out loud. `night_ended_pass_out` is the Mod's verdict on how the night ended. Each rides
- * the lease for the same reason - a reply that reaches the model but not the chat is a decision the
- * player never sees.
- *
- * OUTCOME. `program_settled` is the one-line ledger of a plan that stopped (`program-settlement-digest.ts`).
- * The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
- * it is deliberately NOT held); without a lease the answer to that news was counted - and lost - as text
- * nobody was shown. An outcome is not progress, so its volume is one per program, never one per tile.
- *
- * Progress and every other world fact keep today's silence: the per-tile traffic (`route_progress`, the
- * receipt states) is what fills a session, and a bubble per harvested crop is not a companion.
- */
-export const PRESENTATION_LEASE_KINDS = Object.freeze([
-  "day_started",
-  "time_milestone",
-  "companion_arrival",
-  "native_notice",
-  "night_ended_pass_out",
-  "program_settled",
-] as const);
-
-/** Does a fact of this kind open a bounded presentation lease? The ONE reading of the list above. */
-export function opensPresentationLease(kind: string | undefined): boolean {
-  return kind !== undefined && (PRESENTATION_LEASE_KINDS as readonly string[]).includes(kind);
 }
 
 /**
@@ -1201,10 +1166,6 @@ function bubbleNotDeliveredAccount(
       rightCount - leftCount || leftReason.localeCompare(rightReason),
   );
   return primary === undefined ? Object.freeze({}) : Object.freeze({ [primary[0]]: 1 });
-}
-
-function isOpaqueSource(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 /**

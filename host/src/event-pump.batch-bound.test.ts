@@ -59,6 +59,24 @@ test("a batch is bounded by bytes, and the overflow is delivered in a later batc
     );
   }
 
+  // ONE presentable fact, because a turn opens only where the player's surface can show it: `npc_dialogue_presented` is not
+  // a lease kind, so without this the pump would answer `not_owed` and compose nothing - and the byte bound is a property of
+  // a batch, not of a decision.
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "notice_batch_bound",
+      sourceEventId: "notice_batch_bound",
+      correlationId: "notice_batch_bound",
+      revision: 1,
+      observedTick: MAX_PENDING_WORLD_FACTS,
+      semanticKind: "native_notice",
+      payload: { message: "It is getting late." },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
+
   await pump.flush(sink);
 
   assert.equal(delivered.length, 1, "one flush delivers one batch");
@@ -69,20 +87,40 @@ test("a batch is bounded by bytes, and the overflow is delivered in a later batc
   );
 
   // The rest is still pending: nothing was dropped to make the first batch fit.
-  assert.equal(pump.hasPendingDelivery, true, "overflow must remain queued");
+  assert.ok(pump.pendingCount > 0, "overflow must remain queued");
 
   // Drain. Across the batches every fact arrives exactly once - a bound that lost facts would be worse
-  // than the unbounded batch it replaced.
+  // than the unbounded batch it replaced. Each round carries the NEXT fact the surface can show (a HUD line), because a
+  // window of undrawn dialogues cannot open a turn on its own: the byte bound is a property of a batch, and a batch exists
+  // only where a surface does (`event-pump.turn-surface.test.ts`).
   let guard = 0;
-  while (pump.hasPendingDelivery && guard < 100) {
+  while (pump.pendingCount > 0 && guard < 100) {
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "world_fact",
+        eventId: `notice_drain_${String(guard)}`,
+        sourceEventId: `notice_drain_${String(guard)}`,
+        correlationId: `notice_drain_${String(guard)}`,
+        revision: guard,
+        observedTick: MAX_PENDING_WORLD_FACTS + guard,
+        semanticKind: "native_notice",
+        payload: { message: "It is getting late." },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
     await pump.flush(sink);
     guard += 1;
   }
   assert.ok(guard < 100, "the pump drained within a bounded number of batches");
 
+  // Every dialogue the world drew arrived exactly once. The notices are the triggers and are counted separately, because a
+  // trigger that opened a batch is not one of the facts whose overflow this test is about.
   const seen = new Set<string>();
   for (const batch of delivered) {
-    for (const fact of batch.facts) if (fact.correlationId !== undefined) seen.add(fact.correlationId);
+    for (const fact of batch.facts)
+      if (typeof fact.correlationId === "string" && fact.correlationId.startsWith("npc_dialogue_"))
+        seen.add(fact.correlationId);
   }
   assert.equal(seen.size, MAX_PENDING_WORLD_FACTS - 2, "every enqueued fact must be delivered exactly once");
 });
@@ -107,6 +145,21 @@ test("a batch of ordinary size is not split", async () => {
       FACT_PRODUCER.adapterIngress,
     );
   }
+  // The trigger: a receipt cannot present, so the game's own HUD line is what opens the batch these receipts ride.
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "notice_small",
+      sourceEventId: "notice_small",
+      correlationId: "notice_small",
+      revision: 1,
+      observedTick: 9,
+      semanticKind: "native_notice",
+      payload: { message: "It is getting late." },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   await pump.flush(sink);
 
@@ -146,6 +199,22 @@ test("the snapshot is never separated from the batch that triggers it", async ()
       FACT_PRODUCER.adapterIngress,
     );
   }
+  // The trigger, for the same reason: sixty receipts owe no turn each and cannot present, and this test is about what a
+  // batch does with a snapshot that is too large for it.
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      eventId: "notice_snapshot",
+      sourceEventId: "notice_snapshot",
+      correlationId: "notice_snapshot",
+      revision: 1,
+      observedTick: 100,
+      semanticKind: "native_notice",
+      payload: { message: "It is getting late." },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   await pump.flush(sink);
 
