@@ -1289,13 +1289,6 @@ export const UNPRODUCED_DEBT = Object.freeze([
     owner: "the tavern contract lane",
   },
   {
-    code: "turn_already_terminal",
-    declaredIn: "host/src/tavern/browser-contract/index.ts:84",
-    reason:
-      "declared in `ProblemCode` and `TAVERN_BROWSER_PROBLEM_CODES_V1`, worded by the client's catalogue, and produced by no Host route",
-    owner: "the tavern contract lane",
-  },
-  {
     code: "presentation_unavailable",
     declaredIn: "host/src/tavern/browser-contract/index.ts:84",
     reason:

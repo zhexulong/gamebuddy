@@ -539,7 +539,6 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   character_import_not_found: noSuchItem,
 
   turn_not_active: turnNotRunning,
-  turn_already_terminal: turnNotRunning,
 
   runtime_unavailable: serviceUnavailable,
   presentation_unavailable: serviceUnavailable,

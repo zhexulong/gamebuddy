@@ -1464,7 +1464,6 @@ const PROBLEM_CODES = [
   "turn_busy",
   "stream_resync_required",
   "turn_not_active",
-  "turn_already_terminal",
   "runtime_unavailable",
   "presentation_unavailable",
   "storage_unavailable",

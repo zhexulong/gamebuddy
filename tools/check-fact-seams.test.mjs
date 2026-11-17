@@ -230,7 +230,7 @@ test("red proof: the two game.create refusals are declared and unproduced at 25d
   }
 });
 
-test("red proof: the same two codes are produced on this tree, and the three tavern orphans are the ones recorded", () => {
+test("red proof: the same two codes are produced on this tree, and the two tavern orphans are the ones recorded", () => {
   const report = evaluate(REPO);
   const unproduced = report.codes.unproduced.map((entry) => entry.code);
   assert.deepEqual(
@@ -238,7 +238,7 @@ test("red proof: the same two codes are produced on this tree, and the three tav
     [],
     "the fix that gave the create route its two arms is what moved these out of the finding",
   );
-  assert.deepEqual(unproduced.sort(), ["presentation_unavailable", "turn_already_terminal", "turn_not_active"]);
+  assert.deepEqual(unproduced.sort(), ["presentation_unavailable", "turn_not_active"]);
 });
 
 test("mutation: one member added to a mirrored list is a drift, not a silent difference", () => {
