@@ -111,7 +111,7 @@ test("an ordinary disconnect that stopped the game is a failure, not a pass", ()
 test("a disconnect that leaves the authority active is authority nobody re-granted", () => {
   const reading = classifyDisconnect({
     gameAliveAfter: true,
-    after: { attachmentStatus: "detaching", connectionStatus: "disconnected", actionAuthority: "active" },
+    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "active" },
     reopenOffered: true,
     replayed: false,
   });

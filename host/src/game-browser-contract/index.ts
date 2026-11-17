@@ -164,7 +164,6 @@ const AttachmentStatus = Type.Union([
   Type.Literal("none"),
   Type.Literal("pending"),
   Type.Literal("attached"),
-  Type.Literal("detaching"),
   Type.Literal("failed"),
 ]);
 

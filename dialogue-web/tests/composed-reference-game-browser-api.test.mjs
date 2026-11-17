@@ -188,6 +188,16 @@ test("composed Game projection refuses the detected instance status", () => {
   );
 });
 
+test("composed Game projection refuses the detaching attachment status", () => {
+  assert.throws(
+    () =>
+      validateComposedReferenceGameRoot(
+        root(gameSnapshot({ attachment: { status: "detaching", generation: 1 } })),
+      ),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_composed_game",
+  );
+});
+
 test("composed Game projection admits the resume-phase syncing status while staying closed to unknown statuses", () => {
   // reconnecting → syncing → connected_idle are the coordinator resume-phase
   // projections; the browser gate must admit syncing instead of failing closed.

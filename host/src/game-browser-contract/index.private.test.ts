@@ -484,7 +484,7 @@ test("GameBrowserStateV1 accepts all valid compatibility statuses", () => {
 
 test("GameBrowserStateV1 accepts all valid attachment statuses", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  for (const status of ["none", "pending", "attached", "detaching", "failed"] as const) {
+  for (const status of ["none", "pending", "attached", "failed"] as const) {
     assert.equal(
       validator.Check({
         ...baseState,
@@ -493,6 +493,17 @@ test("GameBrowserStateV1 accepts all valid attachment statuses", () => {
       true,
     );
   }
+});
+
+test("GameBrowserStateV1 refuses the detaching status, because a detach is a close and not a state", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  assert.equal(
+    validator.Check({
+      ...baseState,
+      game: { ...baseState.game, attachment: { status: "detaching", generation: 1 } },
+    }),
+    false,
+  );
 });
 
 test("GameBrowserStateV1 rejects attachment with negative generation", () => {

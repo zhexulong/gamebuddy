@@ -50,7 +50,7 @@ const MAX_GAME_MESSAGE_LENGTH = 512;
 const PREREQUISITE_STATUSES = ["unknown", "met", "failed"] as const;
 const INSTANCE_STATUSES = ["none", "launching", "running", "stopped", "crashed", "unread"] as const;
 const COMPATIBILITY_STATUSES = ["unchecked", "compatible", "incompatible", "warning"] as const;
-const ATTACHMENT_STATUSES = ["none", "pending", "attached", "detaching", "failed"] as const;
+const ATTACHMENT_STATUSES = ["none", "pending", "attached", "failed"] as const;
 const CONNECTION_STATUSES = [
   "none",
   "discovering",
