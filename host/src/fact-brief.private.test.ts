@@ -499,26 +499,24 @@ test("world_state_present: the pump states the world on EVERY batch, including b
   const pump = new CompanionEventPump();
   const batches: string[] = [];
   pump.enqueueFact(snapshotFact(1205), FACT_PRODUCER.adapterIngress);
-  pump.enqueueFact(
-    fact({ kind: "execution_receipt", eventId: "receipt_1", executionId: "exec_1", payload: { state: "succeeded" } }),
-    FACT_PRODUCER.adapterIngress,
-  );
+  // A person's word opens a turn, which a settlement no longer does: a settlement with no surface is CARRIED into the next
+  // turn (`no_surface_for: receipt:succeeded`), so a fixture built from settlements would measure the carry ledger rather
+  // than the property under test. The property is the one this test names: every batch states the world.
+  pump.enqueuePlayerInput({ source: "player_text", inputId: "input_1", text: "hello", locale: "en", timestampMs: 1 });
   await pump.flush({
     async deliver(batch) {
       batches.push(batch.text);
     },
   });
-  // Three later turns, none of which observes anything: each is opened by a receipt and must still state the world.
+  // Three later turns, none of which observes anything: each is opened by the player and must still state the world.
   for (let index = 2; index <= 4; index += 1) {
-    pump.enqueueFact(
-      fact({
-        kind: "execution_receipt",
-        eventId: `receipt_${String(index)}`,
-        executionId: `exec_${String(index)}`,
-        payload: { state: "succeeded" },
-      }),
-      FACT_PRODUCER.adapterIngress,
-    );
+    pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: `input_${String(index)}`,
+      text: "hello",
+      locale: "en",
+      timestampMs: index,
+    });
     await pump.flush({
       async deliver(batch) {
         batches.push(batch.text);
