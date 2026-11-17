@@ -1365,7 +1365,8 @@ const en = {
   // first click arms, only the confirm button sends, and the cancel keeps the
   // current state. The words state the consequence and never promise
   // reversibility the action does not have.
-  chatRetentionArchiveConfirm: "Archive this chat? It leaves the active list. This cannot be undone.",
+  chatRetentionArchiveConfirm:
+    "Archive this chat? It leaves the active list, and if it is your only chat a new one starts in its place. This cannot be undone.",
   // The chat transcript export: one Chat's own messages as the SillyTavern chat file the Host's
   // interchange produced. The player saves the Host's own bytes and is told what the file does not
   // carry, so a subset is never mistaken for the whole conversation.
@@ -1385,7 +1386,8 @@ const en = {
   profileBackupUnreadable: "No backup was saved: {{authority}} could not be read.",
   profileBackupFailed: "The backup could not be produced.",
   chatRetentionArchiveConfirmYes: "Archive",
-  chatRetentionTrashConfirm: "Move this chat to the trash? It leaves the active list. This cannot be undone.",
+  chatRetentionTrashConfirm:
+    "Move this chat to the trash? It leaves the active list, and if it is your only chat a new one starts in its place. This cannot be undone.",
   chatRetentionTrashConfirmYes: "Move to trash",
   // The same negative as every other destructive pair in the product: `取消`. The verbs above
   // stay specific to what each press does; the way out is one word.
@@ -2416,7 +2418,8 @@ const zh: Messages = {
   // --- ruling-and-ui-defects lane block（U-05）：某一行的破坏性动作属于“刻意动作”。
   // 与产品中的结束游戏分组同一形状：首次点击只是预置，只有确认按钮才会发出请求，
   // 取消则保持当前状态。措辞说明后果，绝不承诺该动作并不具备的可逆性。
-  chatRetentionArchiveConfirm: "归档此会话？它将离开活动列表，此操作不可撤销。",
+  chatRetentionArchiveConfirm:
+    "归档此会话？它将离开活动列表；若它是你唯一的会话，会就地开始一个新会话。此操作不可撤销。",
   chatExportSaved: "已保存 {{file}}。",
   chatExportFailed: "无法导出这个会话。",
   chatExportDropped: "文件中不包含：{{fields}}。",
@@ -2428,7 +2431,8 @@ const zh: Messages = {
   profileBackupUnreadable: "未生成备份：{{authority}} 无法读取。",
   profileBackupFailed: "无法生成备份。",
   chatRetentionArchiveConfirmYes: "归档",
-  chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，此操作不可撤销。",
+  chatRetentionTrashConfirm:
+    "将此会话移入回收站？它将离开活动列表；若它是你唯一的会话，会就地开始一个新会话。此操作不可撤销。",
   chatRetentionTrashConfirmYes: "移入回收站",
   chatRetentionConfirmNo: "取消",
 
