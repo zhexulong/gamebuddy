@@ -40,6 +40,24 @@ export type NativeGameCompanionContent = Readonly<{
  */
 export const NO_PRESENTATION_LEASE = "no_presentation_lease" as const;
 
+/**
+ * The block this loop appends to a turn whose words the surface cannot show.
+ *
+ * <p>
+ * `no_presentation_lease` names a loss AFTER the fact: her text was composed into a turn that no projection was attached
+ * to. The loss is upstream of delivery - the model was asked a turn and answered it - so the correction belongs at the
+ * invitation, and this is that invitation's one statement about the surface: on a turn that cannot be shown, say so where
+ * the model reads its turn.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-17 (`round65`): 26 turns opened, every one of them answered with text, 17 bubbles delivered and 10 lost
+ * to `no_presentation_lease`. The delivered ones were not the turns the surface admitted on purpose: a receipt-opened turn
+ * only presented when the Mod's HUD happened to draw a line (`native_notice`), which rides the same batch. Admission by
+ * coincidence is why the same body action presented in one batch and vanished in the next.
+ * </p>
+ */
+export const NO_SPEECH_SURFACE_BLOCK = "speech-surface" as const;
+
 export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | typeof NO_PRESENTATION_LEASE;
 
 /**
@@ -255,12 +273,19 @@ export class CompanionLoop {
         // Only the real Pi-consumed batch may activate presentation lineage.
         const sourceEventId = canonicalPresentationSource(batch);
         const batchId = isOpaqueSource(batch.batchId) ? batch.batchId : undefined;
+        const turnLocale = canonicalTurnLocale(batch);
+        // THE INVITATION AND THE ADMISSION ARE ONE DECISION. A turn with no lease is still answered - the pump opened it
+        // because an outcome asked for a decision - so the only honest thing the surface can do is say so in the turn
+        // itself. Without this the model was asked a question it could only answer into a void: 10 of `round65`'s 26
+        // turns spoke into it, and the run counted their words as `no_presentation_lease` after the fact.
+        const turnText = sourceEventId === undefined ? batch.text + speechSurfaceStatement(turnLocale) : batch.text;
         const completion = this.#deliverAndObserve(
-          batch.text,
+          turnText,
           batch.disposition,
           sourceEventId,
           batchId,
-          canonicalTurnLocale(batch),
+          turnLocale,
+          carriedFactKinds(batch),
         );
         this.#inFlight = completion;
         try {
@@ -339,6 +364,7 @@ export class CompanionLoop {
     sourceEventId: string | undefined,
     batchId: string | undefined,
     turnLocale: string | undefined,
+    carried: readonly string[],
   ): Promise<CompanionTurnOutcome> {
     let accepted = false;
     let settled = false;
@@ -895,6 +921,12 @@ export class CompanionLoop {
             suppressedBubbles,
             messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
             ...turnDeliveryOutcome(turnDelivery),
+            // THE TURN'S OWN REASON, beside the loss. `lost 9 {no_presentation_lease: 9}` says a bubble was withheld and
+            // nothing about the turn, so "invited but not admitted" (the batch carried only an outcome) and "admitted but
+            // broken" (the batch was admissible and the projection still withheld) printed as the same word. `lease` is
+            // this turn's admission; `carried` is what the turn was made of, in the pump's own kind names.
+            lease: Object.freeze({ admitted: sourceEventId !== undefined }),
+            carried: Object.freeze([...carried]),
           })}\n`,
         );
         const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
@@ -1020,6 +1052,20 @@ function canonicalTurnLocale(batch: PendingBatch): string | undefined {
 }
 
 /**
+ * What this turn was made of, in the pump's own kind names, sorted.
+ *
+ * <p>
+ * The delivery record's `carried` field: a reader reconciling `lost N {no_presentation_lease: N}` against a turn has to be
+ * able to say WHICH turn was lost. `carried: ["execution_receipt"]` is a turn that carried only an outcome, which is the
+ * class that has no lease; `carried: ["execution_receipt", "world_fact"]` is the same outcome with the Mod's HUD line
+ * riding beside it, which is what made `round65`'s admission a coincidence.
+ * </p>
+ */
+function carriedFactKinds(batch: PendingBatch): readonly string[] {
+  return Object.freeze([...new Set(batch.facts.map((fact) => String(fact.kind)))].sort());
+}
+
+/**
  * Selects the canonical cause only from a real Pi-consumed batch. Events are
  * already deterministically sorted by CompanionEventPump; held snapshot and
  * progress facts never grant presentation authority.
@@ -1047,6 +1093,9 @@ function canonicalPresentationSource(batch: PendingBatch): string | undefined {
 /**
  * White-listed fact kinds allowed to mint a bounded presentation lease.
  *
+ * DECLARED, not written inside the predicate, because a gate has to read the same population this decision reads: a test
+ * that typed the kinds out again could agree with a stale copy and disagree with the loop.
+ *
  * Two families qualify, and a member is added only with the sentence that justifies it.
  *
  * SENSORY. `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the
@@ -1065,15 +1114,36 @@ function canonicalPresentationSource(batch: PendingBatch): string | undefined {
  * Progress and every other world fact keep today's silence: the per-tile traffic (`route_progress`, the
  * receipt states) is what fills a session, and a bubble per harvested crop is not a companion.
  */
-function opensPresentationLease(kind: string | undefined): boolean {
-  return (
-    kind === "day_started" ||
-    kind === "time_milestone" ||
-    kind === "companion_arrival" ||
-    kind === "native_notice" ||
-    kind === "night_ended_pass_out" ||
-    kind === "program_settled"
-  );
+export const PRESENTATION_LEASE_KINDS = Object.freeze([
+  "day_started",
+  "time_milestone",
+  "companion_arrival",
+  "native_notice",
+  "night_ended_pass_out",
+  "program_settled",
+] as const);
+
+/** Does a fact of this kind open a bounded presentation lease? The ONE reading of the list above. */
+export function opensPresentationLease(kind: string | undefined): boolean {
+  return kind !== undefined && (PRESENTATION_LEASE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * The turn's own statement about its surface, appended where the model reads the turn.
+ *
+ * <p>
+ * A turn that carries no presentation lease is still a turn: the pump opened it because an OUTCOME asked for a decision, and
+ * the model answers outcomes. What the surface owes that turn is the truth about itself, so the model is told its words
+ * will not be shown and can act instead of narrating - the difference between a turn that was never asked to speak and one
+ * whose speech was thrown away after the fact.
+ * </p>
+ */
+export function speechSurfaceStatement(locale: string | undefined): string {
+  const says =
+    locale !== undefined && locale.toLowerCase().startsWith("zh")
+      ? "这一回合你的话不会显示给玩家。世界需要的话就行动，不必对着看不见的聊天说话。"
+      : "This turn's words are not shown to the player. Act if the world calls for it; do not speak into a surface that cannot show it.";
+  return `\n\n<${NO_SPEECH_SURFACE_BLOCK}>\n${says}\n</${NO_SPEECH_SURFACE_BLOCK}>`;
 }
 
 /**
