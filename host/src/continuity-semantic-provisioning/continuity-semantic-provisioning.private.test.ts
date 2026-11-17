@@ -172,7 +172,7 @@ test("provision close is terminal at the public store boundary", () => {
   }
 });
 
-test("fresh authority writes the exact v45 fresh-only schema and v21 marker pair", () => {
+test("fresh authority writes the exact v46 fresh-only schema and v21 marker pair", () => {
   const root = canonicalTestRootSync("s3-marker-exact-");
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
@@ -192,11 +192,11 @@ test("fresh authority writes the exact v45 fresh-only schema and v21 marker pair
       "version",
     ]);
     assert.equal(marker.version, 21);
-    assert.equal(marker.schemaVersion, 45);
-    assert.equal(PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION, 45);
+    assert.equal(marker.schemaVersion, 46);
+    assert.equal(PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION, 46);
     const reopened = openKnownProductionContinuity(input(root));
     try {
-      assert.equal(reopened.schemaVersion, 45);
+      assert.equal(reopened.schemaVersion, 46);
       assert.equal(reopened.storeId, expectedStoreId);
       assert.equal(reopened.store.readChatCatalog().vector.partitionRevision, 1);
     } finally {

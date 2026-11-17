@@ -354,10 +354,6 @@ function provision(
       requireOpen();
       return rawStore.selectChat(input);
     },
-    transitionChatLifecycle(input) {
-      requireOpen();
-      return rawStore.transitionChatLifecycle(input);
-    },
     recordChatSelectionIntent(input) {
       requireOpen();
       return rawStore.recordChatSelectionIntent(input);

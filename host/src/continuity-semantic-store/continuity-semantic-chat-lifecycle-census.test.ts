@@ -6,6 +6,7 @@ import test from "node:test";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import {
   openProductionContinuityStore,
+  PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
   type ProductionBootstrapInput,
   type TavernExactContentReceipt,
 } from "./continuity-semantic-production-store.js";
@@ -18,18 +19,6 @@ const bootstrap: ProductionBootstrapInput = {
   authorityRootIdentity: "a".repeat(64),
 };
 const holderBindingDigest = "b".repeat(64);
-const runtimeBindingDigest = "d".repeat(64);
-const runtimeOwner = Object.freeze({
-  ownerToken: "owner-token",
-  runtimeInstanceId: "runtime-1",
-  ownerPid: process.pid,
-  ownerProcessStartIdentity: "start-1",
-});
-
-/** ADR-0011's two gating questions, executed against the file rather than reported by the store. */
-const LIFECYCLE_ROWS_QUERY = "SELECT lifecycle, COUNT(*) FROM production_continuity_thread GROUP BY lifecycle";
-const LIFECYCLE_COMMANDS_QUERY =
-  "SELECT COUNT(*) FROM production_continuity_command WHERE command_kind='transition_chat_lifecycle'";
 
 function receiptFor(chatThreadId: string, chatSurfaceSessionId: string): TavernExactContentReceipt {
   return Object.freeze({
@@ -41,147 +30,116 @@ function receiptFor(chatThreadId: string, chatSurfaceSessionId: string): TavernE
   });
 }
 
-/**
- * ADR-0011 deletes the semantic store's Chat lifecycle mirror, and its first precondition is that the
- * mirror is a write-once constant: the corpus holds only `active`, and no `transition_chat_lifecycle`
- * command was ever committed. A non-zero answer here means a caller nobody has seen writes the mirror,
- * and the deletion needs a data decision rather than a schema change.
- *
- * The corpus below is produced by driving every Chat writer the store publishes for a live Chat -
- * the initial-Chat saga, `register_chat`, `verify_chat_content`, `select_chat`, the recorded selection
- * intent, and a mount/teardown cycle. `transition_chat_lifecycle` is deliberately NOT driven: the
- * census is about what production writers leave behind, and that command's exclusion from production
- * is the fact under test. The answers are read back through a separate read-only connection, so the
- * counts are committed state and not anything the store reports about itself.
- */
-test("the semantic corpus carries only an active lifecycle and no lifecycle command", () => {
+/** One fresh root whose initial Chat is registered, verified and selected. */
+function freshRoot() {
   const root = canonicalTestRootSync("production-chat-lifecycle-census-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
+  const metadata = control.bootstrapFresh(bootstrap);
+  const store = control.bindBootstrapContext({ bootstrap, metadata });
+  const claim = store.claim({
+    holderBindingDigest,
+    operationId: "claim-1",
+    expected: { partitionRevision: 1, fenceEpoch: 1, selectionRevision: 0 },
+  });
+  const registered = store.register({ holderBindingDigest, operationId: "register-1", expected: claim.vector });
+  const verified = store.verify(
+    { holderBindingDigest, operationId: "verify-1", expected: registered.vector },
+    receiptFor(registered.chatThreadId!, registered.chatSurfaceSessionId!),
+  );
+  store.select({ holderBindingDigest, operationId: "select-1", expected: verified.vector });
+  return { root, control, store };
+}
+
+/**
+ * ADR-0011 deleted the semantic store's Chat lifecycle mirror. Before the deletion this lane censused
+ * the corpus (only `active`, zero `transition_chat_lifecycle` commands) and landed that answer; what
+ * remains worth gating is that the mirror is really gone rather than merely unread - a leftover column
+ * would be a state nothing writes and nothing validates, and a leftover command would be a way back
+ * into a state the materialization validator no longer admits.
+ *
+ * The three facts are read from SQLite's own catalogue, not from the store's types: a schema shape is
+ * the only thing that survives a caller that never compiles against these types.
+ */
+test("the built schema carries no Chat lifecycle mirror", () => {
+  const { root, control } = freshRoot();
+  control.close();
+  const db = new DatabaseSync(join(root, "gamebuddy-continuity-v1.sqlite"), { readOnly: true });
   try {
-    const metadata = control.bootstrapFresh(bootstrap);
-    const store = control.bindBootstrapContext({ bootstrap, metadata });
-    const claim = store.claim({
-      holderBindingDigest,
-      operationId: "claim-1",
-      expected: { partitionRevision: 1, fenceEpoch: 1, selectionRevision: 0 },
-    });
-    const registered = store.register({ holderBindingDigest, operationId: "register-1", expected: claim.vector });
-    const initialReceipt = receiptFor(registered.chatThreadId!, registered.chatSurfaceSessionId!);
-    const verified = store.verify(
-      { holderBindingDigest, operationId: "verify-1", expected: registered.vector },
-      initialReceipt,
+    const columns = (db.prepare("PRAGMA table_info(production_continuity_thread)").all() as { name: string }[]).map(
+      (column) => column.name,
     );
-    store.select({ holderBindingDigest, operationId: "select-1", expected: verified.vector });
+    console.log(`census schema: production_continuity_thread columns -> ${JSON.stringify(columns)}`);
+    assert.equal(columns.includes("lifecycle"), false, "the thread table still carries a lifecycle mirror");
 
-    const second = Object.freeze({ chatThreadId: "chat-second", chatSurfaceSessionId: "surface-second" });
-    store.registerChat(
-      Object.freeze({ operationId: "register-chat-2", ...second, expected: { ...store.readChatCatalog().vector } }),
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
+      (table) => table.name,
     );
-    store.verifyChatContent(
-      Object.freeze({ operationId: "verify-chat-2", ...second, expected: { ...store.readChatCatalog().vector } }),
-      receiptFor(second.chatThreadId, second.chatSurfaceSessionId),
-    );
-    store.recordChatSelectionIntent(
-      Object.freeze({
-        intent: Object.freeze({ kind: "select" as const, ...second }),
-        expected: { ...store.readChatCatalog().vector },
-      }),
-    );
-    store.clearChatSelectionIntent(Object.freeze({ expected: { ...store.readChatCatalog().vector } }));
-    store.selectChat(
-      Object.freeze({ operationId: "select-chat-2", ...second, expected: { ...store.readChatCatalog().vector } }),
+    assert.equal(
+      tables.includes("production_chat_lifecycle_metadata"),
+      false,
+      "the lifecycle metadata table survived the deletion and holds the mirror's CAS",
     );
 
-    const prepared = store.prepareChatRuntime(
-      Object.freeze({
-        principal,
-        operationId: "runtime-2",
-        requestId: "runtime-request-2",
-        ...second,
-        runtimeBindingDigest,
-        owner: runtimeOwner,
-        deadlineAtMs: Date.now() + 60_000,
-        expected: { ...store.readChatCatalog().vector },
-      }),
+    const commandSql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='production_continuity_command'").get() as {
+        sql: string;
+      }
+    ).sql;
+    console.log(`census schema: production_continuity_command -> ${commandSql}`);
+    assert.equal(
+      commandSql.includes("transition_chat_lifecycle"),
+      false,
+      "the command ledger still admits transition_chat_lifecycle",
     );
-    assert.equal(prepared.outcome, "effect_owned");
-    const permit = prepared.permit!;
-    store.commitChatRuntime({
-      principal,
-      permit,
-      receipt: Object.freeze({
-        kind: "chat_runtime_bootstrapped" as const,
-        operationId: permit.operationId,
-        requestId: permit.requestId,
-        chatThreadId: permit.chatThreadId,
-        chatSurfaceSessionId: permit.chatSurfaceSessionId,
-        runtimeBindingDigest: permit.runtimeBindingDigest,
-        owner: Object.freeze({ ...permit.owner }),
-        fenceToken: permit.fenceToken,
-        occurredAtMs: Date.now(),
-      }),
-    });
-    const teardown = store.prepareChatRuntimeTeardown({
-      principal,
-      operationId: "teardown-2",
-      requestId: "teardown-request-2",
-      bootstrapOperationId: "runtime-2",
-      ...second,
-      runtimeBindingDigest,
-      owner: runtimeOwner,
-      deadlineAtMs: Date.now() + 60_000,
-      expected: { ...store.readChatCatalog().vector },
-    });
-    assert.equal(teardown.outcome, "effect_owned");
-    const teardownPermit = teardown.permit!;
-    store.commitChatRuntimeTeardown({
-      principal,
-      permit: teardownPermit,
-      receipt: Object.freeze({
-        kind: "chat_runtime_torn_down" as const,
-        operationId: teardownPermit.operationId,
-        requestId: teardownPermit.requestId,
-        bootstrapOperationId: teardownPermit.bootstrapOperationId,
-        chatThreadId: teardownPermit.chatThreadId,
-        chatSurfaceSessionId: teardownPermit.chatSurfaceSessionId,
-        runtimeBindingDigest: teardownPermit.runtimeBindingDigest,
-        owner: Object.freeze({ ...teardownPermit.owner }),
-        fenceToken: teardownPermit.fenceToken,
-        occurredAtMs: Date.now(),
-      }),
-    });
+
+    const version = (
+      db.prepare("SELECT schema_version FROM production_store_meta WHERE singleton=1").get() as {
+        schema_version: number;
+      }
+    ).schema_version;
+    assert.equal(version, PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION);
+  } finally {
+    db.close();
     control.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
-    const db = new DatabaseSync(join(root, "gamebuddy-continuity-v1.sqlite"), { readOnly: true });
-    try {
-      const lifecycleRows = db.prepare(LIFECYCLE_ROWS_QUERY).all() as { lifecycle: string; "COUNT(*)": number }[];
-      const lifecycleCommands = db.prepare(LIFECYCLE_COMMANDS_QUERY).get() as { "COUNT(*)": number };
-      console.log(`census Q1: ${LIFECYCLE_ROWS_QUERY} -> ${JSON.stringify(lifecycleRows)}`);
-      console.log(`census Q2: ${LIFECYCLE_COMMANDS_QUERY} -> ${lifecycleCommands["COUNT(*)"]}`);
-      assert.deepEqual(
-        lifecycleRows.map((row) => row.lifecycle),
-        ["active"],
-        "a Chat left the active lifecycle, so a production writer reaches the mirror",
-      );
-      assert.equal(
-        lifecycleRows[0]!["COUNT(*)"],
-        2,
-        "the census must cover both Chats this corpus registers, or it measured an empty population",
-      );
-      assert.equal(
-        lifecycleCommands["COUNT(*)"],
-        0,
-        "a transition_chat_lifecycle command was committed, so the mirror has a caller",
-      );
-    } finally {
-      db.close();
-    }
+/**
+ * The refusal that survives: the store admits a selection only for a Chat whose exact content it holds.
+ * `chat_transition_invalid` is the name it answers with, and it is genuinely reachable - a Chat is
+ * registered before its Tavern content is verified - so the code keeps its meaning after the mirror's
+ * two refusal codes (`chat_selected_lifecycle_forbidden`,
+ * `chat_selection_pending_lifecycle_forbidden`) went with the command they guarded.
+ */
+test("a select of a Chat the store holds no content receipt for is refused by name", () => {
+  const { root, control, store } = freshRoot();
+  try {
+    const unverified = Object.freeze({ chatThreadId: "chat-unverified", chatSurfaceSessionId: "surface-unverified" });
+    store.registerChat(
+      Object.freeze({
+        operationId: "register-unverified",
+        ...unverified,
+        expected: { ...store.readChatCatalog().vector },
+      }),
+    );
+    assert.equal(
+      store.readChatCatalog().threads.find((thread) => thread.chatThreadId === unverified.chatThreadId)?.contentState,
+      "registered",
+    );
+    assert.throws(
+      () =>
+        store.selectChat(
+          Object.freeze({
+            operationId: "select-unverified",
+            ...unverified,
+            expected: { ...store.readChatCatalog().vector },
+          }),
+        ),
+      /chat_transition_invalid/,
+    );
   } finally {
     control.close();
-    try {
-      rmSync(root, { recursive: true, force: true });
-    } catch {
-      /* Windows keeps the WAL sidecars until the last handle is gone; the root is disposable. */
-    }
+    rmSync(root, { recursive: true, force: true });
   }
 });

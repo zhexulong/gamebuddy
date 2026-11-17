@@ -2092,11 +2092,10 @@ export type SemanticProductionAuthority = Readonly<{
    * Reconciles this catalog with the durable transcript authority. When that
    * authority has orphaned the current selection (the player archived or trashed
    * the Chat the catalog still names), the selection moves onto the successor the
-   * authority names, and every lifecycle row that disagrees is mirrored through
-   * the ordinary Chat commands. It replaces the old
-   * `transitionNonSelectedChatLifecycle`, which inferred a lifecycle from this
-   * catalog alone: the catalog never answers "is this Chat live" by itself, and it
-   * never transitions the Chat it currently selects.
+   * authority names, with one ordinary `select_chat`. The catalog never answers
+   * "is this Chat live" by itself: ADR-0011 removed the lifecycle mirror, so the
+   * only thing this side holds is the Chat's content, and the selection is the one
+   * fact a start may move.
    */
   resettleChatSuccessorFromDurableAuthority(
     durable: readonly DurableChatLiveness[],
@@ -3932,7 +3931,7 @@ function create(
   const resume = (): Promise<ProductionSagaReadback | null> =>
     begin(() => locked(() => provision.store.resume(branded.digest)));
   const nextChatOperation = (
-    kind: "register" | "verify" | "select" | "reselect" | "lifecycle",
+    kind: "register" | "verify" | "select" | "reselect",
     catalog: ProductionChatCatalog,
     target: ProductionChatCatalog["threads"][number] | undefined,
     extra?: string,
@@ -3965,10 +3964,9 @@ function create(
         }
         const target =
           kind === "verify"
-            ? catalog.threads.find((thread) => thread.lifecycle === "active" && thread.contentState === "registered")
+            ? catalog.threads.find((thread) => thread.contentState === "registered")
             : catalog.threads.find(
                 (thread) =>
-                  thread.lifecycle === "active" &&
                   thread.contentState === "verified" &&
                   thread.chatSurfaceSessionId !== catalog.activeSelection?.chatSurfaceSessionId,
               );
@@ -4021,7 +4019,6 @@ function create(
                   (candidate) =>
                     candidate.chatThreadId === target!.chatThreadId &&
                     candidate.chatSurfaceSessionId === target!.chatSurfaceSessionId &&
-                    candidate.lifecycle === "active" &&
                     candidate.contentState === "verified",
                 );
           if (!target || !thread)
@@ -4075,7 +4072,6 @@ function create(
                   (thread) =>
                     thread.chatThreadId === successor.chatThreadId &&
                     thread.chatSurfaceSessionId === successor.chatSurfaceSessionId &&
-                    thread.lifecycle === "active" &&
                     thread.contentState === "verified",
                 );
           if (successor === undefined || successorThread === undefined)

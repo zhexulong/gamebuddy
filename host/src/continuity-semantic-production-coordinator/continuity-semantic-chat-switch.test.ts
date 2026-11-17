@@ -129,7 +129,7 @@ const switchScript = `
     const db = new DatabaseSync(semanticDbPath, { readOnly: true });
     const threads = db
       .prepare(
-        "SELECT t.chat_surface_session_id, t.chat_thread_id, t.lifecycle, t.content_receipt_json IS NOT NULL AS verified, m.management_revision FROM production_continuity_thread t LEFT JOIN production_chat_lifecycle_metadata m ON m.chat_surface_session_id = t.chat_surface_session_id ORDER BY t.chat_surface_session_id",
+        "SELECT chat_thread_id, chat_surface_session_id, content_receipt_json IS NOT NULL AS verified FROM production_continuity_thread ORDER BY chat_surface_session_id",
       )
       .all();
     const active = db
@@ -327,9 +327,6 @@ const switchScript = `
     });
     out.archivedStatus = archived.lifecycleStatus;
     const durable = readDurable();
-    out.archivedSemanticLifecycle = durable.threads.find(
-      (thread) => thread.chat_thread_id === target.chatThreadId,
-    )?.lifecycle;
     out.selectionAfterArchive = durable.active.chat_thread_id;
   } else if (scenario === "archive-selected-after-restart") {
     // Same root, next process, no shell to migrate the selection. The mount at the top of
@@ -398,8 +395,7 @@ const switchScript = `
     const semantic = readDurable();
     const semanticRow = semantic.threads.find((row) => row.chat_thread_id === target.chatThreadId);
     out.semanticAfterArchive = {
-      lifecycle: semanticRow.lifecycle,
-      managementRevision: semanticRow.management_revision,
+      verified: semanticRow.verified,
       selectedThreadId: semantic.active.chat_thread_id,
       selectionRevision: semantic.active.selection_revision,
     };
@@ -1098,9 +1094,7 @@ test(
 type DurableThreadRow = Readonly<{
   chat_thread_id: string;
   chat_surface_session_id: string;
-  lifecycle: string;
-  verified: number | boolean;
-  management_revision: number;
+  verified: number;
 }>;
 type DurableActiveRow = Readonly<{
   chat_thread_id: string;
@@ -1180,7 +1174,6 @@ test(
       const registered = durableThread(after, createdThread);
       assert.equal(after.length, 2);
       assert.equal(registered?.chat_surface_session_id, createdSurface);
-      assert.equal(registered?.lifecycle, "active");
       assert.equal(registered?.verified, 1);
       const active = observed.afterActive as DurableActiveRow;
       assert.equal(active.chat_thread_id, createdThread);
@@ -1189,7 +1182,7 @@ test(
 
       // Switching is not deletion: the conversation switched away from stays.
       assert.equal(observed.firstThreadStillReadable, true);
-      assert.equal(durableThread(after, String(observed.firstThread))?.lifecycle, "active");
+      assert.equal(durableThread(after, String(observed.firstThread))?.verified, 1);
       assert.ok(Number(observed.createdMessageCount) >= 0);
     } finally {
       cleanup(root);
@@ -1289,13 +1282,13 @@ test(
 /**
  * The other half of ADR-0011: migrating the selection is the shell's job, and the shell
  * can die or refuse between the durable archive and that move. The next start must
- * therefore answer "which Chat is mounted" from the durable transcript authority, not
- * from a catalog that still calls the archived Chat active.
+ * therefore answer "which Chat is mounted" from the durable transcript authority, and
+ * not from anything the semantic side says about liveness - since ADR-0011 it says
+ * nothing at all.
  *
  * Red before the reconciliation: the restart re-selected the archived Chat and the
  * materializer refused it, so the process exited non-zero instead of mounting. Green
- * now: the mount lands on the Chat the durable store still holds, and the archived one
- * is mirrored instead of re-selected.
+ * now: the mount lands on the Chat the durable store still holds.
  */
 test(
   "a selected Chat archived before the shell could migrate the selection is not re-selected on the next start",
@@ -1305,10 +1298,10 @@ test(
     try {
       const archived = await runSwitchScenario(root, "archive-selected-create-only");
       const archivedThread = String(archived.createdThread);
-      // The crash window this reconciliation exists for: the durable archive committed,
-      // and the catalog still called that Chat active and still named it the selection.
+      // The crash window this reconciliation exists for: the durable archive committed, and
+      // the semantic selection still named that Chat - the semantic side has no lifecycle to
+      // disagree with, so its selection is the only fact it holds.
       assert.equal(archived.archivedStatus, "archived");
-      assert.equal(archived.archivedSemanticLifecycle, "active");
       assert.equal(archived.selectionAfterArchive, archivedThread);
 
       const restarted = await runSwitchScenario(root, "archive-selected-after-restart");
@@ -1316,10 +1309,8 @@ test(
       assert.equal(restarted.mountedThread, String(archived.firstThread));
       assert.notEqual(restarted.mountedThread, archivedThread);
       // ... and the selection no longer names the archived Chat: no dangling cursor is left
-      // behind. The archived row itself keeps its registration-time lifecycle, because a
-      // start may write exactly one Chat command - the settling select the mount is proved
-      // against - and the store refuses to transition the Chat it selects (ADR-0011's
-      // 2026-11-16 mediation records that bound and why it is harmless here).
+      // behind. The selection is the only thing a start may move here, because a start may
+      // write exactly one Chat command - the settling select the mount is proved against.
       assert.equal((restarted.afterActive as DurableActiveRow).chat_thread_id, String(archived.firstThread));
     } finally {
       cleanup(root);
@@ -1332,17 +1323,20 @@ test(
  * management route's own service archives the Chat the player is looking at, and both
  * authorities are read from their own files afterwards.
  *
- * The two rows disagree, and the test says so rather than asserting them into agreement:
+ * One row moved and one did not, and the test says so rather than asserting them into
+ * agreement:
  * - `tavern.sqlite` `tavern_threads.lifecycle_status` = `archived`, `management_revision` = 2
  *   (the route's own CAS advanced once);
- * - `gamebuddy-continuity-v1.sqlite` `production_continuity_thread.lifecycle` = `active`,
- *   `production_chat_lifecycle_metadata.management_revision` = 1 (write-once, at registration).
+ * - `gamebuddy-continuity-v1.sqlite` holds no lifecycle at all (ADR-0011 removed the
+ *   mirror and its CAS): the thread row carries the Chat and its content receipt, and the
+ *   selection is the only liveness-adjacent fact it states.
  *
- * With that in hand the three questions the ADR's mediation rests on are answered by
- * driving the real Host, not by reading the store:
- * (a) the semantic store still ACCEPTS `select_chat` for the archived Chat: its admission
- *     is the lifecycle row, which still reads `active`, so the settlement commits the
- *     selection onto the archived Chat (asserted from the file afterwards, revision 3);
+ * With that in hand the three questions the ADR rests on are answered by driving the real
+ * Host, not by reading the store:
+ * (a) the semantic store still ACCEPTS `select_chat` for the archived Chat, because it has
+ *     no lifecycle to consult: admission is the content receipt, which the archived Chat
+ *     still carries, so the settlement commits the selection onto it (asserted from the
+ *     file afterwards, revision 3);
  * (b) the mount REFUSES it: the same `requestChatSelection` call answers
  *     `chat_runtime_exact_content_unavailable`, because `prepareExactChatRuntimeConstruction`
  *     reads the transcript authority's `lifecycle_status` and nothing else
@@ -1381,15 +1375,14 @@ test(
       assert.equal(transcript.lifecycleStatus, "archived");
       assert.equal(transcript.managementRevision, 2);
       const semantic = observed.semanticAfterArchive as Readonly<Record<string, unknown>>;
-      assert.equal(semantic.lifecycle, "active");
-      assert.equal(semantic.managementRevision, 1);
+      assert.equal(semantic.verified, 1);
       // ...and the semantic selection still names the Chat the player archived.
       assert.equal(semantic.selectedThreadId, targetThread);
       assert.equal(semantic.selectionRevision, 2);
 
-      // (a)+(b) One request shows both halves of the divergence. The pre-mount settlement
-      // admits the target - its semantic row still reads active - and commits its
-      // select_chat; the mount then refuses the conversation it just selected.
+      // (a)+(b) One request shows both halves. The pre-mount settlement admits the target -
+      // its content receipt is what this side admits on - and commits its select_chat; the
+      // mount then refuses the conversation it just selected.
       assert.equal(observed.shellMigration, "switched");
       assert.equal(observed.afterMigrationMountedThread, String(observed.firstThread));
       assert.equal(observed.selectionOfArchived, "chat_runtime_exact_content_unavailable");

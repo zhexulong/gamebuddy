@@ -77,8 +77,6 @@ function argumentsFor(member: string, fixture: Fixture): readonly unknown[] {
         chatThreadId: "gate-thread-2",
         chatSurfaceSessionId: "gate-surface-2",
         expected: fixture.vector,
-        lifecycle: "active",
-        managementRevision: 1,
       },
     ],
     verifyChatContent: [
@@ -87,8 +85,6 @@ function argumentsFor(member: string, fixture: Fixture): readonly unknown[] {
         chatThreadId: "gate-thread-2",
         chatSurfaceSessionId: "gate-surface-2",
         expected: fixture.vector,
-        lifecycle: "active",
-        managementRevision: 1,
       },
       {
         chatThreadId: "gate-thread-2",
@@ -104,18 +100,6 @@ function argumentsFor(member: string, fixture: Fixture): readonly unknown[] {
         chatThreadId: fixture.chatThreadId,
         chatSurfaceSessionId: fixture.chatSurfaceSessionId,
         expected: fixture.vector,
-        lifecycle: "active",
-        managementRevision: 1,
-      },
-    ],
-    transitionChatLifecycle: [
-      {
-        operationId: "gate-probe-lifecycle",
-        chatThreadId: fixture.chatThreadId,
-        chatSurfaceSessionId: fixture.chatSurfaceSessionId,
-        expectedManagementRevision: 1,
-        expected: fixture.vector,
-        operation: "archive",
       },
     ],
     recordChatSelectionIntent: [

@@ -424,8 +424,8 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       const originalSurface = original!.chatSurfaceSessionId!;
       const registeredThread = registered.chatThreadId!;
       const registeredSurface = registered.chatSurfaceSessionId!;
-      const lifecycleOf = (catalog: ProductionChatCatalog, chatThreadId: string) =>
-        catalog.threads.find((thread) => thread.chatThreadId === chatThreadId)?.lifecycle;
+      const contentOf = (catalog: ProductionChatCatalog, chatThreadId: string) =>
+        catalog.threads.find((thread) => thread.chatThreadId === chatThreadId)?.contentState;
       // Every call carries the durable authority's answer for both Chats, which is what a
       // start reads from `tavern.sqlite` before it derives a mount target.
       const durableOf = (
@@ -455,12 +455,13 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       );
       assert.equal(moved.movedSelection, true);
       assert.equal(moved.catalog.activeSelection?.chatThreadId, originalThread);
-      // The archived row keeps its registration-time lifecycle: a start that already wrote its
-      // settling `select_chat` may write nothing else (ADR-0011's mediation records why). The
-      // product's own select seat resolves its target from the durable list and filters
-      // `lifecycleStatus === "active"` (`desktop-presentation-admission-owner.ts`), so the stale
-      // row is not reachable as a selection - the selection is what this reconciliation owns.
-      assert.equal(lifecycleOf(moved.catalog, registeredThread), "active");
+      // The archived Chat keeps its content: this store no longer holds a lifecycle to disagree
+      // with (ADR-0011), and a start that already wrote its settling `select_chat` may write
+      // nothing else. The product's own select seat resolves its target from the durable list
+      // and filters `lifecycleStatus === "active"` (`desktop-presentation-admission-owner.ts`),
+      // so an archived Chat is not reachable as a selection - the selection is what this
+      // reconciliation owns.
+      assert.equal(contentOf(moved.catalog, registeredThread), "verified");
       // A live selection is left exactly alone: a start may write only the one command the
       // mount is proved against, so a settled selection must not be disturbed by a no-op.
       const settled = await authority.resettleChatSuccessorFromDurableAuthority(
@@ -479,8 +480,8 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       assert.equal(orphaned, "semantic_chat_liveness_unrecoverable");
       const catalog = await authority.readChatCatalog();
       assert.equal(catalog.activeSelection?.chatThreadId, originalThread);
-      assert.equal(lifecycleOf(catalog, originalThread), "active");
-      assert.equal(lifecycleOf(catalog, registeredThread), "active");
+      assert.equal(contentOf(catalog, originalThread), "verified");
+      assert.equal(contentOf(catalog, registeredThread), "verified");
     } finally {
       await authority.close();
     }
