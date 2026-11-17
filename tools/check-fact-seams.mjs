@@ -346,6 +346,20 @@ export const SEAMS = Object.freeze([
     },
     owner: "the connection panel lane",
   },
+  {
+    fact: "world info binding states",
+    authority: { file: TAVERN_CONTRACT, name: "WorldInfoBindingState" },
+    readers: [
+      { file: MANAGEMENT_CLIENT, name: "WORLD_INFO_STATES" },
+      { file: REFERENCE_CLIENT, name: "WORLD_INFO_STATES" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["WorldInfoBindingState", "WORLD_INFO_STATES"],
+    },
+    owner: "the world info surface lane",
+  },
 ]);
 
 /** `"path/to/file.ts:Name"` -> the declaration the scan indexes. The one spelling this file uses to name one. */
@@ -392,10 +406,6 @@ export const DEBT = Object.freeze([
     `${MANAGEMENT_CLIENT}:NAVIGATION_ITEM_IDS`,
     `${REFERENCE_CLIENT}:NAVIGATION_ITEM_IDS`,
     "tools/run-tavern-release-live-gate.mjs:CONTRACT_NAVIGATION_ITEM_IDS",
-  ]),
-  mirrorDebt("world info binding states", `${TAVERN_CONTRACT}:WorldInfoBindingState`, [
-    `${MANAGEMENT_CLIENT}:WORLD_INFO_STATES`,
-    `${REFERENCE_CLIENT}:WORLD_INFO_STATES`,
   ]),
   mirrorDebt("thinking levels", "host/src/runtime-identity.ts:COMPANION_THINKING_LEVELS", [
     `${TAVERN_CONTRACT}:TavernConnectionThinkingLevelV1Schema`,
