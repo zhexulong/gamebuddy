@@ -28,9 +28,10 @@
  *     node tools/check-host-source-directories.mjs          # the verdict; exit 1 on a gap, 2 on a blocked reading
  *     node tools/check-host-source-directories.mjs --list   # the population and what each directory holds
  *
- * red-proof: self-check  a scratch tree whose `host/src/thing/README.md` claims a component with no module beneath it ->
- *                    `a_directory_whose_only_content_is_a_claim:host/src/thing`, while the same tree with
- *                    `host/src/thing/index.ts` added is silent (tools/check-host-source-directories.mjs)
+ * red-proof: self-check  a scratch tree whose one directory holds only a README -> the finding names that directory,
+ *                    `a_directory_whose_only_content_is_a_claim` plus `document_claim_names_missing_source` for the
+ *                    module the README quotes and the tree does not carry, while the same tree with both files added
+ *                    is silent (tools/check-host-source-directories.mjs)
  */
 
 export const gateDeclaration = {

@@ -5,9 +5,9 @@
  * names today (`host/src/containment/windows`) is deleted by the commit that added it: a rule that can only be shown
  * red on a defect that no longer exists is a rule nobody can re-prove.
  *
- * red-proof: inject  a scratch tree whose `host/src/thing/` holds only a README -> `✖
- *                    a_directory_whose_only_content_is_a_claim:host/src/thing`, exit 1, while the same tree with
- *                    `host/src/thing/index.ts` is silent (tools/check-host-source-directories.test.mjs)
+ * red-proof: inject  a scratch tree whose one directory holds only a README -> `✖
+ *                    a_directory_whose_only_content_is_a_claim`, exit 1, while the same tree with the module added
+ *                    is silent (tools/check-host-source-directories.test.mjs)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
