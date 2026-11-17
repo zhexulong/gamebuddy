@@ -575,8 +575,9 @@ limit and they are three shapes: files that carried one revision or none when th
 (`preset-macros.ts`, `preset-segments.ts`, `preset-request-segments.ts` at 1 each,
 `composed-reference-game-view.ts` at 0 — invisible to a churn ranking), files whose churn had not yet
 accumulated (`MarkdownMessage.tsx` at 568 of 3,098), and files outside the population's extension set — the
-largest being `dialogue-web/src/style.css`, 185 commits and 15,348 changed lines over the 90-day window,
-with no line ceiling, so it is not in this report at all.
+largest being `dialogue-web/src/style.css`, 185 commits and 15,348 changed lines over the 90-day window, which
+carried no line ceiling and so was not in this report at all. `.css` now has one in the size ratchet, so that file
+enters this table like any other: rank 2 of 3,244, 99 revisions, 7,432 lines (measured 2026-11-17).
 
 `replay-gate-on-history` cannot measure this reading and says so: it extracts each revision with `git archive`,
 which carries no `.git`, so the run is `not_measured  reason=findings_unreadable  exit=2` with

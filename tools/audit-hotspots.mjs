@@ -46,9 +46,12 @@
  * when that window closed (`preset-macros.ts`, `preset-segments.ts`, `preset-request-segments.ts` at 1 each and
  * `composed-reference-game-view.ts` at 0) - a churn ranking cannot see a file with no history, which is why a defect
  * in a two-day-old file is invisible here - files whose churn had not yet accumulated (`MarkdownMessage.tsx` at 568 of
- * 3,098, `ProblemView.tsx` at 1,263), and files outside the population's extension set, of which the largest is
- * `dialogue-web/src/style.css` (185 commits and 15,348 changed lines over the 90-day window, and no line ceiling, so
- * it is not in this report at all; the fix for that is a ceiling in the size ratchet, not a second file list here).
+ * 3,098, `ProblemView.tsx` at 1,263), and files outside the population's extension set. The largest of that third
+ * shape WAS `dialogue-web/src/style.css` (185 commits and 15,348 changed lines over the 90-day window) because `.css`
+ * carried no line ceiling; the size ratchet now gives `.css` one, so that file is measured here like any other - it
+ * ranks 2 of 3,244 with 99 revisions and 7,432 lines (measured 2026-11-17). The fix for a missing extension is a
+ * ceiling in the size ratchet, not a second file list here; what remains outside is whatever that ratchet leaves
+ * unmeasured by design (`.json`, `.md`, `.html`, templates).
  *
  * WHAT A ROW DOES NOT SAY:
  *
@@ -61,8 +64,9 @@
  *             that says how weak it is, is better than a column that pretends.
  *
  * POPULATION, AND THE ZERO. Files are the size ratchet's population: every path `git ls-files` names whose extension
- * carries a line ceiling there (`.ts .mjs .cs .tsx .ps1 .cjs .py .mts`), which is 3,243 files measured 2026-11-17; the
- * extensions that carry no ceiling are printed by that gate and are outside this report for the same reason. A run that
+ * carries a line ceiling there (`.ts .mjs .cs .tsx .ps1 .cjs .py .mts .css`), which is 3,244 files measured 2026-11-17;
+ * the extensions that carry no ceiling are printed by that gate and are outside this report for the same reason - a
+ * file whose extension has no ceiling has no size, so it has no place in a frequency x size table. A run that
  * measured no file exits 2 (`hotspots_blocked:population_empty`), and a run that could not date its own HEAD, or whose
  * window then held no revision at all, exits 2 (`window_unreadable` / `window_empty`) - "nothing was busy" and "nothing
  * was measured" are different facts.
