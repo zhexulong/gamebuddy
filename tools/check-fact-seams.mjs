@@ -523,9 +523,6 @@ export const DEBT = Object.freeze([
   ),
 ]);
 
-/** The owner who owes the four words below: the lane that declares the game browser contract. */
-const UNPRODUCED_OWNER = "the game browser contract lane";
-
 /**
  * The declared codes the gate has READ and not resolved.
  *
@@ -536,37 +533,14 @@ const UNPRODUCED_OWNER = "the game browser contract lane";
  *
  * The rule that put them here is the reason the first one hid for months: a `*.test.ts` file is never a producer, so a
  * list in a test can no longer certify the declaration it was copied from.
+ *
+ * EMPTY, and that is the reading rather than a rule switched off. The last four records were speculative words rather
+ * than debt - `unmet` beside the missing-items list, `checking`, `detected` and `detaching` - and the game browser
+ * contract deleted them instead of producing them. A declared code no host source sends is still the finding this gate
+ * exists for, and both expiry directions are still proved red in `check-fact-seams.test.mjs` against a record passed
+ * to `evaluate`, so the mechanism does not depend on a real word happening to be unproduced today.
  */
-export const UNPRODUCED = Object.freeze([
-  {
-    code: "unmet",
-    reason:
-      "`PrerequisiteStatus` beside `missingItems: []`, which is always empty: the projector publishes only `met` and `unknown` (`host/src/game-browser/game-browser-state-provider.ts:233-234`), so the missing-items vocabulary is unbuilt, not unused",
-    expires: "produced, or deleted with its declaration",
-    owner: UNPRODUCED_OWNER,
-  },
-  {
-    code: "checking",
-    reason:
-      "the same `PrerequisiteStatus` read while a prerequisites check is in flight: nothing in the projector is asynchronous, so there is no moment to publish it",
-    expires: "produced, or deleted with its declaration",
-    owner: UNPRODUCED_OWNER,
-  },
-  {
-    code: "detected",
-    reason:
-      "`InstanceStatus` for a game that was found and is not this product's: the launch readiness the projector reads (`none`, `launching`, `running`, `stopped`, `crashed`, `unread`) has no member for it",
-    expires: "produced, or deleted with its declaration",
-    owner: UNPRODUCED_OWNER,
-  },
-  {
-    code: "detaching",
-    reason:
-      "`AttachmentStatus` for a detach in flight: the projector observes only `none` and `attached`, and detach is synchronous there",
-    expires: "produced, or deleted with its declaration",
-    owner: UNPRODUCED_OWNER,
-  },
-]);
+export const UNPRODUCED = Object.freeze([]);
 
 // ---------------------------------------------------------------------------
 // Reading: comments out, strings intact, and where the module level starts
@@ -1282,8 +1256,13 @@ function derivationHolds(root, record) {
   return { holds: false, why: `unknown derivation "${derives.kind}"` };
 }
 
-/** Every finding, and the two readings the verdict prints. */
-export function evaluate(root) {
+/**
+ * Every finding, and the two readings the verdict prints.
+ *
+ * `unproducedRecords` is the ledger whose expiry is checked, `UNPRODUCED` unless a proof passes its own: the list is a
+ * fact about what this tree owes, and a proof of one expiry direction cannot depend on this tree happening to owe it.
+ */
+export function evaluate(root, unproducedRecords = UNPRODUCED) {
   // One run, one reading of the tree: the caches are per run, so a caller that edits a file between two calls (the
   // mutation proof does exactly that) reads what is on disk now rather than what it read the first time.
   SOURCE_CACHE.clear();
@@ -1366,7 +1345,7 @@ export function evaluate(root) {
   const declaredCodes = new Set(codes.declarations.flatMap((declaration) => declaration.members));
   const stillUnproduced = new Set(codes.unproduced.map((entry) => entry.code));
   const recordedUnproduced = new Set();
-  for (const record of UNPRODUCED) {
+  for (const record of unproducedRecords) {
     if (!declaredCodes.has(record.code)) {
       findings.push(
         `stale_fact_seam:unproduced code ${record.code} (no declaration carries it any more: remove the record and its reason)`,

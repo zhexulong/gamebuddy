@@ -75,6 +75,34 @@ function materialise(root, file, revision) {
 
 const findingsOf = (report) => report.findings;
 
+/**
+ * A root whose one typebox union declares `reloading`, and - when `sent` - a sibling host file that sends it.
+ *
+ * The record these two proofs read is PASSED IN rather than taken from `UNPRODUCED`: that ledger is empty, and proving
+ * that a record expires must not depend on a real word happening to be unproduced in this tree.
+ */
+function unproducedWorld(root, { declares, sent }) {
+  const declaration = join(root, "host/src/game-browser/attachment-projection.ts");
+  mkdirSync(dirname(declaration), { recursive: true });
+  writeFileSync(
+    declaration,
+    declares
+      ? 'export const AttachmentStatus = Type.Union([Type.Literal("none"), Type.Literal("pending"), Type.Literal("reloading")]);\n'
+      : 'export const AttachmentStatus = Type.Union([Type.Literal("none"), Type.Literal("pending"), Type.Literal("attached")]);\n',
+  );
+  if (!sent) return;
+  writeFileSync(join(root, "host/src/game-browser/attachment-producer.ts"), 'export const RELOADING = "reloading";\n');
+}
+
+const RELOADING_RECORD = Object.freeze([
+  {
+    code: "reloading",
+    reason: "the record these two proofs read",
+    expires: "produced, or deleted with its declaration",
+    owner: "this suite",
+  },
+]);
+
 test("the readers read the four shapes a vocabulary is written in here", () => {
   const array = withoutComments('const CODES = ["a", "b", "c"];');
   assert.deepEqual(vocabularyAt(array, array.indexOf("[")).members, ["a", "b", "c"]);
@@ -270,21 +298,19 @@ test("red proof: the same two codes are produced on this tree, and no unrecorded
     [],
     "a declared code no host source produces is the finding this gate exists for: produce it, delete the word, or record it in UNPRODUCED with its owner and its expiry",
   );
-  assert.ok(
-    report.readings.unproducedRecorded > 0 && report.readings.unproducedRecorded <= report.readings.unproduced,
-    "every recorded code must be one of the unproduced codes, and a run with no recorded code would say this rule holds nothing",
+  assert.equal(
+    report.readings.unproducedRecorded,
+    report.readings.unproduced,
+    "every code this tree declares and no host source sends is either recorded in UNPRODUCED with its owner or is the finding this gate exists for: a run where the two counts differ would say this rule holds nothing",
   );
 });
 
 test("a recorded unproduced code expires the moment a host source produces it", () => {
   const root = temporaryRoot("unproduced-produced");
   try {
-    materialise(root, "host/src/game-browser-contract/index.ts", "HEAD");
-    const path = join(root, "host/src/game-browser/attachment-projection.ts");
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, 'export const DETACHING = "detaching";\n');
-    const finding = findingsOf(evaluate(root)).find((entry) =>
-      entry.startsWith("stale_fact_seam:unproduced code detaching"),
+    unproducedWorld(root, { declares: true, sent: true });
+    const finding = findingsOf(evaluate(root, RELOADING_RECORD)).find((entry) =>
+      entry.startsWith("stale_fact_seam:unproduced code reloading"),
     );
     assert.notEqual(finding, undefined, "a produced code makes its record a lie: it has to be removed");
     assert.match(finding, /produces it now/);
@@ -296,14 +322,9 @@ test("a recorded unproduced code expires the moment a host source produces it", 
 test("a recorded unproduced code expires the moment its declaration stops carrying it", () => {
   const root = temporaryRoot("unproduced-deleted");
   try {
-    materialise(root, "host/src/game-browser-contract/index.ts", "HEAD");
-    const path = join(root, "host/src/game-browser-contract/index.ts");
-    const source = readFileSync(path, "utf8");
-    const withoutDetaching = source.replace('  Type.Literal("detaching"),\n', "");
-    assert.notEqual(withoutDetaching, source, "the contract must carry `detaching` for this proof to mean anything");
-    writeFileSync(path, withoutDetaching);
-    const finding = findingsOf(evaluate(root)).find((entry) =>
-      entry.startsWith("stale_fact_seam:unproduced code detaching"),
+    unproducedWorld(root, { declares: false, sent: false });
+    const finding = findingsOf(evaluate(root, RELOADING_RECORD)).find((entry) =>
+      entry.startsWith("stale_fact_seam:unproduced code reloading"),
     );
     assert.notEqual(
       finding,
