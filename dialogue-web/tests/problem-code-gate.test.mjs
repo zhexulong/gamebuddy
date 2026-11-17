@@ -532,8 +532,11 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // recreated) and the world's slot being held by an earlier attempt of this product's own
   // (`stardew_game_create_slot_held_by_earlier_attempt`, closed out by a fresh GameBuddy) - were named
   // instead of falling through to `state_unavailable`, whose "try again" is false advice for both,
-  // moving it 27 to 29.
-  assert.equal(game.size, 29, `the game problem union should have 29 members, read ${game.size}`);
+  // moving it 27 to 29. It went the other way once, 29 to 28: `game_compatibility_error` named no
+  // refusal any route makes - the fact it stood for is published where it is computed
+  // (`compatibility.status = "incompatible"` plus the reason codes `stardew-compatibility.ts` derives,
+  // `game-browser-state-provider.ts:274-290`) - and no host source ever produced the code.
+  assert.equal(game.size, 28, `the game problem union should have 28 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
   const { findings, examined, senders } = unreadCodeArguments(

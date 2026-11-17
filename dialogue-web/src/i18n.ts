@@ -912,9 +912,6 @@ const en = {
   gameProblemPrerequisitesMissingTitle: "Companion play is not ready yet",
   gameProblemPrerequisitesMissingDetail:
     "GameBuddy has not staged this session's game yet. Enable companion play first, then try this again.",
-  gameProblemCompatibilityTitle: "That game build is not supported",
-  gameProblemCompatibilityDetail:
-    "The Stardew Valley installation GameBuddy found is not a version it can run with. Fix the installation, then try again.",
   gameProblemInstanceGoneTitle: "That game is gone",
   gameProblemInstanceGoneDetail:
     "The game instance this page named is no longer the current one - it stopped or was replaced. Reload the game page to see what is running now.",
@@ -2065,8 +2062,6 @@ const zh: Messages = {
     "GameBuddy 无法完成这一步游戏操作（登记的原因：{{cause}}）。下面是当前权威的游戏状态；请检查「游戏安装」，再试一次。",
   gameProblemPrerequisitesMissingTitle: "陪伴游览还没有准备好",
   gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为这次会话准备好游戏。请先启用陪伴游览，再重试。",
-  gameProblemCompatibilityTitle: "这个游戏版本不受支持",
-  gameProblemCompatibilityDetail: "GameBuddy 找到的《星露谷物语》不是它能配合运行的版本。请修好这份安装，再试一次。",
   gameProblemInstanceGoneTitle: "那个游戏已经不在了",
   gameProblemInstanceGoneDetail:
     "这个页面指的游戏实例已经不是当前的那个了 —— 它停止了，或被替换了。请重新加载游戏页面，看看现在运行的是哪一个。",

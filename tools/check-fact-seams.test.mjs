@@ -136,10 +136,10 @@ test("the derived population spans two packages, and the game problem codes are 
     codes.declarations.map((entry) => `${entry.file}:${entry.name}`).sort(),
     [
       "dialogue-web/src/composed-reference-game-browser-api.ts:GAME_PROBLEM_CODES",
-      "host/src/game-browser-contract/index.ts:GAME_BROWSER_PROBLEM_CODES_V1",
       "host/src/game-browser-contract/index.ts:GameProblemCode",
     ],
-    "one fact with three declarations: the union, the frozen array beside it, and the browser's copy",
+    "one fact with two ends: the contract's union, and the browser's copy of it. A third list beside the union is " +
+      "the copy that was resolved by deriving it, and a new one would appear here as an unrepaired copy again",
   );
 
   for (const group of groups) {

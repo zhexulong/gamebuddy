@@ -243,17 +243,6 @@ export const DEBT = Object.freeze([
     "dialogue-web/src/components/GamePlayerSettings.tsx:WINDOW_MODE_KEYS",
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
-  // The frozen array beside the union, which no test compares to it: `index.private.test.ts:974` restates sixteen of
-  // the codes in a list of its own and asserts each is included, which is the third copy of this vocabulary.
-  {
-    fact: "game problem codes (frozen array)",
-    authority: reference(`${GAME_CONTRACT}:GameProblemCode`),
-    readers: [reference(`${GAME_CONTRACT}:GAME_BROWSER_PROBLEM_CODES_V1`)],
-    reason:
-      "the frozen array beside the union is a second spelling of the same 29 codes in one file; nothing compares them, and the contract's own test restates sixteen of them in a third list",
-    owner: "the game browser contract lane",
-  },
-
   // ─── The tavern contract's vocabularies ───
   mirrorDebt("connection setup fields", `${TAVERN_CONTRACT}:TavernConnectionSetupFieldV1Schema`, [
     `${MANAGEMENT_CLIENT}:CONNECTION_SETUP_FIELDS`,

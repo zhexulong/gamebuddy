@@ -126,7 +126,6 @@ export const GAME_PROBLEM_CODES = [
   "idempotency_expired",
   "game_unavailable",
   "game_prerequisites_missing",
-  "game_compatibility_error",
   "game_instance_not_found",
   "game_attachment_conflict",
   "game_operation_in_progress",

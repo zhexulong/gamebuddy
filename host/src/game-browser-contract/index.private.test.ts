@@ -968,30 +968,27 @@ test("Game problem codes are a closed union", () => {
     }),
     false,
   );
-  assert.deepEqual(GAME_BROWSER_PROBLEM_CODES_V1.includes("invented_code" as never), false);
 });
 
-test("Game problem codes include all expected codes", () => {
-  const expected = [
-    "unauthorized",
-    "csrf_failed",
-    "invalid_request",
-    "unsupported_api_version",
-    "profile_operation_unavailable",
-    "idempotency_conflict",
-    "idempotency_in_progress",
-    "idempotency_expired",
-    "game_unavailable",
-    "game_prerequisites_missing",
-    "game_compatibility_error",
-    "game_instance_not_found",
-    "game_attachment_conflict",
-    "game_operation_in_progress",
-    "game_runtime_unavailable",
-    "game_storage_unavailable",
-  ];
-  for (const code of expected) {
-    assert.ok(GAME_BROWSER_PROBLEM_CODES_V1.includes(code as never), `missing problem code: ${code}`);
+test("every published game problem code is one the compiled validator accepts", () => {
+  // Derived, not restated: this list is the union's own arms, so this test holds the declaration, the
+  // exported list and the compiled validator to each other. The hand-written sixteen codes it replaces
+  // could not fail for the thirteen it omitted.
+  assert.ok(GAME_BROWSER_PROBLEM_CODES_V1.length > 0, "a list of zero codes is not a vocabulary");
+  const validator = GameBrowserValidatorsV1.GameProblemV1Schema;
+  for (const code of GAME_BROWSER_PROBLEM_CODES_V1) {
+    assert.equal(
+      validator.Check({
+        type: "about:blank",
+        title: "Game unavailable",
+        status: 503,
+        code,
+        requestId: handle,
+        retryable: true,
+      }),
+      true,
+      `the compiled validator must accept ${code}, a member of the union the schema is built from`,
+    );
   }
 });
 

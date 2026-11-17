@@ -628,12 +628,6 @@ const gamePrerequisitesMissing: ProblemSentence = (labels) =>
     id: "companion-choose",
     elsewhere: { said_as: "Enable companion play" },
   });
-const gameCompatibility: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemCompatibilityTitle, labels.gameProblemCompatibilityDetail, {
-    kind: "control",
-    id: "game-start-guide",
-    elsewhere: { said_as: "Fix the installation" },
-  });
 const gameInstanceGone: ProblemSentence = (labels) =>
   sentence(labels.gameProblemInstanceGoneTitle, labels.gameProblemInstanceGoneDetail, RETRY_READ);
 const gameAttachmentMoved: ProblemSentence = (labels) =>
@@ -745,7 +739,6 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
       ),
   },
   game_prerequisites_missing: refused(gamePrerequisitesMissing),
-  game_compatibility_error: refused(gameCompatibility),
   game_instance_not_found: refused(gameInstanceGone),
   game_attachment_conflict: refused(gameAttachmentMoved),
   game_operation_in_progress: refused(stillRunning),

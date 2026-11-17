@@ -41,72 +41,14 @@ const SAFE_ID = Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-
 
 // ─── Problem code ───────────────────────────────────────────────────────────
 
-export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
-  "unauthorized",
-  "csrf_failed",
-  "invalid_request",
-  "unsupported_api_version",
-  "profile_operation_unavailable",
-  "idempotency_conflict",
-  "idempotency_in_progress",
-  "idempotency_expired",
-  "game_unavailable",
-  "game_prerequisites_missing",
-  "game_compatibility_error",
-  "game_instance_not_found",
-  "game_attachment_conflict",
-  "game_operation_in_progress",
-  "stardew_cabin_choice_stale",
-  "stardew_manifest_handoff_uncertain",
-  "game_runtime_unavailable",
-  "game_storage_unavailable",
-  // The composed reference-game shell's own route and transport refusals. They are
-  // produced by `composed-reference-game-browser.ts` for its bootstrap, state,
-  // lifecycle and game routes, so they belong to this surface's vocabulary rather
-  // than to a client-side allowlist. The client already reads `not_found` as an
-  // absent route and `state_unavailable` (and any 5xx) as retryable.
-  "closed",
-  "malformed_request",
-  "not_found",
-  "state_unavailable",
-  "game_endgame_settlement_unavailable",
-  // The player's own Stardew settings: the record they edited moved under them. It is a
-  // refusal, not a fault - nothing was written, and the fresh record is the thing to act on.
-  "stardew_settings_revision_conflict",
-  // The player-host role exited: the Guardian that owns the game process reported the
-  // native exit code it ended with, so the cabin handoff cannot be read for a game that is
-  // no longer there. It is its own code because `state_unavailable` is the opposite claim -
-  // the Host does not know - and because the code states the CONDITION only: the exit fact
-  // itself (the code the OS gave) travels in exactly one field, `game.instance.playerHostExitCode`,
-  // and appears nowhere else.
-  "stardew_player_host_exited",
-  // The other named answer the cabin read gives, which it has produced since 2026-10-28 without
-  // this union declaring it: a live, generation-correlated host world that offers no cabin the
-  // companion may use. Its cure is the game's own - have Robin build one - so it must reach the
-  // player as that fact rather than as an internal error.
-  "stardew_player_host_cabin_missing",
-  // An earlier attempt still holds the installation registration. The activation route answers
-  // this instead of the generic `state_unavailable` because the two facts have opposite fixes: a
-  // missing registration is the installation step, a held one is "close the game and this
-  // GameBuddy session". It names the CONDITION only - which attempt holds it travels in no field.
-  "stardew_bootstrap_registration_held",
-  // The create whose world is the player's own. The save slot the new world would be registered on
-  // already binds the world an earlier session created and the recovery deliberately preserved, so
-  // this create refuses instead of taking it over (`STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED`,
-  // stardew-production-lifecycle-coordinator.internal.ts:969-970). Its fix is the opposite of the
-  // generic `state_unavailable`'s: retrying create on the same slot fails identically, and the world
-  // the player already has is resumed, never recreated. It names the CONDITION only - which session
-  // holds the world travels in no field.
-  "stardew_game_create_world_held_by_player",
-  // The create whose slot an earlier GameBuddy attempt still holds. That attempt's lease was not
-  // proven gone, so nothing was finalized and nothing released
-  // (`STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE`, stardew-production-lifecycle-coordinator.internal.ts:950).
-  // Its own code rather than the one above because the two facts have opposite fixes: there the
-  // world is the player's and is resumed, here a leftover attempt of this product is what has to be
-  // closed out. It names the CONDITION only - which attempt holds it travels in no field.
-  "stardew_game_create_slot_held_by_earlier_attempt",
-] as const);
-
+/**
+ * The one declaration of the `game_browser_api/v1` problem vocabulary: the union `GameProblemV1Schema.code`
+ * validates, and the arms `GAME_BROWSER_PROBLEM_CODES_V1` publishes below.
+ *
+ * A code is added HERE and nowhere else. The browser's copy cannot import this package and is held to EQUALITY
+ * with these arms by `dialogue-web/tests/problem-code-gate.test.mjs` (`problem-code.9` for the names,
+ * `problem-code.10` for the player's words), which reads them from this declaration.
+ */
 const GameProblemCode = Type.Union([
   Type.Literal("unauthorized"),
   Type.Literal("csrf_failed"),
@@ -118,7 +60,6 @@ const GameProblemCode = Type.Union([
   Type.Literal("idempotency_expired"),
   Type.Literal("game_unavailable"),
   Type.Literal("game_prerequisites_missing"),
-  Type.Literal("game_compatibility_error"),
   Type.Literal("game_instance_not_found"),
   Type.Literal("game_attachment_conflict"),
   Type.Literal("game_operation_in_progress"),
@@ -126,20 +67,64 @@ const GameProblemCode = Type.Union([
   Type.Literal("stardew_manifest_handoff_uncertain"),
   Type.Literal("game_runtime_unavailable"),
   Type.Literal("game_storage_unavailable"),
-  // The composed reference-game shell's own route and transport refusals (see
-  // `GAME_BROWSER_PROBLEM_CODES_V1`).
+  // The composed reference-game shell's own route and transport refusals. They are
+  // produced by `composed-reference-game-browser.ts` for its bootstrap, state,
+  // lifecycle and game routes, so they belong to this surface's vocabulary rather
+  // than to a client-side allowlist. The client already reads `not_found` as an
+  // absent route and `state_unavailable` (and any 5xx) as retryable.
   Type.Literal("closed"),
   Type.Literal("malformed_request"),
   Type.Literal("not_found"),
   Type.Literal("state_unavailable"),
   Type.Literal("game_endgame_settlement_unavailable"),
+  // The player's own Stardew settings: the record they edited moved under them. It is a
+  // refusal, not a fault - nothing was written, and the fresh record is the thing to act on.
   Type.Literal("stardew_settings_revision_conflict"),
+  // The player-host role exited: the Guardian that owns the game process reported the
+  // native exit code it ended with, so the cabin handoff cannot be read for a game that is
+  // no longer there. It is its own code because `state_unavailable` is the opposite claim -
+  // the Host does not know - and because the code states the CONDITION only: the exit fact
+  // itself (the code the OS gave) travels in exactly one field, `game.instance.playerHostExitCode`,
+  // and appears nowhere else.
   Type.Literal("stardew_player_host_exited"),
+  // The other named answer the cabin read gives, which it has produced since 2026-10-28 without
+  // this union declaring it: a live, generation-correlated host world that offers no cabin the
+  // companion may use. Its cure is the game's own - have Robin build one - so it must reach the
+  // player as that fact rather than as an internal error.
   Type.Literal("stardew_player_host_cabin_missing"),
+  // An earlier attempt still holds the installation registration. The activation route answers
+  // this instead of the generic `state_unavailable` because the two facts have opposite fixes: a
+  // missing registration is the installation step, a held one is "close the game and this
+  // GameBuddy session". It names the CONDITION only - which attempt holds it travels in no field.
   Type.Literal("stardew_bootstrap_registration_held"),
+  // The create whose world is the player's own. The save slot the new world would be registered on
+  // already binds the world an earlier session created and the recovery deliberately preserved, so
+  // this create refuses instead of taking it over (`STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED`,
+  // stardew-production-lifecycle-coordinator.internal.ts:969-970). Its fix is the opposite of the
+  // generic `state_unavailable`'s: retrying create on the same slot fails identically, and the world
+  // the player already has is resumed, never recreated. It names the CONDITION only - which session
+  // holds the world travels in no field.
   Type.Literal("stardew_game_create_world_held_by_player"),
+  // The create whose slot an earlier GameBuddy attempt still holds. That attempt's lease was not
+  // proven gone, so nothing was finalized and nothing released
+  // (`STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE`, stardew-production-lifecycle-coordinator.internal.ts:950).
+  // Its own code rather than the one above because the two facts have opposite fixes: there the
+  // world is the player's and is resumed, here a leftover attempt of this product is what has to be
+  // closed out. It names the CONDITION only - which attempt holds it travels in no field.
   Type.Literal("stardew_game_create_slot_held_by_earlier_attempt"),
 ]);
+
+/**
+ * The union's own members, as the runtime list a caller iterates.
+ *
+ * Derived from `GameProblemCode.anyOf`, never restated: the annotation is the union's own static type, so a member
+ * the union does not declare - or an arm that stopped being a literal - is a compile error here, and a code added
+ * above appears without a second edit. It was a hand-written `Object.freeze([...])` of the same codes beside the
+ * union, which nothing compared to it; the contract's own test then restated sixteen of them a third time.
+ */
+export const GAME_BROWSER_PROBLEM_CODES_V1: readonly Static<typeof GameProblemCode>[] = Object.freeze(
+  GameProblemCode.anyOf.map((arm) => arm.const),
+);
 
 // ─── Redacted read projections ──────────────────────────────────────────────
 
