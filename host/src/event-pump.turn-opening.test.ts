@@ -37,6 +37,7 @@ import {
   PER_DELIVERED_BATCH,
   RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
+  STALLED,
   TRACES,
   TURN_OPENING,
   TURN_OPENINGS,
@@ -675,6 +676,7 @@ function readTurnAccountLine(line: string): Readonly<{
   examined: number;
   carried: Readonly<{ total: number; pending: number }>;
   traces: number;
+  stalled: Readonly<{ total: number; counts: Record<string, number> }>;
   delivery: Readonly<{ bubbles: number; lostTotal: number; lost: Record<string, number> }>;
   emptyTurns: Readonly<{ total: number; counts: Record<string, number> }>;
   silentSettled: Readonly<{ total: number; counts: Record<string, number> }>;
@@ -698,6 +700,7 @@ function readTurnAccountLine(line: string): Readonly<{
     TRACES,
     BUBBLES_DELIVERED,
     LOST,
+    STALLED,
     TURN_WITHOUT_ACTION,
     TURN_SETTLED_SILENT,
     TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
@@ -727,6 +730,7 @@ function readTurnAccountLine(line: string): Readonly<{
     tracesSegment,
     bubblesSegment,
     lostSegment,
+    stalledSegment,
     emptySegment,
     silentSegment,
     inFlightSegment,
@@ -735,6 +739,9 @@ function readTurnAccountLine(line: string): Readonly<{
     declinedSegment,
     rearmedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -772,6 +779,7 @@ function readTurnAccountLine(line: string): Readonly<{
     carried: Object.freeze({ total: carriedSegment.total, pending: carriedSegment.counts.pending ?? 0 }),
     traces: tracesSegment.total,
     delivery: Object.freeze({ bubbles: bubblesSegment.total, lostTotal: lostSegment.total, lost: lostSegment.counts }),
+    stalled: Object.freeze({ total: stalledSegment.total, counts: stalledSegment.counts }),
     emptyTurns: Object.freeze({ total: emptySegment.total, counts: emptySegment.counts }),
     silentSettled: Object.freeze({ total: silentSegment.total, counts: silentSegment.counts }),
     settledWithExecutionInFlight: inFlightSegment.total,
@@ -915,6 +923,7 @@ test("the account line reads back into the account it names", () => {
     }),
     carry: Object.freeze({ carried: 9, pending: 2 }),
     traces: 4,
+    stalled: Object.freeze({ total: 2, byReason: Object.freeze({ entity_block: 2 }) }),
     delivery: Object.freeze({ bubbles: 7, lost: Object.freeze({ no_presentation_lease: 1 }), lostTotal: 1 }),
     autoObserve: autoObserveAccount(
       { refreshed: 4, lastAgeTurns: 20 },
@@ -1005,6 +1014,13 @@ test("the account line reads back into the account it names", () => {
     account.settledWithExecutionInFlight,
     "and the in-flight settlement count reads back: the condition that used to exclude silence is now a number on the line",
   );
+  assert.equal(parsed.stalled.total, account.stalled.total, "the stall announcements read back");
+  assert.deepEqual(parsed.stalled.counts, account.stalled.byReason, "with the Mod's own reason beside each one");
+  assert.equal(
+    parsed.stalled.total,
+    Object.values(parsed.stalled.counts).reduce((total, count) => total + count, 0),
+    "and the total is the sum of its reasons: an announcement cannot be counted and then lose the reason it carried",
+  );
   assert.equal(parsed.autoObserve.agedTurns, account.autoObserve.agedTurns);
   assert.equal(
     parsed.autoObserve.agedTurns,
@@ -1059,6 +1075,7 @@ test("the account line names a member that never fired, in both histograms", () 
     }),
     carry: Object.freeze({ carried: 0, pending: 0 }),
     traces: 0,
+    stalled: Object.freeze({ total: 0, byReason: Object.freeze({}) }),
     delivery: Object.freeze({ bubbles: 0, lost: Object.freeze({}), lostTotal: 0 }),
     autoObserve: autoObserveAccount({ refreshed: 0, lastAgeTurns: undefined }),
     lastDecision: undefined,
@@ -1106,7 +1123,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /per delivered batch: turns opened, flushes examined, not owed, carried, traces, bubbles delivered, lost, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
+    /per delivered batch: turns opened, flushes examined, not owed, carried, traces, bubbles delivered, lost, stalled, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });
