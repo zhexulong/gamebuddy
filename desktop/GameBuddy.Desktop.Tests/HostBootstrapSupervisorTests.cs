@@ -134,8 +134,8 @@ public sealed class HostBootstrapSupervisorTests
         // broker close first - before the wait and before any termination - is the whole point of the
         // order: with the termination first, the child was already dead when that EOF would arrive and
         // its own reclamation never ran.
-        var arm = source.IndexOf("await (Interlocked.Exchange(ref broker, null)?.DisposeAsync()", close, StringComparison.Ordinal);
-        var wait = source.IndexOf("await WaitForExitWithinAsync(child, Result.DrainDeadlineMs)", close, StringComparison.Ordinal);
+        var arm = source.IndexOf("await closingBroker.CloseAsync(budget, cancellationToken)", close, StringComparison.Ordinal);
+        var wait = source.IndexOf("await WaitForExitWithinAsync(child, budget.RemainingMs)", close, StringComparison.Ordinal);
         var terminate = source.IndexOf("WindowsNative.TerminateProcess(child, 1)", close, StringComparison.Ordinal);
         // And the kill is never anonymous: it is followed by the launcher's own named fact.
         var fact = source.IndexOf("DesktopHostTeardownRecord.Write(operationalRoot", close, StringComparison.Ordinal);
@@ -170,7 +170,7 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("internal async Task AttachResidentGuardianAsync(GuardianSupervisorLease lease", source, StringComparison.Ordinal);
         Assert.Contains("await currentBroker.AttachResidentGuardianAsync(lease, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout", source, StringComparison.Ordinal);
-        Assert.Contains("await (Interlocked.Exchange(ref broker, null)?.DisposeAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("await closingBroker.CloseAsync(budget, cancellationToken)", source, StringComparison.Ordinal);
         // Closing the authenticated broker is the only guardian signal the host
         // lease owns; it drives the native control EOF so the guardian exits by
         // itself. The resident guardian lease belongs to its caller, so the host
@@ -341,10 +341,10 @@ public sealed class HostBootstrapSupervisorTests
         var cleanup = source.IndexOf("if (process is not null)", authentication, StringComparison.Ordinal);
         var launched = source.IndexOf("if (launched)", cleanup, StringComparison.Ordinal);
         var terminate = source.IndexOf("WindowsNative.TerminateProcess(process, 1)", launched, StringComparison.Ordinal);
-        var wait = source.IndexOf("WindowsNative.WaitForSingleObject(process, 30_000)", terminate, StringComparison.Ordinal);
+        var wait = source.IndexOf("WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs)", terminate, StringComparison.Ordinal);
         var dispose = source.IndexOf("process.Dispose()", wait, StringComparison.Ordinal);
 
-        var brokerDispose = source.IndexOf("if (!brokerTransferred && broker is not null) await broker.DisposeAsync()", dispose, StringComparison.Ordinal);
+        var brokerDispose = source.IndexOf("if (!brokerTransferred && broker is not null) await broker.CloseAsync(new ShutdownBudget(GuardianSupervisorLease.ContainmentCeilingMs), CancellationToken.None)", dispose, StringComparison.Ordinal);
         Assert.True(authentication >= 0 && cleanup > authentication && launched > cleanup && terminate > launched && wait > terminate && dispose > wait && brokerDispose > dispose);
     }
 

@@ -9,7 +9,7 @@ namespace GameBuddy.Desktop;
 /// The Desktop-private, bootstrap-bound resident Guardian relay. It owns the pipe
 /// and never projects its endpoint, native control credentials, or raw responses.
 /// </summary>
-internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
+internal sealed class DesktopHostBootstrapBroker
 {
     private const int MaxWireBytes = 16_384;
     private static readonly TimeSpan MaximumDeadline = TimeSpan.FromMinutes(5);
@@ -130,7 +130,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                     if (firstByte is null)
                     {
                         sessionClosing.Cancel();
-                        await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                        await guardian.CloseControlAndWaitForExitAsync(GuardianSupervisorLease.ContainmentCeilingMs, CancellationToken.None).ConfigureAwait(false);
                         try { await relay.ConfigureAwait(false); } catch { }
                         throw new GuardianLaunchUnavailableException();
                     }
@@ -144,7 +144,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                         if (firstByte is null)
                         {
                             sessionClosing.Cancel();
-                            await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                            await guardian.CloseControlAndWaitForExitAsync(GuardianSupervisorLease.ContainmentCeilingMs, CancellationToken.None).ConfigureAwait(false);
                             try { await relay.ConfigureAwait(false); } catch { }
                             throw new GuardianLaunchUnavailableException();
                         }
@@ -171,7 +171,10 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         }
         catch
         {
-            await CloseAsync(CancellationToken.None).ConfigureAwait(false);
+            // The session failed before any child published an exit deadline, so there is no budget to
+            // draw on: the one thing still being waited for is the Guardian's containment of the roles
+            // it created, and its own ceiling is the declared number for that.
+            await CloseAsync(new ShutdownBudget(GuardianSupervisorLease.ContainmentCeilingMs), CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -441,22 +444,32 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
 
-    internal async Task CloseAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Ends this brokered session under the quit's one budget.
+    ///
+    /// The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
+    /// reclamation waits for, so a child that is reclaiming must never be waiting behind this
+    /// launcher's own containment. Disposing the server end closes the one instance the child is
+    /// connected to; the child observes the loss on its own session and leaves by itself.
+    /// </summary>
+    internal async Task CloseAsync(ShutdownBudget budget, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(budget);
         if (closed) return;
         closed = true;
         sessionClosing.Cancel();
-        // The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
-        // reclamation waits for, so a child that is reclaiming must never be waiting behind this
-        // launcher's own containment. Disposing the server end closes the one instance the child is
-        // connected to; the child observes the loss on its own session and leaves by itself.
         server.Dispose();
         try
         {
             // Only then does the launcher give up the guardian it relays to. The native guardian
             // exits on the control EOF this closes, which is how the roles it created are contained
             // on this side even when the child never got to ask for it.
-            if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            //
+            // This wait draws on the quit's one budget: it may use the guardian's containment
+            // ceiling, and it may never spend more than the quit has left. What it costs is therefore
+            // inside both the number the player waits and the number the record carries.
+            if (guardian is not null)
+                await guardian.CloseControlAndWaitForExitAsync(budget.Take(GuardianSupervisorLease.ContainmentCeilingMs), cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -464,8 +477,6 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             // the caller's guard-lease disposal still terminates as a fallback.
         }
     }
-
-    public async ValueTask DisposeAsync() => await CloseAsync(CancellationToken.None).ConfigureAwait(false);
 
     private static bool ExactObject(JsonElement value, params string[] expected) => value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(property => property.Name).SequenceEqual(expected, StringComparer.Ordinal);
     private static bool IsHex(string value) => value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');

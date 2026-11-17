@@ -257,11 +257,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
                 if (launched)
                 {
                     _ = WindowsNative.TerminateProcess(process, 1);
-                    _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+                    _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs), CancellationToken.None).ConfigureAwait(false);
                 }
                 process.Dispose();
             }
-            if (!brokerTransferred && broker is not null) await broker.DisposeAsync().ConfigureAwait(false);
+            if (!brokerTransferred && broker is not null) await broker.CloseAsync(new ShutdownBudget(GuardianSupervisorLease.ContainmentCeilingMs), CancellationToken.None).ConfigureAwait(false);
             if (handoff is not null) await handoff.DisposeAsync().ConfigureAwait(false);
             if (attributeList != IntPtr.Zero)
             {
@@ -970,7 +970,7 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await Task.Run(() => WindowsNative.WaitForSingleObject(child, 100), CancellationToken.None).ConfigureAwait(false);
+            var result = await Task.Run(() => WindowsNative.WaitForSingleObject(child, WindowsNative.HandlePollIntervalMs), CancellationToken.None).ConfigureAwait(false);
             if (result == WindowsNative.WaitTimeout) continue;
             var exited = result == WindowsNative.WaitObject0 && WindowsNative.GetExitCodeProcess(child, out _);
             if (exited) await CloseAsync(CancellationToken.None).ConfigureAwait(false);
@@ -979,7 +979,7 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ends the exact admitted child in the order a quit requires.
+    /// Ends the exact admitted child in the order a quit requires, under ONE declared budget.
     ///
     /// Closing the authenticated broker is the ARM, not the epilogue. That broker owns the one pipe
     /// this launcher shares with the child, and closing it is the controller EOF the child's own
@@ -989,14 +989,21 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     /// when it would have arrived - so the child's eight named steps never ran and its own drain
     /// budget was dead code on this path.
     ///
-    /// So the order is: arm the child, wait for it to leave inside the deadline IT published in its
-    /// acknowledgement, and terminate only as the watchdog over that wait. The wait's expiry is a
-    /// named fact of this launcher's own (`host_teardown_timeout`, written beside the child's exit
-    /// records) because killing a child that was still reclaiming must never be silent.
+    /// The arm is also where the quit's budget starts, because it is the one frame that tells BOTH
+    /// processes to leave: the child gets its controller EOF, and the native Guardian gets the control
+    /// EOF that makes it contain the roles it created. Every wait below draws on that budget, so the
+    /// player waits at most the deadline the child itself published - not the Guardian's exit and then
+    /// the child's deadline, counted separately as they were - and <see cref="ShutdownBudget.ConsumedMs"/>
+    /// is what the teardown record carries.
+    ///
+    /// The wait's expiry is a named fact of this launcher's own (`host_teardown_timeout`, written
+    /// beside the child's exit records) because killing a child that was still reclaiming must never
+    /// be silent.
     /// </summary>
     internal async Task CloseAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var budget = new ShutdownBudget(Result.DrainDeadlineMs);
         var shouldTerminate = Interlocked.Exchange(ref closed, 1) == 0;
         var child = Interlocked.Exchange(ref process, null);
         await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -1007,20 +1014,21 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
             // exits by itself. The resident guardian lease belongs to its caller (the
             // composition/test scope that created and attached it); the host lease must not dispose
             // it, or the caller observes a nulled handle.
-            await (Interlocked.Exchange(ref broker, null)?.DisposeAsync() ?? ValueTask.CompletedTask).ConfigureAwait(false);
+            var closingBroker = Interlocked.Exchange(ref broker, null);
+            if (closingBroker is not null) await closingBroker.CloseAsync(budget, cancellationToken).ConfigureAwait(false);
         }
         finally { guardianGate.Release(); }
         if (child is not null)
         {
-            var waited = Stopwatch.StartNew();
-            if (shouldTerminate && !await WaitForExitWithinAsync(child, Result.DrainDeadlineMs).ConfigureAwait(false))
+            if (shouldTerminate && !await WaitForExitWithinAsync(child, budget.RemainingMs).ConfigureAwait(false))
             {
                 var pid = WindowsNative.GetProcessId(child);
                 _ = WindowsNative.TerminateProcess(child, 1);
-                DesktopHostTeardownRecord.Write(operationalRoot, pid, waited.ElapsedMilliseconds, Result.DrainDeadlineMs);
-                // The kill is this launch's last resort, so the handle is waited for once more: this
-                // is the bound on "the process did not even die", not a second teardown budget.
-                _ = await Task.Run(() => WindowsNative.WaitForSingleObject(child, 30_000), CancellationToken.None).ConfigureAwait(false);
+                DesktopHostTeardownRecord.Write(operationalRoot, pid, budget.ConsumedMs, budget.DeclaredMs);
+                // The kill is this quit's last resort, and the handle is waited for inside what is
+                // LEFT of the same budget: a process that will not even die adds no written-down time
+                // to a deadline that already ran out.
+                _ = await WaitForExitWithinAsync(child, budget.RemainingMs).ConfigureAwait(false);
             }
             child.Dispose();
         }
@@ -1029,16 +1037,16 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits for the exact child to leave, bounded by the deadline the child itself declared, and
-    /// reports whether it left inside it.
+    /// Waits for the exact child to leave, bounded by what is left of the quit's budget, and reports
+    /// whether it left inside it.
     ///
     /// The caller's token is deliberately not observed: the quit is already under way, and the one
     /// thing it still has to learn is whether the child left. A child that is already gone returns at
     /// once - the wait is on the process handle, not a sleep.
     /// </summary>
-    private static async Task<bool> WaitForExitWithinAsync(WindowsNative.SafeProcessHandle child, long drainDeadlineMs)
+    private static async Task<bool> WaitForExitWithinAsync(WindowsNative.SafeProcessHandle child, long remainingBudgetMs)
     {
-        var bounded = (uint)Math.Clamp(drainDeadlineMs, 0, int.MaxValue);
+        var bounded = (uint)Math.Clamp(remainingBudgetMs, 0, int.MaxValue);
         var result = await Task.Run(() => WindowsNative.WaitForSingleObject(child, bounded), CancellationToken.None).ConfigureAwait(false);
         return result == WindowsNative.WaitObject0;
     }

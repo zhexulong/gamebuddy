@@ -73,7 +73,7 @@ public sealed class GuardianBrokerTests
         Assert.Contains("byte? queuedCommandFirstByte", source, StringComparison.Ordinal);
         Assert.Contains("ReadFrameAsync(cancellationToken, queuedCommandFirstByte)", source, StringComparison.Ordinal);
         Assert.Contains("if (firstByte is null)", source, StringComparison.Ordinal);
-        Assert.Contains("await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None)", source, StringComparison.Ordinal);
+        Assert.Contains("await guardian.CloseControlAndWaitForExitAsync(GuardianSupervisorLease.ContainmentCeilingMs, CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.Contains("if (sessionClosing.IsCancellationRequested) throw new GuardianLaunchUnavailableException();", source, StringComparison.Ordinal);
         Assert.Contains("parsed.ThrowIfExpired(commandCancellation);\n                AdvanceTransition(parsed);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("deadlineUnixMs =", source, StringComparison.Ordinal);
@@ -135,7 +135,7 @@ public sealed class GuardianBrokerTests
         var relay = source.IndexOf("var relay = guardian!.RelayResidentAsync", StringComparison.Ordinal);
         var pipeRead = source.IndexOf("var pipeRead = WatchForHostPipeReadAsync", relay, StringComparison.Ordinal);
         var eof = source.IndexOf("if (firstByte is null)", pipeRead, StringComparison.Ordinal);
-        var cleanup = source.IndexOf("await guardian.CloseControlAndWaitForExitAsync(CancellationToken.None)", eof, StringComparison.Ordinal);
+        var cleanup = source.IndexOf("await guardian.CloseControlAndWaitForExitAsync(GuardianSupervisorLease.ContainmentCeilingMs, CancellationToken.None)", eof, StringComparison.Ordinal);
         var acknowledgement = source.IndexOf("await WriteAcknowledgementAsync", cleanup, StringComparison.Ordinal);
 
         Assert.True(relay >= 0 && pipeRead > relay && eof > pipeRead && cleanup > eof && acknowledgement > cleanup);
@@ -163,7 +163,7 @@ public sealed class GuardianBrokerTests
         Assert.Contains("BindDeadline(cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("await CloseControlAsync(CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.Contains("CloseControlAndWaitForExitAsync", source, StringComparison.Ordinal);
-        Assert.Contains("WaitForExitAsync(cancellationToken, 30_000)", source, StringComparison.Ordinal);
+        Assert.Contains("WaitForExitAsync(cancellationToken, ContainmentCeilingMs)", source, StringComparison.Ordinal);
         Assert.Contains("InjectArmToken", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Console.", source, StringComparison.Ordinal);
     }
@@ -172,11 +172,11 @@ public sealed class GuardianBrokerTests
     public void Broker_close_releases_the_host_facing_pipe_before_the_guardian_control_it_relays_to()
     {
         var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
-        var close = source.IndexOf("internal async Task CloseAsync(CancellationToken cancellationToken)", StringComparison.Ordinal);
+        var close = source.IndexOf("internal async Task CloseAsync(ShutdownBudget budget, CancellationToken cancellationToken)", StringComparison.Ordinal);
         // The Host-facing pipe is the child's controller EOF. Closing it first is what lets a child
         // that is already reclaiming finish; closing it last made every clean quit a kill.
         var pipe = source.IndexOf("server.Dispose();", close, StringComparison.Ordinal);
-        var guardianControl = source.IndexOf("if (guardian is not null) await guardian.CloseControlAndWaitForExitAsync(cancellationToken)", close, StringComparison.Ordinal);
+        var guardianControl = source.IndexOf("await guardian.CloseControlAndWaitForExitAsync(budget.Take(GuardianSupervisorLease.ContainmentCeilingMs), cancellationToken)", close, StringComparison.Ordinal);
 
         Assert.True(pipe > close && guardianControl > pipe);
     }
