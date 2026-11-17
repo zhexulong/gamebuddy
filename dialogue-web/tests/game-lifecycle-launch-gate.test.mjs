@@ -227,7 +227,7 @@ test("a setup retry may use a fresh key exactly when the reading proves nothing 
     ...registered,
     game: {
       ...registered.game,
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
     },
   };
   assert.equal(

@@ -65,7 +65,7 @@ const root = {
     csrfToken,
     browserSession: { expiresAtMs: 1_900_000_000_000 },
     game: {
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
       instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },

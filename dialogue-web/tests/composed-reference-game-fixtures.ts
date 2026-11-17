@@ -62,7 +62,7 @@ export const game = {
   csrfToken,
   browserSession: { expiresAtMs },
   game: {
-    prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+    prerequisites: { status: "unknown", detectedGame: null },
     instance: { status: "none", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
@@ -141,7 +141,7 @@ export const stagedGame = {
   ...game,
   game: {
     ...game.game,
-    prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+    prerequisites: { status: "met", detectedGame: "Stardew Valley" },
     instance: { status: "none", gameTitle: null, generation: 1 },
   },
 };
@@ -161,7 +161,7 @@ export const installedGame = {
   ...game,
   game: {
     ...game.game,
-    prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+    prerequisites: { status: "met", detectedGame: "Stardew Valley" },
   },
 };
 

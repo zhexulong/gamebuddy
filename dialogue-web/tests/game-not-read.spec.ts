@@ -57,7 +57,7 @@ const chat = {
  * answers with setup and activation.
  */
 const UNREAD_GAME = {
-  prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+  prerequisites: { status: "met", detectedGame: "Stardew Valley" },
   instance: { status: "unread", gameTitle: null, generation: 0 },
   compatibility: { status: "unchecked", message: null },
   attachment: { status: "none", generation: 0 },

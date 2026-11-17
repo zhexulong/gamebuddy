@@ -196,7 +196,7 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
     ...game,
     game: {
       ...game.game,
-      prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+      prerequisites: { status: "met", detectedGame: "Stardew Valley" },
       instance: { status: "none", gameTitle: null, generation: 1 },
     },
   };

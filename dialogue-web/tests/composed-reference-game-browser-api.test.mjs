@@ -60,7 +60,7 @@ function gameSnapshot(overrides = {}) {
     csrfToken: HANDLE,
     browserSession: { expiresAtMs: 1000 },
     game: {
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
       instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },
@@ -156,6 +156,19 @@ test("composed validator is closed and binds nested Chat and Game to one browser
     () => validateComposedReferenceGameRoot(root(gameSnapshot({ launchPath: "C:/forged" }))),
     ComposedReferenceGameProtocolError,
   );
+});
+
+test("composed Game projection refuses the unmet prerequisite status and a missing-items list", () => {
+  for (const prerequisites of [
+    { status: "unmet", detectedGame: null },
+    { status: "unknown", detectedGame: null, missingItems: [] },
+  ]) {
+    assert.throws(
+      () => validateComposedReferenceGameRoot(root(gameSnapshot({ prerequisites }))),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_composed_game",
+      JSON.stringify(prerequisites),
+    );
+  }
 });
 
 test("composed Game projection admits the resume-phase syncing status while staying closed to unknown statuses", () => {

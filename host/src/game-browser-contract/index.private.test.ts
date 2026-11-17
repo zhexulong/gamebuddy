@@ -43,7 +43,7 @@ const baseState = {
   csrfToken: handle,
   browserSession: { expiresAtMs: 100_000 },
   game: {
-    prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
+    prerequisites: { status: "met", detectedGame: "Stardew Valley" },
     instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
     compatibility: { status: "compatible" as const, message: null },
     attachment: { status: "none" as const, generation: 0 },
@@ -364,13 +364,27 @@ test("GameBrowserStateV1 rejects action ID in nested game fields", () => {
 
 test("GameBrowserStateV1 accepts all valid prerequisite statuses", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  for (const status of ["unknown", "met", "unmet", "checking", "failed"] as const) {
+  for (const status of ["unknown", "met", "checking", "failed"] as const) {
     assert.equal(
       validator.Check({
         ...baseState,
-        game: { ...baseState.game, prerequisites: { status, detectedGame: null, missingItems: [] } },
+        game: { ...baseState.game, prerequisites: { status, detectedGame: null } },
       }),
       true,
+    );
+  }
+});
+
+test("GameBrowserStateV1 refuses the unmet status and the missing-items list the contract no longer declares", () => {
+  const validator = Compile(GameBrowserStateV1Schema);
+  for (const prerequisites of [
+    { status: "unmet", detectedGame: null },
+    { status: "unknown", detectedGame: null, missingItems: [] },
+  ]) {
+    assert.equal(
+      validator.Check({ ...baseState, game: { ...baseState.game, prerequisites } }),
+      false,
+      JSON.stringify(prerequisites),
     );
   }
 });
@@ -380,7 +394,7 @@ test("GameBrowserStateV1 rejects invalid prerequisite status", () => {
   assert.equal(
     validator.Check({
       ...baseState,
-      game: { ...baseState.game, prerequisites: { status: "invented", detectedGame: null, missingItems: [] } },
+      game: { ...baseState.game, prerequisites: { status: "invented", detectedGame: null } },
     }),
     false,
   );
@@ -393,7 +407,7 @@ test("GameBrowserStateV1 rejects prerequisite with extra field", () => {
       ...baseState,
       game: {
         ...baseState.game,
-        prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [], installPath: "C:\\games" },
+        prerequisites: { status: "met", detectedGame: "Stardew Valley", installPath: "C:\\games" },
       },
     }),
     false,

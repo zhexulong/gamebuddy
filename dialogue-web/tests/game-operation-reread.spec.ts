@@ -80,7 +80,7 @@ function composedRoot(state: HostState) {
       csrfToken,
       browserSession: { expiresAtMs },
       game: {
-        prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+        prerequisites: { status: "met", detectedGame: "Stardew Valley" },
         instance: { status: state.instanceStatus, gameTitle: "Stardew Valley", generation: state.instanceGeneration },
         compatibility: { status: "compatible", message: null },
         attachment: { status: state.attachmentStatus, generation: state.attachmentGeneration },

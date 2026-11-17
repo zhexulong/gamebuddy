@@ -131,7 +131,6 @@ export const GAME_BROWSER_PROBLEM_CODES_V1: readonly Static<typeof GameProblemCo
 const PrerequisiteStatus = Type.Union([
   Type.Literal("unknown"),
   Type.Literal("met"),
-  Type.Literal("unmet"),
   Type.Literal("checking"),
   Type.Literal("failed"),
 ]);
@@ -209,30 +208,20 @@ const CompanionName = Type.Union([Type.String({ minLength: 1, maxLength: 256 }),
 const SafeWorldLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]);
 const SafeSaveLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]);
 const CompatibilityMessage = Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]);
-const MissingItemLabel = Type.String({ minLength: 1, maxLength: 256 });
 const GameTitleLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]);
 
 /**
  * The prerequisite projection `game.state.read` publishes.
  *
- * Reserved members: `missingItems` is DECLARED BUT UNPRODUCED, and the
- * `unmet` / `checking` / `failed` statuses are declared with no producer. The one
- * shipped producer (`game-browser/game-browser-state-provider.ts:88-90`) writes
- * only `met` or `unknown` and always an empty `missingItems`, because the Host's
- * own readiness facts are binary - an `registered`/`absent` installation view plus
- * a launch-readiness status - and no shipped reader enumerates individual missing
- * prerequisites. The only per-item prerequisite strings in the tree ride the
- * installation-discovery route (`GET .../installation/discovery`), the sole place
- * they are honestly scoped. Rendering an always-empty list is not a fix;
- * producing entries would first take a reader that enumerates missing
- * prerequisites, which does not exist. The client keeps the full vocabulary
- * (`dialogue-web/src/composed-reference-game-browser-api.ts`), so a future
- * producer needs no contract change.
+ * Two facts and no third: whether the bound installation is registered, and which game that is. The
+ * Host's readiness view is binary - an `registered`/`absent` installation plus a launch-readiness
+ * status - so it has no per-item list to publish. "What am I missing" is answered by the
+ * installation-discovery route (`GET .../installation/discovery`), which names the candidate folders
+ * it found, whether the chosen one holds a mod loader, and which channel it could not read.
  */
 const GamePrerequisiteStateV1Schema = strictObject({
   status: PrerequisiteStatus,
   detectedGame: DetectedGameLabel,
-  missingItems: Type.Array(MissingItemLabel, { maxItems: 50 }),
 });
 
 const GameInstanceV1Schema = strictObject({
@@ -1065,7 +1054,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
       csrfToken: fixtureHandle,
       browserSession: { expiresAtMs: 100_000 },
       game: {
-        prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
+        prerequisites: { status: "met" as const, detectedGame: "Stardew Valley" },
         instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "none" as const, generation: 0 },
@@ -1086,7 +1075,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
       csrfToken: fixtureHandle,
       browserSession: { expiresAtMs: 100_000 },
       game: {
-        prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
+        prerequisites: { status: "met" as const, detectedGame: "Stardew Valley" },
         instance: { status: "running" as const, gameTitle: "Stardew Valley", generation: 3 },
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "attached" as const, generation: 3 },

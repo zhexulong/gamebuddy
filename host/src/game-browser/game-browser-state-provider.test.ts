@@ -117,7 +117,7 @@ test("spawned Player Host projects only met prerequisite and truthful launching 
     attachment(),
     launchReadiness(),
   ).readState(context);
-  assert.deepEqual(state.game.prerequisites, { status: "met", detectedGame: "Stardew Valley", missingItems: [] });
+  assert.deepEqual(state.game.prerequisites, { status: "met", detectedGame: "Stardew Valley" });
   assert.deepEqual(state.game.instance, { status: "launching", gameTitle: "Stardew Valley", generation: 0 });
   assert.equal(JSON.stringify(state).includes("C:\\\\"), false);
 });
@@ -193,7 +193,7 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
   );
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
-    prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+    prerequisites: { status: "unknown", detectedGame: null },
     instance: { status: "none", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
@@ -217,7 +217,7 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
   ).readState(context);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
-    prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+    prerequisites: { status: "unknown", detectedGame: null },
     instance: { status: "unread", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
@@ -555,7 +555,6 @@ test("terminal launch failure remains met/crashed without a retry generation", a
   assert.deepEqual(failed.game.prerequisites, {
     status: "met",
     detectedGame: "Stardew Valley",
-    missingItems: [],
   });
   assert.deepEqual(failed.game.instance, {
     status: "crashed",

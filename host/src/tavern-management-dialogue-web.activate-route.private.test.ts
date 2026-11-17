@@ -331,7 +331,7 @@ test("a running game refuses the switch by name, and the player is told to stop 
     csrfToken: "csrf",
     browserSession: { expiresAtMs: 1 },
     game: {
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
       instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },

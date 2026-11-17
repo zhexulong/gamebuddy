@@ -230,8 +230,8 @@ function projectGameBrowserState(
       : { eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }) }),
     game: Object.freeze({
       prerequisites: prerequisitesMet
-        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
-        : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
+        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley" })
+        : Object.freeze({ status: "unknown" as const, detectedGame: null }),
       ...facts.instance.game,
       ...facts.attachment.game,
       ...facts.selectedWorld.game,

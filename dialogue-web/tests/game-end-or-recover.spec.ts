@@ -52,7 +52,7 @@ const chat = {
 type GameFacts = Readonly<Record<string, unknown>>;
 
 const ATTACHED_CONNECTED: GameFacts = {
-  prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+  prerequisites: { status: "met", detectedGame: "Stardew Valley" },
   instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
   compatibility: { status: "compatible", message: null },
   attachment: { status: "attached", generation: 1 },

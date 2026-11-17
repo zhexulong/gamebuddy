@@ -181,7 +181,7 @@ void test("the Host's own note becomes the player's sentence, never the Host's E
 void test("the capability board states one line, and which silence a session is in", () => {
   const labels = messages("en");
   const projection = (available: boolean, count: number, companionName: string | null, attached = true) => ({
-    prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
+    prerequisites: { status: "met" as const, detectedGame: null },
     instance: { status: "running" as const, gameTitle: null, generation: 1 },
     compatibility: { status: "compatible" as const, message: null },
     attachment: attached ? { status: "attached" as const, generation: 1 } : { status: "none" as const, generation: 0 },

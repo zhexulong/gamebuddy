@@ -74,7 +74,7 @@ const composedRoot = {
     csrfToken,
     browserSession: { expiresAtMs },
     game: {
-      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown", detectedGame: null },
       instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },

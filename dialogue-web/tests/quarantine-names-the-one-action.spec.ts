@@ -50,7 +50,7 @@ const QUARANTINED_ROOT: Readonly<Record<QuarantineKey, unknown>> = {
       ...game,
       game: {
         ...game.game,
-        prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+        prerequisites: { status: "met", detectedGame: "Stardew Valley" },
         instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },
         latestOutcome: "failed",
       },
@@ -62,7 +62,7 @@ const QUARANTINED_ROOT: Readonly<Record<QuarantineKey, unknown>> = {
       ...game,
       game: {
         ...game.game,
-        prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+        prerequisites: { status: "met", detectedGame: "Stardew Valley" },
         instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0 },
       },
     },

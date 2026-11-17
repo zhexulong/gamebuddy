@@ -46,9 +46,8 @@ const MAX_GAME_LABEL_LENGTH = 256;
 const MAX_CABIN_DISPLAY_LABEL_LENGTH = 128;
 const MAX_CABIN_CHOICES = 64;
 const MAX_GAME_MESSAGE_LENGTH = 512;
-const MAX_GAME_MISSING_ITEMS = 50;
 
-const PREREQUISITE_STATUSES = ["unknown", "met", "unmet", "checking", "failed"] as const;
+const PREREQUISITE_STATUSES = ["unknown", "met", "checking", "failed"] as const;
 const INSTANCE_STATUSES = ["none", "detected", "launching", "running", "stopped", "crashed", "unread"] as const;
 const COMPATIBILITY_STATUSES = ["unchecked", "compatible", "incompatible", "warning"] as const;
 const ATTACHMENT_STATUSES = ["none", "pending", "attached", "detaching", "failed"] as const;
@@ -189,7 +188,7 @@ const GAME_FACTS = ["instance", "attachment", "selectedWorld"] as const;
 const GAME_EVENT_TYPES = ["game.fact_changed", "game.stream_resync_required"] as const;
 const GAME_RESYNC_REASONS = ["gap", "epoch_changed", "ambiguous_cursor"] as const;
 const GAME_BUILD_KEYS = ["browserContract", "profileId"] as const;
-const GAME_PREREQUISITES_KEYS = ["status", "detectedGame", "missingItems"] as const;
+const GAME_PREREQUISITES_KEYS = ["status", "detectedGame"] as const;
 const GAME_INSTANCE_REQUIRED_KEYS = ["status", "gameTitle", "generation"] as const;
 /**
  * The instance members the contract declares `Type.Optional`. `playerHostExitCode` is one: it
@@ -222,7 +221,6 @@ export type GameBrowserStateV1 = Readonly<{
     prerequisites: Readonly<{
       status: (typeof PREREQUISITE_STATUSES)[number];
       detectedGame: string | null;
-      missingItems: readonly string[];
     }>;
     instance: Readonly<{
       status: (typeof INSTANCE_STATUSES)[number];
@@ -1106,10 +1104,7 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
     !isRecord(game.prerequisites) ||
     !hasExactKeys(game.prerequisites, GAME_PREREQUISITES_KEYS) ||
     !isOneOf(game.prerequisites.status, PREREQUISITE_STATUSES) ||
-    !isNullableLabel(game.prerequisites.detectedGame, MAX_GAME_LABEL_LENGTH) ||
-    !Array.isArray(game.prerequisites.missingItems) ||
-    game.prerequisites.missingItems.length > MAX_GAME_MISSING_ITEMS ||
-    !game.prerequisites.missingItems.every((item) => isBoundedString(item, 1, MAX_GAME_LABEL_LENGTH))
+    !isNullableLabel(game.prerequisites.detectedGame, MAX_GAME_LABEL_LENGTH)
   ) {
     return false;
   }

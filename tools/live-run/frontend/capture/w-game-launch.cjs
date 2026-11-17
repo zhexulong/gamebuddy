@@ -196,7 +196,6 @@ const readGameState = async () => {
       status: response.status,
       prerequisites: game?.prerequisites?.status ?? null,
       detectedGame: game?.prerequisites?.detectedGame ?? null,
-      missingItems: Array.isArray(game?.prerequisites?.missingItems) ? game.prerequisites.missingItems : null,
       instanceStatus: game?.instance?.status ?? null,
       instanceGeneration: game?.instance?.generation ?? null,
       attachmentStatus: game?.attachment?.status ?? null,

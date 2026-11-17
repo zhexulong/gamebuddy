@@ -444,7 +444,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
 export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<typeof deriveGameSessionControls>[0]>> =
   (() => {
     const PROJECTION = Object.freeze({
-      prerequisites: Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] }),
+      prerequisites: Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley" }),
       instance: Object.freeze({ status: "running" as const, gameTitle: "Stardew Valley", generation: 1 }),
       compatibility: Object.freeze({ status: "compatible" as const, message: null }),
       attachment: Object.freeze({ status: "none" as const, generation: 0 }),
@@ -467,7 +467,7 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       });
     const unstarted = (overrides: Partial<GameBrowserStateV1["game"]> = {}) =>
       game({
-        prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+        prerequisites: { status: "unknown", detectedGame: null },
         instance: { status: "none", gameTitle: null, generation: 0 },
         actionAuthority: "unavailable",
         ...overrides,
@@ -494,7 +494,7 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       // instead - the shape `tests/game-panel-forward-path.spec.ts` mounts.
       pre_activation: input(
         unstarted({
-          prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+          prerequisites: { status: "met", detectedGame: "Stardew Valley" },
         }),
       ),
       activated_not_launched: input(

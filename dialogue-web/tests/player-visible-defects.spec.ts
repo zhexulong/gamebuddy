@@ -91,7 +91,7 @@ function composedRoot(overrides: GameProjectionOverrides = {}) {
       csrfToken,
       browserSession: { expiresAtMs },
       game: {
-        prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+        prerequisites: { status: "unknown", detectedGame: null },
         instance: { status: instanceStatus, gameTitle: null, generation: 0 },
         compatibility: { status: "unchecked", message: null },
         attachment: { status: overrides.attachmentStatus ?? "none", generation: 0 },

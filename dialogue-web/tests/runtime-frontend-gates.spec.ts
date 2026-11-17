@@ -165,7 +165,7 @@ function composedRoot(options: FixtureOptions = {}) {
       csrfToken,
       browserSession: { expiresAtMs },
       game: {
-        prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+        prerequisites: { status: "unknown", detectedGame: null },
         instance: { status: "none", gameTitle: null, generation: 0 },
         compatibility: { status: "unchecked", message: null },
         attachment: { status: "none", generation: 0 },
@@ -1420,7 +1420,7 @@ test("game.3: while disconnected the start guide presents the existing controls 
         ...staged.game,
         game: {
           ...staged.game.game,
-          prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+          prerequisites: { status: "met", detectedGame: "Stardew Valley" },
           instance: { status: "none", gameTitle: "Stardew Valley", generation: 1 },
         },
       },
