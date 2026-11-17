@@ -268,7 +268,7 @@ test("a_turn_is_opened_where_no_surface_can_present", async () => {
       1,
       `${label}: the declined fact travels exactly once, in the batch that could present it`,
     );
-    assert.equal(pump.turnAccount.carry.pending, 0, `${label}: and nothing is left waiting`);
+    assert.equal(pump.turnAccount.carry.held, 0, `${label}: and nothing is left waiting`);
   }
 
   const tally = `consequences examined ${String(cases.length)} · presentable ${String(presentable.length)} · wake ${String(wakes.length)} · carried ${String(carried.length)} · opened-without-a-surface ${String(openedWithoutSurface.length)}`;

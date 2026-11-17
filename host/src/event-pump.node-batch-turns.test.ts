@@ -45,8 +45,9 @@ import { MAX_BODY_PROGRAM_NODES } from "./protocol.js";
  * "she knows" is the settle hop, not a turn per node. A terminal receipt belonging to NO programme has no settlement to
  * wake her; it waits for the next presentable fact, whose population is `PRESENTATION_LEASE_KINDS` (the Mod's five
  * clock marks a day, `ISalientEventFilter.AllowedMilestones`: 600, 1200, 1800, 2200, 2400, plus the day boundary, her
- * arrival, a native notice and any player word). The pump imposes NO bound of its own: 60 node receipts with nothing
- * presentable stay `pending 60`, by measurement.
+ * arrival, a native notice and any player word). The pump imposes NO bound on the TURN (60 node receipts with nothing
+ * presentable open no turn, by measurement); the WAIT for one is bounded separately (`CARRY_HOLD_BOUND_MS`), and past it
+ * the receipts are counted as `lost` instead of still described as `held`.
  * </p>
  * <p>
  * THE POPULATION IS THE PLAN'S OWN BOUND, not a count written here: the smallest plan, the 60-node plan the `for` loop

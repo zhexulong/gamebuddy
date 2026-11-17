@@ -23,6 +23,8 @@ import {
   BUBBLES_DELIVERED,
   CARRIED,
   CompanionEventPump,
+  CONSUMED,
+  HELD,
   EXECUTION_STALL_SEMANTIC_KIND,
   emptyTurnShapes,
   FACT_PRODUCER,
@@ -677,7 +679,13 @@ function readTurnAccountLine(line: string): Readonly<{
     producers: Record<string, Record<string, number>>;
   }>;
   examined: number;
-  carried: Readonly<{ total: number; pending: number }>;
+  carried: Readonly<{
+    carried: number;
+    consumed: number;
+    lostTotal: number;
+    lost: Record<string, number>;
+    held: number;
+  }>;
   traces: Readonly<{ total: number; counts: Record<string, number> }>;
   stalled: Readonly<{ total: number; counts: Record<string, number> }>;
   delivery: Readonly<{ bubbles: number; lostTotal: number; lost: Record<string, number> }>;
@@ -700,6 +708,9 @@ function readTurnAccountLine(line: string): Readonly<{
     FLUSHES_EXAMINED,
     NOT_OWED_LABEL,
     CARRIED,
+    CONSUMED,
+    LOST,
+    HELD,
     TRACES,
     BUBBLES_DELIVERED,
     LOST,
@@ -730,6 +741,9 @@ function readTurnAccountLine(line: string): Readonly<{
     examinedSegment,
     notOwedSegment,
     carriedSegment,
+    consumedCarrySegment,
+    lostCarrySegment,
+    heldCarrySegment,
     tracesSegment,
     bubblesSegment,
     lostSegment,
@@ -742,6 +756,7 @@ function readTurnAccountLine(line: string): Readonly<{
     declinedSegment,
     rearmedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -779,7 +794,13 @@ function readTurnAccountLine(line: string): Readonly<{
       producers: notOwedSegment.producers,
     }),
     examined: examinedSegment.total,
-    carried: Object.freeze({ total: carriedSegment.total, pending: carriedSegment.counts.pending ?? 0 }),
+    carried: Object.freeze({
+      carried: carriedSegment.total,
+      consumed: consumedCarrySegment.total,
+      lostTotal: lostCarrySegment.total,
+      lost: lostCarrySegment.counts,
+      held: heldCarrySegment.total,
+    }),
     traces: Object.freeze({ total: tracesSegment.total, counts: tracesSegment.counts }),
     delivery: Object.freeze({ bubbles: bubblesSegment.total, lostTotal: lostSegment.total, lost: lostSegment.counts }),
     stalled: Object.freeze({ total: stalledSegment.total, counts: stalledSegment.counts }),
@@ -948,7 +969,7 @@ test("the account line reads back into the account it names", () => {
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
-    carry: Object.freeze({ carried: 9, pending: 2 }),
+    carry: Object.freeze({ carried: 11, consumed: 9, lost: Object.freeze({}), lostTotal: 0, held: 2 }),
     traces: Object.freeze({ ...tracesAtZero(), [TRACE_KINDS[0]!]: 2, [TRACE_KINDS[1]!]: 2 }),
     stalled: Object.freeze({ total: 2, byReason: Object.freeze({ entity_block: 2 }) }),
     delivery: Object.freeze({ bubbles: 7, lost: Object.freeze({ no_presentation_lease: 1 }), lostTotal: 1 }),
@@ -995,6 +1016,19 @@ test("the account line reads back into the account it names", () => {
   );
   assert.deepEqual(parsed.notOwed.counts, account.notOwed);
   assert.equal(parsed.examined, account.examined);
+  // THE CARRY LEDGER IS AN ARITHMETIC, not three numbers beside one another: `carried` is the population and the other three
+  // partition it, so a fact cannot leave it by a door nobody counted. `round68`'s last two settlements left by exactly that
+  // door - ticketed, never delivered - and the line said `carried 2`, which is why the loss has its own segment now.
+  assert.equal(parsed.carried.carried, account.carry.carried, "the carried population reads back");
+  assert.equal(parsed.carried.consumed, account.carry.consumed, "and how much of it arrived");
+  assert.equal(parsed.carried.lostTotal, account.carry.lostTotal, "and how much of it nobody took");
+  assert.deepEqual(parsed.carried.lost, { ...account.carry.lost }, "named by the shape that could not present");
+  assert.equal(parsed.carried.held, account.carry.held, "and what is still inside the bound");
+  assert.equal(
+    parsed.carried.carried,
+    parsed.carried.consumed + parsed.carried.lostTotal + parsed.carried.held,
+    "the three outcomes must add up to the population, or a carried fact has found a fourth way to disappear",
+  );
   // THE TRACE SEGMENT IS A MAP, not a total: `traces 4` could not say which four, which is the reading `round65` needed
   // and could not get. The kinds are the pump's own declared population, so a kind that stopped reads `0` rather than
   // vanishing from the line.
@@ -1110,7 +1144,7 @@ test("the account line names a member that never fired, in both histograms", () 
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
-    carry: Object.freeze({ carried: 0, pending: 0 }),
+    carry: Object.freeze({ carried: 0, consumed: 0, lost: Object.freeze({}), lostTotal: 0, held: 0 }),
     traces: Object.freeze(tracesAtZero()),
     stalled: Object.freeze({ total: 0, byReason: Object.freeze({}) }),
     delivery: Object.freeze({ bubbles: 0, lost: Object.freeze({}), lostTotal: 0 }),
@@ -1160,7 +1194,7 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /per delivered batch: turns opened, flushes examined, not owed, carried, traces, bubbles delivered, lost, stalled, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
+    /per delivered batch: turns opened, flushes examined, not owed, carried, consumed, lost, held, traces, bubbles delivered, lost, stalled, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });

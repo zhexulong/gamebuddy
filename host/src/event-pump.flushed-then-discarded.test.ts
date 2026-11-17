@@ -58,8 +58,10 @@ function flushReading(account: TurnAccount): Readonly<{
   opened: number;
   notOwed: number;
   discarded: number;
+  /** Every fact a `not_owed` answer ticketed, and the three states it can leave in (`event-pump.ts#CARRY_HOLD_BOUND_MS`). */
   carried: number;
-  pending: number;
+  consumed: number;
+  held: number;
   /** The trace count, by the kind that produced it: the reading `traces N` alone could not give. */
   traces: Readonly<Record<string, number>>;
 }> {
@@ -72,13 +74,14 @@ function flushReading(account: TurnAccount): Readonly<{
     // rather than the sum of its own terms.
     discarded: account.examined - account.opened,
     carried: account.carry.carried,
-    pending: account.carry.pending,
+    consumed: account.carry.consumed,
+    held: account.carry.held,
     traces: account.traces,
   });
 }
 
 function describe(reading: ReturnType<typeof flushReading>, account: TurnAccount): string {
-  return `flushes examined ${String(reading.examined)} · opened ${String(reading.opened)} · named-refused ${String(reading.notOwed)} · discarded ${String(reading.discarded)} · carried ${String(reading.carried)} · pending ${String(reading.pending)} · traces ${JSON.stringify(reading.traces)} · not owed ${JSON.stringify(account.notOwed)}`;
+  return `flushes examined ${String(reading.examined)} · opened ${String(reading.opened)} · named-refused ${String(reading.notOwed)} · discarded ${String(reading.discarded)} · carried ${String(reading.carried)} · consumed ${String(reading.consumed)} · held ${String(reading.held)} · traces ${JSON.stringify(reading.traces)} · not owed ${JSON.stringify(account.notOwed)}`;
 }
 
 function snapshotFact(revision: number): WorldFact {
@@ -344,7 +347,8 @@ test("fact_flushed_then_discarded:carried, every fact that owed no turn reaches 
   assert.equal(notOwed.carry.facts.length, 2, "the ticket names both facts that are waiting");
   assert.equal(pump.carriedInto(notOwed.carry), undefined, "and answers `not yet` until a batch consumes them");
   const before = flushReading(pump.turnAccount);
-  assert.equal(before.carried, 0, "nothing has been carried yet");
+  assert.equal(before.consumed, 0, "nothing has been consumed yet: a ticket is not a delivery");
+  assert.equal(before.held, 2, "both are held, which is the promise a `not_owed` answer makes");
 
   pump.enqueuePlayerInput(PLAYER_INPUT);
   const opened = await pump.flush(turns.sink);
@@ -356,8 +360,9 @@ test("fact_flushed_then_discarded:carried, every fact that owed no turn reaches 
     "the ticket resolves to the batch that carried those exact facts",
   );
   const after = flushReading(pump.turnAccount);
-  assert.equal(after.carried, 2, "and both facts are counted as arrived: 事件守恒 —— 一个都不许消失");
-  assert.equal(after.pending, 0, "nothing is left waiting");
+  assert.equal(after.consumed, 2, "and both facts are counted as arrived: 事件守恒 —— 一个都不许消失");
+  assert.equal(after.held, 0, "nothing is left waiting");
+  assert.equal(after.carried, 2, "and the population is the two facts the ledger closed over");
   assert.equal(turns.batches[0]!.facts.filter((fact) => fact.kind === "semantic_event").length, 2);
 });
 
@@ -471,11 +476,11 @@ test("the account line prints the flush, the carry and the loss in one reading",
   assert.equal(reading.examined, 1, "one batch was composed");
   assert.equal(reading.opened, 1, "and it opened one turn");
   assert.equal(reading.notOwed, 1, "one call owed no turn");
-  assert.equal(reading.carried, 1, "and the trace it declined was carried by the turn that followed");
+  assert.equal(reading.consumed, 1, "and the trace it declined was carried by the turn that followed");
   const line = turnAccountLine(pump.turnAccount);
   assert.match(line, /flushes examined 1/u, line);
   assert.match(line, /turns opened 1/u, line);
-  assert.match(line, /carried 1 \{pending: 0\}/u, line);
+  assert.match(line, /carried 1 · consumed 1 · lost 0 · held 0/u, line);
   assert.match(line, /traces 1/u, line);
 });
 
