@@ -13,6 +13,7 @@ import {
   turnAccountLine,
   type WorldFact,
 } from "./event-pump.js";
+import type { InFlightProgrammeReading } from "./program-status-wait.js";
 
 /**
  * THE SHAPE OF A FLUSH, AS A GATE RATHER THAN AS A COUNT.
@@ -109,6 +110,24 @@ function programmeStep(state: string, revision: number): WorldFact {
   };
 }
 
+/** The journal's own statement that a plan she dispatched still has nodes to get through. */
+function runningPlan(remaining: number): InFlightProgrammeReading {
+  return Object.freeze({
+    programmes: Object.freeze([
+      Object.freeze({
+        programId: "plan_walk",
+        total: remaining,
+        settled: 0,
+        remaining,
+        readAgeMs: 250,
+        nodes: Object.freeze([]),
+        omitted: 0,
+      }),
+    ]),
+    omittedProgrammes: 0,
+  });
+}
+
 /** A native notice: the game said something about the hour, and two copies of it say it once. */
 function noticeFact(published: number): WorldFact {
   return {
@@ -178,9 +197,27 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
   const scenarios: ReadonlyArray<
     Readonly<{
       reason: string;
+      /**
+       * The journal's own reading, for the answers that depend on what her plan still has to get through.
+       *
+       * A pump reads the real ledger (`readInFlightProgrammes`) unless it is given one, and in this process that ledger
+       * is empty - so the one reason whose whole subject is a RUNNING PLAN has to be driven with a reading that says
+       * so. It is the scenario's own input rather than a global, which is what keeps the other scenarios honest.
+       */
+      reading?: InFlightProgrammeReading;
       drive: (pump: CompanionEventPump, sink: { deliver(batch: PendingBatch): Promise<void> }) => Promise<void>;
     }>
   > = [
+    {
+      reason: NOT_OWED.planStillRunning,
+      reading: runningPlan(2),
+      drive: async (pump, sink) => {
+        // A HUD line the game showed, while her own plan still has nodes: it may open a turn, and the answer that plan
+        // is about to give is the batch it travels in (`event-pump.plan-keeps-the-turn.test.ts`).
+        pump.enqueueFact(noticeFact(0), FACT_PRODUCER.adapterIngress);
+        await pump.flush(sink);
+      },
+    },
     {
       reason: NOT_OWED.nothingPending,
       drive: async (pump, sink) => {
@@ -256,7 +293,9 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
   );
 
   for (const scenario of scenarios) {
-    const pump = new CompanionEventPump();
+    const pump = new CompanionEventPump(
+      scenario.reading === undefined ? undefined : () => scenario.reading as InFlightProgrammeReading,
+    );
     const turns = recorder();
     await scenario.drive(pump, turns.sink);
     const reading = flushReading(pump.turnAccount);

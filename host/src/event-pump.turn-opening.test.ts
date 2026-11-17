@@ -10,8 +10,6 @@ import {
   ASSISTANT_TURNS_EXAMINED,
   ASSISTANT_TURNS_TOOL_ONLY,
   ASSISTANT_TURNS_WITH_TEXT,
-  assistantTurnsToolOnly,
-  assistantTurnsWithText,
   AUTO_OBSERVE_AGED_TURNS,
   AUTO_OBSERVE_ON_STALE,
   AUTO_OBSERVE_REARM,
@@ -20,6 +18,8 @@ import {
   AUTO_OBSERVE_UNAVAILABLE,
   AUTO_OBSERVE_UNAVAILABLE_REASONS,
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+  assistantTurnsToolOnly,
+  assistantTurnsWithText,
   BUBBLES_DELIVERED,
   CARRIED,
   CompanionEventPump,
@@ -27,33 +27,34 @@ import {
   emptyTurnShapes,
   FACT_PRODUCER,
   FACT_PRODUCERS,
-  factContentIdentity,
+  type FactProducer,
   FLUSHES_EXAMINED,
+  factContentIdentity,
   HOST_MINTED_FACT_SOURCE,
   LOST,
   MAX_DELIVERED_FACT_IDENTITIES,
+  NOT_OWED,
   NOT_OWED_LABEL,
-  type PendingBatch,
+  NOT_OWED_REASONS,
+  type NotOwedReason,
   PER_DELIVERED_BATCH,
+  type PendingBatch,
   RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
   STALLED,
   TRACE_KINDS,
   TRACES,
-  tracedFacts,
   TURN_OPENING,
   TURN_OPENINGS,
   TURN_PRODUCTION,
   TURN_PRODUCTIONS,
   TURN_SETTLED_SILENT,
   TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
-  NOT_OWED,
-  NOT_OWED_REASONS,
   TURN_WITHOUT_ACTION,
   TURN_WITHOUT_ACTION_REASON,
   type TurnAccount,
-  type FactProducer,
   type TurnProduction,
+  tracedFacts,
   turnAccountLine,
   turnWithoutActionShape,
   turnWithoutActionToken,
@@ -820,6 +821,19 @@ function tracesAtZero(): Record<string, number> {
   return counts;
 }
 
+/**
+ * Every declared not-owed reason, with the given ones counted.
+ *
+ * Derived from `NOT_OWED_REASONS` for the same reason the histograms beside it are: a reason added to the closed list is
+ * PRINTED by `turnAccountLine`, so a fixture that spelled the members by hand would refuse to compile the day the pump
+ * learned a new answer - which is a test that has to be edited to keep measuring what it was written for.
+ */
+function notOwedCounts(overrides: Readonly<Record<string, number>> = {}): Record<NotOwedReason, number> {
+  const counts = {} as Record<NotOwedReason, number>;
+  for (const reason of NOT_OWED_REASONS) counts[reason] = overrides[reason] ?? 0;
+  return counts;
+}
+
 /** Every production member, with the given ones counted: the population is the pump's own closed list. */
 function assistantProductionCounts(overrides: Readonly<Record<string, number>>): Record<TurnProduction, number> {
   const counts = {} as Record<TurnProduction, number>;
@@ -885,15 +899,17 @@ test("the account line reads back into the account it names", () => {
         [TURN_OPENING.due]: { [FACT_PRODUCER.stallWatch]: 3 },
       }),
     ),
-    notOwed: Object.freeze({
-      [NOT_OWED.observationRestated]: 2,
-      [NOT_OWED.observationMoved]: 1,
-      [NOT_OWED.worldFactRestated]: 4,
-      [NOT_OWED.inFlightProgress]: 3,
-      [NOT_OWED.progress]: 6,
-      [NOT_OWED.noSurface]: 2,
-      [NOT_OWED.nothingPending]: 5,
-    }),
+    notOwed: Object.freeze(
+      notOwedCounts({
+        [NOT_OWED.observationRestated]: 2,
+        [NOT_OWED.observationMoved]: 1,
+        [NOT_OWED.worldFactRestated]: 4,
+        [NOT_OWED.inFlightProgress]: 3,
+        [NOT_OWED.progress]: 6,
+        [NOT_OWED.noSurface]: 2,
+        [NOT_OWED.nothingPending]: 5,
+      }),
+    ),
     noSurface: Object.freeze({ "receipt:succeeded": 2 }),
     notOwedByProducer: Object.freeze(
       producerHistograms(NOT_OWED_REASONS, {
@@ -1078,15 +1094,7 @@ test("the account line names a member that never fired, in both histograms", () 
       [TURN_OPENING.due]: 0,
     }),
     openedByProducer: Object.freeze(producerHistograms(TURN_OPENINGS)),
-    notOwed: Object.freeze({
-      [NOT_OWED.observationRestated]: 0,
-      [NOT_OWED.observationMoved]: 0,
-      [NOT_OWED.worldFactRestated]: 0,
-      [NOT_OWED.inFlightProgress]: 0,
-      [NOT_OWED.progress]: 0,
-      [NOT_OWED.noSurface]: 0,
-      [NOT_OWED.nothingPending]: 0,
-    }),
+    notOwed: Object.freeze(notOwedCounts()),
     noSurface: Object.freeze({}),
     notOwedByProducer: Object.freeze(producerHistograms(NOT_OWED_REASONS)),
     examined: 1,
