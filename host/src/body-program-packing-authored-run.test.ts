@@ -196,10 +196,19 @@ test("a step written on a packed tile consumes the use that covers it, so a fail
   // stale reference names a node the packing removed. Only containment separates them.
   const producers = [stepOn(nodes, "plant_seed", { x: 60, y: 20 }), stepOn(nodes, "plant_seed", { x: 61, y: 19 })].map(
     (step) => {
-      assert.equal(
-        step.dependsOn.length,
-        1,
-        `the step on ${String(integerOf(step, "x"))},${String(integerOf(step, "y"))} consumes exactly one use`,
+      const x = integerOf(step, "x");
+      const y = integerOf(step, "y");
+      // The population is the nodes that COVER the tile, read off the nodes themselves - so "exactly one" is asserted as
+      // "exactly these", and a packing that emitted two covering uses would name both rather than pass on a count.
+      // The `actionId` guard is not decoration: a step carries no footprint, and `coveredBy` on one answers nothing.
+      const covering = nodes
+        .filter((node) => node.actionId === "till_soil")
+        .filter((node) => coveredBy(node).some((tileCovered) => tileCovered.x === x && tileCovered.y === y))
+        .map((node) => node.nodeId);
+      assert.deepEqual(
+        step.dependsOn,
+        covering,
+        `the step on ${String(x)},${String(y)} consumes exactly the uses that cover it: ${covering.join(", ") || "none"}`,
       );
       return byId(nodes, step.dependsOn[0]!);
     },
