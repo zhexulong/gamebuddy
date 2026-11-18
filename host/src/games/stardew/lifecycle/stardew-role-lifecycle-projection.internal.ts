@@ -29,7 +29,7 @@
  */
 
 import type { StardewGameLifecycleState } from "./stardew-game-lifecycle-state.internal.js";
-import type { StardewRoleLifecycleView } from "./stardew-role-lifecycle-facade.js";
+import type { StardewRoleLifecycleView } from "../../../stardew-role-lifecycle-facade.js";
 
 type PlayerHostSlot = StardewRoleLifecycleView["playerHost"];
 

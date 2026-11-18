@@ -127,14 +127,14 @@ import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment
 import { FarmhandBridgeConnectionNotAvailableError } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { createStardewRoleLifecycleFacade, type StardewRoleLifecycleReader } from "./stardew-role-lifecycle-facade.js";
 import type { HostGameLifecycleSnapshot } from "./game-status/game-status.js";
-import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
+import { composeCoordinatorRoleLifecycleView } from "./games/stardew/lifecycle/stardew-role-lifecycle-projection.internal.js";
 import {
   STARDEW_GAME_LIFECYCLE_INITIAL_STATE,
   hasGameLifecycleTransition,
   isGameLifecycleClosing,
   isGameLifecyclePlayerHostUp,
   type StardewGameLifecycleState,
-} from "./stardew-game-lifecycle-state.internal.js";
+} from "./games/stardew/lifecycle/stardew-game-lifecycle-state.internal.js";
 import type {
   StardewOwnedPlayerHostStageCResult,
   StardewOwnedAiClientStageDResult,
@@ -1643,8 +1643,7 @@ function createCoordinator(
       // SAME exit code by construction - the settle only ever moves the record - so the
       // player never reads a different game than the one that ended.
       const exit = recordPlayerHostExit() ?? endedAttemptExit;
-      if (exit !== null)
-        return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
+      if (exit !== null) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
       if (lifecycleState === "launch_quarantined")
         return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
       if (exactOwner !== undefined && lifecycleState === "staged") {
@@ -2897,10 +2896,10 @@ function createCoordinator(
    *
    * Two endings are knowledge and both settle: the Guardian reported the Player Host
    * process gone, or an explicit endgame already settled the attempt durably.
-    * `launch_quarantined` is the opposite fact - a launch or an attestation whose outcome
-    * nobody knows - and it is answered first, because re-driving an unprovable native
-    * effect is exactly what must never be reachable through this door. Such an attempt
-    * keeps its generation and never settles, for this Host's life.
+   * `launch_quarantined` is the opposite fact - a launch or an attestation whose outcome
+   * nobody knows - and it is answered first, because re-driving an unprovable native
+   * effect is exactly what must never be reachable through this door. Such an attempt
+   * keeps its generation and never settles, for this Host's life.
    *
    * What makes the settle SAFE is that the next attempt can reach nothing of this one.
    * Under ADR-0015 the attempt is the Guardian session: its lease, both its Jobs, its

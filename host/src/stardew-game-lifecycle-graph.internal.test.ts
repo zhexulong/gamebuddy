@@ -48,8 +48,8 @@ import {
   STARDEW_GAME_LIFECYCLE_TRANSITIONS,
   STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS,
   isGameLifecyclePlayerHostUp,
-} from "./stardew-game-lifecycle-state.internal.js";
-import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
+} from "./games/stardew/lifecycle/stardew-game-lifecycle-state.internal.js";
+import { composeCoordinatorRoleLifecycleView } from "./games/stardew/lifecycle/stardew-role-lifecycle-projection.internal.js";
 import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
 import { composeGameProfile } from "./game-browser-contract/index.js";
 import type { StardewRoleLifecycleView } from "./stardew-role-lifecycle-facade.js";
@@ -274,7 +274,9 @@ export function lifecycleSiteTransitionFindings(
     );
   }
 
-  const attribution = (site: TransitionSite): Readonly<{ site: string; target: string; from: readonly string[] }> | undefined =>
+  const attribution = (
+    site: TransitionSite,
+  ): Readonly<{ site: string; target: string; from: readonly string[] }> | undefined =>
     input.siteTransitions.find((entry) => entry.site === site.site && entry.target === site.target);
 
   for (const site of input.sites) {
@@ -379,8 +381,10 @@ export function lifecycleDeclaredExitFindings(
     );
   }
   for (const [state, reason] of Object.entries(input.trapped)) {
-    if (!states.includes(state)) findings.push(`a_declared_trap_has_an_exit:${state} declares a reason but is no longer a state`);
-    else if (!reachable.has(state)) findings.push(`a_declared_trap_has_an_exit:${state} declares a reason but is unreachable`);
+    if (!states.includes(state))
+      findings.push(`a_declared_trap_has_an_exit:${state} declares a reason but is no longer a state`);
+    else if (!reachable.has(state))
+      findings.push(`a_declared_trap_has_an_exit:${state} declares a reason but is unreachable`);
     else if (reason.trim().length === 0) findings.push(`a_declared_trap_has_an_exit:${state} declares an empty reason`);
   }
   for (const state of states) {
@@ -391,7 +395,12 @@ export function lifecycleDeclaredExitFindings(
     );
   }
 
-  return Object.freeze({ findings: Object.freeze(findings), states: states.length, reachable: reachable.size, noExit: Object.freeze(noExit) });
+  return Object.freeze({
+    findings: Object.freeze(findings),
+    states: states.length,
+    reachable: reachable.size,
+    noExit: Object.freeze(noExit),
+  });
 }
 
 /** The declared graph with the hand-back edges removed: the shape this unit found. */
@@ -400,7 +409,12 @@ export function withoutReturnEdges(graph: LifecycleGraph): LifecycleGraph {
     Object.fromEntries(
       Object.entries(graph).map(([state, successors]) => [
         state,
-        Object.freeze(successors.filter((next) => !(next === STARDEW_GAME_LIFECYCLE_INITIAL_STATE && state !== STARDEW_GAME_LIFECYCLE_INITIAL_STATE))),
+        Object.freeze(
+          successors.filter(
+            (next) =>
+              !(next === STARDEW_GAME_LIFECYCLE_INITIAL_STATE && state !== STARDEW_GAME_LIFECYCLE_INITIAL_STATE),
+          ),
+        ),
       ]),
     ),
   );
@@ -646,7 +660,9 @@ test("lifecycle-graph.6: every state a transition site can run in is declared fr
   });
   t.diagnostic(`lifecycle-graph.6 (falsifier: hand-back): ${before.findings.join(" | ")}`);
   assert.ok(
-    before.findings.some((finding) => finding.startsWith("a_state_the_topology_transitions_from_is_not_declared:player_host_attested->inactive ")),
+    before.findings.some((finding) =>
+      finding.startsWith("a_state_the_topology_transitions_from_is_not_declared:player_host_attested->inactive "),
+    ),
     `the settled-and-ready hand-back is named, saw ${JSON.stringify(before.findings)}`,
   );
   assert.ok(
@@ -686,7 +702,9 @@ test("lifecycle-graph.6: every state a transition site can run in is declared fr
   t.diagnostic(`lifecycle-graph.6 (falsifier: quarantine helper): ${withoutQuarantineEdge.findings.join(" | ")}`);
   assert.ok(
     withoutQuarantineEdge.findings.some((finding) =>
-      finding.startsWith("a_state_the_topology_transitions_from_is_not_declared:player_host_attested->launch_quarantined "),
+      finding.startsWith(
+        "a_state_the_topology_transitions_from_is_not_declared:player_host_attested->launch_quarantined ",
+      ),
     ),
     `the quarantine an attested owner can still reach is named, saw ${JSON.stringify(withoutQuarantineEdge.findings)}`,
   );
@@ -898,7 +916,11 @@ test("lifecycle-graph.8: no reader treats the Player Host as up without answerin
   // gives it, so the sites it answers for are the ones named.
   const source = readCoordinatorSource();
   const withoutAnswer = source.replace(EXIT_ANSWER_REMOVAL, "");
-  assert.notEqual(withoutAnswer, source, "the exit answer this falsifier removes is still written the way it is expected");
+  assert.notEqual(
+    withoutAnswer,
+    source,
+    "the exit answer this falsifier removes is still written the way it is expected",
+  );
   const broken = playerHostExitAnswerFindings({
     targets: STARDEW_GAME_LIFECYCLE_TARGETS,
     upStates,
@@ -1030,7 +1052,8 @@ function refusingTransitions(declarations: readonly Declaration[]): ReadonlyMap<
     if (seen.has(name)) return new Set<string>();
     const next = new Set(seen).add(name);
     const transitions = new Set(own.get(name) ?? []);
-    for (const called of calls.get(name) ?? []) for (const transition of resolve(called, next)) transitions.add(transition);
+    for (const called of calls.get(name) ?? [])
+      for (const transition of resolve(called, next)) transitions.add(transition);
     resolved.set(name, transitions);
     return transitions;
   };
@@ -1122,7 +1145,11 @@ test("lifecycle-graph.9: a catch that can receive a transition refusal re-throws
     /throw new Error\("stardew_player_host_attestation_failed", \{ cause: error \}\);\n/u,
     "\n",
   );
-  assert.notEqual(withoutRethrow, source, "the re-throw this falsifier removes is still written the way it is expected");
+  assert.notEqual(
+    withoutRethrow,
+    source,
+    "the re-throw this falsifier removes is still written the way it is expected",
+  );
   const broken = lifecycleSwallowedRefusalFindings({
     source: withoutRethrow,
     shutdownStates: STARDEW_GAME_LIFECYCLE_SHUTDOWN_STATES,

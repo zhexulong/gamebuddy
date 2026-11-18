@@ -92,7 +92,7 @@
         "src/composition/stardew/stardew-guardian-platform.ts!",
         "src/games/stardew/provider.ts!",
         "src/stardew-ai-client-process-owner.ts!",
-        "src/stardew-role-lifecycle-projection.internal.ts!",
+        "src/games/stardew/lifecycle/stardew-role-lifecycle-projection.internal.ts!",
         "src/voice-gateway-artifact-admission.ts!",
         "scripts/dotnet-sdk-lock.mjs!",
         "scripts/run-tests.mjs!",

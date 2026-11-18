@@ -34,7 +34,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { composeCoordinatorRoleLifecycleView } from "../../host/src/stardew-role-lifecycle-projection.internal.js";
+import { composeCoordinatorRoleLifecycleView } from "../../host/src/games/stardew/lifecycle/stardew-role-lifecycle-projection.internal.js";
 import { createStardewRoleLifecycleFacade } from "../../host/src/stardew-role-lifecycle-facade.js";
 import { createGameBrowserStateProvider } from "../../host/src/game-browser/game-browser-state-provider.js";
 import { composeGameProfile } from "../../host/src/game-browser-contract/index.js";
