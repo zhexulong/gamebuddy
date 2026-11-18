@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4554, largest ExecutionManager at 24455 lines / 841 members across 52 partial(s).",
-  "revision": "6a194fa8",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4563, largest ExecutionManager at 24549 lines / 844 members across 52 partial(s).",
+  "revision": "6d44041c",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -69,7 +69,7 @@
       "language": "cs",
       "name": "DerivedDestinationSet.TryApplyNativeMetadata(List<NavigationDestination>)",
       "file": "integrations/stardew/navigation/deriveddestinationset.cs",
-      "line": 239,
+      "line": 245,
       "value": 33
     },
     {
@@ -209,7 +209,7 @@
       "language": "cs",
       "name": "FarmhandForEachExpansion.Expand(FarmhandForEachLoop,string,IEnumerable<FarmhandForEachRow>,FarmhandForEachDispatch,Func<bool>,Func<string, bool>,Func<string, LocalExecutionReceipt?>)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandForEachExpansion.cs",
-      "line": 244,
+      "line": 243,
       "value": 34
     },
     {
@@ -348,7 +348,7 @@
       "name": "NavigationNextStep.Of(string?)",
       "file": "integrations/stardew/navigation/navigationnextstep.cs",
       "line": 71,
-      "value": 33
+      "value": 34
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority.TryComplete(HostAdmissionGrant,BodyProgramTerminalResult)",
@@ -625,7 +625,7 @@
       "language": "ts",
       "name": "host/src/event-pump.ts#CompanionEventPump.enqueueFact",
       "file": "host/src/event-pump.ts",
-      "line": 2251,
+      "line": 2270,
       "value": 38,
       "reason": "recorded 40 at 11e7cc9b, and 40 at `6b54dad4^`; 41 at `6b54dad4` and at HEAD (measured at 11e7cc9b, at the merge 57142c05, at `6b54dad4^`, at `6b54dad4` and at HEAD). The one point is `6b54dad4` (`account(traces): the body-trace count names its kinds`), +95/-20 in this file: admission now classifies the fact as a trace and counts it by kind (`factTraceKind`) before it chooses a window, which is one more conditional in a body that already had it. RECORDED AS DEBT, not accepted: 41 is still over the bound of 30 and the bound is unchanged."
     },
@@ -639,20 +639,11 @@
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
     {
-      "id": "ts:host/src/game-tools.ts#createStardewActionTools",
-      "language": "ts",
-      "name": "host/src/game-tools.ts#createStardewActionTools",
-      "file": "host/src/game-tools.ts",
-      "line": 1652,
-      "value": 113,
-      "reason": "111 -> 113 for one mount block: `sweep_scythe` was enrolled as a staged candidate but no block handed it to the Agent, so the arm existed with no tool behind it. The block is a descriptor check plus a mount, i.e. the same two decisions every neighbouring arm makes; folding the arms into one table is the shape this number is pointing at, not something this unit takes on."
-    },
-    {
       "id": "ts:host/src/game-tools.ts#execute",
       "language": "ts",
       "name": "host/src/game-tools.ts#execute",
       "file": "host/src/game-tools.ts",
-      "line": 1047,
+      "line": 1048,
       "value": 44
     },
     {
@@ -676,7 +667,7 @@
       "language": "ts",
       "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#launchWithGeneration",
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
-      "line": 4127,
+      "line": 4140,
       "value": 31
     },
     {
@@ -784,7 +775,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3875,
+      "line": 3870,
       "value": 59
     },
     {
@@ -792,7 +783,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3045,
+      "line": 3040,
       "value": 49
     },
     {
@@ -800,7 +791,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3177,
+      "line": 3172,
       "value": 64
     },
     {
@@ -808,7 +799,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3362,
+      "line": 3357,
       "value": 47
     },
     {
@@ -816,7 +807,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4049,
+      "line": 4044,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -825,7 +816,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2478,
+      "line": 2473,
       "value": 44
     },
     {
@@ -925,7 +916,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#acceptMounted#lambda2",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3315,
+      "line": 3328,
       "value": 54
     },
     {
@@ -933,7 +924,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#assertP5ReadBack",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5736,
+      "line": 5749,
       "value": 36
     },
     {
@@ -973,7 +964,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#transitionMountedPresentation#lambda3",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3614,
+      "line": 3627,
       "value": 121
     },
     {
@@ -981,7 +972,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#transitionMountedProviderStart#lambda1",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3505,
+      "line": 3518,
       "value": 59
     },
     {
@@ -989,7 +980,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateP5TerminalishCommon",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5120,
+      "line": 5133,
       "value": 64
     },
     {
@@ -997,7 +988,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validatePresentationTransition",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5619,
+      "line": 5632,
       "value": 41
     },
     {
@@ -1005,7 +996,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateTurnIntegrity",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5946,
+      "line": 5959,
       "value": 32
     },
     {
@@ -1013,7 +1004,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateTurnLedger",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 4968,
+      "line": 4981,
       "value": 41
     },
     {
@@ -1021,7 +1012,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#writeWorldInfoBinding",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 4033,
+      "line": 4046,
       "value": 36
     },
     {
@@ -1147,7 +1138,7 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4554,
+      "value": 4563,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
     },
     {
@@ -1174,7 +1165,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "value": 218,
+      "value": 216,
       "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
@@ -1268,8 +1259,8 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 24455,
-      "methods": 841,
+      "lines": 24549,
+      "methods": 844,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
     },
     {
@@ -1278,8 +1269,8 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-      "line": 427,
-      "lines": 1205,
+      "line": 420,
+      "lines": 1165,
       "methods": 35,
       "reason": "1083 -> 1124 lines and 30 -> 31 methods at the same single part: `c2e1a2fc` added `Charged(FarmhandActionDescriptor,string?)`, and the rest is catalogue rows and the comments that moved with them (`88d9d9d2`, `55e4a27e`, `7e0ee6e1`). Class complexity is 9, so these lines are declarations, not branches."
     },
@@ -1345,7 +1336,7 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/navigationexecutionmanagertests.cs",
       "line": 20,
-      "lines": 1282,
+      "lines": 1297,
       "methods": 43,
       "reason": "recorded at 11e7cc9b: 1089 -> 1094 lines over the SAME 42 methods, all of it in `04598eda`: five `harness.Manager.Trace.Should().BeEmpty()` assertions became the receipt-shaped ones that survive the channel's removal (+19/-14 lines) and the two tests that named the channel were renamed. No member was added, so this is a longer test with the same shape, and the next edit to this file re-records it."
     },
@@ -1377,8 +1368,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "lines": 1182,
-      "methods": 41,
+      "lines": 1148,
+      "methods": 39,
       "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {

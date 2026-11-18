@@ -454,15 +454,6 @@
       ]
     },
     {
-      "hash": "64bd1f4f6fbb",
-      "tokens": 65,
-      "sites": [
-        "host/src/game-tools.ts:3036",
-        "host/src/game-tools.ts:3173",
-        "host/src/game-tools.ts:3197"
-      ]
-    },
-    {
       "hash": "6564bcd736dc",
       "tokens": 40,
       "sites": [
@@ -509,15 +500,6 @@
         "tools/run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs:213",
         "tools/run-stardew-native-local-player-wia-item-pickup-smoke.mjs:267",
         "tools/run-stardew-native-local-player-wia-tool-approach-smoke.mjs:273"
-      ]
-    },
-    {
-      "hash": "6c070b0191dc",
-      "tokens": 41,
-      "sites": [
-        "host/src/game-tools.ts:2047",
-        "host/src/game-tools.ts:2068",
-        "host/src/game-tools.ts:2089"
       ]
     },
     {
@@ -640,23 +622,6 @@
         "integrations/stardew/action-development/src/analysis/stardew-action-seam-terminals-audit.mjs:136",
         "integrations/stardew/action-development/src/analysis/stardew-reachable-exit-reconciliation.mjs:282",
         "integrations/stardew/action-development/src/analysis/stardew-uncovered-exit-expansion.mjs:195"
-      ]
-    },
-    {
-      "hash": "88576e4c17ee",
-      "tokens": 53,
-      "sites": [
-        "host/src/game-tools.ts:1860",
-        "host/src/game-tools.ts:1882",
-        "host/src/game-tools.ts:1904",
-        "host/src/game-tools.ts:1980",
-        "host/src/game-tools.ts:2002",
-        "host/src/game-tools.ts:2198",
-        "host/src/game-tools.ts:2220",
-        "host/src/game-tools.ts:2865",
-        "host/src/game-tools.ts:3083",
-        "host/src/game-tools.ts:3128",
-        "host/src/game-tools.ts:3221"
       ]
     },
     {
@@ -1117,15 +1082,6 @@
         "host/scripts/build-windows-reparse-inspector.mjs:92",
         "host/scripts/build-windows-stale-lock-reclaimer.mjs:161",
         "host/scripts/build-windows-stardew-folder-picker.mjs:161"
-      ]
-    },
-    {
-      "hash": "f10e2eaba212",
-      "tokens": 59,
-      "sites": [
-        "host/src/game-tools.ts:3060",
-        "host/src/game-tools.ts:3105",
-        "host/src/game-tools.ts:3150"
       ]
     },
     {
