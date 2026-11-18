@@ -3129,6 +3129,50 @@ const MULTIDAY_POLL_INTERVAL_MS = 250;
  * foreground WINDOW MODE is not a proxy for actual activation, because a real run logged
  * SetForegroundWindow=refused while running in foreground mode.
  */
+/**
+ * One Mod-log source, decoded by the encoding it was WRITTEN in.
+ *
+ * The sources are written by two different things: SMAPI writes UTF-8, and the lane's console capture is a PowerShell
+ * redirect, which writes UTF-16LE. Reading both as UTF-8 put a NUL between every character of the console half, so the
+ * concatenation was a binary file (measured 2026-11-18, `round76`) and every tool that sniffs for a NUL refused to read
+ * `mod-log.txt` as text - including the ones this archive exists for.
+ */
+function readModLogSource(candidate) {
+  const bytes = readFileSync(candidate);
+  const encoding = modLogEncoding(bytes);
+  const text = encoding === "utf8" ? bytes.toString("utf8") : decodeUtf16(bytes, encoding);
+  return Object.freeze({ path: candidate, encoding, text });
+}
+
+/**
+ * The encoding a Mod-log source carries, from its bytes rather than from its name.
+ *
+ * A BOM is decisive, and so is the shape when there is none: every ASCII character of a UTF-16LE line is followed by a
+ * NUL, and a NUL at an odd offset is not a byte any UTF-8 writer produces.
+ */
+function modLogEncoding(bytes) {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return "utf16le";
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return "utf16be";
+  for (let index = 1; index < Math.min(bytes.length, 512); index += 2) {
+    if (bytes[index] === 0) return "utf16le";
+  }
+  return "utf8";
+}
+
+/** One UTF-16 source as text, BOM or not. Node has no big-endian decoder, so that case swaps the pairs first. */
+function decodeUtf16(bytes, encoding) {
+  const bommed =
+    bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff));
+  const body = bommed ? bytes.subarray(2) : bytes;
+  if (encoding === "utf16le") return body.toString("utf16le");
+  const swapped = Buffer.alloc(body.length - (body.length % 2));
+  for (let index = 0; index + 1 < body.length; index += 2) {
+    swapped[index] = body[index + 1];
+    swapped[index + 1] = body[index];
+  }
+  return swapped.toString("utf16le");
+}
+
 function captureModLogFacts(runDir) {
   // EVERY source, not one of them, and the archive says which files supplied it.
   //
@@ -3137,14 +3181,10 @@ function captureModLogFacts(runDir) {
   // stream does not merely lose a heartbeat: it loses the receipts, refusals and save-boundary facts this function exists to
   // make durable, and the artifact then says "no evidence" about things that were logged.
   try {
-    const sources = MOD_LOG_PATHS().filter((candidate) => {
-      try {
-        return readFileSync(candidate, "utf8").length > 0;
-      } catch {
-        return false;
-      }
-    });
-    const text = sources.map((candidate) => readFileSync(candidate, "utf8")).join("\n");
+    const decoded = MOD_LOG_PATHS()
+      .map(readModLogSource)
+      .filter((source) => source.text.length > 0);
+    const text = decoded.map((source) => source.text).join("\n");
     const rows = text.split("\n");
     const tail = (pattern, count = 4) =>
       rows
@@ -3153,8 +3193,20 @@ function captureModLogFacts(runDir) {
         .map((row) => row.trim().slice(0, 400));
     const archived = typeof runDir === "string" && runDir.length > 0;
     if (archived) {
-      writeFileSync(join(runDir, "mod-log.txt"), text);
-      writeFileSync(join(runDir, "mod-log-sources.json"), JSON.stringify(sources, null, 2));
+      // AS UTF-8, WHATEVER EACH SOURCE WAS WRITTEN IN. A PowerShell redirect (`| Out-File`) writes UTF-16LE and SMAPI
+      // writes UTF-8; concatenating the two as if both were UTF-8 put a NUL between every character of the console half,
+      // so `mod-log.txt` was a file that `grep`, `diff` and every tool that sniffs for a NUL read as BINARY - measured
+      // 2026-11-18 (`round76`), where the markers this archive exists for could not be read out of it at all. The
+      // encoding each source was decoded from travels in `mod-log-sources.json`, so the archive says what it is.
+      writeFileSync(join(runDir, "mod-log.txt"), text, "utf8");
+      writeFileSync(
+        join(runDir, "mod-log-sources.json"),
+        JSON.stringify(
+          decoded.map((source) => ({ path: source.path, encoding: source.encoding })),
+          null,
+          2,
+        ),
+      );
     }
     const lastWith = (needle) => (rows.filter((row) => row.includes(needle)).slice(-1)[0] ?? "").trim().slice(0, 400);
     return Object.freeze({
@@ -3162,8 +3214,10 @@ function captureModLogFacts(runDir) {
       // (`mod-log-sources.json`). Measured 2026-11-05: this read a bare `path` that no enclosing scope declared, so
       // EVERY call threw `ReferenceError: path is not defined` - and the catch threw the same one, which ended the run
       // at the very line that assembles its result.
-      sources,
-      bytes: text.length,
+      sources: Object.freeze(decoded.map((source) => ({ path: source.path, encoding: source.encoding }))),
+      // The size of the archive this run writes, in BYTES of the UTF-8 text: `text.length` counted characters, which is
+      // the wrong number for a file whose sources were written in two different encodings.
+      bytes: Buffer.byteLength(text, "utf8"),
       archived,
       setForegroundWindow: tail(/SetForegroundWindow/i),
       saveGameMenu: tail(/SaveGameMenu/i),
@@ -3220,7 +3274,7 @@ const readModLogText = () =>
   MOD_LOG_PATHS()
     .map((candidate) => {
       try {
-        return readFileSync(candidate, "utf8");
+        return readModLogSource(candidate).text;
       } catch {
         return "";
       }
@@ -3438,8 +3492,8 @@ function sampleModHeartbeat() {
     for (const candidate of MOD_LOG_PATHS()) {
       let lines;
       try {
-        lines = readFileSync(candidate, "utf8")
-          .split("\n")
+        lines = readModLogSource(candidate)
+          .text.split("\n")
           .filter((line) => line.includes(MOD_HEARTBEAT_MARKER));
       } catch {
         continue;
@@ -7149,7 +7203,20 @@ async function writeRunBundle({
       },
     },
     timeline: { path: "timeline.jsonl", records: factLog.length, sources: ["player", "smapi", "llm"] },
-    actionTrace: { path: "actionTrace.jsonl", records: actionTrace.length },
+    // AN EMPTY TRACE THAT SAYS WHY. `actionTrace.jsonl` records FLAT request frames only, and a run that batched every
+    // dispatch through a Body Program has none - measured 2026-10-22 and again 2026-11-18 (`round76`: the file was 1
+    // byte, `actionTraceSummary: []`, `repro.replayedSteps: 0`). Zero frames is a reading about the CHANNEL; a zero with
+    // no reason beside it reads as a run that dispatched nothing, and the two are different findings.
+    actionTrace: Object.freeze({
+      path: "actionTrace.jsonl",
+      records: actionTrace.length,
+      reason:
+        actionTrace.length > 0
+          ? null
+          : programSubmissions.length > 0
+            ? "every_dispatch_went_through_a_program:see_programTrace"
+            : "the_run_dispatched_nothing",
+    }),
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
     // The run's memory: one projection, carried here so the contract's own face of the run can answer the question an
     // auditor asks of it. `not_measured:no_turn_samples` is a legitimate answer; a missing field never was.
@@ -7210,7 +7277,11 @@ async function writeRunBundle({
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
     runTrace: runTraceRecordAtAssembly(),
-    programTrace: { path: PROGRAM_TRACE_FILE, records: (programRows ?? []).length },
+    programTrace: {
+      path: PROGRAM_TRACE_FILE,
+      records: (programRows ?? []).length,
+      reason: (programRows ?? []).length === 0 ? "no_body_program_was_submitted" : null,
+    },
     // Three waits a reader can act on, each from the same clock: the provider's own latency, the game's own work,
     // and the gap between them. An unfinished pair is reported as `open` rather than as a zero.
     // The provider's own three boundaries are NOT recorded, and that is stated rather than left as a zero: the runner

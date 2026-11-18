@@ -149,6 +149,7 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
     return Object.freeze({
       ok: false,
       violations: Object.freeze([violation("bundle_not_object", "bundle")]),
+      artifacts: Object.freeze({ examined: 0, readable: 0, empty: 0 }),
       checkedObligations: CHECKED_OBLIGATIONS,
     });
   }
@@ -262,6 +263,22 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
     violations.push(violation("key_frames_reason_missing", "keyFrames.reason"));
   }
 
+  // AN ARTIFACT THAT CANNOT REPORT IS NAMED, NOT SILENT.
+  //
+  // Measured 2026-11-18 (`round76`): `actionTrace.jsonl` was 1 byte, `actionTraceSummary: []` and `repro.replayedSteps:
+  // 0`, while the manifest declared `actionTrace: { path, records: 0 }` and nothing beside it said why - so an instrument
+  // that recorded nothing read exactly like a run that did nothing, and the two are different findings. Zero records is a
+  // reading about a CHANNEL (every dispatch went through a Body Program) or about a run that never dispatched; either way
+  // the artifact has to say which, or its emptiness is a shape nobody can act on.
+  //
+  // The population is the bundle's OWN artifact declarations - every own property that names a `path` and a `records`
+  // count - so an artifact added tomorrow is examined without editing this rule.
+  const artifacts = declaredArtifacts(bundle);
+  for (const artifact of artifacts) {
+    if (artifact.records > 0 || isNonEmptyString(artifact.reason)) continue;
+    violations.push(violation(`a_run_artifact_that_cannot_report:${artifact.path}`, artifact.where));
+  }
+
   const reclamation = bundle.reclamation;
   if (!isPlainObject(reclamation) || !isNonEmptyString(reclamation.state) || !Array.isArray(reclamation.steps)) {
     violations.push(violation("reclamation_missing", "reclamation"));
@@ -358,8 +375,32 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
   return Object.freeze({
     ok: violations.length === 0,
     violations: Object.freeze(violations),
+    // What the artifact gate above examined, so a reader sees `0 violations` beside `examined N` rather than instead of
+    // it. `empty` counts the artifacts that declared zero records AND said why: an empty artifact is readable when its
+    // reason is; only an empty one with no reason is the defect.
+    artifacts: Object.freeze({
+      examined: artifacts.length,
+      readable:
+        artifacts.length -
+        violations.filter((item) => item.code.startsWith("a_run_artifact_that_cannot_report")).length,
+      empty: artifacts.filter((item) => item.records === 0).length,
+    }),
     checkedObligations: CHECKED_OBLIGATIONS,
   });
+}
+
+/**
+ * The artifacts a bundle declares: every own property that names a `path` and a `records` count.
+ *
+ * Derived from the bundle rather than listed here, so the fourth artifact added tomorrow is examined by the same rule.
+ */
+function declaredArtifacts(bundle) {
+  const found = [];
+  for (const [name, value] of Object.entries(bundle)) {
+    if (!isPlainObject(value) || !isNonEmptyString(value.path) || !isFiniteNumber(value.records)) continue;
+    found.push({ where: name, path: value.path, records: value.records, reason: value.reason ?? null });
+  }
+  return found;
 }
 
 /** The failure moment must be locatable, or the snapshot cannot be repositioned by a replay. */
@@ -425,6 +466,7 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "key_frames_status_unknown",
   "key_frames_dir_missing",
   "key_frames_reason_missing",
+  "a_run_artifact_that_cannot_report",
   "reclamation_missing",
   "reclamation_state_unknown",
   "reclamation_reflection_unknown",

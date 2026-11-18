@@ -507,6 +507,11 @@ test("the scheduled gates are delivered from ground truth the run observed, and 
     "read every source the Mod logs to",
   );
   assert.match(RUNNER_SOURCE, /const MOD_LOG_PATHS = \(\) => \{/);
+  // 4b. AND IT IS DECODED BY THE ENCODING IT WAS WRITTEN IN. The lane log is a PowerShell redirect (UTF-16LE) and the SMAPI
+  // log is UTF-8; reading both as UTF-8 put a NUL between every character of the console half, so `mod-log.txt` was a file
+  // that every tool sniffing for a NUL refused as binary (measured 2026-11-18, `round76`). Driven against real files below.
+  assert.match(RUNNER_SOURCE, /function readModLogSource\(candidate\)/u);
+  assert.match(RUNNER_SOURCE, /writeFileSync\(join\(runDir, "mod-log\.txt"\), text, "utf8"\)/u);
   // 5. A gate is CLAIMED before the admission is awaited, so two turns cannot both speak the same line.
   const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day, tools)");
   const deliverBody = RUNNER_SOURCE.slice(
@@ -3201,8 +3206,13 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
       reason: null,
     },
     verdict: { state: "blocked", reasonCode: "multiday_routine_blocked", rubric: { broken: [], unmeasured: [] } },
-    timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "smapi", "llm"] },
-    actionTrace: { path: "actionTrace.jsonl", records: 0 },
+    timeline: {
+      path: "timeline.jsonl",
+      records: 0,
+      sources: ["player", "smapi", "llm"],
+      reason: "the_run_recorded_no_world_fact",
+    },
+    actionTrace: { path: "actionTrace.jsonl", records: 0, reason: "the_run_dispatched_nothing" },
     // The run trace is a DECLARATION the writer always publishes, not a reading a caller supplies:
     // `writeEvidenceBundle` replaces it with the record it decides from the file it copies, so every manifest the
     // product can write carries it - including the ones whose product wrote no trace, which publish
@@ -5833,4 +5843,39 @@ test("the runner reads the owner's own strings for both markers, so neither can 
     arrivalLineOwner,
     "the arrival marker must be the line the owner prints for that kind, not a second copy of it",
   );
+});
+
+test("a Mod log written as UTF-16 is read back as text, so the archive is not a binary file", () => {
+  // Two writers, two encodings: the lane's console capture is a PowerShell redirect (UTF-16LE) and SMAPI writes UTF-8.
+  // Reading both as UTF-8 is what made `mod-log.txt` unreadable in `round76`. The real reader is extracted and driven
+  // against real files here, because the property is about bytes rather than about a regex in the source.
+  const [readSource] = extractRunnerFunction(RUNNER_SOURCE, ["readModLogSource", "modLogEncoding", "decodeUtf16"], {
+    readFileSync,
+  });
+  const dir = mkdtempSync(join(tmpdir(), "gamebuddy-mod-log-"));
+  try {
+    const console = join(dir, "lane-console.log");
+    // No BOM: this is the shape a redirected capture actually has, and the NUL pattern is what identifies it.
+    writeFileSync(console, "game_mode=play;saving=false\r\nDEBUG-native-local-heartbeat day=6\r\n", "utf16le");
+    const bommed = join(dir, "lane-console-bom.log");
+    writeFileSync(bommed, "\uFEFFDEBUG-native-local-heartbeat day=6\r\n", "utf16le");
+    const smapi = join(dir, "SMAPI-latest.txt");
+    writeFileSync(smapi, "SMAPI 4.5.2\nDEBUG-native-local-heartbeat day=6\n", "utf8");
+
+    const wide = readSource(console);
+    assert.equal(wide.encoding, "utf16le", "a redirected console capture is UTF-16LE, and the reader says so");
+    assert.ok(!wide.text.includes("\u0000"), "no NUL survives the decode: a NUL is what made the archive binary");
+    assert.ok(wide.text.includes("game_mode=play;saving=false"), `decoded text: ${JSON.stringify(wide.text)}`);
+    assert.ok(wide.text.includes("DEBUG-native-local-heartbeat day=6"));
+    // A BOM is part of the encoding, not part of the first line.
+    assert.equal(readSource(bommed).text, "DEBUG-native-local-heartbeat day=6\r\n");
+    const narrow = readSource(smapi);
+    assert.equal(narrow.encoding, "utf8");
+    assert.ok(narrow.text.startsWith("SMAPI 4.5.2"), "a UTF-8 source is not re-read as UTF-16");
+    // The two halves concatenate into ONE text, which is what the archive writes.
+    const joined = [wide, narrow].map((source) => source.text).join("\n");
+    assert.ok(!joined.includes("\u0000"), "the concatenation is text, whatever each half was written in");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -666,3 +666,38 @@ test("the documented bundle publishes what its producers derive", () => {
     .map((line) => JSON.parse(line));
   assert.deepEqual(validateEvidenceBundle(documented, { actionTrace }).violations, []);
 });
+
+test("an artifact that writes nothing and says nothing is named, and an empty one that says why is a reading", () => {
+  // Measured 2026-11-18 (`round76`): `actionTrace.jsonl` was 1 byte, `actionTraceSummary: []`, `repro.replayedSteps: 0`,
+  // and the manifest declared `records: 0` with nothing beside it - so an instrument that recorded nothing read exactly
+  // like a run that did nothing. The population is the bundle's own artifact declarations, so the fourth artifact added
+  // tomorrow is examined by the same rule rather than by a list here.
+  const silent = validateEvidenceBundle(
+    bundle({ actionTrace: { path: EVIDENCE_BUNDLE_FILES.actionTrace, records: 0 } }),
+    { actionTrace: [] },
+  );
+  assert.ok(
+    silent.violations.some((item) => item.code === "a_run_artifact_that_cannot_report:actionTrace.jsonl"),
+    `an empty trace with no reason must be named; got ${JSON.stringify(silent.violations)}`,
+  );
+  // THE SAME ZERO, SAID WHY, IS A READING: every dispatch went through a Body Program, which the flat channel cannot
+  // carry, and the program trace is where those executions are.
+  const explained = validateEvidenceBundle(
+    bundle({
+      actionTrace: {
+        path: EVIDENCE_BUNDLE_FILES.actionTrace,
+        records: 0,
+        reason: "every_dispatch_went_through_a_program:see_programTrace",
+      },
+    }),
+    { actionTrace: [] },
+  );
+  assert.deepEqual(explained.violations, []);
+  const population = validateEvidenceBundle(bundle(), { actionTrace: TRACE });
+  console.log(
+    `artifacts examined ${String(population.artifacts.examined)} · readable ${String(
+      population.artifacts.readable,
+    )} · empty-or-mixed ${String(population.artifacts.empty)}`,
+  );
+  assert.ok(population.artifacts.examined > 0, "a gate whose population is empty agrees with itself");
+});
