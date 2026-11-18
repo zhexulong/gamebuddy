@@ -31,7 +31,16 @@ internal enum RefusalLayerKind
     /// <summary>The tool the action's own registration claims, resolved against the pack.</summary>
     Tool = 1,
 
-    /// <summary>The inventory item the action's own declaration pins.</summary>
+    /// <summary>
+    /// The inventory item the LIVE game reports at the slot a request named.
+    ///
+    /// <para>
+    /// No static producer answers this any more: the offline comparison between a pinned declaration and a pack
+    /// (<c>DeclaredItem</c>) answered a refusal the conversation owns and duplicated what the executing handler decides, so it
+    /// is deleted. The producers that remain are the live ones - a geode slot that is empty or holds something else, a rod
+    /// that needs bait, a slot whose stack was already spent - and every one of them reads the real pack on the game thread.
+    /// </para>
+    /// </summary>
     Item = 2,
 
     /// <summary>A character or farm animal standing on the target tile.</summary>
@@ -141,10 +150,12 @@ internal readonly record struct RefusalLayerToken(RefusalLayerKind Layer, string
 /// plan on the first refusal; a bare <c>no_native_path</c> gets re-aimed at a neighbouring tile instead.
 /// </para>
 /// <para>
-/// Every declared layer reads its requirement from the ACTION'S OWN ROW - the `tool:&lt;category&gt;` claim, the pinned
-/// item in its acceptance facts, the declared approach - and never from a table here. A second hand-written copy of
+/// Every declared layer reads its requirement from the ACTION'S OWN ROW - the `tool:&lt;category&gt;` claim, the declared
+/// approach - and never from a table here. A second hand-written copy of
 /// what each action needs is the defect this project keeps paying for: the two copies agree on the day they are
-/// written and disagree the first time either moves.
+/// written and disagree the first time either moves. And the row's PINNED ITEM is read by nobody here: whether the bag
+/// carries it is a comparison the conversation owns, and the handler that takes the item out of the pack decides it from
+/// the real thing (`tool_not_owned:&lt;category&gt;`, `*_not_owned_in_requested_slot`).
 /// </para>
 /// <para>
 /// Order matters and is the whole design: the first layer that actually refuses is reported, so a tile that is both
@@ -168,28 +179,33 @@ internal static class RefusalProbe
         Vector2 tile,
         Farmer? player)
     {
-        RefusalLayerToken declared = DescribeDeclared(action, player?.Items);
+        RefusalLayerToken declared = DescribeDeclaredTool(action, player?.Items);
         return declared.Refused
             ? declared
             : DescribeWorld(action, location, tile, player?.Tile, player);
     }
 
     /// <summary>
-    /// The layers a refusal can read from the ACTION'S OWN ROW and the pack it carries, with no world at all.
+    /// The tool claim the ACTION'S OWN ROW declares, resolved against the pack it carries, with no world at all.
     ///
     /// <para>
     /// Split out because it needs no `GameLocation` and no `Farmer`: the same question a live refusal asks can be
     /// asked of a synthetic pack, which is what lets the gate drive every declared requirement from
     /// <see cref="FarmhandActionCatalog.Registrations"/> instead of a list of actions somebody remembered.
     /// </para>
+    /// <para>
+    /// THE ITEM COMPARISON THAT LIVED HERE IS GONE, and it is not moved. `DeclaredItem` asked whether the pack carried the
+    /// id an action's acceptance pinned - a comparison between a DECLARATION and an INVENTORY, decided offline, with no
+    /// game entity in the signature - and it answered a refusal the conversation owns (ADR-0014). It was also a second
+    /// authority for a fact the executing handler already decides from the real pack on the game thread:
+    /// `tool_not_owned:&lt;category&gt;`, `*_not_owned_in_requested_slot`, and `slot:empty` are the words a bag that lacks the
+    /// item really produces, and they carry the live slot. A static copy that agrees with them today is a disagreement
+    /// scheduled for later, so the copy is deleted rather than re-worded. <see cref="RefusalLayerKind.Item"/> stays: the
+    /// LIVE producers still name it, with facts this probe cannot see.
+    /// </para>
     /// </summary>
-    internal static RefusalLayerToken DescribeDeclared(FarmhandActionRegistration? action, IList<Item?>? pack)
-    {
-        RefusalLayerToken tool = DeclaredTool(action, pack);
-        if (tool.Refused)
-            return tool;
-        return DeclaredItem(action, pack);
-    }
+    internal static RefusalLayerToken DescribeDeclaredTool(FarmhandActionRegistration? action, IList<Item?>? pack) =>
+        DeclaredTool(action, pack);
 
     /// <summary>
     /// The layers that need the world: an occupant standing or lying on the tile, the declared spatial relation, then
@@ -242,23 +258,6 @@ internal static class RefusalProbe
         return resolution.RefusalDetail is { } detail
             ? new RefusalLayerToken(RefusalLayerKind.Tool, detail)
             : RefusalLayerToken.None;
-    }
-
-    /// <summary>
-    /// The item the action's own acceptance facts pin, when the pack carries none of it. Only a PINNED item can be read
-    /// from the row; an action that takes "whatever the caller names in `slot`" states no requirement the surface could
-    /// know before the request arrives, and inventing one here would refuse a request the handler accepts.
-    /// </summary>
-    private static RefusalLayerToken DeclaredItem(FarmhandActionRegistration? action, IList<Item?>? pack)
-    {
-        if (action?.Descriptor?.Acceptance?.ExactExpectedQualifiedItemId is not { } pinned || pack is null)
-            return RefusalLayerToken.None;
-        foreach (Item? carried in pack)
-        {
-            if (carried is not null && string.Equals(carried.QualifiedItemId, pinned, StringComparison.Ordinal))
-                return RefusalLayerToken.None;
-        }
-        return new RefusalLayerToken(RefusalLayerKind.Item, pinned);
     }
 
     /// <summary>

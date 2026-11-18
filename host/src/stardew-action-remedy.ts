@@ -1,6 +1,5 @@
 /**
- * The countermeasure an Agent is told about when a Stardew action is refused because the actor's body is
- * held.
+ * The countermeasure an Agent is told about when a Stardew action is refused.
  *
  * Why this exists: the Host used to answer a held body with `player_not_actionable` and nothing else. One
  * code covered a mounted menu, a cutscene, a faint, an eating animation and a tool swing - five states whose
@@ -8,6 +7,11 @@
  * was to re-issue the same request until it gave up. The Mod now names the hold and carries the facts; this
  * module turns that into the one thing the Agent should do next, and it is a PURE function of the reason code
  * and the Mod's evidence, so the whole table is testable without a game.
+ *
+ * IT IS WHERE A REFUSAL'S WORDS LIVE, and that is the second half of its job. A sentence composed in the Mod
+ * shipped in English inside a Chinese run, and changing one word of it was a Mod release; the Mod publishes a
+ * code and its facts instead (`no_safe_clear:<occupant>:<action>`), and the sentence a reader needs - what she
+ * can do about it - is composed here, next to the run's own prompt.
  *
  * It never promises a remedy it cannot deliver: a modal the audited whitelist will not close reports that
  * honestly rather than pointing at a tool that will refuse, and every route it names is one the Game surface
@@ -23,6 +27,30 @@ export type StardewActionRemedy = Readonly<{
   /** One sentence the Agent can act on, including the tool name when there is one. */
   guidance: string;
 }>;
+
+/**
+ * The code a `for_each` row answers with when every published clearer of the occupant on its tile would destroy what the
+ * player put there: `no_safe_clear:<occupant>:<actionThatWouldDestroyIt>`, from the Mod's own healing join.
+ */
+const NO_SAFE_CLEAR_PREFIX = "no_safe_clear:";
+
+/** The code a row answers with when nothing the plan library publishes clears the occupant on its tile. */
+const NO_PUBLISHED_CLEAR_PREFIX = "no_published_action_clears:";
+
+/**
+ * The refusal families this module renders, keyed by the Mod's own code, with the reason a family that names no sentence is
+ * still honest to leave bare.
+ *
+ * EMPTY TODAY, and that is the claim: every refusal family the Mod's clearing join can publish has a sentence below. An
+ * entry added here is a decision a reader can see and argue with, and `a_refusal_the_model_reads_is_a_sentence` refuses an
+ * entry that carries no reason.
+ */
+export const MACHINE_ONLY_REFUSAL_CODES: ReadonlyMap<string, string> = Object.freeze(new Map());
+
+/** One `code:parameter` split into its parts, in the order the code carries them. */
+function codeParts(reasonCode: string, prefix: string): readonly string[] {
+  return reasonCode.slice(prefix.length).split(":");
+}
 
 /** The Mod's evidence travels as `{ detail: "key=value;..." }`. */
 export function evidenceDetailOf(evidence: unknown): string | null {
@@ -45,12 +73,12 @@ export function evidenceField(detail: string | null, key: string): string | null
 }
 
 /**
- * The countermeasure for a body hold, or null when this reason code is not a body hold.
+ * The countermeasure for a refusal, or null when this reason code is not one this module knows.
  *
- * Returning null matters: a remedy attached to a code that is not a hold would tell the Agent to close a
+ * Returning null matters: a remedy attached to a code it does not understand would tell the Agent to close a
  * dialogue that is not open.
  */
-export function remedyForBodyHold(reasonCode: string | null, detail: string | null): StardewActionRemedy | null {
+export function remedyForRefusal(reasonCode: string | null, detail: string | null): StardewActionRemedy | null {
   switch (reasonCode) {
     case "actor_held_by_modal": {
       const modalType = evidenceField(detail, "modal_type") ?? "a menu";
@@ -237,17 +265,51 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
             "The farmhand's body is held by another in-flight execution. Wait for it to settle, then re-issue " +
             "the same request instead of repeating it in a loop.",
         };
+      // A REQUEST FOR A TILE NOTHING SAFE OPENS. The Mod's healing join answers a refused row with the code alone -
+      // `no_safe_clear:<occupant>:<action>` - because the sentence is the conversation's: it has to arrive in the run's own
+      // words, and re-wording it must not be a Mod release. Until 2026-11-19 that sentence lived in the Mod's clearing
+      // declaration, in English, and reached the model only through a chain of four records.
+      if (reasonCode !== null && reasonCode.startsWith(NO_SAFE_CLEAR_PREFIX)) {
+        const [occupant = "occupant", swing = "that action"] = codeParts(reasonCode, NO_SAFE_CLEAR_PREFIX);
+        return {
+          action: "stardew_plan_work",
+          guidance:
+            `The ${occupant} standing here is something she put there, not an obstruction: ${swing} would take it, so the ` +
+            `pass withheld that swing and left it standing. If it should go, dispatch ${swing} yourself as a step of its ` +
+            `own with stardew_plan_work - it is her decision, not the pass's. Otherwise work a different tile.`,
+        };
+      }
+      // AND A TILE NOTHING PUBLISHED OPENS AT ALL. The honest answer is that no step exists, so the Agent must stop asking
+      // this tile for one instead of re-issuing the request.
+      if (reasonCode !== null && reasonCode.startsWith(NO_PUBLISHED_CLEAR_PREFIX)) {
+        const [occupant = "occupant"] = codeParts(reasonCode, NO_PUBLISHED_CLEAR_PREFIX);
+        return {
+          action: null,
+          guidance:
+            `Nothing the plan library publishes removes the ${occupant} standing on the tile the request named, so no step ` +
+            `can work that tile. Leave it as it is and work a different one: re-issuing the same request cannot change it.`,
+        };
+      }
       return null;
   }
 }
 
 /**
- * Everything an Agent-visible refusal carries when the body is held: the Mod's named code, the Mod's
- * evidence, the countermeasure, and the exact sentence appended to the tool result.
+ * Everything an Agent-visible refusal carries: the Mod's named code, the Mod's evidence, the countermeasure, and the exact
+ * sentence appended to the tool result.
  *
- * The tool layer and the live probe both call THIS, so what a probe asserts is literally what the Agent
- * reads - an assertion on a hand-written sentence would prove nothing about the tool result.
+ * The tool layer and the live probe both call THIS, so what a probe asserts is literally what the Agent reads - an
+ * assertion on a hand-written sentence would prove nothing about the tool result.
  */
-export function describeBodyHoldRefusal(reasonCode: string | null, evidence: unknown): StardewActionRemedy | null {
-  return remedyForBodyHold(reasonCode, evidenceDetailOf(evidence));
+export function describeRefusalRemedy(reasonCode: string | null, evidence: unknown): StardewActionRemedy | null {
+  return remedyForRefusal(reasonCode, evidenceDetailOf(evidence));
 }
+
+/**
+ * The name the tool layer and the live-smoke harness still call.
+ *
+ * It answers every refusal this module knows, which is what its caller already asks it for - the tool layer hands it every
+ * refused receipt, and a body hold is only the majority of them. One function, one spelling; the alias exists because
+ * `tools/**` pins the name and the tool layer's own import is not this unit's to change.
+ */
+export const describeBodyHoldRefusal = describeRefusalRemedy;

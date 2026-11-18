@@ -28,16 +28,17 @@ public enum FarmhandForEachClearanceOutcome
 }
 
 /// <summary>One refused row's answer about the thing standing on its tile.</summary>
-/// <param name="RefusalDetail">
-/// The words the refusal carries beside <paramref name="RefusalReasonCode"/>: for a destructive occupant, the declaration's
-/// own sentence saying what the swing costs and whose decision it is. Null when there is nothing to say beyond the code.
+/// <param name="RefusalReasonCode">
+/// The code the row answers with, in the healing join's own closed vocabulary: `no_published_action_clears:&lt;occupant&gt;`
+/// or `no_safe_clear:&lt;occupant&gt;:&lt;actionThatWouldDestroyIt&gt;`. It names the occupant and the swing it weighed, which
+/// is every fact the refusal has; the SENTENCE is the Host's (`host/src/stardew-action-remedy.ts`), because the Host owns
+/// the prompt and the locale.
 /// </param>
 public sealed record FarmhandForEachClearance(
     FarmhandForEachClearanceOutcome Outcome,
     string Occupant,
     FarmhandClearingOffer? Clearer,
-    string? RefusalReasonCode,
-    string? RefusalDetail = null);
+    string? RefusalReasonCode);
 
 /// <summary>
 /// Which published action removes what stands on a tile, read from the catalogue's own `Clears` declarations.
@@ -67,8 +68,8 @@ public sealed record FarmhandForEachClearance(
 /// the player could not foresee, produced by a step neither she nor the player wrote. The declarations now say which
 /// swings are destructive (<see cref="FarmhandClearingDeclaration.Destructive"/>) and this join never proposes one:
 /// the row answers <c>no_safe_clear:crop:scythe_crop</c>, which names the occupant, the swing that was weighed and
-/// refused, and the fact that the tile is hers - and the same row carries the declaration's own sentence saying what that
-/// swing costs, because a code tells a reader which decision was withheld and never tells it what the decision costs.
+/// refused, and the fact that the tile is hers. The words that turn that into something to do are the Host's, because a
+/// sentence composed here arrives in the Mod's locale rather than the run's.
 /// </para>
 /// </summary>
 public static class FarmhandForEachHealing
@@ -108,6 +109,18 @@ public static class FarmhandForEachHealing
         ArgumentNullException.ThrowIfNull(actionThatWouldDestroyIt);
         return string.Create(CultureInfo.InvariantCulture, $"{NoSafeClear}:{occupant}:{actionThatWouldDestroyIt}");
     }
+
+    /// <summary>
+    /// Every refusal code this join can answer with, as data.
+    ///
+    /// <para>
+    /// It exists so the gate that proves a code reaches its reader (`host/src/stardew-action-remedy.test.ts`,
+    /// `a_refusal_the_model_reads_is_a_sentence`) has a population the Mod OWNS, instead of a list of codes retyped on the
+    /// Host side: a producer added here without an answer there fails by name, and two spellings of "which codes can this
+    /// join emit" cannot drift.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyList<string> RefusalCodes = Array.AsReadOnly(new[] { NoPublishedActionClears, NoSafeClear });
 
     /// <summary>What one healed row says it removed, before the action it was asked for ran.</summary>
     public static string HealedToken(string occupant, string clearingAction)
@@ -192,8 +205,7 @@ public static class FarmhandForEachHealing
                 FarmhandForEachClearanceOutcome.NoSafeClear,
                 occupant,
                 null,
-                NoSafeClearReason(occupant, destructive.ActionId),
-                destructive.RefusalDetail);
+                NoSafeClearReason(occupant, destructive.ActionId));
         }
 
         // A clearer the live policy disables is still the honest thing to name: its dispatch refuses with the policy's own

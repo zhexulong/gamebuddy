@@ -95,10 +95,10 @@ public sealed record FarmhandForEachStepResult(int Step, string ActionId, Farmha
 /// `refused`/`failed`/`stopped`, and repeating that as a position would be a second spelling of the same fact.
 /// </para>
 /// <para>
-/// <see cref="Detail"/> IS THE ONE WORDS FIELD on a row, and it exists because a reason CODE is not an explanation: a tile
-/// refused for her own grass answers <c>no_safe_clear:grass:cut_grass</c>, which names the decision that was withheld and
-/// nothing about what taking it would cost. The sentence comes from the clearing declaration itself
-/// (<see cref="FarmhandClearingDeclaration.RefusalDetail"/>) and the row hands it to the wire unchanged.
+/// THE ROW CARRIES NO WORDS. Its `reasonCode` names the occupant and the action a refusal weighed
+/// (`no_safe_clear:crop:scythe_crop`), and that is every fact the refusal has; the SENTENCE is the Host's, because the
+/// Host owns the prompt and the locale (`host/src/stardew-action-remedy.ts`). A sentence composed here shipped in the
+/// Mod's English inside a Chinese run and could not be re-worded without a Mod release.
 /// </para>
 /// </summary>
 public sealed record FarmhandForEachTargetResult(
@@ -114,8 +114,7 @@ public sealed record FarmhandForEachTargetResult(
     string? Evidence,
     string? Healed = null,
     IReadOnlyList<FarmhandForEachStepResult>? Steps = null,
-    string? StoppedAt = null,
-    string? Detail = null)
+    string? StoppedAt = null)
 {
     /// <summary>Where the target is, in the one shape every answer uses - or null when the row carries no tile.</summary>
     public string? Tile => this.X is null || this.Y is null
@@ -463,9 +462,9 @@ public static class FarmhandForEachExpansion
     /// A CLEAR THAT WOULD DESTROY SOMETHING SHE PUT ON THE TILE IS NOT TAKEN. When every published clearer of the occupant
     /// is destructive (`scythe_crop` on her own crop, `cut_grass` on grass a starter planted) the row reports the
     /// clearance's own refusal - `no_safe_clear:<occupant>:<action>` - as a REFUSED row with no swing made: the pass may
-    /// not spend a destructive effect on a tile neither she nor the player asked it to clear. The row carries the
-    /// declaration's own sentence beside that code, because "a swing was withheld" is not the same answer as "here is what
-    /// the swing would have cost you, and it is yours to make".
+    /// not spend a destructive effect on a tile neither she nor the player asked it to clear. The code names the occupant
+    /// and the swing that was weighed; the sentence that says what to do about it is the Host's
+    /// (`host/src/stardew-action-remedy.ts`), because it has to arrive in the run's own words.
     /// </para>
     /// </summary>
     private static FarmhandForEachTargetResult Heal(
@@ -489,8 +488,7 @@ public static class FarmhandForEachExpansion
                 refused.ExecutionId,
                 refused.State,
                 clearance.RefusalReasonCode,
-                refused.Evidence,
-                clearance.RefusalDetail);
+                refused.Evidence);
 
         FarmhandClearingOffer clearer = clearance.Clearer!;
         if (stopRequested())
@@ -526,9 +524,8 @@ public static class FarmhandForEachExpansion
         string? executionId,
         ExecutionState? state,
         string? reasonCode,
-        string? evidence,
-        string? detail = null) =>
-        new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, target, executionId, state, reasonCode, evidence, Detail: detail);
+        string? evidence) =>
+        new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, target, executionId, state, reasonCode, evidence);
 
     private static FarmhandForEachTargetResult Skipped(FarmhandForEachRow row, FarmhandForEachTargetOutcome outcome, string? reasonCode) =>
         new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, null, null, null, reasonCode, null);

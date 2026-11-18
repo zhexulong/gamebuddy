@@ -8,11 +8,17 @@ import ts from "typescript";
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import { ADVERTISED, MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
-import { evidenceDetailOf, evidenceField, remedyForBodyHold } from "./stardew-action-remedy.js";
+import {
+  MACHINE_ONLY_REFUSAL_CODES,
+  describeRefusalRemedy,
+  evidenceDetailOf,
+  evidenceField,
+  remedyForRefusal,
+} from "./stardew-action-remedy.js";
 
 test("every named hold gets a countermeasure, and none of them is the same text", () => {
   const codes = ["actor_held_by_modal", "transient_busy", "cutscene_active", "actor_passed_out"];
-  const guidances = codes.map((code) => remedyForBodyHold(code, null)?.guidance);
+  const guidances = codes.map((code) => remedyForRefusal(code, null)?.guidance);
   for (const [index, guidance] of guidances.entries()) {
     assert.ok(
       guidance,
@@ -28,12 +34,12 @@ test("every named hold gets a countermeasure, and none of them is the same text"
 });
 
 test("a modal points at the plan step that matches whether an answer is owed", () => {
-  const question = remedyForBodyHold("actor_held_by_modal", "modal_type=DialogueBox;is_question=true;can_move=false");
+  const question = remedyForRefusal("actor_held_by_modal", "modal_type=DialogueBox;is_question=true;can_move=false");
   assert.equal(question?.action, "stardew_plan_work");
   assert.match(question?.guidance ?? "", /'answer_dialogue'/);
   assert.match(question?.guidance ?? "", /stardew_plan_work/);
 
-  const informational = remedyForBodyHold(
+  const informational = remedyForRefusal(
     "actor_held_by_modal",
     "modal_type=DialogueBox;is_question=false;can_move=false",
   );
@@ -45,7 +51,7 @@ test("a modal points at the plan step that matches whether an answer is owed", (
 test("an unreadable answer state is honest rather than promising a close that may be refused", () => {
   // A non-dialogue operation menu: the question flag is absent because it does not apply, and dismiss_modal's
   // audited whitelist may refuse it. The guidance must not claim the close will work.
-  const remedy = remedyForBodyHold(
+  const remedy = remedyForRefusal(
     "actor_held_by_modal",
     "modal_type=LetterViewerMenu;is_question=unknown;can_move=false",
   );
@@ -55,10 +61,7 @@ test("an unreadable answer state is honest rather than promising a close that ma
 });
 
 test("a transient hold tells the Agent to wait and to keep the SAME target", () => {
-  const remedy = remedyForBodyHold(
-    "transient_busy",
-    "transient_kind=toolAnimation;retry_window_ms=2000;can_move=false",
-  );
+  const remedy = remedyForRefusal("transient_busy", "transient_kind=toolAnimation;retry_window_ms=2000;can_move=false");
   assert.equal(remedy?.action, null, "no tool can shorten a transient, so none may be named");
   assert.match(remedy?.guidance ?? "", /toolAnimation/);
   assert.match(remedy?.guidance ?? "", /2000/);
@@ -67,7 +70,7 @@ test("a transient hold tells the Agent to wait and to keep the SAME target", () 
 
 test("a hold with no countermeasure says so instead of naming a tool", () => {
   for (const code of ["cutscene_active", "actor_passed_out"]) {
-    const remedy = remedyForBodyHold(code, null);
+    const remedy = remedyForRefusal(code, null);
     assert.equal(remedy?.action, null, `${code} cannot be cleared by a tool`);
     assert.match(remedy?.guidance ?? "", /retry|Do not issue|Do not retry/i);
   }
@@ -77,7 +80,7 @@ test("a cutscene points at the plan step that acts on the box it is showing", ()
   // A cutscene is not one state. Two handlers act on its own dialogue box, and the evidence says which box is on
   // screen - the same fact the modal hold publishes. The dead end this replaces: one sentence for both, telling a run
   // that could have advanced the box that no action can run (four retries over twenty minutes).
-  const question = remedyForBodyHold(
+  const question = remedyForRefusal(
     "cutscene_active",
     "event_up=true;dialogue_box=true;is_question=true;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
   );
@@ -85,7 +88,7 @@ test("a cutscene points at the plan step that acts on the box it is showing", ()
   assert.match(question?.guidance ?? "", /'answer_dialogue'/);
   assert.match(question?.guidance ?? "", /'dismiss_modal'/, "the way to learn the offered keys must be named");
 
-  const informational = remedyForBodyHold(
+  const informational = remedyForRefusal(
     "cutscene_active",
     "event_up=true;dialogue_box=true;is_question=false;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
   );
@@ -100,7 +103,7 @@ test("a cutscene points at the plan step that acts on the box it is showing", ()
     assert.match(guidance ?? "", /stardew_plan_work/, "a step needs the route that can submit it");
 
   // No box: nothing to act on, and the guidance must not name a tool that would be refused.
-  const bare = remedyForBodyHold(
+  const bare = remedyForRefusal(
     "cutscene_active",
     "event_up=true;dialogue_box=false;admissible_actions=none;next_step=wait_for_event_to_advance;can_move=false",
   );
@@ -111,7 +114,7 @@ test("a cutscene points at the plan step that acts on the box it is showing", ()
 test("a cutscene with nothing to act on is its own code, with its own answer", () => {
   // The modal family was admitted into the cutscene and found no box. That is a wait which ends by itself, not the
   // anonymous cutscene hold whose countermeasure a run is still looking for.
-  const remedy = remedyForBodyHold(
+  const remedy = remedyForRefusal(
     "event_has_no_dialogue_box",
     "event_up=true;dialogue_box=false;admissible_actions=none;next_step=wait_for_event_to_advance;can_move=false",
   );
@@ -120,7 +123,7 @@ test("a cutscene with nothing to act on is its own code, with its own answer", (
   assert.match(remedy?.guidance ?? "", /advances on its own/);
   assert.notEqual(
     remedy?.guidance,
-    remedyForBodyHold("cutscene_active", null)?.guidance,
+    remedyForRefusal("cutscene_active", null)?.guidance,
     "two different facts must not read as one sentence",
   );
 });
@@ -135,7 +138,7 @@ test("every named body owner gets actionable guidance, and no two owners read th
     "body_owned_by_day_advance",
     "body_owned_by_activity",
   ];
-  const guidances = owners.map((code) => remedyForBodyHold(code, null)?.guidance);
+  const guidances = owners.map((code) => remedyForRefusal(code, null)?.guidance);
   for (const [index, guidance] of guidances.entries()) {
     assert.ok(guidance, `${owners[index]} must name a next step, not just report the hold`);
     assert.match(guidance ?? "", /Wait|Re-issue/, `${owners[index]} must say to wait or to re-issue`);
@@ -152,7 +155,7 @@ test("only a supersedable owner is told to re-issue; every other owner must sett
   // movement displaces it: `RequestLocalMove` cancels `active`, while any other action goes through shared
   // admission and is refused again. The guidance must therefore name both cases instead of promising a
   // takeover to whichever request happens to be holding the code.
-  const movement = remedyForBodyHold("body_owned_by_movement", null)?.guidance ?? "";
+  const movement = remedyForRefusal("body_owned_by_movement", null)?.guidance ?? "";
   assert.match(movement, /if you meant to walk somewhere, re-issue the request now/);
   assert.match(movement, /Any other action has to wait/, "a tool action must not be told to re-issue blindly");
   for (const code of [
@@ -163,20 +166,20 @@ test("only a supersedable owner is told to re-issue; every other owner must sett
     "body_owned_by_activity",
     "body_owned_by_navigation",
   ]) {
-    assert.match(remedyForBodyHold(code, null)?.guidance ?? "", /Wait for/, `${code} cannot be interrupted`);
+    assert.match(remedyForRefusal(code, null)?.guidance ?? "", /Wait for/, `${code} cannot be interrupted`);
   }
   // Navigation is deliberately in the settle-only list above, matching the Mod's own `interruptible=false`.
   // It used to offer a takeover here as well; that contradicted the structured fact published in the same
   // snapshot, and the movement path has no clean takeover to offer (`RequestLocalMove`'s occupancy guard does
   // not include `activeNavigate`). One authority, one answer.
-  const navigation = remedyForBodyHold("body_owned_by_navigation", null)?.guidance ?? "";
+  const navigation = remedyForRefusal("body_owned_by_navigation", null)?.guidance ?? "";
   assert.match(navigation, /cannot be taken over/, "the guidance must say so plainly");
   assert.doesNotMatch(navigation, /also takes over|takes over from/, "and must not promise a takeover the Mod denies");
 });
 
 test("a body_owned_* code the table does not list still gets a generic actionable remedy", () => {
   // A named hold the Host has not heard of yet must not degrade to an unknown-error dead end.
-  const remedy = remedyForBodyHold("body_owned_by_future_owner", null);
+  const remedy = remedyForRefusal("body_owned_by_future_owner", null);
   assert.equal(remedy?.action, null, "a prefixed hold names no tool");
   assert.match(remedy?.guidance ?? "", /Wait for it to settle/);
   assert.match(remedy?.guidance ?? "", /re-issue the same request/);
@@ -184,14 +187,14 @@ test("a body_owned_* code the table does not list still gets a generic actionabl
 
 test("the bare legacy body_owned stays a dead end for the prefix fallback", () => {
   // `body_owned` is not `body_owned_`: the fallback must not swallow the code whose test asserts no remedy.
-  assert.equal(remedyForBodyHold("body_owned", null), null);
+  assert.equal(remedyForRefusal("body_owned", null), null);
 });
 
 test("a queued request that outlived its wait names the owner it waited for", () => {
   // The Mod parks a request behind the actor's OWN in-flight work and dispatches it when that work ends. When the
   // boundary is crossed, the wait answers with `waiting_for_body:<owner>` - a code neither the named table nor the
   // `body_owned_` prefix fallback covers. It must still give the Agent a next step, and it must name the owner.
-  const remedy = remedyForBodyHold(
+  const remedy = remedyForRefusal(
     "waiting_for_body:body_owned_by_activity",
     "owner_execution_id=exec_1;owner_action=pickup_item",
   );
@@ -199,7 +202,7 @@ test("a queued request that outlived its wait names the owner it waited for", ()
   assert.match(remedy?.guidance ?? "", /pickup_item/, "the guidance must name the owner, not just the hold");
   assert.match(remedy?.guidance ?? "", /Re-issue the same request/);
   // Evidence is optional: without it the code itself still says which owner the wait was for.
-  const withoutDetail = remedyForBodyHold("waiting_for_body:body_owned_by_movement", null);
+  const withoutDetail = remedyForRefusal("waiting_for_body:body_owned_by_movement", null);
   assert.match(withoutDetail?.guidance ?? "", /body_owned_by_movement/);
 });
 
@@ -213,7 +216,7 @@ test("a reason code that is not a body hold gets no remedy", () => {
     "accepted",
     null,
   ]) {
-    assert.equal(remedyForBodyHold(code, "modal_type=DialogueBox"), null, `${String(code)} is not a body hold`);
+    assert.equal(remedyForRefusal(code, "modal_type=DialogueBox"), null, `${String(code)} is not a body hold`);
   }
 });
 
@@ -350,4 +353,141 @@ test("every route a remedy names is one the mounted surface can take", (t) => {
     [],
     "a remedy that points at a route the game cannot take is the defect this module's own header rules out",
   );
+});
+
+/**
+ * The Mod's own file that declares the refusal vocabulary the healing join can publish.
+ *
+ * Resolved through `../..` for the same reason as `REMEDY_SOURCE`: the test is compiled into `host/dist-test`, so `..` is
+ * `host` and `../..` is the repository root, in both the source and the compiled layout.
+ */
+const HEALING_SOURCE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "integrations",
+  "stardew",
+  "src",
+  "Core",
+  "Policy",
+  "FarmhandForEachHealing.cs",
+);
+
+/**
+ * The refusal codes the Mod can carry to the model, read from the Mod's OWN declaration.
+ *
+ * The population is `FarmhandForEachHealing.RefusalCodes` - an array the Mod compiles from the same constants its join
+ * returns - so a producer added there enrols itself here without an edit, and a code the Mod stops publishing leaves the
+ * population rather than lingering in this file. A declaration that cannot be read is a BLOCKED reading, never an empty
+ * set that agrees with itself.
+ */
+function modPublishedRefusalCodes(): readonly string[] {
+  const source = readFileSync(HEALING_SOURCE, "utf8");
+  const declared = /RefusalCodes\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([^}]*)\}\)/u.exec(source);
+  assert.ok(
+    declared !== null,
+    `blocked: the Mod declares no RefusalCodes array in ${HEALING_SOURCE}, so this gate has no population to read`,
+  );
+  const constants = new Map(
+    [...source.matchAll(/public const string (\w+) = "([a-z0-9_]+)";/gu)].map((match) => [
+      match[1] ?? "",
+      match[2] ?? "",
+    ]),
+  );
+  const names = (declared[1] ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return names.map((name) => {
+    const value = constants.get(name);
+    assert.ok(value !== undefined, `blocked: ${name} is in RefusalCodes and this file declares no literal for it`);
+    return value;
+  });
+}
+
+type RefusalCoverage = Readonly<{
+  examined: number;
+  rendered: number;
+  machineOnly: number;
+  findings: readonly string[];
+}>;
+
+/**
+ * The judgement, as a pure function of the population and a renderer.
+ *
+ * A code passes when this module composes a sentence for it, or when it is declared machine-only WITH a reason. Anything
+ * else is a code the model would read bare, which is the defect: a code names the fact and never what to do about it.
+ */
+function judgeRefusalCoverage(codes: readonly string[], render: (code: string) => string | null): RefusalCoverage {
+  const findings: string[] = [];
+  let rendered = 0;
+  let machineOnly = 0;
+  for (const code of codes) {
+    const guidance = render(code);
+    if (guidance !== null) {
+      if (!guidance.includes("occupant")) findings.push(`sentence_does_not_name_the_thing:${code}`);
+      else rendered += 1;
+      continue;
+    }
+    const reason = MACHINE_ONLY_REFUSAL_CODES.get(code);
+    if (reason !== undefined && reason.trim().length > 0) {
+      machineOnly += 1;
+      continue;
+    }
+    findings.push(`code_reads_bare:${code}`);
+  }
+  return { examined: codes.length, rendered, machineOnly, findings };
+}
+
+/** The sentence this module composes for one code, with a parameterisation that puts both of its facts in the text. */
+function sentenceFor(code: string): string | null {
+  return remedyForRefusal(`${code}:occupant:action`, null)?.guidance ?? null;
+}
+
+test("a_refusal_the_model_reads_is_a_sentence: every code the Mod publishes has words, or a stated reason it does not", (t) => {
+  const codes = modPublishedRefusalCodes();
+  assert.ok(codes.length > 0, "blocked: the Mod publishes no refusal code, so this gate examines nothing");
+  for (const [code, reason] of MACHINE_ONLY_REFUSAL_CODES)
+    assert.ok(reason.trim().length > 0, `a machine-only exemption carries its reason or it is a silent drop: ${code}`);
+
+  const verdict = judgeRefusalCoverage(codes, sentenceFor);
+  t.diagnostic(
+    `codes examined ${String(verdict.examined)} · rendered ${String(verdict.rendered)} · machine-only ${String(verdict.machineOnly)}; ${verdict.findings.length} bare`,
+  );
+  assert.deepEqual(
+    verdict.findings,
+    [],
+    "a refusal code that reaches the model without a sentence is a dead end: the Mod names the fact and this module owes the Agent what to do about it",
+  );
+});
+
+test("the coverage judgement is red for a code whose sentence is deleted", () => {
+  // THE FALSIFIER: withhold exactly one code's sentence - what deleting its branch does - and the judgement names that code
+  // rather than passing because the rest of the table still answers. The population is still the Mod's own.
+  const codes = modPublishedRefusalCodes();
+  const deleted = codes[0] ?? "";
+  assert.ok(deleted.length > 0, "blocked: the Mod publishes no refusal code to withhold");
+  const verdict = judgeRefusalCoverage(codes, (code) => (code === deleted ? null : sentenceFor(code)));
+
+  assert.ok(
+    verdict.findings.includes(`code_reads_bare:${deleted}`),
+    `withholding ${deleted}'s sentence must be named, got ${verdict.findings.join(" ")}`,
+  );
+});
+
+test("the clearing refusal names the occupant, the swing that was withheld, and the step that can take it", () => {
+  // The shape the Mod actually publishes, read through the function the tool layer calls, so this is the Agent's text.
+  const remedy = describeRefusalRemedy("no_safe_clear:crop:scythe_crop", null);
+  assert.equal(remedy?.action, "stardew_plan_work", "the next step is a plan step, not a flat tool");
+  assert.match(remedy?.guidance ?? "", /crop/, "the sentence has to name what is standing there");
+  assert.match(remedy?.guidance ?? "", /scythe_crop/, "and the swing it weighed, which is what she may still choose");
+  assert.match(remedy?.guidance ?? "", /yourself/, "the decision is hers, and the sentence must say so");
+  assert.doesNotMatch(remedy?.guidance ?? "", /no safe clear/i, "a restatement of the code is not a sentence");
+});
+
+test("a tile nothing published clears says to stop asking it", () => {
+  const remedy = describeRefusalRemedy("no_published_action_clears:object", null);
+  assert.equal(remedy?.action, null, "no tool changes it, so none may be named");
+  assert.match(remedy?.guidance ?? "", /object/);
+  assert.match(remedy?.guidance ?? "", /different one/, "the Agent must be told what to do instead of re-issuing");
 });

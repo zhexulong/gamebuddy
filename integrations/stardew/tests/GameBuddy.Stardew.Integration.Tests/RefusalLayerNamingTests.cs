@@ -22,8 +22,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <para>
 /// <b>Population.</b> Nothing here is a hand-written list of actions:
 /// <list type="bullet">
-/// <item>the declared layers come from <see cref="FarmhandActionCatalog.Registrations"/> - the tool claims, the pinned
-/// items and the approach requirements the actions themselves publish;</item>
+/// <item>the declared layers come from <see cref="FarmhandActionCatalog.Registrations"/> - the tool claims and the
+/// approach requirements the actions themselves publish. The PINNED ITEM is deliberately not one of them: whether a bag
+/// carries it is a comparison between a declaration and an inventory, which is the conversation's (ADR-0014), and the
+/// handler that takes the item out of the pack decides it on the game thread;</item>
 /// <item>the world layers are driven through the probe with a real (empty or single-object) <see cref="GameLocation"/>;</item>
 /// <item>the refusal paths come from the <c>NoNativePathReasonCode</c> mint shapes in the Mod's own source;</item>
 /// <item>the vocabulary comes from <see cref="RefusalLayerKind"/> itself, never from a list of words written here.</item>
@@ -154,7 +156,7 @@ public sealed class RefusalLayerNamingTests
                 continue;
             population++;
 
-            RefusalLayerToken token = RefusalProbe.DescribeDeclared(registration, pack);
+            RefusalLayerToken token = RefusalProbe.DescribeDeclaredTool(registration, pack);
 
             token.Layer.Should().Be(RefusalLayerKind.Tool, $"{registration.ActionId} declares tool:{category} and an empty pack cannot satisfy it");
             token.Detail.Should().Be(category, $"{registration.ActionId}'s token names the category its OWN row declares");
@@ -174,35 +176,33 @@ public sealed class RefusalLayerNamingTests
             if (DeclaredToolCategory(registration) is null)
                 continue;
 
-            RefusalProbe.DescribeDeclared(registration, pack).Layer
+            RefusalProbe.DescribeDeclaredTool(registration, pack).Layer
                 .Should().NotBe(RefusalLayerKind.Tool, $"{registration.ActionId} claims a tool this pack holds");
         }
     }
 
     [Fact]
-    public void EveryPinnedItemIsNamedWhenThePackDoesNotCarryIt()
+    public void APinnedItemIsTheExecutingHandlersAnswerAndNotTheProbes()
     {
+        // ADR-0014: the Mod knows the game, not the conversation. "Does the bag carry the id this action pins" is a
+        // comparison between a DECLARATION and an INVENTORY with no game entity in it, so this probe must not answer it.
+        // The authority is the handler that takes the item out of the pack on the game thread, whose words are
+        // `tool_not_owned:<category>` / `<action>_not_owned_in_requested_slot` / `slot:empty` - read from the real slot,
+        // which no static comparison can see. The population is the acceptance facts the catalog declares, so a row that
+        // starts pinning an item is examined here without an edit.
         int population = 0;
-        var empty = new List<Item?>();
+        var pack = new List<Item?>();
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
             if (registration.Descriptor?.Acceptance?.ExactExpectedQualifiedItemId is not { } pinned)
                 continue;
             population++;
 
-            // No tool claim competes here: a pinned item is only interesting for a row that declares no tool, and the
-            // probe orders the tool layer first by design.
-            if (DeclaredToolCategory(registration) is not null)
-                continue;
-
-            RefusalLayerToken token = RefusalProbe.DescribeDeclared(registration, empty);
-            token.Layer.Should().Be(RefusalLayerKind.Item, $"{registration.ActionId} pins {pinned} and an empty pack cannot carry it");
-            token.Detail.Should().Be(pinned, $"{registration.ActionId}'s token names the id its OWN acceptance facts pin");
-            AssertWireBounded(token.Format());
-
-            // And the same row with the item in hand must fall through to the world layers rather than blaming the pack.
-            RefusalProbe.DescribeDeclared(registration, new List<Item?> { SeededObject(pinned) }).Layer
-                .Should().NotBe(RefusalLayerKind.Item, $"{registration.ActionId} carries {pinned}, so the pack is not the reason");
+            RefusalProbe.DescribeDeclaredTool(registration, pack).Layer
+                .Should().NotBe(RefusalLayerKind.Item,
+                    $"{registration.ActionId} pins {pinned}, and an empty pack is not this probe's question: the handler decides it");
+            RefusalProbe.DescribeDeclaredTool(registration, new List<Item?> { SeededObject(pinned) }).Layer
+                .Should().NotBe(RefusalLayerKind.Item, "and the answer does not depend on what the bag holds either");
         }
         population.Should().BeGreaterThan(0, "the population comes from the acceptance facts the catalog declares");
     }
@@ -236,17 +236,17 @@ public sealed class RefusalLayerNamingTests
     public void AnActionThatDeclaresNothingInventsNoRequirement()
     {
         // The other direction of the same gate: the probe must not manufacture a precondition an action does not have.
-        // A row with no tool claim, no pinned item and no approach can only be refused by the world, so with no world in
-        // scope it must refuse nothing at all - never a `tool:` the caller cannot act on.
+        // A row with no tool claim and no approach can only be refused by the world, so with no world in scope it must
+        // refuse nothing at all - never a `tool:` the caller cannot act on, and never a pinned item, which is the
+        // handler's answer and not this probe's.
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
             if (DeclaredToolCategory(registration) is not null
-                || registration.Descriptor?.Acceptance?.ExactExpectedQualifiedItemId is not null
                 || registration.Descriptor?.Approach is not null)
                 continue;
 
-            RefusalProbe.DescribeDeclared(registration, new List<Item?>()).Refused
-                .Should().BeFalse($"{registration.ActionId} declares no tool and no pinned item");
+            RefusalProbe.DescribeDeclaredTool(registration, new List<Item?>()).Refused
+                .Should().BeFalse($"{registration.ActionId} declares no tool and no approach");
         }
     }
 

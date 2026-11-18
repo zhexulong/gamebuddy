@@ -836,11 +836,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     };
 
     /// <summary>
-    /// One row of the pass's table, in the words the aggregate carries it in.
+    /// One pass row, as the aggregate's table carries it: `x`, `y`, the action, the state, the reason CODE, and whether the
+    /// pass opened the tile first. No free text of any kind - a row says what happened, and the words are the Host's.
     ///
-    /// INTERNAL SO A TEST CAN ASK THE RECEIPT ITSELF what a chained row and a one-action row look like: the two new words
-    /// (`steps`, `stopped_at`) are additive only if the rows that never asked for a chain stay byte-identical, and that is a
-    /// property of this formatting rather than of the pass. Same seam as <see cref="VerdictFor"/>, one level down.
+    /// INTERNAL SO A TEST CAN ASK THE RECEIPT ITSELF what a chained row and a one-action row look like: `steps` and
+    /// `stopped_at` are additive only if the rows that never asked for a chain stay byte-identical, and that is a property
+    /// of this formatting rather than of the pass. Same seam as <see cref="VerdictFor"/>, one level down.
     /// </summary>
     internal static string RowJson(
         int? x,
@@ -850,25 +851,24 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         string? reasonCode,
         string? healed,
         IReadOnlyList<FarmhandForEachStepResult>? steps = null,
-        string? stoppedAt = null,
-        string? detail = null) =>
+        string? stoppedAt = null) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}{StepsJson(steps, stoppedAt)}{StoppedAtJson(stoppedAt)}{DetailJson(detail)}}}");
+            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}{StepsJson(steps, stoppedAt)}{StoppedAtJson(stoppedAt)}}}");
 
     /// <summary>
-    /// One pass row, projected by the only mapping there is. The row carries more than the wire needs (its local position,
-    /// its receipt identity, its state), and the words it carries travel in <c>detail</c>.
+    /// One pass row, projected by the only mapping there is: its coordinates, its action, its state and the reason CODE it
+    /// answered with. There is no `detail` beside that code, because the sentence a reader needs is the Host's to compose.
     ///
     /// <para>
-    /// ONE CALL SITE, ONE SPELLING. The gate that proves a refused row says what it costs reads the MODEL-VISIBLE answer, so
-    /// it drives this projection rather than re-listing the row's fields: a field the wire stops carrying must make that gate
+    /// ONE CALL SITE, ONE SPELLING. A gate proving something about a refused row reads the MODEL-VISIBLE answer, so it
+    /// drives this projection rather than re-listing the row's fields: a field the wire stops carrying must make that gate
     /// fail, not quietly pass because the record still holds it.
     /// </para>
     /// </summary>
     internal static string RowJson(FarmhandForEachTargetResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        return RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed, result.Steps, result.StoppedAt, result.Detail);
+        return RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed, result.Steps, result.StoppedAt);
     }
 
     /// <summary>
@@ -894,16 +894,6 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
     /// <summary>Where a row's chain stopped, on the row it happened to: `&lt;step&gt;:&lt;reasonCode&gt;`.</summary>
     private static string StoppedAtJson(string? stoppedAt) => stoppedAt is null ? string.Empty : $",\"stopped_at\":{JsonText(stoppedAt)}";
-
-    /// <summary>
-    /// What a row says beyond its reason code, on the row it was refused on.
-    ///
-    /// <para>
-    /// ADDITIVE ONLY: a row with nothing to say keeps the exact bytes it answered before this field existed, which is why the
-    /// tail is empty rather than `"detail":null`.
-    /// </para>
-    /// </summary>
-    private static string DetailJson(string? detail) => detail is null ? string.Empty : $",\"detail\":{JsonText(detail)}";
 
     private static string JsonText(string? value) => value is null ? "null" : JsonSerializer.Serialize(value);
 
@@ -988,8 +978,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         PassCounts(pass, BodyProgramValidation.MaximumNodeHintLength);
 
     /// <summary>
-    /// The same counts, in the field a reader reads as `reasonDetail` - led by the SENTENCES of its refused rows, which
-    /// are not the tail.
+    /// The same counts, in the field a reader reads as `reasonDetail`.
     ///
     /// Measured 2026-11-10 (`round42`, day 6): the loop's hint carried `decided=9;succeeded=0;failed=1;refused=8;...` and the
     /// detail said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006) and this aggregate never
@@ -997,47 +986,24 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// a reader sees the counts where it looks for the reason and the two fields cannot disagree.
     ///
     /// <para>
-    /// A PASS THAT FAILED AS A UNIT DROPS ITS ROW TABLE - a failed node carries no evidence - so the sentences its refused
-    /// rows carry would be lost exactly where every row needs one. They are written here, once per distinct sentence and
-    /// only when such a row exists, inside the field's own budget: the counts say how many rows are behind the answer, and
-    /// the sentence says what the withheld swing costs.
-    /// </para>
-    /// <para>
-    /// THE SENTENCE IS NOT QUEUED BEHIND THE ENUMERATION. Measured 2026-11-11 (`round45`): a pass of 18 rows, 3 of them
-    /// refused `no_safe_clear:crop:scythe_crop`, answered a 494-character detail consisting ENTIRELY of counts and
-    /// per-reason entries, and the sentence its declaration writes for exactly that refusal was in none of the run's
-    /// model-visible text - `scythe_crop levels it` appears zero times in the bundle, the Mod's own journal included. The
-    /// loop below used to run after the budget was already spent and `continue`d past every sentence, silently. So the
-    /// counts and the sentences come first and the per-reason enumeration is what yields: it is a second copy of what the
-    /// hint already carries, and it is no answer to a reader who cannot see what the withheld swing would have cost.
+    /// IT CARRIES NO SENTENCE, AND THAT IS THE POINT. A refused row's explanation used to be composed in the Mod and written
+    /// here, which put an English sentence inside a Chinese run and made the wording a Mod release. What the codes name -
+    /// `no_safe_clear:crop:scythe_crop=3` - is the whole refusal: the occupant, the swing that was weighed, and how many rows
+    /// it withheld. The Host turns that into something to do (`host/src/stardew-action-remedy.ts`), in the run's own words.
+    /// `ClearanceProseOwnershipTests` keeps a sentence out of this file.
     /// </para>
     /// </summary>
     internal static string FailureDetail(FarmhandForEachPassResult pass)
     {
         ArgumentNullException.ThrowIfNull(pass);
         int budget = BodyProgramValidation.MaximumNodeRefusalDetailLength;
-        IReadOnlyList<string> codes = ReasonEntries(pass);
         var detail = new StringBuilder(Ledger(pass));
-        // The sentences get everything except the room the enumeration's own cut-count may need.
-        AppendNamingCuts(detail, Sentences(pass), SentencesNotListed, budget, codes.Count == 0 ? 0 : Remainder(CodesNotListed, codes.Count).Length);
-        AppendNamingCuts(detail, codes, CodesNotListed, budget, 0);
+        AppendNamingCuts(detail, ReasonEntries(pass), CodesNotListed, budget, 0);
         return detail.ToString();
     }
 
-    /// <summary>How a field says it could not carry every refusal sentence it had.</summary>
-    internal const string SentencesNotListed = "sentences_not_listed";
-
     /// <summary>How a field says it could not carry every per-reason entry it had.</summary>
     internal const string CodesNotListed = "codes_not_listed";
-
-    /// <summary>The distinct sentences this pass's rows carry, as `;&lt;sentence&gt;` entries.</summary>
-    private static IReadOnlyList<string> Sentences(FarmhandForEachPassResult pass) =>
-        pass.Targets.Select(target => target.Detail)
-            .OfType<string>()
-            .Where(sentence => sentence.Length > 0)
-            .Distinct(StringComparer.Ordinal)
-            .Select(sentence => string.Create(CultureInfo.InvariantCulture, $";{sentence}"))
-            .ToArray();
 
     /// <summary>The per-reason counts, as `;&lt;code&gt;=&lt;count&gt;` entries, in the order <see cref="ReasonsByCount"/> decided.</summary>
     private static IReadOnlyList<string> ReasonEntries(FarmhandForEachPassResult pass) =>
