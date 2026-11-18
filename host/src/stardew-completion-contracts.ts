@@ -435,6 +435,63 @@ function hasCookRecipeCompletionEvidence(detail: string, droppedOutput: boolean)
 }
 
 /**
+ * THE SETTLEMENT ENVELOPE: the fields the Mod appends to a receipt's evidence AFTER the handler has composed it.
+ *
+ * WHY THIS IS ONE DECLARATION AND NOT A KEY IN EVERY RULE. These clauses are not statements about the action's
+ * postcondition, and they are not minted by any handler: three seams in `ExecutionManager` write them onto whatever
+ * detail the handler already produced, on the way out. So they belong to every row at once, and a row that had to
+ * list them would be saying the same thing 102 times - and would say it wrongly the first time a seam learned a new
+ * field.
+ *
+ * THE THREE SEAMS (the Mod side of this declaration, checked against the C# by
+ * `stardew-live-receipt-parity.test.ts`):
+ *   - `RememberTerminal` appends `chore=<family>` to every TERMINAL of an action whose descriptor declares a chore
+ *     (`FarmhandActionCatalog.ChoreEntry`).
+ *   - `CarryTraceSteps` appends the fold `steps=N[;folded=...][;steps_omitted=N]` to the receipt that settles an
+ *     execution that walked there (`FoldedTraceSteps.Render`).
+ *   - `AddTrace` appends `held_ms=<n>` to a receipt whose dispatch was parked on the body slot.
+ *
+ * THE FAILURE THIS FIXES, MEASURED. `chore` was minted on 2026-11-18 by the commit that gave a settlement its chore
+ * clause; `steps`/`folded` by the fold commit before it; `held_ms` long before either. Nothing failed. The Host's
+ * rules refuse a field they were not told about (`declaredCompletionEvidence`), so on `round73` every one of the 65
+ * `succeeded` receipts of the ten world-changing actions was refused - `admittedActionIds: []`, the day's purpose
+ * `task_unproven` - while she cut 93 weeds. A contract that has no reader for "the producer wrote a field I do not
+ * know" does not fail on drift; it fails on the WORK.
+ *
+ * THE KEYS SAY WHAT EACH FIELD IS, and `ignored` is a decision stated by name rather than a gap: the completion
+ * contract reads none of these to decide whether a postcondition held.
+ */
+export const STARDEW_SETTLEMENT_ENVELOPE_FIELDS: Readonly<Record<string, string>> = Object.freeze({
+  /** `chore=<family>`: which chore the finished work consumed. Read by the settlement reader (`fact-brief.ts`), not here. */
+  chore: "chore family the settlement's work consumed (FarmhandActionCatalog.ChoreEntry)",
+  /** `steps=<n>`: how many body-trace transitions led to the settlement. */
+  steps: "body-trace transitions that led to the settlement",
+  /** `folded=<reason@evidence|…>`: the walk itself, bounded and folded by the producer. */
+  folded: "the folded body-trace walk, `reason@evidence` joined by `|`",
+  /** `steps_omitted=<n>`: how much of the walk did not fit the fold's bound. */
+  steps_omitted: "folded steps the producer's bound could not carry",
+  /** `held_ms=<n>`: how long the dispatch was parked before the body ran it. */
+  held_ms: "how long the dispatch was parked on the body slot",
+});
+
+/**
+ * The receipt's own evidence, with the settlement envelope removed.
+ *
+ * The row is handed what its handler composed and nothing else: `chore`/`steps`/`folded`/`held_ms` are statements
+ * about the settlement, and a row that had to ignore them would be re-deriving the envelope decision 102 times.
+ * Byte-exact otherwise - a field the producer wrote is neither re-spelled nor re-ordered, so every rule's own
+ * evidence grammar (including the predicates that refuse a duplicate key) still reads the wire's own text.
+ */
+function withoutSettlementEnvelope(detail: string): string {
+  const clauses = detail.split(";");
+  const kept = clauses.filter((clause) => {
+    const separator = clause.indexOf("=");
+    return separator <= 0 || !Object.hasOwn(STARDEW_SETTLEMENT_ENVELOPE_FIELDS, clause.slice(0, separator));
+  });
+  return kept.length === clauses.length ? detail : kept.join(";");
+}
+
+/**
  * One completion rule's evidence contract, declared as a SET rather than a key count.
  *
  * `required` ⊆ emitted ⊆ `required ∪ optional`. The count form this replaced
@@ -1331,7 +1388,54 @@ function chunkRemovalAccountedFor(evidence: Readonly<Record<string, string>>): b
   return evidence.chunk_removed === "false" && evidence.reason === "chunk_still_present";
 }
 
+/**
+ * The pack's quality census as the harvest handler spells it (`{quality}:{stacks}`, joined by `,`), or `none` for a
+ * pack that holds none of the item. A census that cannot be read is `null` - the same refusal `parseSemicolonEvidence`
+ * gives a field, because a measurement nobody can parse is not a measurement.
+ */
+function parseQualityCensus(value: string | undefined): ReadonlyMap<number, number> | null {
+  if (value === undefined) return null;
+  if (value === "none") return new Map();
+  const census = new Map<number, number>();
+  for (const pair of value.split(",")) {
+    const [qualityText, countText, ...rest] = pair.split(":");
+    const quality = integerEvidenceValue(qualityText);
+    const count = integerEvidenceValue(countText);
+    if (rest.length > 0 || quality === null || count === null || quality < 0 || count < 0) return null;
+    if (census.has(quality)) return null;
+    census.set(quality, count);
+  }
+  return census;
+}
+
+/**
+ * What the census gained between the two readings: the stacks added and the qualities that rose, sorted the way the
+ * handler sorts them. `null` when the after-census is smaller anywhere, which no harvest of this item can cause.
+ */
+function qualityCensusGain(
+  before: ReadonlyMap<number, number>,
+  after: ReadonlyMap<number, number>,
+): Readonly<{ total: number; qualities: readonly number[] }> | null {
+  let total = 0;
+  const qualities: number[] = [];
+  for (const [quality, count] of after) {
+    const held = before.get(quality) ?? 0;
+    if (count < held) return null;
+    total += count - held;
+    if (count > held) qualities.push(quality);
+  }
+  for (const quality of before.keys()) if (!after.has(quality)) return null;
+  return { total, qualities: qualities.sort((left, right) => left - right) };
+}
+
 function hasHarvestCropCompletionEvidence(detail: string): boolean {
+  // THE PACK'S QUALITY CENSUS IS PART OF THE POSTCONDITION, not a diagnostic. `CountQualities`
+  // (`farmhandexecutioncontroller.farmingconstructionactions.cs:257`) counts the stacks of THIS item id in the pack by
+  // quality, before and after the native harvest, so the pair is the same measurement `inventory_before`/`after`
+  // takes - and `harvest_quality` names which qualities the harvest actually added. Declared here because the handler
+  // has written all three since the harvest path was measured, while this rule still demanded exactly seventeen keys:
+  // on `round73` every real `crop_harvested` was refused as "twenty fields, not seventeen", which is the same drift the
+  // settlement envelope caused, one action down.
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
   const expectedKeys = [
@@ -1352,6 +1456,9 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     "inventory_after",
     "inventory_gained",
     "crop_present_after",
+    "harvest_quality",
+    "quality_counts_before",
+    "quality_counts_after",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -1359,6 +1466,9 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
   const dayOfPhaseBefore = integerEvidenceValue(evidence.day_of_phase_before);
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
+  const censusBefore = parseQualityCensus(evidence.quality_counts_before);
+  const censusAfter = parseQualityCensus(evidence.quality_counts_after);
+  if (censusBefore === null || censusAfter === null) return false;
   if (
     !hasBoundedNonemptyEvidenceValue(evidence.location) ||
     !hasOpaqueIdEvidenceValue(evidence.target) ||
@@ -1373,6 +1483,13 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     phaseBefore === null ||
     dayOfPhaseBefore === null
   )
+    return false;
+  // THE CENSUS AND THE PACK ARE THE SAME MEASUREMENT. Both count the stacks of this item id the player holds, so the
+  // census delta must equal the inventory delta, and `harvest_quality` must name exactly the qualities that rose -
+  // a harvest that reported a quality it did not add, or added stacks it did not count, is a reading that disagrees
+  // with itself.
+  const gain = qualityCensusGain(censusBefore, censusAfter);
+  if (gain === null || gain.total !== after - before || gain.qualities.join(",") !== evidence.harvest_quality)
     return false;
   if (evidence.regrows === "true") {
     // A regrowing harvest keeps the crop and advances its phase/day; the
@@ -4759,6 +4876,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
  * A FOLD over `STARDEW_COMPLETION_CONTRACTS`. An id that is not in the table is refused, and the `hasOwn` check is what
  * makes that a refusal rather than a prototype read: `STARDEW_COMPLETION_CONTRACTS["constructor"]` would otherwise hand
  * back a function and call it with the claim, which is a completion verdict nobody declared.
+ *
+ * THE SETTLEMENT ENVELOPE IS REMOVED HERE, ONCE, for every row - see `STARDEW_SETTLEMENT_ENVELOPE_FIELDS`.
  */
 export function hasStardewCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean {
   const detail = receipt.evidence?.detail;
@@ -4767,5 +4886,5 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
   const contract = (STARDEW_COMPLETION_CONTRACTS as Readonly<Record<string, CompletionContract | undefined>>)[actionId];
   if (contract === undefined) return false;
   if (!Object.hasOwn(STARDEW_COMPLETION_CONTRACTS, actionId)) return false;
-  return contract({ reasonCode: receipt.reasonCode, detail });
+  return contract({ reasonCode: receipt.reasonCode, detail: withoutSettlementEnvelope(detail) });
 }
