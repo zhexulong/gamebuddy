@@ -32,12 +32,17 @@ function patchFor(input: Parameters<typeof composeGameEvent>[0]): GameFactPatchV
     case "attachment":
       // Only the connection word matters to the waits: the generation and the catalog count stay the ones the
       // snapshot published, so a frame can never be read as a different attachment than the one it belongs to.
+      //
+      // `capabilitySummary` is the contract's own union (`{status:"published",count}` or
+      // `{status:"not_measured",reason}`); the `{available,count}` shape this fixture used to mint was the
+      // retired one, so every frame failed validation, the surface took its resync path, and the two journeys
+      // that measure a fact arriving read the projection from `/game` instead of the frame.
       return {
         fact: "attachment",
         game: {
           attachment: { status: "attached", generation: 1 },
           connectionStatus: input.connectionStatus ?? "connected_idle",
-          capabilitySummary: { available: false, count: 0 },
+          capabilitySummary: { status: "published", count: 0 },
         },
       };
     case "instance":
