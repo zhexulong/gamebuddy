@@ -411,35 +411,63 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     {
         BodyProgramNodeOutcome? outcome = OutcomeForTerminalState(state);
         if (outcome is null) return null;
-        switch (outcome.Value)
+        if (outcome.Value != BodyProgramNodeOutcome.Succeeded) return SettleWithoutProof(execution, receipt, outcome.Value);
+        IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
+        // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
+        // action whose work consumes a family, minted where that string is composed for every terminal
+        // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
+        // a journal field rather than the settlement a reader receives. Minted here as well it was a second
+        // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
+        // no `chore=` in the log.
+        return new BodyProgramTerminalResult(
+            execution,
+            BodyProgramNodeOutcome.Succeeded,
+            facts,
+            receipt.ExecutionId,
+            receipt.Evidence,
+            $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
+    }
+
+    /// <summary>
+    /// The terminal a receipt settles a node on when the receipt proves NO effect: `Failed`, `Cancelled` or `Uncertain`.
+    ///
+    /// <para>
+    /// THREE REASON STATEMENTS, ONE LEGALITY, ASKED OF THE JOURNAL. `FailureCode`, `Hint` and `RefusalDetail` are the
+    /// reason fields, and `OpenBodyProgramJournalAuthority.TryComplete` stores all three on exactly the outcomes that
+    /// settled without succeeding. A `Cancelled` node therefore keeps the hint its receipt carried, on the same footing as
+    /// a `Failed` one, because a hint means the same thing in both: the bounded, actionable projection of the refusal's
+    /// own evidence (`blocker_occupant=weed@40,9;clears_with=cut_weeds;stand_at=41,8`) - what still stands between the
+    /// caller and the goal, and what opens it. It is never "it stopped": `FailureCode` states that, and a hint that only
+    /// restated it would be a second spelling of the reason.
+    /// </para>
+    /// <para>
+    /// MEASURED 2026-11-19: this arm passed `null` while the `Failed` arm passed `receipt.Hint`, so of two terminals with
+    /// the same legal shape, only one reached a model with the route facts. The `for_each` cancellation in
+    /// <see cref="ExecuteForEach"/> already carries `FailureHint(pass)` on its `Cancelled` terminal for the same reason:
+    /// which cancellation a caller could act on depended on which producer cancelled it.
+    /// </para>
+    /// <para>
+    /// A RECEIPT WITH NO HINT LEAVES THE FIELD ABSENT. Absence is this product's word for "the refusal computed no route
+    /// fact": `Invalidated` settles as `Cancelled` and carries `destination=...;phase=approaching`, from which no route
+    /// field can be projected. That is a complete statement beside the reason code, and it is checked here rather than
+    /// spelled as a `none` token - a literal would be a fact no producer measured, and a reader would have to unlearn it.
+    /// </para>
+    /// </summary>
+    internal static BodyProgramTerminalResult SettleWithoutProof(
+        NodeExecutionBinding execution,
+        LocalExecutionReceipt receipt,
+        BodyProgramNodeOutcome outcome) =>
+        outcome switch
         {
-            case BodyProgramNodeOutcome.Succeeded:
-                IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
-                // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
-                // action whose work consumes a family, minted where that string is composed for every terminal
-                // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
-                // a journal field rather than the settlement a reader receives. Minted here as well it was a second
-                // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
-                // no `chore=` in the log.
-                return new BodyProgramTerminalResult(
-                    execution,
-                    BodyProgramNodeOutcome.Succeeded,
-                    facts,
-                    receipt.ExecutionId,
-                    receipt.Evidence,
-                    $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
-            case BodyProgramNodeOutcome.Cancelled:
-                // A cancellation is still a settlement, and the receipt that produced one may state why (`Invalidated`
-                // arrives here through the default arm below). Its reason detail belongs on the node; its evidence does
-                // not, because nothing was proved.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, null, receipt.Evidence);
-            case BodyProgramNodeOutcome.Uncertain:
+            BodyProgramNodeOutcome.Uncertain =>
                 // A terminal the action minted: it ran, and its own postcondition could not confirm the effect. It must
                 // NOT be retried (the side effect may already exist), so it settles the node as the unknown it is. Its
-                // reason is `RecoveryDiagnostic`, not `FailureCode`: the outcome is unknown, not a known non-effect.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null);
-            default:
-                // Failed, and the authority refuses this shape for a non-success outcome: `TryComplete` requires Facts
+                // reason is `RecoveryDiagnostic`, not `FailureCode`: the outcome is unknown, not a known non-effect, so
+                // none of the three reason fields may travel.
+                new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null),
+            _ =>
+                // Failed, Cancelled, and every state that maps onto one of them (`Rejected`, `Blocked`, `Expired`,
+                // `Invalidated`). The authority refuses this shape for a non-success outcome: `TryComplete` requires Facts
                 // to be a non-null (empty) set and ReceiptId/Evidence/PostconditionVerification to be absent, because a
                 // node that claims no effect must not present proof of one. Sending `null` facts WITH evidence made
                 // every Failed/Rejected node fail that gate as InvalidInput, and the controller then replaced it with an
@@ -449,16 +477,15 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // The receipt's own reason code DOES travel, in `FailureCode`. It was dropped here, so `door_out_of_range`
                 // reached the companion as a bare `Failed` and it re-sent the same doomed node; the reason is a statement
                 // about why nothing happened, not proof that something did, so it cannot be confused with the evidence
-                // the success path requires.
+                // the success path requires. The `for_each` cancellation does the same.
                 //
                 // The receipt's EVIDENCE travels too - as `RefusalDetail`, never as `Evidence`. That is the whole of
                 // round41's defect: `shop_purchase` refused `shop_counter_out_of_reach` six times while
                 // `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` sat in this receipt, and the model received the
                 // reason code alone and invented the world fact it needed. ADR-006's ban is on evidence for a node that
                 // claims no effect; a reason detail is the same statement the reason code makes, one level down.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint, receipt.Evidence);
-        }
-    }
+                new BodyProgramTerminalResult(execution, outcome, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint, receipt.Evidence),
+        };
 
     /// <summary>
     /// Expands one `for_each` node into a pass over the live rows its source yields.
