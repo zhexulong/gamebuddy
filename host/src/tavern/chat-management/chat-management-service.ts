@@ -286,39 +286,12 @@ export function createChatManagementService(options: ChatManagementServiceOption
   };
 
   /**
-   * THE ACTIVE LIST MAY NEVER BE EMPTIED - the rule the browser panel used to hold alone.
-   *
-   * A removal that leaves the companion with ZERO active Chats leaves the next start with nothing to
-   * mount. `createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest` reconciles the
-   * semantic selection against this durable list, finds no active successor to move it to, and fails
-   * closed with `semantic_chat_liveness_unrecoverable` - before a browser, a tray or a record exists.
-   * The panel keeps the invariant by creating and mounting a successor before it archives the last
-   * Chat, but a writer that reaches this route directly (or a root written before that rule) had no
-   * guard at all, and there is no second start that could repair it: the refusal has to be here.
-   *
-   * Only removals are judged, and only when the target is itself active: a removal with a survivor and
-   * every restore are the ordinary transitions below. The forward path stays the one the product
-   * already has - the successor is created by `chat.create`, the New Chat control's own creation,
-   * never invented by an archive.
+   * Durable lifecycle retention. The invariants a removal must not break - the active list is never
+   * emptied, and the archived Chat is never the one the next start has to mount with nothing behind
+   * it - are judged by `ChatThreadStore.transitionLifecycle` inside its own transaction and by the
+   * unmountable-successor guard just above it; this method only resolves the handle, hands the exact
+   * CAS vector over and renames what comes back.
    */
-  const refuseAnEmptyActiveList = async (
-    target: ChatThread,
-    operation: ChatRetentionServiceCommand["operation"],
-  ): Promise<void> => {
-    if (operation === "restore") return;
-    if ((target.lifecycleStatus ?? "active") !== "active") return;
-    const threads = await listThreads();
-    assertLeaseAfterDurableRead();
-    const survivors = threads.filter(
-      (thread) =>
-        thread.companionId === manifest.principal.companionId &&
-        thread.continuityId === manifest.principal.continuityId &&
-        (thread.lifecycleStatus ?? "active") === "active" &&
-        thread.chatThreadId !== target.chatThreadId,
-    );
-    if (survivors.length === 0) throw new ChatActiveListEmptyError();
-  };
-
   const transitionLifecycle = async (command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1> => {
     assertOpen();
     validateRetentionCommand(command);
@@ -327,7 +300,6 @@ export function createChatManagementService(options: ChatManagementServiceOption
     try {
       const target = await resolveChatTarget(command.chatHandle);
       assertLeaseAfterDurableRead();
-      await refuseAnEmptyActiveList(target, command.operation);
       const thread = await store.transitionLifecycle({
         chatThreadId: target.chatThreadId,
         chatSurfaceSessionId: target.chatSurfaceSessionId,
@@ -533,9 +505,9 @@ function validateRetentionCommand(command: ChatRetentionServiceCommand): void {
 function rethrowRetentionError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
   if (error.message === "chat_not_found") return error;
-  // The library's own named refusal is carried out unchanged, so the route can name it rather than
-  // report it as a service outage.
-  if (error instanceof ChatActiveListEmptyError) return error;
+  // The store's own refusal of the last live Chat, carried out under its own name so the route
+  // reports the player-actionable fact instead of a service outage.
+  if (error.message === "chat_active_list_empty") return new ChatActiveListEmptyError();
   if (error.message === "chat_thread_management_revision_conflict")
     return new Error("chat_management_revision_conflict");
   if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();

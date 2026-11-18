@@ -388,10 +388,127 @@ test("multiline drafts preserve newline, CRLF, and tab text", async () => {
   }
 });
 
+test("a removal that would empty the active list is refused inside the removal's own transaction", async () => {
+  const { root, store: s, creation } = await store();
+  try {
+    await creation.createExplicit(request());
+    // The companion's only live Chat: the transition itself refuses, so no caller can reach the
+    // state a start cannot recover from by taking a snapshot first and writing after it.
+    await assert.rejects(
+      () =>
+        s.transitionLifecycle!({
+          chatThreadId: "thread_01",
+          chatSurfaceSessionId: "surface_01",
+          companionId: "companion_01",
+          continuityId: "continuity_01",
+          expectedManagementRevision: 1,
+          operation: "archive",
+        }),
+      /chat_active_list_empty/,
+    );
+    const untouched = (await s.listThreads!()).find((thread) => thread.chatThreadId === "thread_01");
+    assert.equal(untouched?.lifecycleStatus, "active", "the refused removal reached the row anyway");
+    assert.equal(untouched?.managementRevision, 1, "the refused removal consumed a revision");
+
+    // A survivor makes the same removal ordinary...
+    await creation.createExplicit({
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      opening: "blank",
+    });
+    const archived = await s.transitionLifecycle!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      expectedManagementRevision: 1,
+      operation: "archive",
+    });
+    assert.equal(archived.lifecycleStatus, "archived");
+
+    // ...and the survivor is the last one now, so its own removal is refused too. Two removals
+    // racing in one tick end here as well: the second transaction reads the first's committed
+    // rows, so the pair can never agree to empty the list between them.
+    const racing = await Promise.allSettled([
+      s.transitionLifecycle!({
+        chatThreadId: "thread_02",
+        chatSurfaceSessionId: "surface_02",
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        expectedManagementRevision: 1,
+        operation: "trash",
+      }),
+    ]);
+    assert.equal(racing[0]?.status, "rejected");
+    assert.match(String((racing[0] as PromiseRejectedResult).reason), /chat_active_list_empty/);
+    // Restore only ever adds to the active list, so the rule never refuses it.
+    const restored = await s.transitionLifecycle!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      expectedManagementRevision: 2,
+      operation: "restore",
+    });
+    assert.equal(restored.lifecycleStatus, "active");
+  } finally {
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("two removals of the last two live Chats cannot both commit", async () => {
+  const { root, store: s, creation } = await store();
+  try {
+    await creation.createExplicit(request());
+    await creation.createExplicit({
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      opening: "blank",
+    });
+    const removal = (chatThreadId: string, chatSurfaceSessionId: string) =>
+      s.transitionLifecycle!({
+        chatThreadId,
+        chatSurfaceSessionId,
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        expectedManagementRevision: 1,
+        operation: "archive" as const,
+      });
+    // Issued in one tick: this is the shape a pre-check in front of the write cannot judge. The
+    // transaction serialises them, so the loser sees the winner's committed rows.
+    const outcomes = await Promise.allSettled([removal("thread_01", "surface_01"), removal("thread_02", "surface_02")]);
+    assert.deepEqual(
+      outcomes.map((outcome) => outcome.status),
+      ["fulfilled", "rejected"],
+      "both removals committed, so the active list was emptied",
+    );
+    assert.match(String((outcomes[1] as PromiseRejectedResult).reason), /chat_active_list_empty/);
+    const live = (await s.listThreads!()).filter((thread) => (thread.lifecycleStatus ?? "active") === "active");
+    assert.equal(live.length, 1, "the active list ended with a number of Chats other than one");
+  } finally {
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("lifecycle transitions increment managementRevision monotonically with CAS guard", async () => {
   const { root, store: s, creation } = await store();
   try {
     await creation.createExplicit(request());
+    // A survivor, because the removal this test drives must not be the one that would empty the
+    // active list: that refusal has its own test above.
+    await creation.createExplicit({
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      opening: "blank",
+    });
     const thread1 = await s.transitionLifecycle!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",

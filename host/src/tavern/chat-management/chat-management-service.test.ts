@@ -485,3 +485,40 @@ test("a removal that would leave the companion with no active Chat is refused by
   assert.equal((results.restored as { ok: boolean }).ok, true, "a restore was refused as if it were a removal");
   assert.equal(results.activeAtEnd, 2, "the durable list did not end where the two operations left it");
 });
+
+/**
+ * Two removals issued in one tick are the shape the rule used to miss.
+ *
+ * The refusal was a read in front of the write: both requests listed the threads before either had
+ * written, each saw the other's Chat still live, and both archived - emptying the list, which is the
+ * state the next start cannot recover from. It is now the removal's own transaction that judges it,
+ * so the loser reads the winner's committed rows.
+ */
+test("two removals issued in one tick cannot leave the companion with no active Chat", async () => {
+  const results = await mounted(`
+    const creation = createProfileAwareChatThreadCreationCapability(store(), { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+    await creation.createExplicit({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), opening: { messageId: "opening_02", text: "The second one.", source: { greetingSetId: "greetings_01", sourceRevision: 2, canonicalHash: "a".repeat(64), variantId: "default_01", profileRevision: 3, scenarioRevision: null } } });
+    const secondHandle = lease.browserProjection.projectChatHandle("thread_02", "surface_02");
+    const outcomes = await Promise.all([
+      code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: lease.browserProjection.chatHandle, expectedManagementRevision: 1, operation: "archive" })),
+      code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: secondHandle, expectedManagementRevision: 1, operation: "archive" })),
+    ]);
+    const live = (await service.listChats({ apiVersion: 1, state: "active" })).chats.length;
+    process.stdout.write(JSON.stringify({ outcomes, live }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  const outcomes = results.outcomes as readonly { ok: boolean; error?: string }[];
+  assert.equal(
+    outcomes.filter((outcome) => outcome.ok).length,
+    1,
+    "both removals committed, so the companion was left with no Chat the next start could mount",
+  );
+  assert.deepEqual(
+    outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.error),
+    ["chat_active_list_empty"],
+    "the losing removal was refused as something other than the empty list",
+  );
+  assert.equal(results.live, 1, "the active list did not end with exactly one Chat");
+});

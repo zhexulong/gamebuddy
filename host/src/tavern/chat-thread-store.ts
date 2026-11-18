@@ -3190,6 +3190,19 @@ export function createChatThreadStore(
           thread.trashRestoreStatus,
           input.operation,
         );
+        // THE ACTIVE LIST MAY NEVER BE EMPTIED, judged here because here is the only place that
+        // can judge it. A start reconciles the semantic selection against this list and fails
+        // closed with `semantic_chat_liveness_unrecoverable` when there is nothing to move it to -
+        // before a browser, a tray or a record exists, so the state is unrepairable from inside the
+        // product. The rule used to be a read in front of the write, where two removals racing in
+        // one tick each saw the other's Chat still live and both committed; `runInTransaction` is
+        // synchronous and serialises them, so this predicate is the only one that can hold it.
+        if (
+          (thread.lifecycleStatus ?? "active") === "active" &&
+          transition.status !== "active" &&
+          !hasActiveSurvivor(db, input.companionId, input.continuityId, input.chatThreadId)
+        )
+          throw new Error("chat_active_list_empty");
         const nextRevision = currentManagementRevision + 1;
 
         db.prepare(
@@ -6312,6 +6325,25 @@ function isThreadTitle(value: unknown): value is string {
 function validateLifecycleStatus(value: unknown): "active" | "archived" | "trashed" {
   if (value === "active" || value === "archived" || value === "trashed") return value;
   throw new Error("invalid_chat_thread_lifecycle_status");
+}
+
+/**
+ * Whether the companion/continuity keeps at least one live Chat once `excludedThreadId` leaves the
+ * active list. Read inside the removal's own transaction, from the row set that transaction is
+ * about to change - never from a snapshot a caller took before it.
+ */
+function hasActiveSurvivor(
+  db: DatabaseSync,
+  companionId: string,
+  continuityId: string,
+  excludedThreadId: string,
+): boolean {
+  const survivor = db
+    .prepare(
+      "SELECT 1 AS live FROM tavern_threads WHERE companion_id = ? AND continuity_id = ? AND thread_id <> ? AND lifecycle_status = 'active' LIMIT 1",
+    )
+    .get(companionId, continuityId, excludedThreadId);
+  return survivor !== undefined;
 }
 
 function validateTrashRestoreStatus(value: unknown): "active" | "archived" {

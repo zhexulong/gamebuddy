@@ -236,7 +236,7 @@ async function fixture(options: FixtureOptions = {}) {
         }),
     opening: "blank",
   });
-  return Object.freeze({ root, runtimeRoot, binding, threads });
+  return Object.freeze({ root, runtimeRoot, binding, threads, creation });
 }
 
 /**
@@ -597,6 +597,15 @@ test("Chat construction refuses a Chat the transcript authority archived", async
   try {
     const transitionLifecycle = value.threads.transitionLifecycle;
     if (transitionLifecycle === undefined) throw new Error("the fixture's store serves no lifecycle transition");
+    // A survivor, so the archive under test is not the removal that would empty the active list:
+    // that refusal is the store's own and belongs to its own test.
+    await value.creation.createExplicit({
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "chat_session_02",
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      opening: "blank",
+    });
     const archived = await transitionLifecycle({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "chat_session_01",
