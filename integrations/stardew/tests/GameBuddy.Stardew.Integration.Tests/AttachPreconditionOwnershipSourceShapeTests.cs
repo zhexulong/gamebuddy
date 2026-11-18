@@ -84,7 +84,6 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
             // for: the trigger is ours, the save cycle is the engine's, and the binding is only
             // durable once both have happened.
             ["binding_persist_pending"] = new(Owner.Ours, "RequestsNativeSave"),
-            ["save_persistence_timeout"] = new(Owner.Engine, "pendingSaveTimedOut"),
             ["save_persistence_failed"] = new(Owner.Engine, "WriteSaveData"),
             ["binding_readback_mismatch"] = new(Owner.Engine, "isCustomized"),
             ["binding_readback_unavailable"] = new(Owner.Host, "ReadBindings"),
@@ -232,7 +231,7 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         return null;
     }
 
-    private static string BodyOf(string source, string marker)
+    internal static string BodyOf(string source, string marker)
     {
         int start = source.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0) throw new InvalidOperationException($"declaration_not_found:{marker}");

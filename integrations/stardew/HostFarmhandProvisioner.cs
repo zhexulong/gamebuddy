@@ -24,13 +24,11 @@ internal sealed class HostFarmhandProvisioner
     private FarmhandSessionAdvertisement? lastAdvertisement;
     private FarmhandAttachmentRequest? pendingSaveRequest;
     private FarmhandBinding? pendingBinding;
-    private long pendingSaveAtUnixMs;
     private string? lastRequestId;
     private FarmhandAttachmentResponse? lastResponse;
     private long nextAdvertisementAtMs;
     private bool pendingSaveObserved;
     private bool pendingSaveWriteFailed;
-    private bool pendingSaveTimedOut;
     private bool quarantined;
     private Cabin? pendingCreatedCabin;
     private long? pendingCreatedFarmhandId;
@@ -118,48 +116,6 @@ internal sealed class HostFarmhandProvisioner
         }
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.pendingSaveRequest is not null && !this.pendingSaveTimedOut && now - this.pendingSaveAtUnixMs > 60_000)
-        {
-            FarmhandAttachmentRequest request = this.pendingSaveRequest;
-            if (!this.pendingSaveObserved)
-            {
-                this.pendingSaveRequest = null;
-                this.pendingBinding = null;
-                this.RollbackCreatedFarmhand();
-                this.pendingSaveObserved = false;
-                this.pendingSaveWriteFailed = false;
-                this.pendingSaveTimedOut = false;
-                FarmhandAttachmentResponse response = new()
-                {
-                    SchemaVersion = FarmhandProvisioningProtocol.Version,
-                    RequestId = request.RequestId,
-                    State = "rejected",
-                    ReasonCode = "save_persistence_timeout",
-                    UpdatedAtUnixMs = now,
-                };
-                this.lastRequestId = request.RequestId;
-                this.lastResponse = response;
-                this.WriteResponse(response);
-            }
-            else
-            {
-                // The native save owns its iterator. Keep the transaction until
-                // Saved arrives, and leave the response in awaiting_save so the
-                // App cannot mistake the timeout marker for the final result.
-                this.pendingSaveTimedOut = true;
-                FarmhandAttachmentResponse response = new()
-                {
-                    SchemaVersion = FarmhandProvisioningProtocol.Version,
-                    RequestId = request.RequestId,
-                    State = "awaiting_save",
-                    ReasonCode = "save_persistence_timeout",
-                    UpdatedAtUnixMs = now,
-                };
-                this.lastRequestId = request.RequestId;
-                this.lastResponse = response;
-                this.WriteResponse(response);
-            }
-        }
         if (now >= this.nextAdvertisementAtMs)
         {
             this.PublishAdvertisement(now);
@@ -182,7 +138,6 @@ internal sealed class HostFarmhandProvisioner
         this.pendingCreatedFarmhandId = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.lastRequestId = null;
         this.lastResponse = null;
         this.RemovePublishedFiles();
@@ -190,7 +145,7 @@ internal sealed class HostFarmhandProvisioner
 
     internal void OnSaving()
     {
-        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null || this.pendingSaveTimedOut)
+        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null)
             return;
         this.pendingSaveObserved = true;
         this.PersistPendingBinding();
@@ -238,14 +193,9 @@ internal sealed class HostFarmhandProvisioner
             return;
 
         bool saveWriteFailed = this.pendingSaveWriteFailed;
-        bool saveTimedOut = this.pendingSaveTimedOut;
         string? manifestPath = null;
         FarmhandProvisioningResult result;
-        if (saveTimedOut)
-        {
-            result = new("rejected", "save_persistence_timeout");
-        }
-        else if (saveWriteFailed)
+        if (saveWriteFailed)
         {
             result = new("rejected", "save_persistence_failed");
         }
@@ -295,14 +245,10 @@ internal sealed class HostFarmhandProvisioner
             }
         }
 
-        // A timeout after Saving means the native save may already contain the
-        // binding. Keep that durable state, but withhold the manifest; a later
-        // request must pass a fresh save gate. Write failures roll back in OnSaving.
         this.pendingSaveRequest = null;
         this.pendingBinding = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.pendingCreatedCabin = null;
         this.pendingCreatedFarmhandId = null;
         FarmhandAttachmentResponse response = new()
@@ -391,7 +337,7 @@ internal sealed class HostFarmhandProvisioner
         // facts across that lifecycle boundary.
         if (!Context.IsWorldReady)
             return "host_not_ready";
-        if (this.pendingSaveTimedOut || this.pendingSaveRequest is not null || Game1.game1.IsSaving)
+        if (this.pendingSaveRequest is not null || Game1.game1.IsSaving)
             return "host_not_ready";
         if (!Game1.options.enableServer || !NativeLanEndpoint.TryRead(out _))
             return "host_not_ready";
@@ -584,7 +530,6 @@ internal sealed class HostFarmhandProvisioner
             this.pendingBinding = null;
         }
         this.pendingSaveRequest = request;
-        this.pendingSaveAtUnixMs = now;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
         if (!createdFarmhand)
@@ -1055,7 +1000,6 @@ internal sealed class HostFarmhandProvisioner
         this.pendingBinding = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.RollbackCreatedFarmhand();
         this.lastAdvertisement = null;
         this.lastRequestId = null;
