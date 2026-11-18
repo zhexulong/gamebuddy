@@ -1,10 +1,23 @@
 # Composition
 
 ## Owns
-Generic Host composition lifetimes, including authenticated desktop session ownership, and the composition root that wires generic platform infrastructure to exactly one selected game adapter.
+Generic Host composition lifetimes: the authenticated desktop session's owner, the browser-presentation admission and its domain services, and the composition root that wires generic platform infrastructure to exactly one selected game adapter.
+
+Two of those lifetimes are worth naming because they look like someone else's:
+
+- **The browser-presentation admission** (`desktop-presentation-admission-owner.ts`) is a child of this root, like the game owner: it decides when a presentation is admitted, tears it down in one order, and builds the Tavern management services behind it (`createTavernManagementDomains`). What it holds is the lifetime, not the transport.
+- **The management route advertisement** is a composition decision, and it is made here: `composeTavernManagementProfile().routeIds` is published from this directory as the one production statement of what the mounted surface offers, and `management-profile-route-census.private.test.ts` pins it in both directions against what the surface really answers and what the dispatcher really branches on.
 
 ## Does not know
-Browser presentation, operator configuration, or public game APIs.
+Operator configuration, or public game APIs.
+
+## Does not do
+Listen. Nothing under `composition/**` creates a server, hosts a file, or dispatches a request: `createServer`, `.listen(` and `node:http` appear nowhere here. The listeners are Tavern's (`tavern/composed-reference-game-static-shell-composition.ts` for the presentation shell, `tavern-management-dialogue-web.ts` for the management routes, `tavern/static-artifact/index.ts` for the artifact listener), the route table they dispatch is `tavern/browser-contract`, and the dispatcher is Tavern's too. Advertisement and dispatch are different facts with different owners: this layer says which routes exist, Tavern answers them.
+
+It also does not render: the presentation-admission file imports the renderers (`renderCompanionVoiceText`, `renderCompanionExamples`, `projectRenderedCompanionWorldBook`, `chatListPreviewText`) from their owning modules and calls them; the rendering lives where the data does.
+
+## Open follow-up: the presentation root's directory
+`desktop-presentation-admission-owner.ts` (1,450 lines) and `companion-library-list.ts` are presentation composition sitting in a directory that is otherwise generic. They belong here on the current reading - the admission decision is a Host-lifetime child of this root exactly as the game owner is, and moving it would put the lifetime next to the transport it does not own - but the honest alternative is to move both under `tavern/**`, where the listeners they feed live. That is a 1,450-line relocation with its own verification, so it is recorded here as the open follow-up rather than done in passing. Nothing in this file may drift from that: if the move happens, this section goes with it.
 
 ## Dependency direction
 Composition consumes generic containment runtime/core and auth contracts, the platform capability modules it admits (for example the Windows folder picker), and exactly one selected game adapter; it is consumed by bootstrap wire. A game adapter receives platform capabilities only as opaque injected values and never imports them itself.
