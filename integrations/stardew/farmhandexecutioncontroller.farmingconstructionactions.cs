@@ -120,12 +120,15 @@ internal sealed partial class ExecutionManager
             // derived from the charge. The named crop's own read below stays the COMPLETION condition.
             HashSet<Vector2> wateredBefore = AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is { } scanDirt && scanDirt.isWatered());
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE NATIVE CALL, like every tool family: a swing can grant the level this formula reads,
+            // and the engine charges the level the actor held when it swung. See `ExecuteBreakRock` for the measured
+            // case (`round73`: 270 -> 268 charged 2.0 against a printed 1.9).
+            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f * (charge + 1) - (Game1.player.FarmingLevel * 0.1f);
             UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore, charge);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
             // WateringCan reads the SAME charge for its stamina as for its footprint (`WateringCan.cs:169`: `2 * (power + 1)`),
             // unlike the hoe, whose stamina keeps the `power` argument and is therefore flat in the charge.
-            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f * (charge + 1) - (Game1.player.FarmingLevel * 0.1f);
             // Water is spent by the charge, not by the tiles: `WaterLeft -= power + 1` (`WateringCan.cs:189-191`), so a
             // charge-4 watering of 18 tiles costs 5 units, and a bottomless can costs none.
             int waterExpectedCost = wateringCan.IsBottomless ? 0 : charge + 1;
@@ -230,7 +233,7 @@ internal sealed partial class ExecutionManager
             executionId,
             ExecutionState.Rejected,
             "inventory_full",
-            $"item={expectedQualifiedHarvestItemId};refused_qualities={string.Join(",", capacity.RefusedQualities)};admitted_qualities={string.Join(",", capacity.AdmittedQualities)}");
+            $"item={expectedQualifiedHarvestItemId};refused_qualities={QualityList(capacity.RefusedQualities)};admitted_qualities={QualityList(capacity.AdmittedQualities)}");
     }
 
     bool regrowsAfterHarvest = crop.RegrowsAfterHarvest();
@@ -291,13 +294,31 @@ internal sealed partial class ExecutionManager
     string harvestedQuality = gainedQualities.Length == 0
         ? "unknown"
         : string.Join(",", gainedQualities);
-    string qualityCountsBefore = string.Join(",", qualityBefore.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
-    string qualityCountsAfter = string.Join(",", qualityAfter.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+    string qualityCountsBefore = QualityCensus(qualityBefore);
+    string qualityCountsAfter = QualityCensus(qualityAfter);
     ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
     string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
     return this.RememberTerminal(requestId, executionId, state, reasonCode,
         $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
     }
+
+    /// <summary>
+    /// A quality census as one field value, or `none` when the pack holds none of the item.
+    ///
+    /// THE EMPTY STRING IS NOT THIS MOD'S SPELLING FOR ABSENT. Every other absent reading on a receipt says `none`
+    /// (`phase_after=none`, `held_after=none`, `owner=none`, `drops` in the furniture family), and the receipts' own
+    /// parser refuses an empty value because that is how it rejects junk. `quality_counts_before=` therefore made every
+    /// harvest from an empty pack unreadable, while the same harvest from a non-empty pack read fine - the shape that is
+    /// hardest to notice, because the ordinary case passes.
+    /// </summary>
+    private static string QualityCensus(Dictionary<int, int> counts) =>
+        counts.Count == 0
+            ? "none"
+            : string.Join(",", counts.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+
+    /// <summary>The same spelling for a quality list: `none` rather than nothing.</summary>
+    private static string QualityList(IReadOnlyList<int> qualities) =>
+        qualities.Count == 0 ? "none" : string.Join(",", qualities);
 
     /// <summary>
     /// The live pack, in the shape the native capacity predicate reads it (<c>Farmer.cs:4763-4765</c>).
@@ -793,6 +814,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         string activeToolKind;
         int swingCount = 0;
+        float perSwingStaminaCost = 0f;
         try
         {
             if (Game1.player.CurrentTool is not Tool activeTool)
@@ -804,6 +826,16 @@ internal sealed partial class ExecutionManager
                 Hoe => "hoe",
                 _ => "tool",
             };
+            // PRICED BEFORE THE FIRST SWING: clearing a clump grants foraging/mining/farming experience, so a level
+            // earned by the swing must not change the cost the swing is compared against. See `ExecuteBreakRock` for
+            // the measured case.
+            int skillLevelBefore = activeToolKind switch
+            {
+                "axe" => Game1.player.ForagingLevel,
+                "pickaxe" => Game1.player.MiningLevel,
+                _ => Game1.player.FarmingLevel,
+            };
+            perSwingStaminaCost = activeTool.IsEfficient ? 0f : 2f - (skillLevelBefore * 0.1f);
             Vector2 hitTile = clump.Tile;
             const int maximumSwingCount = 16;
             StardewValley.TerrainFeatures.ResourceClump? standing = clump;
@@ -824,18 +856,10 @@ internal sealed partial class ExecutionManager
 
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
-        // Cleared debris uses the player's equipped tool; Axe/Hoe deduct from the
-        // passed power (tap => 2*1 - level*0.1) while Pickaxe overrides power with
-        // toolPower.Value (tap => 0, so 2*(0+1) - level*0.1). Both evaluate to
-        // 2 - level*0.1 for a basic tap; keep the formula explicit per tool.
-        float expectedStaminaCost = 0f;
-        if (Game1.player.CurrentTool is Tool activeToolForCost && activeToolKind == "axe")
-            expectedStaminaCost = activeToolForCost.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
-        else if (activeToolKind == "pickaxe")
-            expectedStaminaCost = (Game1.player.CurrentTool is Tool pickForCost && pickForCost.IsEfficient) ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
-        else if (activeToolKind == "hoe")
-            expectedStaminaCost = (Game1.player.CurrentTool is Tool hoeForCost && hoeForCost.IsEfficient) ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        expectedStaminaCost *= swingCount;
+        // Axe/Hoe deduct from the passed power (tap => 2*1 - level*0.1) while Pickaxe overrides power with
+        // toolPower.Value (tap => 0, so 2*(0+1) - level*0.1). Both evaluate to 2 - level*0.1 for a basic tap, so
+        // the price is the same expression for every tool this family drives; it was read above, before the swing.
+        float expectedStaminaCost = perSwingStaminaCost * swingCount;
 
         StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         float healthAfter = remaining?.health.Value ?? 0f;

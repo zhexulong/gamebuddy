@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -142,6 +142,17 @@ test("an_undeclared_receipt_field_refuses_a_real_receipt", (t) => {
   for (const entry of receipts) {
     if (!hasRule(entry.actionId)) continue;
     const fields = Object.keys(entry.evidence);
+    // A FIELD WITH NO VALUE IS NOT A READING: this Mod spells absent `none` (`phase_after=none`, `held_after=none`,
+    // `owner=none`), and the shared parser refuses an empty value because that is how it rejects junk. Measured
+    // `round73`: `quality_counts_before=` made every harvest from an empty pack unreadable while the same harvest from
+    // a non-empty pack read fine - the shape that hides, because the ordinary case passes.
+    const empty = fields.filter((field) => entry.evidence[field] === "");
+    if (empty.length > 0) {
+      failures.push(
+        `${entry.actionId}: the Mod wrote a field with no value: ${empty.join(", ")} - absent is spelled \`none\``,
+      );
+      continue;
+    }
     written += fields.length;
     if (!recognised(entry.actionId, entry.reasonCode, entry.evidence)) {
       const undeclared = undeclaredFields(entry);
@@ -245,4 +256,78 @@ test("every settlement field the Mod mints is declared by the Host", (t) => {
     `seams ${String(seams.length)} · fields minted ${String(minted)} · declared ${String(minted - undeclared.length)} · undeclared ${String(undeclared.length)}`,
   );
   assert.deepEqual(undeclared, []);
+});
+
+/**
+ * A price read AFTER the call it prices is a guess about what the call charged.
+ *
+ * MEASURED `round73`. `break_rock` computed `expected_stamina_cost = 2 - Mining*0.1` after `UseNativeToolOnTile`, so
+ * the swing that earned a mining level printed the NEW level's price while the engine charged the one the actor swung
+ * with: 270 -> 268 charged 2.0 against a printed 1.9, and 266.1 -> 264.2 charged 1.9 against a printed 1.8. Two of
+ * sixteen receipts were refused by the Host's conservation guard, and the guard was right both times - `|−delta −
+ * expected| <= 0.011` is arithmetic, not an opinion. The same shape sat in five other handlers of the two files this
+ * unit was allowed to edit, and in two more it still does.
+ *
+ * THE POPULATION IS EVERY HANDLER THAT PUBLISHES `expected_stamina_cost` AND DRIVES A NATIVE TOOL, read out of the
+ * Mod's own sources. The property is the ordering: no player skill level may be read after the first tool dispatch in
+ * such a handler, because the dispatch is what can change that level.
+ *
+ * THE TWO EXEMPTIONS ARE DEBT, NOT APPROVAL, and each is checked in both directions: a handler that starts pricing
+ * late fails as undeclared, and an exemption whose handler is no longer late fails as stale - so an entry cannot
+ * outlive the thing it exempts.
+ */
+const LATE_LEVEL_READ_DEBT: Readonly<Record<string, string>> = Object.freeze({
+  "farmhandexecutioncontroller.petbowlactions.cs:ExecuteWaterPetBowl":
+    "outside this unit's approved files; the same one-line defect, measured here and not edited here",
+  "farmhandexecutioncontroller.slimehutchtroughactions.cs:ExecuteWaterSlimeHutchTrough":
+    "outside this unit's approved files; the same one-line defect, measured here and not edited here",
+});
+
+/** The calls that mean "this handler has spent the tool", so the levels they can raise are already committed. */
+const TOOL_DISPATCH = /(?:UseNativeToolOnTile\(|\.DoFunction\(|performToolAction\(|BeginUsingTool\()/u;
+const SKILL_LEVEL_READ =
+  /Game1\.player\.(?:MiningLevel|ForagingLevel|FarmingLevel|FishingLevel|CombatLevel|LuckLevel)/u;
+const HANDLER_START = /^ {4}(?:public|private|internal)[^\n]*LocalExecutionReceipt (\w+)\(/u;
+
+test("a receipt's expected stamina cost is read before the native call it prices", (t) => {
+  const directory = join(ROOT, "integrations", "stardew");
+  const files = readdirSync(directory).filter((name) => name.endsWith(".cs"));
+  let examined = 0;
+  let publishing = 0;
+  const measured: string[] = [];
+  for (const name of files) {
+    const lines = readFileSync(join(directory, name), "utf8").split("\n");
+    const starts: number[] = [];
+    for (const [index, line] of lines.entries()) if (HANDLER_START.test(line)) starts.push(index);
+    for (const [position, start] of starts.entries()) {
+      const body = lines.slice(start, starts[position + 1] ?? lines.length);
+      examined += 1;
+      if (!body.join("\n").includes("expected_stamina_cost")) continue;
+      publishing += 1;
+      const dispatch = body.findIndex((line) => TOOL_DISPATCH.test(line));
+      if (dispatch < 0) continue;
+      const handler = HANDLER_START.exec(body[0] ?? "")?.[1] ?? "unknown";
+      if (body.slice(dispatch).some((line) => SKILL_LEVEL_READ.test(line))) measured.push(`${name}:${handler}`);
+    }
+  }
+  assert.ok(
+    publishing > 0,
+    "blocked: no handler in the Mod's sources publishes an expected stamina cost, so no ordering could be judged",
+  );
+  const declared = new Set(Object.keys(LATE_LEVEL_READ_DEBT));
+  const undeclared = measured.filter((site) => !declared.has(site));
+  const stale = [...declared].filter((site) => !measured.includes(site));
+  t.diagnostic(
+    `handlers examined ${String(examined)} · publish an expected cost ${String(publishing)} · priced after the call ${String(measured.length)} · declared debt ${String(declared.size)}`,
+  );
+  assert.deepEqual(
+    undeclared,
+    [],
+    "a handler prices its swing from a skill level read AFTER the native call: the engine charged the level the actor held when it swung, so the price must be read before the dispatch",
+  );
+  assert.deepEqual(
+    stale,
+    [],
+    "a declared late-read exemption no longer applies - remove it rather than leaving it green",
+  );
 });

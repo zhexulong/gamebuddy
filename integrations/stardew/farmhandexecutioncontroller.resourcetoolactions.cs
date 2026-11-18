@@ -101,6 +101,12 @@ internal sealed partial class ExecutionManager
                     $"target={expectedTargetId};tree_type={treeType};swings_worst_case={swingsWorstCase};{stamina.Evidence}");
 
             float staminaBefore = Game1.player.Stamina;
+            // THE PER-SWING COST IS READ BEFORE THE FIRST SWING, because a felled tree grants foraging XP that can
+            // raise the level this price depends on. `PerSwingCharge` reads the level outside the loop's own mutation
+            // for the same reason the rock path reads `MiningLevel` before its one swing: an expected value computed
+            // after the call is a measurement of the world AFTER it moved, and the Host's conservation guard then
+            // refuses a receipt that is telling the truth about a discrepancy the producer invented.
+            float perSwingStaminaCost = ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, axe.IsEfficient);
             int swingCount = 0;
             float lastHealth = before;
             string? stoppedBy = null;
@@ -140,7 +146,6 @@ internal sealed partial class ExecutionManager
 
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            float perSwingStaminaCost = ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, axe.IsEfficient);
             // THE POSTCONDITION IS THE WORLD, not the loop's counter: read the tile again after the swings. `Axe.DoFunction`
             // returns nothing useful about the tree, and on the swing that reaches `<= 0` the engine sets
             // `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497) - so the felled stump is
@@ -200,13 +205,19 @@ internal sealed partial class ExecutionManager
             if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
             int before = rock.MinutesUntilReady;
             float staminaBefore = Game1.player.Stamina;
+            // THE EXPECTED COST IS READ BEFORE THE SWING, because the swing can grant the mining level it depends on.
+            // Pickaxe covers power with who.toolPower.Value before deducting; a plain tap holds toolPower at 0
+            // (pressUseToolButton resets it), so a basic pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
+            // Reading `MiningLevel` AFTER `UseNativeToolOnTile` printed the level the swing had just earned while the
+            // engine charged the one it was cast with: measured `round73`, 270 -> 268 charged 2.0 against a printed
+            // 1.9, and 266.1 -> 264.2 charged 1.9 against a printed 1.8. Two of sixteen receipts were refused by the
+            // Host's stamina guard, which was right both times - the guard's tolerance is arithmetic, not an opinion.
+            int miningLevelBefore = Game1.player.MiningLevel;
+            bool efficientBefore = pickaxe.IsEfficient;
+            float expectedStaminaCost = efficientBefore ? 0f : 2f - (miningLevelBefore * 0.1f);
             UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            // Pickaxe covers power with who.toolPower.Value before deducting; a plain
-            // tap holds toolPower at 0 (pressUseToolButton resets it), so a basic
-            // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
-            float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
             int? after = removed ? null : afterRock!.MinutesUntilReady;
             evidence["target"] = expectedTargetId;
@@ -302,10 +313,12 @@ internal sealed partial class ExecutionManager
             if (hoeDirtPresentBefore)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_hoedirt_present_before", $"target={targetX},{targetY};hoedirt_present_before=true");
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE NATIVE CALL: the dig grants farming experience, and the engine charged the level the
+            // actor held when it swung. See `ExecuteBreakRock` for the measured case.
+            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
             UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
             bool sourcePresentAfter = location.objects.TryGetValue(tile, out _);
             bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
                 && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
@@ -370,12 +383,11 @@ internal sealed partial class ExecutionManager
             Vector2 tile = new(targetX, targetY);
             if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE NATIVE CALL: clearing the soil grants mining experience. See `ExecuteBreakRock`.
+            float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
-            // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
-            float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
             bool removed = !hoeDirtPresentAfter;
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
@@ -491,10 +503,11 @@ internal sealed partial class ExecutionManager
             // charge. The named tile's own read below stays the COMPLETION condition (the footprint is a consequence).
             HashSet<Vector2> tilledBefore = AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is not null);
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE NATIVE CALL: tilling grants farming experience. See `ExecuteBreakRock`.
+            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
             UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore, charge);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
             StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
             string after = DescribeSoilFeature(dirtAfter);
             bool tilled = dirtAfter is not null;
@@ -990,6 +1003,8 @@ internal sealed partial class ExecutionManager
 
             int swingCount = 0;
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE FIRST SWING: a felled stump grants foraging experience. See `ExecuteBreakRock`.
+            float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
             while (tree.health.Value > 0f && swingCount < maximumSwingCount)
             {
                 UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
@@ -997,7 +1012,6 @@ internal sealed partial class ExecutionManager
             }
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
             float expectedStaminaCost = perSwingStaminaCost * swingCount;
             bool removed = tree.health.Value <= -100f;
             bool terrainGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
