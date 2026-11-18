@@ -256,6 +256,68 @@ test("body_state_names_a_way_out: the answers are a closed set, so a reader can 
   }
 });
 
+test("body_state_names_a_way_out: an execution of hers is what she is doing, not 空闲", () => {
+  // MEASURED 2026-11-18 (`round76`, mid-`plan_319`): a walk publishes `actionable: true` and `actorDispositionKind:
+  // idle` - a programme of hers holds neither field - so the line read `身体: 空闲` while she was walking, she took that
+  // as "nothing is running", and submitted the same work again. The Mod publishes the in-flight execution itself.
+  const walking = formatBodyState(
+    {
+      actionable: true,
+      actorDispositionKind: "idle",
+      activeExecution: {
+        executionId: "exec_1",
+        requestId: "request_1",
+        action: "move_to_tile",
+        state: "accepted",
+        reasonCode: "accepted",
+        evidence: { target_tile: "68,20" },
+        phase: "approaching",
+        cancelSafe: true,
+        interruptible: false,
+      },
+    },
+    true,
+  );
+  assert.match(walking, /身体: 执行中 move_to_tile/u, `the body says what it is doing while it does it: ${walking}`);
+  assert.match(walking, /accepted\/approaching/u, `the phase the Mod named is part of the answer: ${walking}`);
+  assert.match(walking, /可由指令接管: 否/u, `the Mod's own interruptible flag answers the takeover half: ${walking}`);
+  assert.match(walking, /下一步: 等结算$/u, `and the settlement is what releases it: ${walking}`);
+  assert.equal(walking.includes("空闲"), false, `a walking body is not free: ${walking}`);
+  const english = formatBodyState(
+    {
+      actionable: true,
+      actorDispositionKind: "idle",
+      activeExecution: {
+        executionId: "e",
+        requestId: "r",
+        action: "move_to_tile",
+        state: "accepted",
+        reasonCode: "accepted",
+        evidence: null,
+      },
+    },
+    false,
+  );
+  assert.match(english, /body: running move_to_tile/u);
+  assert.equal(english.includes("free"), false, `a walking body is not free in either language: ${english}`);
+});
+
+test("body_state_names_a_way_out: an unmeasured half says what could not be read", () => {
+  // THREE `未知` AND NO REASON is a field that cannot be read without saying why (`round76` turn 29).
+  const line = formatBodyState({ actionable: false }, true);
+  assertBodyLineNamesAWayOut(line, "未知");
+  assert.match(line, /持有: 未知（快照没说谁占着/u, `the holder half names what was missing: ${line}`);
+  assert.match(
+    line,
+    /可由指令接管: 未知/u,
+    `the takeover half still answers, because there is nothing to take over: ${line}`,
+  );
+  // A kind the table has not met is a different gap: the holder IS named, and the way out is what nobody declared.
+  const unknownKind = formatBodyState({ actionable: false, actorDispositionKind: "minigame_mount" }, true);
+  assert.match(unknownKind, /可由指令接管: 未知（这张表还没有 minigame_mount/u, `the gap is named: ${unknownKind}`);
+  assert.ok(unknownKind.endsWith("下一步: 未知"), `the way forward stays the last claim: ${unknownKind}`);
+});
+
 test("a rectangle read that did not read every tile reports the gap and does not order", () => {
   // The three zeroes are PER TILE on this path, and the block's sentence shipped an order after the fact: `别当成空地`
   // says what `没有人回答` already said, as a command. A fact block reports; the order belongs to nobody here.

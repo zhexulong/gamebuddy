@@ -250,6 +250,9 @@ export type GameEnvironmentFactsSource = Pick<
   | "villagerWhereabouts"
   | "wateringWhereabouts"
   | "chestsSummary"
+  | "chests"
+  | "colorTargets"
+  | "worldObjectTargets"
   | "cropTargets"
   | "cookingStationTargets"
 > &
@@ -400,13 +403,69 @@ function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): s
   // The full count is only worth the bytes when it is non-zero: "0 full" spends the line saying nothing the item count
   // did not already say.
   const full = summary.fullCount > 0 ? summary.fullCount : undefined;
-  if (zh)
-    return full === undefined
+  const counted = zh
+    ? full === undefined
       ? `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}）`
-      : `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`;
-  return full === undefined
-    ? `chests here: ${summary.chestCount} (items ${summary.itemCount})`
-    : `chests here: ${summary.chestCount} (items ${summary.itemCount}; full ${full})`;
+      : `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`
+    : full === undefined
+      ? `chests here: ${summary.chestCount} (items ${summary.itemCount})`
+      : `chests here: ${summary.chestCount} (items ${summary.itemCount}; full ${full})`;
+  // A COUNT THE SAME OBSERVATION CONTRADICTS. `SummarizeChests` counts the location's chests through its own ownership
+  // test, and the rows beside it are discovered separately - so measured 2026-11-18 (`round76`, the FarmHouse) the block
+  // printed 「本图箱子: 0（物品 0）」 one line above 「可交互的物件 宝箱 (2,10) 宝箱 (3,10) 宝箱 (4,10)」. Two of the
+  // block's own lines then disagree about whether there is a chest in the room she is standing in, and the count is the
+  // one that reads as the whole answer. The rows are printed, so the count may no longer be silent about what they say.
+  const observed = observationChestTiles(source);
+  if (observed.length <= summary.chestCount) return counted;
+  const named = observed
+    .slice(0, MAX_TARGET_TILES_SHOWN)
+    .map((tile) => `(${tile.x},${tile.y})`)
+    .join(" ");
+  const rest = observed.length - Math.min(observed.length, MAX_TARGET_TILES_SHOWN);
+  const remainder = rest > 0 ? (zh ? ` 其余 ${rest} 个` : ` and ${rest} more`) : "";
+  return zh
+    ? `${counted} · 这次观察还列出 ${observed.length} 个箱子 ${named}${remainder}，本图的计数没算它们`
+    : `${counted} · this observation also lists ${observed.length} chests ${named}${remainder}, which the count above did not include`;
+}
+
+/**
+ * The game's own identity for a Chest big craftable: what a placed chest IS on the wire (`qualifiedItemId`).
+ *
+ * A name would be the wrong key twice over: `displayName` is the game's localized string, and `worldObjectTargets`
+ * carries furniture of every kind - so the only thing that tells the room's chests from its bed in that family is the
+ * item the row stands for.
+ */
+const CHEST_QUALIFIED_ITEM_ID = "(BC)130";
+
+/**
+ * The chests THIS observation published in the location she is standing in, as tiles.
+ *
+ * <p>
+ * Three families publish a placed chest - `chests` (the radius-bounded container family), `colorTargets` (the repaint
+ * action addresses chests by definition) and `worldObjectTargets` (the furniture family, where a house's chests arrive
+ * beside its bed). A chest can be in more than one of them, which is why the tiles are deduplicated rather than added:
+ * the question is "how many chests did this observation name", not "how many rows".
+ * </p>
+ * <p>
+ * `buildingChestTargets` is deliberately NOT here. Those rows are a building's OWN internal chest (a Mill's input), and
+ * the summary's ownership test excludes them; counting them would manufacture the very disagreement this reads for.
+ * </p>
+ */
+export function observationChestTiles(
+  source: Partial<Pick<Snapshot, "location" | "chests" | "colorTargets" | "worldObjectTargets">>,
+): readonly Readonly<{ x: number; y: number }>[] {
+  const here = source.location;
+  const tiles = new Map<string, Readonly<{ x: number; y: number }>>();
+  const add = (row: Readonly<{ x: number; y: number; location?: string }>): void => {
+    if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) return;
+    if (row.location !== undefined && row.location !== here) return;
+    tiles.set(`${row.x},${row.y}`, Object.freeze({ x: row.x, y: row.y }));
+  };
+  // `chests` rows describe `snapshot.location` by construction and carry no `location` of their own.
+  for (const row of source.chests ?? []) add(row);
+  for (const row of source.colorTargets ?? []) add(row);
+  for (const row of source.worldObjectTargets ?? []) if (row.qualifiedItemId === CHEST_QUALIFIED_ITEM_ID) add(row);
+  return Object.freeze([...tiles.values()]);
 }
 
 /**
@@ -551,31 +610,87 @@ export const BODY_WAY_FORWARD_EN: Readonly<Record<BodyWayForward, string>> = Obj
  */
 export function formatBodyState(
   source: Partial<
-    Pick<Snapshot, "actionable" | "actorDispositionKind" | "actorDispositionDetail" | "actorDispositionActionOwned">
+    Pick<
+      Snapshot,
+      | "actionable"
+      | "actorDispositionKind"
+      | "actorDispositionDetail"
+      | "actorDispositionActionOwned"
+      | "activeExecution"
+    >
   >,
   zh: boolean,
 ): string {
   const disposition = source.actorDispositionKind;
   const named = disposition !== undefined && disposition !== "idle" ? disposition : undefined;
+  const execution = source.activeExecution ?? null;
   if (named === undefined) {
+    // HER OWN EXECUTION IS NOT A HOLD, AND IT IS NOT FREE EITHER. `actionable` answers "may a command be admitted" and
+    // the disposition answers "what is holding the body"; a programme of hers holds neither. So a companion walking to a
+    // tile read `身体: 空闲` on every turn of a nine-node plan (measured 2026-11-18, `round76`, mid-`plan_319`) and drew
+    // the only conclusion the line allowed - that nothing was running - then submitted the same work a second time. The
+    // Mod publishes the in-flight execution on the snapshot itself (`activeExecution`, one row, `ownerKind` and
+    // `interruptible` included), so this line can say what she is doing WHILE SHE DOES IT instead of after the settlement.
+    if (execution !== null) return bodyExecutingLine(execution, zh);
     if (source.actionable === undefined) return "";
     if (source.actionable) return zh ? "身体: 空闲" : "body: free";
-    return bodyHoldLine(BODY_HOLD_UNKNOWN, zh ? BODY_WAY_FORWARD_ZH.unknown : BODY_WAY_FORWARD_EN.unknown, zh);
+    // THREE `未知` IN A ROW IS A FIELD READ THAT DOES NOT SAY WHY IT COULD NOT BE READ. The snapshot states that the
+    // body cannot act and names no holder, which is a different fact from "the holder is unknown" - so the holder half
+    // says which field the Mod did not publish. The takeover half then follows from it: a body nobody was named for is
+    // not one a command can be said to take over.
+    return bodyHoldLine(
+      BODY_HOLD_UNKNOWN,
+      zh
+        ? "未知（快照没说谁占着：actorDispositionKind 没发布）"
+        : "unknown (the snapshot named no holder: actorDispositionKind was not published)",
+      zh,
+    );
   }
   const hold =
     named === "modal" && source.actorDispositionActionOwned === true ? MODAL_OWNED_BY_ACTION : BODY_HOLDS[named];
   const detail = source.actorDispositionDetail;
   const holder = typeof detail === "string" && detail.length > 0 ? `${named}/${detail}` : named;
-  return bodyHoldLine(hold ?? BODY_HOLD_UNKNOWN, holder, zh);
+  // A KIND THIS TABLE HAS NOT MET: the kind is named, and the half that cannot answer says so.
+  const why =
+    hold === undefined
+      ? zh
+        ? `（这张表还没有 ${named} 这个持有者的出口）`
+        : ` (this table has no way out for ${named})`
+      : undefined;
+  return bodyHoldLine(hold ?? BODY_HOLD_UNKNOWN, holder, zh, why);
+}
+
+/**
+ * Her own execution, in the words the rest of the line uses: what it is doing, whether a command can take the body,
+ * and what releases it.
+ *
+ * The action and the state are the Mod's own (`activeExecution.action`/`.state`), the phase is its `approaching`/
+ * `committed` distinction where it names one, and `interruptible` is the Mod's answer to the takeover question - never
+ * a guess from the action id, which is why an absent flag prints `未知` with its reason rather than `否`.
+ */
+function bodyExecutingLine(execution: NonNullable<Snapshot["activeExecution"]>, zh: boolean): string {
+  const phase = typeof execution.phase === "string" && execution.phase.length > 0 ? `/${execution.phase}` : "";
+  const takeover = execution.interruptible === undefined ? "未知" : execution.interruptible ? "是" : "否";
+  const why =
+    execution.interruptible === undefined
+      ? zh
+        ? "（快照没发布 interruptible）"
+        : " (the snapshot published no interruptible flag)"
+      : "";
+  return zh
+    ? `身体: 执行中 ${execution.action}（${execution.state}${phase}） · 可由指令接管: ${takeover}${why} · 下一步: ${
+        execution.interruptible === true ? BODY_WAY_FORWARD_ZH.retry_now : BODY_WAY_FORWARD_ZH.await_settlement
+      }`
+    : `body: running ${execution.action} (${execution.state}${phase}) · command can take over: ${
+        execution.interruptible === true ? BODY_WAY_FORWARD_EN.retry_now : BODY_WAY_FORWARD_EN.await_settlement
+      }${why}`;
 }
 
 /** The line a hold renders as, so each of its three halves is spelled once. */
-function bodyHoldLine(hold: BodyHold, holder: string, zh: boolean): string {
+function bodyHoldLine(hold: BodyHold, holder: string, zh: boolean, unknownWhy = ""): string {
   const takeover =
     hold.takeover === undefined
-      ? zh
-        ? BODY_WAY_FORWARD_ZH.unknown
-        : BODY_WAY_FORWARD_EN.unknown
+      ? `${zh ? BODY_WAY_FORWARD_ZH.unknown : BODY_WAY_FORWARD_EN.unknown}${unknownWhy}`
       : hold.takeover
         ? zh
           ? "是"
@@ -766,7 +881,12 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   petBowlTargets: "宠物碗",
   slimeHutchTroughTargets: "史莱姆槽",
   harvestTargets: "可收的作物",
-  seedTargets: "已播种的地",
+  // NOT `已播种的地`. The family is "nearby EMPTY HoeDirt targets paired with a live inventory seed slot"
+  // (`protocol.ts`), so a label that calls them sown states the opposite of its own rows: measured 2026-11-18
+  // (`round76`, turns 3-4), the block printed this word over (65,20) (64,19) (65,19)... and her own rectangle read
+  // answered `hoed=yes watered=no crop=no`. `world-state-observation-agreement.test.ts` holds every label that
+  // asserts a state to the rows it prints beside it.
+  seedTargets: "可播种的地",
   fertilizerTargets: "可施肥的地",
   woodFenceTargets: "木栅栏",
   woodFenceResultTargets: "栅栏改过的位置",

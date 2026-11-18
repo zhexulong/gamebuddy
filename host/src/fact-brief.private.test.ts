@@ -925,7 +925,7 @@ test("seed_absent: an unmeasured seed family leaves the block byte-identical", (
       "世界（revision 1205，刚刚更新）",
       "06:20（清晨）；1年第3天 春季；天气：雨天；位置: 农场；脚下: (64, 15)；手持: 锄头（+2）；体力: 82；血量: 100；身体: 空闲",
       "可锄的地块 (64,15) (63,15) (63,16) (64,16) (65,15) (65,16) 其余 56 格未列出",
-      "这一带没有：可收的作物、已播种的地",
+      "这一带没有：可收的作物、可播种的地",
       "</world-state>",
     ].join("\n"),
     "a snapshot with no seed family must not gain a word: absent is not zero",
