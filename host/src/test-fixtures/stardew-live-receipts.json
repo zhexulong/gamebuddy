@@ -42,6 +42,32 @@
       }
     },
     {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "break_rock",
+      "state": "succeeded",
+      "reasonCode": "rock_source_broken",
+      "evidence": {
+        "target": "rock_source_5dcd66abe2ae6efa",
+        "tool": "pickaxe",
+        "tool_selected": "pickaxe",
+        "slot": "3",
+        "tool_before": "axe",
+        "slot_before": "0",
+        "qualified_item_id": "(O)2",
+        "durability_before": "1",
+        "durability_after": "removed",
+        "removed": "true",
+        "stamina_before": "218.6",
+        "stamina_after": "216.8",
+        "stamina_delta": "-1.8",
+        "expected_stamina_cost": "1.8",
+        "tool_restored": "axe",
+        "chore": "rockSourceTargets",
+        "steps": "2",
+        "folded": "accepted@location=Farm,target=rock_source_5dcd66abe2ae6efa,tile=54,8,distance=3,reach=1,approach=adjacent,stand_at=53,9|tool_approach_completed@tile=53,9,target=53,9,arrival=exact,path=stardew_native"
+      }
+    },
+    {
       "fromRun": "build_farm_building",
       "actionId": "build_farm_building",
       "state": "succeeded",
@@ -82,6 +108,64 @@
         "inventory_after": "1",
         "leftover_returned": "false",
         "native_menu_opened": "false"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "chop_stump",
+      "state": "succeeded",
+      "reasonCode": "stump_cleared",
+      "evidence": {
+        "target": "tree_stump_39ba40287e3f9303",
+        "type": "tree_stump",
+        "tree": "3",
+        "tool": "axe",
+        "tool_level": "0",
+        "health_before": "5",
+        "health_after": "destroyed",
+        "swings": "5",
+        "stump_removed": "true",
+        "stamina_before": "196.8",
+        "stamina_after": "186.8",
+        "stamina_delta": "-10",
+        "expected_stamina_cost": "10",
+        "tool_selected": "axe",
+        "slot": "0",
+        "tool_before": "axe",
+        "slot_before": "0",
+        "tool_restored": "axe",
+        "chore": "treeStumpTargets",
+        "steps": "2",
+        "folded": "accepted@location=Farm,target=tree_stump_39ba40287e3f9303,tile=52,13,distance=4,reach=1,approach=adjacent,stand_at=53,12|tool_approach_completed@tile=53,12,target=53,12,arrival=exact,path=stardew_native"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "chop_tree",
+      "state": "succeeded",
+      "reasonCode": "tree_source_chopped",
+      "evidence": {
+        "target": "tree_chop_source_70137eecb8cdb9cd",
+        "tool": "axe",
+        "tree": "1",
+        "health_before": "1",
+        "health_after": "5",
+        "stump_before": "false",
+        "stump_after": "true",
+        "source_transformed": "true",
+        "swings": "1",
+        "stamina_before": "224.2",
+        "stamina_after": "222.2",
+        "stamina_delta": "-2",
+        "expected_stamina_cost": "2",
+        "tool_selected": "axe",
+        "slot": "0",
+        "tool_before": "axe",
+        "slot_before": "0",
+        "tool_restored": "axe",
+        "chore": "treeChopSourceTargets",
+        "steps": "2",
+        "folded": "accepted@location=Farm,target=tree_chop_source_70137eecb8cdb9cd,tile=57,10,distance=3,reach=1,approach=adjacent,stand_at=56,11|tool_approach_completed@tile=56,11,target=56,11,arrival=exact,path=stardew_native"
       }
     },
     {
@@ -198,6 +282,61 @@
       }
     },
     {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "cut_grass",
+      "state": "succeeded",
+      "reasonCode": "grass_cut",
+      "evidence": {
+        "target": "grass_cbe023ec0a901d6f",
+        "type": "grass",
+        "tool": "scythe",
+        "tool_selected": "scythe",
+        "slot": "4",
+        "tool_before": "axe",
+        "slot_before": "0",
+        "grass_type": "1",
+        "weeds_before": "4",
+        "weeds_after": "removed",
+        "swings": "4",
+        "removed": "true",
+        "tuft_removed": "true",
+        "stamina_before": "222.2",
+        "stamina_after": "222.2",
+        "stamina_delta": "0",
+        "expected_stamina_cost": "0",
+        "tool_restored": "axe",
+        "chore": "grassTargets",
+        "steps": "2",
+        "folded": "accepted@location=Farm,target=grass_cbe023ec0a901d6f,tile=50,18,distance=2,reach=1,approach=adjacent,stand_at=51,18|tool_approach_completed@tile=51,18,target=51,18,arrival=exact,path=stardew_native"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "cut_weeds",
+      "state": "succeeded",
+      "reasonCode": "weeds_cut",
+      "evidence": {
+        "target": "weed_477355609732a653",
+        "type": "weed",
+        "tool": "scythe",
+        "tool_selected": "scythe",
+        "slot": "4",
+        "tool_before": "axe",
+        "slot_before": "0",
+        "qualified_item_id": "(O)784",
+        "health_before": "1",
+        "health_after": "removed",
+        "swings": "1",
+        "removed": "true",
+        "stamina_before": "186.8",
+        "stamina_after": "186.8",
+        "stamina_delta": "0",
+        "expected_stamina_cost": "0",
+        "tool_restored": "axe",
+        "chore": "weedTargets"
+      }
+    },
+    {
       "fromRun": "dye_clothing_with_item",
       "actionId": "dye_clothing_with_item",
       "state": "succeeded",
@@ -220,6 +359,47 @@
         "dye_after": "2",
         "dye_spent": "true",
         "colour_route": "TailoringMenu.GetDyeColor"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "enter_exit",
+      "state": "succeeded",
+      "reasonCode": "enter_exit_completed",
+      "evidence": {
+        "expected": "Farm:64,15",
+        "actual": "Farm:64,15",
+        "steps": "1",
+        "folded": "accepted@source=FarmHouse:3,12,target=Farm:64,15,entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "harvest_crop",
+      "state": "succeeded",
+      "reasonCode": "crop_harvested",
+      "evidence": {
+        "location": "Farm",
+        "target": "crop_5481d34df6f60c18",
+        "tile": "58,14",
+        "crop": "474",
+        "item": "(O)190",
+        "native_path_return": "true",
+        "native_accepted": "true",
+        "regrows": "false",
+        "phase_before": "5",
+        "phase_after": "none",
+        "day_of_phase_before": "0",
+        "day_of_phase_after": "none",
+        "regrow_advanced": "false",
+        "inventory_before": "2",
+        "inventory_after": "3",
+        "inventory_gained": "true",
+        "crop_present_after": "false",
+        "harvest_quality": "0",
+        "quality_counts_before": "0:2",
+        "quality_counts_after": "0:3",
+        "chore": "harvestTargets"
       }
     },
     {
@@ -253,6 +433,20 @@
       }
     },
     {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "move_to_tile",
+      "state": "succeeded",
+      "reasonCode": "target_reached",
+      "evidence": {
+        "tile": "58,15",
+        "target": "58,15",
+        "arrival": "exact",
+        "path": "stardew_native",
+        "steps": "1",
+        "folded": "accepted@route_revision=215,target=58,15"
+      }
+    },
+    {
       "fromRun": "name_entity",
       "actionId": "name_entity",
       "state": "succeeded",
@@ -270,6 +464,27 @@
         "name_after": "GameBuddyNamedHorse",
         "name_matches_requested": "true",
         "player_horse_name_updated": "true"
+      }
+    },
+    {
+      "fromRun": "2026-11-18T06-53-54-609Z-multiday_routine",
+      "actionId": "pickup_item",
+      "state": "succeeded",
+      "reasonCode": "item_picked_up",
+      "evidence": {
+        "location": "Farm",
+        "target": "item_b1a053542985bc45",
+        "tile": "60,11",
+        "item": "(O)92",
+        "stack": "1",
+        "native_auto_collect": "true",
+        "chunk_removed": "false",
+        "reason": "chunk_still_present",
+        "inventory_before": "7",
+        "inventory_after": "12",
+        "chore": "itemTargets",
+        "steps": "2",
+        "folded": "accepted@location=Farm,target=item_b1a053542985bc45,tile=60,11,item=(O)92,stack=1,inventory_before=7,native_auto_collect=true,within_magnet=true,radius=128,stand_at=58,12|item_pickup_approach_completed@tile=58,12,target=58,12,arrival=exact,path=stardew_native"
       }
     },
     {
