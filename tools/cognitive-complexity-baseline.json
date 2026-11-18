@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4563, largest ExecutionManager at 24549 lines / 844 members across 52 partial(s).",
-  "revision": "6d44041c",
+  "revision": "3e9981bb",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -191,7 +191,7 @@
       "language": "cs",
       "name": "FarmhandBodyProgramController.AdvanceAwaitingNodes(string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramController.cs",
-      "line": 431,
+      "line": 454,
       "value": 39,
       "reason": "33 -> 36 in `df79b260`, which made a cutscene something the waiting node waits out instead of spending the plan on. Three branches, no move: the owner and the signature are unchanged."
     },
@@ -1156,7 +1156,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "value": 268,
+      "value": 267,
       "reason": "259 -> 268 in two commits: `df79b260` +1 (`TryRejectAdmission` took a third parameter and reads 18 where its predecessor read 17) and `e2a6ae87` +8 (`AttributeExecution(string?)`, new, which is also the type's 60 -> 61st method)."
     },
     {
@@ -1357,7 +1357,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "lines": 1222,
+      "lines": 1240,
       "methods": 61,
       "reason": "lines 1209 -> 1211 in `a3e6eb34` (+5/-3 in the file) at the same 61 methods and the same one part: `TryComplete`'s `provesEffect` stopped spelling the outcome set and asks `BodyProgramValidation.MayCarryProof`, the declaration the wire validator refuses a frame by, and the two lines that replaced it are its comment. A re-partition of one authority plus a comment, not a member."
     },
