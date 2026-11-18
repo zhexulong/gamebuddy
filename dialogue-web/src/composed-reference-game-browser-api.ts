@@ -1042,11 +1042,7 @@ function validateGameFactPatch(value: unknown): GameFactPatchV1 {
         !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
         !isSafeInteger(game.attachment.generation, 0) ||
         !isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
-        !isRecord(game.capabilitySummary) ||
-        !hasExactKeys(game.capabilitySummary, GAME_CAPABILITY_SUMMARY_KEYS) ||
-        typeof game.capabilitySummary.available !== "boolean" ||
-        !isSafeInteger(game.capabilitySummary.count, 0) ||
-        game.capabilitySummary.count > 512
+        !isCapabilitySummary(game.capabilitySummary)
       )
         throw invalid;
       return value as unknown as GameFactPatchV1;

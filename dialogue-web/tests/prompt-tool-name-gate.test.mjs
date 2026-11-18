@@ -99,10 +99,8 @@ import {
   ADVERTISED,
   MOUNTED_GAME_SURFACE_TOOL_NAMES,
 } from "../../host/src/game-surface-prompt-floor.test-support.ts";
-import {
-  DEFAULT_IDENTITY_PROFILE,
-  buildChatCompanionSystemPrompt,
-} from "../../host/src/identity-profile.ts";
+import { DEFAULT_IDENTITY_PROFILE } from "../../host/src/identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "../../host/src/companion-prompt-assembly.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOST = join(REPO, "host", "src");
@@ -278,12 +276,12 @@ export function promptTextReading(mounted = mountedGameToolNames()) {
   return {
     entries: [
       {
-        file: "host/src/identity-profile.ts",
+        file: "host/src/companion-prompt-assembly.ts",
         line: null,
         text: buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE),
       },
       {
-        file: "host/src/identity-profile.ts",
+        file: "host/src/companion-prompt-assembly.ts",
         line: null,
         text: buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE),
       },

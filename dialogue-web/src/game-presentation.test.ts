@@ -185,6 +185,7 @@ test("the capability board states the published facts, and waits when nothing is
       | Readonly<{ status: "published"; count: number }>
       | Readonly<{ status: "not_measured"; reason: string }>,
     companionName: string | null,
+    attached = false,
   ) => ({
     prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
     instance: { status: "running" as const, gameTitle: null, generation: 1 },
@@ -218,17 +219,17 @@ test("the capability board states the published facts, and waits when nothing is
   assert.equal(unmeasured.waiting, labels.gameBoardWaiting);
   assert.equal(unmeasured.cards[0].title, labels.gameBoardCompanionTitle);
   // What the board is waiting for is never a fallback list of abilities.
-  assert.equal(unmeasured.lead, labels.gameBoardUnpublishedLead);
+  assert.equal(unmeasured.line, labels.gameBoardLineNoGame);
   assert.notEqual(unmeasured.cards[1].detail, published.cards[1].detail);
 
   // THREE ZEROS STAY APART: a runtime that answered and published nothing is a measured zero and says `0`, while a
   // reading this layer could not take has no count at all. Collapsing them is what the literal `{available:false,
   // count:0}` did on every reply.
   const measuredZero = deriveCapabilityBoard(labels, projection({ status: "published", count: 0 }, null));
-  assert.ok(measuredZero.lead.includes("0"), "a measured zero is still a measurement");
+  assert.ok(measuredZero.line.includes("0"), "a measured zero is still a measurement");
   assert.notEqual(
-    measuredZero.lead,
-    unmeasured.lead,
+    measuredZero.line,
+    unmeasured.line,
     "a measured zero reads as the same sentence as an unmeasured one",
   );
   assert.equal(measuredZero.waiting, null, "a measured zero is not 'waiting for the session'");

@@ -475,7 +475,11 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
   const companionName = projection.companionName ?? labels.gameBoardCompanionTitle;
   return Object.freeze({
     title: labels.gameBoardTitle,
-    lead: published ? withCount(labels.gameBoardPublishedLead, summary.count) : labels.gameBoardUnpublishedLead,
+    line: published
+      ? withCount(labels.gameBoardLinePublished, summary.count)
+      : projection.attachment.status === "none"
+        ? labels.gameBoardLineNoGame
+        : labels.gameBoardLineAttachedEmpty,
     cards: Object.freeze([
       Object.freeze({
         key: "companion" as const,
