@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { readPublishedStardewActionIds, readStardewActionWatchdogs } from "./stardew-published-action-registry.mjs";
+import {
+  readPublishedStardewActionIds,
+  readStardewActionToolClaims,
+  readStardewActionWatchdogs,
+} from "./stardew-published-action-registry.mjs";
 
 const registrations = `
 public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
@@ -135,4 +139,42 @@ test("one action declaring two different windows is refused rather than last-win
       );
     },
   );
+});
+
+test("each registration's declared tool is read from its own row", async () => {
+  const catalog = `
+public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
+{
+    E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Finishes(Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", destructive: false, "tree")), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
+    E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "fish_caught", ("x", "integer"))), FarmhandActionLifecycle.Published, "waterTargets"),
+    E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Finishes(SelfWalked(TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade))), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),
+    E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x", "integer")), FarmhandActionLifecycle.Published, "harvestTargets"),
+});
+`;
+  await withRegistrations(catalog, (registrationsPath) => {
+    // All three spellings the catalog uses (`SlotTargetWith`, `ToolResource`, `TargetWith`) are one fact, and an action
+    // that declares no tool is absent rather than mapped to a default.
+    assert.deepEqual(Object.fromEntries(readStardewActionToolClaims({ registrationsPath })), {
+      chop_tree: "axe",
+      fish_here: "fishing_rod",
+      water_pet_bowl: "watering_can",
+    });
+  });
+});
+
+test("one action declaring two different tools is refused rather than last-wins", async () => {
+  const catalog = `
+public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
+{
+    E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade)), FarmhandActionLifecycle.Published),
+    E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(ToolResource("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade)), FarmhandActionLifecycle.Published),
+});
+`;
+  await withRegistrations(catalog, (registrationsPath) => {
+    assert.throws(
+      () => readStardewActionToolClaims({ registrationsPath }),
+      /action_declares_two_tools:chop_tree:axe:pickaxe/u,
+      "two tools for one action is the catalog saying two things, not a row to pick from",
+    );
+  });
 });

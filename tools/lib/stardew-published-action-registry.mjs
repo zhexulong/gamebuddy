@@ -253,6 +253,40 @@ export function readStardewActionWatchdogs({ definitionsPath = REGISTRATIONS_PAT
 }
 
 /**
+ * The tool each action's own registration DECLARES, as the claim word (`axe`, `fishing_rod`, `heavy_hitter` …), read
+ * from the same registration table every other reader here parses.
+ *
+ * WHY FROM THE DECLARATION. The Mod resolves an action's tool from its OWN row rather than from a table in the handler
+ * (`farmhandexecutioncontroller.resourcetoolactions.cs:684-728`: `DeclaredToolClaim` → `SatisfiesToolRequirement`), so
+ * "which tool does `fish_here` need" is a published fact. Re-spelling it in the measurement layer would be the kind of
+ * second copy that agrees today and disagrees the first time a row changes its claim.
+ *
+ * The word is either a `ToolCategory` value or one of the Mod's three predicate words (`axe_or_pickaxe`,
+ * `heavy_hitter`, `heavy_hitter_not_melee_weapon`); telling them apart needs the Mod's predicate table, so this reader
+ * returns the WORD and leaves the interpretation to its caller.
+ *
+ * SYNCHRONOUS, like the family and watchdog readers, and for the same reason: a measurement built at module load.
+ * FAILS CLOSED on a declaration that names no tool at all, because an empty map would read as "no action needs a tool".
+ */
+export function readStardewActionToolClaims({ registrationsPath = REGISTRATIONS_PATH } = {}) {
+  const claims = new Map();
+  for (const entry of registrationsBody(readFileSync(registrationsPath, "utf8")).split(
+    /(?=\b(?:E|R|Registration)\()/u,
+  )) {
+    const row = entry.match(/\b(?:E|Registration)\(\s*"([a-z][a-z0-9_]{1,127})"/u);
+    if (row === null) continue;
+    const claim = entry.match(/\b(?:SlotTargetWith|ToolResource|TargetWith)\(\s*"([a-z][a-z0-9_]*)"/u);
+    if (claim === null) continue;
+    const [, actionId] = row;
+    const claimed = claims.get(actionId);
+    if (claimed !== undefined && claimed !== claim[1])
+      fail(`action_declares_two_tools:${actionId}:${claimed}:${claim[1]}`);
+    claims.set(actionId, claim[1]);
+  }
+  return claims;
+}
+
+/**
  * The Mod registrations whose lifecycle is exactly `Experimental`.
  *
  * This is the only thing a fixture may name in `ExperimentalActions`: a policy

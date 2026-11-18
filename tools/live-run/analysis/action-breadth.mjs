@@ -79,7 +79,13 @@ function reportPerAction(breadth) {
   for (const row of breadth.perAction) {
     const marks = [
       row.excluded ? "excluded" : null,
-      row.addressable === null ? null : row.addressable ? "addressable" : "outside_addressable",
+      row.withheld === null || row.withheld === undefined
+        ? row.addressable === null
+          ? null
+          : row.addressable
+            ? "addressable"
+            : "outside_addressable"
+        : `withheld:${row.withheld}`,
       row.succeeded ? "succeeded" : "not_succeeded",
     ].filter((mark) => mark !== null);
     out(

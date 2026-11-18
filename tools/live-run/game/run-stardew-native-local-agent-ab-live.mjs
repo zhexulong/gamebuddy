@@ -138,6 +138,7 @@ import { createBuildWindowsStaleLockReclaimer } from "../../../host/dist-test/wi
 import {
   actionBreadthClause,
   addSnapshotToCensus,
+  addSnapshotToolCategories,
   buildSnapshotCensus,
   measureActionBreadth,
   readActionBreadthSurface,
@@ -715,6 +716,10 @@ let lastObservedPose = null;
 // actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
 // the 40 its own observations made addressable, and the gate called that 15 of 95).
 const snapshotFamilyRows = new Map();
+// The tools those snapshots published (`toolSlots[].category`), so `action_breadth` can tell an action whose witness
+// family was full from one the run could actually perform: `round76` counted `fish_here` against 32 reachable water
+// tiles while the run never held a rod.
+const snapshotToolCategories = new Set();
 let snapshotCensusSamples = 0;
 let voice = null;
 let voiceChild = null;
@@ -1016,6 +1021,7 @@ function censusAdmittedSnapshot(snapshot) {
   if (snapshot === null || typeof snapshot !== "object") return;
   snapshotCensusSamples += 1;
   addSnapshotToCensus(snapshotFamilyRows, snapshot);
+  addSnapshotToolCategories(snapshotToolCategories, snapshot);
 }
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
@@ -6854,6 +6860,7 @@ async function buildRunResult({
     surface: breadthSurface,
     rows: snapshotFamilyRows,
     snapshots: snapshotCensusSamples,
+    tools: snapshotToolCategories,
   });
   const actionBreadth = await measureActionBreadth({
     scenario: SCENARIO,

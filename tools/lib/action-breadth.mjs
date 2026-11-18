@@ -50,6 +50,7 @@ import { TARGET_FIELD } from "../audit-stardew-discovery-channels.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
   readStardewActionFamilies,
+  readStardewActionToolClaims,
 } from "./stardew-published-action-registry.mjs";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -72,6 +73,57 @@ export const ACTION_BREADTH_RICH = "rich";
 
 /** An action the family table does not name. REPORTED, never dropped: a silent skip would shrink the denominator. */
 export const UNMAPPED_FAMILY = "unmapped";
+
+/**
+ * Which snapshot `toolSlots[].category` values satisfy each tool a registration can declare.
+ *
+ * The words and the categories are the MOD's, not this file's: `ToolCategory` names one category per tool class, and the
+ * three words that are not categories are the Mod's own predicates (`heavy_hitter` is `Tool.isHeavyHitter`;
+ * `heavy_hitter_not_melee_weapon` is the cask's `isHeavyHitter() && !(t is MeleeWeapon)`;
+ * `axe_or_pickaxe` is the pair no single category can say) - `farmhandexecutioncontroller.resourcetoolactions.cs:713-728`.
+ * A claim word absent here is NOT read as "no tool needed": it is published as `toolClaimUnmeasured`, because a rule
+ * this table cannot interpret must not silently withhold an action from a run's denominator.
+ *
+ * `weapon` appears as a category the snapshot publishes but no claim names it; `heavy_hitter` reaches it because the
+ * engine's own predicate admits MeleeWeapon and Slingshot.
+ */
+export const TOOL_CLAIM_CATEGORIES = Object.freeze({
+  axe: Object.freeze(["axe"]),
+  pickaxe: Object.freeze(["pickaxe"]),
+  hoe: Object.freeze(["hoe"]),
+  watering_can: Object.freeze(["watering_can"]),
+  fishing_rod: Object.freeze(["fishing_rod"]),
+  shears: Object.freeze(["shears"]),
+  milk_pail: Object.freeze(["milk_pail"]),
+  pan: Object.freeze(["pan"]),
+  lantern: Object.freeze(["lantern"]),
+  raft: Object.freeze(["raft"]),
+  scythe: Object.freeze(["scythe"]),
+  axe_or_pickaxe: Object.freeze(["axe", "pickaxe"]),
+  heavy_hitter: Object.freeze(["axe", "pickaxe", "hoe", "weapon"]),
+  heavy_hitter_not_melee_weapon: Object.freeze(["axe", "pickaxe", "hoe"]),
+});
+
+/**
+ * Target families whose rows say nothing about their action's subject, each with the fact that would.
+ *
+ * The addressable join treats "this family carried a row" as "this action is constructible". That is true of a family
+ * discovery filters to the action's own subject and FALSE of a family it publishes wholesale: `inventoryItemFacts`
+ * enumerates every non-empty backpack slot (`farmhandexecutioncontroller.targetdiscovery.cs:1068-1080`), so a row there
+ * only says the actor's bag is not empty - never that it holds something `open_geode` opens (`Utility.IsGeode`, the
+ * engine predicate the handler asks at `farmhandexecutioncontroller.geodeactions.cs:158`), and the snapshot publishes no
+ * item category that could answer it. Measured 2026-11-18 (`round76`): 16 ordinary farm slots put `open_geode` in the
+ * denominator of a run that never had a geode.
+ *
+ * This is a declared list rather than a derived one - the Mod does not publish which families it filters - so it is held
+ * to the same standard as the baseline's exclusions: each entry names the publisher and the missing fact, and an action
+ * withheld here that the run ATTEMPTED is put back in the denominator and reported, so an entry that stops being true
+ * cannot quietly shrink the surface.
+ */
+export const SUPERSET_WITNESS_FAMILIES = Object.freeze({
+  inventoryItemFacts:
+    "publishes every non-empty backpack slot, so its rows say the bag is not empty, never that it holds the item the action opens",
+});
 
 /** Who produced a census. Published with it, so a reader knows whose observation the denominator rests on. */
 export const SNAPSHOT_CENSUS_SOURCE = "runner_observations";
@@ -103,6 +155,7 @@ export async function readActionBreadthSurface() {
     const field = snapshotTargetField(TARGET_FIELD[actionId]);
     if (field !== null) targetFieldOf.set(actionId, field);
   }
+  const declaredTools = readStardewActionToolClaims();
   return Object.freeze({
     actionIds,
     families,
@@ -111,6 +164,16 @@ export async function readActionBreadthSurface() {
     // (the discovery audit's `NON_SNAPSHOT_TARGET_ACTIONS`), so no row count can gate it.
     targetFieldOf,
     targetFields: Object.freeze([...new Set(targetFieldOf.values())].sort()),
+    // The tool each action's OWN registration declares. A row needs its tool in the pack before the action can run, and
+    // the snapshot publishes that as `toolSlots[].category`; the family row alone says nothing about it.
+    toolClaimOf: new Map(
+      actionIds
+        .filter((actionId) => declaredTools.has(actionId))
+        .map((actionId) => [actionId, declaredTools.get(actionId)]),
+    ),
+    toolClaimWords: Object.freeze(
+      [...new Set(actionIds.map((actionId) => declaredTools.get(actionId)).filter(Boolean))].sort(),
+    ),
   });
 }
 
@@ -129,18 +192,40 @@ export function addSnapshotToCensus(rows, snapshot) {
 }
 
 /**
+ * The tool categories one snapshot published, accumulated into `categories`.
+ *
+ * The snapshot names a category per tool in the pack (`toolSlots[].category`), which is the same vocabulary a
+ * registration's `tool:` claim uses, so this is the one fact that can tell whether an action whose witness family was
+ * full was actually possible. It is a SET because "the axe was in the pack at some point" is what the run needs: the
+ * question is whether the tool was ever held, not in which slot at which instant.
+ */
+export function addSnapshotToolCategories(categories, snapshot) {
+  if (snapshot === null || typeof snapshot !== "object") return categories;
+  for (const row of Array.isArray(snapshot.toolSlots) ? snapshot.toolSlots : [])
+    if (typeof row?.category === "string" && row.category.length > 0) categories.add(row.category);
+  return categories;
+}
+
+/**
  * The census a bundle publishes: one entry per target family in the catalog, with the rows the run's snapshots
- * carried for it - `0` included.
+ * carried for it - `0` included - beside the tools those snapshots ever held.
  *
  * The zeroes are the point. A census that listed only the families it saw rows for could not be told apart from one
  * that never looked at a family, so an empty world and an unobserved one would read the same, and a later target
  * family added to the catalog would silently vanish from the denominator instead of being reported as drift.
+ *
+ * `tools` is null when the caller did not sample it: that is "this census never declared what the run held", which is a
+ * different answer from an empty list and must not withhold every tool-bound action silently.
  */
-export function buildSnapshotCensus({ surface, rows, snapshots }) {
+export function buildSnapshotCensus({ surface, rows, snapshots, tools }) {
   const observed = rows instanceof Map ? rows : new Map(Object.entries(rows ?? {}));
   return Object.freeze({
     source: SNAPSHOT_CENSUS_SOURCE,
     snapshots: Number.isInteger(snapshots) && snapshots > 0 ? snapshots : 0,
+    tools:
+      tools === undefined || tools === null
+        ? null
+        : Object.freeze([...(tools instanceof Set ? tools : new Set(tools))].sort()),
     families: Object.freeze(
       surface.targetFields.map((family) => Object.freeze({ family, rows: observed.get(family) ?? 0 })),
     ),
@@ -166,6 +251,11 @@ function normalizeCensus(census) {
   return Object.freeze({
     source: typeof census.source === "string" && census.source.length > 0 ? census.source : "unlabeled",
     snapshots: census.snapshots,
+    // `null` is a bundle from before the tool reading: the reader can say "this run's census never declared what it
+    // held", which is not the same answer as an empty list and must not withhold every tool-bound action silently.
+    tools: Array.isArray(census.tools)
+      ? Object.freeze(census.tools.filter((tool) => typeof tool === "string" && tool.length > 0))
+      : null,
     families: Object.freeze(families.map((entry) => Object.freeze({ family: entry.family, rows: entry.rows }))),
   });
 }
@@ -176,12 +266,35 @@ function normalizeCensus(census) {
  * Target-bound actions need a row in their family; actions that name no family need nothing, because their target is
  * the actor itself. Declared exclusions are subtracted last, and only the ones that were still addressable are
  * reported, so an expired carve-out cannot quietly shrink the denominator.
+ *
+ * A FAMILY ROW IS NOT ALWAYS THE ACTION'S PRECONDITION. `round76` (2026-11-18) counted `fish_here` as addressable because
+ * 32 water tiles were in reach, while the action needs a rod in the pack that this run never held; the same shape made
+ * `open_geode` addressable off a backpack full of ordinary items. The tool half is decidable from the declaration (every
+ * action whose registration carries a `tool:` claim) against the single fact the snapshot publishes about it
+ * (`toolSlots[].category`), so the rule is the Mod's own claim read against the run's own reading - and an action the run
+ * DISPATCHED is addressable whatever the census failed to evidence, because its own execution is proof the precondition
+ * held. That last half is not charity: without it the ruler would charge the run for our sampling gap.
  */
-export function deriveAddressable({ surface, census, exclusions = [] }) {
+export function deriveAddressable({ surface, census, exclusions = [], attempted = [] }) {
   const normalized = normalizeCensus(census);
   if (normalized === null) return null;
   const rows = new Map(normalized.families.map((entry) => [entry.family, entry.rows]));
   const excluded = new Set(exclusions);
+  const attemptedSet = new Set(attempted);
+  const held = normalized.tools;
+  // A tool the run DEMONSTRABLY used is held: an attempted action whose registration declares exactly one tool category
+  // could not have run without that tool in the pack, and the Mod resolves the tool from the pack itself. This is what
+  // keeps a census that predates the tool reading from withholding an action the run obviously could perform - `round76`
+  // never sampled `toolSlots`, yet its `break_rock` execution proves the pickaxe was there.
+  const provenByUse = new Set();
+  for (const actionId of attemptedSet) {
+    const word = surface.toolClaimOf?.get(actionId);
+    const categories = word === undefined ? undefined : TOOL_CLAIM_CATEGORIES[word];
+    if (categories !== undefined && categories.length === 1) provenByUse.add(categories[0]);
+  }
+  const withheld = [];
+  const fromAttempt = [];
+  const toolClaimUnmeasured = [];
   const targetBound = [];
   const targetless = [];
   for (const actionId of surface.actionIds) {
@@ -189,23 +302,66 @@ export function deriveAddressable({ surface, census, exclusions = [] }) {
     if (field === undefined) targetless.push(actionId);
     else if ((rows.get(field) ?? 0) > 0) targetBound.push(actionId);
   }
-  const addressable = Object.freeze([...targetBound, ...targetless].filter((actionId) => !excluded.has(actionId)));
+  const addressable = [];
+  for (const actionId of [...targetBound, ...targetless]) {
+    if (excluded.has(actionId)) continue;
+    const field = surface.targetFieldOf.get(actionId);
+    const superset = field !== undefined && SUPERSET_WITNESS_FAMILIES[field] !== undefined ? field : null;
+    const word = surface.toolClaimOf?.get(actionId);
+    if (word === undefined) {
+      if (superset === null) addressable.push(actionId);
+      else if (attemptedSet.has(actionId)) {
+        fromAttempt.push(actionId);
+        addressable.push(actionId);
+      } else withheld.push(Object.freeze({ actionId, reason: `witness_is_a_superset:${superset}` }));
+      continue;
+    }
+    const categories = TOOL_CLAIM_CATEGORIES[word];
+    if (categories === undefined) {
+      // A claim word this tree cannot interpret is NAMED and left in the denominator: withholding on it would be a
+      // measurement artefact dressed as a fact about the run.
+      toolClaimUnmeasured.push(Object.freeze({ actionId, word }));
+      addressable.push(actionId);
+      continue;
+    }
+    if (held !== null && categories.some((category) => held.includes(category))) {
+      addressable.push(actionId);
+      continue;
+    }
+    if (attemptedSet.has(actionId) || categories.some((category) => provenByUse.has(category))) {
+      fromAttempt.push(actionId);
+      addressable.push(actionId);
+      continue;
+    }
+    withheld.push(Object.freeze({ actionId, reason: `tool_not_held:${word}` }));
+  }
   const families = Object.freeze(
     [...new Set(targetBound.map((actionId) => surface.targetFieldOf.get(actionId)))].sort().map((family) =>
       Object.freeze({
         family,
         rows: rows.get(family) ?? 0,
-        actionIds: Object.freeze(targetBound.filter((actionId) => surface.targetFieldOf.get(actionId) === family)),
+        actionIds: Object.freeze(
+          targetBound.filter(
+            (actionId) => surface.targetFieldOf.get(actionId) === family && addressable.includes(actionId),
+          ),
+        ),
       }),
     ),
   );
   return Object.freeze({
-    actionIds: addressable,
+    actionIds: Object.freeze(addressable),
     targetBound: Object.freeze(targetBound.filter((actionId) => !excluded.has(actionId))),
     targetless: Object.freeze(targetless.filter((actionId) => !excluded.has(actionId))),
     // An exclusion that WOULD have been addressable: the ones a reader has to be able to weigh against the surface.
     excludedAddressable: Object.freeze([...targetBound, ...targetless].filter((actionId) => excluded.has(actionId))),
     families,
+    // Every action whose witness family carried a row but whose own declared precondition did not hold: what the
+    // family-only denominator used to charge the run for, named with the word that failed.
+    withheld: Object.freeze(withheld),
+    // The actions that stayed in the denominator on the run's own execution rather than on its census. A reader has to
+    // see this list, because it is exactly where the census under-sampled.
+    fromAttempt: Object.freeze(fromAttempt),
+    toolClaimUnmeasured: Object.freeze(toolClaimUnmeasured),
     // Every target family the catalog names but the census does not: drift between this tree's catalog and the
     // census the run published (an older runner, a renamed family), named member by member.
     censusFamiliesAbsent: Object.freeze(surface.targetFields.filter((family) => !rows.has(family))),
@@ -351,8 +507,12 @@ export async function measureActionBreadth({
     surface: resolvedSurface,
     census: resolvedCensus,
     exclusions: [...exclusions.keys()].filter((actionId) => published.has(actionId)),
+    // The run's own dispatches, so a precondition the census could not evidence cannot withdraw an action the run
+    // really executed (see `deriveAddressable`).
+    attempted: attemptedIds,
   });
   const addressableSet = addressable === null ? null : new Set(addressable.actionIds);
+  const withheldOf = new Map((addressable?.withheld ?? []).map((entry) => [entry.actionId, entry.reason]));
   // The coherence check this denominator rests on: everything the run DISPATCHED had to have been addressable, or
   // the census missed a family the run really used and the coverage it would produce is against the wrong world.
   const outsideAddressable =
@@ -370,6 +530,8 @@ export async function measureActionBreadth({
           succeeded: succeededSet.has(actionId),
           excluded: exclusions.has(actionId),
           addressable: addressableSet === null ? null : addressableSet.has(actionId),
+          // Why a census-witnessed action is not in the denominator, for the reader who asks about this row.
+          withheld: withheldOf.get(actionId) ?? null,
         }),
       )
       .sort((left, right) => right.executions - left.executions || left.actionId.localeCompare(right.actionId)),
@@ -405,6 +567,12 @@ export async function measureActionBreadth({
     addressableTargetless: addressable === null ? null : addressable.targetless.length,
     addressableFamilies: addressable === null ? null : addressable.families,
     addressableExcluded: addressable === null ? null : addressable.excludedAddressable,
+    // The witness family carried a row but the action's own declared precondition did not hold (`tool_not_held:<word>`),
+    // and the actions kept on the run's own execution because its census could not evidence them. Both are published so
+    // a reader can weigh the denominator instead of trusting it.
+    addressableWithheld: addressable === null ? null : addressable.withheld,
+    addressableFromAttempt: addressable === null ? null : addressable.fromAttempt,
+    toolClaimUnmeasured: addressable === null ? null : addressable.toolClaimUnmeasured,
     censusFamiliesAbsent: addressable === null ? null : addressable.censusFamiliesAbsent,
     // Coverage of the world this run was given; the catalog coverage stays beside it as context, never as the
     // denominator (it is the number that charged the companion for the fixture's world).
@@ -522,6 +690,22 @@ export function formatActionBreadth(breadth) {
     breadth.addressable === null
       ? "action_breadth: addressable not_measured (no snapshot census)"
       : `action_breadth: addressable ${String(breadth.addressable)} of ${String(breadth.published)} published (target-bound ${String(breadth.addressableTargetBound)}, targetless ${String(breadth.addressableTargetless)})`,
+    // Only when there is something to say: an empty line for the ordinary run would be noise in every artifact.
+    ...(breadth.addressableWithheld !== null && (breadth.addressableWithheld ?? []).length > 0
+      ? [
+          `action_breadth: withheld ${breadth.addressableWithheld.map((entry) => `${entry.actionId}(${entry.reason})`).join(",")} - the family had a row, the action's own precondition did not hold`,
+        ]
+      : []),
+    ...(breadth.addressableFromAttempt !== null && (breadth.addressableFromAttempt ?? []).length > 0
+      ? [
+          `action_breadth: from_attempt ${breadth.addressableFromAttempt.join(",")} - addressable on the run's own execution, which its census could not evidence`,
+        ]
+      : []),
+    ...(breadth.toolClaimUnmeasured !== null && (breadth.toolClaimUnmeasured ?? []).length > 0
+      ? [
+          `action_breadth: tool_claim_unmeasured ${breadth.toolClaimUnmeasured.map((entry) => `${entry.actionId}(${entry.word})`).join(",")} - a declared tool word this tree cannot interpret, so the action stays in the denominator`,
+        ]
+      : []),
     `action_breadth: ${coverage}`,
     `action_breadth: families ${String(breadth.families)} of ${String(breadth.publishedFamilies)}${breadth.familyNames.length === 0 ? "" : ` ${breadth.familyNames.join(",")}`}`,
     `action_breadth: executions ${String(breadth.executions)} (${String(breadth.attributedExecutions)} attributed); concentration ${share}`,

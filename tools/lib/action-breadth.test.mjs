@@ -22,11 +22,14 @@ import {
   actionBreadthClause,
   actionExecutionCounts,
   addSnapshotToCensus,
+  addSnapshotToolCategories,
   buildSnapshotCensus,
   deriveAddressable,
   formatActionBreadth,
   measureActionBreadth,
+  readActionBreadthSurface,
   SNAPSHOT_CENSUS_SOURCE,
+  TOOL_CLAIM_CATEGORIES,
 } from "./action-breadth.mjs";
 
 /** A family per action, so a reading's family count is decided by the fixture and not by today's catalog. */
@@ -54,9 +57,12 @@ const TARGET_FIELD_OF = Object.freeze({
   plant_seed: "seedTargets",
   water_crop: "cropTargets",
   talk_to_npc: "npcRelationshipTargets",
+  // The one fixture action whose target family is a TILE list and whose declared tool is not a farming implement: the cast
+  // needs the rod, and the water in reach says nothing about whether one is in the pack (`round76`'s `fish_here`).
+  fish_here: "waterTargets",
 });
 
-function surfaceOf(actionIds) {
+function surfaceOf(actionIds, { toolClaimOf = {} } = {}) {
   const families = new Map(actionIds.map((actionId) => [actionId, FAMILY_OF[actionId] ?? "unmapped"]));
   const targetFieldOf = new Map(
     actionIds
@@ -69,10 +75,11 @@ function surfaceOf(actionIds) {
     familyCount: new Set(families.values()).size,
     targetFieldOf,
     targetFields: [...new Set(targetFieldOf.values())].sort(),
+    toolClaimOf: new Map(Object.entries(toolClaimOf).filter(([actionId]) => actionIds.includes(actionId))),
   };
 }
 
-const ALL_ACTIONS = Object.keys(FAMILY_OF);
+const ALL_ACTIONS = Object.keys(FAMILY_OF).concat(["fish_here"]);
 const SURFACE = surfaceOf(ALL_ACTIONS);
 
 /** Every target family of the fixture world carrying rows: the widest world this fixture can arm. */
@@ -111,6 +118,23 @@ const BASELINE = Object.freeze({
         "targets the Bus Stop ticket machine and drives its native dialogue; the bus is out of order until the Vault repair",
     }),
   ]),
+});
+
+test("every tool the catalog declares is a word this reading can interpret", async () => {
+  // THE ONE TEST HERE THAT READS TODAY'S CATALOG, and it must: the population is the Mod's own declarations, and a claim
+  // word this tree cannot interpret would silently stop withholding - or start withholding - for actions nobody has
+  // written yet. `TOOL_CLAIM_CATEGORIES` holds the Mod's own vocabulary (`ToolCategory` plus its three predicate words);
+  // a word outside it has to be added there with the predicate it means, so this fails and names the word.
+  const surface = await readActionBreadthSurface();
+  assert.ok(surface.toolClaimOf.size > 0, "blocked: the catalog declares no tool claim, so this gate examined nothing");
+  const uninterpretable = [...new Set(surface.toolClaimOf.values())].filter(
+    (word) => TOOL_CLAIM_CATEGORIES[word] === undefined,
+  );
+  assert.deepEqual(
+    uninterpretable,
+    [],
+    `these declared tool words have no category set in TOOL_CLAIM_CATEGORIES, so the actions that declare them cannot be judged: ${uninterpretable.join(",")}`,
+  );
 });
 
 /**
@@ -447,9 +471,11 @@ test("a target family the census never names is drift, reported by name", async 
   const truncated = {
     source: SNAPSHOT_CENSUS_SOURCE,
     snapshots: 4,
-    families: Object.entries(WIDE_ROWS)
-      .filter(([family]) => family !== "npcRelationshipTargets")
-      .map(([family, rows]) => ({ family, rows })),
+    // Every family the catalog names except the one being withheld: the census's own key space, so the only drift is the
+    // family this fixture leaves out.
+    families: SURFACE.targetFields
+      .filter((family) => family !== "npcRelationshipTargets")
+      .map((family) => ({ family, rows: WIDE_ROWS[family] ?? 0 })),
   };
   const breadth = await measure(
     {
@@ -538,7 +564,7 @@ test("the census names every target family, including the ones it saw no row for
   assert.equal(census.snapshots, 3);
   assert.equal(
     census.families.length,
-    7,
+    SURFACE.targetFields.length,
     "the key space is the catalog's target families, not what the snapshots happened to carry",
   );
   assert.deepEqual(
@@ -566,6 +592,140 @@ test("a snapshot contributes the largest row count it showed for each family", (
   assert.equal(rows.get("capabilities"), 1);
   assert.equal(rows.has("cropTargets"), false, "an empty array is no row at all");
   assert.equal(rows.has("location"), false, "a scalar is not a family");
+});
+
+test("an action whose declared tool was never held is withheld, whatever its witness family carried", () => {
+  // MEASURED 2026-11-18 (`round76`): `waterTargets` carried 32 reachable tiles and `fish_here` was counted addressable for
+  // a run that never held a rod. The declaration the Mod resolves the tool from is the authority here, and the run's own
+  // `toolSlots` is the evidence.
+  const surface = surfaceOf(ALL_ACTIONS, { toolClaimOf: { cut_weeds: "scythe" } });
+  const withoutTool = deriveAddressable({
+    surface,
+    census: censusOf(WIDE_ROWS, { surface }),
+    exclusions: ["ride_bus"],
+  });
+  assert.deepEqual(
+    withoutTool.withheld.map((entry) => `${entry.actionId}:${entry.reason}`),
+    ["cut_weeds:tool_not_held:scythe"],
+    "the family had rows and the action still could not run",
+  );
+  assert.ok(!withoutTool.actionIds.includes("cut_weeds"));
+
+  // The falsifier: the same world with the tool in the pack puts it back, and nothing else changes.
+  const withTool = deriveAddressable({
+    surface,
+    census: buildSnapshotCensus({ surface, rows: new Map(Object.entries(WIDE_ROWS)), snapshots: 5, tools: ["scythe"] }),
+    exclusions: ["ride_bus"],
+  });
+  assert.deepEqual(withTool.withheld, []);
+  assert.ok(withTool.actionIds.includes("cut_weeds"));
+  assert.equal(withTool.actionIds.length, withoutTool.actionIds.length + 1);
+});
+
+test("an action the run dispatched stays addressable when its census could not evidence the tool", () => {
+  // A census from before the tool reading (`tools: null`) says nothing about the pack. Withholding on it would charge the
+  // run for our sampling gap, so the dispatch itself is the evidence and the row says where the evidence came from.
+  const surface = surfaceOf(ALL_ACTIONS, {
+    toolClaimOf: { cut_weeds: "scythe", cut_grass: "scythe", fish_here: "fishing_rod" },
+  });
+  const addressable = deriveAddressable({
+    surface,
+    census: censusOf(WIDE_ROWS, { surface }),
+    exclusions: ["ride_bus"],
+    attempted: ["cut_weeds"],
+  });
+  // `cut_grass` declares the SAME single-category tool the run demonstrably used, so the tool is held for it too; the rod
+  // was never used and never published, so `fish_here` is withheld - but it has no witness family in this fixture, so it
+  // is not in the target-bound set at all and nothing is withheld.
+  assert.deepEqual([...addressable.fromAttempt], ["cut_weeds", "cut_grass"]);
+  assert.deepEqual(addressable.withheld, [], "no other action in this fixture declares a tool");
+  assert.ok(addressable.actionIds.includes("cut_weeds") && addressable.actionIds.includes("cut_grass"));
+
+  // And an action that declares a tool nothing else proves, which the run never attempted, is withheld.
+  const loneRod = deriveAddressable({
+    surface: surfaceOf(ALL_ACTIONS, { toolClaimOf: { cut_grass: "scythe", fish_here: "fishing_rod" } }),
+    census: buildSnapshotCensus({
+      surface: SURFACE,
+      rows: new Map([...Object.entries(WIDE_ROWS), ["waterTargets", 32]]),
+      snapshots: 5,
+      tools: ["axe"],
+    }),
+    exclusions: ["ride_bus"],
+    attempted: ["cut_grass"],
+  });
+  assert.deepEqual(
+    loneRod.withheld.map((entry) => `${entry.actionId}:${entry.reason}`),
+    ["fish_here:tool_not_held:fishing_rod"],
+    "the pack published an axe, not the rod the cast needs",
+  );
+});
+
+test("a declared tool word this tree cannot interpret is named, never used to withhold", () => {
+  // The failure this rule must not have: a modded claim word silently removing an action from every future denominator.
+  const surface = surfaceOf(ALL_ACTIONS, { toolClaimOf: { cut_weeds: "modded_laser_wand" } });
+  const addressable = deriveAddressable({
+    surface,
+    census: buildSnapshotCensus({ surface, rows: new Map(Object.entries(WIDE_ROWS)), snapshots: 5, tools: [] }),
+    exclusions: ["ride_bus"],
+  });
+  assert.deepEqual(
+    addressable.toolClaimUnmeasured.map((entry) => `${entry.actionId}:${entry.word}`),
+    ["cut_weeds:modded_laser_wand"],
+  );
+  assert.ok(addressable.actionIds.includes("cut_weeds"), "an uninterpretable claim must not shrink the surface");
+  assert.deepEqual(addressable.withheld, []);
+});
+
+test("a family that publishes the whole bag does not witness its action's subject", () => {
+  // `round76`'s own shape: 16 ordinary slots made `open_geode` addressable. The decl ared list names the family and the
+  // fact it cannot carry; an action the run ATTEMPTED is put back, so a stale entry cannot quietly shrink the surface.
+  const surface = surfaceOf(ALL_ACTIONS, {});
+  // The family must be in the surface's own key space as well as on the action, or the census cannot name it at all.
+  surface.targetFieldOf.set("ride_bus", "inventoryItemFacts");
+  surface.targetFields.push("inventoryItemFacts");
+  const rows = { ...WIDE_ROWS, inventoryItemFacts: 16 };
+  const withheldReading = deriveAddressable({
+    surface,
+    census: buildSnapshotCensus({ surface, rows: new Map(Object.entries(rows)), snapshots: 5 }),
+  });
+  assert.deepEqual(
+    withheldReading.withheld.map((entry) => `${entry.actionId}:${entry.reason}`),
+    ["ride_bus:witness_is_a_superset:inventoryItemFacts"],
+  );
+  assert.ok(!withheldReading.actionIds.includes("ride_bus"));
+
+  const attemptedReading = deriveAddressable({
+    surface,
+    census: buildSnapshotCensus({ surface, rows: new Map(Object.entries(rows)), snapshots: 5 }),
+    attempted: ["ride_bus"],
+  });
+  assert.deepEqual(
+    [...attemptedReading.fromAttempt],
+    ["ride_bus"],
+    "the run's own execution outranks the declared rule",
+  );
+  assert.ok(attemptedReading.actionIds.includes("ride_bus"));
+});
+
+test("the census carries the tool categories the snapshots published, and only those", () => {
+  const categories = new Set();
+  addSnapshotToolCategories(categories, {
+    toolSlots: [
+      { slot: 0, label: "Axe", category: "axe" },
+      { slot: 1, label: "Watering Can", category: "watering_can" },
+    ],
+  });
+  addSnapshotToolCategories(categories, { toolSlots: [{ slot: 0, label: "Pickaxe", category: "pickaxe" }] });
+  addSnapshotToolCategories(categories, { toolSlots: [{ slot: 0, label: "mystery" }, { category: "" }, null] });
+  addSnapshotToolCategories(categories, null);
+  assert.deepEqual([...categories].sort(), ["axe", "pickaxe", "watering_can"]);
+  // A census built without them says so with null, which is not the same answer as "nothing was held".
+  assert.equal(buildSnapshotCensus({ surface: SURFACE, rows: new Map(), snapshots: 1 }).tools, null);
+  assert.deepEqual(
+    buildSnapshotCensus({ surface: SURFACE, rows: new Map(), snapshots: 1, tools: [] }).tools,
+    [],
+    "sampled and empty is an answer",
+  );
 });
 
 test("an execution that names no action is counted as unattributed, never as one concentrated action", async () => {
