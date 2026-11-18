@@ -105,7 +105,8 @@ test("the falsifier: an instrument armed inside the subject is lost when the sub
   assert.equal(
     existsSync(join(dir, RUN_PROGRESS_FILE)),
     false,
-    "a record whose only opener is the process it describes leaves nothing when that process dies",
+    "an_instrument_outlives_its_subject:run-progress.jsonl - a record whose only opener is the process it describes " +
+      "leaves nothing when that process dies, which is round67's directory verbatim",
   );
   const audit = auditRunClosures({ root: join(area.dir, "game-ladder") });
   assert.equal(audit.examined, 1);
