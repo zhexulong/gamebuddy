@@ -144,11 +144,16 @@ type SettledNode = Readonly<{
   hint?: string;
   reasonDetail?: string;
   /**
-   * The pass's own row table, verbatim, from the Mod's `BodyProgramJournalNode.Evidence`.
+   * The node's own proof, verbatim, from the Mod's `BodyProgramJournalNode.Evidence`.
    *
-   * `for_each` settles ONE node for sixty tiles, so this row - not sixty facts - is where a batch's per-row outcome lives,
-   * and it is the row `round63` read as `{"nodeId":"n02","actionId":"for_each","state":"succeeded"}`: fifteen tiles
-   * tilled, forty-five untouched, and not one tile named.
+   * TWO SHAPES, ONE FIELD, because the producer puts both here. A `for_each` settles ONE node for sixty tiles, so its
+   * evidence is the pass's own row table - `round63` read it as `{"nodeId":"n02","actionId":"for_each","state":
+   * "succeeded"}`: fifteen tiles tilled, forty-five untouched, and not one tile named. A single settled action's evidence
+   * is instead the receipt's own detail (`crop_harvested`'s `location=…;tile=…`, projected one-to-one onto
+   * `evidence.detail`), and that is the string `ExecutionManager.RememberTerminal` appends `;chore=<family>` to.
+   *
+   * SO THIS IS THE FIELD A SETTLEMENT NAMES ITS CHORE IN, and a reader that looks only at `postconditionVerification`
+   * (a journal verdict line) finds nothing: `round73`, 205 mints in the log and 9 of 9 remainders saying `未测`.
    */
   evidence?: string;
   /**
@@ -870,7 +875,7 @@ function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined)
 // THE ONE THING THE HOST CANNOT DERIVE is WHICH family a step's work consumes. That is the Mod's declaration (its
 // descriptor's `Chore` claim, whose family is the `TargetFamily` it addressed - NOT its `Clears`, which answers a routing
 // question and is declared only on the actions that open a route, so asking it here answered `未测` for 14 of round70's
-// 14 delivered batches), and the Mod mints it into the node's own verdict line as `chore=<family>`. A settlement whose
+// 14 delivered batches), and the Mod mints it into the SETTLEMENT's own evidence as `chore=<family>`. A settlement whose
 // steps say nothing about their chore states `剩下的：未测` rather than staying silent.
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -900,8 +905,22 @@ type ChoreReading = Readonly<{
   unmeasured: readonly string[];
 }>;
 
-/** The Mod's token for the family a step's work consumed, inside the node's verdict line. */
+/**
+ * The Mod's token for the family a step's work consumed: `chore=<family>`, a field of its own.
+ *
+ * A FIELD'S NAME, NOT A POSITION. It is minted at the settlement's seam (`ExecutionManager.RememberTerminal`, which
+ * appends `;chore=<family>` to the receipt's evidence - `evidence.detail` on the wire) and a pass states the same field
+ * on its own `for_each_pass:` verdict line, so the field arrives after a `;` in one place and a `:` in the other. What
+ * this reader keys on is the name: the family is the run of identifier characters after `chore=` wherever it appears.
+ *
+ * WHY THAT MATTERS RATHER THAN reading the line it used to sit on: the mint MOVED once already (`4c25331c`, measured
+ * `round71`), and a reader that required `:`-separated `key=value` segments read every settled settlement as `未测` -
+ * `round73`, 205 mints in the log and 9 of 9 clauses saying the Mod had said nothing.
+ */
 const CHORE_FIELD = "chore=";
+
+/** The characters a wire family key is made of (`harvestTargets`, `weedTargets`, `woodFenceTargets`). */
+const FAMILY_KEY = /[A-Za-z0-9_]/;
 
 /**
  * The states in which a node PROVED it did something.
@@ -1037,23 +1056,46 @@ function choreReading(nodes: readonly SettledNode[], reading: WorldStateReading 
 }
 
 /**
- * The family whose work one settled step consumed, as the Mod minted it: `…:chore=weedTargets`.
+ * The family whose work one settled step consumed, as the Mod minted it: `…;chore=weedTargets`.
  *
- * Read from the node's own verdict line - the `:`-delimited `key=value` document the Mod already writes there
- * (`route_reentrant_terminal:state=…:request=…:revision=…`, `for_each_pass:decided=…:succeeded=…`) - so the family
- * arrives from the descriptor that declares it rather than from a table here that could drift from that declaration.
+ * <p>
+ * READ BY THE FIELD'S OWN NAME, FROM EVERY FIELD OF THE SETTLEMENT THAT CAN CARRY IT. The family arrives from the
+ * descriptor that declares it rather than from a table here that could drift from that declaration, and the two places
+ * one settlement can state it are the receipt's evidence (a single settled action - `RememberTerminal` appends
+ * `;chore=<family>`) and a pass's own `for_each_pass:` verdict line (`:chore=<family>`). Splitting either on ONE
+ * separator was the whole of `round73`: the settlement's evidence is `;`-separated, so a `:`-split found nothing, and 9
+ * of 9 remainders said `未测` beside 205 mints in the log.
+ * </p>
+ * <p>
  * Present only on a step whose action declares that its success TAKES its family's row out of the world: a step that
  * reads or loads a machine has no chore, and neither has one that clears a route (`clearing is a different question`).
+ * </p>
  */
 function choreFamilyOf(node: SettledNode): string | undefined {
   if (typeof node.state !== "string" || !PROVEN_EFFECT_STATES.has(node.state)) return undefined;
-  for (const field of [node.postconditionVerification, node.evidence]) {
+  for (const field of [node.evidence, node.postconditionVerification]) {
     if (typeof field !== "string") continue;
-    for (const segment of field.split(":")) {
-      if (!segment.startsWith(CHORE_FIELD)) continue;
-      const family = segment.slice(CHORE_FIELD.length);
-      if (family !== "") return family;
-    }
+    const family = choreNamedIn(field);
+    if (family !== undefined) return family;
+  }
+  return undefined;
+}
+
+/**
+ * The family one field of a settlement names, or `undefined` when it names none.
+ *
+ * The token is found wherever it stands - start of the field, after a `;`, after a `:` - and its value ends at the first
+ * byte a family key cannot hold. A `chore=` that continues an identifier (`my_chore=`) is not this field and is skipped,
+ * so a future key whose name merely ENDS in `chore` cannot be read as this one.
+ */
+function choreNamedIn(field: string): string | undefined {
+  for (let at = field.indexOf(CHORE_FIELD); at >= 0; at = field.indexOf(CHORE_FIELD, at + 1)) {
+    const before = field[at - 1];
+    if (before !== undefined && FAMILY_KEY.test(before)) continue;
+    let end = at + CHORE_FIELD.length;
+    while (end < field.length && FAMILY_KEY.test(field[end] as string)) end += 1;
+    const family = field.slice(at + CHORE_FIELD.length, end);
+    if (family !== "") return family;
   }
   return undefined;
 }
