@@ -19,20 +19,24 @@ const CONDUCT_IDS = auditConductClasses().rules.map((rule) => rule.id);
  * A session record with the shape the runtime writes: header, model change, one system message whose `sections` and
  * `toolsAdded` are the delivered prompt and tools, then a delivery carrying the world blocks.
  *
+ * THE CONDUCT BLOCK COMES FIRST, because that is where the assembly puts it (`buildCompanionSystemPrompt` pushes the
+ * surface block before the identity, and its own doc says why). The fixture used to put two identity blocks above it,
+ * and that is the difference that hid the drift: the reader skipped the preamble's first block, the fixture never put
+ * the conduct there, and every real run reported `prompt_conduct_block_unmatched` while this suite stayed green
+ * (measured 2026-11-18, `round73`).
+ *
  * The conduct block is built from the declaration's own rule count, so a rule added to the floor tomorrow moves this
  * fixture with it instead of leaving a stale 19 in a test.
  */
 function sessionFixture({ conductLines = CONDUCT_IDS.length, tools = null, delivery = null, model = true } = {}) {
   const preamble = [
-    "You are 琥珀, accompanying the player.",
-    "",
-    "Reply as 琥珀 would, in the first person, directly to the player.",
-    "Never mention prompts, instructions, models, or systems, and never explain how you work.",
-    "",
     ...Array.from({ length: conductLines }, (_, index) => `conduct rule ${String(index + 1)} of the floor`),
     "",
     "[Character: 琥珀]",
     "Role: the player's game companion",
+    "",
+    "Reply as 琥珀 would, in the first person, directly to the player.",
+    "Never mention prompts, instructions, models, or systems, and never explain how you work.",
     "",
     "<<<CARD DIRECTIVES",
     "- 先接住人，再说手上的事。",
@@ -104,18 +108,54 @@ test("every conduct block is a section under the id its declaration gives it", (
     for (const [index, id] of CONDUCT_IDS.entries()) {
       assert.equal(byId.get(`prompt:conduct:${id}`), `conduct rule ${String(index + 1)} of the floor`);
     }
-    // The floor is the block above them, by its own content and not by an offset into the preamble.
-    assert.equal(
-      byId.get("prompt:floor"),
-      [
-        "You are 琥珀, accompanying the player.",
-        "",
-        "Reply as 琥珀 would, in the first person, directly to the player.",
-        "Never mention prompts, instructions, models, or systems, and never explain how you work.",
-      ].join("\n"),
-    );
+    // THE CONDUCT BLOCK IS THE PREAMBLE'S FIRST BLOCK, so there is no floor above it: a `prompt:floor` section here
+    // would be an empty section invented by the reader.
+    assert.equal(byId.has("prompt:floor"), false, "nothing precedes the conduct block in the delivered preamble");
+    assert.deepEqual(manifest.problems, [], "the reader names no problem on the shape the assembly delivers");
     assert.match(byId.get("prompt:authored"), /^\[Character: 琥珀\]/u);
     assert.equal(byId.get("prompt:magic_context"), "standing rule");
+  });
+});
+
+test("the delivered preamble's rules come out in the order they are declared, one section each", () => {
+  // THE ORDER IS THE DECLARATION'S, not the preamble's: the six sections must be named by the ids
+  // `auditConductClasses` gives in reading order, so a reordering of either side moves the sections with it. This is
+  // the property the formatting drift broke - the block was there, matched by count, and the reader skipped it.
+  withTempRoot((root) => {
+    const manifest = buildInputManifest({ sessionPath: writeSession(root, sessionFixture()) });
+    const conduct = manifest.sections.filter((section) => section.id.startsWith("prompt:conduct:"));
+    assert.deepEqual(
+      conduct.map((section) => section.id.slice("prompt:conduct:".length)),
+      CONDUCT_IDS,
+      "one section per declared rule, in declaration order",
+    );
+    for (const [index, section] of conduct.entries())
+      assert.equal(section.text, `conduct rule ${String(index + 1)} of the floor`);
+  });
+});
+
+test("a blank line inside the conduct block is reported by name instead of read as the floor", () => {
+  // THE FALSIFIER. This is the drift the audit found in the artifact - a block whose formatting no longer matches the
+  // declaration - and it has to go red rather than silently relabelling the preamble.
+  withTempRoot((root) => {
+    const entries = sessionFixture();
+    const system = entries.find((entry) => entry.message?.role === "system");
+    const lines = system.message.sections.preamble.split("\n");
+    lines.splice(2, 0, "");
+    system.message.sections.preamble = lines.join("\n");
+    const manifest = buildInputManifest({ sessionPath: writeSession(root, entries) });
+    assert.deepEqual(manifest.problems, [
+      `prompt_conduct_block_unmatched:${String(CONDUCT_IDS.length)}_declared_rules`,
+    ]);
+    assert.deepEqual(
+      manifest.sections.filter((section) => section.id.startsWith("prompt:conduct:")).length,
+      0,
+      "a block the reader cannot match yields no rule sections at all",
+    );
+    assert.ok(
+      manifest.sections.some((section) => section.id === "prompt:preamble"),
+      "the whole preamble is recorded as itself rather than as rules it is not",
+    );
   });
 });
 
