@@ -296,6 +296,7 @@ test("the production settlement path advances the owner to contained and release
     state: "ready",
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
+    instanceGeneration: 0,
   });
   const claim = harness.composition.broker
     .confirm({
@@ -351,6 +352,7 @@ test("only a `reserved` predecessor can be settled: a quarantined attempt is ref
       state: "ready",
       locator: "C:\\Games\\Stardew Valley",
       activeAttempt: null,
+      instanceGeneration: 0,
     });
     const claim = harness.composition.broker
       .confirm({
@@ -437,6 +439,7 @@ test("settlement rejects a terminal owner replacement unless its exact fence and
       state: "ready",
       locator: "C:\\Games\\Stardew Valley",
       activeAttempt: null,
+      instanceGeneration: 0,
     });
     const claim = harness.composition.broker
       .confirm({
@@ -478,6 +481,7 @@ test("a settlement proof is one-shot and cannot be replayed", async () => {
     state: "ready",
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
+    instanceGeneration: 0,
   });
   const claim = harness.composition.broker
     .confirm({
@@ -507,6 +511,7 @@ test("settlement releases an active registration after its owner-authorized loca
     state: "ready",
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
+    instanceGeneration: 0,
   });
   const claim = harness.composition.broker
     .confirm({
@@ -529,6 +534,7 @@ test("settlement releases an active registration after its owner-authorized loca
     state: "ready",
     locator: "D:\\Games\\Replacement Stardew Valley",
     activeAttempt: null,
+    instanceGeneration: 1,
   });
 });
 
@@ -5834,6 +5840,7 @@ async function publishReadyRegistration(root: string): Promise<void> {
     state: "ready",
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
+    instanceGeneration: 0,
   });
 }
 

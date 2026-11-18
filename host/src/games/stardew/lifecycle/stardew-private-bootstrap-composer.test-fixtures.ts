@@ -632,6 +632,7 @@ export async function writeRegistrationAttemptFixture(
       state: "ready",
       locator: "C:\\StardewValley",
       activeAttempt: input.activeAttempt ? { bootstrapCorrelation: "bootstrap-1" } : null,
+      instanceGeneration: input.activeAttempt ? 1 : 0,
     }),
     "utf8",
   );

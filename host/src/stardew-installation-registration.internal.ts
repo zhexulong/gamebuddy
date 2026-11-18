@@ -32,6 +32,17 @@ export type StardewInstallationRegistrationRecordV1 = Readonly<{
   activeAttempt: Readonly<{
     bootstrapCorrelation: string;
   }> | null;
+  /**
+   * The Player Host instance this installation has named most recently: `0` before any
+   * attempt has bound, and the next number each time a new attempt takes the pointer.
+   *
+   * It is deliberately NOT `revision`. A revision counts writes - a locator replacement, a
+   * release, a re-bind all move it - while this number counts the things the browser is
+   * being asked to tell apart: one launched game. `game.instance.generation` is this number,
+   * and the browser's `expectedInstanceGeneration` is checked against it, so a second
+   * instance must be able to answer `2` in a process that has never seen the first one.
+   */
+  instanceGeneration: number;
 }>;
 
 /**
@@ -121,6 +132,7 @@ export async function withStardewLifecycleInstallationRegistrationOwner<T>(
               ...current,
               revision: current.revision + 1,
               activeAttempt: { bootstrapCorrelation: checked.bootstrapCorrelation },
+              instanceGeneration: current.instanceGeneration + 1,
             });
           },
           releaseSettledPointer: async (expectedRegistrationRevision, marker) => {
@@ -285,6 +297,7 @@ export async function publishStardewReadyInstallationRegistration(
   runtimeRoot: string,
   expectedRevision: number | null,
   locator: string,
+  instanceGeneration: number,
 ): Promise<StardewInstallationRegistrationRecordV1> {
   return await publishStardewInstallationRegistration(runtimeRoot, expectedRevision, {
     schema: REGISTRATION_SCHEMA,
@@ -293,6 +306,9 @@ export async function publishStardewReadyInstallationRegistration(
     state: "ready",
     locator,
     activeAttempt: null,
+    // A new folder is not a new instance: the replacement carries the number forward so the
+    // browse-to-a-different-installation path cannot make the next launch answer `1` again.
+    instanceGeneration,
   });
 }
 
@@ -450,8 +466,17 @@ async function readCurrentRecord(
 }
 
 function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1 {
-  const record = requireExactObject(value, ["schema", "binding", "revision", "state", "locator", "activeAttempt"]);
+  const record = requireExactObject(value, [
+    "schema",
+    "binding",
+    "revision",
+    "state",
+    "locator",
+    "activeAttempt",
+    "instanceGeneration",
+  ]);
   if (record.schema !== REGISTRATION_SCHEMA || !isPositiveSafeInteger(record.revision)) throw unavailable();
+  if (!isNonNegativeSafeInteger(record.instanceGeneration)) throw unavailable();
 
   const binding = requireExactObject(record.binding, ["rootLayoutVersion"]);
   if (binding.rootLayoutVersion !== 1) throw unavailable();
@@ -480,6 +505,7 @@ function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1
     state: record.state,
     locator,
     activeAttempt,
+    instanceGeneration: record.instanceGeneration,
   });
 }
 
@@ -499,6 +525,7 @@ function serializeRecord(record: StardewInstallationRegistrationRecordV1): strin
         : {
             bootstrapCorrelation: normalized.activeAttempt.bootstrapCorrelation,
           },
+    instanceGeneration: normalized.instanceGeneration,
   });
 }
 
@@ -519,6 +546,10 @@ function requireExactObject(value: unknown, keys: readonly string[]): Record<str
     if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) throw unavailable();
   }
   return value as Record<string, unknown>;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isOpaqueId(value: unknown): value is string {

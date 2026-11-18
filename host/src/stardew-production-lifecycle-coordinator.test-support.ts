@@ -629,31 +629,56 @@ export async function createFixture(
     boundInstallation?: Readonly<{ installRoot: string; smapi: boolean }>;
     /** Generation root whose `native/smapi/` payload the mod-loader install reads. */
     hostArtifactRoot?: string;
+    /**
+     * The runtime root to run this fixture against, for a test that must observe a SECOND
+     * attempt over the same durable installation. A supplied root is not seeded: its
+     * registration is whatever the previous attempt left on it, which is the state the
+     * second attempt has to answer for.
+     */
+    runtimeRoot?: string;
+    /**
+     * Whether this fixture seeds the ready installation registration. A second attempt over a
+     * root the first one used must not: the record it has to answer for is the one the first
+     * attempt left there.
+     */
+    seedRegistration?: boolean;
+    /**
+     * Which attempt this fixture is, 1-based. It suffixes every identity the attempt mints,
+     * because the durable attempt is keyed by its bootstrap id: a second fixture over the
+     * same root that reused the first one's identity would be refused as a held attempt
+     * instead of observed as the next one.
+     */
+    attempt?: number;
   }> = {},
 ) {
-  const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
+  const attempt = input.attempt ?? 1;
+  const runtimeRoot = input.runtimeRoot ?? (await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-"));
   const packageRoot = join(runtimeRoot, "package");
-  temporaryRoots.push(runtimeRoot);
-  if (input.boundInstallation !== undefined) {
-    await publishStardewInstallationRegistration(runtimeRoot, null, {
-      schema: "gamebuddy-stardew-installation-registration/v1",
-      binding: { rootLayoutVersion: 1 },
-      revision: 1,
-      state: "ready",
-      locator: input.boundInstallation.installRoot,
-      activeAttempt: null,
-    });
-  } else if (input.withoutSeededRegistration !== true) {
-    await publishStardewInstallationRegistration(runtimeRoot, null, {
-      schema: "gamebuddy-stardew-installation-registration/v1",
-      binding: { rootLayoutVersion: 1 },
-      revision: 1,
-      state: "ready",
-      locator: gameDirectoryCandidate,
-      activeAttempt: null,
-    });
+  if (input.runtimeRoot === undefined) temporaryRoots.push(runtimeRoot);
+  if (input.seedRegistration !== false) {
+    if (input.boundInstallation !== undefined) {
+      await publishStardewInstallationRegistration(runtimeRoot, null, {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 1,
+        state: "ready",
+        locator: input.boundInstallation.installRoot,
+        activeAttempt: null,
+        instanceGeneration: 0,
+      });
+    } else if (input.withoutSeededRegistration !== true) {
+      await publishStardewInstallationRegistration(runtimeRoot, null, {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 1,
+        state: "ready",
+        locator: gameDirectoryCandidate,
+        activeAttempt: null,
+        instanceGeneration: 0,
+      });
+    }
   }
-  await mkdir(packageRoot);
+  await mkdir(packageRoot, { recursive: true });
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const spawnCalls: Array<
     Readonly<{
@@ -741,15 +766,15 @@ export async function createFixture(
       });
     },
     rawPlayerHostProbe: (pid) => (input.playerProbeFailure ? null : { pid, creationDate: "20260101010101.000000+000" }),
-    createBootstrapIdentity: () => "bootstrap-coordinator-1",
-    createGuardianRevision: () => "guardian-revision-coordinator-1",
-    createGuardianInstanceId: () => "guardian-instance-coordinator-1",
+    createBootstrapIdentity: () => `bootstrap-coordinator-${attempt}`,
+    createGuardianRevision: () => `guardian-revision-coordinator-${attempt}`,
+    createGuardianInstanceId: () => `guardian-instance-coordinator-${attempt}`,
     createGuardianEpoch: () => 1,
-    createGuardianLeaseName: () => "Local\\GameBuddy-Coordinator-Lease-1",
-    createGuardianPlayerJobName: () => "Local\\GameBuddy-Coordinator-Player-1",
-    createGuardianAiJobName: () => "Local\\GameBuddy-Coordinator-Ai-1",
+    createGuardianLeaseName: () => `Local\\GameBuddy-Coordinator-Lease-${attempt}`,
+    createGuardianPlayerJobName: () => `Local\\GameBuddy-Coordinator-Player-${attempt}`,
+    createGuardianAiJobName: () => `Local\\GameBuddy-Coordinator-Ai-${attempt}`,
     createLaunchGeneration: () => `ai-generation-${++aiClientLaunchGenerationIndex}`,
-    createPlayerHostLaunchGeneration: () => "player-generation-1",
+    createPlayerHostLaunchGeneration: () => `player-generation-${attempt}`,
     createBridgePipeName: () => "gamebuddy-stardew-coordinator-bridge",
     createBridgeToken: () => "coordinator-bridge-token-0123456789",
     nowMs: input.nowMs ?? (() => Date.now()),
@@ -771,7 +796,7 @@ export async function createFixture(
     topology: "independent_chat_and_game_surfaces",
     runtimeRoot,
     principal: Object.freeze({ continuityId: "continuity-1", playerId: "player-1", companionId: "companion-1" }),
-    bootstrapOperationId: "request-1",
+    bootstrapOperationId: `request-${attempt}`,
     authorityGeneration: 1,
   });
   let freshRegistrationAdmissionCount = 0;

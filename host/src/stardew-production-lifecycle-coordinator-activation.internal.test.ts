@@ -343,6 +343,7 @@ test("Game setup registers only the selected installation and Player Host fresh-
         state: "ready",
         locator: gameDirectoryCandidate,
         activeAttempt: { bootstrapCorrelation: "bootstrap-coordinator-1" },
+        instanceGeneration: 1,
       });
       await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
         apiVersion: 1,

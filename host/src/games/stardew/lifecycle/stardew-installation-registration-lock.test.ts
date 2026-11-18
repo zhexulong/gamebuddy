@@ -114,6 +114,7 @@ const readyRecord = (revision = 1) => ({
   state: "ready" as const,
   locator: "C:\\Games\\Stardew Valley",
   activeAttempt: null,
+  instanceGeneration: 0,
 });
 
 async function createRoot(): Promise<string> {

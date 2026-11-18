@@ -59,6 +59,7 @@ test("a fresh Host registers the folder the player picked as revision one, and a
         state: "ready",
         locator: picks[0],
         activeAttempt: null,
+        instanceGeneration: 0,
       });
       // The product-visible half: the Host now reports an installation, which is the fact the
       // Game surface reads instead of asking the player to choose a folder again.
@@ -77,6 +78,7 @@ test("a fresh Host registers the folder the player picked as revision one, and a
         state: "ready",
         locator: picks[1],
         activeAttempt: null,
+        instanceGeneration: 0,
       });
       assert.equal(pickCount, 2);
     } finally {
@@ -107,6 +109,7 @@ test("a registration with a live attempt pointer and no owner is refused instead
         state: "ready" as const,
         locator: gameDirectoryCandidate,
         activeAttempt: { bootstrapCorrelation: "bootstrap-other-attempt" },
+        instanceGeneration: 1,
       };
       await writeFile(
         join(fixture.runtimeRoot, "stardew-installation-registration", "registration.json"),

@@ -540,6 +540,7 @@ async function prepareIntegrationRoot(): Promise<string> {
     state: "ready",
     locator: gameDirectoryCandidate,
     activeAttempt: null,
+    instanceGeneration: 0,
   });
   const packageRoot = join(runtimeRoot, "package");
   await mkdir(packageRoot);

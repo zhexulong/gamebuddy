@@ -49,6 +49,7 @@ function record(
     state: "ready",
     locator,
     activeAttempt: null,
+    instanceGeneration: 0,
     ...overrides,
   } as StardewInstallationRegistrationRecordV1;
 }
@@ -525,6 +526,7 @@ test("owner transaction locator replacement preserves the pointer and rejects st
           revision: 3,
           locator: "D:\\Games\\Stardew Valley",
           activeAttempt: { bootstrapCorrelation: "bootstrap_01" },
+          instanceGeneration: 1,
         }),
       );
       await assert.rejects(storage.replaceActiveAttemptLocator(2, "bootstrap_01", "E:\\Games\\Stardew Valley"), {

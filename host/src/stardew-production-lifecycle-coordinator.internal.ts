@@ -1325,16 +1325,17 @@ function createCoordinator(
   let exactOwner: StardewOwnedPlayerHostBootstrap | undefined;
   let ownerQuarantined = false;
   /**
-   * Which attempt this lifecycle is on, as the browser's launch gate names it.
+   * Which Player Host instance this lifecycle is about, `0` before an attempt has bound.
    *
-   * It is the one fact that says "attempt N+1 is a different attempt from attempt
-   * N". Every attempt a settled ending hands back gets the next number, so a
-   * command that bound the ended attempt's number - its launch, above all - is
-   * refused instead of being replayed onto the next one. It moves only where the
-   * attempt itself ends (`settleEndedAttempt`), never on a read, and never for an
-   * attempt whose outcome nobody knows: that attempt does not settle at all.
+   * It is read from the durable installation registration at the instant this lifecycle's
+   * own attempt takes the pointer (`bindPreparedPointer` issues the next number there), so
+   * the number the browser is handed for a launch and the number it is checked against are
+   * one fact, and the second attempt in a process - or in the next process - is `2`.
+   *
+   * It is held rather than read per answer because `launchReadinessReader` is synchronous:
+   * the registration lock is not something a projection may wait on.
    */
-  let expectedPlayerHostInstanceGeneration = 1;
+  let playerHostInstanceGeneration = 0;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   const installationDiscoveryProvider = installationDiscovery;
   /**
@@ -1648,7 +1649,7 @@ function createCoordinator(
         return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
       if (exactOwner !== undefined && lifecycleState === "staged") {
         return Object.freeze({
-          generation: expectedPlayerHostInstanceGeneration,
+          generation: playerHostInstanceGeneration,
           status: "ready",
           playerHostExitCode: null,
         });
@@ -1735,6 +1736,21 @@ function createCoordinator(
    * It throws `stardew_lifecycle_closing` after quarantining what it just reserved, which is
    * why it never returns an owner it has not staged.
    */
+  /**
+   * The instance number the attempt this lifecycle has just bound is, read from the record
+   * that issued it.
+   *
+   * Called at the one instant the pointer provably names this lifecycle's attempt - the
+   * reservation that bound it has returned - so the read cannot return another attempt's
+   * number, and the number is never derived a second way here.
+   */
+  const readBoundInstanceGeneration = async (): Promise<number> => {
+    const registration = await readStardewInstallationRegistration(runtimeRoot);
+    if (registration === null || registration.state !== "ready" || registration.activeAttempt === null)
+      throw new Error("stardew_bootstrap_registration_unavailable");
+    return registration.instanceGeneration;
+  };
+
   const reserveAndStageOwnedPlayerHost = async (
     browserSessionId: string,
     expiresAtMs: number,
@@ -1748,6 +1764,7 @@ function createCoordinator(
       })
       .consume(browserSessionId);
     const owner = await internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
+    playerHostInstanceGeneration = await readBoundInstanceGeneration();
     exactOwner = owner;
     if (isClosing()) {
       await internal.quarantineOwnedPlayerHostOwner(owner);
@@ -2234,6 +2251,7 @@ function createCoordinator(
         runtimeRoot,
         current === null ? null : current.revision,
         locator,
+        current === null ? 0 : current.instanceGeneration,
       );
     }
     const expectedRevision = (current === null ? 0 : current.revision) + 1;
@@ -2351,7 +2369,7 @@ function createCoordinator(
       if (launchPromise !== undefined) return Promise.reject(new Error("stardew_game_launch_in_progress"));
       if (lifecycleState === "launch_quarantined")
         return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
-      if (command.expectedInstanceGeneration !== expectedPlayerHostInstanceGeneration)
+      if (command.expectedInstanceGeneration !== playerHostInstanceGeneration)
         return Promise.reject(new Error("stardew_game_instance_generation_conflict"));
       if (lifecycleState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
       const promise = launchSelectedPlayerHost();
@@ -2973,7 +2991,7 @@ function createCoordinator(
       attachmentConnectionStatus = "none";
       actionAuthorityStatus = "unavailable";
       resumedGameSessionId = undefined;
-      expectedPlayerHostInstanceGeneration += 1;
+      playerHostInstanceGeneration = 0;
       transition("inactive");
       publishGameFact("instance");
       publishGameFact("attachment");
@@ -3895,6 +3913,7 @@ function createCoordinator(
           })
           .consume(headlessSessionId);
         const owner = await internal.reserveOwnedPlayerHostBootstrapForActivation(runtimeRoot, claim);
+        playerHostInstanceGeneration = await readBoundInstanceGeneration();
         exactOwner = owner;
         if (isClosing()) {
           await internal.quarantineOwnedPlayerHostOwner(owner);
