@@ -347,6 +347,17 @@ export const SEAMS = Object.freeze([
     owner: "the connection panel lane",
   },
   {
+    fact: "connection readiness",
+    authority: { file: TAVERN_CONTRACT, name: "TavernConnectionReadinessV1Schema" },
+    readers: [{ file: MANAGEMENT_CLIENT, name: "CONNECTION_READINESS" }],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["TavernConnectionReadinessV1Schema", "CONNECTION_READINESS"],
+    },
+    owner: "the connection panel lane",
+  },
+  {
     fact: "world info binding states",
     authority: { file: TAVERN_CONTRACT, name: "WorldInfoBindingState" },
     readers: [
@@ -417,9 +428,6 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
-  mirrorDebt("connection readiness", "host/src/tavern/connection-store.ts:READINESS", [
-    `${MANAGEMENT_CLIENT}:CONNECTION_READINESS`,
-  ]),
   mirrorDebt("navigation item ids", `${TAVERN_CONTRACT}:NavigationItemId`, [
     `${TAVERN_CONTRACT}:contractDeclaredNavigationItemIds`,
     "host/src/tavern-management-dialogue-web.ts:MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY",

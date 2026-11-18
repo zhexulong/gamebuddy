@@ -4,7 +4,11 @@ import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 import type { CompanionThinkingLevel } from "../runtime-identity.js";
 import { COMPANION_THINKING_LEVELS, PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
-import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
+import {
+  TAVERN_MODEL_LISTING_LIMIT,
+  TavernConnectionReadinessV1Schema,
+  type TavernConnectionReadinessV1,
+} from "./browser-contract/index.js";
 import {
   acceptsPlayerModel,
   catalogModel,
@@ -49,7 +53,12 @@ import {
  * atomic rename and keeps every unrelated provider entry Pi stored.
  */
 
-export type TavernConnectionReadiness = "unconfigured" | "configured" | "ready" | "failed";
+/**
+ * The readiness a stored record holds. The wire contract declares the four values; this store derives the
+ * type from that declaration rather than restating the union, so the record a probe writes and the row a
+ * panel reads cannot disagree about what a readiness is.
+ */
+export type TavernConnectionReadiness = TavernConnectionReadinessV1;
 
 /**
  * Closed, audit-safe probe outcome. It is the exact vocabulary a player notice
@@ -601,7 +610,7 @@ function serialize(document: TavernConnectionDocument): string {
   });
 }
 
-const READINESS: ReadonlySet<string> = new Set(["unconfigured", "configured", "ready", "failed"]);
+const READINESS: ReadonlySet<string> = new Set(TavernConnectionReadinessV1Schema.anyOf.map((arm) => arm.const));
 const PROBE_FAILURES: ReadonlySet<string> = new Set([
   "invalid_endpoint",
   "not_configured",

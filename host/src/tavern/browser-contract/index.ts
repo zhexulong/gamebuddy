@@ -815,6 +815,19 @@ const ConnectionFailure = Type.Union([
   Type.Null(),
 ]);
 /**
+ * The four states a connection record is in (design/28 §5.1), in the order a panel reads them.
+ *
+ * The authority for the vocabulary, and the reason nothing else spells it: `connection-store.ts`
+ * derives its record type from this schema's `Static` and derives the set its untrusted-record check
+ * consults from these same arms, so a value added here reaches both without a second edit.
+ */
+export const TavernConnectionReadinessV1Schema = Type.Union([
+  Type.Literal("unconfigured"),
+  Type.Literal("configured"),
+  Type.Literal("ready"),
+  Type.Literal("failed"),
+]);
+/**
  * One player-readable connection row (design/28 §5.1). `connectionId` is an
  * opaque write handle and is never the player's result, so the row also
  * carries the labels a player actually reads. `baseUrl` is the player's own
@@ -827,12 +840,7 @@ export const TavernConnectionV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
   configured: Type.Boolean(),
-  readiness: Type.Union([
-    Type.Literal("unconfigured"),
-    Type.Literal("configured"),
-    Type.Literal("ready"),
-    Type.Literal("failed"),
-  ]),
+  readiness: TavernConnectionReadinessV1Schema,
   active: Type.Boolean(),
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
@@ -858,12 +866,7 @@ export const TavernConnectionActiveV1Schema = strictObject({
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
   thinkingLevel: TavernConnectionThinkingLevelV1Schema,
-  readiness: Type.Union([
-    Type.Literal("unconfigured"),
-    Type.Literal("configured"),
-    Type.Literal("ready"),
-    Type.Literal("failed"),
-  ]),
+  readiness: TavernConnectionReadinessV1Schema,
   baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
   failure: ConnectionFailure,
   lastCheckedAtMs: Type.Union([Revision, Type.Null()]),
@@ -4369,6 +4372,7 @@ export type CompanionProfileV1 = Readonly<{
 export type CompanionCardExportV1 = Static<typeof CompanionCardExportV1Schema>;
 export type CompanionAvatarUploadCommandV1 = Static<typeof CompanionAvatarUploadCommandV1Schema>;
 export type CompanionAvatarV1 = Static<typeof CompanionAvatarV1Schema>;
+export type TavernConnectionReadinessV1 = Static<typeof TavernConnectionReadinessV1Schema>;
 export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
 export type TavernConnectionApiShapeV1 = Static<typeof TavernConnectionApiShapeV1Schema>;
 export type TavernConnectionThinkingLevelV1 = Static<typeof TavernConnectionThinkingLevelV1Schema>;

@@ -131,6 +131,9 @@ export const MIRRORED_VOCABULARIES = [
   // The connection probe's closed failure vocabulary. A member the mirror does not know is refused
   // as protocol corruption, so a player whose endpoint throttled them would read a blank result.
   { mirror: "CONNECTION_FAILURES", contract: { name: "ConnectionFailure" } },
+  // The four states a connection row can be in. `connection-store.ts` derives both its record type and its
+  // untrusted-record check from this one union, so this list is the only hand copy of it left.
+  { mirror: "CONNECTION_READINESS", contract: { name: "TavernConnectionReadinessV1Schema" } },
   // The fields the player may fill on a connection, and the shapes the escape hatch may name. Both are
   // closed unions on the wire and both are read by the management mirror's own validators: a field the
   // mirror does not list is refused (`setupFields.every(isOneOf)`), so a Host that admits `apiKeyRequired`

@@ -1114,7 +1114,8 @@ export const CONNECTION_API_SHAPES = [
 export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
 /** Derived from the one list, so the type cannot drift from the validator's. */
 export type TavernConnectionThinkingLevelV1 = (typeof CONNECTION_THINKING_LEVELS)[number];
-export type TavernConnectionReadinessV1 = "unconfigured" | "configured" | "ready" | "failed";
+/** Derived from the one list, so the type cannot drift from the validator's. */
+export type TavernConnectionReadinessV1 = (typeof CONNECTION_READINESS)[number];
 export type TavernConnectionFailureV1 =
   | "invalid_endpoint"
   | "not_configured"
