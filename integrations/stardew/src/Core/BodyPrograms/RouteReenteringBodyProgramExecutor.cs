@@ -108,42 +108,18 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         return ToTerminal(grant, execution, receipt);
     }
 
-    /// <summary>The word the verdict line publishes before the family a step's work consumed, so the Host can count
-    /// what is left of it without a second world read (`fact-brief.ts#remainderSentence`).</summary>
-    internal const string ChoreField = "chore=";
-
     /// <summary>
-    /// The one family this action's WORK consumes - the family a finished step leaves a remainder in - or null.
+    /// The suffix this file's own PASS lines carry for a chore family, or nothing on a pass that finished none.
     ///
     /// <para>
-    /// WHY THIS IS MINTED AT ALL. Measured `round69`: a script of 16 nodes cut six weeds out of a field that has more,
-    /// the settlement said `16/16 步做成了`, and the run then sat idle for 2.8 minutes - because nothing in the answer
-    /// said how much of the same chore was left. The Host can count that remainder from the reading it already holds,
-    /// but it cannot know WHICH family a step consumed: that is this catalogue's declaration, and a table over there
-    /// would be a second spelling of it.
-    /// </para>
-    /// <para>
-    /// IT READS THE DESCRIPTOR'S <c>Chore</c> AND NOTHING ELSE - not `Clears`, which answers a ROUTING question and is
-    /// declared only on the nine actions that open a route, and not `TargetFamily`, which says which family SUPPLIES the
-    /// targets and is true of actions that finish nothing (`machine_inspect`, `ship_item`). Measured `round70`: the
-    /// `Clears` form answered `未测` for 14 of 14 delivered batches, because a harvest never stood in anybody's way.
-    /// </para>
-    /// <para>
-    /// IT COSTS NO WORLD READ: the claim is a descriptor fact the catalogue already publishes, so the settlement's
-    /// evidence is minted from declarations rather than from a second look at the farm.
+    /// A PASS IS NOT A SETTLEMENT OF ONE ACTION: its rows may name different actions, so the family it finished is the
+    /// aggregation <see cref="PassChoreFamily"/> derives and not any one row's declaration. The clause a single settled
+    /// action owes the reader is minted elsewhere and only once - where the receipt's `evidence.detail` is composed
+    /// (<see cref="FarmhandActionCatalog.ChoreEntry"/>).
     /// </para>
     /// </summary>
-    internal static string? ChoreFamilyOf(string? actionId)
-    {
-        if (actionId is null) return null;
-        FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
-            .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
-        if (descriptor?.Chore is not { Consumes: true }) return null;
-        return descriptor.TargetFamily is { Length: > 0 } family ? family : null;
-    }
-
-    /// <summary>The verdict line's own suffix for a chore family, or nothing on an action that finishes no chore.</summary>
-    internal static string ChoreSuffix(string? family) => family is null ? string.Empty : $":{ChoreField}{family}";
+    internal static string ChoreSuffix(string? family) =>
+        family is null ? string.Empty : $":{FarmhandActionCatalog.ChoreField}={family}";
 
     /// <summary>
     /// The ONE chore a pass finished, or null when its rows do not agree on one.
@@ -162,10 +138,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             if (row.Steps is { Count: > 0 } steps)
             {
                 foreach (FarmhandForEachStepResult step in steps)
-                    if (ChoreFamilyOf(step.ActionId) is { } stepped) families.Add(stepped);
+                    if (FarmhandActionCatalog.ChoreFamilyOf(step.ActionId) is { } stepped) families.Add(stepped);
                 continue;
             }
-            if (ChoreFamilyOf(row.Target?.ActionId) is { } single) families.Add(single);
+            if (FarmhandActionCatalog.ChoreFamilyOf(row.Target?.ActionId) is { } single) families.Add(single);
         }
         return families.Count == 1 ? families.First() : null;
     }
@@ -439,13 +415,19 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         {
             case BodyProgramNodeOutcome.Succeeded:
                 IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
+                // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
+                // action whose work consumes a family, minted where that string is composed for every terminal
+                // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
+                // a journal field rather than the settlement a reader receives. Minted here as well it was a second
+                // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
+                // no `chore=` in the log.
                 return new BodyProgramTerminalResult(
                     execution,
                     BodyProgramNodeOutcome.Succeeded,
                     facts,
                     receipt.ExecutionId,
                     receipt.Evidence,
-                    $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}{ChoreSuffix(ChoreFamilyOf(grant.ActionId))}");
+                    $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
             case BodyProgramNodeOutcome.Cancelled:
                 // A cancellation is still a settlement, and the receipt that produced one may state why (`Invalidated`
                 // arrives here through the default arm below). Its reason detail belongs on the node; its evidence does

@@ -3227,11 +3227,31 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <c>false</c> withholds it from the fact stream while every other step of the funnel still runs, so the receipt
     /// that answers its own dispatch, that the ledger stores and that the plan's journal row carries is the same bytes
     /// either way (<see cref="AddTrace"/>).
+    ///
+    /// <para>
+    /// AND THE SETTLEMENT NAMES THE CHORE ITS WORK CONSUMED, HERE AND NOWHERE ELSE. `evidence.detail` is
+    /// <see cref="LocalExecutionReceipt.Evidence"/> projected one-to-one (<c>BridgeSession.TryProjectReceipt</c>), and
+    /// every terminal of every action - native body, router handler, Body Program node, `for_each` row - is minted
+    /// through this method, so a family named in a settlement can only be said in the three lines below. Measured
+    /// `round71`: the clause was minted into the Body Program executor's <c>route_reentrant_terminal:</c> postcondition
+    /// instead, three crops were harvested with complete `crop_harvested` details, and `chore=` appeared zero times in
+    /// the session - because that postcondition is a journal field, not a string a reader receives. A clause on a seam
+    /// nobody's action passes through is green in the unit suite and absent from the run.
+    /// </para>
+    /// <para>
+    /// ONLY A TERMINAL NAMES IT: `accepted` and `running` are the body narrating a step it has not finished, so a family
+    /// named there would claim work not yet done. A terminal of ANY outcome names it - `rejected`, `uncertain` and
+    /// `blocked` included - because "which family is this step's work" is a declaration about the ACTION, and how much
+    /// of it is left is the reader's own world reading rather than anything the clause asserts.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true)
     {
         string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
+        string? detail = evidence;
+        if (state.IsTerminal() && FarmhandActionCatalog.ChoreEntry(boundActionId) is { } chore)
+            detail = string.IsNullOrEmpty(detail) ? chore : $"{detail};{chore}";
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt, publish);
         if (state.IsTerminal())

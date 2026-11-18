@@ -16,7 +16,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// THE DEFECT, measured `round70` (`tools/_multiday_routine-round70.result.json`): 14 `剩下的：` clauses in 10 delivered
 /// batches, and 14 of 14 read `未测（这一份结算没说是哪一类活）` - while 15 of that run's world changes were crops. The
 /// clause was reaching every batch and saying nothing about any of them, and the reason was one field doing two jobs:
-/// <see cref="RouteReenteringBodyProgramExecutor.ChoreFamilyOf"/> asked `Clears` which family a step finished, and
+/// <see cref="FarmhandActionCatalog.ChoreFamilyOf"/> asked `Clears` which family a step finished, and
 /// `Clears` answers a ROUTING question (<see cref="FarmhandActionDescriptor.Clears"/>), declared on 9 of the
 /// registrations. `harvest_crop` and `pickup_forage` take work out of the world all day and never stand in anybody's way.
 /// </para>
@@ -68,7 +68,7 @@ public sealed class ChoreDeclarationCoverageTests
             if (descriptor.TargetFamily is not { Length: > 0 } family) continue;
             if (!workFamilies.Contains(family, StringComparer.Ordinal)) continue;
             if (descriptor.Chore is null) cannot.Add($"{registration.ActionId} ({family})");
-            else if (descriptor.Chore.Consumes && !string.Equals(RouteReenteringBodyProgramExecutor.ChoreFamilyOf(registration.ActionId), family, StringComparison.Ordinal))
+            else if (descriptor.Chore.Consumes && !string.Equals(FarmhandActionCatalog.ChoreFamilyOf(registration.ActionId), family, StringComparison.Ordinal))
                 cannot.Add($"{registration.ActionId} ({family}): consumes it and mints nothing");
         }
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
