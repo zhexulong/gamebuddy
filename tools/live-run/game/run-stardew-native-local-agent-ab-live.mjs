@@ -1001,15 +1001,31 @@ const advertisedActionSamples = new Set();
 // was the second case and looked like the first.
 let advertisedSampleCount = 0;
 let advertisedSampleMaxSize = 0;
+/**
+ * One snapshot the bridge ADMITTED, merged into the census of the world this run was given.
+ *
+ * Called from the bridge's own `snapshot` fact, so the census is fed by every reading that reaches this process and not
+ * only by the moments the harness happened to look. Measured 2026-11-18 (`round76`): the census counted 8 snapshots taken
+ * from `rememberObservation()`, and the 34 `pickup_item`, 3 `chop_tree` and 3 `chop_stump` executions that succeeded ran
+ * against `itemTargets`/`treeChopSourceTargets`/`treeStumpTargets` rows no sample had ever seen - so the run's own
+ * successful work was reported as `action_breadth_outside_addressable` and the denominator was a fraction of the world
+ * she was actually shown. Every one of those readings arrived through this channel, whoever asked for it: the launch's
+ * opening observe, the clock beats, and her own `stardew_observe` calls.
+ */
+function censusAdmittedSnapshot(snapshot) {
+  if (snapshot === null || typeof snapshot !== "object") return;
+  snapshotCensusSamples += 1;
+  addSnapshotToCensus(snapshotFamilyRows, snapshot);
+}
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
   if (snapshot !== null && snapshot !== undefined) {
     // The snapshot object the client admitted, NOT the copy below: the bridge has no unsolicited push, so one admitted
-    // snapshot is one reading of the world and sampling it twice is not a second one (game-clock.mjs).
+    // snapshot is one reading of the world and sampling it twice is not a second one (game-clock.mjs). The census is fed
+    // by the admitted FRAME (`censusAdmittedSnapshot`), not here: reading the cached projection again would count one
+    // reading of the world as two.
     gameClock.observe(snapshot, { source: "snapshot" });
     lastObservedSnapshot = Object.freeze({ ...snapshot });
-    snapshotCensusSamples += 1;
-    addSnapshotToCensus(snapshotFamilyRows, snapshot);
   }
   return lastObservedSnapshot;
 }
@@ -1232,6 +1248,14 @@ const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
 hostMemoryTimer.unref?.();
 
 ledger.record("run.start");
+// THE CENSUS'S ONE INPUT, registered before anything can observe: every snapshot this bridge admits is a reading of the
+// world the companion was given, and `action_breadth`'s denominator is supposed to be exactly that world. Polling it
+// instead (the previous shape) counted 8 readings of a 170-execution run and left the run's own successful work outside
+// `addressable` (`round76`, 2026-11-18). `receive()` forwards a snapshot only after `acceptSnapshot` admits it, so a
+// publication-stale or unauthorized frame cannot pad the census.
+client.onFact((fact) => {
+  if (fact?.type === "snapshot") censusAdmittedSnapshot(fact.payload);
+});
 client.onConnectionFact((fact) => {
   if (fact?.state !== "disconnected") return;
   // The bridge this run reads the clock through is gone, and this runner never reconnects (one `connect`, one

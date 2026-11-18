@@ -118,6 +118,69 @@ function reportAddressable(breadth) {
     out(`action_breadth_addressable_absent: ${withoutRows.join(",")} carried no row in any of the run's snapshots`);
 }
 
+/**
+ * The target families the run's OWN receipts say it acted in, from the run directory's `timeline.jsonl`.
+ *
+ * Every Mod settlement states its chore by the family name the observation publishes (`chore=itemTargets`, …), so this is
+ * the run's own statement of which families its work reached - the one reading that can tell a census which sampled too
+ * little apart from a world that held nothing. Null when the run directory or its timeline is absent: a bundle without
+ * one is not evidence that the census was right.
+ */
+async function readActedFamilies(runDir) {
+  if (typeof runDir !== "string" || runDir.length === 0) return null;
+  const path = join(runDir, "timeline.jsonl");
+  if (!existsSync(path)) return null;
+  const acted = new Map();
+  for (const line of (await readFile(path, "utf8")).split(/\r?\n/u)) {
+    if (line.trim().length === 0) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const detail = entry?.worldFactPayload?.evidence?.detail ?? entry?.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    for (const pair of detail.split(";")) {
+      const index = pair.indexOf("=");
+      if (index <= 0 || pair.slice(0, index) !== "chore") continue;
+      const family = pair.slice(index + 1);
+      if (family.length > 0) acted.set(family, (acted.get(family) ?? 0) + 1);
+    }
+  }
+  return acted;
+}
+
+/**
+ * Whether the census sampled the families the run actually worked in.
+ *
+ * The census is a sample of the world this run was given, so it is only as good as its sample rate: `round76` published 8
+ * snapshots, and the families of its 40 successful `pickup_item`/`chop_tree`/`chop_stump` executions carried no row in any
+ * of them - which reads as "she acted outside her addressable surface" when the truth is "the census never looked".
+ * Each family the run's own receipts name is a family it SAW, so a zero here is our sampling gap and is reported as one.
+ */
+function reportCensusContact(breadth, actedFamilies) {
+  const census = breadth.census ?? null;
+  if (census === null || actedFamilies === null) return;
+  const rowsOf = new Map(census.families.map((entry) => [entry.family, entry.rows]));
+  const missed = [...actedFamilies]
+    .filter(([family]) => (rowsOf.get(family) ?? 0) === 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const unsampled = [...actedFamilies.keys()].filter((family) => !rowsOf.has(family)).sort();
+  if (unsampled.length > 0)
+    out(
+      `action_breadth_census_unmapped: ${unsampled.join(",")} carried the run's work but names no action's target family, so no denominator can join it`,
+    );
+  for (const [family, count] of missed)
+    out(
+      `action_breadth_census_gap: ${family} carried ${String(count)} of the run's own settlements but had no row in any of the ${String(census.snapshots)} snapshots the census sampled; the sample missed the frames the run really worked in`,
+    );
+  if (missed.length === 0 && unsampled.length === 0)
+    out(
+      `action_breadth_census_contact: all ${String(actedFamilies.size)} families the run worked in carried a row in its census`,
+    );
+}
+
 function reportFindings(breadth, flatDispatchCount, rowsRead) {
   for (const actionId of breadth.excludedAttempted)
     out(
@@ -176,6 +239,7 @@ async function main() {
   const flatDispatchCount = Number.isInteger(result?.executionTrace?.flat) ? result.executionTrace.flat : 0;
   const runDir = result?.bundle?.runDir ?? result?.capture?.dir ?? null;
   const flatRows = await readFlatActionRows(runDir);
+  const actedFamilies = await readActedFamilies(runDir);
   const breadth = await measureActionBreadth({
     scenario: typeof result?.scenario === "string" ? result.scenario : null,
     attempted,
@@ -206,6 +270,7 @@ async function main() {
     }`,
   );
   reportFindings(breadth, flatDispatchCount, flatRows);
+  reportCensusContact(breadth, actedFamilies);
   reportPerAction(breadth);
   if (result?.actionBreadth !== undefined && result.actionBreadth !== null) {
     // The bundle already publishes this reading (every run from this commit on does). Comparing the recorded numbers
