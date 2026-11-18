@@ -156,6 +156,12 @@ internal sealed class DerivedDestinationSet
             }
 
             string generation = ComputeGeneration(destinations);
+            // THE SEARCH ANSWERS WHAT THE GRAPH NAMES. `destinations` is every loaded location - the graph's own node set -
+            // and it is also the population `find_destination` and a label selector resolve against, so a room the
+            // topology can route into is never a place the directory denies. The spellings each destination carries stay
+            // derived from the location's own data: its `Data/Locations` display name in the current language (the
+            // canonical label), the same row in the English fallback, the world-map area's label, and its internal
+            // identity.
             set = new DerivedDestinationSet(generation, new NavigationSourceNode("root", null, null, null, sourceNodes), destinations);
             reasonCode = "accepted";
             return true;

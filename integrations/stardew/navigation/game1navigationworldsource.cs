@@ -55,6 +55,49 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             false);
     }
 
+    /// <summary>
+    /// The locations this location's OWN members name as transition targets, before any projection decides what may be
+    /// walked. It is the population a reachability gate must use: taken from the projected legs instead, an edge the
+    /// projection drops would silently shrink the set of places that have to be reachable, and the gate would pass by
+    /// having watched nothing.
+    /// </summary>
+    internal static IReadOnlyList<string> DeclaredTransitionTargets(GameLocation location) =>
+        EnumerateEdges(location)
+            .Select(edge => edge.TargetLocation)
+            .Where(target => !string.IsNullOrWhiteSpace(target))
+            .Select(target => target!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(target => target, StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>
+    /// The outgoing topology legs for ONE location: the same edges <see cref="CurrentView"/> publishes, put through the
+    /// tile rules the topology requires. Split out of <see cref="TryCreateCurrentOrdinaryWarpTopology"/> so the rules that
+    /// decide "is this a leg of the graph" are asserted against a real location instead of through a live save. It is
+    /// TOTAL: a tile outside the publishable ranges is not a leg of this graph, and the enumeration never yields a
+    /// transition without a target identity - the planner fail-closes if a synthetic topology carries one anyway.
+    /// </summary>
+    internal static NavigationTransitionLeg[] ProjectTopologyLegs(GameLocation location)
+    {
+        List<NavigationTransitionLeg> projected = new();
+        foreach (WorldEdge edge in EnumerateEdges(location))
+        {
+            // A door is the ONLY way into an interior, so keeping the door families here is what makes the carpenter's,
+            // Pierre's and the community centre destinations at all. The leg keeps `IsDoor`: the executor owns what
+            // crossing a door MEANS (the game's own entry, not a bare warp).
+            if (string.IsNullOrWhiteSpace(edge.TargetLocation))
+                continue;
+            if (!SourceCoordinateInRange(edge.SourceX, edge.SourceY))
+                continue;
+            if (!CoordinateInRange(edge.TargetX, edge.TargetY))
+                continue;
+            projected.Add(new NavigationTransitionLeg(
+                edge.TargetLocation!, edge.SourceX, edge.SourceY, edge.TargetX, edge.TargetY, edge.IsDoor));
+        }
+
+        return projected.ToArray();
+    }
+
     public bool TryCreateCurrentOrdinaryWarpTopology(
         NavigationDestinationBinding acceptedBinding,
         out NavigationOrdinaryWarpTopology? topology,
@@ -92,32 +135,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
                 return false;
             }
 
-            List<NavigationTransitionLeg> legs = new();
-            foreach (WorldEdge edge in EnumerateEdges(location))
-            {
-                // A door is transit, not a walkable graph edge, and this topology holds walkable edges only. The
-                // planner refuses a door leg outright - `navigationrouteplanner.cs:118` answers `route_topology_invalid`
-                // for the WHOLE topology - and the executor refuses to arm one
-                // (`navigation_transition_family_not_materialized`, at
-                // `farmhandexecutioncontroller.movementactions.cs:872`, `farmhandexecutioncontroller.cs:4810` and
-                // `:5033`). Publishing the edge here would make BFS answer a route the executor will not walk, which is
-                // discovery advertising a capability execution refuses. `CurrentView` still publishes door legs, because
-                // `enter_exit` consumes those; the two projections differ on purpose.
-                if (edge.Family != WorldEdgeFamily.Warp)
-                    continue;
-                if (string.IsNullOrWhiteSpace(edge.TargetLocation))
-                {
-                    reasonCode = "ordinary_warp_target_identity_invalid";
-                    return false;
-                }
-                if (!SourceCoordinateInRange(edge.SourceX, edge.SourceY))
-                    continue;
-                if (!CoordinateInRange(edge.TargetX, edge.TargetY))
-                    continue;
-                legs.Add(new NavigationTransitionLeg(
-                    edge.TargetLocation!, edge.SourceX, edge.SourceY, edge.TargetX, edge.TargetY, false));
-            }
-            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, legs));
+            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, ProjectTopologyLegs(location)));
         }
 
         string currentSource = currentLocation.NameOrUniqueName;
@@ -323,37 +341,62 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     /// projects the shape it needs.
     /// </para>
     /// <para>
-    /// It yields raw facts and enforces only the rule that is identical for every consumer: an NPC-only warp moves no
-    /// player, so it is not a player edge. The tile ranges each caller accepts, and whether it may use a door at all,
-    /// belong to the projections - they genuinely differ, see <see cref="SourceCoordinateInRange"/> and the door
-    /// exclusion in <see cref="TryCreateCurrentOrdinaryWarpTopology"/>.
+    /// A DOOR IS AN EDGE. It is the way a location is entered - an interior has no inbound warp at all, so a graph built
+    /// from warps alone answers that the carpenter's or Pierre's cannot be reached, which is a statement about the graph
+    /// and not about the game. The three families below are the three tables the game itself reads to move a player
+    /// through a door: the door table `updateDoors` builds, each building's human door, and the location's warp list
+    /// - the same three, in the same order, as the published `doorTargets` family
+    /// (<c>ExecutionManager.DiscoverDoorTargets</c>), because one tile can be both a gated door and a plain warp and the
+    /// gated one is the tile the native click entry knows.
+    /// </para>
+    /// <para>
+    /// It yields raw facts and enforces only the rules that are identical for every consumer: an NPC-only warp moves no
+    /// player, so it is not a player edge, and one tile is one transition (the earliest table owns the row, as in the
+    /// published family). The tile ranges each caller accepts belong to the projections - see
+    /// <see cref="SourceCoordinateInRange"/>.
     /// </para>
     /// </summary>
     private static IEnumerable<WorldEdge> EnumerateEdges(GameLocation location)
     {
-        foreach (Warp warp in location.warps)
-        {
-            if (warp is null || warp.npcOnly.Value)
-                continue;
-            yield return new WorldEdge(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.Warp);
-        }
+        HashSet<(int X, int Y)> claimed = new();
 
         foreach ((Point point, string _) in location.doors.Pairs)
         {
             Warp? warp = ResolveDoorWarp(location, point);
-            if (warp is null)
+            if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName))
+                continue;
+            claimed.Add((point.X, point.Y));
+            yield return new WorldEdge(warp.TargetName, point.X, point.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.Door);
+        }
+
+        // `location.doors` holds only what a map DREW (`updateDoors`, GameLocation.cs:17586-17641), so a shed's, barn's,
+        // coop's or greenhouse's entrance is in no door table at all: it is its building's human door, and the resolver
+        // answers it with the interior's own entry tile (GameLocation.cs:2196-2206).
+        foreach (StardewValley.Buildings.Building building in location.buildings)
+        {
+            if (!building.HasIndoors())
+                continue;
+            Point point = building.getPointForHumanDoor();
+            if (!claimed.Add((point.X, point.Y)))
+                continue;
+            Warp? warp = ResolveDoorWarp(location, point);
+            if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName))
                 continue;
             yield return new WorldEdge(warp.TargetName, point.X, point.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.Door);
         }
 
-        // A farmhouse or cabin exit lives in the interior's warp table and in no door table, so it needs its own
-        // family: it is the only way out of an interior.
-        if (location is FarmHouse or Cabin)
+        foreach (Warp warp in location.warps)
         {
-            foreach (Warp warp in location.warps.Where(candidate => !candidate.npcOnly.Value
-                && string.Equals(candidate.TargetName, "Farm", StringComparison.Ordinal)))
-                yield return new WorldEdge(
-                    warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.InteriorExit);
+            if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName))
+                continue;
+            if (!claimed.Add((warp.X, warp.Y)))
+                continue;
+            // A farmhouse or cabin exit lives in the interior's warp table and in no door table. It stays its own family
+            // because the view admits it without the range test the other two families take.
+            bool interiorExit = location is FarmHouse or Cabin
+                && string.Equals(warp.TargetName, "Farm", StringComparison.Ordinal);
+            yield return new WorldEdge(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY,
+                interiorExit ? WorldEdgeFamily.InteriorExit : WorldEdgeFamily.Warp);
         }
     }
 
@@ -374,8 +417,8 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         int TargetY,
         WorldEdgeFamily Family)
     {
-        /// <summary>Whether this transition is a door rather than a walkable map warp - the one fact the two
-        /// projections disagree about.</summary>
+        /// <summary>Whether this transition is entered through the game's own door entry rather than walked as a bare
+        /// map warp - the fact the walker needs, because a door's gates live above the resolver.</summary>
         internal bool IsDoor => this.Family != WorldEdgeFamily.Warp;
     }
 

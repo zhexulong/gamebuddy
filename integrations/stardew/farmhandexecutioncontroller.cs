@@ -2902,7 +2902,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         NavigationTransitionLeg? nextLeg = plan.Outcome.NextLeg;
         if (nextLeg is null
-            || nextLeg.IsDoor
+            || nextLeg.IsDoor != navigation.Leg.IsDoor
             || !string.Equals(nextLeg.TargetLocation, navigation.Leg.TargetLocation, StringComparison.Ordinal)
             || nextLeg.SourceX != navigation.Leg.SourceX
             || nextLeg.SourceY != navigation.Leg.SourceY
@@ -2929,7 +2929,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.slots.Navigate.Assign(this.activeNavigate with { Phase = LocalNavigatePhase.AwaitingWarp });
         try
         {
-            this.CommitApproachWarp(navigation, warp);
+            if (!this.CommitNavigationLeg(navigation, warp, out string reasonCode, out string? refused))
+                this.SettleNavigationTerminal(navigation, ExecutionState.Rejected, reasonCode, refused);
         }
         catch
         {
@@ -2954,6 +2955,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return this.controller.TryStart(specification, Game1.player, this.tick, out reasonCode, out evidence, out hint);
     }
 
+    /// <summary>
+    /// The native transition this leg crosses, re-resolved on the game thread at the commit boundary.
+    ///
+    /// <para>
+    /// A DOOR is resolved by the game's own resolver instead of by a scan of <c>location.warps</c>, because a door is not
+    /// a row in that table: it is a Buildings-layer Warp tile, a building's human door whose target is the interior's own
+    /// entry tile, or a fixed-point door (CommunityCenter/Sunroom/BoatTunnel). Resolved, it is checked against the
+    /// accepted leg field for field, so a door that moved - or a plain warp that took its place - between the plan and
+    /// the commit still fails closed.
+    /// </para>
+    /// </summary>
     private StardewValley.Warp? ResolveApproachWarp(LocalNavigateSpec navigation)
     {
         if (this.navigationApproachNative is not null)
@@ -2961,24 +2973,106 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         Farmer? player = Game1.player;
         StardewValley.GameLocation? location = player?.currentLocation;
-        if (location is null || navigation.Leg.IsDoor)
+        if (location is null)
             return null;
 
-        return location.warps.FirstOrDefault(candidate =>
-            !candidate.npcOnly.Value
-            && candidate.X == navigation.Leg.SourceX
-            && candidate.Y == navigation.Leg.SourceY
-            && string.Equals(candidate.TargetName, navigation.Leg.TargetLocation, StringComparison.Ordinal)
-            && candidate.TargetX == navigation.Leg.TargetX
-            && candidate.TargetY == navigation.Leg.TargetY);
+        if (navigation.Leg.IsDoor)
+        {
+            StardewValley.Warp? door = ResolveDoorWarp(
+                location, new Microsoft.Xna.Framework.Point(navigation.Leg.SourceX, navigation.Leg.SourceY));
+            return MatchesNavigationLeg(door, navigation.Leg) ? door : null;
+        }
+
+        return location.warps.FirstOrDefault(candidate => MatchesNavigationLeg(candidate, navigation.Leg));
     }
 
-    private void CommitApproachWarp(LocalNavigateSpec navigation, StardewValley.Warp warp)
+    private static bool MatchesNavigationLeg(StardewValley.Warp? warp, NavigationTransitionLeg leg) =>
+        warp is not null
+        && !warp.npcOnly.Value
+        && warp.X == leg.SourceX
+        && warp.Y == leg.SourceY
+        && string.Equals(warp.TargetName, leg.TargetLocation, StringComparison.Ordinal)
+        && warp.TargetX == leg.TargetX
+        && warp.TargetY == leg.TargetY;
+
+    /// <summary>
+    /// The one native act of a navigation leg: cross it, through the act that leg's FAMILY requires. It answers
+    /// <see langword="false"/> when the game refused the crossing, naming the terminal the caller must settle.
+    ///
+    /// <para>
+    /// A WARP is the engine's own <c>warpFarmer</c>. A DOOR is not: it is crossed through the game's own entry
+    /// (<see cref="CrossDoorNativeEntry"/> -> <see cref="DispatchNativeDoor"/>), the dispatch <c>enter_exit</c> runs,
+    /// because a door's gates live one level above <c>getWarpFromDoor</c>'s resolver - <c>LockedDoorWarp</c>'s festival,
+    /// SeedShop-Wednesday, open-hours and friendship tests, <c>WarpCommunityCenter</c>'s <c>ccDoorUnlock</c>, the
+    /// Sunroom's Caroline hearts, <c>WarpGreenhouse</c>'s <c>ccPantry</c>, and <c>Building.doAction</c>'s construction
+    /// and demolish locks. Arming a door as a bare warp would walk a companion through every one of them; measured
+    /// 2026-11-18, that is why a door leg used to be refused outright
+    /// (<c>navigation_transition_family_not_materialized</c>) instead of being crossed.
+    /// </para>
+    /// </summary>
+    private bool CommitNavigationLeg(
+        LocalNavigateSpec navigation,
+        StardewValley.Warp warp,
+        out string reasonCode,
+        out string? evidence)
     {
+        reasonCode = "accepted";
+        evidence = null;
         if (this.navigationApproachNative is not null)
+        {
             this.navigationApproachNative.CommitWarp(Game1.player, warp);
-        else
-            Game1.player.warpFarmer(warp);
+            return true;
+        }
+
+        StardewValley.GameLocation? location = Game1.player?.currentLocation;
+        if (navigation.Leg.IsDoor && location is not null)
+            return this.CrossDoorNativeEntry(navigation, warp, location, out reasonCode, out evidence);
+
+        this.CommitApproachWarp(warp);
+        return true;
+    }
+
+    private void CommitApproachWarp(StardewValley.Warp warp) => Game1.player.warpFarmer(warp);
+
+    /// <summary>
+    /// Cross one door leg the way the game itself crosses it, with <c>enter_exit</c>'s three answers: the entry started
+    /// the transition, a native gate refused it (the game's own dialogue is the evidence), or the entry passed but moved
+    /// nothing. The resolver's warp is used only when the click path does not own the tile at all, which is the same
+    /// fallback <c>enter_exit</c> takes.
+    /// </summary>
+    private bool CrossDoorNativeEntry(
+        LocalNavigateSpec navigation,
+        StardewValley.Warp warp,
+        StardewValley.GameLocation location,
+        out string reasonCode,
+        out string? evidence)
+    {
+        Microsoft.Xna.Framework.Point source = new(navigation.Leg.SourceX, navigation.Leg.SourceY);
+        NativeDoorOutcome outcome = DispatchNativeDoor(location, source, out string refusal, out string entry);
+        string crossed = $"destination={navigation.CanonicalDestinationIdentity};phase=awaiting_warp;door={source.X},{source.Y};entry={entry}";
+        switch (outcome)
+        {
+            case NativeDoorOutcome.TransitionStarted:
+                reasonCode = "accepted";
+                evidence = null;
+                return true;
+
+            case NativeDoorOutcome.Refused:
+                reasonCode = "door_gate_refused";
+                evidence = $"{crossed};gate=refused;dialogue={refusal}";
+                return false;
+
+            case NativeDoorOutcome.NoEffect:
+                reasonCode = "door_transition_not_started";
+                evidence = $"{crossed};gate=passed;transition=not_started";
+                return false;
+
+            default:
+                reasonCode = "accepted";
+                evidence = null;
+                this.CommitApproachWarp(warp);
+                return true;
+        }
     }
 
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
@@ -3100,9 +3194,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         NavigationTransitionLeg? nextLeg = nextPlan.Outcome.NextLeg;
-        if (nextLeg is null || nextLeg.IsDoor)
+        if (nextLeg is null)
         {
-            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_transition_family_not_materialized", "phase=multi_hop;transition=door_native;never_retry=true");
+            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "destination_access_indeterminate", "phase=multi_hop;transition=none;never_retry=true");
             return;
         }
 

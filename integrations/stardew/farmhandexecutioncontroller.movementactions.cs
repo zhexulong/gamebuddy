@@ -1265,14 +1265,14 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, plan.Outcome.State, plan.Outcome.TerminalReasonCode, plan.Outcome.Evidence);
 
         NavigationTransitionLeg? nextLeg = plan.Outcome.NextLeg;
-        if (nextLeg is null || nextLeg.IsDoor)
+        if (nextLeg is null)
         {
             return this.RememberTerminal(
                 requestId,
                 executionId,
-                ExecutionState.Blocked,
-                "navigation_transition_family_not_materialized",
-                "phase=approved;transition=door_native;commit=never_armed");
+                ExecutionState.Uncertain,
+                "destination_access_indeterminate",
+                "phase=approved;transition=none;commit=never_armed");
         }
 
         Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);

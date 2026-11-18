@@ -160,18 +160,33 @@ public sealed class NavigationExecutionManagerTests
         harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
+    /// <summary>
+    /// A DOOR leg is how an interior is entered, so the navigation arms the walk to it and commits it like any other leg.
+    ///
+    /// <para>
+    /// The old answer here was <c>blocked / destination_access_indeterminate</c> with nothing armed, because the planner
+    /// refused the whole topology on the first <c>IsDoor</c> leg (<c>route_topology_invalid</c>). That made the carpenter's,
+    /// Pierre's and the community centre permanently unreachable; the crossing itself is now the native door entry, pinned
+    /// by <c>NavigationDoorCrossingSourceShapeTests</c>, and this harness's seam stands in for the native act.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void DoorLeg_FailsClosedAndNeverArmsNativeCommit()
+    public void DoorLeg_ArmsAndCommitsLikeAnyOtherLeg()
     {
         var doorLeg = new NavigationTransitionLeg("Mine", 5, 5, 6, 6, IsDoor: true);
         var harness = new ManagerHarness(View(true, true, "Farm", at: false, new[] { doorLeg }));
 
-        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_invalid_deadline1", Label("Mine"), Deadline());
+        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_door", Label("Mine"), Deadline());
 
-        receipt.State.Should().Be(ExecutionState.Blocked);
-        receipt.ReasonCode.Should().Be("destination_access_indeterminate");
-        harness.Armed.Should().BeEmpty();
-        harness.Manager.IsBodySettled.Should().BeTrue();
+        receipt.State.Should().Be(ExecutionState.Accepted);
+        harness.Armed.Should().ContainSingle("the door is the leg to walk, so the approach is armed");
+        harness.Manager.IsBodySettled.Should().BeFalse();
+
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+
+        harness.Commits.Should().Be(1, "the accepted leg is committed once, through the one native act");
+        harness.Stored("req_door").State.Should().NotBe(ExecutionState.Blocked);
     }
 
     [Fact]

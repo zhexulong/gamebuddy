@@ -128,8 +128,18 @@ public sealed class NavigationRoutePlannerTests
         result.NextLeg.Should().BeNull();
     }
 
+    /// <summary>
+    /// A door is an EDGE, and the planner traverses it. This is the property the old rejection protected - a door is never
+    /// silently accepted as a warp - restated where it now lives: the leg keeps <c>IsDoor</c>, so the WALKER decides that
+    /// crossing it means the game's own door entry, and the planner only answers "this is the next leg".
+    ///
+    /// <para>
+    /// Refusing it here made every interior a leaf: an interior has no inbound warp, so a topology of warps alone drains
+    /// its queue and answers <c>destination_unreachable</c> for the carpenter's, Pierre's and the community centre.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void Plan_DoorEdge_IsRejectedNotSilentlyAccepted()
+    public void Plan_DoorEdge_IsTraversedAndKeepsItsFamily()
     {
         var door = new NavigationTransitionLeg("Mountain", 10, 10, 20, 20, IsDoor: true);
         NavigationOrdinaryWarpTopology topology = Topology("Farm",
@@ -139,9 +149,30 @@ public sealed class NavigationRoutePlannerTests
 
         NavigationRoutePlanResult result = new NavigationRoutePlanner().Plan(topology, "Farm", Mine);
 
-        result.Kind.Should().Be(NavigationRoutePlanKind.Terminal);
-        result.ReasonCode.Should().Be("route_topology_invalid");
-        result.NextLeg.Should().BeNull();
+        result.Kind.Should().Be(NavigationRoutePlanKind.NextEdge);
+        result.NextLeg.Should().Be(door);
+        result.NextLeg!.IsDoor.Should().BeTrue("the walker, not the planner, owns how a door is crossed");
+    }
+
+    /// <summary>
+    /// The falsifier's shape: a destination reachable ONLY through a door is reached, and the first leg on the path is the
+    /// door leg - not the second one, and not <c>destination_unreachable</c>. This is the carpenter's/Pierre's/community
+    /// centre shape (an interior with no inbound warp) in three nodes.
+    /// </summary>
+    [Fact]
+    public void Plan_DestinationReachedOnlyThroughADoor_ReturnsTheDoorLeg()
+    {
+        var door = new NavigationTransitionLeg("ScienceHouse", 12, 14, 4, 18, IsDoor: true);
+        var house = new NavigationDestinationBinding("stardew", "ScienceHouse", "generation_01", 1);
+        NavigationOrdinaryWarpTopology topology = Topology("Town",
+            Source("Farm", Leg("Town", 79, -1, 60, 60)),
+            Source("Town", door),
+            Source("ScienceHouse"));
+
+        NavigationRoutePlanResult result = new NavigationRoutePlanner().Plan(topology, "Town", house);
+
+        result.Kind.Should().Be(NavigationRoutePlanKind.NextEdge);
+        result.NextLeg.Should().Be(door, "the interior is behind the door, so the door is the leg to walk");
     }
 
     [Fact]

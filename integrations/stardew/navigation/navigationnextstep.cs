@@ -114,8 +114,13 @@ internal readonly record struct NavigationNextStep(NavigationExit Exit, string? 
         // Another execution holds the body: it settles on its own, then this request can run.
         "navigation_commit_body_still_owned" => Action("wait_for_the_body_to_settle"),
 
-        // The next leg is a DOOR, and the action that walks through a door is `enter_exit` - not this navigation.
-        "navigation_transition_family_not_materialized" => Action("use_enter_exit"),
+        // The next leg is a DOOR: the navigation now crosses it through the game's own entry, so what is left to say is
+        // what that entry answered. A gate that refused names the door the game shut (its own dialogue is in the
+        // evidence); a gate that passed but started nothing means this frame's reading of the door does not match the
+        // game's, so the world has to be read again before another request - the same answer an uncorrelated native
+        // transition gets.
+        "door_gate_refused" => Action("wait_for_the_door_to_open"),
+        "door_transition_not_started" => Action("observe_before_acting"),
 
         // No standing tile beside the leg: the target has to be freed, or a different one chosen.
         "navigation_approach_unavailable" => Action("clear_the_approach_or_choose_another_target"),

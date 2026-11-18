@@ -181,11 +181,19 @@ internal sealed class AcceptedNavigationExecution
             return new NavigationDestinationResolution(null, binding!, label, null);
         }
 
+        // Label selectors resolve through the SAME text normalization the search uses, over every spelling a destination
+        // declares. Measured `plan_339`: `{kind:'label', label:'Farmhouse'}` answered `destination_selector_invalid` for the
+        // farmhouse the directory itself holds as `FarmHouse`, while a label spelled exactly (`皮埃尔的杂货店`) resolved -
+        // one table read with two spellings of "equal", ordinal here and FormKC-lowercase in `DestinationSearch`. The
+        // English fallback label was invisible to this path for the same reason: the search matched it, a label selector
+        // did not. Nothing is bound that the directory does not declare, and nothing fuzzy is bound at all.
+        string normalized = DestinationSearchText.Normalize(selector.Label);
+        if (normalized.Length == 0)
+            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid");
+
         // Label selectors must be provably unique in the current generation.
         NavigationDestination[] matches = set.SearchDestinations
-            .Where(destination => StringComparer.Ordinal.Equals(destination.CanonicalLabel, selector.Label)
-                || (destination.ExplicitAliases is not null
-                    && destination.ExplicitAliases.Contains(selector.Label, StringComparer.Ordinal)))
+            .Where(destination => DeclaresSpelling(destination, normalized))
             .GroupBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
             .Select(group => group.First())
             .ToArray();
@@ -200,6 +208,14 @@ internal sealed class AcceptedNavigationExecution
             match.CanonicalLabel,
             null);
     }
+
+    /// <summary>Whether this destination declares this normalized spelling: its label, its English fallback label, or one
+    /// of its aliases (which always include the internal identity - see `DerivedDestinationSet.WithIdentityAlias`).</summary>
+    private static bool DeclaresSpelling(NavigationDestination destination, string normalized) =>
+        string.Equals(DestinationSearchText.Normalize(destination.CanonicalLabel), normalized, StringComparison.Ordinal)
+        || string.Equals(DestinationSearchText.Normalize(destination.FallbackLabel), normalized, StringComparison.Ordinal)
+        || (destination.ExplicitAliases ?? Array.Empty<string>())
+            .Any(alias => string.Equals(DestinationSearchText.Normalize(alias), normalized, StringComparison.Ordinal));
 
     private static string MapRefFailure(string reason) => reason switch
     {

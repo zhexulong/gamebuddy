@@ -3,8 +3,9 @@ using GameBuddy.Stardew;
 namespace GameBuddy.Stardew.Navigation;
 
 /// <summary>
-/// One source node's outgoing ordinary (non-door) warp legs and private
-/// transport-backed connectivity legs. Nested inside the topology only; never
+/// One source node's outgoing ordinary legs and private transport-backed connectivity legs. A leg is "ordinary" because
+/// a body crosses it by walking to its source tile - a map warp or a DOOR, which is entered through the game's own entry -
+/// as opposed to a virtual leg (a minecart ride) that a native menu performs. Nested inside the topology only; never
 /// projected to a Host/Agent surface.
 /// </summary>
 internal sealed record NavigationOrdinaryWarpLegs(
@@ -13,8 +14,8 @@ internal sealed record NavigationOrdinaryWarpLegs(
     IReadOnlyList<NavigationVirtualConnectivityLeg>? OutgoingVirtualLegs = null);
 
 /// <summary>
-/// A private, deterministic ordinary-warp connectivity topology. It fixes the
-/// current source identity plus the outgoing ordinary (non-door) legs for every
+/// A private, deterministic connectivity topology. It fixes the
+/// current source identity plus the outgoing ordinary legs for every
 /// reachable source. It is a steel box for the planner; nothing about routes,
 /// graph shape, intermediate identities or traversal state escapes it.
 /// </summary>
@@ -72,7 +73,14 @@ internal sealed class NavigationRoutePlanner
     /// Plans one deterministic step from the topology's current source toward
     /// <paramref name="destination"/>. The supplied current source must match
     /// <paramref name="topology"/>.CurrentSourceIdentity. Invalid/duplicate
-    /// source keys, door/empty/invalid edges and missing endpoints fail closed.
+    /// source keys, empty/invalid edges and missing endpoints fail closed.
+    /// A DOOR edge is traversed like any other ordinary edge: it is how an
+    /// interior is entered at all, so refusing it made every interior a leaf
+    /// (<c>destination_unreachable</c> for the carpenter's, Pierre's, the
+    /// community centre). The leg keeps its <c>IsDoor</c> flag, and the walker -
+    /// not this planner - owns the fact that a door is crossed through the
+    /// game's own entry (<c>DispatchNativeDoor</c>) instead of a bare
+    /// <c>warpFarmer</c>.
     /// Virtual edges are traversed by the same BFS as ordinary edges, but their
     /// native transport metadata remains private and they never enter the
     /// ordinary-leg collection.
@@ -106,8 +114,8 @@ internal sealed class NavigationRoutePlanner
         if (!sources.ContainsKey(topologySource))
             return NavigationRoutePlanResult.Terminal("route_topology_invalid");
 
-        // Ordinary doors and malformed edges are rejected, never silently
-        // accepted. Missing endpoints fail closed before any traversal.
+        // Malformed edges are rejected, never silently accepted. Missing
+        // endpoints fail closed before any traversal.
         foreach (NavigationOrdinaryWarpLegs? source in topology.Sources)
         {
             if (source is null)
@@ -115,7 +123,7 @@ internal sealed class NavigationRoutePlanner
 
             foreach (NavigationTransitionLeg? leg in source.OutgoingOrdinaryLegs)
             {
-                if (leg is null || leg.IsDoor)
+                if (leg is null)
                     return NavigationRoutePlanResult.Terminal("route_topology_invalid");
                 if (string.IsNullOrEmpty(leg.TargetLocation))
                     return NavigationRoutePlanResult.Terminal("route_topology_invalid");
