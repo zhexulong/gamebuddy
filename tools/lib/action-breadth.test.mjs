@@ -705,6 +705,11 @@ test("an action whose declared tool was never held is withheld, whatever its wit
     "the family had rows and the action still could not run",
   );
   assert.ok(!withoutTool.actionIds.includes("cut_weeds"));
+  assert.deepEqual(
+    withoutTool.families.find((entry) => entry.family === "weedTargets").actionIds,
+    ["cut_weeds"],
+    "the family still says what it made constructible; the withholding is its own list",
+  );
 
   // The falsifier: the same world with the tool in the pack puts it back, and nothing else changes.
   const withTool = deriveAddressable({

@@ -343,11 +343,11 @@ export function deriveAddressable({ surface, census, exclusions = [], attempted 
       Object.freeze({
         family,
         rows: rows.get(family) ?? 0,
-        actionIds: Object.freeze(
-          targetBound.filter(
-            (actionId) => surface.targetFieldOf.get(actionId) === family && addressable.includes(actionId),
-          ),
-        ),
+        // The actions this FAMILY made constructible, whatever their own precondition then decided: the family's
+        // contribution and the action's addressability are two facts, and `withheld` below says which of these the
+        // second one removed - a family that printed an empty list because its only action was withheld would look like
+        // a family that contributed nothing.
+        actionIds: Object.freeze(targetBound.filter((actionId) => surface.targetFieldOf.get(actionId) === family)),
       }),
     ),
   );
