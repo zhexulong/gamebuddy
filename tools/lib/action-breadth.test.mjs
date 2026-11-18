@@ -14,6 +14,9 @@
  */
 
 import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { programExecutionRows } from "../live-run/game/execution-trace.mjs";
@@ -27,6 +30,7 @@ import {
   deriveAddressable,
   formatActionBreadth,
   measureActionBreadth,
+  readActionBreadthBaseline,
   readActionBreadthSurface,
   SNAPSHOT_CENSUS_SOURCE,
   TOOL_CLAIM_CATEGORIES,
@@ -137,6 +141,67 @@ test("every tool the catalog declares is a word this reading can interpret", asy
   );
 });
 
+test("the coverage floor fails a run that used a fraction of the world its own snapshots offered", async () => {
+  // THE ARM THAT KEEPS THE FAMILY COMPARISON HONEST. Dropping the absolute family count leaves a run in a thin world free
+  // to work in both of its families and still use three of eighteen actions; the floor is the coverage such a run has to
+  // beat, taken from the best census-bearing run and recorded with its OWN attempted/addressable pair.
+  const floored = {
+    baselines: {
+      multiday_routine: {
+        label: "fixture-best",
+        attempted: 6,
+        addressable: null,
+        families: 3,
+        familiesAttempted: { resource_gathering: 3, farming_crops: 2, world_lifecycle: 1 },
+        coverageFloor: { label: "fixture-floor", attempted: 6, addressable: 11 },
+      },
+    },
+    exclusions: BASELINE.exclusions,
+  };
+  const thin = await measure({ cut_weeds: 4, harvest_crop: 4, move_to_tile: 4 }, { baseline: floored });
+  assert.equal(thin.addressable, 11);
+  assert.ok(thin.coverage < 6 / 11, `${String(thin.coverage)} must be below the recorded floor`);
+  assert.equal(thin.verdict, "narrow:below_baseline:fixture-best", "coverage alone fails it, and the code says so");
+
+  // The falsifier: eight of eleven clears the same floor, and nothing else in this reading objects.
+  const wide = await measure(
+    {
+      cut_weeds: 4,
+      break_rock: 4,
+      harvest_crop: 4,
+      till_soil: 4,
+      plant_seed: 4,
+      water_crop: 4,
+      move_to_tile: 4,
+      sleep: 4,
+    },
+    { baseline: floored },
+  );
+  assert.equal(wide.verdict, "rich");
+});
+
+test("a ratchet whose three dimensions disagree with each other is refused, not partly read", async () => {
+  const path = join(tmpdir(), `action-breadth-baseline-${process.pid}.json`);
+  const write = (entry) =>
+    writeFileSync(path, JSON.stringify({ baselines: { multiday_routine: entry }, exclusions: [] }));
+  try {
+    write({ label: "fixture", attempted: 5, families: 2, familiesAttempted: { farming_crops: 2 } });
+    await assert.rejects(
+      readActionBreadthBaseline({ path }),
+      /action_breadth_baseline_families_do_not_sum:multiday_routine:2:5/u,
+      "a split that does not add up describes a different run",
+    );
+    write({ label: "fixture", attempted: 5, families: 2, coverageFloor: { label: "x", attempted: 5, addressable: 3 } });
+    await assert.rejects(
+      readActionBreadthBaseline({ path }),
+      /action_breadth_baseline_coverage_floor_invalid:multiday_routine/u,
+      "a floor narrower than the attempts it records is not a coverage",
+    );
+  } finally {
+    rmSync(path, { force: true });
+  }
+});
+
 /**
  * One program's executions, grouped by action: `{ cut_weeds: 32, break_rock: 17 }` becomes one candidate node and N
  * journal executions per action, plus the DEDUPLICATED rows `execution-trace.mjs` owns.
@@ -233,25 +298,55 @@ test("a run at the recorded best is rich, and one action below it is below_basel
   });
 });
 
-test("the same action count in fewer families is below the baseline too", async () => {
-  // Eight actions, but every one of them resource_gathering, farming_crops or world_lifecycle: "eight actions" would
-  // read as breadth while the day was one kind of work.
-  const breadth = await measure({
+test("a family the run's own world offered and the baseline worked in is what fails the ratchet", async () => {
+  // THE DEFECT THIS REPLACED. The old arm opened with `familyCount < scenarioBaseline.families` and vetoed any run whose
+  // world or task mix was narrower than the best run's - `round38` worked in eleven families including `transport_warps`,
+  // so three farm-only days that did real work in every family their own world offered were "below" it for families they
+  // never had. What is compared now is the share of THIS run's own families that the baseline also worked in.
+  const baseline = {
+    baselines: {
+      multiday_routine: {
+        label: "fixture-best",
+        attempted: 6,
+        addressable: null,
+        families: 3,
+        familiesAttempted: { resource_gathering: 3, farming_crops: 2, npc_social: 1 },
+      },
+    },
+    exclusions: BASELINE.exclusions,
+  };
+  const withoutSocial = {
     cut_weeds: 4,
     cut_grass: 4,
     break_rock: 4,
     harvest_crop: 4,
     till_soil: 4,
-    plant_seed: 4,
-    water_crop: 4,
+    move_to_tile: 4,
+    enter_exit: 4,
     sleep: 4,
-  });
-  assert.equal(breadth.attempted, 8, "the action count still meets the baseline");
-  assert.equal(breadth.addressable, 11);
-  assert.equal(breadth.coverage, 8 / 11, "coverage is exactly the recorded fraction, so only the families can fail it");
-  assert.equal(breadth.families, 3);
-  assert.deepEqual(breadth.familyNames, ["farming_crops", "resource_gathering", "world_lifecycle"]);
-  assert.equal(breadth.verdict, "narrow:below_baseline:fixture-best", "the families dimension is what fails it");
+  };
+
+  // The world offered a stranger and the run never spoke to one: below, and NAMED, because that is a family the run could
+  // have worked in and did not.
+  const skipped = await measure(withoutSocial, { baseline });
+  assert.deepEqual([...skipped.baselineMissedFamilies], ["npc_social"]);
+  assert.equal(skipped.verdict, "narrow:below_baseline:fixture-best:families=npc_social");
+
+  // The falsifier, one action apart: the same day plus one conversation is not below the same baseline.
+  const covered = await measure({ ...withoutSocial, talk_to_npc: 4 }, { baseline });
+  assert.deepEqual([...covered.baselineMissedFamilies], []);
+  assert.equal(covered.verdict, "rich", "a family the run worked in is a family it cannot be charged for skipping");
+
+  // And the veto this arm exists to remove: a world that never published a villager is not asked about `npc_social`, so
+  // the same work in a farm-only world is not below a baseline recorded in a world that had a town.
+  const farmOnly = await measure(withoutSocial, { baseline, census: censusOf(NARROW_ROWS) });
+  assert.equal(farmOnly.addressable, 10, "the narrow world: five target-bound actions, four family-free, one excluded");
+  assert.equal(farmOnly.families, 4, "and four families worked in, over the three the baseline recorded");
+  assert.equal(
+    farmOnly.verdict,
+    "rich",
+    "`round38`'s transport_warps and npc_social are not charged to a run whose world never offered them",
+  );
 });
 
 test("coverage is compared as a fraction, so a smaller world is not charged for being smaller", async () => {

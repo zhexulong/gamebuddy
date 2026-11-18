@@ -13,9 +13,13 @@
     "the run's own census allowed, so a different fixture scenario cannot make the ratchet lie.",
     "WHAT IS NOT HERE. `addressable` is null on the entry below on purpose: `round38`'s bundle publishes no census,",
     "so its addressable width is not a number this gate ever measured, and the ratchet every later run is compared",
-    "against must not rest on a figure derived outside the gate. Its attempted count (24) and family count (11) were",
-    "measured against the catalog and are kept as context; only the family count is compared until a census-bearing",
-    "run records an addressable width."
+    "against must not rest on a figure derived outside the gate. Its attempted count (24), family count (11) and",
+    "per-family split were measured against the catalog and are kept as the ratchet's family dimension.",
+    "HOW A RUN IS COMPARED. `coverageFloor` is the best coverage a census-bearing run of this scenario has shown, with",
+    "its OWN attempted/addressable pair: a run below it did not use the surface its own world offered. The family",
+    "dimension compares coverage of the SAME families - the ones this run's world offered and `round38` also worked in -",
+    "never an absolute family count, which vetoed farm-only days for the mine trips their fixture never had. A family the",
+    "run's world never offered is not asked of it, and one it offered and skipped is named in the verdict."
   ],
   "baselines": {
     "multiday_routine": {
@@ -23,12 +27,33 @@
       "attempted": 24,
       "addressable": null,
       "families": 11,
+      "familiesAttempted": {
+        "buildings_farm_management": 1,
+        "body_tools": 1,
+        "farming_crops": 5,
+        "inventory_items": 1,
+        "modal_handling": 2,
+        "movement_navigation": 2,
+        "resource_gathering": 5,
+        "shops_economy": 2,
+        "transport_warps": 1,
+        "world_lifecycle": 1,
+        "world_navigation": 3
+      },
+      "familiesAttemptedHow": "the attempted actions of tools/_multiday_routine-round38.result.json grouped through readStardewActionFamilies; the counts sum to the 24 above, and the reader refuses a split that does not",
+      "coverageFloor": {
+        "label": "round76",
+        "attempted": 17,
+        "addressable": 43,
+        "bundle": ".live-runs/game-ladder/2026-11-18T14-41-27-250Z-multiday_routine/result.json",
+        "measured": "17 of the 43 actions its own three days made addressable (39.5%), in 9 of the 20 families, largest single action 21.2% (cut_weeds) - the first census-bearing multiday run on this machine. It is a FLOOR for the coverage dimension, not a width for `round38`: round38's own denominator predates the census, and putting its attempted count beside another run's width would be a comparison identity no run ever had."
+      },
       "publishedAtRecord": 95,
       "executions": 379,
       "bundle": "tools/_multiday_routine-round38.result.json",
       "recordedOn": "2026-11-07",
       "measured": "24 distinct actions in 11 families over 379 executions, largest single action 22% (break_rock) - the widest multiday day on this machine out of the 172 multiday bundles that carry an attempted list",
-      "addressableNotRecorded": "this bundle predates `snapshotCensus`, so the gate measures it as not_measured:no_snapshot_census and records no width for it; the first census-bearing multiday run sets `addressable` here"
+      "addressableNotRecorded": "this bundle predates `snapshotCensus`, so the gate measures it as not_measured:no_snapshot_census and records no width for it; the coverage dimension is compared against `coverageFloor` instead, and the first census-bearing multiday run that beats the floor re-records both"
     }
   },
   "exclusions": [

@@ -272,9 +272,13 @@ async function main() {
     `action_breadth_baseline: ${
       breadth.baseline === null
         ? `none recorded for scenario ${breadth.scenario ?? "none"}`
-        : `best seen ${breadth.baseline.label} - attempted ${String(breadth.baseline.attempted)}, families ${String(breadth.baseline.families)}, addressable ${breadth.baseline.addressable === null ? "not recorded" : String(breadth.baseline.addressable)}`
+        : `best seen ${breadth.baseline.label} - attempted ${String(breadth.baseline.attempted)}, families ${String(breadth.baseline.families)}, addressable ${breadth.baseline.addressable === null ? "not recorded" : String(breadth.baseline.addressable)}, coverage floor ${breadth.baseline.coverageFloor === undefined ? "not recorded" : `${String(breadth.baseline.coverageFloor.attempted)} of ${String(breadth.baseline.coverageFloor.addressable)} (${String(breadth.baseline.coverageFloor.label)})`}`
     }`,
   );
+  if ((breadth.baselineMissedFamilies ?? []).length > 0)
+    out(
+      `action_breadth_baseline_families: ${breadth.baselineMissedFamilies.join(",")} - this run's world offered these families, the recorded best worked in them, and this run did not`,
+    );
   reportFindings(breadth, flatDispatchCount, flatRows);
   reportCensusContact(breadth, actedFamilies);
   reportPerAction(breadth);
