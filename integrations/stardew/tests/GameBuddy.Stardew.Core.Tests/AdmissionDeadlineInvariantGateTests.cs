@@ -93,9 +93,18 @@ public sealed class AdmissionDeadlineInvariantGateTests
 
     /// <summary>
     /// THE GATE. Every shape an admission answer can take (the <see cref="BodyNodeAdmissionResult"/> union, plus silence)
-    /// against every journal shape that can mint a challenge (writable, and one neighbour already in recovery). Once the
-    /// node's own deadline has passed, no population member may still be <c>AwaitingHostAdmission</c>: whatever settled
-    /// it, the state is terminal and it names its own code.
+    /// against every journal shape that can mint a challenge (writable, and one neighbour already in recovery), and against the
+    /// one thing that can change between an admission and its deadline without touching the node: the farmhand action policy
+    /// the Mod publishes. Once the node's own deadline has passed, no population member may still be
+    /// <c>AwaitingHostAdmission</c>: whatever settled it, the state is terminal and it names its own code.
+    ///
+    /// <para>
+    /// THE POLICY ARM IS THE ONE THIS GATE WAS MISSING. `TryRejectAdmission` used to judge the rejection against the policy the
+    /// capability surface publishes NOW, so a policy push between the admission and the deadline answered the settlement
+    /// `InvalidInput` - visible since `a5008b32`, and still a node holding the one body. An admission granted under policy A is
+    /// rejected under policy A, because the attempt that is being rejected happened under A; the arm below is that sentence
+    /// as a measurement, and it is red on any build where the rejection is judged against a policy the attempt never saw.
+    /// </para>
     /// </summary>
     [Fact]
     public void EveryAdmissionAnswerInEveryMintableJournalShape_LeavesNoNodeAwaitingPastItsDeadline()
@@ -117,14 +126,19 @@ public sealed class AdmissionDeadlineInvariantGateTests
                 answered.Name);
 
         string[] journals = { "opened", "neighbour_in_recovery" };
+        // THE THIRD DIMENSION: what the Mod's capability surface can publish differently between the admission and the
+        // deadline without anything about the node changing.
+        string[] policies = { "policy_unchanged", "policy_changed_after_admission" };
         int examined = 0;
         int settled = 0;
         var abandoned = new List<string>();
         foreach ((string answer, (Func<NodeAdmissionChallenge, long, BodyNodeAdmissionResult?> script, string settles)) in scripts.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         foreach (string journal in journals)
+        foreach (string policy in policies)
         {
             var clock = new TimeBox { Value = 1_000_000 };
-            OpenBodyProgramJournalAuthority authority = Open(new MemoryStore(), clock);
+            var publishedPolicy = new PolicyBox();
+            OpenBodyProgramJournalAuthority authority = Open(new MemoryStore(), clock, () => publishedPolicy.Value);
             // The NEIGHBOUR is answered on the spot: it exists only to put the journal into the shape under test, so its
             // own admission must not be the thing the scenario is about.
             var admission = new ScriptedAdmissionTransport(clock, (challenge, now) =>
@@ -147,10 +161,15 @@ public sealed class AdmissionDeadlineInvariantGateTests
             BodyProgramJournalNode waiting = authority.Status("subject").Snapshot!.Nodes.Single();
             waiting.State.Should().Be(
                 BodyProgramNodeState.AwaitingHostAdmission,
-                "a_node_outlives_its_admission_deadline:{0}:{1}:the population member was never minted, so it proves nothing",
+                "a_node_outlives_its_admission_deadline:{0}:{1}:{2}:the population member was never minted, so it proves nothing",
                 answer,
-                journal);
+                journal,
+                policy);
             examined += 1;
+
+            // THE POLICY PUSH, between the admission and its deadline. Nothing about the node, the journal or the catalog
+            // changes: this is what `HandleFarmhandActionPolicy` publishes, and what the pump observes on its next pass.
+            if (policy == "policy_changed_after_admission") publishedPolicy.Value = Policy("policy-b", 1);
 
             clock.Value = waiting.DerivedDeadlineMs!.Value + 1;
             for (int pass = 0; pass < 3; pass += 1) controller.Update();
@@ -158,25 +177,26 @@ public sealed class AdmissionDeadlineInvariantGateTests
             BodyProgramJournalNode node = authority.Status("subject").Snapshot!.Nodes.Single();
             if (node.State == BodyProgramNodeState.AwaitingHostAdmission)
             {
-                abandoned.Add($"{answer}/{journal}:{node.NodeId}:expected={settles};found={node.State}");
+                abandoned.Add($"{answer}/{journal}/{policy}:{node.NodeId}:expected={settles};found={node.State};rejection={node.RejectionCode ?? "none"}");
                 continue;
             }
             // A settlement is a STATE AND THE CODE IT SETTLED WITH: a node that ends `Rejected` with the wrong code is a
             // node whose receipt says something the deadline did not.
             node.RejectionCode.Should().Be(
                 settles,
-                "a_node_outlives_its_admission_deadline:{0}/{1}:{2}:the settlement names the wrong reason",
+                "a_node_outlives_its_admission_deadline:{0}/{1}/{2}:{3}:the settlement names the wrong reason",
                 answer,
                 journal,
+                policy,
                 node.NodeId);
             settled += 1;
         }
 
-        examined.Should().Be(scripts.Count * journals.Length, "the gate must examine every population member it declares");
+        examined.Should().Be(scripts.Count * journals.Length * policies.Length, "the gate must examine every population member it declares");
         abandoned.Should().BeEmpty(
             "a_node_outlives_its_admission_deadline:{0}",
             string.Join(",", abandoned));
-        output.WriteLine($"nodes examined {examined} · settled {settled} · abandoned {abandoned.Count}");
+        output.WriteLine($"answers examined {examined} · terminal {settled} · still-awaiting {abandoned.Count}");
     }
 
     /// <summary>
@@ -223,6 +243,13 @@ public sealed class AdmissionDeadlineInvariantGateTests
     /// failing journal is to the pump: the node stays awaiting, and the ONLY difference between a three-hour silent
     /// strand and a diagnosed one is whether the pump says so.
     /// </para>
+    /// <para>
+    /// ② AND THE BODY. This is the one answer no settlement can repair - a journal that will not write will not write - so
+    /// the node stays awaiting and the pump keeps presenting the challenge on every pass. What it may no longer do is let
+    /// that attempt OWN the one embodied actor: an admission past its own deadline can never dispatch, so "in flight" is a
+    /// claim about the body that nobody can use. Both readings are taken from the same run, because a release is only
+    /// meaningful beside the hold it replaced.
+    /// </para>
     /// </summary>
     [Fact]
     public void ARejectionTheJournalRefuses_IsNamed_AndIsNotReportedAsASettlement()
@@ -241,6 +268,9 @@ public sealed class AdmissionDeadlineInvariantGateTests
         controller.Update();
         BodyProgramJournalNode waiting = authority.Status("subject").Snapshot!.Nodes.Single();
         waiting.State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+        controller.ProgramWithNodeInFlight().Should().Be(
+            "subject",
+            "while the deadline stands this admission can still become a dispatch, so it does own the body");
 
         clock.Value = waiting.DerivedDeadlineMs!.Value + 1;
         controller.Update();
@@ -257,6 +287,9 @@ public sealed class AdmissionDeadlineInvariantGateTests
         reported.Should().NotContain(
             line => line.Contains("admission_deadline_settled", StringComparison.Ordinal),
             "the settlement line is a statement about the journal, so it may only be printed once the journal took it");
+        controller.ProgramWithNodeInFlight().Should().BeNull(
+            "a_node_outlives_its_admission_deadline:{0}:an admission past its own deadline can never dispatch, so the body it was holding is a body nobody can use",
+            waiting.NodeId);
     }
 
     /// <summary>Each answer shape in the population above, by the key its scenario is registered under.</summary>
@@ -267,8 +300,8 @@ public sealed class AdmissionDeadlineInvariantGateTests
         ["late_unavailable"] = typeof(BodyNodeAdmissionUnavailableResult),
     };
 
-    private static OpenBodyProgramJournalAuthority Open(IBodyProgramJournalStore store, TimeBox clock) =>
-        OpenBodyProgramJournalAuthority.Open(store, Catalog(), Scope(), () => Policy(), () => clock.Value);
+    private static OpenBodyProgramJournalAuthority Open(IBodyProgramJournalStore store, TimeBox clock, Func<BodyProgramPolicyIdentity>? policy = null) =>
+        OpenBodyProgramJournalAuthority.Open(store, Catalog(), Scope(), policy ?? (static () => Policy()), () => clock.Value);
 
     private static BodyProgramActionCatalog Catalog() => new(7, new[]
     {
@@ -291,7 +324,7 @@ public sealed class AdmissionDeadlineInvariantGateTests
             new ReadOnlyDictionary<string, ActionProgramBinding>(new Dictionary<string, ActionProgramBinding>(StringComparer.Ordinal))),
     });
 
-    private static BodyProgramPolicyIdentity Policy() => new("policy-a", 1);
+    private static BodyProgramPolicyIdentity Policy(string name = "policy-a", long revision = 1) => new(name, revision);
     private static BridgeScope Scope() => new("stardew", "save", "world", "player", "companion");
 
     private static HostAdmissionGrant GrantFor(NodeAdmissionChallenge challenge) => new(
@@ -302,6 +335,12 @@ public sealed class AdmissionDeadlineInvariantGateTests
     private sealed class TimeBox
     {
         public long Value { get; set; }
+    }
+
+    /// <summary>The identity the Mod's capability surface currently publishes - a push can change it mid-session.</summary>
+    private sealed class PolicyBox
+    {
+        public BodyProgramPolicyIdentity Value { get; set; } = Policy();
     }
 
     private sealed class MemoryStore : IBodyProgramJournalStore

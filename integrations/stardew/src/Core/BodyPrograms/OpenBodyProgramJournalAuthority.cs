@@ -548,7 +548,7 @@ public sealed class OpenBodyProgramJournalAuthority
 
         if (node.State == BodyProgramNodeState.Rejected)
         {
-            if (node.RejectionCode == code && ExactAdmissionChallenge(challenge, program, node, descriptor, requireAwaiting: false, requireCurrentPolicy: false))
+            if (node.RejectionCode == code && ExactAdmissionChallenge(challenge, program, node, descriptor, requireAwaiting: false))
                 return BodyProgramControllerResult.Success(challenge);
             return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
         }
@@ -980,10 +980,28 @@ public sealed class OpenBodyProgramJournalAuthority
         return BodyProgramControllerResultCode.Succeeded;
     }
 
+    /// <summary>
+    /// Whether this exact challenge is the tuple the journal minted for this node attempt.
+    ///
+    /// <para>
+    /// ITS POLICY IS THE ONE ITS OWN ATTEMPT WAS ADMITTED UNDER, not whatever the Mod's capability surface publishes now.
+    /// An admission granted under policy A is rejected under policy A, because the thing being rejected - an attempt that
+    /// never dispatched - happened under A. Both halves are already durable: the challenge carries the identity it was
+    /// minted with, the journal node carries it as <see cref="BodyProgramJournalNode.AttemptPolicyIdentity"/>, and
+    /// <see cref="BodyProgramJournalPersistence"/> pins every attempted node's identity to the journal's own policy. So
+    /// comparing the two is the same check, minus a question about the live world that cannot change what already
+    /// happened.
+    /// </para>
+    /// <para>
+    /// MEASURED 2026-11-18 (`round76`): the farmhand action policy changed between an admission and its deadline, the
+    /// deadline settlement's rejection was answered `InvalidInput` for it, and the node then held the only body for three
+    /// in-game hours. A policy that has moved on means the node may not DISPATCH - that is `TryGrant`'s check, and it still
+    /// refuses - but it is no reason to refuse the record that the node never ran.
+    /// </para>
+    /// </summary>
     private bool ExactAdmissionChallenge(NodeAdmissionChallenge challenge, BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor,
-        bool requireAwaiting, bool requireCurrentPolicy = true)
+        bool requireAwaiting)
     {
-        BodyProgramPolicyIdentity policy = requireCurrentPolicy ? ObservePolicy() : this.state.PolicyIdentity;
         return challenge is not null && (!requireAwaiting || node.State == BodyProgramNodeState.AwaitingHostAdmission)
             && challenge.ProgramId == program.Program.ProgramId && challenge.NodeId == node.NodeId
             && challenge.NodeAttempt == node.NodeAttempt && challenge.AdmissionAttempt == node.AdmissionAttempt
@@ -991,7 +1009,7 @@ public sealed class OpenBodyProgramJournalAuthority
             && challenge.CatalogRevision == this.catalog.Revision && challenge.PolicyIdentity is not null
             && challenge.CanonicalArguments is not null && challenge.DerivedResourceClaims is not null
             && node.AttemptPolicyIdentity is not null && challenge.PolicyIdentity.Equals(node.AttemptPolicyIdentity)
-            && (!requireCurrentPolicy || PolicyMatches(policy, challenge.PolicyIdentity)) && challenge.ActionId == descriptor.ActionId
+            && challenge.ActionId == descriptor.ActionId
             && challenge.DeadlineMs == node.DerivedDeadlineMs && node.CanonicalBoundArguments is not null
             && BodyProgramCanonical.CanonicalMapsEqual(challenge.CanonicalArguments, node.CanonicalBoundArguments)
             && BodyProgramCanonical.StringMapsEqual(challenge.DerivedResourceClaims, descriptor.DerivedResourceClaims)

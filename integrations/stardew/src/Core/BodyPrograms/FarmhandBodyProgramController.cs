@@ -368,20 +368,43 @@ public sealed class FarmhandBodyProgramController
     }
 
     /// <summary>
-    /// The programme that already has a node in flight - awaiting its admission answer, or running its native effect -
-    /// or null when no node is in flight anywhere. Its own state is the answer to "may another node start": the farmhand
-    /// is one actor, so a second node would collide with this one rather than work beside it.
+    /// The programme that already has a node in flight - running its native effect, or awaiting an admission answer it can
+    /// still consume - or null when no node is in flight anywhere. Its own state is the answer to "may another node start":
+    /// the farmhand is one actor, so a second node would collide with this one rather than work beside it.
+    ///
+    /// <para>
+    /// AN ADMISSION PAST ITS OWN DEADLINE IS NOT IN FLIGHT. A node that outlived <see cref="BodyProgramJournalNode.DerivedDeadlineMs"/>
+    /// cannot dispatch at all (<c>TryConsumeHostGrant</c> refuses there), so a body it "holds" is a body nobody can use.
+    /// That is the whole cost of the defect this gate was taught about: a settlement the authority refused left one awaiting
+    /// node owning the only farmhand, and every later programme was refused <c>held_by=body_program:&lt;it&gt;</c>. Settling
+    /// the node is still the only way to END it, and the pump keeps trying every pass; but whether it manages to is a
+    /// question about the journal's writability, and it may not be answered with the body.
+    /// </para>
     /// </summary>
-    private string? ProgramWithNodeInFlight()
+    internal string? ProgramWithNodeInFlight()
     {
         foreach (BodyProgramJournalProgram program in this.authority.Snapshot.Programs)
         {
             if (program.State != BodyProgramState.Active) continue;
-            if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.Running))
+            if (program.Nodes.Any(node => node.State == BodyProgramNodeState.Running
+                || (node.State == BodyProgramNodeState.AwaitingHostAdmission && this.ExpiredAdmissionDeadline(node) is null)))
                 return program.Program.ProgramId;
         }
         return null;
     }
+
+    /// <summary>
+    /// This attempt's admission deadline once it has passed, or null while an admission can still be consumed.
+    ///
+    /// <para>
+    /// ONE SPELLING OF ONE BOUNDARY. `TryConsumeHostGrant` refuses a grant while <c>DerivedDeadlineMs &lt; nowMs</c>, so
+    /// <c>&lt;</c> is the first instant at which nothing can dispatch - the settlement waits for it (settling at
+    /// <c>&lt;=</c> would preempt a grant the authority itself would still honour) and the single-flight gate reads the same
+    /// instant (counting a node as in flight at <c>&lt;</c> would let an attempt that cannot dispatch hold the one body).
+    /// </para>
+    /// </summary>
+    private long? ExpiredAdmissionDeadline(BodyProgramJournalNode node) =>
+        node.DerivedDeadlineMs is { } deadlineMs && deadlineMs < this.NowMs() ? deadlineMs : null;
 
     private void DiagnoseStartHeldBehindProgram(string programId, string occupying)
     {
@@ -561,7 +584,7 @@ public sealed class FarmhandBodyProgramController
     /// </summary>
     private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node, string? refusalDetail = null)
     {
-        if (node.DerivedDeadlineMs is not { } deadlineMs || deadlineMs >= this.NowMs()) return false;
+        if (this.ExpiredAdmissionDeadline(node) is not { } deadlineMs) return false;
         string key = AttemptKey(programId, node.NodeId, node.NodeAttempt);
         // The challenge is the settlement's own argument: the authority accepts a rejection only for the exact tuple it
         // minted, so nothing is settled unless the object that was SENT is still here to be presented.
@@ -583,20 +606,47 @@ public sealed class FarmhandBodyProgramController
     ///
     /// <para>
     /// The refusal is the same defect family as every other unnamed answer in this pump: `TryRejectAdmission` can answer
-    /// `InvalidInput` (a code outside the allowlist, or a journal that no longer holds the tuple this pump minted) and
-    /// `PersistenceWriteFailed`, and both leave the node exactly where it was. Discarding that answer
+    /// `InvalidInput` (a code outside the allowlist, or a tuple the journal no longer accepts as the one this pump minted)
+    /// and `PersistenceWriteFailed`, and both leave the node exactly where it was. Discarding that answer
     /// is what made the measured strand invisible - the log said the deadline was settled, and nothing said it was not.
     /// The journal's own last persistence refusal travels with the line, because for the write failure it is the only
     /// sentence that names the rule which refused.
+    /// </para>
+    /// <para>
+    /// TWO NAMES, BECAUSE THE TWO ANSWERS ASK FOR DIFFERENT THINGS. `admission_rejection_refused_by_policy` is the
+    /// authority answering about THE TUPLE - the attempt's own identity no longer matches what the journal holds, the class
+    /// 2026-11-18 measured when a policy push landed between an admission and its deadline. Nothing about the node changed,
+    /// so the pump keeps the challenge and presents it again; what it must not do is let that attempt hold the body, and
+    /// the single-flight gate reads the deadline rather than this answer (see <see cref="ProgramWithNodeInFlight"/>).
+    /// `admission_rejection_refused` is the journal refusing to RECORD anything, which no answer from this pump can repair.
     /// </para>
     /// </summary>
     private bool TryReject(string programId, BodyProgramJournalNode node, NodeAdmissionChallenge challenge, string code, string? refusalDetail)
     {
         BodyProgramControllerResult<NodeAdmissionChallenge> rejected = this.authority.TryRejectAdmission(challenge, code, refusalDetail);
         if (rejected.IsSuccess) return true;
-        this.Diagnose($"admission_rejection_refused;program={programId};node={node.NodeId};code={code};answer={rejected.Code};journal_refusal={this.authority.LastPersistenceRefusal ?? "none"}");
+        string name = rejected.Code == BodyProgramControllerResultCode.InvalidInput
+            ? "admission_rejection_refused_by_policy"
+            : "admission_rejection_refused";
+        this.DiagnoseRefusal(programId, $"{name};program={programId};node={node.NodeId};code={code};answer={rejected.Code};journal_refusal={this.authority.LastPersistenceRefusal ?? "none"}");
         return false;
     }
+
+    /// <summary>
+    /// Reports a refused rejection once per program until it changes. The condition it describes stands for as long as the
+    /// journal keeps refusing - the whole session, in the measured case - so repeating it is the same defect the other
+    /// `Diagnose*` helpers exist to avoid: a fact that never changes is stated once.
+    /// </summary>
+    private void DiagnoseRefusal(string programId, string detail)
+    {
+        if (this.Diagnostics is null) return;
+        if (this.diagnosticsLastRefusal.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastRefusal[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
+
+    /** The last refusal printed for each program, so a repeat says nothing. */
+    private readonly Dictionary<string, string> diagnosticsLastRefusal = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Waits out a hold declared <see cref="BodyHoldWait.RequestDeadline"/> for as long as this node's own watchdog
@@ -624,7 +674,7 @@ public sealed class FarmhandBodyProgramController
     private bool WaitOutTheHold(string programId, BodyProgramJournalNode node, BodyProgramHold met)
     {
         if (node.DerivedDeadlineMs is not { } deadlineMs) return false;
-        if (deadlineMs >= this.NowMs())
+        if (this.ExpiredAdmissionDeadline(node) is null)
         {
             this.DiagnoseHeld(programId, node, met, deadlineMs);
             return true;
