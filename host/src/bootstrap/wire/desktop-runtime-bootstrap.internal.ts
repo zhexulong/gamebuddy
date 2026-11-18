@@ -481,7 +481,7 @@ async function createDesktopProductCompositionForBootstrap(
   rootAuthority: DesktopRootLayoutCapability,
   guardianAuthority: DesktopGuardianSessionCapability,
   assemblyInput: DesktopHostAssemblyInput,
-): Promise<Readonly<{ composition: DesktopPrivateHostComposition; session: GuardianAttemptSessions }>> {
+): Promise<Readonly<{ composition: DesktopPrivateHostComposition; session: GuardianSessionClient }>> {
   const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
   await writeStatus("guardian-session");
   const session = await createAuthenticatedDesktopGuardianSession(
@@ -616,99 +616,15 @@ function publishCompositionReady(launchUrl: string): void {
 
 async function createAuthenticatedDesktopGuardianSession(
   binding: DesktopGuardianSessionBinding,
-): Promise<GuardianAttemptSessions> {
-  const sessions = new GuardianAttemptSessions(binding);
-  await sessions.open();
-  return sessions;
-}
-
-/**
- * The Host's Guardian connection: one authenticated session per game attempt.
- *
- * A session ends when the attempt it was driving does - the composition closes it on a
- * settle - and the next attempt's first command opens a new one on the same one-instance
- * pipe with a fresh hello. That is what lets one Host process serve more than one game:
- * the Desktop settles the finished attempt, proves its Guardian gone, and only then
- * re-offers the pipe, re-authenticating this child from scratch on every connection
- * (`DesktopHostBootstrapBroker.ServeSessionsAsync`). So no correlation, armed flag, role
- * or Guardian of a finished attempt is reachable from the next one, and closing a
- * session never has to mean that the owner disappeared (ADR-0015 §3, §5.1 U4b).
- */
-class GuardianAttemptSessions implements DesktopGuardianSession {
-  #current: GuardianSessionClient | undefined;
-  #lost: (() => void) | undefined;
-  #roleExit: ((exit: GuardianRoleExit) => void) | undefined;
-
-  constructor(private readonly binding: DesktopGuardianSessionBinding) {}
-
-  /**
-   * Opens the first attempt's session, so bootstrap readiness rests on a real hello.
-   *
-   * A refusal here fails this bootstrap rather than ending the process: a pipe that is
-   * not listening yet, or a hello the broker refused, is this launch's own failure to
-   * report, not evidence that the Desktop is gone.
-   */
-  async open(): Promise<void> {
-    await this.#open();
-  }
-
-  /**
-   * The one watcher a loss drives, applied to this attempt's session and to every later
-   * one. A session this side closes never reaches it, and neither does the close.
-   */
-  onLost(callback: () => void): void {
-    this.#lost = callback;
-  }
-
-  onRoleExit(handler: (exit: GuardianRoleExit) => void): void {
-    this.#roleExit = handler;
-    this.#current?.onRoleExit(handler);
-  }
-
-  async arm(input: Parameters<GuardianSessionClient["arm"]>[0]): Promise<GuardianAck> {
-    return await (await this.#session()).arm(input);
-  }
-  async launch(input: Parameters<GuardianSessionClient["launch"]>[0]): Promise<GuardianAck> {
-    return await (await this.#session()).launch(input);
-  }
-  async contain(input: Parameters<GuardianSessionClient["contain"]>[0]): Promise<GuardianAck> {
-    return await (await this.#session()).contain(input);
-  }
-  async recover(input: Parameters<GuardianSessionClient["recover"]>[0]): Promise<GuardianRecoveryAck> {
-    return await (await this.#session()).recover(input);
-  }
-
-  /** Ends the attempt this Host was serving; the next attempt's command opens the next session. */
-  async close(): Promise<void> {
-    const session = this.#current;
-    this.#current = undefined;
-    if (session !== undefined) await session.close();
-  }
-
-  /** This attempt's session, opening the next attempt's when the previous one ended. */
-  async #session(): Promise<GuardianSessionClient> {
-    const current = this.#current;
-    if (current !== undefined) return current;
-    return await this.#open();
-  }
-
-  async #open(): Promise<GuardianSessionClient> {
-    const session = new GuardianSessionClient(
-      await connectGuardianPipe(`\\\\.\\pipe\\GameBuddy.HostGuardian.${this.binding.bootstrapId}`),
-      this.binding,
-    );
-    try {
-      await session.hello();
-    } catch (error) {
-      await session.close();
-      throw error;
-    }
-    // Only an authenticated session can be lost, which is why both watchers are mounted
-    // after the hello it answered and never before it.
-    session.onLost(() => this.#lost?.());
-    if (this.#roleExit !== undefined) session.onRoleExit(this.#roleExit);
-    this.#current = session;
+): Promise<GuardianSessionClient> {
+  const socket = await connectGuardianPipe(`\\\\.\\pipe\\GameBuddy.HostGuardian.${binding.bootstrapId}`);
+  const session = new GuardianSessionClient(socket, binding);
+  try {
+    await session.hello();
     return session;
+  } catch (error) {
+    await session.close();
+    throw error;
   }
 }
 

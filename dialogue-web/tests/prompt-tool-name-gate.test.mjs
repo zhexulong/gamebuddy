@@ -507,6 +507,17 @@ test("prompt-tool.3: the registry's keys and values are declared, and only its v
 
 test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a plan step and an unadmitted id each read as their own shape", (t) => {
   const mounted = mountedGameToolNames();
+  const unmountedDeclared = [...declaredToolNames()].filter((name) => !mounted.has(name));
+  assert.ok(
+    unmountedDeclared.length >= 2,
+    `blocked: only ${unmountedDeclared.length} declared name(s) are unmounted, so a planted unmounted name cannot be built`,
+  );
+  const [unmountedA, unmountedB] = unmountedDeclared;
+  const bareOfUnmounted = unmountedA.replace(/^stardew_/, "");
+  // The unadmitted fixture asks what happens to an id the plan tool does not admit AND no mounted tool carries.
+  // Those are two independent facts, and the registry may hold no id that is currently both, so the second one is
+  // stated by the set passed in rather than assumed of the tree.
+  const withoutMountedTwin = (names, actionId) => new Set([...names].filter((name) => name !== `stardew_${actionId}`));
   const notAdmitted = registryActionIds().find((actionId) => !planBuilderVocabulary().has(actionId));
   assert.ok(notAdmitted !== undefined, `blocked: no registry id is outside ${PLAN_BUILDER_TOOL}'s vocabulary, so an unadmitted step cannot be planted`);
   const planted = {
@@ -520,18 +531,19 @@ test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a 
     unmountedNames: {
       file: "host/src/planted-prompt.ts",
       line: 15,
-      text: "Body language goes through the native actions stardew_express_emote and stardew_face_direction.",
+      text: `Body language goes through the native actions ${unmountedA} and ${unmountedB}.`,
     },
     bareAlone: { file: "host/src/planted-prompt.ts", line: 18, text: "Show a feeling with express_emote." },
+  bareUnplaced: { file: "host/src/planted-prompt.ts", line: 20, text: `Show a feeling with ${bareOfUnmounted}.` },
     planStep: {
       file: "host/src/planted-prompt.ts",
       line: 24,
-      text: "Body language is an action in the plan you submit with stardew_plan_work: express_emote raises an overhead emote balloon.",
+      text: `Body language is an action in the plan you submit with stardew_plan_work: ${bareOfUnmounted} raises an overhead emote balloon.`,
     },
     unmountedNameBesideTheCarrier: {
       file: "host/src/planted-prompt.ts",
       line: 30,
-      text: "Use stardew_express_emote, or submit it in the plan with stardew_plan_work: express_emote.",
+      text: `Use ${unmountedA}, or submit it in the plan with stardew_plan_work: ${bareOfUnmounted}.`,
     },
     unadmittedBesideTheCarrier: {
       file: "host/src/planted-prompt.ts",
@@ -548,12 +560,12 @@ test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a 
     "prompt_names_unmounted_tool:stardew_express_emotions:host/src/planted-prompt.ts:12",
   ]);
   assert.deepEqual(unresolvedFindings([planted.unmountedNames], mounted), [
-    "prompt_names_unmounted_tool:stardew_express_emote:host/src/planted-prompt.ts:15",
-    "prompt_names_unmounted_tool:stardew_face_direction:host/src/planted-prompt.ts:15",
+    `prompt_names_unmounted_tool:${unmountedA}:host/src/planted-prompt.ts:15`,
+    `prompt_names_unmounted_tool:${unmountedB}:host/src/planted-prompt.ts:15`,
   ]);
   assert.deepEqual(
     unresolvedFindings([planted.unmountedNameBesideTheCarrier], mounted),
-    ["prompt_names_unmounted_tool:stardew_express_emote:host/src/planted-prompt.ts:30"],
+    [`prompt_names_unmounted_tool:${unmountedA}:host/src/planted-prompt.ts:30`],
     "naming the carrier does not bless a name the surface does not hand over",
   );
   assert.deepEqual(
@@ -561,8 +573,8 @@ test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a 
     [],
     "the bare id IS reachable there, so only the unmounted name is a finding",
   );
-  assert.deepEqual(bareActionFindings([planted.bareAlone], mounted), [
-    "host/src/planted-prompt.ts:18: prompt names the Mod action id express_emote on a line that does not name stardew_plan_work, so the Agent goes looking for a tool by that name",
+  assert.deepEqual(bareActionFindings([planted.bareUnplaced], mounted), [
+    `host/src/planted-prompt.ts:20: prompt names the Mod action id ${bareOfUnmounted} on a line that does not name stardew_plan_work, so the Agent goes looking for a tool by that name`,
   ]);
   assert.deepEqual(
     bareActionFindings([planted.planStep], mounted),
@@ -570,7 +582,7 @@ test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a 
     "the shipped shape - the id beside the plan tool that carries it - is clean",
   );
   assert.deepEqual(unresolvedFindings([planted.planStep], mounted), [], "the plan tool is mounted, so the line is clean");
-  assert.deepEqual(bareActionFindings([planted.unadmittedBesideTheCarrier], mounted), [
+  assert.deepEqual(bareActionFindings([planted.unadmittedBesideTheCarrier], withoutMountedTwin(mounted, notAdmitted)), [
     `host/src/planted-prompt.ts:36: prompt names the Mod action id ${notAdmitted}, which no mounted tool carries: ${PLAN_BUILDER_TOOL} admits no such step`,
   ]);
   assert.deepEqual(

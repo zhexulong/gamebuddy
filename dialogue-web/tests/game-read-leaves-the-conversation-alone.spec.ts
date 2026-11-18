@@ -110,7 +110,7 @@ const game = {
     companionName: "Mira",
     selectedWorld: "The Farm",
     selectedSave: "Save One",
-    capabilitySummary: { available: true, count: 3 },
+    capabilitySummary: { status: "published", count: 3 },
     latestOutcome: "none",
   },
 };

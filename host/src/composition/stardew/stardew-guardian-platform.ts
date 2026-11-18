@@ -749,11 +749,10 @@ export function createDesktopGuardianGameRuntimePlatform(
   session.onRoleExit?.((exit) => {
     if (exit.role === "player_host") playerHostRoleExit = exit;
   });
-  // The platform session terminates exactly once per attempt. Settlement is the
-  // deliberate terminal operation and the coordinator's ordinary close may still run
+  // The platform session terminates exactly once. Settlement is the deliberate
+  // terminal operation and the coordinator's ordinary close may still run
   // afterwards on the same attempt, so both go through this single latch rather
-  // than racing two `close()` calls onto one authenticated session. `arm` resets it:
-  // a new attempt owns a new session (ADR-0015 §5.1 U4b).
+  // than racing two `close()` calls onto one authenticated session.
   //
   // The latch is set only AFTER the close succeeds: `session.close()` can reject,
   // and the coordinator retries close (`close()` clears `closePromise` when the
@@ -854,15 +853,6 @@ export function createDesktopGuardianGameRuntimePlatform(
     readPlayerHostRoleExit: (): GuardianRoleExit | null => playerHostRoleExit,
     async arm(input) {
       const { authorization, armFacts, ...transportInput } = input;
-      // A new attempt takes the connection from here. The previous attempt's ending and
-      // its closed session are its own: this attempt must neither inherit the exit it
-      // will be judged by nor find a latch saying its own session is already gone. The
-      // Host reconnects and re-hellos on the same pipe for this attempt, so `session` is
-      // a different authenticated session than the one that just closed (ADR-0015 §5.1
-      // U4b), and every fact below is per attempt rather than per Host run.
-      playerHostRoleExit = null;
-      sessionClosed = false;
-      closeInFlight = undefined;
       // The attested installation executable is fixed at arm time and is later
       // enforced by the native Guardian's ParseLaunch. The Host wire mirrors the
       // native ParseArm/ParseLaunch executable constraints here (existence,
@@ -918,9 +908,7 @@ export function createDesktopGuardianGameRuntimePlatform(
      * record advancement, Guardian proof, registration pointer release) is
      * composition-owned and runs in the launch collaborator, which is the only
      * layer that holds the exact owner. Here the platform only performs its own
-     * terminal transport step: releasing this attempt's authenticated session
-     * exactly once. The Host keeps serving, and the next attempt's `arm` opens the
-     * next session on the same pipe.
+     * terminal transport step: releasing the authenticated session exactly once.
      */
     async settle() {
       await closeSessionOnce();

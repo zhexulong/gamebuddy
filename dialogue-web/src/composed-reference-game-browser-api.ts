@@ -1042,6 +1042,7 @@ function validateGameFactPatch(value: unknown): GameFactPatchV1 {
         !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
         !isSafeInteger(game.attachment.generation, 0) ||
         !isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
+        !isRecord(game.capabilitySummary) ||
         !isCapabilitySummary(game.capabilitySummary)
       )
         throw invalid;

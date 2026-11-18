@@ -57,7 +57,7 @@ const composedRoot = {
       companionName: null,
       selectedWorld: null,
       selectedSave: null,
-      capabilitySummary: { available: false, count: 0 },
+      capabilitySummary: { status: "not_measured", reason: "no_capability_reading" },
       latestOutcome: "none",
     },
   },

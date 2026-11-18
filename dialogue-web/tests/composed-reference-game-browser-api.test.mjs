@@ -1675,7 +1675,7 @@ test("the Game channel subscribes with the snapshot's cursor and delivers only f
         game: {
           attachment: { status: "attached", generation: 2 },
           connectionStatus: "connected_idle",
-          capabilitySummary: { available: true, count: 7 },
+          capabilitySummary: { status: "published", count: 7 },
         },
       },
     };
