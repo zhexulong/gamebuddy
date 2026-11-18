@@ -358,6 +358,61 @@ test("desktop bootstrap helper stays alive when its own composition closes the g
   );
 });
 
+// ADR-0015 §3: attempt = session. The Desktop settles the finished attempt, proves its
+// Guardian gone, and only then re-offers the one-instance pipe
+// (`DesktopHostBootstrapBroker.ServeSessionsAsync`: `SettleAttemptAsync()`, `Disconnect()`,
+// `AcceptSessionAsync()`). This is the Host half of that pair, on a real named pipe and a
+// real Host child: the same process serves a second attempt by re-helloing on the same
+// pipe, with a session whose arm frame carries none of the first attempt's five names.
+test("desktop bootstrap helper serves a second attempt after a settle on the same pipe, in the same process", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("settle-and-rearm");
+
+  // Two authenticated sessions, each opened by a hello and each ended by its own attempt's
+  // settle. The second one exists only because the platform's per-attempt latch was released
+  // by the second arm; a latch left closed would have served attempt 2 on attempt 1's
+  // connection and never closed it.
+  assert.deepEqual(
+    result.sessions.map((session) => session.map((request) => request.operation)),
+    [
+      ["hello", "arm_attempt", "launch_role", "contain_role"],
+      ["hello", "arm_attempt", "launch_role", "contain_role"],
+    ],
+  );
+  // Attempt 2 is a different attempt, not attempt 1 resumed: its correlation and every arm
+  // binding name differ, so nothing of attempt 1 is reachable from it (ADR-0015 §4.2).
+  const armFrameOf = (request: Record<string, unknown>): Record<string, unknown> =>
+    JSON.parse(Buffer.from(String(request.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
+  const firstArmFrame = armFrameOf(result.sessions[0]![1]!);
+  const secondArmFrame = armFrameOf(result.sessions[1]![1]!);
+  assert.notEqual(
+    result.sessions[1]![1]!.guardianInstanceId,
+    result.sessions[0]![1]!.guardianInstanceId,
+    "attempt 2 must not reuse attempt 1's guardian instance",
+  );
+  assert.notEqual(result.sessions[1]![1]!.attemptId, result.sessions[0]![1]!.attemptId);
+  for (const key of ["revision", "leaseName", "playerJobName", "aiJobName"] as const) {
+    assert.notEqual(secondArmFrame[key], firstArmFrame[key], `attempt 2 reused attempt 1's ${key}`);
+  }
+  // And it is the SAME Host process that served both: the pid each attempt armed under, as
+  // the Host itself reported it, is the one pid this fixture spawned.
+  const attempts = [...result.stderr.matchAll(/wire_attempt_host_pid:(\d+):(\d+):([0-9a-f-]+)/gu)].map((match) => ({
+    index: Number(match[1]),
+    pid: Number(match[2]),
+    attemptId: match[3],
+  }));
+  assert.equal(attempts.length, 2, `the Host must report both attempts it armed; stderr was ${result.stderr}`);
+  assert.equal(attempts[0]!.pid, result.workerPid, "the pid must be the Host child this fixture spawned");
+  assert.equal(attempts[1]!.pid, attempts[0]!.pid, "attempt 2 must be served by the same Host process as attempt 1");
+  assert.notEqual(attempts[1]!.attemptId, attempts[0]!.attemptId);
+  assert.match(result.stderr, /wire_attempts_complete:2/);
+  assert.equal(
+    result.exitCodeWhileServing,
+    null,
+    `pid ${String(attempts[0]!.pid)} did not survive its two attempts (exit ${String(result.exitCodeWhileServing)})`,
+  );
+});
+
 test("desktop bootstrap helper rejects when guardian peer disconnects", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("peer-disconnect");
@@ -507,6 +562,7 @@ async function runWireFixture(
     | "overhorizon-launch"
     | "peer-disconnect"
     | "settled-session"
+    | "settle-and-rearm"
     | "composition-failure"
     | "ack-write-failure"
     | "termination-failure"
@@ -525,12 +581,16 @@ async function runWireFixture(
   workerClosedAt: number | undefined;
   workerExitCode: number | null;
   workerExitedNaturally: boolean;
+  /** The requests of each authenticated session the Host opened, in the order it opened them. */
+  sessions: Record<string, unknown>[][];
   /**
    * The child's exit code read while it was still expected to be serving - after the
    * scenario's own session close, before this harness asks it to leave. `null` is
    * "still running", which is the only answer a session close may produce.
    */
   exitCodeWhileServing: number | null;
+  /** The pid of the Host child this fixture spawned and served. */
+  workerPid: number | undefined;
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
@@ -583,7 +643,9 @@ async function runWireFixture(
   const moduleDirectory = join(rootLayout.programRoot, "generation");
   const endpoint = `\\\\.\\pipe\\GameBuddy.HostGuardian.${bootstrapId}`;
   const requests: Record<string, unknown>[] = [];
+  const sessions: Record<string, unknown>[][] = [];
   let connected = false;
+  let containRoles = 0;
   let recoveryAttempts = 0;
   let operationsResolve!: () => void;
   const operationsComplete = new Promise<void>((resolve) => {
@@ -609,6 +671,11 @@ async function runWireFixture(
       : new Promise<void>((resolve) => guardianCloseWatchers.set(target, resolve));
   const server = createServer((socket) => {
     connected = true;
+    // One authenticated session per connection: the Desktop broker serves the Host one
+    // session at a time and re-authenticates every connection from scratch, so what the
+    // Host says on connection 2 is a fact about its own attempt boundary.
+    const session: Record<string, unknown>[] = [];
+    sessions.push(session);
     socket.once("close", () => {
       guardianClosed = true;
       guardianClosedResolve();
@@ -631,6 +698,7 @@ async function runWireFixture(
         const request = JSON.parse(buffer.subarray(0, newline).toString("utf8")) as Record<string, unknown>;
         buffer = buffer.subarray(newline + 1);
         requests.push(request);
+        session.push(request);
         const operation = request.operation;
         if ((scenario === "recovery-success" || scenario === "recovery-role-rejected") && operation !== "hello") {
           // Answered at the positions the Desktop broker answers: one
@@ -701,7 +769,12 @@ async function runWireFixture(
             ...(operation !== "arm_attempt" ? { role: request.role } : {}),
           });
         socket.write(`${JSON.stringify(response)}\n`);
-        if (operation === "contain_role") operationsResolve();
+        if (operation === "contain_role") {
+          containRoles += 1;
+          // Every attempt of the per-attempt scenarios arms, launches and contains its
+          // own Player role; the peer has nothing left to answer once the last one did.
+          if (containRoles >= (scenario === "settle-and-rearm" ? 2 : 1)) operationsResolve();
+        }
       }
     });
   });
@@ -872,6 +945,16 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         playerJobName: "Local\\GameBuddy-Wire-Player",
         aiJobName: "Local\\GameBuddy-Wire-Ai",
       },
+      // The second attempt's reservation draws five fresh opaque names (ADR-0015 §4.2), so
+      // its arm frame must carry none of the first attempt's.
+      secondGuardianInstanceId: "99999999-9999-4999-8999-999999999999",
+      secondAttemptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      secondArmFacts: {
+        revision: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        leaseName: "Local\\GameBuddy-Wire-Lease-2",
+        playerJobName: "Local\\GameBuddy-Wire-Player-2",
+        aiJobName: "Local\\GameBuddy-Wire-Ai-2",
+      },
       recoveryLeaseName: "Local\\GameBuddy-Lease-1",
       recoveryBindingRevision: "88888888-8888-4888-8888-888888888888",
       modOutcome: options.modOutcome,
@@ -983,6 +1066,15 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       exitCodeWhileServing = worker.exitCode;
       worker.kill("SIGTERM");
       await withTimeout(workerClose, 10_000, "settled-session cleanup");
+    } else if (scenario === "settle-and-rearm") {
+      await withTimeout(operationsComplete, 15_000, "guardian operations");
+      // Both attempts' sessions must close - the first on its settle, the second on the
+      // second attempt's own settle - and the Host must still be the one process serving.
+      await withTimeout(waitForGuardianCloses(2), 15_000, "both attempt sessions closed");
+      await new Promise((resolveSettle) => setTimeout(resolveSettle, 750));
+      exitCodeWhileServing = worker.exitCode;
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "settle-and-rearm cleanup");
     } else if (scenario === "success" || scenario === "recovery-success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
@@ -1002,6 +1094,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     await withTimeout(workerClose, 10_000, "worker cleanup");
     return {
       requests,
+      sessions,
       acknowledgement,
       lines: frames?.lines ?? [],
       statuses: frames?.statuses ?? [],
@@ -1013,6 +1106,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       workerExitCode: worker.exitCode,
       workerExitedNaturally: worker.exitCode === 0,
       exitCodeWhileServing,
+      workerPid: worker.pid,
     };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) {
@@ -1123,6 +1217,50 @@ async function drive(session) {
       operationWaitBudgetMs: 123,
       launchedRoles: ["player_host"],
     });
+    return;
+  }
+  if (scenario === "settle-and-rearm") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    const attempts = [
+      { guardianInstanceId: fixture.guardianInstanceId, attemptId: fixture.attemptId, armFacts: fixture.armFacts },
+      { guardianInstanceId: fixture.secondGuardianInstanceId, attemptId: fixture.secondAttemptId, armFacts: fixture.secondArmFacts },
+    ];
+    for (const [index, attempt] of attempts.entries()) {
+      // The Host's own reading of who is serving: both attempts must name the same pid.
+      process.stderr.write("wire_attempt_host_pid:" + index + ":" + process.pid + ":" + attempt.attemptId + "\\n");
+      await platform.arm({
+        guardianInstanceId: attempt.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: attempt.attemptId,
+        operationWaitBudgetMs: 123,
+        armFacts: attempt.armFacts,
+        authorization: { executable: fixture.approvedExecutable },
+      });
+      await platform.launch({
+        guardianInstanceId: attempt.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: attempt.attemptId,
+        deadlineUnixMs: Date.now() + 60000,
+        role: "player_host",
+        authorization: fixture.launchFacts,
+      });
+      await platform.contain({
+        guardianInstanceId: attempt.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: attempt.attemptId,
+        operationWaitBudgetMs: 123,
+        role: "player_host",
+      });
+      await platform.settle({
+        guardianInstanceId: attempt.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: attempt.attemptId,
+        operationWaitBudgetMs: 123,
+        launchedRoles: ["player_host"],
+      });
+    }
+    process.stderr.write("wire_attempts_complete:" + attempts.length + "\\n");
     return;
   }
   if (scenario === "recovery-success" || scenario === "recovery-role-rejected") {
