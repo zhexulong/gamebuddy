@@ -163,24 +163,77 @@ export function topLevelArguments(source) {
 }
 
 /**
- * Every occupant a `Clears(...)` declaration names, in catalog order.
+ * The wrapper's own occupants position, read from the ONE declaration that defines it.
  *
- * The argument list is the wrapper's own: `(descriptor, tool, destructive, refusalDetail, params occupants)`. The TOOL
- * is deliberately skipped - `"axe"` in that position is the price of a swing, not an occupant - which is the one place
- * this reader has to know the wrapper's shape, and the reason the wrapper is one function in the catalog.
+ * <p>
+ * `(descriptor, tool, destructive, refusalDetail, params occupants)` was this reader's hard-coded assumption until the prose
+ * field left the wrapper. Two arguments later the same defect would come back - and it failed in the worst direction: zero
+ * declarations parsed, which surfaced as fifteen `published_kind_no_action_clears` findings about the CATALOGUE while the
+ * parser was the thing that was wrong. So the position is taken from the declaration's own parameter list, once, and the
+ * arity cannot drift again.
+ * </p>
+ *
+ * @returns `{ position, declarationStart, declarationEnd }`, with `position` -1 when the wrapper cannot be read at all.
  */
-export function clearedKinds(catalogSource, constants = new Map()) {
+export function wrapperShape(catalogSource) {
+  const code = stripComments(catalogSource);
+  const declaration = /\bFarmhandActionDescriptor\s+Clears\s*\(/u.exec(code);
+  if (declaration === null) return { position: -1, declarationStart: -1, declarationEnd: -1 };
+  const open = declaration.index + declaration[0].length - 1;
+  let depth = 0;
+  for (let cursor = open; cursor < code.length; cursor += 1) {
+    if (code[cursor] === "(") depth += 1;
+    else if (code[cursor] === ")") {
+      depth -= 1;
+      if (depth !== 0) continue;
+      const parameters = topLevelArguments(code.slice(open + 1, cursor));
+      const position = parameters.findIndex((parameter) => /\bparams\s+/u.test(parameter));
+      return { position, declarationStart: declaration.index, declarationEnd: cursor };
+    }
+  }
+  return { position: -1, declarationStart: declaration.index, declarationEnd: -1 };
+}
+
+/**
+ * What one read of the catalog found: every occupant word a `Clears(...)` declaration names, HOW MANY declaration blocks
+ * were examined, and the position the occupant words were read from.
+ *
+ * <p>
+ * The counts travel with the words because a reader that parsed nothing must not be able to report on what the catalogue
+ * contains. The TOOL is the one argument deliberately skipped - `"axe"` in that position is the price of a swing, not an
+ * occupant - and it is skipped by POSITION taken from the wrapper's declaration, never from a number written here.
+ * </p>
+ */
+export function clearingDeclarations(catalogSource, constants = new Map()) {
   const code = stripComments(catalogSource);
   const arrays = stringArrayDeclarations(code);
+  const { position, declarationStart, declarationEnd } = wrapperShape(code);
   const cleared = new Map();
-  for (let index = 0; ; ) {
-    const call = nextCallArguments(code, "Clears(", index);
-    if (call === null) break;
-    index = call.next;
-    for (const argument of call.arguments.slice(4))
-      for (const word of wordsOfArgument(argument, arrays, constants)) if (!cleared.has(word)) cleared.set(word, []);
+  let blocks = 0;
+  if (position >= 0) {
+    for (let index = 0; ; ) {
+      const call = nextCallArguments(code, "Clears(", index);
+      if (call === null) break;
+      index = call.next;
+      // The wrapper's own declaration is not a declaration BLOCK: its "arguments" are parameter names, and counting it
+      // would let an unreadable catalog still report one block examined.
+      if (call.start >= declarationStart && call.start <= declarationEnd) continue;
+      blocks += 1;
+      for (const argument of call.arguments.slice(position))
+        for (const word of wordsOfArgument(argument, arrays, constants)) if (!cleared.has(word)) cleared.set(word, []);
+    }
   }
-  return cleared;
+  return { cleared, blocks, position };
+}
+
+/**
+ * Every occupant a `Clears(...)` declaration names, in catalog order.
+ *
+ * The read itself is <see cref="clearingDeclarations"/>: this is the word map alone, for the callers that only need the
+ * crossing.
+ */
+export function clearedKinds(catalogSource, constants = new Map()) {
+  return clearingDeclarations(catalogSource, constants).cleared;
 }
 
 /** `readonly string[] Name = { "a", "b" };` -> the literals each name holds. */
@@ -194,7 +247,7 @@ function stringArrayDeclarations(code) {
   return arrays;
 }
 
-/** The top-level arguments of the next `<marker>...` call at or after <paramref name="from"/>, and where it ended. */
+/** The top-level arguments of the next `<marker>...` call at or after `<paramref name="from"/>`, where it began and ended. */
 function nextCallArguments(code, marker, from) {
   const start = code.indexOf(marker, from);
   if (start < 0) return null;
@@ -204,7 +257,7 @@ function nextCallArguments(code, marker, from) {
     if (code[cursor] === "(") depth += 1;
     else if (code[cursor] === ")") {
       depth -= 1;
-      if (depth === 0) return { arguments: topLevelArguments(code.slice(open + 1, cursor)), next: cursor + 1 };
+      if (depth === 0) return { start, arguments: topLevelArguments(code.slice(open + 1, cursor)), next: cursor + 1 };
     }
   }
   return null;
@@ -336,17 +389,30 @@ export function checkStardewClearingVocabulary({
   const clumpWords = clumpWordsOf(read(SOURCES.clumps), constants);
   for (const [kind, from] of clumpWords.words) if (!published.words.has(kind)) published.words.set(kind, from);
 
-  const cleared = clearedKinds(read(SOURCES.catalog), constants);
+  const clearing = clearingDeclarations(read(SOURCES.catalog), constants);
+  const cleared = clearing.cleared;
   const unclearable = vocabulary === "" ? null : unclearableKinds(vocabulary, constants);
   const declared = vocabulary === "" ? null : declaredKinds(vocabulary, constants);
 
   const result = judge({ published: published.words, cleared, unclearable, freeTile, declared });
+  result.blocks = clearing.blocks;
+  result.occupantsPosition = clearing.position;
+  result.freeTile = freeTile ?? "unresolved";
+  // ZERO POPULATION IS BLOCKED, NOT FIFTEEN FINDINGS. A parse that read no declaration has not measured the catalogue, and
+  // reporting that as `published_kind_no_action_clears:<kind>` for every kind sends the next reader to the catalogue's
+  // content when the reader itself is what broke. This is the shape that let one arity change look like fifteen defects.
+  if (clearing.blocks === 0 || cleared.size === 0) {
+    result.verdict = "blocked";
+    result.findings = [
+      `clearing_declarations_unparsed:blocks=${clearing.blocks};declarations=${cleared.size};position=${clearing.position}`,
+    ];
+    return result;
+  }
   result.unresolved = [...published.unresolved, ...clumpWords.unresolved];
   if (result.unresolved.length > 0) {
     result.findings.push(...result.unresolved.map((name) => `kind_word_unresolved:${name}`));
     result.verdict = "failed";
   }
-  result.freeTile = freeTile ?? "unresolved";
   return result;
 }
 
@@ -388,6 +454,10 @@ export function report(result, write = (line) => process.stdout.write(`${line}\n
   write(`free-tile word (not a kind): ${result.freeTile}`);
   write(`cleared: ${result.cleared.join(", ")}`);
   write(`unclearable: ${result.unclearable.join(", ")}`);
+  write(
+    `stardew_clearing_vocabulary: blocks examined ${result.blocks} · declarations parsed ${result.cleared.length} · ` +
+      `position ${result.occupantsPosition}`,
+  );
   for (const finding of result.findings) write(finding);
   write(`stardew_clearing_vocabulary: ${result.verdict} (${result.findings.length} finding(s))`);
   return result.verdict === "passed" ? 0 : 1;

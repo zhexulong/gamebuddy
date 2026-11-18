@@ -20,11 +20,13 @@ import test from "node:test";
 import {
   checkStardewClearingVocabulary,
   clearedKinds,
+  clearingDeclarations,
   constantsIn,
   declaredKinds,
   judge,
   publishedWords,
   unclearableKinds,
+  wrapperShape,
 } from "./audit-stardew-clearing-vocabulary.mjs";
 
 /** One population, as the judge reads it: `Map` of word -> where it came from. */
@@ -124,13 +126,32 @@ test("an unresolved free-tile word is a blocked reading rather than a passing on
 
 test("clearedKinds reads the occupants and never the tool the swing costs", () => {
   const catalog = `
+    private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, params string[] occupants) => descriptor;
     private static readonly string[] ClumpOccupants = { "stump", "quarry_boulder" };
-    E("chop_tree", "x", G, Clears(SelfWalked(SlotTargetWith("axe", V, M)), "axe", destructive: false, null, "tree"), L, "treeChopSourceTargets");
-    E("clear_debris", "x", G, Clears(SelfWalked(SlotTarget(Carried)), FarmhandClearingCost.TargetDecidesTool, destructive: false, null, ClumpOccupants), L, "debrisTargets");
-    E("cut_grass", "x", G, Clears(SelfWalked(SlotTargetWith("scythe", V, M)), "scythe", destructive: true, CutGrassRefusalDetail, "grass"), L, "grassTargets");
+    E("chop_tree", "x", G, Clears(SelfWalked(SlotTargetWith("axe", V, M)), "axe", destructive: false, "tree"), L, "treeChopSourceTargets");
+    E("clear_debris", "x", G, Clears(SelfWalked(SlotTarget(Carried)), FarmhandClearingCost.TargetDecidesTool, destructive: false, ClumpOccupants), L, "debrisTargets");
+    E("cut_grass", "x", G, Clears(SelfWalked(SlotTargetWith("scythe", V, M)), "scythe", destructive: true, "grass"), L, "grassTargets");
   `;
 
   assert.deepEqual([...clearedKinds(catalog).keys()], ["tree", "stump", "quarry_boulder", "grass"]);
+  const read = clearingDeclarations(catalog);
+  assert.equal(read.blocks, 3, "the wrapper's own declaration is not a declaration block");
+  assert.equal(read.position, 3, "and the occupants position comes from the wrapper's parameter list");
+});
+
+test("the occupants position follows the wrapper's declaration, so the arity cannot drift", () => {
+  const four =
+    "private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, params string[] occupants) => descriptor;";
+  const five =
+    "private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, string? refusalDetail, params string[] occupants) => descriptor;";
+
+  assert.equal(wrapperShape(four).position, 3);
+  assert.equal(wrapperShape(five).position, 4);
+  assert.equal(
+    wrapperShape("nothing here").position,
+    -1,
+    "an unreadable wrapper says so instead of guessing a position",
+  );
 });
 
 test("publishedWords resolves the vocabulary constants a classifier returns", () => {
@@ -253,4 +274,34 @@ const REAL = Object.freeze({
     path.join(ROOT, "integrations/stardew/src/Core/Policy/FarmhandForEachHealing.cs"),
     "utf8",
   ),
+});
+
+test("a parse that read no declaration is BLOCKED, not a catalogue finding for every kind", () => {
+  // THE FALSIFIER, and the incident it replays: the wrapper's declaration is put back to its five-parameter shape while the
+  // call sites carry four arguments - the drift that made `.slice(4)` read zero declarations and report FIFTEEN
+  // `published_kind_no_action_clears` findings about the catalogue instead of one blocked reading about the parser.
+  const result = checkStardewClearingVocabulary({
+    read: (relative) => {
+      const source = REAL[relative];
+      if (source === undefined) throw new Error(`no probe source for ${relative}`);
+      return relative === "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"
+        ? source.replace(
+            "private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, params string[] occupants)",
+            "private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, string? refusalDetail, params string[] occupants)",
+          )
+        : source;
+    },
+  });
+
+  assert.equal(result.verdict, "blocked", "a reader that found nothing has not measured anything");
+  assert.equal(result.occupantsPosition, 4, "and it names the position it looked at");
+  assert.ok(
+    result.findings.some((finding) => /^clearing_declarations_unparsed:.*declarations=0/u.test(finding)),
+    `the reading names itself: ${result.findings.join(" ")}`,
+  );
+  assert.equal(
+    result.findings.some((finding) => finding.startsWith("published_kind_no_action_clears:")),
+    false,
+    "and it does not accuse the catalogue of a defect the parser invented",
+  );
 });
