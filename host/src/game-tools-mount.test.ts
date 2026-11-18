@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS } from "./action-registry.js";
 import { buildCandidateToolSchema, createStardewActionTools } from "./game-tools.js";
 
 /**
@@ -27,15 +28,20 @@ const CATALOG = readFileSync(
   "utf8",
 );
 
-/** Every id that has a mount block, straight from the source. */
+/**
+ * Every id that has a mount, straight from the source: a block's own `find` predicate, or the projection loop's list.
+ *
+ * One projection loop mounts a block for every id in `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS`, so a reader that only
+ * collects literals reports those actions as unmounted and blocks on a surface that is there.
+ */
 function mountedActionIds(): readonly string[] {
-  return [
-    ...new Set(
-      [...GAME_TOOLS.matchAll(/entry\.actionId === "([a-z_]+)"/g)]
-        .map((m) => m[1])
-        .filter((id): id is string => id !== undefined),
-    ),
-  ].sort();
+  const literals = [...GAME_TOOLS.matchAll(/entry\.actionId === "([a-z_]+)"/g)]
+    .map((m) => m[1])
+    .filter((id): id is string => id !== undefined);
+  const projected = /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\)/u.test(GAME_TOOLS)
+    ? [...STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS]
+    : [];
+  return [...new Set([...literals, ...projected])].sort();
 }
 
 /** The arguments the Mod's catalog declares for one action, and whether any carries an enum constraint. */

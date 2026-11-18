@@ -150,9 +150,18 @@ test("every staged candidate action stays surfaceable through a Host tool name",
  */
 const GAME_TOOLS_SOURCE = readFileSync(resolve(hostRoot, "src", "game-tools.ts"), "utf8");
 
-/** Every action id a mount block names, straight from the source. */
+/**
+ * Every action id a mount names, read from the source: a block's own literal, or the projection loop's list.
+ *
+ * The loop mounts ONE block for every id in `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS`, so reading only the literals would
+ * report those actions as unmounted and this ledger would name forty-eight mounts that are there.
+ */
 function mountedActionIds(): readonly string[] {
-  return [...new Set([...GAME_TOOLS_SOURCE.matchAll(/^\s*action: "([a-z_]+)",/gm)].map((match) => match[1]!))].sort();
+  const literals = [...GAME_TOOLS_SOURCE.matchAll(/^\s*action: "([a-z_]+)",/gm)].map((match) => match[1]!);
+  const projected = /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\)/u.test(GAME_TOOLS_SOURCE)
+    ? [...STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS]
+    : [];
+  return [...new Set([...literals, ...projected])].sort();
 }
 
 /** The descriptor hello_ack publishes for one artifact action: an `arguments` array plus the postcondition record. */

@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 
-import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
+import { STARDEW_ACTION_ADAPTERS, STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS } from "./action-registry.js";
 import { buildCandidateToolSchema, createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { ActionRegistration, ActionRegistrationDescriptor, Scope, Snapshot } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -44,13 +44,14 @@ import { readSourceShape } from "./test-support/source-shape.test-support.js";
  * </p>
  *
  * <p>
- * WHAT IS CONVERTED (2026-11-18): `sleep`. It is the easiest action in the artifact because its `argumentSchema` is the
- * empty object, so the derivation has no member to judge — no enum, no range, no declared description, no optional key,
- * no target family — and its mount already forwarded through `declaredArguments(descriptor, params)`. The one
- * hand-written restatement left was a `buildCandidateToolSchema` arm returning the empty object schema, which the
- * descriptor-derived fallback produces byte for byte; that arm is gone. `ride_bus` is the exact twin that was NOT
- * converted — the same empty declared argument set, the same arm — so the gate has to tell the two apart and does: one
- * derived, one stated `declaration_override`.
+ * WHAT IS CONVERTED (2026-11-18): the whole descriptor-derived set. `game-tools.ts` used to write forty-eight mount blocks,
+ * each one naming its action, calling `buildCandidateToolSchema` for it and forwarding an argument list by hand. One
+ * projection loop over `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` replaces all forty-eight: the ids are the registry's own
+ * list, the parameters are the declaration's arguments, and the forwarded names are `declaredArguments(descriptor, params)`.
+ * What the loop cannot state - the label and the sentence a model reads - is `DECLARED_ACTION_TOOL_PRESENTATION`, typed
+ * against that same array. `sleep` was the first member (its hand-written arm was the empty-schema second spelling); the
+ * twelve actions whose schema still needs a bounded pair, a closed vocabulary or a Host-only member keep their
+ * `buildCandidateToolSchema` arm and are stated `declaration_override`.
  * </p>
  *
  * <p>
@@ -60,8 +61,9 @@ import { readSourceShape } from "./test-support/source-shape.test-support.js";
  * the artifact cannot leave a stale entry behind.
  * </p>
  *
- * red-proof: put the `if (actionId === "sleep")` arm back -> `sleep` reads `stated` with `declaration_override` and
- *   `derived` drops 9 -> 8. Measured 2026-11-18 with the arm restored in `host/src/game-tools.ts`.
+ * red-proof: restore one deleted mount block outside the projection loop -> that action reads `stated` with
+ *   `parameters_inline`+`forwards_by_hand` and its register entry is spent, so the gate fails naming it.
+ * red-proof: put the `if (actionId === "sleep")` arm back -> `sleep` reads `stated` with `declaration_override`.
  * red-proof: delete one `NOT_YET_DERIVABLE` entry -> the gate fails naming that action and the residue it detected.
  * red-proof: give a converted mount a member (`parameters` gained `requestId`) -> the byte-identity test names the
  *   schema the declaration does not imply, and the derived cross-check names the argument the declaration never had.
@@ -222,6 +224,8 @@ type MountAuthoring = Readonly<{
 
 const MOUNT_CALL = "makeGameActionTool({";
 const LOOP_TABLE = /for \(const action of \[([^\]]*)\] as const\)/gu;
+/** The projection loop: one block serves every action in the registry's own id list. */
+const PROJECTION_LOOP = /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\)/u;
 
 /**
  * Read every mount's authoring act out of the source's one-line shape. Two shapes are derived and everything else is a
@@ -247,21 +251,24 @@ function authoringFromShape(shape: string): Readonly<{
     const window = shape.slice(start, next === undefined ? shape.length : next);
     const named = /action: "([a-z_]+)"/u.exec(window)?.at(1);
     let ids: readonly string[] = named === undefined ? [] : [named];
-    if (ids.length === 0 && /\baction,/u.test(window)) {
-      // The table this block iterates is the last one declared between the previous shorthand mount and this one.
+    if (ids.length === 0 && /\baction,\s*|\baction:\s*actionId,/.test(window)) {
+      // The table this block iterates is the last one declared between the previous shorthand mount and this one, and
+      // the projection loop's table is the registry's own id list - read from the registry, never written here.
       const between = shape.slice(previousShorthandStart + 1, start);
       const table = [...between.matchAll(LOOP_TABLE)].at(-1)?.[1];
-      ids =
-        table === undefined
-          ? []
-          : [...table.matchAll(/"([a-z_]+)"/gu)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
+      if (PROJECTION_LOOP.test(between)) ids = [...STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS];
+      else
+        ids =
+          table === undefined
+            ? []
+            : [...table.matchAll(/"([a-z_]+)"/gu)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
       previousShorthandStart = start;
     }
     if (ids.length === 0) unattributable.push(position);
     const parametersAt = window.indexOf("parameters:");
     const forwardsAt = window.indexOf("toArgs:");
     const authoring = {
-      parameters: readParameterAuthoring(parametersAt === -1 ? "" : window.slice(parametersAt, parametersAt + 24)),
+      parameters: readParameterAuthoring(parametersAt === -1 ? "" : window.slice(parametersAt, parametersAt + 48)),
       forwards: readForwardsAuthoring(forwardsAt === -1 ? "" : window.slice(forwardsAt, forwardsAt + 90)),
     };
     for (const id of ids) authored.set(id, authoring);
@@ -272,6 +279,7 @@ function authoringFromShape(shape: string): Readonly<{
 /** Where a mount's parameter schema came from, read from the declaration up to the first argument. */
 function readParameterAuthoring(text: string): MountAuthoring["parameters"] {
   if (text.startsWith("parameters: schema,")) return "declaration";
+  if (text.startsWith("parameters: buildCandidateToolSchema(")) return "declaration";
   if (text.startsWith("parameters: Type.Object(")) return "inline";
   return "unread";
 }
@@ -325,33 +333,24 @@ type Residue = keyof typeof RESIDUE_REASONS | "authoring_unread";
  * THE REGISTER: every action whose tool is not derived from its declaration today, with the exact residue the gate
  * detects for it. It is an allow-list with an expiry — an entry that stops describing its mount fails the gate.
  *
- * WHERE THE 97 STAND (2026-11-18, this checkout): 3 mount no tool at all; 12 keep a hand-written
- * `buildCandidateToolSchema` arm; 82 restate the declaration in the mount itself — 55 of those spell both the parameter
- * schema and the forwarded names, 27 only the forwarded names. None of them is a reason to stop; every one of them is
- * an action nobody has moved yet, and moving one means deleting its line here.
+ * WHERE THE 70 STAND (2026-11-18, this checkout): 3 mount no tool at all; 12 keep a hand-written
+ * `buildCandidateToolSchema` arm because their schema needs a bound pair, a closed vocabulary or a Host-only member the
+ * declaration cannot state; 55 spell both the parameter schema and the forwarded names in their own mount block. None of
+ * them is a reason to stop; every one of them is an action nobody has moved yet, and moving one means deleting its line
+ * here. The thirty-six the projection loop took are gone from this file, which is why it no longer names them.
  */
 const NOT_YET_DERIVABLE: Readonly<Record<string, Residue | readonly Residue[]>> = Object.freeze({
-  accept_daily_quest: "forwards_by_hand",
-  accept_special_order: "forwards_by_hand",
-  answer_dialogue: "forwards_by_hand",
   bait_crab_pot: ["forwards_by_hand", "parameters_inline"],
-  break_container: "forwards_by_hand",
-  break_resource_clump: "forwards_by_hand",
   break_rock: ["forwards_by_hand", "parameters_inline"],
-  build_farm_building: "forwards_by_hand",
   chest_retrieve: ["forwards_by_hand", "parameters_inline"],
   chest_store: ["forwards_by_hand", "parameters_inline"],
   chop_stump: ["forwards_by_hand", "parameters_inline"],
   chop_tree: ["forwards_by_hand", "parameters_inline"],
-  claim_mail_attachment: "forwards_by_hand",
-  claim_museum_reward: "forwards_by_hand",
   clear_cask: ["forwards_by_hand", "parameters_inline"],
   clear_debris: ["forwards_by_hand", "parameters_inline"],
-  clear_fish_pond: "forwards_by_hand",
   clear_hoedirt: ["forwards_by_hand", "parameters_inline"],
   collect_animal_product: ["forwards_by_hand", "parameters_inline"],
   collect_crab_pot_output: ["forwards_by_hand", "parameters_inline"],
-  color_placed_object: "forwards_by_hand",
   cook_recipe: ["forwards_by_hand", "parameters_inline"],
   craft_item: ["forwards_by_hand", "parameters_inline"],
   cut_grass: ["forwards_by_hand", "parameters_inline"],
@@ -359,13 +358,11 @@ const NOT_YET_DERIVABLE: Readonly<Record<string, Residue | readonly Residue[]>> 
   deposit_silo_hay: ["forwards_by_hand", "parameters_inline"],
   dig_artifact_spot: ["forwards_by_hand", "parameters_inline"],
   dress_mannequin: ["forwards_by_hand", "parameters_inline"],
-  dye_clothing_with_item: "forwards_by_hand",
   enter_exit: ["forwards_by_hand", "parameters_inline"],
   enter_mine: ["forwards_by_hand", "parameters_inline"],
   equip_tool: ["forwards_by_hand", "parameters_inline"],
-  equip_wearable: "forwards_by_hand",
-  express_emote: ["declaration_override", "forwards_by_hand"],
-  face_direction: ["declaration_override", "forwards_by_hand"],
+  express_emote: "declaration_override",
+  face_direction: "declaration_override",
   feed_animal: ["forwards_by_hand", "parameters_inline"],
   fertilize_tile: ["forwards_by_hand", "parameters_inline"],
   find_destination: "no_tool",
@@ -374,60 +371,45 @@ const NOT_YET_DERIVABLE: Readonly<Record<string, Residue | readonly Residue[]>> 
   harvest_crop: ["forwards_by_hand", "parameters_inline"],
   harvest_fruit_tree: ["forwards_by_hand", "parameters_inline"],
   inspect_world_map: "no_tool",
-  interact_npc_with_item: ["declaration_override", "forwards_by_hand"],
+  interact_npc_with_item: "declaration_override",
   machine_collect_output: ["forwards_by_hand", "parameters_inline"],
   machine_inspect: ["forwards_by_hand", "parameters_inline"],
   machine_load: ["forwards_by_hand", "parameters_inline"],
   mount_transport: ["forwards_by_hand", "parameters_inline"],
-  move_placed_furniture: "forwards_by_hand",
   move_to_tile: ["forwards_by_hand", "parameters_inline"],
-  name_entity: "forwards_by_hand",
   navigate_to_destination: ["forwards_by_hand", "parameters_inline"],
   npc_relationship: ["forwards_by_hand", "parameters_inline"],
   observe_scene: "no_tool",
-  open_geode: "forwards_by_hand",
-  pan_ore: "forwards_by_hand",
-  pet_animal: ["declaration_override", "forwards_by_hand"],
-  pet_farm_animal: ["declaration_override", "forwards_by_hand"],
+  pet_animal: "declaration_override",
+  pet_farm_animal: "declaration_override",
   pickup_forage: ["forwards_by_hand", "parameters_inline"],
   pickup_item: ["forwards_by_hand", "parameters_inline"],
   place_crab_pot: ["forwards_by_hand", "parameters_inline"],
-  place_item_on_pedestal: "forwards_by_hand",
-  place_owned_object: "forwards_by_hand",
   place_wood_fence: ["forwards_by_hand", "parameters_inline"],
   plant_sapling: ["forwards_by_hand", "parameters_inline"],
   plant_seed: ["forwards_by_hand", "parameters_inline"],
-  put_item_in_fish_tank: "forwards_by_hand",
   refill_watering_can: ["forwards_by_hand", "parameters_inline"],
-  remove_fence: "forwards_by_hand",
-  remove_placed_item: "forwards_by_hand",
-  respond_level_up: ["declaration_override", "forwards_by_hand"],
+  respond_level_up: "declaration_override",
   ride_bus: "declaration_override",
-  ride_minecart: ["declaration_override", "forwards_by_hand"],
-  rotate_furniture: "forwards_by_hand",
+  ride_minecart: "declaration_override",
   scythe_crop: ["forwards_by_hand", "parameters_inline"],
-  send_multiplayer_chat: "forwards_by_hand",
   set_sign_display: ["forwards_by_hand", "parameters_inline"],
   shake_tree: ["forwards_by_hand", "parameters_inline"],
   ship_item: ["forwards_by_hand", "parameters_inline"],
-  tailor_clothing: "forwards_by_hand",
   take_pedestal_item: ["forwards_by_hand", "parameters_inline"],
-  talk_to_npc: ["declaration_override", "forwards_by_hand"],
+  talk_to_npc: "declaration_override",
   till_soil: ["forwards_by_hand", "parameters_inline"],
-  toggle_animal_door: ["declaration_override", "forwards_by_hand"],
+  toggle_animal_door: "declaration_override",
   toggle_fence_gate: ["forwards_by_hand", "parameters_inline"],
   toggle_tool_light: ["forwards_by_hand", "parameters_inline"],
   travel: ["forwards_by_hand", "parameters_inline"],
-  unequip_wearable: "forwards_by_hand",
   use_item: ["forwards_by_hand", "parameters_inline"],
-  use_mine_ladder: "forwards_by_hand",
-  use_obelisk: ["declaration_override", "forwards_by_hand"],
+  use_obelisk: "declaration_override",
   use_raft: ["forwards_by_hand", "parameters_inline"],
-  use_warp_item: "forwards_by_hand",
   water_crop: ["forwards_by_hand", "parameters_inline"],
   water_pet_bowl: ["forwards_by_hand", "parameters_inline"],
   water_slime_hutch_trough: ["forwards_by_hand", "parameters_inline"],
-  withdraw_silo_hay: ["declaration_override", "forwards_by_hand"],
+  withdraw_silo_hay: "declaration_override",
 });
 
 function declaredResidues(residue: Residue | readonly Residue[] | undefined): readonly Residue[] {

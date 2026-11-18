@@ -618,7 +618,13 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
   const problems = [];
   const identity = callerIdentityFields(text);
   const arms = schemaArmKeys(text);
-  const loops = loopActionIds(text);
+  const declaredToDerive = frozenStringArray(
+    stripComments(argumentDeclarations),
+    "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS",
+  );
+  if (declaredToDerive === null || declaredToDerive.length === 0)
+    problems.push("tool_schema_declared_action_loop_unreadable");
+  const loops = loopActionIds(text, declaredToDerive ?? []);
   const tables = readArgumentTables(argumentDeclarations);
   const describesDescriptor = (text.match(/declaredArgumentNames\(descriptor\)/gu) ?? []).length > 0;
   if (!describesDescriptor) problems.push("tool_schema_descriptor_fallback_unreadable");
@@ -643,10 +649,12 @@ export function readToolSurface(source, catalog, argumentDeclarations = "") {
       problems.push(`tool_mount_action_unreadable:${block.slice(0, 60).replace(/\s+/gu, " ")}`);
       continue;
     }
-    const parameters = declaredToolParameters(block, arms, catalog, identity);
     const declaration = forwardedArgumentDeclaration(block);
     const route = mountToolName(block);
     for (const id of ids) {
+      // Per id, because a projection loop writes ONE block for every action in its own list: the schema that block
+      // builds is the schema of the action the CURRENT iteration names, not of the first id in the loop.
+      const parameters = declaredToolParameters(block, arms, catalog, identity, id);
       if (parameters === null) problems.push(`tool_schema_parameters_unreadable:${id}`);
       else if (declaredByAction.has(id)) problems.push(`tool_mounted_twice:${id}`);
       else declaredByAction.set(id, parameters);
@@ -733,13 +741,25 @@ function callerIdentityFields(text) {
  * is the only place it is written down. Each entry carries the region it covers, because a mount's id must come from the
  * loop it is INSIDE rather than from the nearest one above it.
  */
-function loopActionIds(text) {
+function loopActionIds(text, declaredToDerive) {
   const loops = [];
   for (const loop of text.matchAll(/for \(const action of \[([^\]]*)\] as const\) \{/gu)) {
     const open = loop.index + loop[0].length - 1;
     const close = balancedEnd(text, open);
     if (close < 0) continue;
     loops.push({ start: open, end: close, ids: [...loop[1].matchAll(/"([a-z0-9_]+)"/gu)].map((match) => match[1]) });
+  }
+  // A projection loop: the ids are the registry's own list, so the population is read from that declaration rather than
+  // spelled here. A loop over any other name is left out, and the mounts inside it are blocked by name below.
+  for (const loop of text.matchAll(/for \(const [A-Za-z_$][\w$]* of ([A-Z][A-Z0-9_]*)(?: as const)?\) \{/gu)) {
+    const open = loop.index + loop[0].length - 1;
+    const close = balancedEnd(text, open);
+    if (close < 0) continue;
+    loops.push({
+      start: open,
+      end: close,
+      ids: loop[1] === "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS" ? [...declaredToDerive] : [],
+    });
   }
   return loops;
 }
@@ -776,7 +796,7 @@ function lastObjectLiteralKeys(block) {
 }
 
 /** What one mount's `parameters` DECLARES, minus the caller-identity fields, or null when the reading is incomplete. */
-function declaredToolParameters(block, arms, catalog, identity) {
+function declaredToolParameters(block, arms, catalog, identity, mountActionId) {
   const inline = /\bparameters:\s*Type\.Object\(\s*\{/u.exec(block);
   if (inline !== null) {
     const open = inline.index + inline[0].length - 1;
@@ -785,9 +805,12 @@ function declaredToolParameters(block, arms, catalog, identity) {
     const keys = objectLiteralKeys(block.slice(open + 1, close));
     return keys === null ? null : new Set(keys.filter((name) => !identity.includes(name)));
   }
-  const identifier = /\bparameters:\s*([A-Za-z_$][\w$]*)/u.exec(block);
-  if (identifier === null) return null;
-  const actionId = /\baction:\s*"([a-z0-9_]+)"/u.exec(block)?.[1];
+  // A projection loop builds every mount's schema from the same call, so the action it is built for is the loop's own
+  // id - read from the enclosing region above - and never a literal in the block.
+  const derived = /\bparameters:\s*buildCandidateToolSchema\(/u.test(block);
+  const identifier = derived ? null : /\bparameters:\s*([A-Za-z_$][\w$]*)/u.exec(block);
+  if (!derived && identifier === null) return null;
+  const actionId = mountActionId ?? /\baction:\s*"([a-z0-9_]+)"/u.exec(block)?.[1];
   if (actionId === undefined) return null;
   if (arms.has(actionId)) return new Set([...arms.get(actionId)].filter((name) => !identity.includes(name)));
   const entry = catalog.actions.get(actionId);

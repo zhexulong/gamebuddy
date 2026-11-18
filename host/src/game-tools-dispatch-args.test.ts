@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { isDescriptorDerivedActionId } from "./action-registry.js";
+import { STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS, isDescriptorDerivedActionId } from "./action-registry.js";
 
 /**
  * The two ways a mounted action can be MOUNTED BUT UNUSABLE - neither of which a native-local runner can see, because
@@ -48,13 +48,27 @@ function mountBlocks() {
     );
     blocks.push({ action, params: params.trim(), body: body.trim() });
   }
+  // The projection loop: ONE block serves every action in the registry's own id list, so the population it covers is
+  // that list and the expression it forwards with is the loop body's own `toArgs`.
+  const loop = /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\) \{([\s\S]*?)\n  \}/u.exec(
+    GAME_TOOLS,
+  );
+  const forwards = loop === null ? null : /toArgs: \(([^)]*)\) => ([\s\S]{0,120}?),\n/u.exec(loop[1]!);
+  if (forwards !== null)
+    for (const action of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)
+      blocks.push({ action, params: forwards[1]!.trim(), body: forwards[2]!.trim() });
   return blocks;
 }
 
 /** Every action id a mount block asks the completeness gate about, straight from the source. */
 function gateGuardedActionIds(): readonly string[] {
   const calls = GAME_TOOLS.matchAll(/isModDescriptorComplete\("([a-z_]+)"/gu);
-  return [...new Set([...calls].map((match) => match[1]!))].sort();
+  // The projection loop asks the same gate once, for the action the current iteration names, so its ids are read from
+  // the list the loop iterates rather than from a literal argument a loop cannot write.
+  const projected = /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\)/u.test(GAME_TOOLS)
+    ? [...STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS]
+    : [];
+  return [...new Set([...calls].map((match) => match[1]!).concat(projected))].sort();
 }
 
 /** The arguments the Mod declares, in EITHER descriptor syntax (the long form or the `A(...)` shorthand). */
@@ -85,7 +99,7 @@ test("every mount forwards the arguments its action declares", () => {
     // delegates to a helper that takes the names off the descriptor - the stronger design, because the schema and the
     // wire args then come from one source. That helper is asserted below, so "delegates to something" is not a loophole.
     const delegated = new RegExp(
-      "declaredArguments\\(\\s*registration\\.descriptor\\s*,\\s*" + source + "\\s*\\)",
+      "declaredArguments\\(\\s*(?:registration\\.)?descriptor\\s*,\\s*" + source + "\\s*\\)",
     ).test(block.body);
     const forwardsAll =
       delegated ||
