@@ -5956,13 +5956,13 @@
           "type": "boolean"
         },
         "occupant": {
-          "description": "The engine's stored thing on this tile, named by its own runtime type: `none` when the tile is free, `unspecified` when the type name does not survive the trip. HoeDirt is not an occupant - it is the tile's soil and travels as `hoed`/`watered`/`crop`. This is NOT the vocabulary a `for_each` filter speaks; `occupantKind` is.",
+          "description": "The engine's stored thing on this tile, named by its own runtime type: `none` when the tile is free, `unspecified` when the type name does not survive the trip. HoeDirt is not an occupant - it is the tile's soil and travels as `hoed`/`watered`/`crop`. This is NOT the vocabulary an action's `Clears` declaration speaks; `occupantKind` is.",
           "type": "string",
           "minLength": 1,
           "maxLength": 64
         },
         "occupantKind": {
-          "description": "What stands on this tile in the words a `for_each` `where: [{ occupant: ... }]` filter and an action's `Clears` declaration use - `TileOccupancy.Of`, the same function the pass's own row reads: weed, stone, crop, grass, tree, tree_stump, a resource clump's own name, object, terrain, or `none`.",
+          "description": "What stands on this tile, in the one vocabulary an action's `Clears` declaration is written in - `TileOccupancy.Of`, the same function the tile-area pass reads: weed, stone, crop, grass, tree, tree_stump, a resource clump's own name, object, terrain, or `none`. Compare the word directly when deciding which action removes this tile; `occupant` carries the engine's runtime type instead.",
           "type": "string",
           "minLength": 1,
           "maxLength": 64
