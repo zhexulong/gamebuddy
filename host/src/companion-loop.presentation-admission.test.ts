@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionLoop, NO_SPEECH_SURFACE_BLOCK } from "./companion-loop.js";
-import { FACT_PRODUCER, FACT_TURN_CONSEQUENCE, NOT_OWED, type WorldFact } from "./event-pump.js";
+import { CompanionLoop, NO_PRESENTATION_LEASE, NO_SPEECH_SURFACE_BLOCK } from "./companion-loop.js";
+import {
+  FACT_PRODUCER,
+  FACT_TURN_CONSEQUENCE,
+  HELD_WORLD_DECLARATIONS,
+  type HeldWorldDeclaration,
+  NOT_OWED,
+  type WorldFact,
+} from "./event-pump.js";
+import { HELD_WORLD_ZH } from "./fact-brief.js";
 import { PRESENTATION_LEASE_KINDS, presentationSourceOf } from "./presentation-lease.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
 
@@ -178,6 +186,21 @@ function worldFactOf(kind: string, sourceEventId = `fact_${kind}`): WorldFact {
     occurredAtMs: 5,
     semanticKind: kind,
     payload: { kind },
+  };
+}
+
+/** One fact a kind declares the world is waiting on, in the payload field that says so. */
+function heldFact(declaration: HeldWorldDeclaration): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: `modal_${declaration}`,
+    sourceEventId: `modal_${declaration}`,
+    correlationId: `modal_${declaration}`,
+    revision: 1,
+    occurredAtMs: 5,
+    semanticKind: "modal_presented",
+    payload: { kind: "modal_presented", modalType: "DialogueBox", [declaration]: true },
   };
 }
 
@@ -363,4 +386,60 @@ test("the_same_fact_with_an_opaque_identity_is_delivered_and_admitted", async ()
   assert.deepEqual(refused.noSurfaceShapes, { "receipt:succeeded": 1 }, "and the account says which shape and why");
   assert.equal(presentationSourceOf(receiptOf("succeeded")), undefined, "a receipt has no identity to present under");
   assert.equal(NOT_OWED.noSurface, "no_surface_for", "the reason this test reads is the one the account prints");
+});
+
+/**
+ * THE DECLARED EXCEPTION, MEASURED: THE ONE TURN THAT IS DELIVERED WITH NO LEASE.
+ *
+ * <p>
+ * `9be6af14` removed the turns whose only product could be words nobody sees, and the gate above states it as a
+ * biconditional. A menu that has stopped the clock is the opposite product: the turn exists to be ANSWERED, by
+ * `dismiss_modal` or `answer_dialogue`, and the words are what the same turn is told not to rely on
+ * (`speechSurfaceStatement`). So this is not the `round66` defect returning - that was a turn whose ONLY content was an
+ * outcome, which had nothing to do with the world standing still.
+ * </p>
+ *
+ * <p>
+ * AND THE COST IS COUNTED RATHER THAN WAIVED. If she speaks anyway, the bubble is withheld as
+ * `no_presentation_lease` - the delivery layer's own reason, printed on the account - so the exception cannot become a
+ * silent leak of provider turns. What it buys is the 610 seconds `round76` spent with a `DialogueBox` on the screen and
+ * no turn at all: every declaration is driven, so a declaration added to `HELD_WORLD_DECLARATIONS` is covered here without
+ * this file changing.
+ * </p>
+ */
+test("a_held_world_is_answered_even_though_its_words_cannot_be_shown", async () => {
+  assert.ok(HELD_WORLD_DECLARATIONS.length > 0, "declarations examined 0: nothing can hold a world");
+  const delivered: string[] = [];
+  const findings: string[] = [];
+  for (const declaration of HELD_WORLD_DECLARATIONS) {
+    const reading = await flushOf(heldFact(declaration), undefined);
+    if (!reading.delivered) {
+      findings.push(
+        `${declaration}: a held world opened no turn at all, which is the defect this exception exists for`,
+      );
+      continue;
+    }
+    delivered.push(declaration);
+    if (reading.admitted)
+      findings.push(`${declaration}: the surface admitted it, so this is no longer the declared exception`);
+    if (!reading.toldCannotSpeak) findings.push(`${declaration}: the model was not told its words would not be shown`);
+    if (reading.bubbles !== 0)
+      findings.push(`${declaration}: committed ${String(reading.bubbles)} bubbles nobody can read`);
+    if (reading.withheld !== NO_PRESENTATION_LEASE)
+      findings.push(`${declaration}: the withheld bubble is filed as ${String(reading.withheld)} instead of by name`);
+    if (!reading.text.includes(HELD_WORLD_ZH[declaration]))
+      findings.push(`${declaration}: the turn does not state what is blocking in the words the prompt has for it`);
+    if (!reading.text.includes("DialogueBox"))
+      findings.push(`${declaration}: the turn does not name the modal that is holding the world`);
+  }
+  assert.deepEqual(
+    findings,
+    [],
+    `declarations examined ${String(HELD_WORLD_DECLARATIONS.length)}: ${findings.join("; ")}`,
+  );
+  assert.equal(
+    delivered.length,
+    HELD_WORLD_DECLARATIONS.length,
+    `declarations examined ${String(HELD_WORLD_DECLARATIONS.length)} · delivered ${String(delivered.length)}`,
+  );
 });

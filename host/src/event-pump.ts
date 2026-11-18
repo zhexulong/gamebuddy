@@ -259,8 +259,19 @@ export const FACT_PRODUCERS = Object.freeze(Object.values(FACT_PRODUCER));
 
 export type FactProducer = (typeof FACT_PRODUCERS)[number];
 
-/** One decision, with the producer of the fact that made it. `undefined` means no fact decided it. */
-type FlushDecision<Decision extends string> = Readonly<{ decision: Decision; producedBy: FactProducer | undefined }>;
+/**
+ * One decision, with the producer of the fact that made it. `undefined` means no fact decided it.
+ *
+ * `heldWorld` is set on the ONE decision it describes: the fact that opened this turn declared the world is waiting on
+ * an answer AND no surface could show her reply, so the turn exists for that declaration alone (`heldWorldOf`). It is
+ * carried on the decision rather than recomputed at the opener because the batch is composed after the windows are
+ * consumed, and a fact that arrived between the two moments did not decide this turn.
+ */
+type FlushDecision<Decision extends string> = Readonly<{
+  decision: Decision;
+  producedBy: FactProducer | undefined;
+  heldWorld?: HeldWorldDeclaration | undefined;
+}>;
 
 /**
  * A `not_owed` answer, plus the fact SHAPE that could not be shown when the surface is what refused the turn.
@@ -362,6 +373,11 @@ export const NOT_OWED = Object.freeze({
    * The reason's own braces in the account name the SHAPES (`factTurnShape`: `receipt:succeeded`, `world_fact`, ...) rather
    * than the producer, because every one of them arrives through the adapter and the question a reader has is which fact
    * shape is being invited to speak into nothing.
+   * </p>
+   * <p>
+   * ONE SHAPE IS NEVER ANSWERED THIS WAY: a fact that declares the world is waiting on it (`heldWorldOf`) opens its own
+   * turn and states the block in its prompt. `round76` measured what the old rule did with 29 of them in ten minutes -
+   * `no_surface_for 95`, `lost 52`, and 610 seconds of a menu nobody answered.
    * </p>
    */
   noSurface: "no_surface_for",
@@ -591,6 +607,17 @@ export function tracedFacts(traces: Readonly<Record<string, number>>): number {
 export const BUBBLES_DELIVERED = "bubbles delivered";
 export const LOST = "lost";
 /**
+ * The label of the held-world reading: turns this pump opened for a world that declared it was waiting on an answer.
+ *
+ * Printed beside `turns opened`, because it answers the question `no_surface_for` used to receive. A menu that stopped the
+ * clock cannot present (`presentation-lease.ts` names six kinds and a menu is not among them), so there are only two
+ * honest outcomes: lose the fact, or open its turn. This number says which happened, and `round76` had no word for the
+ * case at all - 29 modal facts in ten minutes, `no_surface_for: 95`, `lost 52`, and no line anywhere that said the world
+ * was blocked. Its total is `turns opened`'s own sum over these declarations, so the two readings cannot disagree about
+ * which turns existed.
+ */
+export const HELD_WORLD_OPENED = "held world opened";
+/**
  * The label of the stall reading: how many `execution_stalled` facts this run minted, by the Mod's own reason.
  *
  * IT EXISTS BECAUSE THE OLD READING WAS A ZERO THAT MEANT NOTHING. A run with `lost 0` and no stall segment cannot say
@@ -703,6 +730,19 @@ export type TurnAccount = Readonly<{
    * was answered that way, so the two numbers cannot disagree and a missing shape would show as a short sum.
    */
   noSurface: Readonly<Record<string, number>>;
+  /**
+   * The turns this pump opened because a fact DECLARED the world was waiting on it, one count per declaration
+   * (`HELD_WORLD_DECLARATIONS`) - the reading `round76` could not produce.
+   *
+   * <p>
+   * WHY IT IS NOT DERIVABLE FROM THE OPENERS. `turns opened {world_fact: n}` counts a clock mark and a menu in the same
+   * number, so a run that answered a stopped world and a run that answered the hour would read the same - which is exactly
+   * how `round76`'s 610 seconds of an unanswered `DialogueBox` stayed invisible while `no_surface_for: 95` described it as
+   * a surface problem. `opened` is this field's total (every held-world turn is one of the turns above), so the two cannot
+   * disagree about which turns existed.
+   * </p>
+   */
+  heldWorld: Readonly<{ opened: number; byDeclaration: Readonly<Record<HeldWorldDeclaration, number>> }>;
   /**
    * The batches this pump assembled, counted where the batch is composed.
    *
@@ -936,6 +976,12 @@ export function turnAccountLine(account: TurnAccount): string {
   // the zeros answer.
   const tracesReading = TRACE_KINDS.map((kind) => `${kind}: ${String(account.traces[kind] ?? 0)}`).join(", ");
   const tracesSegment = `${TRACES} ${String(tracedFacts(account.traces))} {${tracesReading}}`;
+  // THE HELD-WORLD READING, in the declaration's own spelling: a reader joins it to the Mod's payload record by the same
+  // word (`isQuestion`, `blocksTimePass`), and the declared zeros say the rule exists in a run where no menu mounted.
+  const heldWorldReading = HELD_WORLD_DECLARATIONS.map(
+    (declaration) => `${declaration}: ${String(account.heldWorld.byDeclaration[declaration])}`,
+  ).join(", ");
+  const heldWorldSegment = `${HELD_WORLD_OPENED} ${String(account.heldWorld.opened)} {${heldWorldReading}}`;
   const restatementsSegment = `${RESTATEMENTS} ${String(account.restatements.examined)} {opened: ${String(
     account.restatements.opened,
   )}, carried: ${String(account.restatements.carried)}, suppressed: ${String(account.restatements.suppressed)}}`;
@@ -949,7 +995,7 @@ export function turnAccountLine(account: TurnAccount): string {
     .map((shape) => `${shape}: ${String(account.carry.lost[shape])}`)
     .join(", ");
   const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)} · ${OLDEST_HELD_MS} ${String(account.carry.oldestHeldMs)} · ${BACKLOG_TURNS_OPENED} ${String(account.carry.named)} · ${BACKLOG_BOUND} ${String(account.carry.backlogBoundMs)}`;
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed} · ${restatementsSegment}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${heldWorldSegment} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed} · ${restatementsSegment}`;
 }
 
 /**
@@ -2137,6 +2183,18 @@ export class CompanionEventPump {
   /** The shapes behind `NOT_OWED.noSurface`, in the pump's own spelling (`factTurnShape`); emptied by `clear()`. */
   readonly #noSurfaceByShape: Record<string, number> = {};
   /**
+   * Turns this pump opened BECAUSE a fact declared the world was waiting, one count per `HELD_WORLD_DECLARATIONS` member.
+   *
+   * <p>
+   * The reading `round76` could not produce. A menu that stopped the clock arrived twenty-nine times in ten minutes and the
+   * account had one word for all of it: `no_surface_for` - which says the surface refused a turn, not that the world was
+   * blocked. Counted where the turn is counted and derived from the same declaration the opener reads, so a kind that
+   * stops holding the world cannot leave a stale number behind it, and the declared zeros say the rule exists even in a run
+   * where no menu mounted.
+   * </p>
+   */
+  readonly #heldWorldOpened: Record<HeldWorldDeclaration, number> = initializedByReason(HELD_WORLD_DECLARATIONS);
+  /**
    * Which producer put each WAITING fact here, by slot key.
    *
    * Beside the windows rather than on the fact: a fact is delivered to the model verbatim (`takeBatch` -> `batch.facts`),
@@ -2534,6 +2592,7 @@ export class CompanionEventPump {
     this.#carryFacts = 0;
     this.#carriedBacklogNamed = 0;
     for (const shape of Object.keys(this.#carryLostByShape)) delete this.#carryLostByShape[shape];
+    for (const declaration of HELD_WORLD_DECLARATIONS) this.#heldWorldOpened[declaration] = 0;
     this.#deliveryBubbles = 0;
     for (const reason of Object.keys(this.#deliveryLost)) delete this.#deliveryLost[reason];
     for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
@@ -2596,6 +2655,10 @@ export class CompanionEventPump {
         suppressed: this.#notOwedByReason[NOT_OWED.observationRestated],
       }),
       noSurface: Object.freeze({ ...this.#noSurfaceByShape }),
+      heldWorld: Object.freeze({
+        opened: HELD_WORLD_DECLARATIONS.reduce((total, declaration) => total + this.#heldWorldOpened[declaration], 0),
+        byDeclaration: Object.freeze({ ...this.#heldWorldOpened }),
+      }),
       // COUNTED WHERE THE BATCH IS COMPOSED (`takeBatch`), not derived from the two histograms beside it: a count that is
       // the sum of its own terms cannot witness a batch that was assembled and then discarded, which is the defect this
       // number exists to make impossible.
@@ -3057,6 +3120,7 @@ export class CompanionEventPump {
       this.#openedTurns += 1;
       this.#openedByReason[opening.decision] += 1;
       if (opening.producedBy !== undefined) this.#openedByProducer[opening.decision][opening.producedBy] += 1;
+      if (opening.heldWorld !== undefined) this.#heldWorldOpened[opening.heldWorld] += 1;
       this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening.decision });
       // A NEW TURN HAS BEEN TOLD NOTHING: the shapes an earlier turn preempted are news again to this one, and a ledger
       // that outlived the turn would silence a plan that is still failing ten minutes later.
@@ -3102,14 +3166,42 @@ export class CompanionEventPump {
       return Object.freeze({
         decision: isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact,
         producedBy: this.#producedBy.get(factSlotKey(fact)),
+        heldWorld: this.#heldWorldThatOpened(fact),
       });
     }
     return undefined;
   }
 
   /**
+   * The declaration this fact opened the turn WITH, or `undefined` when the turn would have opened anyway.
+   *
+   * <p>
+   * THIS IS THE COUNTER'S POPULATION AND NOT A SECOND READING of the fact: the turn a held world buys is exactly the one
+   * that no surface could have bought, so a fact that is both held and presentable (or a wake) is NOT counted here - its
+   * turn exists without the declaration, and counting it would inflate the one number that says the rule fired. What the
+   * account prints (`held world opened`) is therefore "turns this pump opened for a world that was waiting", which is the
+   * number `no_surface_for` used to receive and lose.
+   * </p>
+   */
+  #heldWorldThatOpened(fact: WorldFact): HeldWorldDeclaration | undefined {
+    if (isDueFact(fact) || this.#canPresent(fact)) return undefined;
+    return heldWorldOf(fact)[0];
+  }
+
+  /**
    * Whether this fact may OPEN a turn: it states something she must decide on, she has not already been told it, and the
-   * player's surface can show her answer - or it is a wake the Host mints to make her LOOK (`TURN_OPENING.due`).
+   * player's surface can show her answer - or it is a wake the Host mints to make her LOOK (`TURN_OPENING.due`) - or the
+   * world itself declares it will not move until the fact is answered (`heldWorldOf`).
+   *
+   * <p>
+   * THE HELD WORLD IS NOT A HOLE IN THE SURFACE RULE, IT IS THE RULE'S OTHER SIDE. `9be6af14` removed the turns that could
+   * only produce text nobody is shown, and that is right for a fact whose whole product is a line. A menu that has stopped
+   * the clock is the opposite product: the turn exists to be ANSWERED, by an action (`dismiss_modal`, `answer_dialogue`),
+   * and the loop tells the model in the same turn that its words will not be shown (`speechSurfaceStatement`) - so the
+   * thing the turn is for is the one thing that still works. MEASURED 2026-11-18 (`round76`): a `DialogueBox` at a door with
+   * `isQuestion: true` and `blocksTimePass: true`, 610 seconds of an unanswered world, and 52 carried facts lost by name
+   * while the player watched her stand still.
+   * </p>
    *
    * <p>
    * THE WAKE IS THE ONE DECLARED EXCEPTION, and it is a liveness rule rather than a hole. A stale reading, a refused refresh,
@@ -3150,7 +3242,7 @@ export class CompanionEventPump {
    */
   #opensTurn(fact: WorldFact): boolean {
     if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
-    if (!(isDueFact(fact) || this.#canPresent(fact))) return false;
+    if (!(isDueFact(fact) || this.#canPresent(fact) || heldWorldOf(fact).length > 0)) return false;
     return !this.#waitsForThePlanToAnswer(fact);
   }
 
@@ -3180,6 +3272,11 @@ export class CompanionEventPump {
    */
   #waitsForThePlanToAnswer(fact: WorldFact): boolean {
     if (isDueFact(fact)) return false;
+    // A HELD WORLD IS THE ONE ANSWER A RUNNING PLAN CANNOT PRODUCE. `remaining` counts the nodes her plan has not got
+    // through, and while a menu stands on her screen with the clock stopped, that count cannot fall however long she
+    // waits - `round76` held fourteen flushes on exactly this reading for ten minutes while a `DialogueBox` asked her a
+    // question. Waiting for the plan's answer on the fact that is blocking the plan is a wait with no forward path.
+    if (heldWorldOf(fact).length > 0) return false;
     if (fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND) return false;
     return this.#workLeftToPlan() > 0;
   }
@@ -3216,7 +3313,8 @@ export class CompanionEventPump {
    * <p>
    * A DECISION FACT THAT CANNOT PRESENT STILL OWES HER THE NEWS, so it is not suppressed: `#owesTurn` keeps it, `takeBatch`
    * renders it into the next batch's model-facing text, and it is answered `NOT_OWED.noSurface` with a `CarryTicket` that
-   * proves where it went. What it does not do is open a turn of its own, because a turn whose batch carries no presentation
+   * proves where it went - UNLESS it is the fact that is holding the world (`heldWorldOf`), which opens its own turn because
+   * the answer to a stopped clock is an action rather than a line. What it does not do is open a turn of its own, because a turn whose batch carries no presentation
    * source attaches no projection: she would decide, act and speak, and the player would see nothing
    * (`round66`: `lost 8 → 12 {no_presentation_lease}`, and every one of those batches carried exactly
    * `["execution_receipt","snapshot"]`).
@@ -5014,6 +5112,58 @@ export function factShapeName(fact: WorldFact): string {
  */
 export function factTurnConsequence(fact: WorldFact): FactTurnConsequence {
   return FACT_TURN_CONSEQUENCE[factTurnShape(fact)] ?? "decision";
+}
+
+/**
+ * The fields by which a fact's PRODUCER declares that the world is waiting on it, declared once, in the producer's own
+ * spelling.
+ *
+ * <p>
+ * THE DECLARATION, NOT THE KIND NAME. A `modal_presented` is not what holds a world: the payload says so, in two
+ * statements with different meanings. `blocksTimePass` is the engine's own `Game1.shouldTimePass()` inverted, read at
+ * the mount - while it is true the clock does not move, and every plan she dispatched is stalled behind a menu. `isQuestion`
+ * is the world asking for an answer, which she can give with the keys the same payload publishes. A kind added tomorrow
+ * that declares either one is covered by this table without a second list to extend, and a fact that declares nothing -
+ * `modal_dismissed`, a clock mark, a receipt - is not held whatever it is called.
+ * </p>
+ * <p>
+ * THE NAMES ARE THE WIRE'S, deliberately, and in this order: they are the keys a reader greps in the Mod's payload records
+ * (`ModalPresentedPayload`), the account prints them verbatim, and `isQuestion` comes first because it is the narrower
+ * statement - when a fact says both, what the turn has to produce is an ANSWER, and the stopped clock is the consequence
+ * of it. Nothing here translates them into a second vocabulary.
+ * </p>
+ */
+export const HELD_WORLD_DECLARATIONS = Object.freeze(["isQuestion", "blocksTimePass"] as const);
+
+export type HeldWorldDeclaration = (typeof HELD_WORLD_DECLARATIONS)[number];
+
+/**
+ * Whether this fact declares that the WORLD WILL NOT MOVE until it is answered, and EVERY declaration that said so.
+ *
+ * <p>
+ * An empty list is the only answer that means "not held": `blocksTimePass: true` with `isQuestion: false` is a menu that
+ * stopped the clock while waiting for no answer, and `isQuestion: true` is an answer wanted - a fact may declare both, and
+ * the list keeps both so the prompt can say so. The ORDER is `HELD_WORLD_DECLARATIONS`'s, and the first member is what the
+ * account counts a turn under: when a fact says both, what the turn has to produce is an ANSWER.
+ * </p>
+ *
+ * <p>
+ * THE FACT THE PUMP COULD DISTINGUISH AND NOT ACT ON. `round76` (2026-11-18): she warped into town, a `DialogueBox`
+ * mounted at a door with `isQuestion: true, blocksTimePass: true, responseKeys: ["Yes","No"]`, and for 610 seconds the
+ * only facts were three clock marks. Twenty-nine `modal_presented` / `npc_dialogue_presented` / `modal_dismissed` facts
+ * arrived in that window; not one could present (`presentation-lease.ts` names six kinds and a menu is not among them), so
+ * not one opened a turn, and the carry bound then named sixteen of each as LOST. The world's own statement that it was
+ * blocked bought no turn, and the record of it was thrown away by name.
+ * </p>
+ * <p>
+ * A POSITIVE STATEMENT ONLY. `blocksTimePass: false` says the clock runs, and a payload that never mentions the field says
+ * nothing at all; neither is a hold. Only the literal `true` counts, so a fact stream that stopped publishing the field
+ * cannot be read as a world that started moving.
+ * </p>
+ */
+export function heldWorldOf(fact: WorldFact): readonly HeldWorldDeclaration[] {
+  if (fact.kind !== "world_fact") return [];
+  return HELD_WORLD_DECLARATIONS.filter((declaration) => fact.payload?.[declaration] === true);
 }
 
 /**

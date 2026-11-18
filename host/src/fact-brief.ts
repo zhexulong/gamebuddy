@@ -49,7 +49,7 @@
  */
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
-import { CARRIED_BACKLOG_SEMANTIC_KIND } from "./event-pump.js";
+import { CARRIED_BACKLOG_SEMANTIC_KIND, heldWorldOf, type HeldWorldDeclaration } from "./event-pump.js";
 import {
   formatBodyState,
   formatGameClock,
@@ -748,6 +748,21 @@ const WORLD_FACT_KIND_ZH: Readonly<Record<string, string>> = Object.freeze({
 
 const PROGRAM_SETTLED = "program_settled";
 
+/**
+ * What each declaration of a HELD WORLD means, in the words the model reads.
+ *
+ * <p>
+ * Keyed by the declaration union (`HELD_WORLD_DECLARATIONS`) rather than by a kind name, so a producer that starts
+ * declaring a hold is rendered without a second table - and a declaration added to that union is a compile error here
+ * instead of a `modal_presented` line that silently stops saying why the world stopped. The KEY is printed nowhere: the
+ * sentence is what the model reads, the field name is what an operator greps in the Mod.
+ * </p>
+ */
+export const HELD_WORLD_ZH: Readonly<Record<HeldWorldDeclaration, string>> = Object.freeze({
+  isQuestion: "在等你回答",
+  blocksTimePass: "时间停住了",
+});
+
 /** `<world-facts>`: one line per event, the oldest first, the remainder counted. */
 function composeWorldFacts(events: readonly WorldFact[]): string {
   const lines = events.map(factLine).filter((line): line is string => line !== "");
@@ -827,6 +842,27 @@ function worldFactLine(fact: WorldFact, at: string): string {
       const milestone = fact.payload.milestone;
       return `- ${at}又过了一个时辰${typeof milestone === "string" || typeof milestone === "number" ? `：${milestone}` : ""}`;
     }
+    // THE ONE FACT THAT SAYS THE WORLD IS WAITING ON HER, and the line `round76` needed and did not have: the account
+    // counted 37 of these in ten minutes, not one opened a turn, and the model-facing text for one was the literal word
+    // `modal_presented`. What it says now is the engine's own type name, the modal's own prose when the Mod published any,
+    // EVERY declaration that is holding the world (`heldWorldOf` - the same reading the opener used, so the line and the
+    // turn cannot disagree about whether the world is blocked), and the exact keys `answer_dialogue` sends back. The clock
+    // is the fact's own `gameTime`, which on `round76` stood still across eight minutes of these.
+    case "modal_presented": {
+      const modal =
+        typeof fact.payload.modalType === "string" && fact.payload.modalType !== ""
+          ? fact.payload.modalType
+          : "一个窗口";
+      const prose = typeof fact.payload.text === "string" ? fact.payload.text.trim() : "";
+      const keys = Array.isArray(fact.payload.responseKeys)
+        ? fact.payload.responseKeys.filter((key): key is string => typeof key === "string" && key !== "")
+        : [];
+      const state = [
+        ...heldWorldOf(fact).map((declaration) => HELD_WORLD_ZH[declaration]),
+        ...(keys.length === 0 ? [] : [`可以答：${keys.join(" / ")}`]),
+      ].join("，");
+      return `- ${at}${modal} 挡在面前${prose === "" ? "" : `：「${prose}」`}${state === "" ? "" : `（${state}）`}`;
+    }
     case "npc_dialogue_presented": {
       const speaker = typeof fact.payload.speaker === "string" ? fact.payload.speaker : "有人";
       const pages = Array.isArray(fact.payload.pages)
@@ -841,7 +877,13 @@ function worldFactLine(fact: WorldFact, at: string): string {
             )
             .filter((text): text is string => text !== undefined)
         : [];
-      return `- ${at}${speaker}说：「${pages.join(" ")}」${choices.length === 0 ? "" : `（可以答：${choices.join(" / ")}）`}`;
+      // THE SAME HOLD, ON THE FACT THAT CARRIES THE WORDS. A dialogue box declares `isQuestion` when the game stopped on a
+      // question, and the answers below are the ones it offers - so a line that listed them without saying the box is
+      // waiting read as a remark rather than as an obstruction. The declaration's words come from `HELD_WORLD_ZH`, the one
+      // reading the pump's opener asks, so the prompt and the turn agree about whether the world is blocked.
+      const holding = heldWorldOf(fact).map((declaration) => HELD_WORLD_ZH[declaration]);
+      const tail = [...holding, ...(choices.length === 0 ? [] : [`可以答：${choices.join(" / ")}`])].join("，");
+      return `- ${at}${speaker}说：「${pages.join(" ")}」${tail === "" ? "" : `（${tail}）`}`;
     }
     case "native_notice": {
       // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the

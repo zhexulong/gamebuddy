@@ -32,6 +32,9 @@ import {
   FACT_PRODUCER,
   FACT_PRODUCERS,
   type FactProducer,
+  HELD_WORLD_DECLARATIONS,
+  HELD_WORLD_OPENED,
+  type HeldWorldDeclaration,
   FLUSHES_EXAMINED,
   factContentIdentity,
   HOST_MINTED_FACT_SOURCE,
@@ -614,6 +617,7 @@ const ACCOUNT_SEGMENT_LABELS = [
   ASSISTANT_TURNS_WITH_TEXT,
   ASSISTANT_TURNS_TOOL_ONLY,
   `${PER_DELIVERED_BATCH} turns opened`,
+  HELD_WORLD_OPENED,
   FLUSHES_EXAMINED,
   NOT_OWED_LABEL,
   CARRIED,
@@ -712,6 +716,8 @@ function readTurnAccountLine(line: string): Readonly<{
   }>;
   opened: number;
   byReason: Record<string, number>;
+  /** The turns a fact's own declaration bought, one count per declaration (`isQuestion`, `blocksTimePass`). */
+  heldWorld: Readonly<{ opened: number; counts: Record<string, number> }>;
   /** The producers printed inside each opener's braces: the reasons a FACT opened, and which entrance it came in by. */
   openedProducers: Record<string, Record<string, number>>;
   notOwed: Readonly<{
@@ -757,6 +763,7 @@ function readTurnAccountLine(line: string): Readonly<{
     withTextSegment,
     toolOnlySegment,
     openedSegment,
+    heldWorldSegment,
     examinedSegment,
     notOwedSegment,
     carriedSegment,
@@ -816,6 +823,7 @@ function readTurnAccountLine(line: string): Readonly<{
     opened: openedSegment.total,
     byReason: openedSegment.counts,
     openedProducers: openedSegment.producers,
+    heldWorld: Object.freeze({ opened: heldWorldSegment.total, counts: heldWorldSegment.counts }),
     notOwed: Object.freeze({
       total: notOwedSegment.total,
       counts: notOwedSegment.counts,
@@ -864,6 +872,13 @@ function silentSettledCounts(overrides: Readonly<Record<string, number>>): Recor
 function emptyTurnShapeCounts(overrides: Readonly<Record<string, number>>): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const shape of emptyTurnShapes()) counts[shape] = overrides[shape] ?? 0;
+  return counts;
+}
+
+/** Every held-world declaration, with the given ones counted: the population is the pump's own table. */
+function heldWorldCounts(overrides: Readonly<Record<string, number>>): Record<HeldWorldDeclaration, number> {
+  const counts = {} as Record<HeldWorldDeclaration, number>;
+  for (const declaration of HELD_WORLD_DECLARATIONS) counts[declaration] = overrides[declaration] ?? 0;
   return counts;
 }
 
@@ -964,6 +979,10 @@ test("the account line reads back into the account it names", () => {
       }),
     ),
     noSurface: Object.freeze({ "receipt:succeeded": 2 }),
+    heldWorld: Object.freeze({
+      opened: 3,
+      byDeclaration: Object.freeze(heldWorldCounts({ isQuestion: 2, blocksTimePass: 1 })),
+    }),
     notOwedByProducer: Object.freeze(
       producerHistograms(NOT_OWED_REASONS, {
         [NOT_OWED.observationRestated]: { [FACT_PRODUCER.snapshotRestate]: 2 },
@@ -1060,6 +1079,23 @@ test("the account line reads back into the account it names", () => {
   );
   assert.deepEqual(parsed.notOwed.counts, account.notOwed);
   assert.equal(parsed.examined, account.examined);
+  // THE HELD-WORLD READING IS TWO READINGS THAT MUST AGREE: its total is the sum of the declarations it prints, and every
+  // held-world turn is one of the turns above it. A menu that bought a turn no opener counted would break the second, and a
+  // declaration whose count moved into a sibling would break the first.
+  assert.equal(
+    parsed.heldWorld.opened,
+    Object.values(parsed.heldWorld.counts).reduce((total, count) => total + count, 0),
+    "the held-world total is the SUM of the declarations it names",
+  );
+  assert.deepEqual(
+    Object.keys(parsed.heldWorld.counts).sort(),
+    [...HELD_WORLD_DECLARATIONS].sort(),
+    "and the population is the pump's own table",
+  );
+  assert.ok(
+    parsed.heldWorld.opened <= parsed.opened,
+    `held world opened ${String(parsed.heldWorld.opened)} of ${String(parsed.opened)} turns: every one of them is a turn that opened`,
+  );
   // THE CARRY LEDGER IS AN ARITHMETIC, not three numbers beside one another: `carried` is the population and the other three
   // partition it, so a fact cannot leave it by a door nobody counted. `round68`'s last two settlements left by exactly that
   // door - ticketed, never delivered - and the line said `carried 2`, which is why the loss has its own segment now.
@@ -1174,6 +1210,7 @@ test("the account line names a member that never fired, in both histograms", () 
     openedByProducer: Object.freeze(producerHistograms(TURN_OPENINGS)),
     notOwed: Object.freeze(notOwedCounts()),
     noSurface: Object.freeze({}),
+    heldWorld: Object.freeze({ opened: 0, byDeclaration: Object.freeze(heldWorldCounts({})) }),
     notOwedByProducer: Object.freeze(producerHistograms(NOT_OWED_REASONS)),
     examined: 1,
     restatements: Object.freeze({ examined: 0, opened: 0, carried: 0, suppressed: 0 }),

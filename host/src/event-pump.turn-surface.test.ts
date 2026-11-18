@@ -4,6 +4,8 @@ import {
   CompanionEventPump,
   FACT_PRODUCER,
   FACT_TURN_CONSEQUENCE,
+  HELD_WORLD_DECLARATIONS,
+  type HeldWorldDeclaration,
   NOT_OWED,
   type PendingBatch,
   PUMP_MINTED_WAKE_KINDS,
@@ -29,7 +31,9 @@ import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-diges
  * </p>
  * <ul>
  *   <li>OPENED ⇒ PRESENTABLE. Every batch this pump hands a sink carries a presentation source, so no turn exists whose
- *       answer the player cannot see.</li>
+ *       answer the player cannot see - with ONE exception, declared and driven below: a fact that declares the world is
+ *       waiting on it (`heldWorldOf`) opens its turn with no surface at all, because that turn's product is an action
+ *       (`dismiss_modal`), not a line.</li>
  *   <li>NOT OPENED ⇒ CARRIED. Every decision fact the surface refused is still owed to her: the call answers
  *       `not_owed {no_surface_for {shape: n}}`, the ticket names the fact, `carriedInto` resolves to the batch that consumed
  *       it, and the fact is IN that batch - so she reads the outcome at the next turn that can be shown. 事件守恒.</li>
@@ -79,6 +83,27 @@ function presentableFact(kind: string, sourceEventId = `fact_${kind}`): WorldFac
  */
 function unpresentableWorldFact(): WorldFact {
   return presentableFact("modal_presented");
+}
+
+/**
+ * A world fact that DECLARES the world is waiting on it, one per declaration.
+ *
+ * The population is `HELD_WORLD_DECLARATIONS`, not a list written here: a declaration added to that table is driven below
+ * without this file changing, and the payload is the shape the Mod publishes (`ModalPresentedPayload`), so what is driven
+ * is what a real mount sends.
+ */
+function heldWorldFact(declaration: HeldWorldDeclaration): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: `modal_${declaration}`,
+    sourceEventId: `modal_${declaration}`,
+    correlationId: `modal_${declaration}`,
+    revision: 1,
+    occurredAtMs: 5,
+    semanticKind: "modal_presented",
+    payload: { kind: "modal_presented", modalType: "DialogueBox", [declaration]: true },
+  };
 }
 
 /** A node's terminal receipt, in the wire's own shape: `protocol/bridge-v1.schema.json#receipt` has no event identity. */
@@ -199,6 +224,7 @@ test("a_turn_is_opened_where_no_surface_can_present", async () => {
   const presentable: string[] = [];
   const carried: string[] = [];
   const wakes: string[] = [];
+  const held: string[] = [];
   const openedWithoutSurface: string[] = [];
 
   for (const { label, fact, wake } of cases) {
@@ -271,7 +297,48 @@ test("a_turn_is_opened_where_no_surface_can_present", async () => {
     assert.equal(pump.turnAccount.carry.held, 0, `${label}: and nothing is left waiting`);
   }
 
-  const tally = `consequences examined ${String(cases.length)} · presentable ${String(presentable.length)} · wake ${String(wakes.length)} · carried ${String(carried.length)} · opened-without-a-surface ${String(openedWithoutSurface.length)}`;
+  // THE DECLARED EXCEPTION, DRIVEN RATHER THAN ASSUMED. A fact that declares the world is waiting on it opens its turn
+  // with NO presentation source, and every half of that is asserted: it opens, its batch really carries no lease (or the
+  // exception would be untested), and the account counts it under the declaration that bought it. `round76` is the run this
+  // population is measured from: a `DialogueBox` with `isQuestion: true, blocksTimePass: true` and 610 seconds in which no
+  // turn opened at all.
+  for (const declaration of HELD_WORLD_DECLARATIONS) {
+    const pump = new CompanionEventPump();
+    const turns = recorder();
+    pump.enqueueFact(heldWorldFact(declaration), FACT_PRODUCER.adapterIngress);
+    const flushed = await pump.flush(turns.sink);
+    const label = `held-world:${declaration}`;
+    if (flushed.kind !== "opened") {
+      openedWithoutSurface.push(`${label} (no turn at all: ${flushed.kind})`);
+      continue;
+    }
+    const batch = turns.batches[0];
+    assert.notEqual(batch, undefined, `${label}: an opened turn must be a delivery`);
+    if (batch!.events.some((event) => presentationSourceOf(event) !== undefined)) {
+      openedWithoutSurface.push(`${label} (it presented after all, so the exception proves nothing)`);
+      continue;
+    }
+    const account = pump.turnAccount;
+    if (account.heldWorld.byDeclaration[declaration] !== 1) {
+      openedWithoutSurface.push(
+        `${label} (not counted under its own declaration: ${JSON.stringify(account.heldWorld.byDeclaration)})`,
+      );
+      continue;
+    }
+    assert.equal(
+      account.noSurface[`world_fact:modal_presented`],
+      undefined,
+      `${label}: a held world is not a surface refusal, whatever its shape is called`,
+    );
+    held.push(label);
+  }
+
+  const tally = `consequences examined ${String(cases.length)} · presentable ${String(presentable.length)} · wake ${String(wakes.length)} · carried ${String(carried.length)} · held-world ${String(held.length)} · opened-without-a-surface ${String(openedWithoutSurface.length)}`;
+  assert.equal(
+    held.length,
+    HELD_WORLD_DECLARATIONS.length,
+    `${tally}: a declaration that holds the world must open its turn - the exception is declared, so it is measured`,
+  );
   assert.equal(
     wakes.length,
     Object.keys(PUMP_MINTED_WAKE_KINDS).length,
