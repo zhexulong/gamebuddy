@@ -4787,7 +4787,16 @@ if (existsSync(join(runtimePaths.agentDir, "models.json"))) {
 // The summary lands in the result JSON so a failed capture is visible, never
 // silent — a capture that broke would recreate exactly the blind spot this
 // mechanism exists to remove.
-capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
+capture = await openLiveRunCapture({
+  kind: "game-ladder",
+  label: SCENARIO,
+  root: LIVE_RUN_ROOT,
+  // THE LAUNCHER'S DIRECTORY, when there is one. The launcher allocates the run directory before it spawns anything and
+  // writes the launch receipt there with ITS OWN pid, because it is the process that outlives this one - so this run's
+  // evidence belongs in that directory, and staying here instead would give one launch two run directories that each hold
+  // half of what happened. Absent (a runner started by hand, a test), the layout is derived as before.
+  dir: process.env.GAMEBUDDY_LIVE_RUN_DIR,
+});
 // THE RECORD THAT SURVIVES A DEATH. Every other artifact this harness writes is written at its end, so a run that dies
 // mid-await leaves `launch.json` and nothing else - measured on `round66` and `round67`, where the Host went away inside
 // the first six minutes and the run directory could not say how far the run had got (2026-11-17). One flushed line per

@@ -86,6 +86,50 @@ export function openRunProgress({ dir, startedAtMs = Date.now() } = {}) {
 }
 
 /**
+ * ONE run directory's progress record, read whole.
+ *
+ * <p>
+ * This is the reading the CLOSURE takes (see `run-closure.mjs`): the launcher outlives the child, so it can count what the
+ * child reached and write that count into the record of how the run ended. `null` when the file is absent - "the instrument
+ * wrote nothing", which is not the same reading as "zero events". A half-written last line (what a killed process leaves)
+ * is counted as unparsable rather than dropped silently or repaired.
+ * </p>
+ */
+export function readRunProgressFile({ dir, file = RUN_PROGRESS_FILE } = {}) {
+  if (typeof dir !== "string" || dir.length === 0) return null;
+  const path = join(dir, file);
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  const entries = [];
+  let unparsable = 0;
+  for (const line of text.split("\n")) {
+    if (line.trim().length === 0) continue;
+    try {
+      entries.push(JSON.parse(line));
+    } catch {
+      unparsable += 1;
+    }
+  }
+  const withTurn = entries.filter((entry) => Number.isInteger(entry?.turn));
+  const openers = entries.filter((entry) => entry?.event === "run_opened").map((entry) => entry?.pid ?? null);
+  return {
+    path: path.split(sep).join("/"),
+    lines: entries.length + unparsable,
+    parsed: entries.length,
+    unparsable,
+    // WHO OPENED IT, in order: the first pid is the process that armed the file, and every later one attached to it. A
+    // record whose only opener is the process it describes is the defect `an_instrument_outlives_its_subject` names.
+    openedBy: openers,
+    last: entries.length === 0 ? null : entries[entries.length - 1],
+    lastTurn: withTurn.length === 0 ? null : withTurn[withTurn.length - 1].turn,
+  };
+}
+
+/**
  * The newest run's progress record under a live-run root, and its last line.
  *
  * <p>

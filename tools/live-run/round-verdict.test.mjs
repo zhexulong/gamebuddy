@@ -131,10 +131,27 @@ function writeRun({
   multiday = null,
   timeline = null,
   programOutcomes = null,
+  ending = "closed",
 }) {
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "launch.json"), JSON.stringify({ schema: "gamebuddy-live-run-launch/v1" }));
+  // THE RUN'S ENDING, written by default: every fixture below is about what a FINISHED run's files say, and a run directory
+  // with a launch receipt and no closure is the blocked shape one test below is about. `ending: null` is that shape.
+  if (ending !== null)
+    writeFileSync(
+      join(runDir, "closure.json"),
+      JSON.stringify({
+        schema: "gamebuddy-live-run-closure/v1",
+        run: "run",
+        state: ending,
+        reasonCode: ending === "closed" ? "runner_exited:0" : "runner_exited:1",
+        endedAtMs: START + 60_000,
+        durationMs: 60_000,
+        result: withResult === true ? "fresh" : "absent",
+        progress: { present: true, lines: 2, lastEvent: "run_ended", lastTurn: 1 },
+      }),
+    );
   if (withResult === true)
     writeFileSync(
       join(runDir, "result.json"),
@@ -453,6 +470,48 @@ test("the declared cap is read from the file that enforces it, and named when it
         elsewhere,
         /declared cap not_measured: host\/src\/body-program-script\.ts MAX_PLAN_NODES was not readable/u,
       );
+    },
+  ));
+
+test("a launch receipt with no closure is a BLOCKED reading that names the run and refuses to exit 0", () =>
+  withFixture(
+    () => ({ withResult: false, session: null, ending: null }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(
+        output,
+        /^0 run ended\s+BLOCKED\s+pid undefined, which armed this run directory at a time its receipt does not carry, never wrote a closure record/mu,
+        "round67's shape: a launch receipt and nothing else",
+      );
+      assert.match(output, /never wrote a closure record/u);
+      assert.match(output, /Not silent, not green/u);
+      assert.equal(result.status, 2, "a refused reading must not exit 0");
+    },
+  ));
+
+test("a run whose closure records a death reads DIED, beside the progress it reached", () =>
+  withFixture(
+    () => ({ withResult: false, session: null, ending: "died" }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(
+        output,
+        /^0 run ended\s+DIED\s+died at 2026-11-10T09:01:00\.000Z \(runner_exited:1; after 60s\), result absent, progress 2 line\(s\) last turn 1 last event run_ended/mu,
+      );
+      assert.notEqual(result.status, 2, "a recorded death is not a blocked reading");
+    },
+  ));
+
+test("a directory nothing armed says NOT MEASURED rather than implying the run was fine", () =>
+  withFixture(
+    () => ({ withResult: false, session: null, ending: null }),
+    (runDir) => {
+      rmSync(join(runDir, "launch.json"), { force: true });
+      const output = runVerdict(runDir);
+      assert.match(output, /^0 run ended\s+NOT MEASURED\s+no launch receipt in this run directory/mu);
+      assert.match(output, /not a claim that the run was fine/u);
     },
   ));
 

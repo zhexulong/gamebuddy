@@ -21,6 +21,7 @@ import { basename, join, resolve } from "node:path";
 import { worldDayStartsFromFacts, worldNightEndingsFromFacts } from "../lib/multiday-baseline.mjs";
 import { crossingsFromEvidence, wakeReasonReachability } from "../lib/multiday-loop.mjs";
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
+import { readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
 
 const LADDER = ".live-runs/game-ladder";
 
@@ -1370,6 +1371,55 @@ const modLogPath = join(runDir, "mod-log.txt");
 // still under the live runtime root it was mounted on, and pricing that run means reading it there. Read-only either way.
 const boundSession = explicitSession === null ? sessionPath(runDir) : resolve(explicitSession);
 
+// 0. DID THIS RUN END, AND DOES ANYTHING SAY SO?
+//
+// The first row, because every row below it reads a file that a run may never have reached. Measured 2026-11-17 (round65,
+// round66, round67): eight of ten ladder runs wrote no `result.json`, and their run directories said nothing about the
+// ending either - so a dead run and a clean run reached this report as the same set of NOT EXERCISED rows and exited 0.
+// The launch receipt is written by the process that outlives the child; the closure record is written by the same process on
+// its way out. A receipt with no closure is therefore not "a run that measured nothing" - it is a run nobody can speak for,
+// and this row says so by name rather than leaving the absence to be noticed.
+const runLaunch = readRunLaunch({ dir: runDir });
+const runClosure = readRunClosure({ dir: runDir });
+const runEnded = (() => {
+  if (runClosure !== null)
+    return {
+      verdict: runClosure.state === "closed" ? "PASS" : "DIED",
+      detail:
+        `${String(runClosure.state)} at ${
+          Number.isFinite(runClosure.endedAtMs) ? new Date(runClosure.endedAtMs).toISOString() : "an unreported time"
+        } (${String(runClosure.reasonCode)}; after ${String(Math.round((runClosure.durationMs ?? 0) / 1000))}s), ` +
+        `result ${String(runClosure.result)}, progress ${String(runClosure.progress?.lines ?? "not written")} line(s)` +
+        (runClosure.progress?.lastTurn === null || runClosure.progress?.lastTurn === undefined
+          ? ""
+          : ` last turn ${String(runClosure.progress.lastTurn)}`) +
+        (runClosure.progress?.lastEvent === null || runClosure.progress?.lastEvent === undefined
+          ? ""
+          : ` last event ${String(runClosure.progress.lastEvent)}`),
+      source: `${join(runDir, "closure.json")} + ${join(runDir, "launch.json")}`,
+    };
+  if (runLaunch !== null)
+    return {
+      verdict: "BLOCKED",
+      detail:
+        `pid ${String(runLaunch.pid)}, which armed this run directory ${
+          Number.isFinite(runLaunch.startedAtMs)
+            ? `at ${new Date(runLaunch.startedAtMs).toISOString()}`
+            : "at a time its receipt does not carry"
+        }, never wrote a closure record - the process that spawned this run is gone without saying how ` +
+        `it ended. Not silent, not green: nothing below can be read as a statement about this product.`,
+      source: `${join(runDir, "launch.json")} with no closure.json`,
+    };
+  return {
+    verdict: "NOT MEASURED",
+    detail:
+      "no launch receipt in this run directory, so nothing ever armed it and no ending can be asked of it (not a claim that " +
+      "the run was fine)",
+    source: join(runDir, "launch.json"),
+  };
+})();
+record("0 run ended", runEnded.verdict, runEnded.detail, runEnded.source);
+
 // 1. Contract errors: the run is worthless as evidence if these are non-zero.
 //
 // Read BOTH files, because the two carry different halves and neither alone is the whole answer. Measured 2026-11-01 on
@@ -1573,3 +1623,6 @@ for (const row of rows)
   process.stdout.write(`${row.name.padEnd(width)}  ${row.verdict.padEnd(14)} ${row.detail}\n    <- ${row.source}\n`);
 process.stdout.write(`\n${crossingsLines(crossings).join("\n")}\n`);
 process.stdout.write(`\n${efficiency.join("\n")}\n`);
+// A BLOCKED ending is a refused reading, in the same code `no run directory` already uses: this verdict cannot say anything
+// about a run whose own process never closed the record, and exiting 0 over it is how `round65`-`round67` read as passes.
+if (runEnded.verdict === "BLOCKED") process.exitCode = 2;

@@ -43,6 +43,8 @@ import {
 } from "../../lib/live-run-teardown.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
+import { resolveLiveRunRoot, runDirectoryName } from "../core/capture.mjs";
+import { openRunClosure } from "../core/run-closure.mjs";
 import { assertPromptSurfaceFresh } from "../core/prompt-surface-freshness.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
@@ -299,12 +301,43 @@ const KILL_SETTLE_MS = 60_000;
 const startedAtMs = Date.now();
 let takeoverWatch = null;
 let childSettled = null;
+// THE RUN'S ENDING, owned by the process that outlives the child.
+//
+// Every fact below is watched HERE and nowhere else: the orchestrator's pid and exit, the signal that interrupted this
+// launcher, the fixture takeover, and what became of `result.json`. The record itself is written by one exit handler (see
+// `closeRunRecord`), so every way out of this function - clean, non-zero, thrown, or interrupted - publishes the same
+// shape. What it cannot cover is a hard kill of this process (`TerminateProcess`/`SIGKILL` runs no handler), and that
+// absence is exactly what the auditor reports as BLOCKED rather than green.
+const closureFacts = {
+  childPid: null,
+  launchedAtMs: null,
+  exitCode: null,
+  signal: null,
+  result: "unjudged",
+  fixtureRestoreOk: null,
+  fixtureRestoreError: null,
+  tookOver: false,
+};
+let runClosure = null;
+let runClosureWritten = false;
+function closeRunRecord() {
+  if (runClosureWritten || runClosure === null) return;
+  runClosureWritten = true;
+  runClosure.close({
+    ...closureFacts,
+    takenOver: closureFacts.tookOver || takenOver,
+  });
+}
+process.on("exit", closeRunRecord);
 
 /**
  * What a killed run runs: settle the runner, reap the game, restore the fixture, and leave a record only if the runner
  * left none.
  */
 async function killedTeardown(signal) {
+  // The ending this process is about to publish is "interrupted from outside", and it is recorded before the teardown
+  // runs: a teardown that hangs must not be able to leave the run looking like it finished.
+  closureFacts.signal = signal;
   if (childSettled !== null) {
     console.error(`[killed] waiting up to ${KILL_SETTLE_MS} ms for the runner to publish its own killed bundle`);
     await Promise.race([childSettled, sleep(KILL_SETTLE_MS)]);
@@ -319,6 +352,8 @@ async function killedTeardown(signal) {
     // A restore that refuses must not take the killed record with it: "the lock is still held" and "we stopped this
     // run" are two separate facts, and the second one is the run's verdict.
     console.error(`[killed] fixture restore failed: ${String(error?.message ?? error).slice(0, 200)}`);
+    closureFacts.fixtureRestoreOk = false;
+    closureFacts.fixtureRestoreError = String(error?.message ?? error);
   }
   writeKilledRunRecord({
     resultPath,
@@ -511,6 +546,17 @@ takeoverWatch = setInterval(() => {
   }
 }, 5_000);
 const launchedAtMs = Date.now();
+// THE RUN DIRECTORY IS ALLOCATED BY THE PROCESS THAT WILL STILL BE HERE WHEN THE CHILD IS GONE.
+//
+// It used to be created inside the runner, which is the process that dies: `round67`'s launcher outlived its child by 641.4
+// s and had nowhere to write that fact, because the runner owned the only directory a reader looks at. The name comes from
+// `capture.runDirectoryName` (one spelling for every surface's runs), the layout from `resolveLiveRunRoot` (one resolver),
+// and the directory is handed down so the RUNNER captures INTO it instead of inventing a second one beside it.
+const liveRunRoot = resolveLiveRunRoot({ repoRoot: repo });
+const runDir = path.join(liveRunRoot, "game-ladder", runDirectoryName("game-ladder", scenario));
+runClosure = openRunClosure({ dir: runDir, kind: "game-ladder", label: scenario });
+console.log("run directory:", runDir);
+closureFacts.launchedAtMs = launchedAtMs;
 childSettled = new Promise((resolve) => {
   const child = spawn(node, ["tools/_ladder-live-orchestrator.mjs"], {
     cwd: repo,
@@ -538,6 +584,10 @@ childSettled = new Promise((resolve) => {
       // repro plan has no slot to name and the bundle contract refuses it (measured 2026-10-16).
       GAMEBUDDY_DAY_START_SLOT: saveName,
       GAMEBUDDY_LADDER_LIVE_LOG: logPath,
+      // THE RUN DIRECTORY THE ABOVE RECEIPT WAS WRITTEN INTO. The runner captures into this directory (it allocates none of
+      // its own), so the launch receipt, the progress record and the closure all describe one run rather than a run and its
+      // neighbour.
+      GAMEBUDDY_LIVE_RUN_DIR: runDir,
       // The path the game's own console is piped into, named HERE so this launcher and the orchestrator cannot disagree
       // about which file the game is talking into: the launch phase `game_launched` is the first byte in it.
       GAMEBUDDY_LADDER_SMAPI_LOG: laneLogPath,
@@ -552,6 +602,7 @@ childSettled = new Promise((resolve) => {
     },
   });
   markPhase("orchestrator_spawned");
+  closureFacts.childPid = Number.isInteger(child.pid) ? child.pid : null;
   // stdio is inherited now (the orchestrator and SMAPI need a real console), so there
   // are no pipes to collect. The orchestrator writes its own diagnostics to the
   // terminal and to its runner log; nothing here fabricates a stdout artefact from a
@@ -559,6 +610,9 @@ childSettled = new Promise((resolve) => {
   const stdout = "";
   child.on("close", (code) => {
     exitCode = code;
+    // The child's exit is the fact the closure is made of; it is recorded here, where it is observed, rather than
+    // re-derived at the end from something that could have moved.
+    closureFacts.exitCode = Number.isInteger(code) ? code : null;
     clearInterval(takeoverWatch);
     fs.writeFileSync(path.join(repo, "tools", `_${scenario}${suffix}-stdout.json`), stdout);
     if (takenOver) {
@@ -586,7 +640,11 @@ process.exitCode = exitCode ?? 1;
 // The second half of the stale-bundle rule: a bundle written before this launch is not this attempt's answer, whatever
 // it says, and it must not receive this attempt's teardown account either.
 const freshness = judgeResultFreshness({ resultPath, launchedAtMs });
+// WHAT BECAME OF THIS ATTEMPT'S RESULT, in the freshness vocabulary itself (`absent`/`fresh`/`stale`): a dead run's
+// closure must say that no bundle was written, not leave a reader to infer it from the directory's other files.
+closureFacts.result = freshness.state;
 if (takenOver) {
+  closureFacts.tookOver = true;
   console.log("result file (if any) is marked invalid next to it; not restoring someone else's transaction");
   process.exitCode = 1;
   throw new Error("fixture_taken_over_mid_run");
@@ -669,6 +727,8 @@ try {
   fixtureRestore.ok = false;
   fixtureRestore.error = String(error?.message ?? error).slice(0, 300);
 }
+closureFacts.fixtureRestoreOk = fixtureRestore.ok;
+closureFacts.fixtureRestoreError = fixtureRestore.error;
 // A stale bundle is not this attempt's artifact: stamping it would write this launch's teardown account into another
 // run's record, so the account is refused by name instead.
 if (freshness.state === "stale") {
@@ -711,5 +771,11 @@ if (freshness.state === "stale") {
   console.log("no result file was written — the runner failed before it could report");
   process.exitCode = 1;
 }
+
+// THE ENDING, WRITTEN BEFORE THE PROCESS LEAVES. The exit handler registered above is the net for the paths that never
+// reach this line (a throw, a signal's teardown, a takeover); this is the ordinary one, and it says where the record is so
+// an operator watching the console knows which directory to open when the run delivered nothing.
+closeRunRecord();
+console.log("run closure:", runClosure.closurePath);
 
 import { fileURLToPath } from "node:url";

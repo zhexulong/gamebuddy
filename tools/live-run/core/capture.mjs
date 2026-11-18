@@ -1,6 +1,8 @@
 import { appendFile, copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
+import { RUN_LAUNCH_FILE, writeLaunchReceipt } from "./run-closure.mjs";
+
 /**
  * Live-run capture: one local directory per run, holding everything the harness
  * can observe about that run.
@@ -73,7 +75,7 @@ export function resolveLiveRunRoot({ repoRoot, env = process.env } = {}) {
   return join(resolve(repoRoot), DEFAULT_LIVE_RUN_ROOT);
 }
 
-function runDirectoryName(kind, label) {
+export function runDirectoryName(kind, label) {
   const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
   const suffix = typeof label === "string" && label.length > 0 ? `-${label.replace(/[^\w.-]+/gu, "_")}` : "";
   return `${stamp}${suffix}`;
@@ -83,7 +85,7 @@ function runDirectoryName(kind, label) {
  * Open one run directory. Returns a handle whose every method is
  * failure-tolerant and budget-charged.
  */
-export async function openLiveRunCapture({ kind, label, root, budget, dirName } = {}) {
+export async function openLiveRunCapture({ kind, label, root, budget, dirName, dir: explicitDir } = {}) {
   if (typeof kind !== "string" || kind.length === 0) throw new Error("capture_kind_required");
   const base = root ?? resolveLiveRunRoot({ repoRoot: process.cwd() });
   const limits = Object.freeze({ ...DEFAULT_BUDGET, ...(budget ?? {}) });
@@ -93,9 +95,14 @@ export async function openLiveRunCapture({ kind, label, root, budget, dirName } 
   // browser shots and the captured runtime-root evidence. Without it the shared
   // `<kind>/<timestamp>-<label>` layout is used, unchanged.
   const dir =
-    typeof dirName === "string" && dirName.length > 0
-      ? join(base, dirName.replace(/[^\w.-]+/gu, "_"))
-      : join(base, kind, runDirectoryName(kind, label));
+    typeof explicitDir === "string" && explicitDir.length > 0
+      ? // THE CALLER OWNS THE DIRECTORY. A run whose dir was allocated by the process that outlives it (the ladder
+        // launcher, which writes the launch receipt and the closure record there) is addressed directly. The name is then
+        // the launcher's fact and is not re-derived here.
+        explicitDir
+      : typeof dirName === "string" && dirName.length > 0
+        ? join(base, dirName.replace(/[^\w.-]+/gu, "_"))
+        : join(base, kind, runDirectoryName(kind, label));
 
   const failures = [];
   const skipped = [];
@@ -127,15 +134,17 @@ export async function openLiveRunCapture({ kind, label, root, budget, dirName } 
   // every record was written at CLOSE - so a run killed before its interesting moment left no evidence that it had
   // ever been armed, and "the run failed" was indistinguishable on disk from "the run never started". The receipt
   // is deliberately tiny and outside the charge budget: its value is highest exactly when nothing else got written.
+  // FIRST WRITER WINS. A receipt already in the directory was written by a process that outlives this one (the ladder
+  // launcher, which allocates the run directory before it spawns anything and writes its own pid), and its closing record is
+  // matched to that pid. Overwriting it with the child's pid would name a process that is dead by the time anybody asks how
+  // the run ended - which is the one fact this file exists to carry. Surfaces with no launcher (Chat, the frontend
+  // captures) find no receipt here and get one, exactly as before.
   if (opened) {
     try {
-      await writeFile(
-        join(dir, "launch.json"),
-        `${JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", kind, label: label ?? null, startedAtMs: Date.now(), pid: process.pid })}\n`,
-        "utf8",
-      );
+      // ONE SPELLING of the receipt (`run-closure.mjs`), and it writes only when the directory does not already carry one.
+      writeLaunchReceipt({ dir, kind, label });
     } catch (error) {
-      failures.push({ op: "write", path: join(dir, "launch.json"), error: String(error?.message ?? error) });
+      failures.push({ op: "write", path: join(dir, RUN_LAUNCH_FILE), error: String(error?.message ?? error) });
     }
   }
 
