@@ -557,12 +557,12 @@ export const HELD = "held";
 /**
  * The reading this unit adds: how many backlog turns the bound opened, and the bound itself.
  *
- * `NAMED` is the third exit a held fact can have (`held H · consumed X · named B · aged-out L`): it was read because the
+ * `BACKLOG_TURNS_OPENED` is the third exit a held fact can have (`held H · consumed X · named B · aged-out L`): it was read because the
  * pump said it was waiting. `OLDEST_HELD_MS` and `BACKLOG_BOUND` are printed beside it because the wait is what decides
  * whether the bound is about to fire, and because `CARRIED_BACKLOG_BOUND_MS` is a number a run's log has to carry - a
  * bound nobody prints is a bound nobody checks.
  */
-export const NAMED = "named";
+export const BACKLOG_TURNS_OPENED = "backlog turns opened";
 export const OLDEST_HELD_MS = "oldest held ms";
 export const BACKLOG_BOUND = "backlog bound ms";
 /** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
@@ -753,7 +753,7 @@ export type TurnAccount = Readonly<{
   /**
    * Every fact this pump admitted that stated an execution's provenance, by what it said.
    *
-   * The reading `round62` could not produce: `unattributed` is a NAMED defect (the Mod's journal could not say which
+   * The reading `round62` could not produce: `unattributed` is a BACKLOG_TURNS_OPENED defect (the Mod's journal could not say which
    * programme owns an execution), and `unstated` is a fact that said nothing at all - the shape the wire now refuses. Both
    * are counted rather than inferred from an absence, because an absence is what the Host used to resolve by time.
    */
@@ -802,7 +802,7 @@ export type TurnAccount = Readonly<{
  * the point: `stalled 0` says the two authorities never said so, rather than a zero that might mean nobody asked.
  * </p>
  * <p>
- * WHY THE TWO GROUPS ARE NAMED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
+ * WHY THE TWO GROUPS ARE BACKLOG_TURNS_OPENED. MEASURED 2026-11-15 (`round60`): one run had 169 assistant turns, 36 of which said
  * nothing, and an account that printed `turn_settled_silent 0` - because every one of those turns sat inside a batch that
  * also carried a line, and the batch is the unit every counter on the second half of the line is counted in. A reader who
  * adds the two groups together reads a number nobody measured, so the unit is stated at each group's head rather than
@@ -917,7 +917,7 @@ export function turnAccountLine(account: TurnAccount): string {
     .sort((left, right) => left.localeCompare(right, "en"))
     .map((shape) => `${shape}: ${String(account.carry.lost[shape])}`)
     .join(", ");
-  const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)} · ${OLDEST_HELD_MS} ${String(account.carry.oldestHeldMs)} · ${NAMED} ${String(account.carry.named)} · ${BACKLOG_BOUND} ${String(account.carry.backlogBoundMs)}`;
+  const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)} · ${OLDEST_HELD_MS} ${String(account.carry.oldestHeldMs)} · ${BACKLOG_TURNS_OPENED} ${String(account.carry.named)} · ${BACKLOG_BOUND} ${String(account.carry.backlogBoundMs)}`;
   return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
@@ -2084,7 +2084,7 @@ export class CompanionEventPump {
    * The facts that arrived while no turn was owed, by window slot key, waiting for the batch that carries them.
    *
    * <p>
-   * THIS IS THE PROOF THAT NOTHING VANISHED - or, since `round68`, the proof that what vanished is NAMED. A `not_owed`
+   * THIS IS THE PROOF THAT NOTHING VANISHED - or, since `round68`, the proof that what vanished is BACKLOG_TURNS_OPENED. A `not_owed`
    * answer and "the fact has nowhere to go" used to be one value (`#owesTurn` is a boolean, and a boolean has no third
    * answer), so the 126 progress calls of `round64` dropped their facts silently. Then a fact that opened no turn was
    * named and `takeBatch` moved it to `#carriedFacts` - but `round68` showed the other half: two settlements were ticketed
@@ -3147,7 +3147,7 @@ export class CompanionEventPump {
    *       rides the receipt it appeared in), the five clock marks a day (`time_milestone`, `AllowedMilestones`), the day's
    *       boundary and her own arrival, and every settlement - which is presentable by construction, because the digest
    *       carries an opaque `sourceEventId` of its own. In `round66` 15 of 21 windows already had one of those.</li>
-   *   <li>AND WHEN NOTHING EVER PRESENTS, THE HOLD IS NAMED LOST. The old third bullet said "if nothing ever presents, nothing
+   *   <li>AND WHEN NOTHING EVER PRESENTS, THE HOLD IS BACKLOG_TURNS_OPENED LOST. The old third bullet said "if nothing ever presents, nothing
    *       new is happening either" - true of the world and false of her answer: `round68` sat 347 seconds with two
    *       settlements it had been told about and never read. So the wait has an end that is a READING
    *       (`#expireStaleCarries`), not a hope: past the bound the fact is counted under the shape that could not present,
@@ -3384,7 +3384,10 @@ export class CompanionEventPump {
       held,
       oldestHeldMs,
       boundMs: CARRIED_BACKLOG_BOUND_MS,
-      dueInMs: this.#backlogIsDue() ? Math.max(0, CARRIED_BACKLOG_BOUND_MS - oldestHeldMs) : undefined,
+      // THE WAIT, not the verdict: a caller that had to ask "is it due yet" could only answer by asking again, which is the
+      // poll this bound exists to avoid. `0` means the bound has passed (the next flush names it); `undefined` means nothing
+      // is waiting for a turn of its own at all.
+      dueInMs: this.#backlogIsWaiting() ? Math.max(0, CARRIED_BACKLOG_BOUND_MS - oldestHeldMs) : undefined,
     });
   }
 
@@ -3411,8 +3414,17 @@ export class CompanionEventPump {
    * </p>
    */
   #backlogIsDue(): boolean {
+    return this.#backlogIsWaiting() && this.#oldestCarryWaitMs() >= CARRIED_BACKLOG_BOUND_MS;
+  }
+
+  /**
+   * Whether the facts this pump carries are waiting for the backlog's own turn - which is not the same as being overdue.
+   *
+   * Two conditions, and the second is what a plan changes: a plan whose journal still shows nodes is about to answer, so its
+   * carried facts are waiting for THAT answer (a presentable fact which opens its own turn) and not for this bound.
+   */
+  #backlogIsWaiting(): boolean {
     if (this.#carryHeld.size === 0) return false;
-    if (this.#oldestCarryWaitMs() < CARRIED_BACKLOG_BOUND_MS) return false;
     return this.#workLeftToPlan() === 0;
   }
 
@@ -4482,7 +4494,7 @@ function worldStateRefreshRefusalReason(error: unknown): string {
 
 /**
  * The two fact shapes the pump holds latest-only, each with the reason it is safe: the population the
- * classification test reads. A kind may only be held when a NAMED later fact will wake the model for it, otherwise
+ * classification test reads. A kind may only be held when a BACKLOG_TURNS_OPENED later fact will wake the model for it, otherwise
  * the pump silently swallows the only news the model was going to get.
  *
  * Measured 2026-11-07 (round39 and the run before it): `program_settled` sat in the held set, so a submitted plan
@@ -4612,7 +4624,7 @@ export const PUMP_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
  * <p>
  * MEASURED AGAIN, AND IT HOLDS. `round65` (`tools/_multiday_routine-round65-live-runner.log`) opened 26 turns with
  * `program_settlement 0`, and the first reading of that number was "the steps stole the turns". Attributing each of the 24
- * `adapter_ingress` openers to the facts in its window says otherwise: 20 had a terminal receipt of a NAMED programme arrive
+ * `adapter_ingress` openers to the facts in its window says otherwise: 20 had a terminal receipt of a BACKLOG_TURNS_OPENED programme arrive
  * with them, and the other four are a lone action's outcome (2 standalone receipts), a clock mark, and two turns opened by
  * a fact carried from an earlier window. **No turn in that run was opened by an orphan receipt** - a receipt arriving after
  * its programme was gone. The 103 terminal programme receipts went out as 26 turns because the pump batches them, so
@@ -4784,7 +4796,7 @@ export function factTurnShape(fact: WorldFact): string {
 }
 
 /**
- * The shape a fact is NAMED by in an account's braces: `factTurnShape`, except that a plain world fact is named by its OWN
+ * The shape a fact is BACKLOG_TURNS_OPENED by in an account's braces: `factTurnShape`, except that a plain world fact is named by its OWN
  * semantic kind - `world_fact:modal_presented`.
  *
  * <p>

@@ -15,7 +15,7 @@ import {
   factWindow,
   HELD,
   LOST,
-  NAMED,
+  BACKLOG_TURNS_OPENED,
   NOT_OWED,
   OLDEST_HELD_MS,
   type PendingBatch,
@@ -231,7 +231,7 @@ test("a_held_fact_has_no_reader: every carried fact is read by the turn the boun
   const held: string[] = [];
   const consumed: string[] = [];
   const named: string[] = [];
-  let agedOut = 0;
+  const agedOut = 0;
 
   for (const shape of decisions) {
     const runClock = clock();
@@ -252,7 +252,7 @@ test("a_held_fact_has_no_reader: every carried fact is read by the turn the boun
     assert.equal(pump.turnAccount.carry.held, 1, `${shape}: the fact is held - this is the population`);
     held.push(shape);
 
-    // INSIDE THE BOUND NOTHING IS NAMED: a fact that arrives while a turn is running is read by the next turn, and that
+    // INSIDE THE BOUND NOTHING IS BACKLOG_TURNS_OPENED: a fact that arrives while a turn is running is read by the next turn, and that
     // turn is the ordinary consumer this bound may not pre-empt.
     runClock.advance(CARRIED_BACKLOG_BOUND_MS - 1);
     const inside = pump.turnAccount.carry;
@@ -337,13 +337,15 @@ test("a_held_fact_has_no_reader: every carried fact is read by the turn the boun
   assert.match(
     line,
     new RegExp(
-      `${HELD} 0 · ${OLDEST_HELD_MS} 0 · ${NAMED} 1 · ${BACKLOG_BOUND} ${String(CARRIED_BACKLOG_BOUND_MS)}`,
+      `${HELD} 0 · ${OLDEST_HELD_MS} 0 · ${BACKLOG_TURNS_OPENED} 1 · ${BACKLOG_BOUND} ${String(CARRIED_BACKLOG_BOUND_MS)}`,
       "u",
     ),
     `the account a run's log carries must state the bound it was measured against: ${line}`,
   );
   assert.match(line, new RegExp(`${CARRIED} 1 · ${CONSUMED} 1 · ${LOST} 0 · ${HELD} 0`, "u"), line);
-  console.log(`${CARRIED} ${String(held.length)} · ${CONSUMED} ${String(named.length)} · ${NAMED} 1 · ${tally}`);
+  console.log(
+    `${CARRIED} ${String(held.length)} · ${CONSUMED} ${String(named.length)} · ${BACKLOG_TURNS_OPENED} 1 · ${tally}`,
+  );
 });
 
 /**

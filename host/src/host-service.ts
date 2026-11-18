@@ -321,8 +321,7 @@ function isAuthenticatedStardewPlayerControl(value: unknown): value is Readonly<
   const candidate = value as Record<string, unknown>;
   const opaque = (entry: unknown): entry is string => typeof entry === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(entry);
   if (
-    !opaque(candidate.controlId) ||
-    !opaque(candidate.sourceEventId) ||
+    !(opaque(candidate.controlId) && opaque(candidate.sourceEventId)) ||
     typeof candidate.locale !== "string" ||
     !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(candidate.locale)
   )
@@ -410,6 +409,13 @@ export class CompanionHostService {
    */
   #runTermination: HostRunTermination | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The timer that opens the turn a silent run still owes, and nothing else (`#armBacklogWake`).
+   *
+   * One timer per backlog: armed when the pump says facts are held and the bound has not passed yet, cleared by
+   * `#endIdle` (every real flush, and `close`), and re-armed only after it has fired.
+   */
+  #backlogTimer: ReturnType<typeof setTimeout> | undefined;
   /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
   readonly #baseRetryDelayMs = 50;
   #retryDelayMs = this.#baseRetryDelayMs;
@@ -1305,7 +1311,12 @@ export class CompanionHostService {
       // NOTHING IS OWED. The pump is empty and no decision above woke a turn, so from here the Host is waiting for the
       // world to publish something - the silence round62 spent 165.8 s in. It is opened here rather than in the loop's
       // own idle transition because this is the layer that knows a retry is not already scheduled.
-      if (this.#retryTimer === undefined && this.wakeReason === undefined) this.#beginIdle();
+      if (this.#retryTimer === undefined && this.wakeReason === undefined) {
+        this.#beginIdle();
+        // THE ONE TURN NOBODY ELSE WILL ASK FOR: facts are held and the world has stopped talking. The pump owns the bound
+        // (`CARRIED_BACKLOG_BOUND_MS`); a turn is created by `flush`, and `flush` is this layer's to call.
+        this.#armBacklogWake();
+      }
     }
   }
 
@@ -1496,6 +1507,52 @@ export class CompanionHostService {
   #endIdle(): void {
     this.#idleSpan?.end();
     this.#idleSpan = undefined;
+    // Any real flush reaches this line, so a backlog timer set for a silence cannot outlive the silence: whatever just
+    // happened is the thing that will read the facts, or the pump will report a fresh bound on the next idle.
+    this.#disarmBacklogWake();
+  }
+
+  /**
+   * The turn NOBODY ELSE will ask for: facts are held, no turn is owed, and the world has stopped talking.
+   *
+   * <p>
+   * MEASURED 2026-11-18 (`round72`, and `round69` before it): `carried 21 · consumed 16 · lost 0 · held 5`, and then 166
+   * seconds of nothing - ONE `idle` span, which is this layer's own proof that no `flushSoon` ran, because `#beginIdle` and
+   * `#endIdle` bracket exactly the calls to it. The pump's bound (`CARRIED_BACKLOG_BOUND_MS`) says when a wait becomes news
+   * about the backlog; only this layer can ASK at that moment, because a turn is created by `flush`.
+   * </p>
+   *
+   * <p>
+   * IT ARMS ONCE PER BACKLOG AND IT IS NOT A POLL. `round67`'s `burstRefresh`/`refresh_rearmed` and `round68`'s
+   * `DeferWarpReplan` both re-armed a window on every tick, so the bound they existed to enforce could never expire. This
+   * timer is armed when the pump answers that facts are held and the bound has NOT passed yet
+   * (`carriedBacklog.dueInMs`), it is CLEARED by `#endIdle` - which every real flush and `close` reach - and it re-arms
+   * only after it has fired, because firing is one flush: if facts are still held afterwards, the pump reports the wait
+   * again and the next arm is a fresh bound. A bound that has ALREADY passed arms nothing at all - the next flush names the
+   * backlog, and a timer set to zero would be exactly the spin above.
+   * </p>
+   *
+   * <p>
+   * WHY IT IS HERE AND NOT IN THE PUMP. A pump-owned timer would have to call `flush` with a sink it had stored from an
+   * earlier turn - behind `#flushScheduled`, the delivery guard, the provider-wait trace and the presentation lease - and a
+   * second delivery is the one outcome this path exists to prevent.
+   * </p>
+   */
+  #armBacklogWake(): void {
+    if (this.#closed || this.#backlogTimer !== undefined) return;
+    const dueInMs = this.loop.pump.carriedBacklog?.dueInMs;
+    if (dueInMs === undefined || dueInMs <= 0) return;
+    this.#backlogTimer = setTimeout(() => {
+      this.#backlogTimer = undefined;
+      void this.flushSoon().catch(() => undefined);
+    }, dueInMs);
+  }
+
+  /** The Host stopped being idle, or the session is closing: nothing is waiting on this timer any more. */
+  #disarmBacklogWake(): void {
+    if (this.#backlogTimer === undefined) return;
+    clearTimeout(this.#backlogTimer);
+    this.#backlogTimer = undefined;
   }
 
   /**
