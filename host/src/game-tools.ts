@@ -1480,12 +1480,6 @@ export function buildCandidateToolSchema(
     );
   }
 
-  if (actionId === "sleep") {
-    // No client-supplied target: the Farmhand's own bed and its native ready
-    // state are the whole input, so there is nothing to synthesize or spoof.
-    return Type.Object({}, { additionalProperties: false });
-  }
-
   if (actionId === "ride_bus") {
     // No client-supplied target: the ticket machine of the current location is
     // the whole input, so there is nothing to synthesize or spoof.
