@@ -20,8 +20,10 @@ import {
   AUTO_OBSERVE_UNAVAILABLE_TOKEN,
   assistantTurnsToolOnly,
   assistantTurnsWithText,
+  BACKLOG_BOUND,
   BUBBLES_DELIVERED,
   CARRIED,
+  CARRIED_BACKLOG_BOUND_MS,
   CompanionEventPump,
   CONSUMED,
   HELD,
@@ -35,10 +37,12 @@ import {
   HOST_MINTED_FACT_SOURCE,
   LOST,
   MAX_DELIVERED_FACT_IDENTITIES,
+  NAMED,
   NOT_OWED,
   NOT_OWED_LABEL,
   NOT_OWED_REASONS,
   type NotOwedReason,
+  OLDEST_HELD_MS,
   PER_DELIVERED_BATCH,
   type PendingBatch,
   RECEIPTS_WITH_PROVENANCE,
@@ -599,6 +603,41 @@ function splitEntries(inner: string): string[] {
 }
 
 /**
+ * The segments the account line carries, IN THE ORDER THE LINE PRINTS THEM - one spelling, read by the reader and by the
+ * falsifier below, so a segment added to the printer is one this file expects rather than one the message forgets.
+ *
+ * The first three are the assistant-turn group; everything from `per delivered batch:` on is the delivered-batch group.
+ */
+const ACCOUNT_SEGMENT_LABELS = [
+  ASSISTANT_TURNS_EXAMINED,
+  ASSISTANT_TURNS_WITH_TEXT,
+  ASSISTANT_TURNS_TOOL_ONLY,
+  `${PER_DELIVERED_BATCH} turns opened`,
+  FLUSHES_EXAMINED,
+  NOT_OWED_LABEL,
+  CARRIED,
+  CONSUMED,
+  LOST,
+  HELD,
+  OLDEST_HELD_MS,
+  NAMED,
+  BACKLOG_BOUND,
+  TRACES,
+  BUBBLES_DELIVERED,
+  LOST,
+  STALLED,
+  TURN_WITHOUT_ACTION,
+  TURN_SETTLED_SILENT,
+  TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
+  AUTO_OBSERVE_AGED_TURNS,
+  AUTO_OBSERVE_ON_STALE,
+  AUTO_OBSERVE_UNAVAILABLE_TOKEN,
+  AUTO_OBSERVE_REARMED,
+  RECEIPTS_WITH_PROVENANCE,
+  UNATTRIBUTED_EXECUTION_TOKEN,
+];
+
+/**
  * One histogram read back, WITH the producer block a fact-decided reason carries inside its own braces.
  *
  * The inverse of the printer, and it refuses anything it cannot read: an entry is `<name>: <count>` or
@@ -685,6 +724,9 @@ function readTurnAccountLine(line: string): Readonly<{
     lostTotal: number;
     lost: Record<string, number>;
     held: number;
+    oldestHeldMs: number;
+    named: number;
+    backlogBoundMs: number;
   }>;
   traces: Readonly<{ total: number; counts: Record<string, number> }>;
   stalled: Readonly<{ total: number; counts: Record<string, number> }>;
@@ -700,34 +742,7 @@ function readTurnAccountLine(line: string): Readonly<{
   }>;
 }> {
   const segments = line.split(SEGMENT_SEPARATOR).map(parseSegment);
-  const labels = [
-    ASSISTANT_TURNS_EXAMINED,
-    ASSISTANT_TURNS_WITH_TEXT,
-    ASSISTANT_TURNS_TOOL_ONLY,
-    `${PER_DELIVERED_BATCH} turns opened`,
-    FLUSHES_EXAMINED,
-    NOT_OWED_LABEL,
-    CARRIED,
-    CONSUMED,
-    LOST,
-    HELD,
-    TRACES,
-    BUBBLES_DELIVERED,
-    LOST,
-    STALLED,
-    TURN_WITHOUT_ACTION,
-    TURN_SETTLED_SILENT,
-    TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
-    AUTO_OBSERVE_AGED_TURNS,
-    AUTO_OBSERVE_ON_STALE,
-    AUTO_OBSERVE_UNAVAILABLE_TOKEN,
-    AUTO_OBSERVE_REARMED,
-    // The provenance reading and the defect it names: `round62` could not say how many of its receipts even claimed a
-    // programme, which is why the field that states it had to be added. Both segments are asserted present here so a run's
-    // account keeps answering `receipts with provenance N {…}` and `unattributed_execution U {ids}`.
-    RECEIPTS_WITH_PROVENANCE,
-    UNATTRIBUTED_EXECUTION_TOKEN,
-  ];
+  const labels = ACCOUNT_SEGMENT_LABELS;
   assert.deepEqual(
     segments.map((segment) => segment.label),
     labels,
@@ -744,6 +759,9 @@ function readTurnAccountLine(line: string): Readonly<{
     consumedCarrySegment,
     lostCarrySegment,
     heldCarrySegment,
+    oldestHeldSegment,
+    namedCarrySegment,
+    backlogBoundSegment,
     tracesSegment,
     bubblesSegment,
     lostSegment,
@@ -756,6 +774,9 @@ function readTurnAccountLine(line: string): Readonly<{
     declinedSegment,
     rearmedSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -800,6 +821,9 @@ function readTurnAccountLine(line: string): Readonly<{
       lostTotal: lostCarrySegment.total,
       lost: lostCarrySegment.counts,
       held: heldCarrySegment.total,
+      oldestHeldMs: oldestHeldSegment.total,
+      named: namedCarrySegment.total,
+      backlogBoundMs: backlogBoundSegment.total,
     }),
     traces: Object.freeze({ total: tracesSegment.total, counts: tracesSegment.counts }),
     delivery: Object.freeze({ bubbles: bubblesSegment.total, lostTotal: lostSegment.total, lost: lostSegment.counts }),
@@ -969,7 +993,16 @@ test("the account line reads back into the account it names", () => {
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
-    carry: Object.freeze({ carried: 11, consumed: 9, lost: Object.freeze({}), lostTotal: 0, held: 2 }),
+    carry: Object.freeze({
+      carried: 11,
+      consumed: 9,
+      lost: Object.freeze({}),
+      lostTotal: 0,
+      held: 2,
+      oldestHeldMs: 41_000,
+      named: 1,
+      backlogBoundMs: CARRIED_BACKLOG_BOUND_MS,
+    }),
     traces: Object.freeze({ ...tracesAtZero(), [TRACE_KINDS[0]!]: 2, [TRACE_KINDS[1]!]: 2 }),
     stalled: Object.freeze({ total: 2, byReason: Object.freeze({ entity_block: 2 }) }),
     delivery: Object.freeze({ bubbles: 7, lost: Object.freeze({ no_presentation_lease: 1 }), lostTotal: 1 }),
@@ -1144,7 +1177,16 @@ test("the account line names a member that never fired, in both histograms", () 
       unattributedExecutions: Object.freeze([]),
       omittedUnattributed: 0,
     }),
-    carry: Object.freeze({ carried: 0, consumed: 0, lost: Object.freeze({}), lostTotal: 0, held: 0 }),
+    carry: Object.freeze({
+      carried: 0,
+      consumed: 0,
+      lost: Object.freeze({}),
+      lostTotal: 0,
+      held: 0,
+      oldestHeldMs: 0,
+      named: 0,
+      backlogBoundMs: CARRIED_BACKLOG_BOUND_MS,
+    }),
     traces: Object.freeze(tracesAtZero()),
     stalled: Object.freeze({ total: 0, byReason: Object.freeze({}) }),
     delivery: Object.freeze({ bubbles: 0, lost: Object.freeze({}), lostTotal: 0 }),
@@ -1194,7 +1236,9 @@ test("the account line this repo printed before the change is REFUSED by the rea
     "turns opened 55 · suppressed 0 {observation_restated: 0, world_fact_restated: 0, nothing_pending: 0} · flushes examined 55";
   assert.throws(
     () => readTurnAccountLine(measured),
-    /per delivered batch: turns opened, flushes examined, not owed, carried, consumed, lost, held, traces, bubbles delivered, lost, stalled, turn_closed_without_action, turn_settled_silent, turn_settled_with_execution_in_flight, aged readings, auto_observe_on_stale, auto_observe_unavailable, refresh_rearmed/u,
+    // THE SEGMENTS THE READER NAMES, from the one list it checks and not a hand-written copy of them - which is what the
+    // previous spelling of this assertion was, and what had to be edited by hand when the carry segment grew.
+    new RegExp(ACCOUNT_SEGMENT_LABELS.slice(3).join(", "), "u"),
     "a line that cannot say what opened its turns is not an account, and must not read as one",
   );
 });

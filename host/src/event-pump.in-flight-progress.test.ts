@@ -7,8 +7,7 @@ import {
   factTurnConsequence,
   HELD_RECEIPT_PROGRESS_STATES,
   HELD_SEMANTIC_PROGRESS_KINDS,
-  HOST_MINTED_WAKE_KINDS,
-  MOD_VERDICT_WAKE_KINDS,
+  PUMP_MINTED_WAKE_KINDS,
   IN_FLIGHT_RECEIPT_PROGRESS_STATES,
   type PendingBatch,
   SETTLED_PROGRAM_OUTCOMES,
@@ -471,8 +470,10 @@ function semanticKindPopulation(): readonly string[] {
   return [
     ...new Set([
       ...Object.keys(HELD_SEMANTIC_PROGRESS_KINDS),
-      ...Object.keys(HOST_MINTED_WAKE_KINDS),
-      ...Object.keys(MOD_VERDICT_WAKE_KINDS),
+      // THE UNION THE CLASSIFICATION ITSELF READS, not the two tables it was built from when this file was written: a
+      // third authority (the pump's own ledger, `PUMP_OWNED_WAKE_KINDS`) is a kind the ingress can deliver, so a list of
+      // the tables beside it would examine one fewer shape than the table has rows.
+      ...Object.keys(PUMP_MINTED_WAKE_KINDS),
     ]),
   ].sort();
 }

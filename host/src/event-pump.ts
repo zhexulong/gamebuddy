@@ -241,6 +241,14 @@ export const FACT_PRODUCER = Object.freeze({
   narrationWithoutWork: "narration_without_work",
   /** The pump's own refresh probe came back refused, published through the materializer's `publish` port. */
   worldStateRefreshRefused: "world_state_refresh_refused",
+  /**
+   * The pump's OWN entrance: the backlog fact it mints when facts have waited past `CARRIED_BACKLOG_BOUND_MS`.
+   *
+   * It is the only member of this table whose producer is the pump, which is why it is here rather than beside the Host's
+   * other mints: the measurement IS the ledger (`#carryHeld`), so the layer that can see the wait is the layer that says
+   * so. The fact still travels the pump's one admission door (`enqueueFact`), so nothing about it bypasses validation.
+   */
+  carriedBacklog: "carried_backlog",
 });
 
 export const FACT_PRODUCERS = Object.freeze(Object.values(FACT_PRODUCER));
@@ -546,6 +554,17 @@ export const CARRIED = "carried";
  */
 export const CONSUMED = "consumed";
 export const HELD = "held";
+/**
+ * The reading this unit adds: how many backlog turns the bound opened, and the bound itself.
+ *
+ * `NAMED` is the third exit a held fact can have (`held H · consumed X · named B · aged-out L`): it was read because the
+ * pump said it was waiting. `OLDEST_HELD_MS` and `BACKLOG_BOUND` are printed beside it because the wait is what decides
+ * whether the bound is about to fire, and because `CARRIED_BACKLOG_BOUND_MS` is a number a run's log has to carry - a
+ * bound nobody prints is a bound nobody checks.
+ */
+export const NAMED = "named";
+export const OLDEST_HELD_MS = "oldest held ms";
+export const BACKLOG_BOUND = "backlog bound ms";
 /** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
 export const TRACES = "traces";
 
@@ -681,6 +700,23 @@ export type TurnAccount = Readonly<{
     lost: Readonly<Record<string, number>>;
     lostTotal: number;
     held: number;
+    /**
+     * How long the OLDEST still-held fact has waited: the number `CARRIED_BACKLOG_BOUND_MS` is compared against.
+     *
+     * It is a reading and not a decision: `held H` says how many, and this says whether the bound is about to fire. Zero
+     * when nothing is held, which is not "no wait" but "nobody is waiting".
+     */
+    oldestHeldMs: number;
+    /**
+     * Backlog facts this pump minted: how many turns the bound opened after a silence.
+     *
+     * Counted where the fact is minted, so it cannot be derived from `held` or from the opener histogram - a `due` turn is
+     * also a stale reading or a narration run, and the producer histogram that separates them is only printed
+     * when it fired. `0` is the reading that says the bound never had to fire.
+     */
+    named: number;
+    /** `CARRIED_BACKLOG_BOUND_MS`, printed: a bound nobody prints is a bound nobody checks. */
+    backlogBoundMs: number;
   }>;
   /**
    * Facts admitted whose shape is a body trace, one count per trace KIND: not news, never a turn, never counted as a fact
@@ -881,7 +917,7 @@ export function turnAccountLine(account: TurnAccount): string {
     .sort((left, right) => left.localeCompare(right, "en"))
     .map((shape) => `${shape}: ${String(account.carry.lost[shape])}`)
     .join(", ");
-  const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)}`;
+  const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)} · ${OLDEST_HELD_MS} ${String(account.carry.oldestHeldMs)} · ${NAMED} ${String(account.carry.named)} · ${BACKLOG_BOUND} ${String(account.carry.backlogBoundMs)}`;
   return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
 }
 
@@ -1507,6 +1543,54 @@ export const MEASURED_TURN_CADENCE_MS = 42_324;
 export const CARRY_HOLD_BOUND_MS = MEASURED_TURN_CADENCE_MS * 2;
 
 /**
+ * How long a carried fact may wait for a turn before the PUMP gives up on being waited for and opens one itself.
+ *
+ * <p>
+ * THE WORDS: a settlement nobody read for N seconds is news about the BACKLOG, not about the world. Measured 2026-11-18
+ * (`round72`, and `round69` before it): `carried 21 · consumed 16 · lost 0 · held 5` and then **166 seconds idle** - a
+ * single `idle` span, which is the run trace's own proof that no flush was attempted, because the Host brackets every
+ * `flushSoon` with that span. The five held facts were terminal receipts whose `presentationSourceOf` is `undefined`, so
+ * no turn opened for them and no turn opened for anything else: the carry bound made that honest (they are named lost at
+ * `CARRY_HOLD_BOUND_MS`) and useless - the work they answered had happened and was thrown away by name.
+ * </p>
+ *
+ * <p>
+ * THE NUMBER IS ONE MEASURED TURN (`MEASURED_TURN_CADENCE_MS`, 42.3 s). Two properties fix it, in opposite directions:
+ * </p>
+ * <ul>
+ *   <li>LONGER THAN AN ORDINARY TURN. A fact that arrives while a turn is running is read by the NEXT turn, and that turn
+ *       is the ordinary consumer (`round45` measured 42.3 s per delivered turn; `round43` ~9.4 s). A shorter bound would
+ *       put a backlog utterance in front of a delivery that was already going to carry the facts.</li>
+ *   <li>SHORTER THAN `CARRY_HOLD_BOUND_MS` (two turns). The backlog is what NAMES the waiting facts while they can still be
+ *       read; the carry bound is what ends the promise when even this did not work. Derived from the same cadence on
+ *       purpose, so `backlog < carry` is an arithmetic fact rather than two numbers that happen to agree, and the gate
+ *       asserts the ordering instead of trusting it.</li>
+ * </ul>
+ *
+ * <p>
+ * WHAT IT MAY NOT BECOME: a turn per settlement. A settlement still never opens one (`a_turn_is_opened_where_no_surface_can
+ * _present`), and a backlog turn is ONE utterance about N facts, not N. `round66`'s 60 bubbles in 120 turns and `round67`'s
+ * `adapter_ingress 33` are what a fact-per-event turn costs; this bound only fires for facts that have already waited a
+ * whole delivered turn with nothing else opening one.
+ * </p>
+ */
+export const CARRIED_BACKLOG_BOUND_MS = MEASURED_TURN_CADENCE_MS;
+
+/**
+ * The semantic kind of the pump's own backlog fact: not what the world did, but what is waiting to be read.
+ *
+ * <p>
+ * A KIND OF ITS OWN, rather than a sentence inside a settlement, because the statement is about the HOST's ledger: `held: N`
+ * and the families of the facts nobody carried. It is classified `decision` (`PUMP_OWNED_WAKE_KINDS`) and it is the ONE
+ * thing this pump may raise after a silence - it is what makes her look, and what she then reads is the facts themselves.
+ * </p>
+ */
+export const CARRIED_BACKLOG_SEMANTIC_KIND = "carried_backlog";
+
+/** How many families a backlog fact names before it counts the rest (`held: N` is always the whole population). */
+const MAX_CARRIED_BACKLOG_FAMILIES = 4;
+
+/**
  * Consecutive narration turns that make `narration_without_work` due.
  *
  * <p>
@@ -2016,6 +2100,13 @@ export class CompanionEventPump {
   #carriedFacts = 0;
   /** Every fact a `not_owed` answer ever ticketed: the head of the ledger, `consumed + lost + held`. */
   #carryFacts = 0;
+  /**
+   * Backlog facts this pump minted (`named`): the turns the bound opened by itself.
+   *
+   * Counted where the fact is minted, beside the ledger it reads - so a run can tell "nothing was ever late" from "nothing
+   * was ever carried", which the carry segment alone cannot say.
+   */
+  #carriedBacklogNamed = 0;
   /** The carried facts nobody took, by the shape that could not present (`factShapeName`). */
   readonly #carryLostByShape: Record<string, number> = {};
   /** Bubbles a delivered turn committed to the player, and the text no projection ever saw, by reason. */
@@ -2171,14 +2262,8 @@ export class CompanionEventPump {
     // An execution that has SETTLED can publish no further progress, so its record is dead weight. Dropping
     // it here keeps the record bounded by the in-flight executions instead of by the session's action count.
     if (isTerminalExecutionFact(fact)) this.#forgetSettledProgress(fact);
-    const destination =
-      fact.kind === "execution_receipt"
-        ? this.#receipts
-        : fact.kind === "semantic_event"
-          ? this.#semanticEvents
-          : fact.kind === "world_fact"
-            ? this.#worldFacts
-            : this.#lifecycle;
+    const destination = this.#windowOf(frozen);
+    if (destination === undefined) return;
     const limit =
       fact.kind === "execution_receipt"
         ? MAX_PENDING_RECEIPTS
@@ -2260,16 +2345,34 @@ export class CompanionEventPump {
   }
 
   #readmit(fact: WorldFact): void {
-    const destination =
-      fact.kind === "execution_receipt"
-        ? this.#receipts
-        : fact.kind === "semantic_event"
-          ? this.#semanticEvents
-          : fact.kind === "world_fact"
-            ? this.#worldFacts
-            : this.#lifecycle;
+    const destination = this.#windowOf(fact);
+    // A reading is not a window: it has the `<world-state>` slot, which `takeBatch` consumes with the batch. Nothing that
+    // reaches this method is one (`takeBatch` only pushes back facts it took from a window), so this is the type saying so.
+    if (destination === undefined) return;
     const key = factSlotKey(fact);
     if (!destination.has(key)) destination.set(key, fact);
+  }
+
+  /**
+   * The pending window a fact is filed in, or `undefined` for a reading.
+   *
+   * THE ONE BINDING from `factWindow`'s answer to the `Map` it names: `enqueueFact` and `#readmit` both ask here, so a fact
+   * cannot be admitted to one window and put back into another - the second spelling of the same routing that made
+   * `factWindow` worth extracting.
+   */
+  #windowOf(fact: WorldFact): Map<string, WorldFact> | undefined {
+    switch (factWindow(fact)) {
+      case "receipts":
+        return this.#receipts;
+      case "semantic_events":
+        return this.#semanticEvents;
+      case "world_facts":
+        return this.#worldFacts;
+      case "lifecycle":
+        return this.#lifecycle;
+      case "snapshot":
+        return undefined;
+    }
   }
 
   /**
@@ -2353,6 +2456,7 @@ export class CompanionEventPump {
     this.#carryTickets.clear();
     this.#carriedFacts = 0;
     this.#carryFacts = 0;
+    this.#carriedBacklogNamed = 0;
     for (const shape of Object.keys(this.#carryLostByShape)) delete this.#carryLostByShape[shape];
     this.#deliveryBubbles = 0;
     for (const reason of Object.keys(this.#deliveryLost)) delete this.#deliveryLost[reason];
@@ -2418,6 +2522,9 @@ export class CompanionEventPump {
         lost: Object.freeze({ ...this.#carryLostByShape }),
         lostTotal: Object.values(this.#carryLostByShape).reduce((total, count) => total + count, 0),
         held: this.#carryHeld.size,
+        oldestHeldMs: this.#oldestCarryWaitMs(),
+        named: this.#carriedBacklogNamed,
+        backlogBoundMs: CARRIED_BACKLOG_BOUND_MS,
       }),
       traces: Object.freeze({ ...this.#tracesByKind }),
       stalled: Object.freeze({ total: this.#stallFacts, byReason: Object.freeze({ ...this.#stallReasons }) }),
@@ -2847,6 +2954,18 @@ export class CompanionEventPump {
         }
       }
       opening = retry === undefined ? this.#opening() : retry.opening;
+      // THE BACKLOG: nothing opened a turn, and facts have been waiting past the bound. This is the ONE turn the pump may
+      // raise by itself, and it is raised for a fact about its own ledger (`#takeCarriedBacklogFact`) rather than for a
+      // settlement: a settlement still opens no turn of its own, and a turn that opens for ANY other reason first has already
+      // consumed these facts by the time this line is reached (`takeBatch` empties the windows), so a second turn can never
+      // name the same backlog twice.
+      if (opening === undefined && retry === undefined) {
+        const backlog = this.#takeCarriedBacklogFact();
+        if (backlog !== undefined) {
+          this.enqueueFact(backlog, FACT_PRODUCER.carriedBacklog);
+          opening = Object.freeze({ decision: TURN_OPENING.due, producedBy: FACT_PRODUCER.carriedBacklog });
+        }
+      }
       if (opening === undefined) return this.#noteNotOwed(this.#notOwed());
       // FROM HERE A TURN IS OWED, and this is the only branch that composes a batch.
       pending = retry?.batch ?? this.takeBatch();
@@ -3227,6 +3346,123 @@ export class CompanionEventPump {
     // owed, so a contrary carried fact whose bound has passed is gone rather than still on its way.
     this.#expireStaleCarries();
     return Object.freeze({ kind: "not_owed" as const, reason: notOwed.reason, carry: notOwed.carry });
+  }
+
+  /**
+   * How long the oldest still-held fact has waited, or `0` when nothing is held.
+   *
+   * The population is the ledger (`#carryHeld`), so it is the same number the mint and the account both read: a second
+   * reading of `sinceMs` would let the bound fire on one value and print another.
+   */
+  #oldestCarryWaitMs(): number {
+    if (this.#carryHeld.size === 0) return 0;
+    let oldestMs = this.#now();
+    for (const held of this.#carryHeld.values()) oldestMs = Math.min(oldestMs, held.sinceMs);
+    return Math.max(0, this.#now() - oldestMs);
+  }
+
+  /**
+   * What this pump can say about the facts nobody has read, right now - and when the bound will make it say so itself.
+   *
+   * <p>
+   * READING, NOT DELIVERY: nothing is minted here, exactly as `narrationWithoutWork` and `executionLiveness` are split from
+   * their `take*` methods. It exists because the pump cannot call `flush` - the sink, `#flushScheduled` and the provider
+   * wait belong to the Host - so the Host has to be able to ASK whether a turn is owed to a silence, and for how long it
+   * still has to wait. `dueInMs` is `undefined` when nothing is held (nothing will ever be due) and when her own plan still
+   * has nodes to run (the plan's settlement is the turn, and it is presentable).
+   * </p>
+   */
+  public get carriedBacklog(): Readonly<{
+    held: number;
+    oldestHeldMs: number;
+    boundMs: number;
+    dueInMs: number | undefined;
+  }> {
+    const oldestHeldMs = this.#oldestCarryWaitMs();
+    const held = this.#carryHeld.size;
+    return Object.freeze({
+      held,
+      oldestHeldMs,
+      boundMs: CARRIED_BACKLOG_BOUND_MS,
+      dueInMs: this.#backlogIsDue() ? Math.max(0, CARRIED_BACKLOG_BOUND_MS - oldestHeldMs) : undefined,
+    });
+  }
+
+  /**
+   * Whether the facts this pump is carrying have waited long enough to be NEWS ABOUT THE BACKLOG rather than state.
+   *
+   * <p>
+   * THREE CONDITIONS, and each is a statement the pump can defend:
+   * </p>
+   *
+   * <ul>
+   *   <li>SOMETHING IS HELD. `held 0` is not a backlog: a fact cannot be waiting if there is none.</li>
+   *   <li>IT HAS WAITED `CARRIED_BACKLOG_BOUND_MS`. Not one second less - a fact that arrives while a turn is running is
+   *       read by the next turn, and that turn is the consumer this bound exists to stop pre-empting.</li>
+   *   <li>HER OWN PLAN IS NOT ABOUT TO ANSWER. `#workLeftToPlan` counts the nodes the journal says have not happened, and
+   *       the settlement of that plan is a PRESENTABLE fact which opens its own turn. A backlog turn while a plan works is
+   *       exactly the `plan_still_running` cost the suppressor exists for (`follow_up` 9 -> 65), and it would also be a lie:
+   *       the answer is not lost, it is one turn away.</li>
+   * </ul>
+   * <p>
+   * THE WORK LEFT IS A READING OF THE JOURNAL, not a duration: a plan whose nodes have all happened answers `0`, and so
+   * does a reading that has expired (`IN_FLIGHT_READING_MAX_AGE_MS`, enforced by the reader) - so an unreadable journal can
+   * never hold the backlog for ever.
+   * </p>
+   */
+  #backlogIsDue(): boolean {
+    if (this.#carryHeld.size === 0) return false;
+    if (this.#oldestCarryWaitMs() < CARRIED_BACKLOG_BOUND_MS) return false;
+    return this.#workLeftToPlan() === 0;
+  }
+
+  /**
+   * The backlog fact itself, or `undefined` when none is due - minted where the wait is measured.
+   *
+   * <p>
+   * WHAT IT SAYS, AND WHAT IT MAY NOT SAY. `held: N` and the FAMILIES of the facts waiting (`factShapeName`: the same
+   * spelling the account's `no_surface_for` and `lost` braces use, so a reader can join the three readings by name), the
+   * wait, and the bound. It says nothing about the world: it is not a `snapshot`, it is filed as a `semantic_event` (so it
+   * never enters the `#worldFacts` window), and `describeWorldChange` answers `undefined` for it - the gate asserts all
+   * three, because a fact that made the world look moved would re-arm the stale-reading measurement and suppress a real
+   * `world_state_stale` fact with a statement about the Host's own ledger.
+   * </p>
+   * <p>
+   * IT NAMES, IT DOES NOT CARRY. The facts themselves are still in their windows and ride the same batch, so the turn reads
+   * the outcomes, not a summary of them: this fact is the reason the turn exists, and the model-facing line says how many are
+   * waiting (`fact-brief.ts`).
+   * </p>
+   */
+  #takeCarriedBacklogFact(): WorldFact | undefined {
+    if (!this.#backlogIsDue()) return undefined;
+    const held = [...this.#carryHeld.values()].sort((left, right) => left.sinceMs - right.sinceMs);
+    const families: string[] = [];
+    const counted: Record<string, number> = {};
+    for (const entry of held) counted[entry.shape] = (counted[entry.shape] ?? 0) + 1;
+    for (const entry of held) if (!families.includes(entry.shape)) families.push(entry.shape);
+    this.#carriedBacklogNamed += 1;
+    const eventId = `${CARRIED_BACKLOG_SEMANTIC_KIND}_${String(this.#carriedBacklogNamed)}`;
+    return Object.freeze({
+      source: HOST_MINTED_FACT_SOURCE,
+      kind: "semantic_event" as const,
+      eventId,
+      correlationId: eventId,
+      revision: this.#lastSnapshot?.revision ?? 0,
+      occurredAtMs: this.#now(),
+      semanticKind: CARRIED_BACKLOG_SEMANTIC_KIND,
+      payload: Object.freeze({
+        kind: CARRIED_BACKLOG_SEMANTIC_KIND,
+        held: this.#carryHeld.size,
+        // Bounded and COUNTED, the shape the account's other braces already use: the oldest families first, and the rest is
+        // a number rather than a second list.
+        families: Object.freeze(families.slice(0, MAX_CARRIED_BACKLOG_FAMILIES)),
+        omittedFamilies: Math.max(0, families.length - MAX_CARRIED_BACKLOG_FAMILIES),
+        byFamily: Object.freeze(counted),
+        oldestHeldMs: this.#oldestCarryWaitMs(),
+        boundMs: CARRIED_BACKLOG_BOUND_MS,
+        namedSoFar: this.#carriedBacklogNamed,
+      }),
+    });
   }
 
   /**
@@ -4335,6 +4571,22 @@ export const MOD_VERDICT_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
 });
 
 /**
+ * Semantic kinds the PUMP mints and publishes itself, each with the path that turns it into a turn.
+ *
+ * <p>
+ * A THIRD TABLE BECAUSE THERE IS A THIRD AUTHORITY. A Host-minted kind is a schedule `HostService` keeps; a Mod verdict is
+ * the body controller deciding something about the body it owns; this one is the pump's own LEDGER - `#carryHeld` is a
+ * record only this layer keeps, so only this layer can say when a fact has waited too long. The kind travels the pump's own
+ * `enqueueFact` entrance and is delivered by the flush that mints it, so naming `acceptHostMintedFact` here would be a path
+ * nothing walks.
+ * </p>
+ */
+export const PUMP_OWNED_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  [CARRIED_BACKLOG_SEMANTIC_KIND]:
+    "the pump mints it in `flush` itself, when `#carryHeld` says the oldest fact it carries has waited CARRIED_BACKLOG_BOUND_MS: it enqueues the fact on its own windows (`enqueueFact`) and opens the turn that reads the facts it names, so all the Host owes the bound is the flush - `HostService` arms one timer for it when the run goes idle (`carriedBacklog`)",
+});
+
+/**
  * Every kind the pump can deliver ITSELF, from the two tables that say which authority decides it.
  *
  * The population the turn classification below and the wake-classification gate read, so a kind added to either table is
@@ -4343,6 +4595,7 @@ export const MOD_VERDICT_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
 export const PUMP_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
   ...HOST_MINTED_WAKE_KINDS,
   ...MOD_VERDICT_WAKE_KINDS,
+  ...PUMP_OWNED_WAKE_KINDS,
 });
 
 /**
@@ -4455,10 +4708,11 @@ export function settledProgramOutcome(fact: WorldFact): SettledProgramOutcome {
  * <p>
  * THE POPULATION IS DERIVED, NOT LISTED: every `EXECUTION_STATES` member is classified as a receipt, every settlement
  * outcome the pump declares is classified as a settlement, and every kind the
- * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `HOST_MINTED_WAKE_KINDS`, `MOD_VERDICT_WAKE_KINDS`, and the
- * empty `IN_FLIGHT_RECEIPT_PROGRESS_STATES`) is classified as a semantic event. A state the protocol adds, an outcome or
- * kind added to one of those tables, appears here or fails `event-pump.in-flight-progress.test.ts` by name - which is also
- * why the table is built by code rather than typed out: two hand-written copies of one vocabulary disagree eventually.
+ * pump's own tables declare (`HELD_SEMANTIC_PROGRESS_KINDS`, `HOST_MINTED_WAKE_KINDS`, `MOD_VERDICT_WAKE_KINDS`,
+ * `PUMP_OWNED_WAKE_KINDS`, and the empty `IN_FLIGHT_RECEIPT_PROGRESS_STATES`) is classified as a semantic event. A state the
+ * protocol adds, an outcome or kind added to one of those tables, appears here or fails
+ * `event-pump.in-flight-progress.test.ts` by name - which is also why the table is built by code rather than typed out: two
+ * hand-written copies of one vocabulary disagree eventually.
  * </p>
  */
 function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence>> {
@@ -4475,6 +4729,7 @@ function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence
   for (const kind of Object.keys(HELD_SEMANTIC_PROGRESS_KINDS)) table[`semantic:${kind}`] = "progress";
   for (const kind of Object.keys(HOST_MINTED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
   for (const kind of Object.keys(MOD_VERDICT_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
+  for (const kind of Object.keys(PUMP_OWNED_WAKE_KINDS)) table[`semantic:${kind}`] = "decision";
   for (const outcome of Object.keys(SETTLED_PROGRAM_OUTCOMES) as SettledProgramOutcome[])
     table[`settled:${outcome}`] = "decision";
   return Object.freeze(table);
@@ -4483,6 +4738,40 @@ function buildFactTurnConsequence(): Readonly<Record<string, FactTurnConsequence
 export type FactTurnConsequence = "decision" | "progress" | "in_flight_progress";
 
 export const FACT_TURN_CONSEQUENCE: Readonly<Record<string, FactTurnConsequence>> = buildFactTurnConsequence();
+
+/** Which window a fact waits in: `enqueueFact`'s filing decision, named once. */
+export type FactWindow = "snapshot" | "receipts" | "semantic_events" | "world_facts" | "lifecycle";
+
+/**
+ * Which window this fact is filed in - the one reading of `kind`, which is all the pump's routing has ever read.
+ *
+ * <p>
+ * `#worldFacts` IS THE WINDOW OF THINGS THE WORLD SAID, and a fact that is not one must not be filed there. Extracted when
+ * the pump's own backlog fact needed a gate over exactly that question: the backlog says what the HOST has not read, so a
+ * filing into `#worldFacts` would make the Host's ledger look like a world event - the same defect class as counting a body
+ * trace as a fact, one layer down. A gate cannot read a `Map` it has no handle on, so the decision itself is the reading.
+ * </p>
+ *
+ * <p>
+ * A READING IS NOT A WINDOW. `snapshot` is the `<world-state>` slot, which is consumed by the batch that takes it; it is a
+ * member here because `kind` has five members and this function's job is to answer for all five rather than for the four it
+ * expects.
+ * </p>
+ */
+export function factWindow(fact: WorldFact): FactWindow {
+  switch (fact.kind) {
+    case "snapshot":
+      return "snapshot";
+    case "execution_receipt":
+      return "receipts";
+    case "semantic_event":
+      return "semantic_events";
+    case "world_fact":
+      return "world_facts";
+    case "lifecycle":
+      return "lifecycle";
+  }
+}
 
 /** The table key one fact occupies: its kind, split by the state, the semantic kind or the settlement outcome that says
  * what it means. */
@@ -4907,8 +5196,15 @@ function narrationWithoutWorkThreshold(published: number): number {
  * facts, and a body trace whose location differs from the reading's. A `route_progress` one tile away says the body
  * moved, which is her own walking, not the world - only a DIFFERENT map counts.
  * </p>
+ *
+ * <p>
+ * EXPORTED FOR THE ONE GATE THAT HAS TO ASK IT. A fact the Host mints about its OWN ledger (the backlog,
+ * `CARRIED_BACKLOG_SEMANTIC_KIND`) must not answer here: a true answer would count a Host bookkeeping statement as the world
+ * moving, which re-arms the stale-reading measurement and can suppress a real `world_state_stale` fact. The gate drives this
+ * function rather than a copy of its three conditions, so a fourth condition added here is one the gate reads.
+ * </p>
  */
-function describeWorldChange(fact: WorldFact, readingLocation: string | undefined): string | undefined {
+export function describeWorldChange(fact: WorldFact, readingLocation: string | undefined): string | undefined {
   if (fact.kind === "semantic_event" && fact.payload.kind === "snapshot_changed")
     return `snapshot_changed:${typeof fact.payload.reasonCode === "string" ? fact.payload.reasonCode : "changed"}`;
   if (

@@ -49,6 +49,7 @@
  */
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
+import { CARRIED_BACKLOG_SEMANTIC_KIND } from "./event-pump.js";
 import {
   formatBodyState,
   formatGameClock,
@@ -624,6 +625,9 @@ function factLine(fact: WorldFact): string {
       return receiptLine(fact, at);
     case "semantic_event": {
       const kind = typeof fact.payload.kind === "string" ? fact.payload.kind : "semantic_event";
+      // THE ONE SEMANTIC EVENT THAT IS A STATEMENT OF ITS OWN, because it says what is UNREAD rather than what happened:
+      // it is long enough to need the counts, and `- carried_backlog` told the model nothing (`round72`'s five facts).
+      if (kind === CARRIED_BACKLOG_SEMANTIC_KIND) return carriedBacklogLine(fact, at);
       const words = SEMANTIC_KIND_ZH[kind] ?? kind;
       const reason = typeof fact.payload.reasonCode === "string" ? `（${fact.payload.reasonCode}）` : "";
       return `- ${at}${words}${reason}`;
@@ -726,6 +730,71 @@ function worldFactLine(fact: WorldFact, at: string): string {
     default:
       return genericWorldFactLine(fact, at, kind);
   }
+}
+
+/**
+ * The Host's own backlog: `N 份结果没读到`, and which families they are.
+ *
+ * <p>
+ * WHY THIS LINE EXISTS AT ALL. `round72`: five terminal receipts were carried, no turn opened for them (a receipt has no
+ * presentation identity), and the run sat idle for 166 s while the work they answered had already happened. The pump now
+ * opens ONE turn when the backlog has waited (`CARRIED_BACKLOG_BOUND_MS`), and this is what that turn says: the count, how
+ * long the oldest waited, and the families - in the same `factShapeName` spelling the account's `no_surface_for` and `lost`
+ * braces use, so a reader can join the message to the ledger by name.
+ * </p>
+ *
+ * <p>
+ * IT IS NOT A WORLD-CHANGE LINE, and the sentence is written to be unable to read as one: it says what is UNREAD, never
+ * what the world did. The receipts themselves are rendered beside it by `receiptLine` (they always owed her the news; they
+ * could not OPEN a turn), so this line is the reason the turn exists rather than a summary that replaces them.
+ * </p>
+ *
+ * <p>
+ * NOTHING IS INVENTED. `held` is the pump's ledger size, `families` and their counts are the shapes in it, and
+ * `oldestHeldMs` is the wait the pump measured, converted to seconds at the one place the text is composed. A payload this
+ * file cannot read prints what it can rather than a zero: a sentence that said `0 份` would be the one lie this fact cannot
+ * afford.
+ * </p>
+ */
+function carriedBacklogLine(fact: WorldFact, at: string): string {
+  const held = Number(fact.payload.held);
+  const counted = familyCounts(fact.payload);
+  const named = familyNames(fact.payload);
+  const omitted = Number(fact.payload.omittedFamilies);
+  const waitedMs = Number(fact.payload.oldestHeldMs);
+  const waited = Number.isFinite(waitedMs) ? `（最早的一份等了 ${String(Math.round(waitedMs / 1000))} 秒）` : "";
+  const families = named
+    .map((family) => (counted[family] === undefined ? family : `${family} ${String(counted[family])}`))
+    .join("、");
+  const rest = Number.isFinite(omitted) && omitted > 0 ? ` 等 ${String(omitted)} 类` : "";
+  const count = Number.isFinite(held) && held > 0 ? String(held) : countedTotal(counted);
+  // HELD 0 IS NOT A STATEMENT, IT IS THE ABSENCE OF ONE. The pump cannot mint this fact with an empty ledger
+  // (`#backlogIsDue`), and a line that said `有 0 份结果没读到` would be the one lie this fact cannot afford - so a payload
+  // that says nothing is rendered as nothing rather than as a zero.
+  if (count === "0") return "";
+  return `- ${at}有 ${count} 份结果没读到${waited}${families === "" ? "" : `：${families}${rest}`}`;
+}
+
+/** The families a backlog fact names, in the pump's own order (oldest first), from its own bounded list. */
+function familyNames(payload: Readonly<Record<string, unknown>>): readonly string[] {
+  const families = payload.families;
+  if (!Array.isArray(families)) return [];
+  return families.filter((family): family is string => typeof family === "string" && family !== "");
+}
+
+/** How many facts of each family the pump counted, so the count beside a name is its own and not a guess. */
+function familyCounts(payload: Readonly<Record<string, unknown>>): Readonly<Record<string, number>> {
+  const byFamily = payload.byFamily;
+  if (byFamily === null || typeof byFamily !== "object") return {};
+  const counted: Record<string, number> = {};
+  for (const [family, count] of Object.entries(byFamily as Record<string, unknown>))
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) counted[family] = count;
+  return counted;
+}
+
+/** The whole population, for a payload that lost its own `held`: the counts still close to the number of facts. */
+function countedTotal(counted: Readonly<Record<string, number>>): string {
+  return String(Object.values(counted).reduce((total, count) => total + count, 0));
 }
 
 /**
