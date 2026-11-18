@@ -136,6 +136,7 @@ const {
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
 const { stepRecorder } = require("./game-surface-states.cjs");
+const { INSTALLATION_CONTROL } = require("./installation-panel-names.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -162,6 +163,8 @@ function launchBudgetMs() {
 const BUDGET = Object.freeze({
   /** The panel's own first read; the discovery scan is a Host filesystem walk. */
   discoveryMs: 90_000,
+  /** One press of the panel's confirm, and of its 重新查找: both answer a Host walk, not a pixel. */
+  registrationMs: 20_000,
   /** A lifecycle control that the panel draws from a fresh Game read, after the fact behind it landed. */
   controlMs: 30_000,
   activationMs: 120_000,
@@ -1346,35 +1349,79 @@ async function hostAnswers(port) {
 
   // ---- 1. the installation registration ----
   if (state.prerequisites !== "met") {
+    /*
+     * THE PANEL'S OWN RE-SCAN IS PART OF REGISTERING. A surface that meets the panel in a finished search
+     * with no offer - `cancelled`, `expired`, `no-candidates`, `error`, `source-unavailable` - shows no
+     * candidate and no scan of its own (`StardewInstallationDiscovery.tsx` only scans when it mounts with no
+     * seeded answer), so waiting the budget out printed `no_installation_discovered`, which claimed this
+     * machine has no Stardew Valley. Measured 2026-11-19: driver T drives the panel's 取消 to prove that
+     * control, the Game surface re-mounts into `cancelled`, and W spent 90 s over "搜索已取消。" - a machine
+     * with a registered-and-ready installation. The product publishes 重新查找 as the way out of every one of
+     * those states, so the driver presses it, bounded by the same budget, and says which state it left.
+     */
     let panel = await page.evaluate(readInstallationPanel);
     const panelBegan = Date.now();
     const terminal = new Set(["no-candidates", "source-unavailable", "error", "cancelled", "expired"]);
-    while (Date.now() - panelBegan < BUDGET.discoveryMs && panel.present === true && panel.candidates.length === 0 && !terminal.has(panel.dataState)) {
-      await sleep(1000);
+    let rescans = 0;
+    while (Date.now() - panelBegan < BUDGET.discoveryMs && panel.present === true && panel.candidates.length === 0) {
+      if (!terminal.has(panel.dataState)) {
+        await sleep(1000);
+        panel = await page.evaluate(readInstallationPanel);
+        continue;
+      }
+      const findAgain = page
+        .locator(".game-installation-panel")
+        .getByRole("button", { name: new RegExp(`${INSTALLATION_CONTROL.findAgain.zh}|${INSTALLATION_CONTROL.findAgain.en}`, "u") })
+        .first();
+      if ((await findAgain.count()) === 0 || !(await findAgain.isEnabled().catch(() => false))) break;
+      rescans += 1;
+      say(`the panel sits in data-state=${JSON.stringify(panel.dataState)} (${JSON.stringify(panel.statusText)}); driving its own 重新查找, press ${rescans}`);
+      await findAgain.click();
       panel = await page.evaluate(readInstallationPanel);
     }
     record("installation panel", panel);
+    if (rescans > 0) world.rescans = rescans;
     if (panel.present !== true) return await notMeasured(browser, "no_installation_panel", "the Game surface painted no installation panel, so no registration control exists to drive");
     if (panel.candidates.length === 0)
       return await notMeasured(
         browser,
         "no_installation_discovered",
-        `the panel reached data-state=${JSON.stringify(panel.dataState)} with no candidate within ${String(BUDGET.discoveryMs)}ms: ${JSON.stringify(panel.statusText)}`,
+        `the panel reached data-state=${JSON.stringify(panel.dataState)} with no candidate within ${String(BUDGET.discoveryMs)}ms after ${String(rescans)} re-scan press(es): ${JSON.stringify(panel.statusText)}`,
       );
     const first = panel.candidates[0];
     if (first.confirm === null || first.confirm.disabled)
       return await notMeasured(browser, "no_installation_discovered", `the first candidate offered no enabled confirm control: ${JSON.stringify(first)}`);
     say(`confirming the first candidate: ${JSON.stringify(first.text)}`);
-    await page.locator(".game-installation-panel .installation-candidate button").first().click();
-    const registration = await waitForState((reading) => reading.ok === true && reading.prerequisites === "met", BUDGET.discoveryMs);
+    /*
+     * A press is not an admission. The page draws the confirm from `pending === "none"` and ignores a press
+     * while a scan is outstanding, so a press the page did not take leaves no request and no answer - the
+     * shape this driver met on 2026-11-19, where the facts carried no answer on the confirm route at all.
+     * The driver reads the panel back and presses once more while it still offers an enabled confirm, and
+     * records what the panel then says, so the next reader has the state instead of only "never met".
+     */
+    const pressConfirm = async () => {
+      await page.locator(".game-installation-panel .installation-candidate button").first().click();
+      return await waitForState((reading) => reading.ok === true && reading.prerequisites === "met", BUDGET.registrationMs);
+    };
+    let registration = await pressConfirm();
+    if (!registration.settled) {
+      const after = await page.evaluate(readInstallationPanel);
+      record("installation panel after the press", after);
+      const confirmable = after.present === true && after.candidates.length > 0 && after.candidates[0].confirm?.disabled === false;
+      say(
+        `the confirm produced no prerequisites=met within ${String(BUDGET.registrationMs)}ms; the panel now reads data-state=${JSON.stringify(after.dataState)}, confirm disabled=${String(after.candidates[0]?.confirm?.disabled ?? null)}`,
+      );
+      if (confirmable) registration = await pressConfirm();
+    }
     record("registration", registration);
     if (!registration.settled) {
       const problem = problems.get("game/installation/discovery/confirm") ?? null;
       if (problem !== null) return await refuse(browser, LAUNCH_STEPS.installation, { code: problem.code, cause: problem.cause, guardian });
+      const after = await page.evaluate(readInstallationPanel);
       return await notMeasured(
         browser,
         "installation_registration_refused",
-        `the Host never published prerequisites: met within ${String(BUDGET.discoveryMs)}ms (last prerequisites=${String(registration.state.prerequisites)})`,
+        `the Host never published prerequisites: met within ${String(BUDGET.registrationMs)}ms per press (last prerequisites=${String(registration.state.prerequisites)}); the panel reads data-state=${JSON.stringify(after.dataState)}, status=${JSON.stringify(after.statusText)}, confirm=${JSON.stringify(after.candidates[0]?.confirm ?? null)}`,
       );
     }
   } else {

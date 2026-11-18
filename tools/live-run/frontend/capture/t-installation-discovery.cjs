@@ -25,6 +25,7 @@
 // durable state, which the task scopes this driver out of; it too is read, not clicked.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
+const { INSTALLATION_CONTROL: CONTROL } = require("./installation-panel-names.cjs");
 
 const WIDTHS = [
   { w: 1440, h: 900, tag: "1440x900" },
@@ -50,13 +51,7 @@ const SENTENCE = {
 };
 /** `labels.gameInstallationAria`, which tells the driver which locale's sentences to match. */
 const ARIA = { zh: "游戏安装设置", en: "Game installation setup" };
-/** The panel's own accessible names for its controls (`gameInstallationChooseFolder` / `FindAgain` / `Confirm` / `gameResumeCancel`). */
-const CONTROL = {
-  chooseFolder: { zh: "选择游戏文件夹", en: "Choose game folder" },
-  findAgain: { zh: "重新查找", en: "Find again" },
-  confirm: { zh: "确认", en: "Confirm" },
-  cancel: { zh: "取消", en: "Cancel" },
-};
+/** The panel's own accessible names, in one copy shared with driver W (`installation-panel-names.cjs`). */
 const ALL_STATES = [
   "not_configured",
   "loading",
