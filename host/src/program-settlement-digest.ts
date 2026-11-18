@@ -54,6 +54,16 @@ export const PROGRAM_SETTLED_DIGEST_SOURCE = "host_game_session";
  */
 export const MAX_SETTLED_DIGEST_NODES = 20;
 
+/**
+ * How many characters one failure line may spend.
+ *
+ * A reason code is a wire token and a tile is two numbers, so an ordinary line is `plant_seed (60,18):
+ * seed_not_owned_in_slot` - about forty. This bound exists because the values are the MOD's (`reasonCode`, a hint) and a
+ * producer that stopped bounding them must not be able to push a paragraph into an answer the model re-reads every turn;
+ * a line past it is cut with the cut marked, never silently.
+ */
+export const MAX_SETTLED_FAILURE_CHARS = 96;
+
 /** How often a background watch re-reads. Slower than a turn-holding wait: this one is not on anybody's clock. */
 export const PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS = 1_000;
 
@@ -112,6 +122,17 @@ export interface SettledProgramAnswer {
   readonly reason: string | null;
   /** The one line a reader can take without parsing twenty rows: `.settledSummary`. */
   readonly summary: string;
+  /**
+   * ONE BOUNDED LINE PER STEP THAT DID NOT DO WHAT IT WAS TOLD, read over EVERY row - not over `nodes`.
+   *
+   * `Applied 16 actions: 9 done, 6 rejected, 1 failed` is the head; these are the names it is counting, and without them
+   * the head is a number a reader cannot act on: which seed on which tile, and the Mod's own reason
+   * (`plant_seed (60,18): seed_not_owned_in_slot`). Read from all rows so a twenty-fifth refusal is named on a plan whose
+   * row list is bounded at twenty, and never capped - a plan that refused twenty-five steps is a plan that was wrong
+   * twenty-five times, and naming them is what this list is for. Each line is bounded in LENGTH
+   * (`MAX_SETTLED_FAILURE_CHARS`) because the reason is the Mod's own token, not Host prose.
+   */
+  readonly failures: readonly string[];
   /** The rows, bounded; each carries its terminal state and, where the Mod said one, its own code. */
   readonly nodes: readonly SettledDigestNode[];
   /** How many rows did not fit. `0` for a plan inside the bound, and the counts above still cover them. */
@@ -137,9 +158,25 @@ export function settledProgramAnswer(answer: ReturnType<typeof planBatchAnswer>)
     ok: settledProgramOk(counts, answer.nodes.length),
     reason: firstRefusal === undefined ? null : settledProgramReason(firstRefusal),
     summary: settledSummary(counts, answer.nodes.length),
+    failures: Object.freeze(answer.nodes.filter((node) => node.state !== "succeeded").map(settledFailure)),
     nodes: Object.freeze(nodes),
     omitted: answer.nodes.length - nodes.length,
   });
+}
+
+/**
+ * One step that did not do what it was told, as one bounded line: `<actionId> (<x>,<y>): <reasonCode || state>`.
+ *
+ * The coordinate is there when the step's own arguments named one - the same `tile` field
+ * `stardew_action_program_status` answers with - because "a seed was refused" and "the seed at 60,18 was refused" are
+ * the difference between reading a settlement and acting on it. The reason is the Mod's own `reasonCode`; where it named
+ * none, the Mod's own state word (`for_each`'s `partially_succeeded`, a `skipped_dependency`) stands in it rather than a
+ * Host guess at why.
+ */
+export function settledFailure(node: SettledDigestNode): string {
+  const where = node.tile === undefined ? "" : ` (${String(node.tile.x)},${String(node.tile.y)})`;
+  const line = `${node.actionId}${where}: ${node.reasonCode ?? node.state}`;
+  return line.length > MAX_SETTLED_FAILURE_CHARS ? `${line.slice(0, MAX_SETTLED_FAILURE_CHARS)}\u2026` : line;
 }
 
 /**
@@ -317,18 +354,23 @@ export async function watchProgramSettlement(
 }
 
 /**
- * One line the model can read without parsing twenty rows: `12 of 14 done, 2 rejected`.
+ * The head of a settlement, in one line: `Applied 16 actions: 9 done, 6 rejected, 1 failed`.
+ *
+ * THE SAME REGISTER AS THE HARNESS'S OWN RECEIPTS (`Applied 1 edit to src/foo.ts`): what happened, to what, and how
+ * much, and nothing about when an answer will arrive or what to ask next.
  *
  * `done` counts `succeeded` only - a `failed` node is not done, and neither is a `partially_succeeded` one: it did PART
  * of its work, and calling that done is the polite lie the state exists to refuse. Every OTHER state is named with its own
- * count in a fixed order, so a run that partially worked a patch and abandoned a node cannot be summarised as
- * "N of M done" and read as silent losses. Built from the same `counts` the fact publishes, so the sentence and the numbers cannot disagree.
+ * count in a fixed order, under the Mod's own token, so a run that partially worked a patch and abandoned a node cannot be
+ * summarised as "N done" and read as silent losses. Built from the same `counts` the fact publishes, so the sentence and
+ * the numbers cannot disagree, and the failures it counts are named by `failures` on the same object - a head that counted
+ * refusals without naming them is the paragraph this replaced.
  */
 export function settledSummary(counts: Readonly<Record<string, number>>, total: number): string {
-  const parts = [`${counts.succeeded ?? 0} of ${total} done`];
+  const parts = [`${counts.succeeded ?? 0} done`];
   for (const state of SETTLED_DIGEST_SUMMARY_STATES)
     if ((counts[state] ?? 0) > 0) parts.push(`${counts[state]} ${state}`);
-  return parts.join(", ");
+  return `Applied ${String(total)} ${total === 1 ? "action" : "actions"}: ${parts.join(", ")}`;
 }
 
 /** The non-success states a summary names, in a fixed order so two runs read the same line two ways the same way. */

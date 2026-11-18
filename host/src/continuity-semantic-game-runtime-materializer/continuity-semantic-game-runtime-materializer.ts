@@ -450,10 +450,11 @@ function createBodyProgramTools(
                 settled: answer.settled,
                 remaining: answer.remaining,
                 nodes: answer.nodes,
-                // WHAT ARRIVES NEXT, IN THE ONE ANSWER SHE RE-READS WHILE DECIDING WHETHER TO WAIT. Measured `round43`:
-                // 29 of 96 turns were `stardew_action_program_status` calls. The settlement is already pushed, so what
-                // was missing was not a signal but the answer saying so - with the population it is waiting on.
-                settlementNote: planSettlementNote(nodes.length),
+                // ONE LINE, IN THE HARNESS'S REGISTER: what was accepted, how much, and as which program. Measured
+                // `round43`: 29 of 96 turns were `stardew_action_program_status` calls, and the paragraph that used to
+                // sit here answered them with a description of a message that would arrive instead of the outcome of
+                // the call she made (`planSettlementNote`).
+                settlementNote: planSettlementNote(nodes.length, programId),
                 // What the plan assumed that the snapshot it was compiled against could not answer. Beside the plan rather
                 // than in front of it: the warning is a fact the companion learns from, and a plan that blocked on it would
                 // leave her no way to say "water them anyway".

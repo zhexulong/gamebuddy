@@ -953,29 +953,21 @@ export function planShape(actions: readonly PublishedPlanAction[], request: Plan
 }
 
 /**
- * What an ACCEPTED plan answer says about its own settlement, in one declarative sentence.
+ * What an ACCEPTED plan answer says, in the register the harness's own tool receipts use: one line, what happened,
+ * to what, and how much.
  *
- * Measured `round43` (20.0 min, 1,201 s): 96 assistant turns, 97 tool calls, and **29 of those turns were
- * `stardew_action_program_status` calls** - 30% of the run's model time spent asking whether the plan was done, at
- * ~9.4 s per turn. The settlement is already pushed (`program_settled` is an ordinary fact and it opens a turn of its
- * own), so the polls were not compensating for a missing signal. They were compensating for an ANSWER that did not say
- * what would arrive, when, or what one more question could possibly change.
+ * WHAT WENT: this used to be a paragraph - "the settlement arrives as its own message - a fact - once the last node
+ * reaches a terminal state, the same answer comes back until then, and `stardew_action_program_status` `waitMs` only
+ * holds a turn until that moment". The measurement behind it (`round43`: 29 of 96 turns were status calls) named a real
+ * cost, but the sentence answered a question nobody asked: it described the DELIVERY of a message, told her the same
+ * answer comes back, and gave a bound's purpose beside a tool she had not called. `edit` answers `Applied 1 edit to
+ * src/foo.ts` - the outcome, its target and its size - and a model reads that without deciding anything.
  *
- * The description says much of this (`planWorkDescription`: "do NOT poll it - each step's receipt arrives later as a new
- * message"), and the answer is the thing the model re-reads while deciding whether to wait. So the answer carries it,
- * conditional on acceptance and with the population it is waiting on - which is the one fact the description cannot
- * state.
- *
- * `waitMs` is named because `stardew_action_program_status` documents it, and a bound nobody said the purpose of is a
- * habit rather than a choice: measured `round29`, 48 calls at `waitMs` median 30,000 - the cap - for 248 s blocked.
+ * WHAT MAY NEVER COME BACK: any sentence about a future message, about a turn, about waiting, or about asking again.
+ * `game-surface-receipt.test.ts` reads this line for those words and fails naming the sentence.
  */
-export function planSettlementNote(nodeCount: number): string {
-  const nodes = `${nodeCount} ${nodeCount === 1 ? "node" : "nodes"}`;
-  return (
-    `${nodes}, and the settlement arrives as its own message - a fact - once the last node reaches a terminal state, ` +
-    "the same answer comes back until then, and `stardew_action_program_status` `waitMs` only holds a turn until that " +
-    "moment."
-  );
+export function planSettlementNote(nodeCount: number, programId: string): string {
+  return `Accepted ${String(nodeCount)} ${nodeCount === 1 ? "node" : "nodes"} as ${programId}.`;
 }
 
 /**

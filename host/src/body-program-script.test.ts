@@ -2855,44 +2855,35 @@ test("no program tool description tells the model to poll", () => {
 });
 
 /**
- * THE ACCEPTED PLAN'S OWN SENTENCE ABOUT ITS SETTLEMENT.
+ * THE ACCEPTED PLAN'S OWN ANSWER, IN THE REGISTER PI-AFT'S RECEIPTS USE.
  *
- * Measured `round43` (20 minutes, 1,201 s): 96 assistant turns of which 29 were `stardew_action_program_status` calls -
- * 30% of the run's model round trips spent asking whether the plan was done, at ~9.4 s each. Settlement is already
- * pushed (`program_settled` is a fact and it opens a turn of its own), so the polls were not compensating for a missing
- * signal: they were compensating for an answer that did not say what would arrive and when. The description says it; the
- * answer the model re-reads did not.
+ * The product owner's words: *"body-program receipts should follow pi-aft - ideally almost exactly the same, only a few
+ * words swapped."* `edit` answers `Applied 1 edit to src/foo.ts` or `Error: oldString not found in x.ts`: one line, what
+ * happened, to what, and how much. What this answer said instead was a paragraph about a MESSAGE - "the settlement
+ * arrives as its own message - a fact - once the last node reaches a terminal state, the same answer comes back until
+ * then, and `stardew_action_program_status` `waitMs` only holds a turn until that moment."
  *
- * The sentence therefore has to carry the three facts a decision to wait needs - the population it is waiting on, that
- * the settlement is its own message, and that asking again before then returns the same picture - plus what the status
- * tool's `waitMs` is for, because that tool documents it and a bound nobody explained is a habit.
- *
- * AND IT IS NOT AN INSTRUCTION. The register of every other field in that answer is a statement of fact; a sentence that
- * told the model what to do would be a second, unenforced contract beside the description that owns it.
+ * The measurement it was written for was real (`round43`: 29 of 96 turns were `stardew_action_program_status` calls), but
+ * the sentence answered with the delivery of a future message, with "the same answer comes back", and with the purpose of
+ * a bound on a tool she had not called. A receipt states the outcome of the call it belongs to; whether a later delivery
+ * arrives is the description's business, and `game-surface-receipt.test.ts` is what keeps it out of every answer.
  */
-test("an accepted plan's answer states its node count, what arrives when it settles, and what a wait is for", () => {
-  const note = planSettlementNote(3);
-  assert.match(note, /3 nodes/u, "the population it is waiting on is named");
-  assert.match(
-    note,
-    /settlement arrives as its own message/u,
-    "and that the settlement is a message, not a poll result",
-  );
-  assert.match(note, /terminal state/u, "with the moment it arrives: the last node reaching a terminal state");
-  assert.match(note, /the same answer comes back until then/u, "and that asking before then is the same picture");
-  assert.match(note, /waitMs/u, "the one exception is named, because the status tool documents it");
-  assert.match(note, /only holds a turn until that moment/u, "and what it is FOR, so a 30 s bound is a choice");
-  // One sentence, in the declarative register the rest of the answer uses. `read`/`ask` are deliberately absent from the
-  // sentence for this reason, and the assertion is on the words a model would act on rather than on punctuation alone.
-  assert.equal(note.endsWith("."), true, "it is a sentence, and it ends");
+test("an accepted plan's answer is one line: what was accepted, how many, and as which program", () => {
+  const note = planSettlementNote(3, "plan_2f9c41ab");
+  assert.match(note, /^Accepted /u, "what happened comes first, as `Applied 1 edit` opens the harness's own receipt");
+  assert.match(note, /\b3 nodes\b/u, "how much it was");
+  assert.match(note, /plan_2f9c41ab/u, "and what it happened to: the program she has to name to stop it");
+  // One line: no second sentence, no dash-appended explanation, and nothing about a message, a turn or a wait. The
+  // register is checked word for word in `game-surface-receipt.test.ts`; here it is the shape a reader sees.
+  assert.equal(note.match(/\.\s/u), null, "it is ONE sentence, not a paragraph");
+  assert.equal(note.endsWith("."), true, "and it ends");
   assert.equal(
-    /\b(?:must|should|please|never|always|do|don't|use|read|call|ask|pass|choose|keep|poll|end|stop)\b/iu.test(note),
+    /\b(?:message|fact|turn|turns|wait|waitMs|until|later|arrives?)\b/iu.test(note),
     false,
-    `the note must state a fact, not instruct: ${note}`,
+    `a receipt states what happened, never what will arrive: ${note}`,
   );
-  assert.equal(note.match(/\.\s/u), null, "and it is ONE sentence, not a paragraph");
   // A one-node plan is not "1 nodes": the count is read by a model that notices.
-  assert.match(planSettlementNote(1), /1 node,/u);
+  assert.match(planSettlementNote(1, "plan_2f9c41ab"), /^Accepted 1 node as /u);
 });
 
 /**

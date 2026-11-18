@@ -154,7 +154,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
   assert.ok(digest !== undefined, "the batch carries the settled digest");
   assert.equal(digest.payload.programId, "plan_1");
   assert.equal(digest.payload.settledAtMs, 4_242);
-  assert.equal(digest.payload.summary, "2 of 2 done");
+  assert.equal(digest.payload.summary, "Applied 2 actions: 2 done");
   assert.deepEqual(
     (digest.payload.nodes as readonly Readonly<Record<string, unknown>>[]).map((row) => row.state),
     ["succeeded", "succeeded"],
@@ -222,7 +222,7 @@ test("a plan larger than the digest bound answers its first rows and counts the 
   assert.equal(payload.nodes.length, 20, "at most the bound, not the whole plan");
   assert.equal(payload.omitted, 6, "what did not fit is COUNTED, never dropped silently");
   assert.equal(payload.nodes[19]?.index, 19, "the rows keep the caller's own indices, so a tail is addressable");
-  assert.equal(payload.summary, "26 of 26 done");
+  assert.equal(payload.summary, "Applied 26 actions: 26 done");
 });
 
 test("a plan that settled with one rejection names that node, its code, and the rest as succeeded", () => {
@@ -243,7 +243,7 @@ test("a plan that settled with one rejection names that node, its code, and the 
     summary: string;
     omitted?: number;
   }>;
-  assert.equal(payload.summary, "2 of 3 done, 1 rejected");
+  assert.equal(payload.summary, "Applied 3 actions: 2 done, 1 rejected");
   assert.equal(payload.omitted, 0, "a plan inside the bound omits nothing, and says so as a measured zero");
   assert.deepEqual(
     payload.nodes.map((row) => [row.index, row.actionId, row.state, row.reasonCode]),
@@ -353,7 +353,7 @@ test("a node the journal said nothing about stays unreadable, and is never repor
   assert.ok(fact !== undefined, "one unreadable row must not cost the other rows");
   const payload = fact.payload as Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[]; summary: string }>;
   assert.equal(payload.nodes[1]?.state, "unknown", "PLAN_NODE_STATE_UNREADABLE, not `pending` and not `succeeded`");
-  assert.equal(payload.summary, "1 of 2 done, 1 unknown");
+  assert.equal(payload.summary, "Applied 2 actions: 1 done, 1 unknown");
 });
 
 test("the watch follows a queued plan past the point a turn-holding wait would have given up", async () => {
@@ -548,7 +548,7 @@ test("the digest row and the status row for one node are the same answer", () =>
  * THE SETTLEMENT CARRIES THE FULL AGGREGATE, so one poll after it cannot add a count that was missing.
  *
  * Measured `round43`: 29 of 96 assistant turns were `stardew_action_program_status` calls. A settlement fact that carried
- * only a sentence (`"2 of 3 done, 1 rejected"`) left the per-state population unreadable - "how many were rejected and
+ * only a sentence (`"Applied 3 actions: 2 done, 1 rejected"`) left the per-state population unreadable - "how many were rejected and
  * were they the same nodes I asked about" - so a reader that wanted the breakdown went back to the tool. `counts` is that
  * breakdown in the Mod's own state tokens, over the WHOLE plan rather than the rows the bound could carry, and `total`
  * is the population it is counted against.
@@ -574,7 +574,7 @@ test("a settled program states its aggregate counts over the whole plan, beside 
   }>;
   assert.equal(payload.total, 3, "the population the counts are over");
   assert.deepEqual(payload.counts, { succeeded: 1, rejected: 1, skipped_dependency: 1 });
-  assert.equal(payload.summary, "1 of 3 done, 1 rejected, 1 skipped_dependency");
+  assert.equal(payload.summary, "Applied 3 actions: 1 done, 1 rejected, 1 skipped_dependency");
   // The same fact in the unit a reader acts on: which node, which action, and what the Mod said about it.
   assert.deepEqual(
     payload.nodes.map((row) => [row.actionId, row.state, row.reasonCode]),
@@ -657,7 +657,7 @@ test("a poll after the settlement answers with the settlement's own ledger, and 
  *
  * `settledProgramAnswer` is not a formatter over a string: it is the whole settled answer as data, so a field added to
  * one consumer is added to both. This asserts the shape a reader (the model, a bundle, a report) can rely on, and that an
- * EMPTY plan is refused rather than answering `0 of 0 done`.
+ * EMPTY plan is refused rather than answering `Applied 0 actions: 0 done`.
  */
 test("the settled rendering carries counts, summary, bounded rows and the remainder - and nothing for an empty plan", () => {
   const answer = planBatchAnswer([planNode("n01"), planNode("n02")], {
@@ -669,7 +669,7 @@ test("the settled rendering carries counts, summary, bounded rows and the remain
   const rendered = settledProgramAnswer(answer);
   assert.equal(rendered.total, 2);
   assert.deepEqual(rendered.counts, { succeeded: 1, recovery_required: 1 });
-  assert.equal(rendered.summary, "1 of 2 done, 1 recovery_required");
+  assert.equal(rendered.summary, "Applied 2 actions: 1 done, 1 recovery_required");
   assert.equal(rendered.nodes.length, 2);
   assert.equal(rendered.omitted, 0);
   assert.equal(rendered.nodes[1]?.reasonDetail, "execution_uncertain", "the Mod's own diagnostic still rides the row");
