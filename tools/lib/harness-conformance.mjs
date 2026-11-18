@@ -527,6 +527,19 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Red on real history: round41's own bundle, which carried `pieceCount: 59` and thirteen records, exits 1 here.
   "check-presentation-delivery-account.mjs",
   "check-live-run-silence.mjs",
+  // Prints `rules examined N · with a stated text test M · bubbles examined B · reports P` plus one `checks[]` entry per
+  // clause it can go red on, so its default run (`--rules`) is the report this suite reads. Its falsifier is
+  // tools/check-live-run-speech.test.mjs: the card's own `不报进度` family, parsed from `system_prompt`'s sections and
+  // bullets, is bound to a stated test by the card's OWN phrase - and a card with that phrase removed from every bullet
+  // and header leaves the binding empty, which BLOCKS (exit 2) instead of passing over nothing. `掰下来了` and
+  // `树桩一个个挖掉，地上散的木头也捡了` are reports and name the clause and the bubble they came from, while a plan
+  // (`该掰了`), a remaining count (`还落了一棵没掰`) and a condition (`西边这一片清完，下午我再看北头`) are deliberately not,
+  // because a gate that fails a good run is worse than one that misses a bubble. The cadence clause prints the shortest
+  // gap and fails it by name under `SHORTEST_BUBBLE_GAP_MS`, and a run whose pieces carry no absolute moment is
+  // `unmeasured` rather than passed. Red on real history: `--run-dir` on `round73`'s bundle exits 1, naming
+  // `a_turn_reports_progress_it_was_told_not_to:不当对讲机，不报进度` on 2 of its 7 bubbles and
+  // `speech_is_not_a_metronome:7133` on the 7.1 s gap.
+  "check-live-run-speech.mjs",
   // Prints `loose_assertions specs=… examined=… in_a_test=… in_a_reachable_helper=… runs_at_import=… unreached=…`
   // plus a three-entry `checks[]` verdict (one per assertion the reading can fail on), so its default run is the report
   // this suite reads. Its falsifier is tools/check-loose-assertions.test.mjs: a module-level `expect`, one at the top of

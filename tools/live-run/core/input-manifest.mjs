@@ -120,21 +120,28 @@ function blankDelimitedBlocks(lines) {
  *
  * The conduct block is found by its length against the declaration; every rule then takes the id at its own position,
  * which is the pairing the conduct-class gate already asserts between the composed list and the class tables.
+ *
+ * IT IS THE PREAMBLE'S FIRST BLOCK, AND THIS READER USED TO REFUSE THE FIRST ONE. `buildCompanionSystemPrompt` pushes
+ * the surface block first (its own doc says why: the surface is what the request is ABOUT), so the six composed rules
+ * arrive as block 0 - and the search skipped `index > 0` and reported `prompt_conduct_block_unmatched:6_declared_rules`
+ * on every real run while the suite stayed green, because its fixture put two identity blocks above the conduct block
+ * instead of below it from the assembly. Measured 2026-11-18 (`round73`): the delivered preamble's block 0 is six
+ * lines, block 0's lines are the six rules, and the manifest named none of them.
  */
-function preambleSections(preamble, { conductIds, problems }) {
+export function preambleSections(preamble, { conductIds, problems }) {
   const lines = preamble.split("\n");
   const blocks = blankDelimitedBlocks(lines);
   if (blocks.length === 0) return [];
   const conductIndex =
-    conductIds.length === 0
-      ? -1
-      : blocks.findIndex((block, index) => index > 0 && block.to - block.from + 1 === conductIds.length);
+    conductIds.length === 0 ? -1 : blocks.findIndex((block) => block.to - block.from + 1 === conductIds.length);
   if (conductIndex < 0) {
     problems.push(`prompt_conduct_block_unmatched:${String(conductIds.length)}_declared_rules`);
     return [{ id: "prompt:preamble", text: preamble.trim() }];
   }
   const conduct = blocks[conductIndex];
-  const sections = [{ id: "prompt:floor", text: lines.slice(0, conduct.from).join("\n").trim() }];
+  const sections = [];
+  const floor = lines.slice(0, conduct.from).join("\n").trim();
+  if (floor.length > 0) sections.push({ id: "prompt:floor", text: floor });
   conductIds.forEach((id, offset) => sections.push({ id: `prompt:conduct:${id}`, text: lines[conduct.from + offset] }));
   const authored = lines
     .slice(conduct.to + 1)
