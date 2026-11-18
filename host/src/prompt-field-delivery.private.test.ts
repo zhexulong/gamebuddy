@@ -234,7 +234,7 @@ test("the Game catalogue publishes the preset's tail block, and never the card's
     );
     const trailing = await trailingMessage(catalog);
     assert.ok(
-      trailing.includes("最新回复约束"),
+      trailing.includes("你正在和发小【"),
       `the preset's post-history entry must reach the request's last message; it carried ${JSON.stringify(trailing.slice(0, 160))}`,
     );
     assert.match(trailing, /<character-closing-direction>/u);
@@ -369,7 +369,7 @@ test("the shipped preset's `main` entry reaches the compiled Game prompt, framed
   assert.match(game, /<<<PRESET MAIN>>>/u, "a mounted preset's main entry must reach the installed Game prompt");
   assert.match(game, /【预设总纲（Preset Main）】/u);
   assert.ok(
-    game.includes("你正在扮演星露谷物语中与"),
+    game.includes("你正在和自小一起长大的发小"),
     `the preset's own first line must ride inside the frame; the prompt carried ${JSON.stringify(game.slice(-400))}`,
   );
   // Under the floor, not over it: the frame's ordering clause is part of the same appended block.
