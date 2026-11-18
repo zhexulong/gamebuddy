@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4555, largest ExecutionManager at 24404 lines / 840 members across 52 partial(s).",
-  "revision": "f4ce94c8",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4558, largest ExecutionManager at 24424 lines / 840 members across 52 partial(s).",
+  "revision": "7040f9f9",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -388,7 +388,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildExecutionRequest(IReadOnlyDictionary<string, BodyProgramCanonicalValue>,string,string,string,long,BridgeExecutionRequest?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 225,
+      "line": 201,
       "value": 43,
       "reason": "recorded at 604844a6: 41 -> 43, and `line` -> 163. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charged-use request fields it builds. 43 is the ceiling now."
     },
@@ -397,7 +397,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 720,
+      "line": 702,
       "value": 40
     },
     {
@@ -1154,7 +1154,7 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4555,
+      "value": 4558,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
     },
     {
@@ -1181,7 +1181,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "value": 222,
+      "value": 219,
       "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
@@ -1275,7 +1275,7 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 24404,
+      "lines": 24424,
       "methods": 840,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
     },
@@ -1286,8 +1286,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
       "line": 427,
-      "lines": 1156,
-      "methods": 33,
+      "lines": 1205,
+      "methods": 35,
       "reason": "1083 -> 1124 lines and 30 -> 31 methods at the same single part: `c2e1a2fc` added `Charged(FarmhandActionDescriptor,string?)`, and the rest is catalogue rows and the comments that moved with them (`88d9d9d2`, `55e4a27e`, `7e0ee6e1`). Class complexity is 9, so these lines are declarations, not branches."
     },
     {
@@ -1384,8 +1384,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "lines": 1173,
-      "methods": 41,
+      "lines": 1155,
+      "methods": 40,
       "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {
