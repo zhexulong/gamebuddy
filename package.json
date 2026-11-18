@@ -453,11 +453,8 @@
     "check:production-artifact": "node host/scripts/check-production-artifact.mjs",
     "test:child-output-parsing": "node --test tools/check-child-output-parsing.test.mjs",
     "test:derived-population": "node --test tools/check-derived-population.test.mjs",
-<<<<<<< HEAD
     "test:fact-seams": "node --test tools/check-fact-seams.test.mjs",
-=======
     "test:stale-line-age": "node --test tools/check-stale-line-age.test.mjs",
->>>>>>> 8145bee7 (fix(world-state): a pack count says which action counted it, or how old it is)
     "check:ci-dead-conditions": "node gates/meta/check-ci-dead-conditions.mjs",
     "check:vendor-build-artifacts": "node tools/check-vendor-build-artifacts.mjs",
     "test:ci-dead-conditions": "node --test gates/meta/check-ci-dead-conditions.test.mjs",
