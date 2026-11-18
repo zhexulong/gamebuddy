@@ -588,7 +588,8 @@ internal static class BodyProgramValidation
     /// </summary>
     internal const string RowActionNotEnabledPrefix = "row_action_not_enabled:";
     /// <summary>
-    /// The rejection codes the Host may answer one node's admission with.
+    /// The rejection codes the Host may answer one node's admission with, plus the three the MOD answers for a challenge
+    /// its own transport refused to carry.
     ///
     /// <para>
     /// The closed set is deliberate: a rejection is a durable veto against the node, so only words this product can
@@ -598,9 +599,17 @@ internal static class BodyProgramValidation
     /// act on. This is the ADR-006 amendment `FarmhandBodyProgramController` names where it declines to widen the set for
     /// `admission_unavailable`: those causes are properties of the ATTACHMENT; this one is a property of the node.
     /// </para>
+    /// <para>
+    /// `enqueue_failed`, `admission_not_delivered` and `challenge_not_serialisable` widen it for the other end of the pipe:
+    /// a challenge the transport refused to take never left this process, so no Host answer can ever arrive for that attempt
+    /// and the node would otherwise wait forever while nothing counted it (measured `round73`, `plan_311` n15). They are not
+    /// attachment verdicts - an attachment can come back, but it cannot answer a question it was never asked - so they settle
+    /// the node with a NAME instead of leaving it `AwaitingHostAdmission`.
+    /// </para>
     /// </summary>
     internal static bool IsValidRejectionCode(string? value) => value is "policy_denied" or "deadline_expired" or "resource_conflict" or "catalog_stale"
         or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch"
+        or "enqueue_failed" or "admission_not_delivered" or "challenge_not_serialisable"
         || (value is not null && IsReasonCode(value) && value.StartsWith(RowActionNotEnabledPrefix, StringComparison.Ordinal)
             && IsIdentifier(value[RowActionNotEnabledPrefix.Length..]));
     /// <summary>

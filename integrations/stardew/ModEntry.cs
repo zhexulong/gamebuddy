@@ -2127,8 +2127,9 @@ public sealed partial class ModEntry : Mod
     /// <summary>
     /// Delivers the answer to every execution request the Mod held for a transient body hold. The execution
     /// pump resolves them while it ticks, so this runs right after it: the answer is the dispatch's own
-    /// receipt, or the named refusal the bounded wait ended in, and it carries the correlation of the request
-    /// it answers rather than a fresh one.
+    /// receipt, or the named hold the bounded wait ended in - a refusal of the dispatch, never a receipt, because a
+    /// request that was never started has no execution state to state. Either way it carries the correlation of the
+    /// request it answers rather than a fresh one.
     /// </summary>
     private void DeliverHeldExecutionResponses(ScreenEmbodimentState state)
     {

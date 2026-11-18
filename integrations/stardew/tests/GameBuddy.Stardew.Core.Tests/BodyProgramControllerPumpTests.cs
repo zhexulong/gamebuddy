@@ -257,6 +257,95 @@ public sealed class BodyProgramControllerPumpTests
         ordered.Code.Should().Be(BodyProgramSubmitCode.Accepted, string.Join(";", ordered.Verification.Diagnostics.Select(diagnostic => diagnostic.Code)));
     }
 
+    /// <summary>
+    /// A NODE THE TRANSPORT REFUSED IS A NAMED OUTCOME, NOT A SKIP.
+    ///
+    /// <para>
+    /// Measured `round73`: `send_skipped; reason=enqueue_failed; program=plan_311; node=n15` sat in the SMAPI console
+    /// while the node stayed `AwaitingHostAdmission`. The frame had never left this process, so no Host answer could ever
+    /// arrive for that attempt - and the programme's settlement counted nothing, so the plan could claim work it never
+    /// queued. The node now ends in the transport's own word for what happened, and its descendants are skipped rather
+    /// than left runnable behind a predecessor that never reached the Host.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("enqueue_failed")]
+    [InlineData("admission_not_delivered")]
+    public void AChallengeTheTransportRefusesBecomesThatNodesNamedOutcome(string refusalCode)
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new RefusingAdmissionTransport(refusalCode);
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"))
+        {
+            NowMs = () => 10,
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        BodyProgramJournalNode inspect = status.Nodes.Single(node => node.NodeId == "inspect");
+        inspect.State.Should().Be(
+            BodyProgramNodeState.Rejected,
+            "a node whose challenge never left the process has an outcome of its own, not a place in the waiting queue");
+        inspect.RejectionCode.Should().Be(
+            refusalCode,
+            "the node carries the TRANSPORT's word for what happened rather than a word chosen here");
+        inspect.RefusalDetail.Should().Contain("delivered=false");
+        status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(
+            BodyProgramNodeState.SkippedDependency,
+            "nothing downstream may claim work whose predecessor never reached the Host");
+        admission.ResultsTaken.Should().Be(0, "a challenge that never left has no answer to take");
+
+        controller.Update();
+        authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "admission_rejected",
+            "one refusal is one durable event, however many ticks pass");
+    }
+
+    /// <summary>
+    /// ONE ACTOR, ONE NODE IN FLIGHT - ACROSS PROGRAMMES.
+    ///
+    /// <para>
+    /// Measured `round73`: `plan_311` still had nodes when `plan_327` was submitted, both programmes' nodes were admitted,
+    /// and they fought for one farmhand - the first programme's `n15` was dropped by the outbound queue while the second's
+    /// nodes re-routed underneath it. The body is one actor, so the second programme's first node must WAIT, and the only
+    /// wait this journal has that costs nothing is `Pending`: no admission minted, no watchdog started, nothing settled.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ASecondProgrammeWaitsPendingWhileAnotherProgrammesNodeIsInFlight()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new NoGrantAdmissionTransport();
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"))
+        {
+            NowMs = () => 10,
+        };
+        authority.Submit(MachineProgram(programId: "plan_311")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        controller.Update();
+        admission.Sent.Should().ContainSingle().Which.ProgramId.Should().Be("plan_311");
+
+        authority.Submit(MachineProgram(programId: "plan_327")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        for (int tick = 0; tick < 3; tick++)
+            controller.Update();
+
+        BodyProgramStatusSnapshot waiting = authority.Status("plan_327").Snapshot!;
+        waiting.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Pending,
+            "the second programme's node waits in the one state that costs nothing: Pending");
+        waiting.Nodes.Single(node => node.NodeId == "inspect").DerivedDeadlineMs.Should().BeNull(
+            "a wait is not an admission: nothing durable may be minted for a node that has not started, or its watchdog "
+            + "would later settle it `deadline_expired` for a wait it never got to spend");
+        admission.Sent.Should().OnlyContain(challenge => challenge.ProgramId == "plan_311",
+            "the waiting programme asks the Host nothing while the farmhand is taken");
+
+        // FALSIFIER: the occupying node is resolved, and the waiting programme starts immediately - this is a queue, not
+        // a refusal.
+        controller.TryStop("plan_311", 1).IsSuccess.Should().BeTrue();
+        controller.Update();
+        admission.Sent.Should().Contain(challenge => challenge.ProgramId == "plan_327",
+            "the wait ends when the body frees");
+    }
+
     [Fact]
     public void PumpConsumesRejectedAdmissionWithoutTreatingUnavailableAsRejected()
     {
@@ -899,7 +988,7 @@ public sealed class BodyProgramControllerPumpTests
             null, WatchdogMs: 1000),
     });
 
-    private static ActionProgramCandidate MachineProgram(string targetLiteral = "candidate-target|1") => new("program", new[]
+    private static ActionProgramCandidate MachineProgram(string targetLiteral = "candidate-target|1", string programId = "program") => new(programId, new[]
     {
         new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", targetLiteral)), Array.Empty<string>(), Bindings()),
         new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
@@ -944,10 +1033,11 @@ public sealed class BodyProgramControllerPumpTests
         private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), HostAdmissionGrant> grants = new();
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge)
+        public string? Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
             this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = GrantFor(challenge);
+            return null;
         }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
@@ -963,7 +1053,11 @@ public sealed class BodyProgramControllerPumpTests
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public List<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt)> ResultsTaken { get; } = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
+        public string? Send(NodeAdmissionChallenge challenge)
+        {
+            this.Sent.Add(challenge);
+            return null;
+        }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
             this.ResultsTaken.Add((programId, nodeId, nodeAttempt, admissionAttempt));
@@ -972,11 +1066,15 @@ public sealed class BodyProgramControllerPumpTests
         }
     }
 
-     private sealed class NoGrantAdmissionTransport : IBodyProgramAdmissionTransport
+    private sealed class NoGrantAdmissionTransport : IBodyProgramAdmissionTransport
     {
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
+        public string? Send(NodeAdmissionChallenge challenge)
+        {
+            this.Sent.Add(challenge);
+            return null;
+        }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) => null;
     }
 
@@ -991,7 +1089,11 @@ public sealed class BodyProgramControllerPumpTests
         public int ResultsTaken { get; private set; }
         public long Generation { get; set; } = 1;
         public long AttachmentGeneration => this.Generation;
-        public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
+        public string? Send(NodeAdmissionChallenge challenge)
+        {
+            this.Sent.Add(challenge);
+            return null;
+        }
         public BodyNodeAdmissionResult TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
             this.ResultsTaken++;
@@ -1008,14 +1110,34 @@ public sealed class BodyProgramControllerPumpTests
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public BodyProgramAuthorityLifecycleState? CloseState { get; private set; }
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge)
+        public string? Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
             this.CloseState = this.close() == BodyProgramAuthorityLifecycleState.Draining
                 ? BodyProgramAuthorityLifecycleState.Draining
                 : BodyProgramAuthorityLifecycleState.Closed;
+            return null;
         }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) => null;
+    }
+
+    /// <summary>
+    /// A transport that refuses the challenge outright: the frame never leaves this process, so the pump must turn the
+    /// refusal into a named outcome of that node instead of waiting for an answer that cannot come.
+    /// </summary>
+    private sealed class RefusingAdmissionTransport : IBodyProgramAdmissionTransport
+    {
+        private readonly string code;
+        public RefusingAdmissionTransport(string code) => this.code = code;
+        public List<NodeAdmissionChallenge> Sent { get; } = new();
+        public int ResultsTaken { get; private set; }
+        public long AttachmentGeneration => 1;
+        public string? Send(NodeAdmissionChallenge challenge) => this.code;
+        public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
+        {
+            this.ResultsTaken++;
+            return null;
+        }
     }
 
     private sealed class MachineNodeExecutor : IBodyProgramNodeExecutor

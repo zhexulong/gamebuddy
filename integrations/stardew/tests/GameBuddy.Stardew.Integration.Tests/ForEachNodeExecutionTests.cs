@@ -1106,7 +1106,7 @@ public sealed class ForEachNodeExecutionTests
 
         public long AttachmentGeneration => 1;
 
-        public void Send(NodeAdmissionChallenge challenge)
+        public string? Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
             this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = new HostAdmissionGrant(
@@ -1124,6 +1124,7 @@ public sealed class ForEachNodeExecutionTests
                 $"grant-{challenge.NodeId}-{challenge.NodeAttempt}",
                 "attachment_01",
                 "host-policy_01");
+            return null;
         }
 
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) =>

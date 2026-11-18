@@ -17,29 +17,29 @@ using Xunit;
 namespace GameBuddy.Stardew.Integration.Tests;
 
 /// <summary>
-/// The bounded wait every park already has, and the one state it used to leave open.
+/// The bounded wait every park already has, and the one thing it must never produce.
 ///
 /// <para>
-/// A parked request is answered twice over while its bridge is attached: the wait expires into the admission's
-/// own named refusal, and the receipt reaches the Host both as a published fact and as the response the park
-/// resolves into. The silence this file closes is the park whose bridge is gone: the wait's window used to be
-/// checked inside the same early return that asked for a resolver, so a park nothing could answer stayed parked
-/// forever - no receipt, no refusal, and nothing that could ever drain it.
+/// A parked request is answered twice over while its bridge is attached: the wait dispatches it the moment the body
+/// frees, or it ends in the named hold it waited on. NEITHER END IS A RECEIPT. A request that was never dispatched has
+/// not started, so it has no execution state to publish - the park's marker is deliberately never stored or published -
+/// and the answer its dispatch owes is a refusal on the bridge's own channel. Minting a `rejected` receipt there instead
+/// was measured ending two runs (`round66` and `round73`) with
+/// `execution_receipt_replay_rejected:terminal_state_rewritten`, because the same request was dispatched afterwards and
+/// its real settlement arrived for an executionId the Host had already settled.
 /// </para>
 ///
 /// <para>
-/// The deadline is NOT a second window: an abandoned park ends in
-/// <see cref="WorldModel.TransientRetryWindowMs"/> like every other park, and the code it mints names both the
-/// hold it waited on and the fact that no bridge was left to take the answer.
+/// The silence this file closed first is the park whose bridge is gone: the wait's window used to be checked inside the
+/// same early return that asked for a resolver, so a park nothing could answer stayed parked forever. It still ends, in
+/// the same window every other park ends in - it is drained and reported, and it mints nothing, because there is no
+/// execution to state and no session to answer.
 /// </para>
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the deadline pins drive the real admission, park and pump path on a probe actor; the
-// delivery pin reads ModEntry's source because the native tick it covers cannot load headless. Both live here
-// because they are the two halves of one answer.
 public sealed class HeldParkDeadlineTests
 {
     [Fact]
-    public void AnAbandonedPark_StillExpires_IntoOneNeverAnsweredTerminal()
+    public void AnAbandonedPark_StillExpires_AndMintsNoReceipt()
     {
         ParkedHold hold = Park("abandoned", canMove: false, usingTool: true);
         hold.Session.TryExecute(1, hold.Request, out BridgeEnvelope<BridgeReceipt>? parked, out string parkedReason)
@@ -51,25 +51,11 @@ public sealed class HeldParkDeadlineTests
         Thread.Sleep(WorldModel.TransientRetryWindowMs + 250);
         hold.Executions.PumpHeldRequests();
 
-        string requestId = hold.Request.Payload.RequestId;
-        hold.Executions.TryGetReceipt(requestId, out LocalExecutionReceipt stored)
-            .Should().BeTrue("a park nothing can answer must still end in the one terminal receipt its wait owes");
-        stored.State.Should().Be(ExecutionState.Rejected);
-        // The code names BOTH facts: the hold it waited on (the same code the arrival refusal would have carried)
-        // and the fact that no bridge was left to take the answer.
-        string holdCode = ArrivalHold(hold.Actor).HoldCode;
-        stored.ReasonCode.Should().Be($"{ExecutionManager.HeldRequestNeverAnsweredPrefix}{holdCode}");
-        stored.Evidence.Should().Be(ArrivalHold(hold.Actor).HoldEvidence, "the evidence is the hold's own, not a second story");
-        stored.ActionId.Should().Be(
-            hold.Request.Payload.Action,
-            "the receipt carries the action identity the ledger bound when the router accepted the request");
+        hold.Executions.TryGetReceipt(hold.Request.Payload.RequestId, out _)
+            .Should().BeFalse(
+                "a wait that never dispatched has no execution state to publish: a receipt here claims a terminal for an "
+                + "execution whose only artifact would be that terminal");
         hold.ParkedCount().Should().Be(0, "the park must drain: a bounded collection with no drain is a leak");
-
-        long settledRevision = stored.Revision;
-        hold.Executions.PumpHeldRequests();
-        hold.Executions.TryGetReceipt(requestId, out LocalExecutionReceipt again).Should().BeTrue();
-        again.Revision.Should().Be(settledRevision, "exactly one terminal is minted for one abandoned wait");
-        again.ReasonCode.Should().Be(stored.ReasonCode);
         hold.Handler.Invocations.Should().Be(0, "the window is the whole promise: an abandoned park never dispatches");
         hold.Session.TryDequeueHeldExecutionResponse(out _, out _)
             .Should().BeFalse("no bridge was left to answer, so nothing may be queued for one");
@@ -87,11 +73,8 @@ public sealed class HeldParkDeadlineTests
         hold.Executions.PumpHeldRequests();
 
         hold.Handler.Invocations.Should().Be(0, "nothing may dispatch a request whose bridge is gone: the wait ends, it does not proceed");
-        hold.Executions.TryGetReceipt(hold.Request.Payload.RequestId, out LocalExecutionReceipt stored)
-            .Should().BeTrue("the freed body does not excuse the wait from its one terminal receipt");
-        stored.ReasonCode.Should().Be(
-            $"{ExecutionManager.HeldRequestNeverAnsweredPrefix}{ArrivalHold(hold.Actor).HoldCode}",
-            "the hold it waited on is the one that arrived with the park, because the live one has ended");
+        hold.Executions.TryGetReceipt(hold.Request.Payload.RequestId, out _)
+            .Should().BeFalse("the freed body does not turn a wait into an execution either: nothing ran, so nothing is stated");
         hold.ParkedCount().Should().Be(0);
     }
 
@@ -110,7 +93,7 @@ public sealed class HeldParkDeadlineTests
     }
 
     [Fact]
-    public void AParkWithALiveBridge_KeepsItsByteIdenticalHoldRefusal()
+    public void AWaitThatOutlivesItsWindow_IsAnsweredAsTheHoldItWaitedOn_AndMintsNoReceipt()
     {
         ParkedHold hold = Park("live", canMove: false, usingTool: true);
         hold.Session.TryExecute(1, hold.Request, out _, out string parkedReason).Should().BeTrue(parkedReason);
@@ -118,16 +101,15 @@ public sealed class HeldParkDeadlineTests
         Thread.Sleep(WorldModel.TransientRetryWindowMs + 250);
         hold.Executions.PumpHeldRequests();
 
-        hold.Executions.TryGetReceipt(hold.Request.Payload.RequestId, out LocalExecutionReceipt stored)
-            .Should().BeTrue();
-        stored.State.Should().Be(ExecutionState.Rejected);
-        (string holdCode, string holdEvidence) = ArrivalHold(hold.Actor);
-        stored.ReasonCode.Should().Be(holdCode, "a park with a bridge to answer it keeps the admission's own code, byte for byte");
-        stored.Evidence.Should().Be(holdEvidence);
-        stored.ReasonCode.Should().NotStartWith(
-            ExecutionManager.HeldRequestNeverAnsweredPrefix,
-            "the never-answered code belongs only to the wait no bridge could take");
-        hold.TakeAnswer().Payload.State.Should().Be("rejected", "the park resolves into an answer, not only into a ledger fact");
+        hold.Executions.TryGetReceipt(hold.Request.Payload.RequestId, out _)
+            .Should().BeFalse("a wait is not an outcome, with a bridge to answer it or without one");
+        (string holdCode, string _) = ArrivalHold(hold.Actor);
+        (string Type, string ReasonCode, string CorrelationId) refusal = hold.TakeRefusal();
+        refusal.Type.Should().Be("error", "the request is answered on the bridge's refusal channel, not with a receipt");
+        refusal.ReasonCode.Should().Be(
+            holdCode,
+            "the refusal keeps the admission's own hold code, byte for byte - that is what names what held the request");
+        refusal.CorrelationId.Should().Be(hold.Request.CorrelationId, "the answer belongs to the request that waited");
         hold.ParkedCount().Should().Be(0);
     }
 
@@ -267,6 +249,23 @@ public sealed class HeldParkDeadlineTests
             BridgeProtocol.TryDeserializeExecutionReceipt(json, out BridgeEnvelope<BridgeReceipt>? envelope, out string reason)
                 .Should().BeTrue(reason);
             return envelope!;
+        }
+
+        /// <summary>
+        /// The refusal a wait ends in: a frame on the bridge's own error channel, carrying the hold's code and the
+        /// correlation of the request it answers. Read as JSON because the envelope's payload is the refusal itself -
+        /// there is no receipt to deserialize, and that is the point.
+        /// </summary>
+        internal (string Type, string ReasonCode, string CorrelationId) TakeRefusal()
+        {
+            this.Session.TryDequeueHeldExecutionResponse(out _, out string json)
+                .Should().BeTrue("a wait that ended still answers the request it was waiting for");
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            System.Text.Json.JsonElement root = document.RootElement;
+            return (
+                root.GetProperty("type").GetString()!,
+                root.GetProperty("payload").GetProperty("reasonCode").GetString()!,
+                root.GetProperty("correlationId").GetString()!);
         }
     }
 
