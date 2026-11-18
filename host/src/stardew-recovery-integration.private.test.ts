@@ -117,8 +117,8 @@ import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/des
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-  type StardewOwnerRecoveryRequest,
 } from "./composition/stardew/stardew-guardian-platform.js";
+import type { StardewOwnerRecoveryRequest } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 
 /**
  * The coordinator suite's deterministic stale-lock helper: the real path-lock

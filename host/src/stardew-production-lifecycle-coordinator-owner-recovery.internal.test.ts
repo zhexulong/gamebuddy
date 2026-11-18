@@ -16,7 +16,7 @@ import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/
 import { prepareMaterializedAiClientFixture } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.js";
 import { FarmhandBridgeConnectionNotAvailableError } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { RedactedRecoveryOutcome } from "./containment/runtime/contract/game-runtime.js";
-import type { StardewOwnerRecoveryRequest } from "./composition/stardew/stardew-guardian-platform.js";
+import type { StardewOwnerRecoveryRequest } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 
 installLifecycleTestHooks();
 

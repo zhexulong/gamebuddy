@@ -33,6 +33,10 @@ import {
   type StardewWorldBindingResolver,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 import type { ProductionGameSessionWorldBinding } from "./continuity-semantic-store/continuity-semantic-production-store.js";
+import { selectStardewFolder } from "./windows-stardew-folder-picker/index.js";
+import { probeWindowsStardewGuardianObjects } from "./composition/stardew/stardew-guardian-object-presence.js";
+import { companionModOutcomeFor } from "./stardew-game-install/desktop-entry-mod-deployment.js";
+import type { StardewLifecyclePlatform } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 
 export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   closeBroker?(underlying: () => void): void;
@@ -179,6 +183,19 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
               overrides.containedAiLaunchNowMs,
             ),
           );
+  // The physical platform this lifecycle runs on. A test supplies the picker's answer through the real picker
+  // capability and the inspector through the override, exactly as the composition root would.
+  const platform: StardewLifecyclePlatform = Object.freeze({
+    installation: Object.freeze({
+      createReparseInspector:
+        overrides.createInstallationInspector ??
+        (() => Promise.reject(new Error("test_installation_inspector_unbound"))),
+      selectFolder: selectStardewFolder,
+      discovery: overrides.installationDiscoveryOverlay,
+    }),
+    guardian: Object.freeze({ probeNamedObjects: probeWindowsStardewGuardianObjects }),
+    companionMod: Object.freeze({ outcomeFor: companionModOutcomeFor }),
+  });
   return createStardewProductionLifecycleCoordinatorFromTestingComposition(
     manifest,
     Object.freeze({
@@ -190,7 +207,7 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
         playerHostProcessOwner,
       }),
     }),
-    overrides.createInstallationInspector ?? (() => Promise.reject(new Error("test_installation_inspector_unbound"))),
+    platform,
     overrides.connectFarmhandGameRuntimeFacade ??
       (async () =>
         Object.freeze({
@@ -240,7 +257,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
     overrides.runtimeLaunchContained === undefined
       ? undefined
       : () => overrides.runtimeLaunchContained!.readPlayerHostRoleExit?.() ?? null,
-    overrides.installationDiscoveryOverlay,
     overrides.hostArtifactRoot,
     overrides.companionModDeploy,
   );

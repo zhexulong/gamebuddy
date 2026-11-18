@@ -42,8 +42,8 @@ import type { DesktopGuardianSession } from "./containment/auth/desktop-guardian
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
-  type StardewOwnerRecoveryRequest,
 } from "./composition/stardew/stardew-guardian-platform.js";
+import type { StardewOwnerRecoveryRequest } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./composition/stardew/stardew-native-role-launch-plan.private.js";
 import { STARDEW_PLAYER_HOST_ROLE_LAUNCH_OPERATION_BUDGET_MS } from "./stardew-production-lifecycle-coordinator.internal.js";
 
@@ -1237,10 +1237,16 @@ test("the coordinator binds the boot reconcile to the production OS probe, and b
   const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
   const coordinatorSource = readSourceShape(join(moduleRoot, "stardew-production-lifecycle-coordinator.internal.ts"));
   // The production probe is bound here, once: a boot that could not ask the OS
-  // would leave every held pointer exactly where it is.
+  // would leave every held pointer exactly where it is. Two halves, both read from
+  // the source: the lifecycle asks its platform for the probe, and the platform is
+  // the production OS probe rather than a stand-in.
   assert.match(
     coordinatorSource.shape,
-    /reconcileHeldBootstrapRegistration: \(\) => internal\.reconcileHeldBootstrapRegistration\(runtimeRoot, probeWindowsStardewGuardianObjects\)/u,
+    /reconcileHeldBootstrapRegistration: \(\) => internal\.reconcileHeldBootstrapRegistration\(runtimeRoot, platform\.guardian\.probeNamedObjects\)/u,
+  );
+  assert.match(
+    coordinatorSource.shape,
+    /guardian: Object\.freeze\(\{ probeNamedObjects: probeWindowsStardewGuardianObjects \}\)/u,
   );
   const providerSource = await readFile(join(moduleRoot, "games", "stardew", "provider.ts"), "utf8");
   const boot = providerSource.slice(providerSource.indexOf("async createLifecycleCoordinator"));

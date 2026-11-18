@@ -54,7 +54,7 @@ import {
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/desktop-guardian-session.internal.js";
-import type { StardewOwnerRecoveryRequest } from "./composition/stardew/stardew-guardian-platform.js";
+import type { StardewOwnerRecoveryRequest } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
 import type {

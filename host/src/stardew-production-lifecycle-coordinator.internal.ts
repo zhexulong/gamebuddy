@@ -27,14 +27,10 @@ import {
   requireStardewGameInstalled,
   requireStardewModLoaderInstalled,
 } from "./stardew-game-install/discovery.js";
-import {
-  companionModOutcomeFor,
-  type CompanionGameModDeploymentOutcome,
-} from "./stardew-game-install/desktop-entry-mod-deployment.js";
+import { companionModOutcomeFor } from "./stardew-game-install/desktop-entry-mod-deployment.js";
 import { deployStardewCompanionMod, readStardewCompanionModPackage } from "./stardew-game-install/deployment.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import { probeWindowsStardewGuardianObjects } from "./composition/stardew/stardew-guardian-object-presence.js";
-import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
   selectStardewFolder,
   type WindowsStardewFolderPickerCapability,
@@ -42,8 +38,6 @@ import {
 import {
   createStardewInstallationDiscoveryProvider,
   createWindowsSteamInstallationSource,
-  type StardewInstallationDiscoveryProvider,
-  type StardewInstallationDiscoveryProviderResult,
 } from "./windows-stardew-installation-discovery/index.js";
 import { readIdentityProfile } from "./identity-profile.js";
 import { resolveRuntimePaths } from "./runtime-identity.js";
@@ -142,10 +136,14 @@ import type {
   StardewContainedAiClientLaunchSeam,
   StardewPlayerHostRuntimeLaunchCollaborator,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import { readStardewOwnerRecoveryDriver } from "./composition/stardew/stardew-guardian-platform.js";
 import {
-  readStardewOwnerRecoveryDriver,
+  type StardewCompanionModOutcome,
+  type StardewFolderPickerCapability,
+  type StardewInstallationDiscoveryView,
+  type StardewLifecyclePlatform,
   type StardewOwnerRecoveryRequest,
-} from "./composition/stardew/stardew-guardian-platform.js";
+} from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 
 export type StardewPrivateActivationSnapshot = Readonly<{
   schemaVersion: 1;
@@ -501,10 +499,8 @@ export type StardewInstallationSelectionResult = Readonly<{
    * so a deployment that refused names its refusal instead of the panel implying the companion is ready while
    * `Mods/GameBuddy` is absent.
    */
-  companionMod?: CompanionGameModDeploymentOutcome;
+  companionMod?: StardewCompanionModOutcome;
 }>;
-
-export type StardewInstallationDiscoveryView = Readonly<StardewInstallationDiscoveryProviderResult>;
 
 export type StardewProductionLifecycleActivationOwner = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
@@ -1268,9 +1264,9 @@ async function waitForFarmhandBridgeRetry(deadlineMs: number): Promise<void> {
 function createCoordinator(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
-  createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
+  platform: StardewLifecyclePlatform,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
-  folderPicker: WindowsStardewFolderPickerCapability,
+  folderPicker: StardewFolderPickerCapability,
   worldBindingResolver: StardewWorldBindingResolver,
   playerHostLaunch: StardewLifecyclePlayerHostLaunch,
   aiClientLaunch: StardewLifecycleAiClientLaunch,
@@ -1285,7 +1281,6 @@ function createCoordinator(
    * on. Absent, no exit is ever recorded and every answer keeps its previous shape.
    */
   readPlayerHostRoleExit?: () => Readonly<{ role: "player_host" | "ai_client"; exitCode: number }> | null,
-  installationDiscovery?: StardewInstallationDiscoveryProvider,
   /**
    * The admitted generation root whose `native/smapi/` payload this lifecycle installs.
    * It is supplied by the production entry (the only party that knows the admitted
@@ -1303,7 +1298,7 @@ function createCoordinator(
    * this coordinator because the coordinator's reparse inspector is itself injected with chains sized for the
    * installation folder, while the package verifier checks chains at the generation's own depth.
    */
-  companionModDeploy?: (installRoot: string) => Promise<CompanionGameModDeploymentOutcome>,
+  companionModDeploy?: (installRoot: string) => Promise<StardewCompanionModOutcome>,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -1337,7 +1332,7 @@ function createCoordinator(
    */
   let playerHostInstanceGeneration = 0;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
-  const installationDiscoveryProvider = installationDiscovery;
+  const installationDiscoveryProvider = platform.installation.discovery;
   /**
    * Whether THIS lifecycle asked the Player Host to start. It is the one fact the composed
    * role view needs beyond the lifecycle state, because an ordinary close deliberately
@@ -2016,7 +2011,7 @@ function createCoordinator(
     // refused by name here - before any admission, transition or spawn - instead
     // of starting a vanilla game whose attached world would never answer.
     await requireStardewModLoaderInstalled(registration.locator);
-    const inspector = await createInstallationInspector();
+    const inspector = await platform.installation.createReparseInspector();
     const installation = await admitStardewInstallation(inspector, registration.locator);
     return await callback(installation);
   };
@@ -2233,7 +2228,7 @@ function createCoordinator(
     // failed search.
     await requireStardewGameInstalled(locator);
     await requireStardewModLoaderInstalled(locator);
-    const inspector = await createInstallationInspector();
+    const inspector = await platform.installation.createReparseInspector();
     await admitStardewInstallation(inspector, locator);
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     const current = await readStardewInstallationRegistration(runtimeRoot);
@@ -2300,7 +2295,7 @@ function createCoordinator(
    * with `registrationRefusal` so every route reports the same cause the same way.
    */
   const selectAndRegisterPlayerHostInstallation = async (): Promise<StardewInstallationSelectionResult> => {
-    const result = await selectStardewFolder(folderPicker);
+    const result = await platform.installation.selectFolder(folderPicker);
     if (result.status === "cancelled") return Object.freeze({ status: "cancelled" as const });
     // The registration result is returned whole, so the route that registers through the dialog reports the same
     // facts as the route that registers from a candidate - including what happened to the Mod.
@@ -2958,7 +2953,7 @@ function createCoordinator(
       }
       const heldBefore = (await readStardewInstallationRegistration(runtimeRoot))?.activeAttempt ?? null;
       if (heldBefore !== null) {
-        await internal.reconcileHeldBootstrapRegistration(runtimeRoot, probeWindowsStardewGuardianObjects);
+        await internal.reconcileHeldBootstrapRegistration(runtimeRoot, platform.guardian.probeNamedObjects);
         const heldAfter = (await readStardewInstallationRegistration(runtimeRoot))?.activeAttempt ?? null;
         if (heldAfter !== null) throw new Error(ATTEMPT_SETTLE_REFUSED);
       }
@@ -3737,7 +3732,7 @@ function createCoordinator(
    * generation whose Mod package cannot be read at all, which is named as unavailable rather
    * than silently reported as success.
    */
-  const deployCompanionModInto = async (locator: string): Promise<CompanionGameModDeploymentOutcome> => {
+  const deployCompanionModInto = async (locator: string): Promise<StardewCompanionModOutcome> => {
     if (companionModDeploy !== undefined) return await companionModDeploy(locator);
     try {
       if (hostArtifactRoot === undefined) return "companion-mod-unavailable";
@@ -3750,7 +3745,7 @@ function createCoordinator(
         // stale copy of our own Mod from an older generation is exactly what must be replaced.
         allowReplaceDifferentVersion: true,
       });
-      return companionModOutcomeFor(deployed);
+      return platform.companionMod.outcomeFor(deployed);
     } catch {
       return "companion-mod-unavailable";
     }
@@ -4273,7 +4268,7 @@ function createCoordinator(
     activationOwner,
     headlessOperationalGame,
     reconcileHeldBootstrapRegistration: () =>
-      internal.reconcileHeldBootstrapRegistration(runtimeRoot, probeWindowsStardewGuardianObjects),
+      internal.reconcileHeldBootstrapRegistration(runtimeRoot, platform.guardian.probeNamedObjects),
     close,
   });
 }
@@ -4287,9 +4282,9 @@ function createCoordinator(
 export function createStardewProductionLifecycleCoordinatorFromTestingComposition(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
-  createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
+  platform: StardewLifecyclePlatform,
   materializeFarmhandGameSession: MaterializeFarmhandGameSession,
-  folderPicker: WindowsStardewFolderPickerCapability,
+  folderPicker: StardewFolderPickerCapability,
   worldBindingResolver: StardewWorldBindingResolver,
   playerHostLaunch: StardewLifecyclePlayerHostLaunch = (owner, installation) =>
     internal.launchStagedPlayerHost(owner, installation),
@@ -4299,15 +4294,14 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   readPlayerHostRoleExit?: StardewPlayerHostRoleExitReader["readPlayerHostRoleExit"],
-  installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
   hostArtifactRoot?: string,
   /** Test-only companion-Mod deployment seam; production composition never supplies it. */
-  companionModDeploy?: (installRoot: string) => Promise<CompanionGameModDeploymentOutcome>,
+  companionModDeploy?: (installRoot: string) => Promise<StardewCompanionModOutcome>,
 ): StardewProductionLifecycleCoordinator {
   return createCoordinator(
     manifest,
     internal,
-    createInstallationInspector,
+    platform,
     materializeFarmhandGameSession,
     folderPicker,
     worldBindingResolver,
@@ -4320,7 +4314,6 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     createWorldBindingSeam,
     containedRuntimeTeardown,
     readPlayerHostRoleExit,
-    installationDiscoveryProvider,
     hostArtifactRoot,
     companionModDeploy,
   );
@@ -4429,10 +4422,35 @@ export function createStardewProductionLifecycleCoordinator(
       deadlineMs,
       isCancelled,
     });
+  /**
+   * The physical platform this lifecycle runs on, bound once here: the desktop/native installation sources, the
+   * Guardian's object probe and the companion-Mod deployment outcome are what `games/stardew` may not import.
+   */
+  const stardewLifecyclePlatform: StardewLifecyclePlatform = Object.freeze({
+    installation: Object.freeze({
+      createReparseInspector: () => createPublishedWindowsReparseInspector(hostArtifactRoot),
+      selectFolder: selectStardewFolder,
+      // Steam, GOG and the Microsoft Store are all mounted: a GOG or Game Pass player whose game no
+      // Steam library holds would otherwise be told nothing was found on a machine where it is
+      // installed. Whichever source produced a candidate, confirming it runs the same
+      // `registerInstallationLocator` admission - the source only proposes.
+      discovery: createStardewInstallationDiscoveryProvider({
+        source: createWindowsSteamInstallationSource(),
+        gog: createWindowsGogDiscoveryProposal(),
+        microsoftStore: createWindowsMicrosoftStoreDiscoveryProposal(),
+        // Every candidate says whether its folder already holds a mod loader. The player installs the loader
+        // themselves, and a machine can hold several installations, so which folder is ready is the fact their
+        // choice depends on - the probe that answers it is this one, and it runs before the row is offered.
+        probe: probeStardewGameRoot,
+      }),
+    }),
+    guardian: Object.freeze({ probeNamedObjects: probeWindowsStardewGuardianObjects }),
+    companionMod: Object.freeze({ outcomeFor: companionModOutcomeFor }),
+  });
   return createCoordinator(
     manifest,
     internal,
-    () => createPublishedWindowsReparseInspector(hostArtifactRoot),
+    stardewLifecyclePlatform,
     materializer.materialize,
     folderPicker,
     createStardewWorldBindingResolverFromGameAuthority(game),
@@ -4445,19 +4463,6 @@ export function createStardewProductionLifecycleCoordinator(
     createWorldBindingSeam,
     containedRuntimeTeardown,
     readPlayerHostRoleExit,
-    // Steam, GOG and the Microsoft Store are all mounted: a GOG or Game Pass player whose game no
-    // Steam library holds would otherwise be told nothing was found on a machine where it is
-    // installed. Whichever source produced a candidate, confirming it runs the same
-    // `registerInstallationLocator` admission - the source only proposes.
-    createStardewInstallationDiscoveryProvider({
-      source: createWindowsSteamInstallationSource(),
-      gog: createWindowsGogDiscoveryProposal(),
-      microsoftStore: createWindowsMicrosoftStoreDiscoveryProposal(),
-      // Every candidate says whether its folder already holds a mod loader. The player installs the loader
-      // themselves, and a machine can hold several installations, so which folder is ready is the fact their
-      // choice depends on - the probe that answers it is this one, and it runs before the row is offered.
-      probe: probeStardewGameRoot,
-    }),
     // Where this build's own artifacts are read from: the companion Mod this product deploys, and the
     // generation the Host runs out of.
     hostArtifactRoot,

@@ -36,6 +36,10 @@ import {
   type StardewPlayerHostRuntimeLaunchCollaborator,
 } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import type {
+  StardewOwnerRecoveryDriver,
+  StardewOwnerRecoveryRequest,
+} from "../../games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import { createContainedGameRuntime } from "../../containment/runtime/core/contained-game-runtime.js";
 
@@ -314,59 +318,6 @@ function encodeRecoveryPostCasFrame(
  */
 export type DesktopGuardianGameRuntimePlatform = ContainedGameRuntimePlatform &
   Readonly<{ readPlayerHostRoleExit(): GuardianRoleExit | null }>;
-
-/**
- * The part of a recovery only the calling layer can supply.
- *
- * The gate binding and both durable steps deliberately are NOT part of it: they
- * come from the exact owner's consumed one-shot Guardian binding, so a caller can
- * neither substitute the gate correlation the native gate must acquire nor
- * invent a durable transition it does not own.
- */
-export type StardewOwnerRecoveryRequest = Readonly<{
-  /**
-   * Opaque recovery actor for this attempt. An interrupted recovery resumes its
-   * exact recorded actor instead of minting a new identity.
-   */
-  readonly recoveryInstanceId: string;
-  /**
-   * Durable post-CAS binding facts of the successor record, read after the
-   * `recovering` CAS ran. They are typed game facts only: the composition encodes
-   * them into the post-CAS native body, and the native ingress remains the
-   * authority on the gate correlation they must still match.
-   */
-  readonly readRecoveryBinding: () => Promise<TypedPrivateGameFacts>;
-}>;
-
-/**
- * The owner-held recovery half of the launch collaborator seam.
- *
- * It is declared here and not on the game layer's
- * `StardewPlayerHostRuntimeLaunchCollaborator`, because a recovery is driven for
- * the exact owner whose durable attempt is non-terminal, and only this
- * composition holds that owner's consumed Guardian binding and the authenticated
- * session. The factory below returns it on the same one-shot collaborator object
- * it already returns, so a recovery is never a second collaborator, a second
- * owner path, or a second durable read/write seam.
- */
-export type StardewOwnerRecoveryDriver = Readonly<{
-  recover(
-    owner: StardewOwnedPlayerHostBootstrap,
-    request: StardewOwnerRecoveryRequest,
-  ): Promise<RedactedRecoveryOutcome>;
-  /**
-   * Terminal closure of that same recovery: the durable parent record advances
-   * to its terminal state and the bound registration pointer is released.
-   *
-   * It is a member of this drive rather than a second entry point because it is
-   * the second half of one recovery: it runs on the same exact owner and through
-   * the same consumed one-shot Guardian binding the recovery itself used, so no
-   * second owner path or durable seam is opened, and the actor it must match is
-   * the very actor the recovery recorded. A drive that could not close itself
-   * out would leave the attempt occupying its registration forever.
-   */
-  finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void>;
-}>;
 
 /**
  * Reads the recovery half off a collaborator value.
