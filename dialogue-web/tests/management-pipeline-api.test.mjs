@@ -695,7 +695,11 @@ test("the client mirror's API shape and thinking level lists are the Host contra
     return members.map((member) => member?.const).filter((value) => typeof value === "string");
   };
   const shapes = literalsIn(TavernBrowserContractV1.schemas.TavernConnectionApiShapeV1Schema);
-  const levels = literalsIn(TavernBrowserContractV1.schemas.TavernConnectionThinkingLevelV1Schema);
+  // The connection's level union is DERIVED from `COMPANION_THINKING_LEVELS`, so the contract states its members
+  // as a closed `enum` (`Type.Unsafe`) rather than as one `Type.Literal` arm per level: `Static` stays the union
+  // without the contract spelling the seven out a second time. Each spelling is the same vocabulary.
+  const levelSchema = TavernBrowserContractV1.schemas.TavernConnectionThinkingLevelV1Schema;
+  const levels = levelSchema.enum ?? literalsIn(levelSchema);
   assert.deepEqual(shapes.length, 10, `the contract declares the runtime's own shape set, saw ${shapes.join(", ")}`);
   assert.deepEqual(levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 

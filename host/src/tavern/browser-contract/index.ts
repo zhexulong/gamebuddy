@@ -5,6 +5,7 @@ import { Format } from "typebox/format";
 import { ST_CARD_DECODER_LIMITS_V1 } from "../compatibility-manifest.v1.js";
 import { PRESET_NOT_APPLIED_CODES } from "../../tavern/preset-sampling.js";
 import { PROVIDER_FAILURE_CLASSES, type ProviderFailureClass } from "../../provider-failure-classification.js";
+import { COMPANION_THINKING_LEVELS, type CompanionThinkingLevel } from "../../runtime-identity.js";
 
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
@@ -743,20 +744,20 @@ export const TavernConnectionApiShapeV1Schema = Type.Union([
 /**
  * The thinking levels the embedded runtime accepts, in pi's own order.
  *
- * The authority is pi's `VALID_THINKING_LEVELS` (pi-coding-agent/dist/cli/args.js); a
- * level outside this set is not a preference the runtime can express. The union is
- * spelled out here rather than imported because this contract must stay
- * dependency-free: a dialogue-web test loads this module directly under Node.
+ * The authority is `COMPANION_THINKING_LEVELS` in `runtime-identity.ts`, itself pi's own
+ * `VALID_THINKING_LEVELS`: a level outside that list is not a preference the runtime can express, so this
+ * contract imports the list rather than spelling a second copy of it that could drift.
+ *
+ * Stated as a closed `enum` under `Type.Unsafe` instead of one `Type.Literal` arm per level, for a measured
+ * reason: `Type.Union(list.map((level) => Type.Literal(level)))` types as a NON-TUPLE, and this TypeBox
+ * version resolves `Static` of a non-tuple union to `never` - which would erase every thinking level in the
+ * Host and in the wire. `Type.Unsafe` carries the static type, and the compiled checker still refuses a
+ * level outside the `enum`, so the wire stays closed.
  */
-export const TavernConnectionThinkingLevelV1Schema = Type.Union([
-  Type.Literal("off"),
-  Type.Literal("minimal"),
-  Type.Literal("low"),
-  Type.Literal("medium"),
-  Type.Literal("high"),
-  Type.Literal("xhigh"),
-  Type.Literal("max"),
-]);
+export const TavernConnectionThinkingLevelV1Schema = Type.Unsafe<CompanionThinkingLevel>({
+  type: "string",
+  enum: [...COMPANION_THINKING_LEVELS],
+});
 export const TavernConnectionModelV1Schema = strictObject({
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),

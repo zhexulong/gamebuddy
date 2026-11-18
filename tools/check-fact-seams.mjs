@@ -358,6 +358,20 @@ export const SEAMS = Object.freeze([
     owner: "the connection panel lane",
   },
   {
+    fact: "thinking levels",
+    authority: { file: "host/src/runtime-identity.ts", name: "COMPANION_THINKING_LEVELS" },
+    readers: [
+      { file: "dialogue-web/src/components/management-panels.tsx", name: "MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS" },
+      { file: MANAGEMENT_CLIENT, name: "CONNECTION_THINKING_LEVELS" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["COMPANION_THINKING_LEVELS", "CONNECTION_THINKING_LEVELS"],
+    },
+    owner: "the connection panel lane",
+  },
+  {
     fact: "world info binding states",
     authority: { file: TAVERN_CONTRACT, name: "WorldInfoBindingState" },
     readers: [
@@ -434,11 +448,6 @@ export const DEBT = Object.freeze([
     `${MANAGEMENT_CLIENT}:NAVIGATION_ITEM_IDS`,
     `${REFERENCE_CLIENT}:NAVIGATION_ITEM_IDS`,
     "tools/run-tavern-release-live-gate.mjs:CONTRACT_NAVIGATION_ITEM_IDS",
-  ]),
-  mirrorDebt("thinking levels", "host/src/runtime-identity.ts:COMPANION_THINKING_LEVELS", [
-    `${TAVERN_CONTRACT}:TavernConnectionThinkingLevelV1Schema`,
-    "dialogue-web/src/components/management-panels.tsx:MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS",
-    `${MANAGEMENT_CLIENT}:CONNECTION_THINKING_LEVELS`,
   ]),
 
   // ─── The Host's own vocabularies, restated by the harnesses and the audits ───

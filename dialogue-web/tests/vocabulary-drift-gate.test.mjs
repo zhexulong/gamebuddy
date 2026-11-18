@@ -134,6 +134,18 @@ export const MIRRORED_VOCABULARIES = [
   // The four states a connection row can be in. `connection-store.ts` derives both its record type and its
   // untrusted-record check from this one union, so this list is the only hand copy of it left.
   { mirror: "CONNECTION_READINESS", contract: { name: "TavernConnectionReadinessV1Schema" } },
+  // The embedded runtime's thinking levels. The connection contract now derives its union from
+  // `COMPANION_THINKING_LEVELS`, so what is left to hold is the two browser ends that cannot import it: the
+  // connection panel's own list and the model-profile editor's suggestions.
+  {
+    mirror: "MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS",
+    mirrorFile: join(WEB, "components/management-panels.tsx"),
+    contract: { file: "host/src/runtime-identity.ts", name: "COMPANION_THINKING_LEVELS" },
+  },
+  {
+    mirror: "CONNECTION_THINKING_LEVELS",
+    contract: { file: "host/src/runtime-identity.ts", name: "COMPANION_THINKING_LEVELS" },
+  },
   // The fields the player may fill on a connection, and the shapes the escape hatch may name. Both are
   // closed unions on the wire and both are read by the management mirror's own validators: a field the
   // mirror does not list is refused (`setupFields.every(isOneOf)`), so a Host that admits `apiKeyRequired`
