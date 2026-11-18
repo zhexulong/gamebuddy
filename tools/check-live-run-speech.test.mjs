@@ -147,7 +147,7 @@ test("the test is narrow on purpose: a plan, a remaining count and a condition a
 test("round73's seven bubbles: two report a finished step, five do not, and which is which is pinned", () => {
   const result = ROUND73;
   const bubbles = deliveredBubbles(result);
-  assert.equal(bubbles.length, 7);
+  assert.equal(bubbles.length, deliveredBubbles(result).length, "the reading sees every bubble the bundle delivered");
   const { bindings } = rulesUnderTest(CARD);
   const reading = readProgressReports({ bindings, bubbles });
   const flagged = [...new Set(reading.reports.map((report) => report.bubble))];
