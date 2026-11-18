@@ -212,12 +212,12 @@ const GameTitleLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 })
  * installation-discovery route (`GET .../installation/discovery`), which names the candidate folders
  * it found, whether the chosen one holds a mod loader, and which channel it could not read.
  */
-const GamePrerequisiteStateV1Schema = strictObject({
+export const GamePrerequisiteStateV1Schema = strictObject({
   status: PrerequisiteStatus,
   detectedGame: DetectedGameLabel,
 });
 
-const GameInstanceV1Schema = strictObject({
+export const GameInstanceV1Schema = strictObject({
   status: InstanceStatus,
   gameTitle: GameTitleLabel,
   /** Redacted launch-ready generation: 0 until the coordinator owns/stages the instance. */
@@ -236,17 +236,17 @@ const GameInstanceV1Schema = strictObject({
   playerHostExitCode: Type.Optional(Type.Integer({ minimum: 0, maximum: 4_294_967_295 })),
 });
 
-const GameCompatibilityV1Schema = strictObject({
+export const GameCompatibilityV1Schema = strictObject({
   status: CompatibilityStatus,
   message: CompatibilityMessage,
 });
 
-const GameAttachmentStateV1Schema = strictObject({
+export const GameAttachmentStateV1Schema = strictObject({
   status: AttachmentStatus,
   generation: NonNegativeGeneration,
 });
 
-const GameCapabilitySummaryV1Schema = strictObject({
+export const GameCapabilitySummaryV1Schema = strictObject({
   available: Type.Boolean(),
   count: Type.Integer({ minimum: 0, maximum: 512 }),
 });
@@ -258,7 +258,7 @@ const GameCapabilitySummaryV1Schema = strictObject({
  * It is the Game channel's own epoch and never the Chat channel's: the Game panel's facts must not depend on
  * which Chat is mounted, so nothing here is stamped with a Chat selection generation.
  */
-const GameEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
+export const GameEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
 
 /**
  * The facts that can change without a player acting, one frame's worth at a time.
@@ -366,11 +366,11 @@ export const GameBrowserStateV1Schema = strictObject({
 
 // ─── Read commands ──────────────────────────────────────────────────────────
 
-const GamePrerequisitesReadCommandV1Schema = strictObject({
+export const GamePrerequisitesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
-const GameStateReadCommandV1Schema = strictObject({
+export const GameStateReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
@@ -715,8 +715,14 @@ const StardewActionFamilyV1Schema = strictObject({
  *    (`ConfigureLifecycleMinimumFarmers`), so a change takes effect the next time the
  *    world loads and its own sentence says so.
  */
-/** The four behaviours `WindowModeManagement` implements; anything else is not a mode this product can ask for. */
-export const StardewWindowModeV1Schema = Type.Union([
+/**
+ * The four behaviours `WindowModeManagement` implements; anything else is not a mode this product can ask for.
+ *
+ * Module-private, like `GameCandidateV1Schema` and `StardewActionFamilyV1Schema`: it is one field's vocabulary inside
+ * `StardewPlayerSettingsV1Schema`, not a frame of its own, and the versioned boundary below is exactly the exported
+ * schemas - so exporting this one would publish a frame no route answers.
+ */
+const StardewWindowModeV1Schema = Type.Union([
   Type.Literal("visible"),
   Type.Literal("minimized"),
   Type.Literal("hidden"),
@@ -774,7 +780,7 @@ export const StardewPlayerSettingsReadCommandV1Schema = strictObject({
 
 // ─── Problem schema ─────────────────────────────────────────────────────────
 
-const GameProblemV1Schema = strictObject({
+export const GameProblemV1Schema = strictObject({
   type: Type.String({ minLength: 1, maxLength: 256 }),
   title: Type.String({ minLength: 1, maxLength: 256 }),
   status: Type.Integer({ minimum: 400, maximum: 599 }),
@@ -954,6 +960,19 @@ export function isComposedGameProfile(value: unknown): value is ComposedGameProf
 
 // ─── Contract ───────────────────────────────────────────────────────────────
 
+/**
+ * The `game_browser_api/v1` aggregate: every frame this version puts on the wire, one entry per schema.
+ *
+ * THIS OBJECT IS MEMBERSHIP'S ONLY DECLARATION, and the module's export surface is the population it must cover:
+ * every schema this module exports is a frame here, and every frame here is a schema this module exports. Both
+ * halves are the same rule, and `index.private.test.ts` reads them off the two surfaces - `Object.keys` of this
+ * object and the exported values TypeBox brands with `~kind` - so a frame added to one and not the other fails there
+ * naming it. Keeping a schema private is therefore a statement, not an omission: it says this shape is a field of
+ * some frame rather than a frame (`GameCandidateV1Schema`, `StardewActionFamilyV1Schema`,
+ * `StardewWindowModeV1Schema`). It used to be an omission: the test carried a hand-kept list of these names beside
+ * the object, and `GameEventStreamV1Schema`, `GameFactPatchV1Schema` and `GameEventV1Schema` were served here before
+ * `50f1a593` named them in that list by hand.
+ */
 export const GameBrowserContractV1 = Object.freeze({
   id: GAME_BROWSER_API_V1,
   schemas: Object.freeze({

@@ -33,6 +33,7 @@ import {
   StardewCabinConfirmCommandV1Schema,
   StardewCabinConfirmResultV1Schema,
 } from "./index.js";
+import * as contractModule from "./index.js";
 
 const handle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const idempotencyKey = "ABEiM0RVZneImaq7zN3u_w";
@@ -1258,52 +1259,56 @@ test("GameBrowserFixtureV1 produces a connected state", () => {
 
 // ─── Contract exports ───────────────────────────────────────────────────────
 
-test("GameBrowserContractV1 preserves the exact versioned aggregate schema boundary", () => {
-  // The aggregate's membership has no derived authority in this module, so this list cannot be derived either: the
-  // schemas it serves are `const`s and not all of them are exported (`GameCompatibilityV1Schema` is private), so an
-  // export-surface scan cannot see the population, and `GameBrowserValidatorsV1` is built FROM this object - checking
-  // the two against each other would be the object checked against itself. What would close it: export every schema
-  // the aggregate serves, or declare the population as a descriptor this object and this list both read. Until then
-  // this is a checked-in snapshot of a versioned wire boundary, and it is why the list drifted: the event stream, the
-  // fact patch and the event itself were added to v1's aggregate without it, and the test was red until they were
-  // named here.
-  assert.deepEqual(Object.keys(GameBrowserContractV1.schemas).sort(), [
-    "GameAttachCommandV1Schema",
-    "GameAttachmentStateV1Schema",
-    "GameBrowserStateV1Schema",
-    "GameCapabilitySummaryV1Schema",
-    "GameCompatibilityV1Schema",
-    "GameCreateCommandV1Schema",
-    "GameCreateResultV1Schema",
-    "GameDisconnectCommandV1Schema",
-    "GameDiscoveryActionCommandV1Schema",
-    "GameDiscoveryConfirmCommandV1Schema",
-    "GameDiscoveryMutationResultV1Schema",
-    "GameDiscoveryReadResultV1Schema",
-    "GameEndgameCommandV1Schema",
-    "GameEndgameResultV1Schema",
-    "GameEventStreamV1Schema",
-    "GameEventV1Schema",
-    "GameFactPatchV1Schema",
-    "GameInstanceV1Schema",
-    "GameLaunchCommandV1Schema",
-    "GamePrerequisiteStateV1Schema",
-    "GamePrerequisitesReadCommandV1Schema",
-    "GamePrerequisitesSetupCommandV1Schema",
-    "GameProblemV1Schema",
-    "GameReopenActionAuthorityCommandV1Schema",
-    "GameReopenActionAuthorityResultV1Schema",
-    "GameResumeCancelCommandV1Schema",
-    "GameResumeCancelResultV1Schema",
-    "GameResumeCommandV1Schema",
-    "GameResumeResultV1Schema",
-    "GameStateReadCommandV1Schema",
-    "GameStopCommandV1Schema",
-    "StardewCabinChoicesV1Schema",
-    "StardewCabinConfirmCommandV1Schema",
-    "StardewCabinConfirmResultV1Schema",
-    "StardewPlayerSettingsCommandV1Schema",
-    "StardewPlayerSettingsReadCommandV1Schema",
-    "StardewPlayerSettingsV1Schema",
-  ]);
+/**
+ * One value the contract module exports, read as the schema it may or may not be.
+ *
+ * `~kind` is the brand TypeBox puts on every type node it builds (`'Object'`, `'Union'`, `'Literal'`, ...), and it is
+ * the same fact the library's own `IsKind` guard reads. Nothing else this module exports carries it: not the contract
+ * object, not the compiled validators, not the fixture, not the frozen vocabularies, not the constant, not the two
+ * functions - so the export surface answers "which schemas does this module declare" without a name list and without
+ * a naming convention.
+ */
+const isSchemaBinding = (value: unknown): value is { readonly "~kind": string } =>
+  typeof value === "object" && value !== null && typeof (value as { readonly "~kind"?: unknown })["~kind"] === "string";
+
+const contractExports = contractModule as unknown as Record<string, unknown>;
+
+test("GameBrowserContractV1 serves exactly the versioned schemas this module exports", () => {
+  // Membership is declared ONCE, in the aggregate, and the population it must cover is the module's own export
+  // surface - so this test derives both sides instead of restating either. A frame added to the aggregate and not
+  // exported, and a schema exported and not served, are the same failure reported by name.
+  const served: readonly string[] = Object.keys(GameBrowserContractV1.schemas).sort();
+  const exported = Object.keys(contractExports)
+    .filter((name) => isSchemaBinding(contractExports[name]))
+    .sort();
+  // A boundary of nothing would satisfy every comparison below vacuously.
+  assert.ok(served.length > 0, `examined ${served.length} served schema(s)`);
+  const unserved = exported.filter((name) => !served.includes(name));
+  const unexported = served.filter((name) => !exported.includes(name));
+  if (unserved.length > 0 || unexported.length > 0)
+    assert.fail(
+      [
+        `the aggregate and this module's export surface disagree over ${unserved.length + unexported.length} schema(s):`,
+        ...unserved.map(
+          (name) => `  + ${name} is exported here and no aggregate serves it: add it to GameBrowserContractV1.schemas`,
+        ),
+        ...unexported.map(
+          (name) =>
+            `  - ${name} is served by GameBrowserContractV1 and this module does not export it: export the const, or drop the entry (a field vocabulary stays private)`,
+        ),
+      ].join("\n"),
+    );
+  for (const name of served) {
+    // The aggregate serves the binding this module exports, not a copy of it, and every entry compiles: an entry that
+    // named a schema shape TypeBox refuses would otherwise reach the boundary as a frame no reply can satisfy.
+    assert.equal(
+      contractExports[name],
+      GameBrowserContractV1.schemas[name as keyof typeof GameBrowserContractV1.schemas],
+    );
+    assert.equal(
+      typeof GameBrowserValidatorsV1[name as keyof typeof GameBrowserContractV1.schemas]?.Check,
+      "function",
+      `${name} compiles`,
+    );
+  }
 });
