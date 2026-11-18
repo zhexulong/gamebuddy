@@ -72,6 +72,19 @@ test("verdict.6: 已登记的文件消失也是 stale，不是通过", () => {
   );
 });
 
+test("verdict.7: 记录的路径消失、同一行数出现在没登记的文件上，是「大概移动」而不是两条无关判定", () => {
+  const sizes = sizesOf({ "gates/meta/moved.mjs": 3000 });
+  const result = verdict({ recorded: { "tools/moved.mjs": 3000 }, sizes });
+  assert.deepEqual(result.moved, [{ from: "tools/moved.mjs", to: "gates/meta/moved.mjs", lines: 3000 }]);
+  assert.deepEqual(result.stale, [], "记录没失效，它需要换个路径");
+  assert.deepEqual(result.overCeiling, [], "同一笔债不报两次");
+  // 行数不同就不是移动：那是「少了一笔债，多了一个新文件」，两条都说。
+  const aside = verdict({ recorded: { "tools/moved.mjs": 3000 }, sizes: sizesOf({ "gates/meta/other.mjs": 2900 }) });
+  assert.deepEqual(aside.moved, []);
+  assert.equal(aside.stale.length, 1);
+  assert.equal(aside.overCeiling.length, 1);
+});
+
 const writeLines = (path, count) => writeFileSync(path, "// line\n".repeat(count - 1));
 
 const commit = (root) => {

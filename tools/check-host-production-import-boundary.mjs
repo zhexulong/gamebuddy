@@ -12,6 +12,14 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  display,
+  importedBindings,
+  isDeclaredExternalPackage,
+  isMethodDeclaration,
+  matchingToken,
+  tokens,
+} from "./lib/javascript-lexicon.mjs";
 
 const requireFromHost = createRequire(resolve(import.meta.dirname, "../host/package.json"));
 const ts = requireFromHost("typescript");
@@ -98,150 +106,6 @@ const PERMITTED_NODE_BUILTIN_SPECIFIERS = new Set(
   builtinModules.flatMap((specifier) => [specifier, `node:${specifier}`]),
 );
 
-function lineAt(source, index) {
-  return source.slice(0, index).split("\n").length;
-}
-function display(root, path) {
-  return relative(root, path).replaceAll("\\", "/");
-}
-
-/** Tokenizes just enough TypeScript/JavaScript to avoid treating comments and
- * ordinary strings as import syntax, while retaining string literal locations. */
-function quotedEnd(source, index, end) {
-  const quote = source[index++];
-  while (index < end && source[index] !== quote) {
-    if (source[index] === "\\") index += 1;
-    index += 1;
-  }
-  return index < end ? index + 1 : end;
-}
-function interpolationEnd(source, index, end) {
-  let depth = 1;
-  while (index < end) {
-    const char = source[index];
-    if (char === "'" || char === '"') {
-      index = quotedEnd(source, index, end);
-      continue;
-    }
-    if (char === "`") {
-      index = templateEnd(source, index, end);
-      continue;
-    }
-    if (char === "{") depth += 1;
-    if (char === "}" && --depth === 0) return index;
-    index += 1;
-  }
-  return end;
-}
-function templateEnd(source, index, end) {
-  index += 1;
-  while (index < end && source[index] !== "`") {
-    if (source[index] === "\\") {
-      index += 2;
-      continue;
-    }
-    if (source[index] === "$" && source[index + 1] === "{") {
-      index = interpolationEnd(source, index + 2, end) + 1;
-      continue;
-    }
-    index += 1;
-  }
-  return index < end ? index + 1 : end;
-}
-
-/** Tokenizes just enough TypeScript/JavaScript to avoid treating comments and
- * ordinary strings as import syntax, while retaining string literal locations. */
-function tokens(source, start = 0, end = source.length, result = []) {
-  let index = start;
-  const add = (type, value, offset) => result.push({ type, value, offset, line: lineAt(source, offset) });
-  while (index < end) {
-    const char = source[index];
-    if (/\s/.test(char)) {
-      index += 1;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index < 0 || index >= end) break;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "*") {
-      const close = source.indexOf("*/", index + 2);
-      index = close < 0 || close >= end ? end : close + 2;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      const tokenStart = index;
-      const quote = char;
-      index += 1;
-      let value = "";
-      while (index < end && source[index] !== quote) {
-        if (source[index] === "\\") {
-          index += 1;
-          if (index < end) value += source[index++];
-          continue;
-        }
-        value += source[index++];
-      }
-      if (source[index] === quote) index += 1;
-      add("string", value, tokenStart);
-      continue;
-    }
-    if (char === "`") {
-      const tokenStart = index++;
-      while (index < end && source[index] !== "`") {
-        if (source[index] === "\\") {
-          index += 2;
-          continue;
-        }
-        if (source[index] === "$" && source[index + 1] === "{") {
-          const expressionStart = index + 2;
-          const expressionEnd = interpolationEnd(source, expressionStart, end);
-          tokens(source, expressionStart, expressionEnd, result);
-          index = expressionEnd + 1;
-          continue;
-        }
-        index += 1;
-      }
-      if (source[index] === "`") index += 1;
-      add("template", "", tokenStart);
-      continue;
-    }
-    if (/[A-Za-z_$]/.test(char)) {
-      const tokenStart = index++;
-      while (/[A-Za-z0-9_$]/.test(source[index] ?? "")) index += 1;
-      add("word", source.slice(tokenStart, index), tokenStart);
-      continue;
-    }
-    add("punctuation", char, index++);
-  }
-  return result;
-}
-
-function matchingToken(all, index, open, close) {
-  let depth = 0;
-  for (let cursor = index; cursor < all.length; cursor += 1) {
-    if (all[cursor].value === open) depth += 1;
-    if (all[cursor].value === close && --depth === 0) return cursor;
-  }
-  return -1;
-}
-function isMethodDeclaration(all, index) {
-  let cursor = index + 1;
-  if (all[cursor]?.value === "<") {
-    cursor = matchingToken(all, cursor, "<", ">");
-    if (cursor < 0) return false;
-    cursor += 1;
-  }
-  if (all[cursor]?.value !== "(") return false;
-  cursor = matchingToken(all, cursor, "(", ")");
-  if (cursor < 0) return false;
-  const next = all[cursor + 1]?.value;
-  // A return-type annotation can stand between a method's parameters and body.
-  // A dynamic import expression cannot be followed by one, so this remains
-  // fail-closed for actual dynamic imports (including import(`...`)).
-  return next === "{" || next === ":";
-}
 /**
  * TypeScript represents erased `import("x").T` and `typeof import("x")`
  * syntax as `ImportType` AST nodes, while executable `import("x").then()`
@@ -265,36 +129,6 @@ function erasedImportTypeOffsets(source) {
   return offsets;
 }
 
-function importedBindings(all, start, end) {
-  const bindings = [];
-  let inBraces = false;
-  for (let cursor = start; cursor < end; cursor += 1) {
-    const token = all[cursor];
-    if (token.value === "{") {
-      inBraces = true;
-      continue;
-    }
-    if (token.value === "}") {
-      inBraces = false;
-      continue;
-    }
-    if (token.value === "*") {
-      bindings.push("*");
-      continue;
-    }
-    if ((token.type !== "word" && token.type !== "string") || token.value === "type" || token.value === "as") continue;
-    if (inBraces && ["{", ","].includes(all[cursor - 1]?.value) && all[cursor - 1]?.value !== "type")
-      // ES module bindings may be string-named (for example
-      // `import { "acceptMountedPlayerMessage" as raw }`). Those are
-      // executable bindings just like identifier-named imports.
-      bindings.push(token.value);
-    else if (!inBraces && cursor === start && token.type === "word") bindings.push("default");
-  }
-  return bindings;
-}
-function isDeclaredExternalPackage(specifier, externalPackages) {
-  return [...externalPackages].some((pkg) => specifier === pkg || specifier.startsWith(`${pkg}/`));
-}
 /** Parses the bridge's deliberately tiny runtime export surface. Type-only
  * imports/exports are erased, so they cannot leak a runtime ingress. */
 function bridgeRuntimeExports(source) {
@@ -486,8 +320,7 @@ function isExactBridgeImplementation(
     return false;
   const outer = implementation.body.statements[0].expression;
   if (
-    !ts.isCallExpression(outer) ||
-    !ts.isIdentifier(outer.expression) ||
+    !(ts.isCallExpression(outer) && ts.isIdentifier(outer.expression)) ||
     outer.expression.text !== shape.runner ||
     outer.arguments.length !== (shape.invocationConsumer === undefined ? 3 : 4)
   )
@@ -513,9 +346,7 @@ function isExactBridgeImplementation(
       : undefined
     : firstCallback.body;
   if (
-    !firstBody ||
-    !ts.isCallExpression(firstBody) ||
-    !ts.isIdentifier(firstBody.expression) ||
+    !(firstBody && ts.isCallExpression(firstBody) && ts.isIdentifier(firstBody.expression)) ||
     firstBody.expression.text !== shape.consumer ||
     firstBody.arguments.length !== 2 ||
     !ts.isIdentifier(firstBody.arguments[0]) ||
@@ -557,8 +388,7 @@ function isExactBridgeImplementation(
   const invocation = observer.parameters[0].name.text;
   const observerBody = observer.body;
   if (
-    !ts.isCallExpression(observerBody) ||
-    !ts.isIdentifier(observerBody.expression) ||
+    !(ts.isCallExpression(observerBody) && ts.isIdentifier(observerBody.expression)) ||
     observerBody.expression.text !== shape.invocationConsumer ||
     observerBody.arguments.length !== 2 ||
     !ts.isIdentifier(observerBody.arguments[0]) ||
@@ -654,8 +484,7 @@ function isExactProviderStartImplementation(source) {
   const returned = implementation.body.statements[0].expression;
   const outer = ts.isAwaitExpression(returned) ? returned.expression : returned;
   if (
-    !ts.isCallExpression(outer) ||
-    !ts.isIdentifier(outer.expression) ||
+    !(ts.isCallExpression(outer) && ts.isIdentifier(outer.expression)) ||
     outer.expression.text !== "startMountedAttempt" ||
     outer.arguments.length !== 3
   )
@@ -677,8 +506,7 @@ function isExactProviderStartImplementation(source) {
   const invocation = invocationCallback.parameters[0].name.text;
   const invocationBody = invocationCallback.body;
   if (
-    !ts.isCallExpression(invocationBody) ||
-    !ts.isIdentifier(invocationBody.expression) ||
+    !(ts.isCallExpression(invocationBody) && ts.isIdentifier(invocationBody.expression)) ||
     invocationBody.expression.text !== "consumeMountedAttemptInvocationAdmission" ||
     invocationBody.arguments.length !== 2 ||
     !ts.isIdentifier(invocationBody.arguments[0]) ||
@@ -1340,7 +1168,7 @@ export function checkHostProductionImportBoundary({
   if (existsSync(configPath)) {
     try {
       const closure = JSON.parse(readFile(configPath)).externalRuntimeClosure;
-      if (!Array.isArray(closure?.packages) || !Array.isArray(closure.dynamicExternalImports)) throw new Error();
+      if (!(Array.isArray(closure?.packages) && Array.isArray(closure.dynamicExternalImports))) throw new Error();
       externalPackages = new Set(closure.packages.filter((entry) => typeof entry === "string"));
       declaredDynamicImports = closure.dynamicExternalImports.filter(
         (entry) =>

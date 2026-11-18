@@ -34,6 +34,8 @@
  *   file_over_ceiling:<path>:<lines>:<ceiling>          未登记，且超过本扩展名上限
  *   baselined_file_grew:<path>:<lines>:<recorded>       已登记，且比记录的行数更大
  *   stale_file_ceiling_baseline:<path>                  已登记，但文件已删除或已回到上限之内 - 基准只许收紧
+ *   record_probably_moved:<from>-><to>                  记录的那条路径没了，而同一个行数出现在没登记的超限文件上 - 记录没失效，
+ *                                                      它需要换个路径（按路径记账看不见移动）
  *   expired_file_ceiling_extension:<ext>                上限还在，树里已经没有这种文件
  *   status=blocked file_complexity_population_empty     一个文件都没量到（exit 2，绝不当通过）
  *
@@ -124,11 +126,19 @@ export function measure(root, { ceilings = CEILINGS_BY_EXTENSION } = {}) {
   return { sizes, extensions, unmeasured };
 }
 
+/** 按路径排：一条记录的两端是文件路径，不是文件本身。 */
+const byPath = (left, right) => left.file.localeCompare(right.file);
+const byMovedFrom = (left, right) => left.from.localeCompare(right.from);
+
 /**
- * 三类判定，每类只报它自己。
+ * 四类判定，每类只报它自己。
  *
  * `recorded` 里的文件以记录值为上限（它已经在上限之上，那正是它被记录的原因），其余文件以本扩展名上限为准；
  * `stale` 是反方向：记录还在，但文件没了或已经回到上限之内，基准必须删掉这一条。
+ *
+ * `moved` 是 `stale` 里的一种：记录的那条路径消失了，而同一个行数出现在一个没登记的超限文件上。记录本身没失效，它失去了
+ * 路径 - 这个仓库经常移动文件（2026-11-18：`tools/audit-totality.mjs` → `gates/meta/audit-totality.mjs`，3252 行），
+ * 而按路径记账的基准看不见移动，于是同一笔债会变成两条互不相干的判定。判成「大概是移动」并点名两端，比让人自己拼起来好。
  */
 export function verdict({ recorded, sizes, ceilings = CEILINGS_BY_EXTENSION }) {
   const overCeiling = [];
@@ -148,8 +158,21 @@ export function verdict({ recorded, sizes, ceilings = CEILINGS_BY_EXTENSION }) {
     if (lines === undefined || lines <= ceilings.get(extname(file)))
       stale.push({ file, lines, ceiling: ceilings.get(extname(file)), recorded: baseline });
   }
-  const byFile = (left, right) => left.file.localeCompare(right.file);
-  return { overCeiling: overCeiling.sort(byFile), grew: grew.sort(byFile), stale: stale.sort(byFile) };
+  const moved = [];
+  for (const entry of stale) {
+    // 只有「文件没了」才可能是移动：回到上限之内的那条记录，文件还在原处。
+    if (entry.lines !== undefined) continue;
+    const candidate = overCeiling.find((row) => row.lines === entry.recorded);
+    if (candidate === undefined) continue;
+    moved.push({ from: entry.file, to: candidate.file, lines: entry.recorded });
+  }
+  const isMoved = (value) => moved.some((entry) => entry.from === value || entry.to === value);
+  return {
+    overCeiling: overCeiling.filter((entry) => !isMoved(entry.file)).sort(byPath),
+    grew: grew.sort(byPath),
+    stale: stale.filter((entry) => !isMoved(entry.file)).sort(byPath),
+    moved: moved.sort(byMovedFrom),
+  };
 }
 
 /** 上限还在、树里已经没有这种文件的扩展名。 */
@@ -190,7 +213,7 @@ function main(argv) {
   }
 
   const { sizes: recorded } = JSON.parse(readFileSync(baselineFor(root), "utf8"));
-  const { overCeiling, grew, stale } = verdict({ recorded, sizes });
+  const { overCeiling, grew, stale, moved } = verdict({ recorded, sizes });
   // 失效的上限只有本仓库自己的树能判：fixture 是仓库的一个样本，它没有 .cs 文件不代表这个仓库不再写 C#。
   const expiredExtensions = root === repositoryRoot ? expired({ extensions }) : [];
 
@@ -220,10 +243,13 @@ function main(argv) {
   for (const { file, lines, recorded: baseline } of grew)
     console.error(`baselined_file_grew:${file}:${lines}:${baseline}`);
   for (const { file } of stale) console.error(`stale_file_ceiling_baseline:${file}`);
+  for (const { from, to } of moved) console.error(`record_probably_moved:${from}->${to}`);
   for (const extension of expiredExtensions) console.error(`expired_file_ceiling_extension:${extension}`);
 
-  if (overCeiling.length + grew.length + stale.length + expiredExtensions.length > 0) {
-    console.error("\n复杂度棘轮失败：只允许瘦身。新文件超上限请拆开；已登记文件回到上限之内请删掉该条目。");
+  if (overCeiling.length + grew.length + stale.length + moved.length + expiredExtensions.length > 0) {
+    console.error(
+      "\n复杂度棘轮失败：只允许瘦身。新文件超上限请拆开；已登记文件回到上限之内请删掉该条目；文件移动了请把那条记录换到新路径。",
+    );
     return 1;
   }
   console.log("\n复杂度棘轮通过：没有文件超过判定上限，也没有失效的基准条目。");

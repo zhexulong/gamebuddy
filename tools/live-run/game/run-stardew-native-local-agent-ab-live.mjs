@@ -96,7 +96,6 @@ import {
   resolveVoiceConfiguration,
 } from "../../lib/voice-gateway-launch.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
-import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
 import {
@@ -167,13 +166,6 @@ import {
 import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
-// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
-// the assembly gate only proves hash consistency; this proves the assembled
-// profile actually has persona content and no unrendered SillyTavern macros.
-// A configured-root run whose captured profile is a hollow default (no persona)
-// is an explicit context failure, never a silent pass. A read GAP (no profile
-// captured) stays a gap: nothing to assert.
-import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { writeInputManifest } from "../core/input-manifest.mjs";
 import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
@@ -185,11 +177,27 @@ import { openRunProgress } from "../core/run-progress.mjs";
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
 import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
+import {
+  agentTurnFailureReason,
+  findRunSessionJsonl,
+  readAgentTurnOutcome,
+  readSessionPlayerTexts,
+  sessionIdFromSessionRecord,
+  unsettledTurnError,
+} from "./agent-session-record.mjs";
+import { readAssembledContextEvidence } from "./assembled-context-evidence.mjs";
 import { bridgeClosureStop } from "./bridge-closure.mjs";
+import {
+  assessCompanionArrival,
+  assessDayStarts,
+  awaitDayOpeningWorld,
+  dayPromptWithoutObservation,
+  NOTHING_OBSERVED_WORLD,
+  readDayFirstDelivery,
+} from "./day-opening.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
-  executedActionIds,
   executionTraceInvariant,
   FLAT_EXECUTION_VIA,
   PROGRAM_TRACE_FILE,
@@ -200,9 +208,30 @@ import {
 // world cannot be reported as a companion that stopped. It prints every read and beats once per bound of silence, because
 // a reading that only exists at the END cannot describe the stalls these runs are stopped for (`round50b`, `round51`).
 import { assessPauseOnUnfocus, createGameClock, GAME_CLOCK_HEARTBEAT_MS } from "./game-clock.mjs";
+import { sampleGameProcess, sampleGameThreads } from "./game-process-samplers.mjs";
+import { captureModLogFacts, readModLogSource } from "./mod-log-decoding.mjs";
+import {
+  LATE_DAY_MINUTES,
+  MAX_TURNS_PER_DAY,
+  MULTIDAY_DISMISS_TIMEOUT_MS,
+  MULTIDAY_DISPATCH_TIMEOUT_MS,
+  MULTIDAY_NIGHT_TIMEOUT_MS,
+  MULTIDAY_POLL_INTERVAL_MS,
+  PASS_OUT_MINUTES,
+  WAKE_POLL_MS,
+} from "./night-watch-bounds.mjs";
 import { describePresentationPiece } from "./presentation-piece-time.mjs";
 // The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
+import {
+  deriveRungVerdict,
+  dispatchMarkers,
+  medianPromptTurnIntervalMs,
+  NON_ACCOMPLISHMENT_ACTIONS,
+  sleepSubmittedSince,
+  summarizeDispatchedActions,
+  taskPurposeVerdict,
+} from "./run-verdicts.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 
 // THE LAUNCH CLOCK, which is the launcher's and not this file's.
@@ -607,25 +636,6 @@ const PLAN_TOOL_NAMES = new Set([
   ...PROGRAM_STATUS_TOOL_NAMES,
 ]);
 
-// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
-// A play session that did nothing but these has not played: run H attempted 14 actions,
-// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
-// because the verdict only required "a real attempt". "Did the companion actually do
-// something" is a different question from "did it try", and a rung whose whole job is to
-// report what the companion could do must not call an empty session a success.
-const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
-  new Set([
-    "move_to_tile",
-    "travel",
-    "enter_exit",
-    "navigate_to_destination",
-    "observe_scene",
-    "inspect_world_map",
-    "express_emote",
-    "face_direction",
-    "equip_tool",
-  ]),
-);
 // memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
 // §10.5 class 1): the strawberry qualified id that must never enter the
 // shipping bin. The runner asserts on the Mod receipt evidence field, so this
@@ -1341,134 +1351,6 @@ const playerInputs = [];
 // that day was still current, `passedOut` is the ENGINE taking the night at its own 26:00. The honesty gate asks about
 // yesterday, and this process has no other record of yesterday to answer with.
 const nightRecordsByDay = new Map();
-/**
- * The agent session's own terminal record for the turn(s) this run drove.
- *
- * The harness used to decide "did the companion speak" from `presentedSummary` alone, so a turn whose
- * provider stream ENDED IN AN ERROR was reported as `silent` — as if the companion had chosen not to
- * speak. Measured on a real self-directed run: the last assistant message carried `stopReason: "error"`,
- * `errorMessage: "unexpected EOF"` and zero usage tokens, the verdict was `silent`, `sessionTurnErrors`
- * was empty, and the harness log contained no agent-side line at all. The runtime's own durable session
- * record is the authoritative fact here and the capture already keeps it.
- *
- * Only bounded, content-free facts are published: the stop reason, whether any assistant text part
- * existed, how many assistant messages the turn had, and a redacted provider transport message. Player
- * or companion TEXT is never read into the result.
- */
-function readAgentTurnOutcome(sessionJsonlPath) {
-  let raw;
-  try {
-    raw = readFileSync(sessionJsonlPath, "utf8");
-  } catch {
-    return Object.freeze({ observed: false, reason: "session_not_readable" });
-  }
-  let assistantMessages = 0;
-  let last = null;
-  for (const entry of sessionEntries(raw)) {
-    const message = entry?.message;
-    if (entry?.type !== "message" || message?.role !== "assistant") continue;
-    assistantMessages += 1;
-    const parts = Array.isArray(message.content) ? message.content : [];
-    last = {
-      stopReason: typeof message.stopReason === "string" ? message.stopReason : "unknown",
-      hasText: parts.some(
-        (part) => part?.type === "text" && typeof part.text === "string" && part.text.trim().length > 0,
-      ),
-      errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : null,
-      totalTokens: typeof message.usage?.totalTokens === "number" ? message.usage.totalTokens : null,
-    };
-  }
-  if (last === null) return Object.freeze({ observed: false, reason: "no_assistant_message" });
-  return Object.freeze({
-    observed: true,
-    assistantMessages,
-    stopReason: last.stopReason,
-    // A turn that produced no assistant text at all is exactly the case that used to be
-    // indistinguishable from a companion choosing silence.
-    producedText: last.hasText,
-    error: last.errorMessage === null ? null : redactLiveRunText(last.errorMessage).slice(0, 120),
-    totalTokens: last.totalTokens,
-  });
-}
-
-/**
- * `provider_error`-style reason for a turn that ended in a provider/runtime failure WITHOUT producing
- * any text, or `undefined` when the session record does not say that. Deliberately narrow: a turn that
- * spoke and then failed is not this case, and an unreadable session stays `unobserved` — the verdict
- * reports that rather than converting it into a cause.
- */
-function agentTurnFailureReason(outcome) {
-  if (outcome?.observed !== true) return undefined;
-  if (outcome.producedText === true) return undefined;
-  if (outcome.stopReason !== "error" && outcome.stopReason !== "aborted") return undefined;
-  return `provider_${outcome.stopReason}${outcome.error === null ? "" : `:${outcome.error}`}`;
-}
-
-/**
- * The reason one unsettled turn is recorded with, or a NAMED absence when the record has none.
- *
- * The verdict used to print the literal word `unsettled` for a turn carrying no error, which is how a round46 run ended
- * with a cause nobody could act on while the reason itself was in the envelope: `unsettled` was doing two jobs - the
- * class of the answer (`turn_unsettled`) and the whole sentence. The class stays on the verdict; the sentence is the
- * turn's own named cause, and a missing one says WHERE it is missing rather than defaulting to a plausible word.
- */
-function unsettledTurnError(turn) {
-  const recorded = typeof turn?.error === "string" ? turn.error.trim() : "";
-  return recorded.length > 0 ? recorded : "abandon_cause_absent:session_turn_record";
-}
-
-/**
- * THIS run's own session record: the files under the surface session directory this run materialized, or an object
- * saying why there is none.
- *
- * The product's convention is `<runtimeCwd>/surface-sessions/<surfaceSessionId>/sessions/*.jsonl`
- * (`host/src/runtime-identity.ts:127-136`), and the Game runtime is materialized with this run's own
- * `gameSessionId` - so that directory IS the binding, and it is the only place this reader looks. It used to walk the
- * runtime root and take the newest file it found, which is how two runs launched 38 minutes apart published the SAME
- * foreign record (`calls=45`, `sumMs=47189`, `frames=0` - 2026-10-22 audit) as each run's own measurement, and the
- * pair was quoted afterwards. A record this run cannot bind is not this run's record: the answer is "none" with the
- * reason and the directory searched, never a neighbour's numbers. `searched` stays in the answer because a reader has
- * to tell a missing session from a reader looking in the wrong place.
- */
-/**
- * The session id the Magic Context store keys on, read from the session record's own name.
- *
- * `<timestamp>_<sessionId>.jsonl` is the shape `findRunSessionJsonl` already selects by, and `context.db`'s
- * `tags.session_id` holds exactly that second field - verified against the 2026-10-29 run, whose record
- * `2026-10-29T18-01-38-566Z_01a188d3-1a06-7103-bff6-bb3975370191.jsonl` matches 29 compartments and 191 tags.
- *
- * Returns undefined rather than a guess when the name does not have that shape: a wrong id would report another
- * session's totals as this run's.
- */
-function sessionIdFromSessionRecord(path) {
-  if (typeof path !== "string") return undefined;
-  const name = path.split(/[\\/]/u).at(-1) ?? "";
-  return /_(?<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u.exec(name)?.groups?.id;
-}
-
-function findRunSessionJsonl(sessionDir) {
-  const searched = Object.freeze([String(sessionDir)]);
-  const unbound = Object.freeze({
-    path: undefined,
-    reason: "no_session_record_for_run_surface_session",
-    searched,
-  });
-  let entries;
-  try {
-    entries = readdirSync(sessionDir, { withFileTypes: true });
-  } catch {
-    return unbound;
-  }
-  // Session file names are UTC timestamps, so the last one lexicographically is the newest - of THIS run's session,
-  // which is what makes it this run's record. A resumed or compacted run may leave several here; all of them belong to
-  // the same surface session, unlike the files of another run under a sibling directory.
-  const files = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-    .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
-  if (files.length === 0) return unbound;
-  return Object.freeze({ path: join(sessionDir, files[files.length - 1]), reason: null, searched });
-}
 
 function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
@@ -1543,277 +1425,6 @@ function planPollCount(toolTiming) {
   const calls = toolTiming?.planCalls;
   if (calls === null || calls === undefined) return null;
   return calls.stardew_action_program_status ?? 0;
-}
-
-/**
- * The user messages a session record holds, in order - what she was actually TOLD.
- *
- * This is the only instrument that answers that question. `acceptPlayerText` answers whether the Host took the line, and
- * `round49` is the case where the two came apart: one player message in the session, and it was a gate's, while the day's
- * note appeared nowhere. A record that cannot be read answers `null`, which the reading reports as NOT MEASURED rather
- * than as an absent note - the two have different owners. Text is read here for matching only and is never copied into
- * the result.
- */
-function readSessionPlayerTexts(sessionJsonlPath) {
-  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return null;
-  let raw;
-  try {
-    raw = readFileSync(sessionJsonlPath, "utf8");
-  } catch {
-    return null;
-  }
-  const texts = [];
-  for (const entry of sessionEntries(raw)) {
-    if (entry?.type !== "message" || entry?.message?.role !== "user") continue;
-    const content = entry.message.content;
-    const text =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n")
-          : "";
-    texts.push(text);
-  }
-  return Object.freeze(texts);
-}
-
-/**
- * The world-state block's own words when no observation has arrived.
- *
- * The block's owner is `host/src/fact-brief.ts` (`NOTHING_OBSERVED`), and that constant is not exported, so it is spelled
- * here ONCE and compared against the owner's source by this runner's own test - the two cannot drift apart in silence.
- * It is the marker that makes "this day started blind" readable from a delivered message instead of inferred from code.
- */
-const NOTHING_OBSERVED_WORLD = "世界：尚未收到观察";
-
-/**
- * Wait, bounded, for the world she is about to be handed to have been OBSERVED.
- *
- * <p>
- * The day's first prompt is the one turn with nothing behind it: no tool result, no receipt, no settled programme. Handing
- * it over before the world has been read is what `round49` did - the first delivery carried `世界：尚未收到观察`, her first
- * thinking was "no observation yet", and her first action was `stardew_observe {}`, a whole turn spent looking at a world
- * the harness already held.
- * </p>
- *
- * <p>
- * A WAIT CANNOT MANUFACTURE A READING, and it is not asked to: the producer is the attach boundary
- * (`runtime.connected.activateIngress()`, called before the first prompt). What this adds is the failure mode - if the
- * world is still unread when the bound expires, the caller delivers anyway and NAMES the wait, so a blind day is a stated
- * outcome instead of an invisible one. The bound is a HARNESS bound (design 1432), never a product verdict.
- * </p>
- *
- * <p>
- * The poll count is bounded as well as the clock. Without it a `now` that never advances - the shape every test that
- * fakes the clock has - would loop forever, and "bounded" would be a claim about the caller's clock instead of a property
- * of this function.
- * </p>
- */
-async function awaitDayOpeningWorld({
-  probe,
-  timeoutMs = 15_000,
-  pollMs = 250,
-  now = () => Date.now(),
-  pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-} = {}) {
-  const pollBound = Math.max(1, Math.ceil(timeoutMs / Math.max(1, pollMs)) + 1);
-  const startedAtMs = now();
-  let polls = 0;
-  for (;;) {
-    const reading = probe();
-    if (reading?.observed === true)
-      return Object.freeze({
-        observed: true,
-        waitedMs: now() - startedAtMs,
-        revision: Number.isInteger(reading.revision) ? reading.revision : null,
-        polls,
-      });
-    const waitedMs = now() - startedAtMs;
-    if (waitedMs >= timeoutMs || polls >= pollBound)
-      return Object.freeze({ observed: false, waitedMs, revision: null, polls });
-    await pause(pollMs);
-    polls += 1;
-  }
-}
-
-/**
- * The day's prompt when the wait expired: the harness says what it could not hand over.
- *
- * A statement about the HARNESS, not an instruction to go and look. The turn is still delivered - a companion nobody asks
- * anything cannot act at all - and the sentence exists so the model is not left to read an empty world as a real one.
- * It is deliberately not "observe first": the fix for a blind day is that the observation is handed over, and a prompt
- * that told her to look would hide the harness's own gap behind her next action.
- */
-function dayPromptWithoutObservation(prompt, opening, locale) {
-  // A prompt that says the harness never got the world must be about a wait that actually expired: an observed opening
-  // returns the prompt untouched rather than stating something false about the harness.
-  if (opening?.observed === true) return prompt;
-  const waitedSeconds = String(Math.max(0, Math.round((opening?.waitedMs ?? 0) / 1000)));
-  return locale === "zh"
-    ? `${prompt}\n\n（这一轮之前，系统没有拿到世界的观察：等了 ${waitedSeconds} 秒，仍然没有。现在不知道时间、位置和身上带着什么。）`
-    : `${prompt}\n\n(Before this turn the harness never received an observation of the world: it waited ${waitedSeconds}s and none arrived. Time, place and what you carry are unknown.)`;
-}
-
-/**
- * What the Host actually DELIVERED for one day's first turn, read from this run's own session record.
- *
- * <p>
- * The reading is the session's user message at the moment the day's first prompt was issued, and nothing else: a day that
- * carried `世界：尚未收到观察` started blind, however healthy the turn after it looked. `fromIndex` is captured BEFORE the
- * turn - the count of user messages the record already held - so a gate's line or a later turn can never be read as the
- * day's opening.
- * </p>
- *
- * <p>
- * NOT MEASURED is its own answer, with the reason, and never a pass: an unreadable record, a record that rotated mid-turn
- * (a compaction writes a new file and every index in it means something else), and a turn that appended no user message
- * at all are three different gaps with three different owners.
- * </p>
- */
-function readDayFirstDelivery({
-  day,
-  texts,
-  fromIndex,
-  sourcePath = null,
-  readingPath = null,
-  waitedMs = null,
-  marker,
-}) {
-  const unmeasured = (reason) =>
-    Object.freeze({ day, waitedMs, measured: false, startedBlind: false, worldState: null, reason });
-  // A reading with no marker would compare every delivery against "" and call each one blind, and one with a missing
-  // marker would call every delivery sound; both are silent, so the caller must name what it is looking for.
-  if (typeof marker !== "string" || marker.length === 0) throw new Error("day_start_marker_required");
-  if (typeof sourcePath === "string" && typeof readingPath === "string" && sourcePath !== readingPath)
-    return unmeasured("session_record_changed_mid_turn");
-  if (!Array.isArray(texts)) return unmeasured("session_record_unreadable");
-  if (!Number.isInteger(fromIndex) || fromIndex < 0 || texts.length <= fromIndex)
-    return unmeasured("no_user_message_after_day_prompt");
-  const delivered = texts[fromIndex];
-  const block = /<world-state>([\s\S]*?)<\/world-state>/u.exec(delivered)?.[1]?.trim() ?? null;
-  return Object.freeze({
-    day,
-    waitedMs,
-    measured: true,
-    startedBlind: delivered.includes(marker),
-    // The block itself, bounded: the evidence a reader needs, and never the whole delivery (the player's own note is in
-    // there and is read for matching only).
-    worldState: block === null ? null : `<world-state>${block.slice(0, 200)}</world-state>`,
-    reason: null,
-  });
-}
-
-/**
- * Whether a run started its days BLIND, over the days it scheduled.
- *
- * <p>
- * THE POPULATION IS THE DAYS THE RUN SCHEDULED, so a run that scheduled none is blocked rather than green: `0 of 0` would
- * agree with itself. Every scheduled day must be measured, and a blind one is a finding that names the day and the wait
- * that expired in front of it.
- * </p>
- *
- * <p>
- * The verdict code is the first blind day if there is one, else whatever made the population unmeasurable, else `null` -
- * so the caller cannot fold "not measured" into a pass by reading a `null` and a missing field the same way.
- * </p>
- */
-function assessDayStarts({ scheduledDays, readings } = {}) {
-  const list = Array.isArray(readings) ? readings : [];
-  const findings = [];
-  const blindDays = [];
-  let measured = 0;
-  for (const reading of list) {
-    if (reading?.measured !== true) {
-      findings.push(
-        Object.freeze({
-          code: `day_start_reading_missing:${String(reading?.day ?? "?")}:${String(reading?.reason ?? "no_reading")}`,
-          day: Number.isInteger(reading?.day) ? reading.day : null,
-        }),
-      );
-      continue;
-    }
-    measured += 1;
-    if (reading.startedBlind === true) {
-      blindDays.push(reading.day);
-      findings.push(
-        Object.freeze({
-          code: `day_started_blind:${String(reading.day)}`,
-          day: reading.day,
-          waitedMs: Number.isInteger(reading.waitedMs) ? reading.waitedMs : null,
-        }),
-      );
-    }
-  }
-  const population = Number.isInteger(scheduledDays) && scheduledDays > 0 ? scheduledDays : 0;
-  const missing = findings.find((finding) => finding.code.startsWith("day_start_reading_missing:"));
-  const blocked =
-    population === 0
-      ? "no_days_scheduled"
-      : list.length < population
-        ? `day_start_reading_missing:${String(list.length)}_of_${String(population)}`
-        : (missing?.code ?? null);
-  return Object.freeze({
-    population,
-    measured,
-    startedBlind: blindDays.length,
-    blindDays: Object.freeze(blindDays),
-    findings: Object.freeze(findings),
-    reading: `days started blind ${String(blindDays.length)} of ${String(population)}`,
-    blocked,
-    verdictCode: blindDays.length > 0 ? `day_started_blind:${String(blindDays[0])}` : blocked,
-  });
-}
-
-/**
- * Whether the attach's own arrival fact was said, exactly once.
- *
- * <p>
- * The same call that hands the launch's snapshot to the Host (`activateIngress` -> `host.acceptInitialFacts`) is the
- * attach boundary `companionArrivalFact` is gated on (`host-service.ts`, `#sayArrivalOnce`). A harness that never
- * activated the ingress therefore lost BOTH readings with one omission, and only the world-state half was visible: a
- * companion who is never told she arrived is a second defect hiding behind the first.
- * </p>
- *
- * <p>
- * The marker is the arrival fact's own model-facing line - the one `<world-facts>` prints for it from
- * `WORLD_FACT_KIND_ZH.companion_arrival` (`host/src/fact-brief.ts`) - spelled here because that table is module-local;
- * this runner's test compares it against the owner's source so the marker cannot drift. It is the only thing in a
- * delivery that names the arrival: the fact states no sentence of its own (the state it used to repeat is the batch's
- * `<world-state>`). The record is the authority, not the activation flag: "the flag was set" and "the delivery
- * happened" came apart in every other reading in this file.
- * </p>
- *
- * <p>
- * `attached: false` is NOT a finding about the arrival: a run that never materialized already has a failure that names
- * its own cause, and reporting the attach it never attempted would report a symptom over it.
- * </p>
- */
-function assessCompanionArrival({ attached, texts } = {}) {
-  const arrivalLine = "- 她到了";
-  if (attached !== true)
-    return Object.freeze({
-      measured: false,
-      said: 0,
-      reading: "arrival said 0 of 1",
-      reason: "ingress_not_activated",
-      verdictCode: null,
-    });
-  if (!Array.isArray(texts))
-    return Object.freeze({
-      measured: false,
-      said: 0,
-      reading: "arrival said 0 of 1",
-      reason: "session_record_unreadable",
-      verdictCode: "companion_arrival_unmeasured",
-    });
-  const said = texts.filter((text) => text.includes(arrivalLine)).length;
-  return Object.freeze({
-    measured: true,
-    said,
-    reading: `arrival said ${String(said)} of 1`,
-    reason: null,
-    verdictCode: said === 1 ? null : said === 0 ? "companion_arrival_not_delivered" : "companion_arrival_said_twice",
-  });
 }
 
 function readToolTiming(
@@ -1907,62 +1518,6 @@ function readToolTiming(
     planCalls: Object.freeze(planCalls),
     invariant,
   });
-}
-
-/**
- * Per-execution receipt outcomes, derived from the run's own facts.
- *
- * Deduplicating receipts by `executionId` alone was WRONG and hid real failures: one execution legally
- * emits several receipts (`accepted` -> `controller_started` -> `tool_approach_completed` ->
- * `target_out_of_reach`), so the first one seen claimed the execution and every later code — including
- * its authoritative terminal failure — was dropped. Measured on a real run: three harvest executions
- * ended in `target_out_of_reach`, `capabilityAudit` still reported `harvest_crop.verdict: "succeeded"`
- * with `unresolved: []`, and `target_out_of_reach` appeared nowhere in the audit.
- *
- * A receipt's identity is therefore `(executionId, reasonCode)`: the bridge's legitimate redelivery
- * repeats the same pair, while a different code is a different fact about the same execution. Codes that
- * cannot end an execution are progress; anything else is a terminal claim, classified against the
- * action's registered success terminal from the published gate table.
- */
-function summarizeExecutionOutcomes({ facts, actionOfRequest, terminalReasonCodes }) {
-  // Codes that cannot END an execution: anything else is a terminal claim. Declared here so this
-  // function is self-contained and can be evaluated (and tested) on its own.
-  const progressCodes = new Set(["accepted", "controller_started", "tool_approach_completed", "tile_advanced"]);
-  const byExecution = new Map();
-  const seen = new Set();
-  for (const fact of facts ?? []) {
-    if (fact?.type !== "execution_receipt") continue;
-    const actionId = typeof fact.requestId === "string" ? actionOfRequest.get(fact.requestId) : undefined;
-    if (actionId === undefined) continue;
-    const executionId =
-      typeof fact.executionId === "string" && fact.executionId.length > 0
-        ? fact.executionId
-        : `${fact.requestId}:${fact.reasonCode}`;
-    const code = typeof fact.reasonCode === "string" && fact.reasonCode.length > 0 ? fact.reasonCode : "unknown";
-    const key = `${executionId}\u001f${code}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const current = byExecution.get(executionId) ?? { actionId, terminals: [] };
-    if (!progressCodes.has(code)) current.terminals.push(code);
-    byExecution.set(executionId, current);
-  }
-  const perAction = new Map();
-  for (const entry of byExecution.values()) {
-    const registered = terminalReasonCodes[entry.actionId];
-    const succeeded = entry.terminals.includes(registered);
-    const failures = entry.terminals.filter((code) => code !== registered);
-    const current = perAction.get(entry.actionId) ?? {
-      executions: { succeeded: 0, failed: 0, inFlight: 0 },
-      failedTerminalReasonCodes: {},
-    };
-    if (succeeded) current.executions.succeeded += 1;
-    else if (failures.length > 0) current.executions.failed += 1;
-    else current.executions.inFlight += 1;
-    for (const code of failures)
-      current.failedTerminalReasonCodes[code] = (current.failedTerminalReasonCodes[code] ?? 0) + 1;
-    perAction.set(entry.actionId, current);
-  }
-  return perAction;
 }
 
 /**
@@ -2298,98 +1853,6 @@ function newWorldStateStaleFacts() {
 }
 
 /**
- * What the run tried (`attempted`), succeeded at (`succeeded`), and changed (`accomplished`).
- *
- * Both CHANNELS of an execution are read, each from its own source (`execution-trace.mjs`): the flat request frames the
- * runner sent, and the nodes the Mod ran natively in a Body Program. An action id is counted once however many times it
- * was dispatched, so a run that batched everything through programs is no longer summarised as having done nothing -
- * measured 2026-10-22, when every action went through a program, `actionTrace` held zero rows and a session that tilled,
- * planted and harvested was reported `nothing_accomplished`.
- *
- * The verdict reads attempted and accomplished (moving, looking and re-equipping is not playing); the result publishes
- * the same three lists under its own names. One derivation, so the verdict and the artifact cannot disagree about what
- * the run did.
- */
-function summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions) {
-  const { attempted, succeeded } = executedActionIds({ actionTrace, programOutcomes, programSubmissions });
-  return Object.freeze({
-    attempted,
-    succeeded,
-    accomplished: succeeded.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId)),
-  });
-}
-
-/**
- * Whether the turn that has just settled SUBMITTED a `sleep`, from both channels of a dispatch.
- *
- * The two channels keep their own record of a submission: a flat request frame lands in `actionTrace`, a Body Program's
- * node in `programSubmissions`. `sleep` travels both - it is a world-resetting plan action - so a reading that looked at
- * one channel would say "she never went to bed" for a night she ended through the other.
- *
- * `markers` (`dispatchMarkers()`) are the lengths both records had BEFORE the turn, so a dispatch can only ever be
- * attributed to the turn it happened in. The records are a parameter rather than a closure so this predicate can be
- * driven in isolation, against real trace rows and real submitted nodes, by `run-stardew-native-local-agent-ab-live.test.mjs`.
- *
- * `sleep` is spelled here as the action id the Mod's protocol declares (`BridgeProtocol.cs:2386`: it takes no
- * arguments), the same literal the night watcher already reads; only the SUBMISSION is asked about, because the question
- * this answers is "did she act", never "did it succeed".
- */
-function sleepSubmittedSince(markers, records) {
-  if (records.trace.slice(markers.traceFrom).some((entry) => entry?.action === "sleep")) return true;
-  return records.submissions
-    .slice(markers.submissionsFrom)
-    .some((submission) => (submission?.nodes ?? []).some((node) => node?.actionId === "sleep"));
-}
-
-/** Where a turn starts in both dispatch records, for `sleepSubmittedSince`. */
-function dispatchMarkers(trace, submissions) {
-  return { traceFrom: trace.length, submissionsFrom: submissions.length };
-}
-
-/**
- * The run's OWN prompt-turn cadence, from the moments the harness began its prompt turns.
- *
- * `readObjectiveState` needs one span to answer "the objective's reading has not moved for a whole turn", and a turn
- * of this run is what that phrase means: a companion's turn takes as long as this run's turns take, so the number is
- * measured from the turn stream instead of chosen here (measured 2026-11-11, `round45`: 62 prompt turns in 2510 s, so
- * about 40 s a turn). Fewer than two turns is not a zero interval - it is no interval, and `null` makes
- * `readObjectiveState` answer `advancing` rather than licence a stall nobody measured.
- */
-function medianPromptTurnIntervalMs(starts) {
-  if (starts.length < 2) return null;
-  const intervals = starts.slice(1).map((start, index) => start - starts[index]);
-  const sorted = [...intervals].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
-}
-
-/**
- * The task's own verdict, from the purposes the day loop judged (`task-purpose.mjs`). One spelling, because the session
- * verdict and the rung clause both report it.
- *
- * THREE ANSWERS, and `null` is the only pass:
- *   - `task_not_achieved` when a purpose's receipts are COMPLETE evidence that it did not hold;
- *   - `task_unproven:<taskId>:<reasonCode>,...` when a purpose could not be decided at all - the criterion needs a fact
- *     nothing publishes, or the receipts that would decide it carried no postcondition of their own. It names the
- *     criterion AND the reason, so "we could not prove it" is a finding a reader can act on rather than silence;
- *   - `null` when every purpose was achieved.
- *
- * UNPROVEN IS NOT A PASS. Measured 2026-11-07 (`round39`): three days of `clear_and_plant_long_patch` came out
- * `unproven` - no admitted receipt carried a tile, so the 3x20 strip could be neither confirmed nor denied - and the
- * verdict named none of it, because the arm read only `not_achieved`. An unprovable criterion is a fact about our own
- * reporting, and a run that cannot say whether the task happened has not been verified as one that did.
- */
-function taskPurposeVerdict(taskPurposes) {
-  const purposes = Array.isArray(taskPurposes) ? taskPurposes : [];
-  if (purposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
-  const unproven = purposes.filter((purpose) => purpose.state === "unproven");
-  if (unproven.length === 0) return null;
-  return `task_unproven:${unproven
-    .map((purpose) => `${String(purpose.taskId ?? purpose.task)}:${String(purpose.reasonCode)}`)
-    .join(",")}`;
-}
-
-/**
  * The session's one verdict, decided by a single control flow whose residual IS `completed`.
  *
  * `completed` cannot be computed beside the evidence and then published next to it: measured 2026-10-21 on three
@@ -2476,42 +1939,6 @@ function deriveSessionVerdict({
   const taskVerdict = taskPurposeVerdict(taskPurposes);
   if (taskVerdict !== null) return taskVerdict;
   return "completed";
-}
-
-/**
- * The rung's verdict, and the ONE code that says why it is not a pass.
- *
- * A blocked run used to publish the SCENARIO it ran in as its reason (`${SCENARIO}_blocked` was the fallback in
- * `buildRunResult`), which is not a diagnosis: it names the rung, and the rung is not what failed. Measured
- * 2026-11-06 on `round38` - `state: "blocked"`, `failure.reasonCode: "multiday_routine_blocked"`, while the
- * multi-day assessment said `passed`, the session verdict said `completed` and the historian rubric said `passed`.
- * The only thing the run had actually failed was its companion-interaction gate (`summary_too_long`, 124 characters),
- * and nothing in the artifact said so; the launcher's own summary printed `reason (none)`.
- *
- * So the clauses are named, in the order a reader should be told about them, and the FIRST one that fails is the
- * reason. `passed` is the residual - a run is passed when no clause objects - and every clause carries a code, so a
- * blocked run can never publish an empty or borrowed reason.
- */
-function deriveRungVerdict(clauses) {
-  const all = Array.isArray(clauses) ? clauses : [];
-  // EVERY clause that failed, not only the first: the reason a run is not passed is the first failing clause, but a
-  // reader must not have to infer that a second, independent clause also failed. Measured 2026-11-07 (`round39`): the
-  // rung's reason was `multiday_routine_blocked`, and the run's own task purposes were ALL `unproven` - a second finding
-  // that existed in the evidence and in no verdict field, so the bundle read as if the task had never been asked.
-  const failed = all.filter((clause) => clause?.passed !== true);
-  const failedClauses = Object.freeze(
-    failed.map((clause) => Object.freeze({ id: clause?.id ?? null, reasonCode: clause?.reasonCode ?? null })),
-  );
-  for (const clause of all) {
-    if (clause?.passed !== true)
-      return Object.freeze({
-        state: "blocked",
-        reasonCode: clause?.reasonCode ?? null,
-        failedClause: clause?.id ?? null,
-        failedClauses,
-      });
-  }
-  return Object.freeze({ state: "passed", reasonCode: null, failedClause: null, failedClauses });
 }
 
 /**
@@ -2907,372 +2334,6 @@ async function runAgentTurn(text, tools, wake) {
 }
 
 /**
- * the self-directed scenario's capability/stall audit.
- *
- * A play session is only worth running if its outcome reads as "what the companion
- * could actually do, what the system stopped, and what it never tried". Two
- * authorities make that answerable from the trace alone:
- *
- *   - `actionTrace` records one entry per DISPATCH the Agent sent: the action, its
- *     requestId, the admission state, or the throw when the dispatch was refused.
- *     An admission (`accepted`) is NOT an outcome — the terminal arrives later as a
- *     receipt fact, so counting admissions as failures invents stalls.
- *   - `STARDEW_PUBLISHED_ACTION_GATES` names each action's terminal reason code, so
- *     receipts can be joined to the action that caused them (by requestId, deduped
- *     by executionId) and judged against the registered terminal rather than
- *     against a heuristic list of "success-sounding" codes.
- *
- * Per action the audit therefore reports dispatches (with admission and rejection
- * histograms) plus terminal receipts, and classifies:
- *   blockedBySystem  dispatched, never reached its terminal, and the trace shows a
- *                    refusal or a terminal failure — the stalls to attribute
- *   unresolved       dispatched, never reached its terminal, and NO terminal or
- *                    refusal was observed — a gap to report, never a claimed stall
- *   failed           dispatched, reached a terminal failure code
- *   succeeded        reached its registered terminal
- *   notAttempted     advertised actions the session never dispatched, sampled from
- *                    the LIVE surface (sampled while the session ran, not after it)
- */
-function buildCapabilityAudit({
-  actionTrace,
-  facts,
-  visibleActionIds,
-  sessionTurns,
-  terminalReasonCodes = {},
-  advertisedSampleCount = 0,
-  advertisedSampleMaxSize = 0,
-}) {
-  const byAction = new Map();
-  const actionOfRequest = new Map();
-  const stateOf = (value) => (typeof value === "string" && value.length > 0 ? value : "unknown");
-  const bump = (table, key) => {
-    if (typeof key !== "string" || key.length === 0) return;
-    table[key] = (table[key] ?? 0) + 1;
-  };
-  for (const entry of actionTrace ?? []) {
-    if (typeof entry?.action !== "string") continue;
-    const current = byAction.get(entry.action) ?? {
-      actionId: entry.action,
-      dispatches: 0,
-      admissionStates: {},
-      rejections: {},
-      terminalReceipts: 0,
-      terminalReasonCodes: {},
-      // Non-terminal receipts are PROGRESS (accepted/controller_started/
-      // tile_advanced...). They are recorded for the reader but never counted as
-      // failures: only a dispatch refusal is unambiguous evidence of a stop, and
-      // claiming more than that would be the audit inventing a stall.
-      progressReceipts: 0,
-      receiptReasonCodes: {},
-    };
-    current.dispatches += 1;
-    const state = stateOf(entry.state);
-    bump(current.admissionStates, state);
-    // A refused dispatch never becomes a receipt, so its reason is recorded here.
-    if (state === "rejected" || state === "failed" || state === "uncertain")
-      bump(current.rejections, stateOf(entry.reasonCode));
-    if (typeof entry.requestId === "string" && entry.requestId.length > 0)
-      actionOfRequest.set(entry.requestId, entry.action);
-    byAction.set(entry.action, current);
-  }
-
-  // Join receipts back to the action that caused them. The fact log carries no
-  // actionId, but it does carry requestId/executionId; see summarizeExecutionOutcomes for why
-  // the identity is (executionId, reasonCode) and not executionId alone.
-  const seenReceipt = new Set();
-  for (const fact of facts ?? []) {
-    if (fact?.type !== "execution_receipt") continue;
-    const actionId = typeof fact.requestId === "string" ? actionOfRequest.get(fact.requestId) : undefined;
-    if (actionId === undefined) continue;
-    const current = byAction.get(actionId);
-    if (current === undefined) continue;
-    const executionId =
-      typeof fact.executionId === "string" && fact.executionId.length > 0
-        ? fact.executionId
-        : `${fact.requestId}:${fact.reasonCode}`;
-    const code = stateOf(fact.reasonCode);
-    const key = `${executionId}\u001f${code}`;
-    if (seenReceipt.has(key)) continue;
-    seenReceipt.add(key);
-    bump(current.receiptReasonCodes, code);
-    if (code === terminalReasonCodes[actionId]) {
-      current.terminalReceipts += 1;
-      bump(current.terminalReasonCodes, code);
-    } else {
-      current.progressReceipts += 1;
-    }
-  }
-
-  // A receipt the audit calls "progress" may still be an execution's END, and that is how three
-  // authoritative failures (target_out_of_reach) disappeared from a real run's audit. Per-execution
-  // outcomes are therefore derived separately, from the same facts, and folded back in below.
-  const executionOutcomes = summarizeExecutionOutcomes({
-    facts,
-    actionOfRequest,
-    terminalReasonCodes,
-  });
-
-  const reachedTerminal = (entry) => entry.terminalReceipts > 0;
-  const sawFailure = (entry) => Object.keys(entry.rejections).length > 0;
-  const attempted = [...byAction.values()]
-    .map((entry) => {
-      const outcomes = executionOutcomes.get(entry.actionId) ?? {
-        executions: { succeeded: 0, failed: 0, inFlight: 0 },
-        failedTerminalReasonCodes: {},
-      };
-      const failed = outcomes.executions.failed;
-      return Object.freeze({
-        ...entry,
-        admissionStates: Object.freeze({ ...entry.admissionStates }),
-        rejections: Object.freeze({ ...entry.rejections }),
-        terminalReasonCodes: Object.freeze({ ...entry.terminalReasonCodes }),
-        receiptReasonCodes: Object.freeze({ ...entry.receiptReasonCodes }),
-        executionOutcomes: Object.freeze({
-          ...outcomes.executions,
-        }),
-        failedTerminalReasonCodes: Object.freeze({ ...outcomes.failedTerminalReasonCodes }),
-        // `succeeded` now means EVERY execution of this action finished on its registered terminal;
-        // one success next to a failure is `partial`, and failures are never folded into success.
-        verdict:
-          reachedTerminal(entry) && failed === 0
-            ? "succeeded"
-            : reachedTerminal(entry)
-              ? "partial"
-              : failed > 0
-                ? "failed"
-                : sawFailure(entry)
-                  ? "blocked"
-                  : "unresolved",
-      });
-    })
-    .sort((left, right) => right.dispatches - left.dispatches || left.actionId.localeCompare(right.actionId));
-  const advertised = Array.isArray(visibleActionIds) ? visibleActionIds.filter((id) => typeof id === "string") : [];
-  return Object.freeze({
-    schema: "gamebuddy_stardew_play_session_capability_audit/v1",
-    sessionTurnCount: (sessionTurns ?? []).length,
-    attempts: Object.freeze(attempted),
-    attemptedCount: attempted.length,
-    succeededCount: attempted.filter((entry) => entry.verdict === "succeeded").length,
-    // "The system blocked it" is a claim that needs evidence behind it: an action
-    // is only reported as a system stall when the trace shows a refusal or an execution
-    // that ended on a non-success terminal, and as `unresolved` when nothing terminal was observed at
-    // all. An audit that over-claims is worse than one that admits a gap.
-    blockedBySystem: Object.freeze(
-      attempted.filter((entry) => entry.verdict === "blocked" || entry.verdict === "failed"),
-    ),
-    // Actions that succeeded at least once AND failed at least once. Their failures are the
-    // interesting ones (a retry that never worked), so they must not hide behind the success.
-    partialFailures: Object.freeze(
-      attempted
-        .filter((entry) => entry.verdict === "partial")
-        .map((entry) =>
-          Object.freeze({ actionId: entry.actionId, failedTerminalReasonCodes: entry.failedTerminalReasonCodes }),
-        ),
-    ),
-    unresolved: Object.freeze(
-      attempted.filter((entry) => entry.verdict === "unresolved").map((entry) => entry.actionId),
-    ),
-    notAttempted: Object.freeze(advertised.filter((actionId) => !byAction.has(actionId)).sort()),
-    advertisedCount: advertised.length,
-    // Proof that the axis above was actually sampled while the session ran.
-    advertisedSampleCount,
-    advertisedSampleMaxSize,
-    advertisedAxisUsable: advertisedSampleCount > 0 && advertised.length > 0,
-  });
-}
-/**
- * How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product
- * verdict - and it has to OUTLIVE the day it is waiting for.
- *
- * It was ten minutes, which is shorter than the day turn it runs alongside (`turnWaitSeconds` is 1800 for the
- * self-directed scenarios). Measured on g39home: 78 actions of real farm work over about ten and a half minutes,
- * the watcher's own bound expired while the day turn was STILL RUNNING, and the run was recorded as
- * `companion_did_not_sleep:day_turn_still_running` - a verdict about a day that had not finished making up its
- * mind, let alone refused to sleep. The watcher already distinguishes the two honest cases: when the day turn
- * SETTLES with no `sleep`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
- * the turn budget, so the run budget stays the hard stop.
- */
-// The engine's own pass-out hour: at 26:00 the actor collapses and the day rolls over by itself
-// (`Game1.cs:6452-6460`, `timeOfDay >= 2600 || player.stamina <= -15f`). This is the LAST moment a night can
-// still be the companion's own; anything earlier is a judged value rather than a native fact.
-//
-// `readWorldClock().spent` used to compare against 22:00 and the night watcher answered `companion_did_not_sleep`
-// the moment a settled turn found the clock past it. Measured 2026-10-26: the companion reached 22:00, said
-// "Time to sleep ... let me observe first then sleep", and the watcher had already called it a refusal - a
-// verdict about the harness's hour, reported as a verdict about her behaviour, arriving before the dispatch it had
-// announced. The sleep hour is therefore the engine's, not the scenario's.
-const PASS_OUT_MINUTES = 26 * 60;
-
-// When the harness stops offering the generic "carry on" and names the clock instead. Not a sleep order: the
-// engine's own evening has visibly arrived (`Game1` switches to the night sky at 19:00), so a companion still
-// working needs to be told what time it is, not told what to do.
-const LATE_DAY_MINUTES = 19 * 60;
-
-// A day contains turns; this bounds how many, for the harness only. It is not a limit on the day.
-const MAX_TURNS_PER_DAY = Number(process.env.GAMEBUDDY_MULTIDAY_MAX_TURNS_PER_DAY ?? 40);
-
-/**
- * How often a day loop that may NOT wake her re-asks the world whether it now may.
- *
- * A poll rather than a timer per condition: the facts that decide a wake arrive on four different channels (a
- * programme's terminal receipt, the in-game clock, the Host's stall fact, the day's own purpose), and one cadence over
- * all of them cannot miss one. One second is below the resolution of anything it reads and far above the cost of asking.
- */
-const WAKE_POLL_MS = 1_000;
-const MULTIDAY_NIGHT_TIMEOUT_MS = (() => {
-  const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_NIGHT_TIMEOUT_MS ?? "", 10);
-  if (Number.isInteger(requested) && requested > 0) return requested;
-  // One minute past the 1800s turn budget, so the watcher cannot expire before the turn it accompanies.
-  return 31 * 60 * 1000;
-})();
-/**
- * How long one harness dispatch may take to be admitted, and to reach its terminal.
- *
- * 45 s, not the 120 s this first used: the Mod bounds a request's deadline by the ACTION'S OWN published watchdog
- * (`BridgeSession.IsFreshExecutionRequest`), whose default is 60 s (`BodyProgramModels.cs:153`) - only the
- * cross-day lifecycle publishes 600 s, and the harness never dispatches that (the companion does, through the
- * Host's tool layer, which sizes its deadline from the same descriptor). A 120 s deadline was refused by name
- * with `invalid_deadline` (measured 2026-10-17, run g14), and 45 s leaves slack for the two processes' clock reads
- * differing by the request's transit time.
- */
-const MULTIDAY_DISPATCH_TIMEOUT_MS = 45_000;
-
-/** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
-const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
-/**
- * How often the runner re-checks ITS OWN record - 250 ms, and it costs no bridge request.
- *
- * Two waits use it: `waitForNightToBegin` reads the fact log and the cached snapshot until the companion's `sleep` shows
- * up, and the pass-out re-entry asks the watcher again. Neither asks the world anything. The night WATCH is not on this
- * cadence and must not be: it is the one that observes, and `round56` measured what a 250 ms interval costs there - 742
- * observations inside one 208.6 s night, each a whole snapshot rebuilt on the game thread. The watch waits on the Mod's own
- * statements instead (see `worldFacts` below).
- */
-const MULTIDAY_POLL_INTERVAL_MS = 250;
-
-/**
- * This run's Mod log, copied into the run directory, plus the lines an audit needs out of it.
- *
- * The Mod's own phase facts live in %APPDATA%/StardewValley/ErrorLogs/SMAPI-latest.txt, which ROTATES: once the
- * next run starts, the previous night's is_saving, save_boundary_not_observed, SaveGameMenu and
- * SetForegroundWindow evidence is gone - the round-2 audit could not confirm the crossing cause for exactly that
- * reason ("the facts are not in the surviving artifacts"). Durability is the fix. Note what it already shows: the
- * foreground WINDOW MODE is not a proxy for actual activation, because a real run logged
- * SetForegroundWindow=refused while running in foreground mode.
- */
-/**
- * One Mod-log source, decoded by the encoding it was WRITTEN in.
- *
- * The sources are written by two different things: SMAPI writes UTF-8, and the lane's console capture is a PowerShell
- * redirect, which writes UTF-16LE. Reading both as UTF-8 put a NUL between every character of the console half, so the
- * concatenation was a binary file (measured 2026-11-18, `round76`) and every tool that sniffs for a NUL refused to read
- * `mod-log.txt` as text - including the ones this archive exists for.
- */
-function readModLogSource(candidate) {
-  const bytes = readFileSync(candidate);
-  const encoding = modLogEncoding(bytes);
-  const text = encoding === "utf8" ? bytes.toString("utf8") : decodeUtf16(bytes, encoding);
-  return Object.freeze({ path: candidate, encoding, text });
-}
-
-/**
- * The encoding a Mod-log source carries, from its bytes rather than from its name.
- *
- * A BOM is decisive, and so is the shape when there is none: every ASCII character of a UTF-16LE line is followed by a
- * NUL, and a NUL at an odd offset is not a byte any UTF-8 writer produces.
- */
-function modLogEncoding(bytes) {
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return "utf16le";
-  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return "utf16be";
-  for (let index = 1; index < Math.min(bytes.length, 512); index += 2) {
-    if (bytes[index] === 0) return "utf16le";
-  }
-  return "utf8";
-}
-
-/** One UTF-16 source as text, BOM or not. Node has no big-endian decoder, so that case swaps the pairs first. */
-function decodeUtf16(bytes, encoding) {
-  const bommed =
-    bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff));
-  const body = bommed ? bytes.subarray(2) : bytes;
-  if (encoding === "utf16le") return body.toString("utf16le");
-  const swapped = Buffer.alloc(body.length - (body.length % 2));
-  for (let index = 0; index + 1 < body.length; index += 2) {
-    swapped[index] = body[index + 1];
-    swapped[index + 1] = body[index];
-  }
-  return swapped.toString("utf16le");
-}
-
-function captureModLogFacts(runDir) {
-  // EVERY source, not one of them, and the archive says which files supplied it.
-  //
-  // This used to read a single path, and that path was the one the liveness meter read - which turned out to be the lane's
-  // CONSOLE capture while the Mod writes its markers into the SMAPI log FILE. A run whose observation layer reads the wrong
-  // stream does not merely lose a heartbeat: it loses the receipts, refusals and save-boundary facts this function exists to
-  // make durable, and the artifact then says "no evidence" about things that were logged.
-  try {
-    const decoded = MOD_LOG_PATHS()
-      .map(readModLogSource)
-      .filter((source) => source.text.length > 0);
-    const text = decoded.map((source) => source.text).join("\n");
-    const rows = text.split("\n");
-    const tail = (pattern, count = 4) =>
-      rows
-        .filter((row) => pattern.test(row))
-        .slice(-count)
-        .map((row) => row.trim().slice(0, 400));
-    const archived = typeof runDir === "string" && runDir.length > 0;
-    if (archived) {
-      // AS UTF-8, WHATEVER EACH SOURCE WAS WRITTEN IN. A PowerShell redirect (`| Out-File`) writes UTF-16LE and SMAPI
-      // writes UTF-8; concatenating the two as if both were UTF-8 put a NUL between every character of the console half,
-      // so `mod-log.txt` was a file that `grep`, `diff` and every tool that sniffs for a NUL read as BINARY - measured
-      // 2026-11-18 (`round76`), where the markers this archive exists for could not be read out of it at all. The
-      // encoding each source was decoded from travels in `mod-log-sources.json`, so the archive says what it is.
-      writeFileSync(join(runDir, "mod-log.txt"), text, "utf8");
-      writeFileSync(
-        join(runDir, "mod-log-sources.json"),
-        JSON.stringify(
-          decoded.map((source) => ({ path: source.path, encoding: source.encoding })),
-          null,
-          2,
-        ),
-      );
-    }
-    const lastWith = (needle) => (rows.filter((row) => row.includes(needle)).slice(-1)[0] ?? "").trim().slice(0, 400);
-    return Object.freeze({
-      // `sources` rather than a `path`: there is more than one source now, and the list is archived beside the text
-      // (`mod-log-sources.json`). Measured 2026-11-05: this read a bare `path` that no enclosing scope declared, so
-      // EVERY call threw `ReferenceError: path is not defined` - and the catch threw the same one, which ended the run
-      // at the very line that assembles its result.
-      sources: Object.freeze(decoded.map((source) => ({ path: source.path, encoding: source.encoding }))),
-      // The size of the archive this run writes, in BYTES of the UTF-8 text: `text.length` counted characters, which is
-      // the wrong number for a file whose sources were written in two different encodings.
-      bytes: Buffer.byteLength(text, "utf8"),
-      archived,
-      setForegroundWindow: tail(/SetForegroundWindow/i),
-      saveGameMenu: tail(/SaveGameMenu/i),
-      saveBoundary: tail(/save_boundary|SaveBoundaryFrameBudget|save boundary/i),
-      sleepLifecycle: tail(/sleep lifecycle/i, 6),
-      // The two lines a freeze is diagnosed from, straight into the result instead of only into the archived log: the
-      // last step the tick NAMED (a stage marker) and the last thing the Mod say through the pipe ingress path.
-      lastStage: (rows.filter((row) => row.includes("DEBUG-native-local-stage")).slice(-1)[0] ?? "")
-        .trim()
-        .slice(0, 300),
-      lastIngress: (rows.filter((row) => row.includes("native chat ingress")).slice(-1)[0] ?? "").trim().slice(0, 300),
-      // The frames the outbound queue REFUSED, by frame kind: a terminal receipt dropped there is a state the Host waits
-      // for and never receives, and until the bridge named it the run read as a companion that simply stopped answering.
-      // The bridge bounds it to one line per second, so this tail is the whole population of a bounded fact.
-      bridgeFrameRefused: tail(/bridge_frame_refused:/, 8),
-      lastFrameState: lastWith("game_mode="),
-      lastSavingState: lastWith("saving="),
-    });
-  } catch (error) {
-    return Object.freeze({ archived: false, error: String(error?.message ?? error).slice(0, 240) });
-  }
-}
-
-/**
  * How long the Mod may go without printing a heartbeat before the run says the WORLD stopped.
  *
  * The Mod's heartbeat is per tick, and the native-local lane prints it on every path that yields (including the ones
@@ -3352,64 +2413,6 @@ let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
  *
  * Counting rather than parsing timestamps keeps it independent of the log's clock format and of midnight.
  */
-/**
- * Whether the game process is answering Windows messages, and how much CPU it has burned.
- *
- * Read-only, and matched by name because the runner does not receive the launched pid: nothing here kills or signals
- * anything, and an absent process answers `responded: null` rather than guessing.
- */
-/**
- * The threads of the game process and what they are waiting on.
- *
- * The decisive reading after g80stall: BOTH timer-thread files stopped - the engine-frame writer and the watchdog's
- * fallback - while the process stayed alive, which points at the managed side as a whole rather than one blocked
- * thread. A thread-state census taken during the stall separates the remaining cases: every thread parked on one
- * lock (a managed deadlock), threads waiting on I/O, or a suspended runtime.
- *
- * Four different answers, four different values, each naming the pid it asked about: `no_game_process` (nothing to
- * census), `pid=<id>;process_without_threads`, `pid=<id>;threads=<n>;<groups>`, and `probe_unavailable:<why>` (the
- * query itself failing, which is NOT evidence about the world). They used to be ONE value, `unavailable` - and a
- * real artifact shows why that was unreadable: the same tick reported `game_cpu_s=539` from the process probe beside
- * it while the census said `unavailable`, so the reader could not tell a dead process from a threadless one from a
- * broken query (2026-10-19, multiday_routine).
- */
-function sampleGameThreads() {
-  const query = () =>
-    execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        "$p = Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1; " +
-          'if ($null -ne $p) { [pscustomobject]@{ "pid" = $p.Id; "threadCount" = $p.Threads.Count; "census" = ' +
-          '(($p.Threads | Group-Object ThreadState,WaitReason | ForEach-Object { "$($_.Count)x$($_.Name)" }) -join "|") } ' +
-          "| ConvertTo-Json -Compress }",
-      ],
-      { encoding: "utf8", timeout: 8_000 },
-    );
-  let rows;
-  try {
-    rows = query();
-  } catch (error) {
-    return `probe_unavailable:${String(error?.message ?? error)
-      .replace(/\s+/gu, " ")
-      .slice(0, 120)}`;
-  }
-  const text = rows.trim();
-  // An empty answer is Get-Process finding nothing, which is the only reading here that says the game is not running.
-  if (text === "") return "no_game_process";
-  let parsed = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return `probe_unavailable:unparseable_output:${text.slice(0, 120)}`;
-  }
-  const pid = Number.isInteger(parsed?.pid) ? String(parsed.pid) : "unknown";
-  const census = typeof parsed?.census === "string" ? parsed.census.trim().replace(/\s+/gu, " ") : "";
-  if (census === "") return `pid=${pid};process_without_threads`;
-  const threadCount = Number.isInteger(parsed?.threadCount) ? String(parsed.threadCount) : "unknown";
-  return `pid=${pid};threads=${threadCount};${census.slice(0, 400)}`;
-}
 
 /**
  * The adapter name and the primary display size, for a run that is not headless.
@@ -3468,51 +2471,6 @@ function measureEnvironmentFacts() {
     resolution: resolution === "" ? null : resolution.slice(0, 40),
   });
   return environmentFactsCache;
-}
-
-function sampleGameProcess() {
-  /**
-   * Three different answers, three different values.
-   *
-   * `responding: false` is a live process that is not pumping messages - the signature of the engine-side freeze.
-   * `responding: null` with `note: "no_game_process"` is a game that is not running. `note: "probe_unavailable"` is the
-   * query itself failing, which is NOT evidence about the world: measured 2026-10-19 (g70probe), the sampler recorded
-   * `game_responding=null` during a freeze in which the game was alive, collapsing two of these into one value.
-   */
-  const query = () =>
-    execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        "Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Responding,CPU,WorkingSet64,PrivateMemorySize64 | ConvertTo-Json -Compress",
-      ],
-      { encoding: "utf8", timeout: 8_000 },
-    );
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const rows = query();
-      const parsed = JSON.parse(rows.trim() === "" ? "null" : rows);
-      if (parsed === null) return Object.freeze({ responding: null, cpuSeconds: null, note: "no_game_process" });
-      return Object.freeze({
-        responding: parsed.Responding === true,
-        cpuSeconds: typeof parsed.CPU === "number" ? parsed.CPU : null,
-        // The game's own working set. Without it a run that dies of memory exhaustion cannot say whose: the harness
-        // records system-wide free memory and the Host's RSS, and never the process that owns most of the machine.
-        // Measured 2026-11-09: `minFreeMb: 97` beside `hostRssMb: 934` on a machine whose rest state is 4.2 GB free of
-        // 31 - a 934 MB process cannot account for that, so the attribute had no owner in any artifact.
-        workingSetMb: typeof parsed.WorkingSet64 === "number" ? Math.round(parsed.WorkingSet64 / (1024 * 1024)) : null,
-        privateMb:
-          typeof parsed.PrivateMemorySize64 === "number"
-            ? Math.round(parsed.PrivateMemorySize64 / (1024 * 1024))
-            : null,
-        note: null,
-      });
-    } catch {
-      // A failed query is not evidence; try once more, then say so.
-    }
-  }
-  return Object.freeze({ responding: null, cpuSeconds: null, note: "probe_unavailable" });
 }
 
 function sampleModHeartbeat() {
@@ -6344,7 +5302,7 @@ try {
     pauseOnUnfocus,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
     // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
-    modLog: captureModLogFacts(capture?.dir ?? null),
+    modLog: captureModLogFacts(capture?.dir ?? null, MOD_LOG_PATHS()),
     // What the fixture config ASKED for, recorded next to what the run did. A run
     // that armed a different world (a scenario-resolution bug did exactly that) is
     // otherwise invisible in the artifact.
@@ -6574,65 +5532,6 @@ try {
       }),
     );
   }
-}
-/**
- * Reads what the runtime actually mounted versus what the product placed for
- * this identity, using only authoritative files: the runtime's own run manifest
- * (what the session mounted) and the canonical identity-profile/worldbook under
- * the runtime root (what was available). A disposable root has neither, and the
- * caller treats that as "nothing to assert" rather than a failure.
- */
-async function readAssembledContextEvidence(runtimePaths) {
-  const readJson = async (path) => {
-    try {
-      return JSON.parse(await readFile(path, "utf8"));
-    } catch {
-      return null;
-    }
-  };
-  const manifest = await readJson(runtimePaths.runManifestPath);
-  const canonicalProfile = await readJson(runtimePaths.identityProfilePath);
-  const canonicalWorldBook = await readJson(join(runtimePaths.runtimeCwd, "worldbook.json"));
-  const mountedProfile = manifest?.identityProfile ?? null;
-  const mountedWorldBook = manifest?.worldBook ?? null;
-  return Object.freeze({
-    // What was available for this identity (absent on a disposable root).
-    expectedProfile:
-      canonicalProfile === null
-        ? null
-        : Object.freeze({
-            profileId: canonicalProfile.profileId ?? null,
-            revision: canonicalProfile.revision ?? null,
-            canonicalHash: canonicalProfile.canonicalHash ?? null,
-          }),
-    // Content facts from the same canonical profile (persona present? macro
-    // residue?) — the assembly gate cannot see these; the content gate can.
-    contentGate: canonicalProfile === null ? null : assessIdentityProfile(canonicalProfile),
-    expectedWorldBook:
-      canonicalWorldBook === null
-        ? null
-        : Object.freeze({
-            worldBookId: canonicalWorldBook.worldBookId ?? null,
-            revision: canonicalWorldBook.revision ?? null,
-          }),
-    // What the runtime session actually mounted (from its own run manifest).
-    mountedProfileId: mountedProfile?.profileId ?? null,
-    mountedProfileRevision: mountedProfile?.revision ?? null,
-    mountedProfileHash: mountedProfile?.canonicalHash ?? null,
-    mountedWorldBookId: mountedWorldBook?.worldBookId ?? null,
-    mountedWorldBookRevision: mountedWorldBook?.revision ?? null,
-    manifestPresent: manifest !== null,
-    // Model identity the runtime recorded in its own run manifest (M5). Absent
-    // on a disposable root; non-null only when the runtime actually wrote it.
-    model:
-      manifest?.model === undefined || manifest?.model === null
-        ? undefined
-        : Object.freeze({
-            provider: manifest.model.provider ?? null,
-            modelId: manifest.model.modelId ?? null,
-            thinkingLevel: manifest.model.thinkingLevel ?? null,
-          }),
-  });
 }
 
 // Split a companion line at sentence boundaries so voice can stream chunks as
