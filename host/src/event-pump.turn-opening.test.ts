@@ -45,6 +45,7 @@ import {
   OLDEST_HELD_MS,
   PER_DELIVERED_BATCH,
   type PendingBatch,
+  RESTATEMENTS,
   RECEIPTS_WITH_PROVENANCE,
   SILENT_SETTLED_OPENINGS,
   STALLED,
@@ -635,6 +636,7 @@ const ACCOUNT_SEGMENT_LABELS = [
   AUTO_OBSERVE_REARMED,
   RECEIPTS_WITH_PROVENANCE,
   UNATTRIBUTED_EXECUTION_TOKEN,
+  RESTATEMENTS,
 ];
 
 /**
@@ -717,6 +719,8 @@ function readTurnAccountLine(line: string): Readonly<{
     counts: Record<string, number>;
     producers: Record<string, Record<string, number>>;
   }>;
+  /** The readings that repeated one she had been given, and where each went (`examined {opened, carried, suppressed}`). */
+  restatements: Readonly<{ examined: number; counts: Record<string, number> }>;
   examined: number;
   carried: Readonly<{
     carried: number;
@@ -773,7 +777,10 @@ function readTurnAccountLine(line: string): Readonly<{
     observedSegment,
     declinedSegment,
     rearmedSegment,
+    restatementsSegment,
   ] = segments as [
+    ReturnType<typeof parseSegment>,
+    ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
     ReturnType<typeof parseSegment>,
@@ -814,6 +821,7 @@ function readTurnAccountLine(line: string): Readonly<{
       counts: notOwedSegment.counts,
       producers: notOwedSegment.producers,
     }),
+    restatements: Object.freeze({ examined: restatementsSegment.total, counts: restatementsSegment.counts }),
     examined: examinedSegment.total,
     carried: Object.freeze({
       carried: carriedSegment.total,
@@ -965,6 +973,9 @@ test("the account line reads back into the account it names", () => {
       }),
     ),
     examined: 12,
+    // `suppressed` is the SAME number the `not owed` segment prints (two, above): one event, one count, so the fixture
+    // derives it from the histogram it already declared rather than naming a second value.
+    restatements: Object.freeze({ examined: 3, opened: 0, carried: 1, suppressed: 2 }),
     assistantTurns: Object.freeze({
       examined: 6,
       byProduction: Object.freeze(
@@ -1165,6 +1176,7 @@ test("the account line names a member that never fired, in both histograms", () 
     noSurface: Object.freeze({}),
     notOwedByProducer: Object.freeze(producerHistograms(NOT_OWED_REASONS)),
     examined: 1,
+    restatements: Object.freeze({ examined: 0, opened: 0, carried: 0, suppressed: 0 }),
     assistantTurns: Object.freeze({
       examined: 0,
       byProduction: Object.freeze(assistantProductionCounts({})),

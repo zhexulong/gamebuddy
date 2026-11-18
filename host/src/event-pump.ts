@@ -319,7 +319,7 @@ type NotOwedCause = FlushDecision<NotOwedReason> & Readonly<{ shape?: string }>;
  * </p>
  */
 export const NOT_OWED = Object.freeze({
-  /** The flush held a copy of the reading the pump already held: nothing this flush saw was different. */
+  /** The flush held a copy of the reading SHE WAS GIVEN: nothing this flush saw was different. */
   observationRestated: "observation_restated",
   /** The flush held a reading that says something the held one did not, and a reading opens no turn. */
   observationMoved: "observation_moved",
@@ -567,7 +567,14 @@ export const OLDEST_HELD_MS = "oldest held ms";
 export const BACKLOG_BOUND = "backlog bound ms";
 /** Facts admitted whose shape is a BODY TRACE: not an event, never a turn (see `TurnAccount.traces`). */
 export const TRACES = "traces";
-
+/**
+ * The readings that repeat one she has already been given, and where each of them went (see `TurnAccount.restatements`).
+ *
+ * Printed because the two halves were measured apart and never met: `round75` answered `observation_restated: 22` while
+ * twelve consecutive turns handed her the same block, and no number in the account joined the suppression to the
+ * delivery. The braces print `opened` and `carried` - what was delivered anyway - beside `suppressed`.
+ */
+export const RESTATEMENTS = "restatements examined";
 /**
  * How many traces the account counted, over the kinds it counted them in.
  *
@@ -665,6 +672,23 @@ export type TurnAccount = Readonly<{
   notOwed: Readonly<Record<NotOwedReason, number>>;
   /** Which producer's fact answered each such call: the re-stated fact, the step, or the reading held as state. */
   notOwedByProducer: Readonly<Record<NotOwedReason, Readonly<Record<FactProducer, number>>>>;
+  /**
+   * What happened to the readings that repeat one she has already been given: the four places a re-statement can go.
+   *
+   * <p>
+   * `examined` is the population - a reading whose content she was already handed (`#restatementExamined`); `suppressed`
+   * is the flushes answered `observation_restated` (read from `notOwed`, one authority); and `opened`/`carried` are what
+   * was DELIVERED anyway, split by whether the turn had anything else to state. `opened` is the defect - a turn whose only
+   * content is standing state - while `carried` is the same reading riding a turn that had a reason.
+   * </p>
+   * <p>
+   * THE INVARIANT THE GATE READS IS NOT `examined === opened + carried + suppressed`: a second reading arriving before a
+   * flush replaces the first in the slot, so a re-statement can be examined and never answered at all. What must hold is
+   * that nothing is CALLED a re-statement she was never given (`suppressed + carried <= examined`), and that a re-statement
+   * never buys a turn of its own (`opened === 0`).
+   * </p>
+   */
+  restatements: Readonly<{ examined: number; opened: number; carried: number; suppressed: number }>;
   /**
    * The decision facts this pump declined to open a turn for because the surface could not show an answer, by the pump's own
    * fact shape (`factTurnShape`) - `receipt:succeeded`, `world_fact`, `lifecycle`.
@@ -908,6 +932,9 @@ export function turnAccountLine(account: TurnAccount): string {
   // the zeros answer.
   const tracesReading = TRACE_KINDS.map((kind) => `${kind}: ${String(account.traces[kind] ?? 0)}`).join(", ");
   const tracesSegment = `${TRACES} ${String(tracedFacts(account.traces))} {${tracesReading}}`;
+  const restatementsSegment = `${RESTATEMENTS} ${String(account.restatements.examined)} {opened: ${String(
+    account.restatements.opened,
+  )}, carried: ${String(account.restatements.carried)}, suppressed: ${String(account.restatements.suppressed)}}`;
   // THE CARRY LEDGER, IN THE SHAPE THAT MAKES ITS ARITHMETIC READABLE: `carried C · consumed X · lost L {shape: n} ·
   // held H`, where `C === X + L + H` always. `round68` printed `carried 2 {pending: 0}` for two settlements nothing ever
   // delivered, and no reader could tell that from two that arrived. The loss's braces name the fact SHAPES that could not
@@ -918,7 +945,7 @@ export function turnAccountLine(account: TurnAccount): string {
     .map((shape) => `${shape}: ${String(account.carry.lost[shape])}`)
     .join(", ");
   const carrySegment = `${CARRIED} ${String(account.carry.carried)} · ${CONSUMED} ${String(account.carry.consumed)} · ${LOST} ${String(account.carry.lostTotal)}${carryLostReading === "" ? "" : ` {${carryLostReading}}`} · ${HELD} ${String(account.carry.held)} · ${OLDEST_HELD_MS} ${String(account.carry.oldestHeldMs)} · ${BACKLOG_TURNS_OPENED} ${String(account.carry.named)} · ${BACKLOG_BOUND} ${String(account.carry.backlogBoundMs)}`;
-  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed}`;
+  return `${ASSISTANT_TURNS_EXAMINED} ${String(account.assistantTurns.examined)} {${assistantProductions}} · ${ASSISTANT_TURNS_WITH_TEXT} ${String(assistantTurnsWithText(account.assistantTurns))} · ${ASSISTANT_TURNS_TOOL_ONLY} ${String(assistantTurnsToolOnly(account.assistantTurns))} · ${PER_DELIVERED_BATCH} turns opened ${String(account.opened)} {${opened}} · ${FLUSHES_EXAMINED} ${String(account.examined)} · ${NOT_OWED_LABEL} ${String(notOwedTotal(account))} {${notOwed}} · ${carrySegment} · ${tracesSegment} · ${BUBBLES_DELIVERED} ${String(account.delivery.bubbles)} · ${LOST} ${String(account.delivery.lostTotal)} {${lostReading}} · ${stalledSegment} · ${TURN_WITHOUT_ACTION} ${String(account.emptyTurns.total)} {${empty}} · ${TURN_SETTLED_SILENT} ${String(account.silentSettled.total)} {${silent}} · ${TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT} ${String(account.settledWithExecutionInFlight)} · ${AUTO_OBSERVE_AGED_TURNS} ${String(account.autoObserve.agedTurns)} · ${refreshed} · ${AUTO_OBSERVE_UNAVAILABLE_TOKEN} ${String(declined)} {${unavailable}} · ${AUTO_OBSERVE_REARMED} ${String(rearmedAgain)} {${rearmed}} · ${receiptProvenance} · ${unattributed} · ${restatementsSegment}`;
 }
 
 /**
@@ -1833,21 +1860,28 @@ export class CompanionEventPump {
   /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
   /**
-   * Whether the reading in that slot says what the reading the pump already held said.
+   * The restatement reading: what happened to the readings that repeat one she has already been handed.
    *
    * <p>
-   * The ONE comparison admission already makes to decide whether the world moved (see the `changes` branch of
-   * `enqueueFact`), kept beside the slot rather than computed again at flush time: a second spelling of "the reading says
-   * something else" is the disagreement this file exists to prevent. It travels with the slot - cleared by `takeBatch`
-   * with it - because it is a property of the reading being held, not of the session.
+   * WHY IT IS A LEDGER AND NOT A BOOLEAN. `observation_restated` was a claim about a FLUSH - "the reading this call held
+   * is one the pump already held, so no turn is owed" - and it was the only place in this file that answered "has she
+   * read this" from the pump's own copy rather than from what she was SHOWN. Measured 2026-11-18 (`round75`): the account
+   * printed `observation_restated: 22 {snapshot_restate: 22}` while turns 47-75 handed her the SAME block twelve times in
+   * a row (`世界（revision 14，本轮无新观察）`), so the run said "the observation was suppressed" and "the observation was
+   * delivered" and nothing in the artifact could tell which reading was which.
    * </p>
    * <p>
-   * What reads it is the suppressed-flush reason: `#notOwed` names a re-statement of the held reading
-   * (`observation_restated`) apart from a reading that moved (`observation_moved`), which is the difference between "the
-   * watcher asked again and the world had not spoken" and "the world spoke and a reading still opens no turn".
+   * THE FOUR NUMBERS ARE THE FOUR PLACES A RE-STATEMENT CAN GO, and they are counted where each one happens rather than
+   * re-derived from each other: `examined` here (`enqueueFact`, a reading whose content she has already been given),
+   * `opened` and `carried` at `takeBatch` (the turn existed for the reading alone, or the reading rode a turn that had a
+   * reason), and `suppressed` from `#notOwedByReason` (the one authority that already counts the flushes answered with it).
    * </p>
    */
-  #snapshotRestatesPrevious = false;
+  #restatementExamined = 0;
+  /** Re-statements delivered by a turn that had nothing else to state: the turn existed for standing state. */
+  #restatementOpened = 0;
+  /** Re-statements delivered inside a turn something else had already opened. */
+  #restatementCarried = 0;
   /**
    * The world as LAST HEARD, for rendering `<world-state>` on every batch.
    *
@@ -2244,7 +2278,10 @@ export class CompanionEventPump {
       const changes = previous === undefined || readingContentIdentity(fact) !== readingContentIdentity(previous);
       this.#snapshot = frozen;
       this.#lastSnapshot = frozen;
-      this.#snapshotRestatesPrevious = !changes;
+      // SHE HAS ALREADY BEEN GIVEN THIS ONE: the same question `#worldStateReading` asks before it writes `本轮无新观察`,
+      // and the same one the cue reads before it composes an aged reading - asked here so a re-statement is COUNTED
+      // where it arrives (`restatements examined`) rather than only where a flush declines it.
+      if (this.#readingIsNews(frozen) === false) this.#restatementExamined += 1;
       this.#snapshotProducedBy = producedBy;
       // A READING IS A READING: the world was read, so the reading's own age restarts whether or not it says something
       // new. The content's age restarts only when the content does.
@@ -2411,7 +2448,9 @@ export class CompanionEventPump {
   public clear(): void {
     this.#generation++;
     this.#snapshot = undefined;
-    this.#snapshotRestatesPrevious = false;
+    this.#restatementExamined = 0;
+    this.#restatementOpened = 0;
+    this.#restatementCarried = 0;
     this.#snapshotProducedBy = undefined;
     this.#lastSnapshot = undefined;
     this.#lastSnapshotDeliveredIdentity = undefined;
@@ -2511,6 +2550,14 @@ export class CompanionEventPump {
       openedByProducer: freezeProducerHistograms(this.#openedByProducer, TURN_OPENINGS),
       notOwed: Object.freeze({ ...this.#notOwedByReason }),
       notOwedByProducer: freezeProducerHistograms(this.#notOwedByProducer, NOT_OWED_REASONS),
+      // `suppressed` is READ FROM `notOwed` rather than counted a second time: a re-statement answered by a flush and a
+      // re-statement declined are one event, and two counters could disagree about it.
+      restatements: Object.freeze({
+        examined: this.#restatementExamined,
+        opened: this.#restatementOpened,
+        carried: this.#restatementCarried,
+        suppressed: this.#notOwedByReason[NOT_OWED.observationRestated],
+      }),
       noSurface: Object.freeze({ ...this.#noSurfaceByShape }),
       // COUNTED WHERE THE BATCH IS COMPOSED (`takeBatch`), not derived from the two histograms beside it: a count that is
       // the sum of its own terms cannot witness a batch that was assembled and then discarded, which is the defect this
@@ -3236,9 +3283,9 @@ export class CompanionEventPump {
    * skipped it for that reason). A step of a programme is its own reason (`in_flight_progress`):
    * the fact is not a re-statement - she has never seen it - and it still opens no turn, because the programme's
    * settlement is what she has to decide on. A snapshot slot holding a reading is a READING AND NOTHING ELSE, and which
-   * of the two members it is depends on the reading alone: a copy of the one the pump already held is
-   * `observation_restated` - the world's last statement, asked about again - and a reading that says something else is
-   * `observation_moved`, which is standing state she has not been handed rather than a wake (`TURN_OPENING`).
+   * of the two members it is depends on the reading alone: a copy of the one SHE WAS SHOWN is
+   * `observation_restated` - the world's last statement, asked about again - and a reading she has not been handed is
+   * `observation_moved`, which is standing state she has not received rather than a wake (`TURN_OPENING`).
    * `nothing_pending` is the rest.
    *
    * THE TICKET IS TAKEN HERE, at the moment the pump says "no turn is owed", and it names every waiting fact slot. Those
@@ -3316,7 +3363,12 @@ export class CompanionEventPump {
     }
     if (this.#snapshot !== undefined)
       return Object.freeze({
-        decision: this.#snapshotRestatesPrevious ? NOT_OWED.observationRestated : NOT_OWED.observationMoved,
+        // ONE AUTHORITY: the reading she was SHOWN (`#lastSnapshotDeliveredIdentity`, through `#readingIsNews`), which is
+        // what the block's header, `broughtObservation` and the cure already ask. A comparison against the pump's own held
+        // copy is a second spelling of "has she read this", and it says `observation_restated` for a reading she has never
+        // been handed - the one direction in which a wrong label silences news.
+        decision:
+          this.#readingIsNews(this.#snapshot) === false ? NOT_OWED.observationRestated : NOT_OWED.observationMoved,
         producedBy: this.#snapshotProducedBy,
       });
     return Object.freeze({ decision: NOT_OWED.nothingPending, producedBy: undefined });
@@ -3796,7 +3848,6 @@ export class CompanionEventPump {
     const snapshot = this.#snapshot;
     const broughtObservation = this.#snapshotBringsObservation();
     this.#snapshot = undefined;
-    this.#snapshotRestatesPrevious = false;
     this.#snapshotProducedBy = undefined;
     const carriedSlots = [
       ...this.#receipts.keys(),
@@ -3884,6 +3935,7 @@ export class CompanionEventPump {
       ]);
       return Object.freeze({
         batchFacts,
+        promptFacts,
         deliveredFacts,
         events,
         triggerEventIds,
@@ -3924,6 +3976,15 @@ export class CompanionEventPump {
       if (ticket.carriedInto !== undefined) continue;
       if (!ticket.facts.every((slot) => !this.#carryHeld.has(slot))) continue;
       this.#carryTickets.set(ticketId, { facts: ticket.facts, carriedInto: batchId });
+    }
+
+    // WHERE THE RE-STATEMENT WENT, counted where it leaves: a reading she has already been given, rendered into a batch that
+    // a turn is about to deliver. `opened` is the defect - a turn whose ONLY content is standing state - and `carried` is
+    // the same reading riding a turn something else had already justified. Both are printed beside `suppressed`, because a
+    // run that says only how many readings it declined cannot say whether it handed them over anyway (`round75`).
+    if (!broughtObservation && this.#lastSnapshot !== undefined && this.#readingIsNews(this.#lastSnapshot) === false) {
+      if (batchInputs.length === 0 && composed.promptFacts.length === 0) this.#restatementOpened += 1;
+      else this.#restatementCarried += 1;
     }
 
     // This batch was shown the observation, so the next one counts its age from here. Recorded at composition, not at

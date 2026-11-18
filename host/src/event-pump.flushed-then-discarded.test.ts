@@ -84,13 +84,13 @@ function describe(reading: ReturnType<typeof flushReading>, account: TurnAccount
   return `flushes examined ${String(reading.examined)} · opened ${String(reading.opened)} · named-refused ${String(reading.notOwed)} · discarded ${String(reading.discarded)} · carried ${String(reading.carried)} · consumed ${String(reading.consumed)} · held ${String(reading.held)} · traces ${JSON.stringify(reading.traces)} · not owed ${JSON.stringify(account.notOwed)}`;
 }
 
-function snapshotFact(revision: number): WorldFact {
+function snapshotFact(revision: number, gameTime = "0610"): WorldFact {
   return {
     source: "stardew_mod",
     kind: "snapshot",
     correlationId: `snapshot_${String(revision)}`,
     revision,
-    payload: { location: "Farm", gameTime: "0610", revision },
+    payload: { location: "Farm", gameTime, revision },
   };
 }
 
@@ -243,8 +243,11 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
       reason: NOT_OWED.observationMoved,
       drive: async (pump, sink) => {
         pump.enqueueFact(snapshotFact(1), FACT_PRODUCER.adapterIngress);
+        // A reading is standing state, so a turn has to hand the FIRST one over: `observation_moved` compares the reading
+        // against the one she was GIVEN, and a pump holding a reading nobody was shown has moved nothing she can see.
+        pump.enqueuePlayerInput(PLAYER_INPUT);
         await pump.flush(sink);
-        pump.enqueueFact(snapshotFact(2), FACT_PRODUCER.adapterIngress);
+        pump.enqueueFact(snapshotFact(2, "0620"), FACT_PRODUCER.adapterIngress);
         await pump.flush(sink);
       },
     },

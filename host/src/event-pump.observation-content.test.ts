@@ -410,8 +410,15 @@ test("a pump with no way to ask declines by name, and the turn it could not cure
  * either degenerate direction: a rule that answered one member for everything fails the `repeated` count, and one that
  * alternated fails it too.
  * </p>
+ * <p>
+ * WHAT A RE-STATEMENT IS COMPARED AGAINST, WHICH IS THE UNIT `round75` MOVED. The population below is derived from the
+ * reading she was SHOWN (the one turn 1 delivered), not from the reading the pump happens to be holding: a reading she has
+ * never been handed is standing state she has not received, and calling it `observation_restated` is the label claiming a
+ * delivery that never happened. So rows three and four of the schedule - the same new payload twice, neither delivered -
+ * are both `observation_moved`, and `observation_restated` is reserved for content she has actually read.
+ * </p>
  */
-test("a reading that repeats the held one and a reading that moved are the same flush, named apart", async () => {
+test("a reading that repeats the one she was given and a reading that moved are the same flush, named apart", async () => {
   const pump = new CompanionEventPump();
   const batches: PendingBatch[] = [];
   pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
@@ -419,8 +426,9 @@ test("a reading that repeats the held one and a reading that moved are the same 
   await pump.flush(sink(batches));
   assert.equal(batches.length, 1, "the person spoke, so the first turn is owed whatever else is pending");
 
-  // The schedule, in the units the world publishes: each row is one reading, and whether it says anything the reading
-  // before it did is decided by comparing the two payloads - not by a number written here.
+  // The schedule, in the units the world publishes: each row is one reading, and whether it repeats what she has been
+  // GIVEN is decided by comparing it with the delivered payload - not by a number written here. No flush in the loop
+  // delivers a batch (a reading opens no turn), so what she was given stays the first reading throughout.
   const schedule = [
     { payload: READING, by: FACT_PRODUCER.snapshotRestate },
     { payload: READING, by: FACT_PRODUCER.snapshotRestate },
@@ -428,9 +436,9 @@ test("a reading that repeats the held one and a reading that moved are the same 
     { payload: Object.freeze({ ...READING, timeOfDay: 610 }), by: FACT_PRODUCER.snapshotRestate },
     { payload: Object.freeze({ ...READING, timeOfDay: 610, stamina: 265 }), by: FACT_PRODUCER.adapterIngress },
   ];
-  const held = [READING, ...schedule.map((row) => row.payload)];
-  const repeats = schedule.filter((row, index) => JSON.stringify(row.payload) === JSON.stringify(held[index])).length;
-  assert.equal(repeats, 3, "the fixture's own arithmetic: three of these five readings say what the one before said");
+  const shown = READING;
+  const repeats = schedule.filter((row) => JSON.stringify(row.payload) === JSON.stringify(shown)).length;
+  assert.equal(repeats, 2, "the fixture's own arithmetic: two of these five readings say what she was given");
 
   const labels: string[] = [];
   for (const [index, row] of schedule.entries()) {
@@ -445,7 +453,7 @@ test("a reading that repeats the held one and a reading that moved are the same 
   assert.equal(
     labels.filter((label) => label === NOT_OWED.observationRestated).length,
     repeats,
-    `the readings that said what the held one said are \`${NOT_OWED.observationRestated}\`, and no others: ${labels.join(", ")}`,
+    `the readings that repeat the one she was given are \`${NOT_OWED.observationRestated}\`, and no others: ${labels.join(", ")}`,
   );
   assert.equal(
     labels.filter((label) => label === NOT_OWED.observationMoved).length,
@@ -493,4 +501,123 @@ test("the flush that holds only a reading is counted against the reading, never 
   );
   assert.match(line, /observation_moved: 1/u, line);
   assert.match(line, /nothing_pending: 1/u, line);
+});
+
+/**
+ * A RE-STATEMENT IS A CLAIM ABOUT WHAT SHE WAS GIVEN, NOT ABOUT WHAT THE PUMP HOLDS.
+ *
+ * <p>
+ * `observation_restated` used to be decided by comparing the incoming reading with the copy the pump was holding
+ * (`#snapshotRestatesPrevious`). That is a second spelling of a question this file already answers from the reading she
+ * was SHOWN (`#lastSnapshotDeliveredIdentity`, through `#readingIsNews`), and it lies in the one direction that silences
+ * news: two readings that repeat each other arrive before any turn has handed either of them over, and the second is
+ * labelled "a copy of the reading she already has" when she has never seen it.
+ * </p>
+ * <p>
+ * The guard is both directions, because "never say restated" would pass the first half alone: a reading she was never
+ * handed is `observation_moved`, and the same reading one delivery later is `observation_restated`.
+ * </p>
+ */
+test("a reading she has never been handed is not a restatement, however many times the pump sees it", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
+  await pump.flush(sink(batches));
+  assert.equal(
+    pump.turnAccount.notOwed[NOT_OWED.observationMoved],
+    1,
+    "no turn has handed anything over yet, so this reading is state she has not received",
+  );
+
+  pump.enqueueFact(reading(353, READING, 1), FACT_PRODUCER.snapshotRestate);
+  await pump.flush(sink(batches));
+  assert.equal(
+    pump.turnAccount.notOwed[NOT_OWED.observationRestated],
+    0,
+    "the pump held this reading and she never got it: calling that 'restated' is the label lying",
+  );
+  assert.equal(pump.turnAccount.notOwed[NOT_OWED.observationMoved], 2, "it says something she has not been handed");
+  assert.equal(
+    pump.turnAccount.restatements.examined,
+    0,
+    "a re-statement is a copy of something GIVEN, and nothing was",
+  );
+
+  // AND THE OTHER DIRECTION: once a turn has handed it to her, the same reading is exactly what the member names.
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
+  pump.enqueueFact(reading(354, READING, 2), FACT_PRODUCER.snapshotRestate);
+  await pump.flush(sink(batches));
+  assert.equal(pump.turnAccount.notOwed[NOT_OWED.observationRestated], 1);
+  assert.equal(pump.turnAccount.restatements.examined, 1);
+  assert.equal(
+    batches.length,
+    1,
+    "and neither re-statement opened a turn: the only batch is the one the person's words bought",
+  );
+});
+
+/**
+ * THE GATE: both numbers, printed together - how many readings repeated one she had, and where each of them went.
+ *
+ * <p>
+ * MEASURED 2026-11-18 (`round75`): the account said `observation_restated: 22 {snapshot_restate: 22}` while turns 47-75
+ * handed her the SAME block twelve times in a row. Both numbers were true and no segment of the line joined them, so the
+ * run's own artifact could not say whether the observation was suppressed or delivered - it said both and meant neither.
+ * </p>
+ * <p>
+ * The invariant is not `examined === opened + carried + suppressed`: a second reading arriving before a flush replaces
+ * the first in the slot, so a re-statement can be examined and never answered. What must hold is that a re-statement
+ * never buys a turn of its own (`opened === 0`) and that nothing is called one she was never given
+ * (`suppressed + carried <= examined`) - which is exactly what the old classifier broke.
+ * </p>
+ */
+test("the restatement ledger: examined, opened, carried and suppressed are printed as one reading", async () => {
+  const pump = new CompanionEventPump();
+  const batches: PendingBatch[] = [];
+
+  pump.enqueueFact(reading(352, READING, 0), FACT_PRODUCER.adapterIngress);
+  pump.enqueuePlayerInput(FIRST_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 1, "the person spoke, and that turn brings the observation");
+  assert.equal(pump.turnAccount.restatements.examined, 0, "the first reading repeats nothing she was given");
+
+  // `round75`'s shape: the Host re-states the same reading, and nothing else is pending either time.
+  pump.enqueueFact(reading(353, READING, 1), FACT_PRODUCER.snapshotRestate);
+  await pump.flush(sink(batches));
+  pump.enqueueFact(reading(354, READING, 2), FACT_PRODUCER.snapshotRestate);
+  await pump.flush(sink(batches));
+
+  // AND THEN A TURN OPENS FOR A REASON OF ITS OWN - the person speaks - and the same reading rides along, because every
+  // batch renders it. This is the delivery twelve of `round75`'s turns made and no counter recorded.
+  pump.enqueueFact(reading(355, READING, 3), FACT_PRODUCER.snapshotRestate);
+  pump.enqueuePlayerInput(SECOND_INPUT);
+  await pump.flush(sink(batches));
+  assert.equal(batches.length, 2);
+
+  const restatements = pump.turnAccount.restatements;
+  assert.equal(restatements.examined, 3, "three readings arrived repeating the one she had been given");
+  assert.equal(restatements.suppressed, 2, "two flushes answered that they owed no turn");
+  assert.equal(restatements.carried, 1, "one rode the turn the person opened");
+  assert.equal(restatements.opened, 0, "and not one of them bought a turn of its own");
+  assert.ok(
+    restatements.suppressed + restatements.carried <= restatements.examined,
+    `nothing is called a re-statement she was never given: ${JSON.stringify(restatements)}`,
+  );
+
+  // THE LINE A LIVE RUN PRINTS, read back rather than restated: the suppression and the delivery as one segment.
+  const line = turnAccountLine(pump.turnAccount);
+  process.stdout.write(
+    `restatements examined ${String(restatements.examined)} · opened ${String(restatements.opened)} · carried ${String(
+      restatements.carried,
+    )} · suppressed ${String(restatements.suppressed)}\n`,
+  );
+  assert.match(
+    line,
+    /restatements examined 3 \{opened: 0, carried: 1, suppressed: 2\}/u,
+    `the account joins the suppression to the delivery: ${line}`,
+  );
+  // What the second turn actually handed her is the block she already had - the fact the ledger exists to count.
+  assert.equal(worldStateBlock(batches[1]?.text ?? "").header.includes(RESTATED), true);
 });

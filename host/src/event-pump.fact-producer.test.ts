@@ -265,8 +265,17 @@ test("the account says WHICH entrance a suppressed flush was suppressed for", as
   );
 
   // The Host re-states the same reading before every batch it composes; that copy is the one a run has to be able to
-  // count, because it is the copy the Host, not the world, put there - and it says nothing the held reading did not, so it
-  // is the re-statement reason.
+  // count, because it is the copy the Host, not the world, put there. A copy is a RE-STATEMENT only of something she was
+  // given, so one turn has to hand the reading over first: a reading nobody was shown is standing state she has not
+  // received, and `observation_moved` is the honest member for it.
+  pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_restate",
+    text: "嗯。",
+    locale: "zh-CN",
+    timestampMs: 2,
+  });
+  await pump.flush(recordingSink());
   pump.enqueueFact(reading(14), FACT_PRODUCER.snapshotRestate);
   await pump.flush(recordingSink());
 
