@@ -146,6 +146,10 @@ jobs:
       # rather than in the install-free `gates` job. Neither ran anywhere before the CI coverage gate.
       - run: pnpm check:host-game-physical-seam
       - run: pnpm check:live-run-failure-dump
+      # The speech gate's falsifiers need no install of their own, but it belongs beside the delivery account it reads:
+      # `--rules` is the automated half, and `--run-dir` is for a real bundle an operator points it at.
+      - run: pnpm check:live-run-speech
+      - run: pnpm test:live-run-speech
       - run: pnpm typecheck
       # `pnpm typecheck` reads the working tree, so it cannot see a commit that only compiles
       # because another lane's uncommitted work is present. This checks the commit itself.

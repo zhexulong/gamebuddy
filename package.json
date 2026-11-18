@@ -391,6 +391,8 @@
     "check:harness-conformance": "node gates/meta/check-harness-conformance.mjs",
     "check:live-run-preflight": "node tools/preflight-live-run.mjs",
     "check:live-run-silence": "node tools/check-live-run-silence.mjs",
+    "check:live-run-speech": "node tools/check-live-run-speech.mjs --rules",
+    "test:live-run-speech": "node --test tools/check-live-run-speech.test.mjs",
     "audit:totality": "node gates/meta/audit-totality.mjs",
     "test:audit-totality": "node --test gates/meta/audit-totality.test.mjs gates/meta/audit-totality-duplication.test.mjs",
     "run:post-history-live": "node tools/live-run/chat/run-post-history-live.mjs",
