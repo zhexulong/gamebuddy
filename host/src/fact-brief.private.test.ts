@@ -878,6 +878,39 @@ test("seed_held: the seeds she can plant print their own count, once", () => {
 });
 
 /**
+ * THE MONEY QUESTION, NAMED AS UNMEASURED INSTEAD OF LEFT SILENT.
+ *
+ * <p>
+ * The wire publishes no balance at all (`protocol.ts` has no money field), so "can she afford a seed" is a question
+ * nothing here was asked. Measured 2026-11-18 (`round67`): she priced a seed at 80 g and concluded 「I have little
+ * money」 with nothing to read - an absent number read as a number. The line that carries the seed COUNT is where the
+ * gap belongs, because that is the line she reads when deciding whether to walk to town.
+ * </p>
+ * <p>
+ * The falsifier is the absent family: `seedSupplyTargets` missing means nobody measured seeds at all, so there is no
+ * seed line and no affordability claim on it. A guard that printed the clause on every block would pass the first half
+ * while making a claim about a shop that was never read.
+ * </p>
+ */
+test("seed_affordability: the seed line names the money the observation does not carry, and only when it measured seeds", () => {
+  const gap = /买种子的钱: 未观察 affordability_unknown/u;
+  const held = seedText(
+    seedWorld({ seedSupplyTargets: [{ qualifiedItemId: "(O)472", displayName: "防风草种子", heldCount: 3 }] }),
+  );
+  assert.match(held, gap, `the seed line must name the missing balance; it read:\n${held}`);
+
+  // The measured zero names it too: with no seed in the pack, what one COSTS is the whole question.
+  assert.match(seedText(seedWorld({ seedSupplyTargets: [] })), gap);
+
+  // And a family nobody published makes no claim at all: absent is not zero, and it is not "she can afford it" either.
+  const nothingMeasured = seedText(seedWorld());
+  assert.ok(
+    !nothingMeasured.includes("affordability_unknown"),
+    `an unmeasured seed family must leave the block byte-identical:\n${nothingMeasured}`,
+  );
+});
+
+/**
  * Degrading to today's bytes: a snapshot that never published the family gets the line it gets now.
  *
  * The golden below is the block this snapshot rendered at `fcfdce40`, before the seed fact existed - captured from the

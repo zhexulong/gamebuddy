@@ -535,6 +535,8 @@ function packCountsAge(provedRows: number, totalRows: number, ageTurns: number):
   if (ageTurns < 1 || provedRows >= totalRows) return "";
   return provedRows > 0 ? `（其余是 ${String(ageTurns)} 轮前数的计数）` : `（${String(ageTurns)} 轮前数的计数）`;
 }
+/** The seed line's own name for the one question the observation cannot answer (`round67`'s 80 g shop). */
+const AFFORDABILITY_GAP = "（买种子的钱: 未观察 affordability_unknown）";
 
 /**
  * The seeds she can actually plant, and how many of each.
@@ -565,11 +567,19 @@ function packCountsAge(provedRows: number, totalRows: number, ageTurns: number):
  * zero-seed actor has no row at all - so a counter named beside the zero would be the one invention this line exists to
  * prevent. The zero is the whole next step: with no seed, hoeing sows nothing.
  * </p>
+ *
+ * <p>
+ * AND THE MONEY QUESTION IS NAMED AS UNMEASURED, WHICH IS THE FACT AND NOT A SHRUG. The wire publishes no balance at all
+ * (`protocol.ts` has no money field), so whether she can afford a seed is a question NOTHING here was asked. Measured
+ * 2026-11-18 (`round67`): she priced a seed at 80 g and concluded 「I have little money」 with nothing to read - the
+ * absence of a number read as a number. Printing the gap is what stops the silence from being filled with a guess; a
+ * figure would be ours, and publishing a balance is a wire decision rather than a line this module can compose.
+ * </p>
  */
 function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): string {
   const rows = world.seedSupplyTargets;
   if (!Array.isArray(rows)) return "";
-  if (rows.length === 0) return "种子: 0（背包里没有种子）";
+  if (rows.length === 0) return `种子: 0（背包里没有种子）${AFFORDABILITY_GAP}`;
   const seeds: string[] = [];
   const seen = new Set<string>();
   let provedSeeds = 0;
@@ -585,7 +595,7 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
     const count = proved?.count ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
     seeds.push(count === null ? `${name}（数量未测）` : `${String(count)} ${name}${packCountSource(proved)}`);
   }
-  return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}`;
+  return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}${AFFORDABILITY_GAP}`;
 }
 
 /**
