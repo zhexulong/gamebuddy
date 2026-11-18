@@ -25,6 +25,12 @@ const trustedDotnetPath = "C:\\Program Files\\dotnet\\dotnet.exe";
 const timeoutMs = 5 * 60_000;
 const probeTimeoutMs = 10_000;
 const outputLimitBytes = 64 * 1024;
+// A self-contained `dotnet publish --output D` leaves D unrenamable for a short window after the
+// publish process has exited: five samples on 2026-11-19 measured 331, 445, 536, 544 and 551 ms.
+// The fixture pair is renamed straight after its own publish, so a budget under that window fails
+// every run; this one is the measured window with a wide margin and still bounded.
+const renameRetryBudgetMs = 10_000;
+const renameRetryIntervalMs = 100;
 const expectedSdkVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 function contained(root, value) {
@@ -122,16 +128,14 @@ export function canonicalManifest(sha256) {
 
 async function renameWithBoundedRetry(from, to, renameDirectory) {
   const retryable = new Set(["EACCES", "EBUSY", "EPERM"]);
-  let lastError;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  const deadline = Date.now() + renameRetryBudgetMs;
+  for (;;) {
     try { await renameDirectory(from, to); return; }
     catch (error) {
-      lastError = error;
-      if (!retryable.has(error?.code) || attempt === 4) throw error;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25 * (attempt + 1)));
+      if (!retryable.has(error?.code) || Date.now() >= deadline) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, renameRetryIntervalMs));
     }
   }
-  throw lastError;
 }
 
 async function replaceFinalDirectories(stagingGuardian, stagingFixture, { output = outputRoot, guardianOutput = guardianOutputRoot, fixtureOutput = fixtureOutputRoot, renameDirectory = rename } = {}) {
