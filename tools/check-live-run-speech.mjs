@@ -60,18 +60,27 @@ export const CARD_PATH = "assets/tavern/presets/default-companion/card.json";
 /**
  * The shortest gap between two of her bubbles, in milliseconds - the metronome floor.
  *
- * CHOSEN FROM NUMBERS, NOT FROM TASTE, and the numbers are these. Every run on this machine whose pieces carry an
- * absolute moment (`presentation-piece-time.mjs`) reports its shortest gap: `round73` 7 133 ms over 7 bubbles in 253 s,
- * and the `round66`-era bundle beside it 7 200 ms. BOTH ARE THE DEFECT - a bubble per action step - so neither can be the
- * floor. The healthy cadence this floor is meant to protect is the one `round42` measured and `host/src/event-pump.ts`
- * records: a turn did 8.2 model steps and carried text on ONE of them, and a turn cannot carry a second bubble before
- * its own settle->dispatch, measured p50 3.3 s. The only per-turn cadence the repository records for a later run is
- * `round46b`'s `one bubble every 13 seconds`, which is the rate at which TURNS arrived, and a bubble arriving twice as
- * fast as a turn can settle is the shape this clause names.
+ * ITS PROVENANCE IS A MEASUREMENT, AND THE MEASUREMENT IT WAS SUPPOSED TO COME FROM DOES NOT EXIST. `round42`'s runner log
+ * is on this machine (`tools/_multiday_routine-round42-live-runner.log`, 6 135 237 bytes, 2026-11-10) and it carries NO
+ * clock this floor could be read from: its seventeen `NATIVE_COMPANION_TURN_DELIVERY` records have no `atMs`, and its
+ * twenty-eight `AGENT_PRESENTATION_PIECE` lines carry only `elapsedMs` measured from their OWN TURN's start - piece 5
+ * reads 166 458 ms and piece 6 reads 10 806 ms with no reset of the run-global index, so an inter-bubble gap cannot be
+ * subtracted from that file. Nor does any bundle beside it: every `result.json` in the main checkout's `.live-runs` from
+ * 2026-11-09 and 2026-11-10 (fifteen runs) carries pieces with `elapsedMs` and NOT ONE with `atMs`, because the absolute
+ * clock was added on 2026-11-17 (`presentation-piece-time.mjs`). What round42 does prove: SEVENTEEN bubbles, one per turn,
+ * of which THREE were `suppressed: {no_presentation_lease: 1}` - a period far slower than what this clause catches, which
+ * is why no number from it can be a floor of SECONDS between bubbles.
  *
- * 10 000 ms is therefore: above both defect readings (7.1 s, 7.2 s) so the metronome it was written for fails, and below
- * the 13 s turn cadence so a turn-per-bubble run never touches it. ONE CONSTANT, so the number a reader disagrees with is
- * the number to change.
+ * THE NUMBER IS THEREFORE CHOSEN FROM THE RUNS THAT CAN BE PLACED ON A CLOCK, and it is stated as what it is: the two
+ * bundles on this machine whose pieces carry an absolute moment (`presentation-piece-time.mjs`) report shortest gaps of
+ * 7 133 ms (`round73`, 7 bubbles in 253 s) and 7 200 ms (the 2026-11-17T23-22 bundle, 10 bubbles). BOTH ARE THE DEFECT -
+ * one bubble per step - so the floor sits above the worse of every MEASURABLE metronome and well below round42's one
+ * bubble per turn. It is a bound on the disease, not a measurement of the cure, and this comment says so rather than
+ * dressing 10 000 ms as round42's own gap.
+ *
+ * THE POPULATION IS DELIVERED BUBBLES. A bubble that was composed and refused by the presentation lease never reached
+ * the player, so it cannot be half of a gap - otherwise a run that loses them reads as quiet instead of broken. The
+ * losses are printed beside the cadence for that reason (`lost L {reason}`).
  */
 export const SHORTEST_BUBBLE_GAP_MS = 10_000;
 

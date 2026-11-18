@@ -222,7 +222,7 @@ function numberOrNull(value) {
  * the clock - rather than all three reading `0`.
  * </p>
  */
-export function summarizeSpeechFrequency({ pieces, window, turns }) {
+export function summarizeSpeechFrequency({ pieces, window, turns, spoke, lost, lostReasons }) {
   const list = Array.isArray(pieces) ? pieces : [];
   const placed = list.filter((piece) => numberOrNull(piece?.atMs) !== null);
   const bubbles = list.length;
@@ -247,6 +247,9 @@ export function summarizeSpeechFrequency({ pieces, window, turns }) {
     bubbles,
     placedBubbles: placed.length,
     turns: numberOrNull(turns),
+    spoke: numberOrNull(spoke),
+    lost: numberOrNull(lost),
+    lostReasons: Object.freeze({ ...(lostReasons ?? {}) }),
     spanMs,
     oneEveryMs: spanMs === null || bubbles === 0 ? null : Math.round(spanMs / bubbles),
     shortestGapMs: shortest === null ? null : shortest.gapMs,
@@ -277,7 +280,14 @@ export function describeSpeechFrequency(speech) {
     speech.shortestGapMs === null
       ? `not measured (${String(speech.notMeasured)})`
       : `${seconds(speech.shortestGapMs)} s`;
-  return `bubbles ${String(speech.bubbles)} over ${over} = one every ${every} · shortest gap ${gap} · turns ${String(speech.turns ?? "-")}`;
+  return `bubbles ${String(speech.bubbles)} over ${over} = one every ${every} · shortest gap ${gap} · turns ${String(speech.turns ?? "-")} · spoke ${String(speech.spoke ?? "-")} · lost ${String(speech.lost ?? "-")} ${formatReasons(speech.lostReasons)}`;
+}
+
+/** `{no_presentation_lease: 7}` as the account line spells it: a loss nobody can name is `{}`, not silence. */
+function formatReasons(reasons) {
+  const entries = Object.entries(reasons ?? {});
+  if (entries.length === 0) return "{}";
+  return `{${entries.map(([reason, count]) => `${reason}: ${String(count)}`).join(", ")}}`;
 }
 
 /**
@@ -324,6 +334,9 @@ export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable 
   let truncatedChars = 0;
   let mismatchedTurns = 0;
   let perTurnMax = 0;
+  let spoke = 0;
+  let lost = 0;
+  const lostReasons = {};
   const overOne = [];
   for (const [index, record] of (records ?? []).entries()) {
     const turnParts = Number(record.textParts) || 0;
@@ -336,6 +349,17 @@ export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable 
       suppressed[reason] = (suppressed[reason] ?? 0) + (Number(count) || 0);
     const bubbles = Number(record.bubbles) || 0;
     accountedBubbles += bubbles;
+    // HOW MANY TURNS SPOKE, and how many composed bubbles nobody could present. `round42` is the shape: seventeen
+    // deliveries of which three are `presented: 0` with `suppressed: {no_presentation_lease: 1}` - paid for in tokens and
+    // thrown away. A cadence that ignores the losses measures half the problem, and a run that loses them would
+    // otherwise read as quiet rather than broken.
+    if (turnPresented > 0) spoke += 1;
+    else if (turnParts > 0) {
+      lost += 1;
+      const reasons = Object.entries(turnSuppressedByReason(record));
+      if (reasons.length === 0) lostReasons.unnamed = (lostReasons.unnamed ?? 0) + 1;
+      for (const [reason, count] of reasons) lostReasons[reason] = (lostReasons[reason] ?? 0) + count;
+    }
     perTurnMax = Math.max(perTurnMax, bubbles);
     // Named with the turn's own index and the messages it rolled up, so a reader knows WHICH turn spoke twice and what
     // it had to say: a bare count would leave them to bisect the run.
@@ -390,6 +414,12 @@ export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable 
       unaccounted: unaccountedBubbles,
       turns: (records ?? []).length,
       perTurnMax,
+      // A turn that carried text is a turn that spoke; a turn that carried text and delivered none of it is a LOSS,
+      // with the reason the projection gave. Both count turns, so `spoke + lost` is not the population - a turn that
+      // carried nothing is neither.
+      spoke,
+      lost,
+      lostReasons: Object.freeze(lostReasons),
       overOne: Object.freeze(overOne),
       truncatedTurns,
       truncatedChars,
@@ -397,7 +427,14 @@ export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable 
     rollUp: Object.freeze({ messages, bubbles: accountedBubbles }),
     // The cadence in the other unit: `bubbles.perTurnMax` asks how many a TURN carried, `speech` asks how far apart
     // they were, and neither is derivable from the other.
-    speech: summarizeSpeechFrequency({ pieces, window, turns: (records ?? []).length }),
+    speech: summarizeSpeechFrequency({
+      pieces,
+      window,
+      turns: (records ?? []).length,
+      spoke,
+      lost,
+      lostReasons: Object.freeze(lostReasons),
+    }),
     blocked,
   });
 }
@@ -503,4 +540,14 @@ export function assessBundleDeliveryAccount(bundle) {
 
 function sumSuppressed(suppressed) {
   return Object.values(suppressed ?? {}).reduce((total, count) => total + (Number(count) || 0), 0);
+}
+
+/** A turn's withheld parts by reason, as whole numbers: a malformed count is not a reason to lose the reason. */
+function turnSuppressedByReason(record) {
+  const byReason = {};
+  for (const [reason, count] of Object.entries(record?.suppressed ?? {})) {
+    const value = Number(count) || 0;
+    if (value > 0) byReason[reason] = value;
+  }
+  return byReason;
 }

@@ -156,6 +156,9 @@ test("a run's committed bubbles and its account are the same population, one per
     unaccounted: 0,
     turns: 2,
     perTurnMax: 1,
+    spoke: 2,
+    lost: 0,
+    lostReasons: {},
     overOne: [],
     truncatedTurns: 1,
     truncatedChars: 22,
@@ -381,8 +384,45 @@ test("the run reports how often she spoke from its own pieces, not from a count 
   // The sentence the run prints for itself, in the two numbers a frequency claim needs.
   assert.match(
     describeSpeechFrequency(speech),
-    /^bubbles 7 over 253 s = one every 36\.1 s · shortest gap 7\.1 s · turns 7$/u,
+    /^bubbles 7 over 253 s = one every 36\.1 s · shortest gap 7\.1 s · turns 7 · spoke 7 · lost 0 \{\}$/u,
   );
+});
+
+test("a run whose deliveries nobody could present says how many it lost and why", () => {
+  // ROUND42'S OWN SHAPE, measured from `tools/_multiday_routine-round42-live-runner.log`: seventeen delivered records, of
+  // which three are `presented: 0` with `suppressed: {no_presentation_lease: 1}` - text produced, paid for, and thrown
+  // away. A cadence that counts only what reached the player reads those seventeen as fourteen quiet turns.
+  const records = Array.from({ length: 17 }, (_, index) =>
+    index % 5 === 4
+      ? { textParts: 1, presented: 0, suppressed: { no_presentation_lease: 1 }, bubbles: 0 }
+      : { textParts: 1, presented: 1, suppressed: {}, bubbles: 1 },
+  );
+  const account = summarizeDeliveryAccount({
+    records,
+    bubblesProduced: 14,
+    pieces: Array.from({ length: 14 }, (_, index) => ({ index, atMs: index * 76_000 })),
+    window: { startedAtMs: 0, endedAtMs: 1_290_000 },
+  });
+  assert.equal(account.bubbles.turns, 17);
+  assert.equal(account.bubbles.spoke, 14);
+  assert.equal(account.bubbles.lost, 3);
+  assert.deepEqual(account.bubbles.lostReasons, { no_presentation_lease: 3 });
+  assert.equal(account.speech.lost, 3);
+  assert.match(
+    describeSpeechFrequency(account.speech),
+    /· turns 17 · spoke 14 · lost 3 \{no_presentation_lease: 3\}$/u,
+  );
+  // A turn that carried nothing is neither one that spoke nor one that lost: the three populations are not a partition
+  // of the turns, and saying so is what stops `spoke + lost === turns` from being believed.
+  const withSilent = summarizeDeliveryAccount({
+    records: [...records, { textParts: 0, presented: 0, suppressed: {}, bubbles: 0 }],
+    bubblesProduced: 14,
+    pieces: Array.from({ length: 14 }, (_, index) => ({ index, atMs: index * 76_000 })),
+    window: { startedAtMs: 0, endedAtMs: 1_290_000 },
+  });
+  assert.equal(withSilent.bubbles.turns, 18);
+  assert.equal(withSilent.bubbles.spoke, 14);
+  assert.equal(withSilent.bubbles.lost, 3);
 });
 
 test("a run that delivered nothing reports zero bubbles and the reason, never nothing at all", () => {
