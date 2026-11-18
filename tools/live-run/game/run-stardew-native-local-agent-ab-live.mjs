@@ -1951,6 +1951,11 @@ function summarizePresentationEvidence() {
     records: delivery.records,
     unparsable: delivery.unparsable,
     bubblesProduced: presentationPieces.length,
+    // The bubbles themselves and the window they arrived in: the two numbers a frequency claim needs, taken from the
+    // port that committed them rather than from a count someone took by hand afterwards (`round73`: seven bubbles in
+    // 252 s, one every 36 s, the shortest gap 7 s - and no artifact said any of it).
+    pieces: presentationPieces,
+    window: { startedAtMs: phaseTimings.runStartedAtMs, endedAtMs: Date.now() },
   });
   console.error("DELIVERY_ACCOUNT", describeDeliveryAccount(deliveryAccount));
   // What she was doing BETWEEN the pieces, off the same log the delivery account is read from. Bounded, and
@@ -1986,6 +1991,10 @@ function summarizePresentationEvidence() {
     // paced surface emitted ahead of them, and whatever is left over. A non-zero remainder is a blocked run (the
     // `delivery_account` clause), not a number a reader has to notice.
     deliveryAccount,
+    // The same reading in the shape a later stage asks for by name: how often she spoke, over what span, and the
+    // shortest gap between two bubbles. Published as its own field so a gate reads a reading rather than parsing the
+    // account sentence.
+    speechFrequency: deliveryAccount.speech,
     activity,
     stallWatch,
     worldStateStale,

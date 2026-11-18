@@ -1383,6 +1383,15 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // presentation.pieces = [] and presentedSummary = "".
   assert.match(RUNNER_SOURCE, /onCompanionTextPresented,\n/);
   assert.doesNotMatch(RUNNER_SOURCE, /SCENARIO === "npc_social_and_presence" \? \{ onCompanionTextPresented \}/);
+  // HOW OFTEN SHE SPOKE is an artifact field, not a number somebody counts off a log afterwards (`round73`: seven
+  // bubbles in 252 s, one every 36 s, the shortest gap 7 s - and no artifact carried any of it). The pieces the port
+  // committed and the run's own window are handed to the account, and the reading is published under its own name as
+  // well as printed in the account line.
+  assert.match(
+    RUNNER_SOURCE,
+    /pieces: presentationPieces,\n\s+window: \{ startedAtMs: phaseTimings\.runStartedAtMs, endedAtMs: Date\.now\(\) \},/,
+  );
+  assert.match(RUNNER_SOURCE, /speechFrequency: deliveryAccount\.speech,/);
 });
 
 // ── the launch sequence, on one clock, in one line shape ──────────────────────────────────────────────────────────────

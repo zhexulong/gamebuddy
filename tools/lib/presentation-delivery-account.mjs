@@ -205,6 +205,82 @@ function numberOrNull(value) {
 }
 
 /**
+ * HOW OFTEN SHE SPOKE: the two numbers a frequency claim needs, from the run's own pieces.
+ *
+ * <p>
+ * WHY (measured 2026-11-18, `round73`). The audit of that run counted seven delivered bubbles in 252 s by hand, off
+ * `run-progress.jsonl`, and the two facts it needed - one bubble every 36 s, and a 7-second gap between two of them -
+ * existed in no artifact: `presentation.pieceCount` said `7` and the delivery account said `7`, so both were right and
+ * neither could answer "how often did she talk". A frequency claim is not a count; it needs the span it happened over
+ * and the shortest gap between two bubbles, and a reader who counts them has no way to say which window they counted.
+ * </p>
+ * <p>
+ * POPULATION: every delivered bubble (`presentation.pieces`, which the presentation port counts where it commits).
+ * `placedBubbles` says how many carry an absolute moment, because only those can produce a gap: a bundle that predates
+ * `presentation-piece-time.mjs` carries `elapsedMs` against a turn start and has NO gap this can measure, and the three
+ * zeroes are told apart - no bubble delivered, a window the run never recorded, and fewer than two bubbles placed on
+ * the clock - rather than all three reading `0`.
+ * </p>
+ */
+export function summarizeSpeechFrequency({ pieces, window, turns }) {
+  const list = Array.isArray(pieces) ? pieces : [];
+  const placed = list.filter((piece) => numberOrNull(piece?.atMs) !== null);
+  const bubbles = list.length;
+  const startedAtMs = numberOrNull(window?.startedAtMs);
+  const endedAtMs = numberOrNull(window?.endedAtMs);
+  const spanMs = startedAtMs === null || endedAtMs === null || endedAtMs < startedAtMs ? null : endedAtMs - startedAtMs;
+  let shortest = null;
+  for (let offset = 1; offset < placed.length; offset += 1) {
+    const gapMs = placed[offset].atMs - placed[offset - 1].atMs;
+    if (shortest === null || gapMs < shortest.gapMs)
+      shortest = { fromIndex: placed[offset - 1].index ?? offset - 1, toIndex: placed[offset].index ?? offset, gapMs };
+  }
+  const notMeasured =
+    bubbles === 0
+      ? "run_presented_no_bubble"
+      : spanMs === null
+        ? "run_window_not_recorded"
+        : placed.length < 2
+          ? "fewer_than_two_bubbles_on_the_run_clock"
+          : null;
+  return Object.freeze({
+    bubbles,
+    placedBubbles: placed.length,
+    turns: numberOrNull(turns),
+    spanMs,
+    oneEveryMs: spanMs === null || bubbles === 0 ? null : Math.round(spanMs / bubbles),
+    shortestGapMs: shortest === null ? null : shortest.gapMs,
+    shortestGap: shortest === null ? null : Object.freeze({ ...shortest }),
+    notMeasured,
+  });
+}
+
+/** Seconds to one decimal, without the trailing `.0` a whole number does not need: `36`, `7.1`. */
+function seconds(ms) {
+  return String(Math.round(ms / 100) / 10);
+}
+
+/**
+ * The speech reading as the sentence the run prints for itself.
+ *
+ * The shape is the claim, in the order the claim is made: how many bubbles, over what span, one every how long, the
+ * shortest gap between two of them, and how many turns produced them. A run that delivered nothing says `0` AND why -
+ * an absent sentence would read as a run whose speech nobody measured.
+ */
+export function describeSpeechFrequency(speech) {
+  if (speech === undefined || speech === null) return "speech not measured: the account carries no speech reading";
+  if (speech.notMeasured === "run_presented_no_bubble")
+    return "bubbles 0 · nothing was delivered, so there is no rate to report";
+  const over = speech.spanMs === null ? `not measured (${String(speech.notMeasured)})` : `${seconds(speech.spanMs)} s`;
+  const every = speech.oneEveryMs === null ? "not measured" : `${seconds(speech.oneEveryMs)} s`;
+  const gap =
+    speech.shortestGapMs === null
+      ? `not measured (${String(speech.notMeasured)})`
+      : `${seconds(speech.shortestGapMs)} s`;
+  return `bubbles ${String(speech.bubbles)} over ${over} = one every ${every} · shortest gap ${gap} · turns ${String(speech.turns ?? "-")}`;
+}
+
+/**
  * The run-level account: both populations, each a partition, plus the one numbers the reader compares.
  *
  * `parts` is the assistant text the run produced, and it is reconciled from THREE populations that are each summed
@@ -233,8 +309,12 @@ function numberOrNull(value) {
  * `rollUp` names the many-to-one mapping that makes one bubble per turn possible: how many assistant messages carried
  * text, and into how many bubbles they went. `messages rolled up: 28 into 27` is a healthy run; the inverse is a turn
  * that spoke twice.
+ *
+ * `speech` is how often she talked, which no count answers: `pieces` and `window` are the delivered bubbles and the run
+ * window, and `describeSpeechFrequency` prints them beside this account. The two readings are independent - a run can
+ * keep one bubble per turn and still speak every seven seconds, which is exactly `round73`.
  */
-export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable = 0 }) {
+export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable = 0, pieces = [], window = null }) {
   const suppressed = {};
   let textParts = 0;
   let presented = 0;
@@ -315,6 +395,9 @@ export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable 
       truncatedChars,
     }),
     rollUp: Object.freeze({ messages, bubbles: accountedBubbles }),
+    // The cadence in the other unit: `bubbles.perTurnMax` asks how many a TURN carried, `speech` asks how far apart
+    // they were, and neither is derivable from the other.
+    speech: summarizeSpeechFrequency({ pieces, window, turns: (records ?? []).length }),
     blocked,
   });
 }
@@ -350,7 +433,7 @@ export function describeDeliveryAccount(account) {
               `bubble_per_turn_over_one:turn#${String(turn.turn)}:${String(turn.bubbles)}:${turn.messageIds.join(",") || "-"}`,
           )
           .join(" ")}`;
-  return `bubbles produced ${bubbles.produced} · accounted ${bubbles.accounted} · unaccounted ${bubbles.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · suppressed ${sumSuppressed(parts.suppressed)} · missing ${parts.missing}${mismatched} · ${cadence}${truncated} · ${verdict}${over}${mismatch}`;
+  return `bubbles produced ${bubbles.produced} · accounted ${bubbles.accounted} · unaccounted ${bubbles.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · suppressed ${sumSuppressed(parts.suppressed)} · missing ${parts.missing}${mismatched} · ${cadence}${truncated} · ${verdict}${over}${mismatch} · ${describeSpeechFrequency(account.speech)}`;
 }
 
 /** The rung clause: a run whose own commitment count disagrees with its account is not a passed run. */
