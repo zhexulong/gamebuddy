@@ -34,6 +34,29 @@ export type ChatSnapshotPair = Readonly<{
 }>;
 
 /**
+ * The composed root with its Chat half replaced and its Game half left exactly as it stands.
+ *
+ * Every Chat read in the shell answers the whole aggregate: `/state` carries the conversation *and* a
+ * `game` slice beside it, photographed when the request left. A read is a round trip, so a Game fact
+ * that arrives inside it (`GameSurface.applyGameFact`, from the game's own channel, or the panel's own
+ * `/game` read) is NEWER than that photograph - committing the photograph over it puts the panel back
+ * on an older projection, and nothing in the Chat channel ever puts it forward again: the game channel
+ * only speaks when the Host moves, which it has already done.
+ *
+ * So every Chat path replaces `chat` and keeps `root.game` from the view that is current when the read
+ * LANDS. The reverse direction has its own guard (`GameSurface.rereadGame` commits the Game slice and
+ * nothing else): each surface's authoritative read writes its own slice, and neither decides the
+ * other's. It lives here rather than in the shell because the shell's own reads, the live event
+ * stream and the fallback poll are three callers of one rule.
+ */
+export function withChatHalf(
+  current: ComposedReferenceGameBrowserRootV1,
+  read: ComposedReferenceGameBrowserRootV1,
+): ComposedReferenceGameBrowserRootV1 {
+  return { ...current, chat: read.chat };
+}
+
+/**
  * The draft the root's Chat half publishes, in the shape the composer and the draft commands use.
  *
  * `present` is the same fact as `text !== null` on this contract - the Host writes both from one

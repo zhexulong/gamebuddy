@@ -10,11 +10,17 @@
  * The journey is deliberately an in-flight one, and it asserts what the panel SHOWS rather than that a request
  * happened: the player is on the Game surface, the Game's own channel publishes the move, and the Chat read that
  * was already outstanding answers the projection from before it.
+ *
+ * There are two such Chat reads and each has its own journey. The first is the shell's own reread (a surface
+ * arrival). The second is the fallback poll, the reader that settles a turn no stream is delivering: it ran the
+ * same whole-document commit after the other two had been narrowed, so a Game fact that arrived inside its three
+ * round trips was undone by the hop that followed - and the panel lost, with it, the controls that belong to the
+ * newer projection (`Stop game`, `Disconnect game`), because those are drawn from the same Game slice.
  */
 import { expect, test } from "./frontend-coverage";
 import { composeGameEvent, gameStreamCursor } from "./game-stream-fixtures";
 import { emitStreamEvent, installSyntheticEventStream, streamUrls } from "./synthetic-event-stream";
-import { draft, game, jsonOk, root, stubGameRead, token } from "./composed-reference-game-fixtures";
+import { chat, draft, game, jsonOk, root, stubGameRead, token } from "./composed-reference-game-fixtures";
 
 // A canonical opaque epoch handle: 43 base64url characters whose last carries two zero bits, the shape this
 // boundary accepts, so the fixture cannot pass where the real Host's own epoch would not.
@@ -27,6 +33,18 @@ const quietGame = {
 };
 
 const panel = (page: Parameters<typeof stubGameRead>[0]) => page.getByTestId("game-state-panel");
+
+/**
+ * The Chat half a send needs: the fallback poll starts on a submission record, and a record needs
+ * `chat.submit` advertised as available.
+ */
+const submittableChat = {
+  ...chat,
+  eventStream: null,
+  operations: [
+    { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+  ],
+};
 
 function isGameStream(url: string): boolean {
   return url.includes("/api/composed-reference-game/v1/events");
@@ -104,4 +122,80 @@ test("a Chat read that outlives a Game fact does not put the panel back on the o
   await page.waitForTimeout(500);
   await expect(panel(page)).toContainText("ConnectionConnected");
   await expect(panel(page)).not.toContainText("ConnectionNo game connection");
+});
+
+test("the fallback poll's hop does not put the panel back on the projection it read", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installSyntheticEventStream(page);
+  const quietRoot = { ...root, chat: submittableChat, game: quietGame };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(quietRoot)));
+
+  // The poll's own hop: the first `/state` after the send is held, and answers the projection from BEFORE the
+  // frame below - which is exactly what a round trip returns.
+  let armed = false;
+  let releaseHop: (() => void) | null = null;
+  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+    const hold = armed;
+    armed = false;
+    if (hold) await new Promise<void>((resolve) => (releaseHop = resolve));
+    await route.fulfill(jsonOk(quietRoot));
+  });
+  await stubGameRead(page, quietGame);
+  // The press leaves the browser and nothing comes back, so the submission record it published is what starts
+  // the fallback poll - the reader this journey is about.
+  await page.route("**/api/tavern/v1/messages", async () => {
+    await new Promise(() => {});
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, disposition: "unknown" })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  await expect(panel(page)).toContainText("ConnectionNo game connection");
+  const streamIndex = (await streamUrls(page)).findIndex(isGameStream);
+  expect(streamIndex, "the Game surface opened its own channel").toBeGreaterThanOrEqual(0);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate((at: number) => {
+          const state = window as unknown as { __streamHandlers: Array<Map<string, unknown[]>> };
+          return (state.__streamHandlers[at]?.get("game.fact_changed") ?? []).length;
+        }, streamIndex),
+    )
+    .toBeGreaterThan(0);
+
+  // The player writes in the conversation, and the press is left unanswered: its record starts the poll.
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(surface).toBeVisible();
+  await surface.locator(".composer-textarea").fill("Hold this press open.");
+  armed = true;
+  await surface.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => armed, { message: "the poll's first hop is the held read" }).toBe(false);
+
+  // A Game fact reaches the panel while that hop is out: the companion is in the farm.
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  await emitStreamEvent(
+    page,
+    streamIndex,
+    composeGameEvent({ epoch: SESSION_EPOCH, sequence: 1, fact: "attachment", connectionStatus: "connected_idle" }),
+    gameStreamCursor(SESSION_EPOCH, 1),
+  );
+  await expect(panel(page)).toContainText("ConnectionConnected");
+  // ...and with it the controls that belong to this projection, so a regression is visible as more than a word.
+  await expect(panel(page).getByRole("button", { name: "Stop game" })).toBeVisible();
+
+  // The held hop answers the projection from before the move. The panel the player is looking at is the fact
+  // under test.
+  expect(releaseHop, "the poll's hop was the read that was held").not.toBeNull();
+  releaseHop?.();
+  await page.waitForTimeout(1_500);
+  await expect(panel(page)).toContainText("ConnectionConnected");
+  await expect(panel(page)).not.toContainText("ConnectionNo game connection");
+  await expect(panel(page).getByRole("button", { name: "Stop game" })).toBeVisible();
 });

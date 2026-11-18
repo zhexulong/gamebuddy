@@ -107,7 +107,6 @@ function harness(view: ViewState) {
   const committed: ViewState[] = [];
   const notices: (string | null)[] = [];
   const problems: unknown[] = [];
-  const halves: { current: ComposedReferenceGameBrowserRootV1; chat: ChatSnapshotPair["root"]["chat"] }[] = [];
   const sources: OpenedSource[] = [];
   const timers: Timer[] = [];
   const reads = { count: 0 };
@@ -175,10 +174,6 @@ function harness(view: ViewState) {
     commitChatProblem: (error) => {
       problems.push(error);
     },
-    withChatHalf: (current, chat) => {
-      halves.push({ current, chat });
-      return { ...current, chat };
-    },
     eventStreamEpoch: `${EPOCH}#0`,
   });
 
@@ -187,7 +182,6 @@ function harness(view: ViewState) {
     committed,
     notices,
     problems,
-    halves,
     sources,
     timers,
     reads,
@@ -223,12 +217,11 @@ test("a socket error resyncs through the shell's Chat rule and reconnects from t
   h.sources[0].options.onError(new Event("error"));
   await settle();
 
-  // The socket is gone and the projection is the read's: one commit, through `withChatHalf`, against
+  // The socket is gone and the projection is the read's: one commit, through the Chat rule, against
   // the view that was current when the answer landed.
   assert.equal(h.sources[0].closed, true);
   assert.equal(h.streamFailedRef.current, true);
   assert.equal(h.committed.length, 1);
-  assert.equal(h.halves.length, 1);
   assert.equal(h.committed[0].kind === "ready" ? h.committed[0].root.chat : null, state);
   // Same epoch, so the validated frames still stand: the new connection resumes at the old cursor.
   assert.equal(h.sources.length, 2);

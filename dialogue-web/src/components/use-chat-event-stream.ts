@@ -1,5 +1,5 @@
 import { type Dispatch, type RefObject, type SetStateAction, useEffect, useState } from "react";
-import { type ChatSnapshotPair, readChatSnapshotPair } from "../chat-snapshot-pair";
+import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   type ComposedReferenceGameBrowserApi,
   type ComposedReferenceGameBrowserRootV1,
@@ -103,15 +103,6 @@ export type ChatEventStreamInput = Readonly<{
   setPreview: Dispatch<SetStateAction<ComposedPreviewV1 | null>>;
   commit: (next: ViewState) => void;
   commitChatProblem: (error: unknown) => void;
-  /**
-   * The shell's Chat-read rule (`withChatHalf`): a Chat read replaces the Chat half and keeps the
-   * Game slice it did not read. Passed rather than restated - the shell's own reads apply it too, and
-   * one spelling of it is the point.
-   */
-  withChatHalf: (
-    current: ComposedReferenceGameBrowserRootV1,
-    chat: ChatSnapshotPair["root"]["chat"],
-  ) => ComposedReferenceGameBrowserRootV1;
   eventStreamEpoch: string | undefined;
 }>;
 
@@ -140,7 +131,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
     setStreamNotice,
     commit,
     commitChatProblem,
-    withChatHalf,
+    eventStreamEpoch,
   } = input;
   if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return () => undefined;
   let disposed = false;
@@ -222,7 +213,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
       checkpoint = settled;
       commit({
         kind: "ready",
-        root: withChatHalf(current.root, root.chat),
+        root: withChatHalf(current.root, root),
         session: settled,
         draft,
         locale: current.locale,
@@ -335,7 +326,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
           checkpoint = settled;
           commit({
             kind: "ready",
-            root: withChatHalf(latest.root, root.chat),
+            root: withChatHalf(latest.root, root),
             session: settled,
             draft,
             locale: latest.locale,

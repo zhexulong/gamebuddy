@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ChatSnapshotPair, readChatSnapshotPair } from "../chat-snapshot-pair";
+import { type ChatSnapshotPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
@@ -57,26 +57,6 @@ import { useArrivalReread } from "./use-arrival-reread";
 import { useAppearance } from "./use-appearance";
 import { useChatEventStream } from "./use-chat-event-stream";
 import { type ComposedPreviewV1, terminalTurn, useComposedBootstrap } from "./use-composed-bootstrap";
-
-/**
- * The composed root with its Chat half replaced and its Game half left exactly as it stands.
- *
- * Every Chat read in this shell answers the whole aggregate: `/state` carries the conversation *and* a
- * `game` slice beside it, photographed when the request left. A read is a round trip, so a Game fact
- * that arrives inside it (`GameSurface.applyGameFact`, from the game's own channel, or the panel's own
- * `/game` read) is NEWER than that photograph - committing the photograph over it puts the panel back
- * on an older projection, and nothing in the Chat channel ever puts it forward again: the game channel
- * only speaks when the Host moves, which it has already done. So the Chat paths replace `chat` and keep
- * `root.game` from the view that is current when the read lands, the same rule these reads already
- * apply to the pending record and the preview.
- *
- * The reverse direction has its own guard (`GameSurface.rereadGame` commits the Game slice and nothing
- * else): each surface's authoritative read writes its own slice, and neither decides the other's.
- */
-const withChatHalf = (
-  current: ComposedReferenceGameBrowserRootV1,
-  chat: ChatSnapshotPair["root"]["chat"],
-): ComposedReferenceGameBrowserRootV1 => ({ ...current, chat });
 
 /**
  * Same-origin composed reference-game shell. The composed root is the only
@@ -337,7 +317,6 @@ export function ComposedReferenceGameApp() {
     setPreview,
     commit,
     commitChatProblem,
-    withChatHalf,
     eventStreamEpoch,
   });
 
@@ -515,7 +494,7 @@ export function ComposedReferenceGameApp() {
     const session = current.session.applySnapshot(root.chat);
     commit({
       ...current,
-      root: withChatHalf(current.root, root.chat),
+      root: withChatHalf(current.root, root),
       // A record this surface published while the read was in flight is the surface's own fact, and
       // the reading cannot have seen the submission it names: `applySnapshot` carries it over, and
       // the read only spends it for the one state that settles it - a terminal turn.
@@ -864,11 +843,17 @@ export function ComposedReferenceGameApp() {
    * it is rebuilt from the fresh snapshot, and the mounted-chat revision is bumped
    * so the event-stream effect re-subscribes on the new conversation's checkpoint
    * instead of continuing the previous one's cursor.
+   *
+   * Only the Chat half is adopted. The read is also a photograph of the Game slice taken
+   * before the switch, and the Game does not change because a conversation was mounted:
+   * a fact that reached the panel inside these round trips is newer than the photograph
+   * (`withChatHalf`), and committing it here would be the switch undoing the game.
    */
   const adoptMountedChat = (root: ComposedReferenceGameBrowserRootV1, draft: BrowserDraftV1): void => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
-    if (cancelledRef.current || root.chat.chat === null) return;
+    const chat = root.chat;
+    if (cancelledRef.current || chat.chat === null) return;
     setPreview(null);
     // The key named a turn in the conversation this mount is leaving, and the conversation it adopts
     // is not that one's successor: its own turn, if any, was started elsewhere and has its own
@@ -879,10 +864,10 @@ export function ComposedReferenceGameApp() {
     // is not a fact about the one it adopts.
     setSendFailure(null);
     setMessageMutationNotice(null);
-    const base = createReferencePipelineSession(root.chat);
-    const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
+    const base = createReferencePipelineSession(chat);
+    const session = chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
-    commit({ ...current, root, session, draft, chatProblem: null });
+    commit({ ...current, root: withChatHalf(current.root, root), session, draft, chatProblem: null });
   };
 
   /**

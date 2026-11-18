@@ -1,5 +1,5 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
-import { readChatSnapshotPair } from "../chat-snapshot-pair";
+import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import { composedProblemView as problemView } from "../composed-problem-view";
 import {
   type ComposedReferenceGameBrowserApi,
@@ -240,7 +240,6 @@ export function useComposedBootstrap(
           });
           session = session.withPending(applyStatus(session.pending, status).pending);
         }
-        const next = { kind: "ready" as const, root, session, draft, locale: current.locale, chatProblem: null };
         // Three awaits just happened (`readState`, `resolvePollDraft`, `readSubmissionStatus`) and the surface can
         // unmount or switch away inside any of them. The catch below answers that for the failure path; this answers
         // it for the success path, so a poll that lands after teardown does not commit state to a component that is
@@ -249,6 +248,19 @@ export function useComposedBootstrap(
           pollActiveRef.current = false;
           return;
         }
+        // The hop answered the whole aggregate, and its `game` slice was photographed before those three awaits: a
+        // Game fact that reached the panel inside them is newer, and this read is the one Chat path that would have
+        // put the panel back on the older projection with nothing left to put it forward again. So the root is
+        // taken from the view that is current HERE, with only the Chat half replaced (`withChatHalf`).
+        const landing = viewRef.current;
+        const next = {
+          kind: "ready" as const,
+          root: landing.kind === "ready" ? withChatHalf(landing.root, root) : root,
+          session,
+          draft,
+          locale: current.locale,
+          chatProblem: null,
+        };
         if (terminalTurn(root.chat.chat?.turn ?? null)) {
           // The authoritative turn is settled; a pending record for it is spent
           // whatever an out-of-date submission status still says, and keeping it
