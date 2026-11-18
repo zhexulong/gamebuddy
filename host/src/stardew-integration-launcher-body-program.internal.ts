@@ -1,6 +1,6 @@
 import type { WorldFact } from "./event-pump.js";
 import { projectGameSnapshotContext } from "./snapshot-projection.js";
-import { classifyFactListenerFailure } from "./local-stardew-bridge.js";
+import { factListenerFailureReasonCode } from "./local-stardew-bridge.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   type ExecutionWake,
@@ -159,15 +159,14 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     try {
       for (const listener of [...factListeners]) listener(converted);
     } catch (error) {
-      // WHICH listener rejected WHICH fact kind, and the error's own bounded token. Without this the disconnect is a
-      // bare `fact_listener_failed`, which says nothing about whether the fault is a projection, an event pump, or a
-      // serialization problem (measured 2026-10-17 twice: a multi-day run died 14s in and the artifact could not
-      // say what had thrown).
-      console.error(
-        "STARDEW_FACT_LISTENER_FAILED",
-        JSON.stringify({ factKind: converted.kind, error: classifyFactListenerFailure(error) }),
-      );
-      disconnect("fact_listener_failed");
+      // WHICH listener rejected WHICH fact, and the error's own bounded token - in the REASON, not only on stderr.
+      // Without this the disconnect is a bare `fact_listener_failed`, which says nothing about whether the fault is a
+      // projection, an event pump, or a serialization problem (measured 2026-10-17 twice, and again 2026-11-17: a
+      // multi-day run died and the artifact could not say what had thrown). The stderr line stays as the local trace of
+      // the throw; the reason travels into the product's own disconnect projection, which is what a run reports.
+      const reasonCode = factListenerFailureReasonCode(converted, error);
+      console.error("STARDEW_FACT_LISTENER_FAILED", JSON.stringify({ reasonCode }));
+      disconnect(reasonCode);
       return;
     }
     if (fact.type === "semantic_event" && (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")) {

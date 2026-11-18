@@ -166,6 +166,21 @@ export function report(input: SettledDigestInput) {
 }
 `;
 
+/**
+ * A listener dispatch wrapped in a `try`, whose catch composes the close reason with the ONE composer.
+ *
+ * This is the shape the gate's eighth check measures, and the only thing a third wrapper has to get right.
+ */
+const goodListenerWrapper = () => `export function deliver(message: unknown, error: unknown) {
+  try {
+    for (const listener of this.#factListeners) listener(message);
+  } catch (error) {
+    const reasonCode = factListenerFailureReasonCode(message, error);
+    this.transport.close(reasonCode);
+  }
+}
+`;
+
 /** The whole fixture, so a case only names the file it breaks. */
 function goodTree() {
   return {
@@ -177,10 +192,9 @@ function goodTree() {
     "host/src/event-pump.ts": goodEventPump(),
     "host/src/companion-loop.ts": goodCompanionLoop(),
     "host/src/program-settlement-digest.ts": goodSettlement(),
+    "host/src/local-stardew-bridge.ts": goodListenerWrapper(),
   };
 }
-
-const gateFile = (name) => (body) => [`${name}`, body];
 
 /** Build a tree, run the gate over it, and remove it - AWAITING nothing, because the gate is a child process. */
 function read(files) {
@@ -206,7 +220,7 @@ const withDefect = (name, body) => ({ ...goodTree(), [name]: body });
 // -------------------------------------------------------------------------------------------------------------
 // The good tree: green, and every population counted.
 // -------------------------------------------------------------------------------------------------------------
-test("a tree where the body says nothing about itself passes, with all seven populations non-zero", () => {
+test("a tree where the body says nothing about itself passes, with all eight populations non-zero", () => {
   const { status, report, stdout } = read(goodTree());
   assert.equal(status, 0, stdout);
   assert.deepEqual(codes(report), []);
@@ -223,6 +237,9 @@ test("a tree where the body says nothing about itself passes, with all seven pop
     "the step half is measured, not skipped",
   );
   assert.equal(report.checks.settlement_evidence_still_carries_them.withheldStated, 1);
+  assert.equal(report.checks.a_listener_failure_does_not_name_its_fact.examined, 1);
+  assert.equal(report.checks.a_listener_failure_does_not_name_its_fact.namesTheFact, 1);
+  assert.equal(report.checks.a_listener_failure_does_not_name_its_fact.namesOnlyFailure, 0);
   assert.ok(report.population > 0, "the population is counted, so a green reading is a measurement");
   // N = E + T + D, so the four printed numbers describe one population rather than four overlapping ones.
   const one = report.checks.progress_reported_as_a_fact;
@@ -427,6 +444,37 @@ test("FALSIFIER a tree that withholds nothing blocks the step half instead of pa
   assert.equal(status, 2, stdout);
   assert.match(stdout, /fact_authority_no_population/u);
   assert.match(stdout, /withheld from the fact stream/u);
+});
+
+// -------------------------------------------------------------------------------------------------------------
+// Falsifier 8: a listener failure that closes the bridge without naming the fact.
+// -------------------------------------------------------------------------------------------------------------
+test("FALSIFIER a wrapper whose catch publishes a bare code is named with its line and the code it publishes", () => {
+  // round66's and round73's shape: the throw is caught, the bridge closes, and the reason says only that a listener
+  // failed - the fact that was in flight and the error's own token are discarded at the throw site.
+  const bare = goodListenerWrapper().replace(
+    "    const reasonCode = factListenerFailureReasonCode(message, error);\n    this.transport.close(reasonCode);",
+    '    this.transport.close("fact_listener_failed");',
+  );
+  const { status, report } = read(withDefect("host/src/local-stardew-bridge.ts", bare));
+  assert.equal(status, 1, codes(report).join(", "));
+  const finding = report.findings.find((entry) => entry.code === "a_listener_failure_does_not_name_its_fact");
+  assert.ok(finding, codes(report).join(", "));
+  // The site is the DISPATCH loop's own line, so the next reader is sent to the throw site rather than to a file.
+  assert.match(finding.id, /^host\/src\/local-stardew-bridge\.ts:\d+$/u);
+  assert.match(finding.detail, /`fact_listener_failed`/u);
+  assert.match(finding.detail, /factListenerFailureReasonCode/u);
+  assert.equal(report.checks.a_listener_failure_does_not_name_its_fact.namesOnlyFailure, 1);
+  assert.equal(report.checks.a_listener_failure_does_not_name_its_fact.namesTheFact, 0);
+});
+
+test("FALSIFIER a tree with no fact-listener wrapper at all is blocked, never green", () => {
+  const tree = goodTree();
+  delete tree["host/src/local-stardew-bridge.ts"];
+  const { status, stdout } = read(tree);
+  assert.equal(status, 2, stdout);
+  assert.match(stdout, /fact_authority_no_population/u);
+  assert.match(stdout, /no fact-listener dispatch/u);
 });
 
 // -------------------------------------------------------------------------------------------------------------

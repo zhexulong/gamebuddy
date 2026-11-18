@@ -85,6 +85,69 @@ export function classifyFactListenerFailure(error: unknown): string {
   return token === error.name ? token : `${error.name}:${token}`;
 }
 
+/** The shape of a protocol identifier a reason code may carry: a kind from an enum, never prose. */
+const REASON_KIND_TOKEN = /^[a-z][a-z0-9_]{0,63}$/u;
+/** The shape of the ids the Mod and the Host mint: opaque, and bounded so one reason cannot carry a payload. */
+const REASON_ID_TOKEN = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/**
+ * The reason a closed bridge publishes when a FACT LISTENER threw: which fact, which id, and the error's own token.
+ *
+ * <p>
+ * MEASURED 2026-11-17 (`round66`): the run's only failure was `fact_listener_failed`, thrown by a listener while an
+ * `execution_receipt` was being delivered - and the artifact could not say which listener, over which fact, or why. The
+ * thrown error was `execution_receipt_replay_rejected:terminal_state_rewritten`, a name the wrapper HAD in hand and
+ * dropped. The same drop recurred on the best run of that night, which is why the wrapper's name alone is no longer an
+ * acceptable answer: a reason that does not name its own cause sends the next reader to the wrong layer.
+ * </p>
+ * <p>
+ * ONE SPELLING for every wrapper: the bridge's own fact listeners and the launcher's integration event source both
+ * compose their reason here, so the two cannot drift into two vocabularies that a reader has to cross-reference.
+ * </p>
+ * <p>
+ * Everything in the result is a bounded protocol token - a message type, a semantic kind from the wire's unions, an id
+ * the Mod minted, and an error's identifier-shaped prefix - never a frame, a payload, a path, or player text.
+ * `event_pump_event_overflow` keeps its own leading code because it is a LOAD condition the pump owns, not an arbitrary
+ * listener bug, and its token is the reason's own name, so it is printed once.
+ * </p>
+ */
+export function factListenerFailureReasonCode(fact: unknown, error: unknown): string {
+  const record = typeof fact === "object" && fact !== null ? (fact as Record<string, unknown>) : {};
+  const payload =
+    typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : {};
+  // A world fact's semantic kind is the narrowest name it has: the bridge message carries it on the wire payload, the
+  // converted fact carries it as `semanticKind`, and only then does the transport's own type (`world_fact`) have to do.
+  const factKind =
+    firstBoundedToken([payload.kind, record.semanticKind, record.type, record.kind], REASON_KIND_TOKEN) ??
+    "unnamed_fact";
+  const factId = firstBoundedToken(
+    [
+      record.executionId,
+      payload.executionId,
+      record.requestId,
+      payload.requestId,
+      record.eventId,
+      payload.eventId,
+      record.sourceEventId,
+      record.correlationId,
+    ],
+    REASON_ID_TOKEN,
+  );
+  const detail = classifyFactListenerFailure(error);
+  const overflow = error instanceof Error && error.message === "event_pump_event_overflow";
+  const tokens = [overflow ? "event_pump_event_overflow" : "fact_listener_failed", factKind];
+  if (factId !== null) tokens.push(factId);
+  if (!overflow) tokens.push(detail);
+  return tokens.join(":");
+}
+
+function firstBoundedToken(candidates: readonly unknown[], pattern: RegExp): string | null {
+  for (const candidate of candidates) if (typeof candidate === "string" && pattern.test(candidate)) return candidate;
+  return null;
+}
+
 /**
  * The shape of a bridge message type as the wire spells it (`program_events_result`, `snapshot`, ...).
  *
@@ -1167,17 +1230,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         // the existing close/state cleanup path: pending requests are rejected
         // by onClose and no later inbound fact is accepted on this generation.
         //
-        // WHICH listener failed, and why, is named before closing. Discarding the cause made every one of these
-        // closes read as the same unattributable `fact_listener_failed` (measured 2026-10-17: a run died 23s in
-        // and neither the shape of the error nor the fact type was recoverable from the artifact). The report is
-        // bounded: an error's own name/message token, never a frame, payload, or player text.
-        const reasonCode =
-          error instanceof Error && error.message === "event_pump_event_overflow"
-            ? "event_pump_event_overflow"
-            : "fact_listener_failed";
-        const detail = classifyFactListenerFailure(error);
+        // WHICH listener failed, and why, is named in the reason itself: the fact that was being delivered, the id the
+        // Mod minted for it, and the error's own token. A bare `fact_listener_failed` made every one of these closes
+        // read as the same unattributable fault (measured 2026-10-17 and again 2026-11-17, twice on one night), and a
+        // reader could not tell a projection bug from the pump from a receipt fold. The report is bounded by the same
+        // function that composes every other listener-failure reason: protocol enums and opaque ids, never a frame,
+        // payload, or player text.
+        const reasonCode = factListenerFailureReasonCode(message, error);
         for (const listener of this.#diagnosticListeners)
-          listener({ stage: "native_chat_bridge_fact_listener_failed", reasonCode: `${reasonCode}:${detail}` });
+          listener({ stage: "native_chat_bridge_fact_listener_failed", reasonCode });
         this.transport.close(reasonCode);
         return;
       }
