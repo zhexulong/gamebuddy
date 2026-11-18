@@ -460,19 +460,48 @@ async function createAdmissionBroker(
   const server = createServer((request, response) =>
     handler.handle(request, response, `http://127.0.0.1:${(server.address() as { port: number }).port}`),
   );
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const bootstrap = await fetch(`${origin}/api/composed-reference-game/v1/bootstrap`, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
-  });
-  assert.equal(bootstrap.status, 200);
-  const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-  const root = (await bootstrap.json()) as { chat: { csrfToken: string } };
+  /**
+   * The broker's ONE teardown, defined before the socket is opened so the handshake below cannot
+   * escape with it still listening.
+   *
+   * The socket is live from `listen`'s callback on, and the bootstrap fetch that follows is the
+   * first thing a product change can make fail: a refused bootstrap answers something other than
+   * 200, `createAdmissionBroker` throws, and the caller never receives a broker to close. The
+   * server then stays listening for the life of the process, no `finally` can reach it, and the
+   * file prints its tests and never returns - `--test-timeout` cannot end it, because it bounds a
+   * test BODY and not a leaked handle. Every test after that file is then hidden behind a
+   * silence, which is a worse failure than a red one.
+   */
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    const handlerDrain = handler.close();
+    server.closeAllConnections();
+    await closeServer(server);
+    await handlerDrain;
+  };
+  let origin: string;
+  let cookie: string;
+  let csrfToken: string;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const bootstrap = await fetch(`${origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
+    });
+    assert.equal(bootstrap.status, 200);
+    cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    csrfToken = ((await bootstrap.json()) as { chat: { csrfToken: string } }).chat.csrfToken;
+  } catch (error) {
+    await close();
+    throw error;
+  }
   const request = (
     operation:
       | "lifecycle_activation"
@@ -537,7 +566,7 @@ async function createAdmissionBroker(
         origin,
         "content-type": "application/json",
         cookie,
-        "x-csrf-token": root.chat.csrfToken,
+        "x-csrf-token": csrfToken,
       },
     } as unknown as IncomingMessage;
   };
@@ -569,22 +598,14 @@ async function createAdmissionBroker(
     assert.notEqual(admission, null);
     return admission!;
   };
-  let closed = false;
   return {
     handler,
     origin,
     cookie,
-    csrfToken: root.chat.csrfToken,
+    csrfToken,
     issue,
     isClosed: () => closed,
-    async close() {
-      if (closed) return;
-      closed = true;
-      const handlerDrain = handler.close();
-      server.closeAllConnections();
-      await closeServer(server);
-      await handlerDrain;
-    },
+    close,
   };
 }
 export async function canonicalTemporaryRoot(prefix: string): Promise<string> {
