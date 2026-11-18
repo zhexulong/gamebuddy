@@ -1129,7 +1129,7 @@ test("harvest_crop completion evidence distinguishes regrowing and destroyed cro
     reasonCode: "crop_harvested",
     evidence: {
       detail:
-        "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false",
+        "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false;harvest_quality=0;quality_counts_before=none;quality_counts_after=0:1",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("harvest_crop", destroyed), true);
@@ -1137,7 +1137,7 @@ test("harvest_crop completion evidence distinguishes regrowing and destroyed cro
     ...destroyed,
     evidence: {
       detail:
-        "location=Farm;target=crop_01;tile=5,9;crop=Strawberry;item=(O)400;native_path_return=false;native_accepted=true;regrows=true;phase_before=4;phase_after=4;day_of_phase_before=1;day_of_phase_after=2;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true",
+        "location=Farm;target=crop_01;tile=5,9;crop=Strawberry;item=(O)400;native_path_return=false;native_accepted=true;regrows=true;phase_before=4;phase_after=4;day_of_phase_before=1;day_of_phase_after=2;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true;harvest_quality=0;quality_counts_before=none;quality_counts_after=0:1",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("harvest_crop", regrow), true);
@@ -1156,6 +1156,11 @@ test("harvest_crop completion evidence distinguishes regrowing and destroyed cro
       "day_of_phase_before=2;day_of_phase_after=2",
     ),
     regrow.evidence.detail.replace("phase_before=4;phase_after=4", "phase_before=4;phase_after=3"),
+    // The pack's quality census is part of the postcondition: a census that gained more stacks than the pack did, a
+    // quality the harvest did not add, or no census at all is a reading that disagrees with itself.
+    destroyed.evidence.detail.replace("quality_counts_after=0:1", "quality_counts_after=0:2"),
+    destroyed.evidence.detail.replace("harvest_quality=0", "harvest_quality=1"),
+    destroyed.evidence.detail.replace(";quality_counts_after=0:1", ""),
     `${destroyed.evidence.detail};native_accepted=true`,
   ])
     assert.equal(
@@ -1179,7 +1184,7 @@ test("completion parsers never accept another action's succeeded evidence", () =
     [
       "harvest_crop",
       "crop_harvested",
-      "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false",
+      "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false;harvest_quality=0;quality_counts_before=none;quality_counts_after=0:1",
     ],
   ] as const;
   for (const [actionId, , detail] of cross) {
