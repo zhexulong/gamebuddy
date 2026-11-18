@@ -47,7 +47,7 @@ public sealed class SettlementNamesItsChoreTests
         var findings = new List<string>();
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
-            string? family = RouteReenteringBodyProgramExecutor.ChoreFamilyOf(registration.ActionId);
+            string? family = FarmhandActionCatalog.ChoreFamilyOf(registration.ActionId);
             FarmhandChoreDeclaration? chore = registration.Descriptor?.Chore;
             if (chore is null) silent += 1;
             else if (chore.Consumes) consuming += 1;
@@ -77,21 +77,26 @@ public sealed class SettlementNamesItsChoreTests
     public void WorkThatLeavesNothingBehindNamesItsFamilyAndReadingDoesNot()
     {
         // THE ONES THAT TAKE WORK OUT OF THE WORLD WITHOUT EVER BEING IN THE WAY - the 14 `未测` clauses of round70.
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("harvest_crop").Should().Be("harvestTargets");
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("pickup_forage").Should().Be("forageTargets");
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("water_crop").Should().Be("cropTargets");
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("cut_weeds").Should().Be("weedTargets");
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("break_rock").Should().Be("rockSourceTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("harvest_crop").Should().Be("harvestTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("pickup_forage").Should().Be("forageTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("water_crop").Should().Be("cropTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("cut_weeds").Should().Be("weedTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("break_rock").Should().Be("rockSourceTargets");
         // ADDRESSES A FAMILY AND FINISHES NOTHING: `machineTargets` rows are not a chore, so no remainder is owed.
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("machine_load").Should().BeNull();
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("machine_collect_output").Should().BeNull();
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("equip_tool").Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf("machine_load").Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf("machine_collect_output").Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf("equip_tool").Should().BeNull();
         // EIGHT ACTIONS ADDRESS `worldObjectTargets` AND THREE OF THEM TAKE THE OBJECT AWAY: one family, two answers,
         // which is why the declaration is per action and not per family.
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("remove_placed_item").Should().Be("worldObjectTargets");
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("move_placed_furniture").Should().BeNull();
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf("no_such_action").Should().BeNull();
-        RouteReenteringBodyProgramExecutor.ChoreFamilyOf(null).Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf("remove_placed_item").Should().Be("worldObjectTargets");
+        FarmhandActionCatalog.ChoreFamilyOf("move_placed_furniture").Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf("no_such_action").Should().BeNull();
+        FarmhandActionCatalog.ChoreFamilyOf(null).Should().BeNull();
+
+        // AND THE CLAUSE IS THE FIELD A SETTLEMENT'S `evidence.detail` CARRIES, in the wire's own spelling.
+        FarmhandActionCatalog.ChoreEntry("harvest_crop").Should().Be("chore=harvestTargets");
+        FarmhandActionCatalog.ChoreEntry("machine_load").Should().BeNull();
+        FarmhandActionCatalog.ChoreEntry(null).Should().BeNull();
     }
 
     /// <summary>
@@ -121,25 +126,35 @@ public sealed class SettlementNamesItsChoreTests
     }
 
     /// <summary>
-    /// The end of the road: a settled node's own verdict line carries the family, and a node that clears nothing does not.
+    /// The end of the road: a settled node carries the receipt's own evidence, and it does NOT restate the chore the
+    /// receipt already names.
+    ///
+    /// <para>
+    /// THE MISTAKE THIS PINS, measured `round71`. The clause used to be appended to this node's
+    /// `route_reentrant_terminal:` postcondition, and a unit test asserted it there - so the suite was green while three
+    /// harvested crops produced receipts with no `chore=` anywhere, because the postcondition is a journal field and the
+    /// string the reader receives is the receipt's `evidence.detail`. The clause is minted once, where that string is
+    /// composed (<c>ExecutionManager.RememberTerminal</c>), and a node that spelled it again would be the second copy this
+    /// assertion refuses.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ASettledNodeCarriesTheFamilyInItsVerdictLine()
+    public void ASettledNodeLeavesTheClauseToTheReceiptItCarries()
     {
         BodyProgramTerminalResult? cut = ExecuteSettled("cut_weeds", ("x", "61"), ("y", "18"), ("slot", "4"), ("expectedTargetId", "weed_1"));
         cut.Should().NotBeNull();
         cut!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
-        cut.PostconditionVerification.Should().EndWith(":chore=weedTargets");
+        cut.PostconditionVerification.Should().NotContain("chore=",
+            "the family belongs to the settlement's evidence, and this postcondition is not a string the reader receives");
+        cut.Evidence.Should().Be("chore_done", "the node carries the receipt's own detail verbatim, unchanged");
 
-        // THE ROUND70 SHAPE: a harvest is work finished with nothing in its way, and the line must say which family.
+        // THE ROUND70 SHAPE: a harvest is work finished with nothing in its way, and the clause the settlement owes is
+        // the family the harvest consumed.
         BodyProgramTerminalResult? harvest = ExecuteSettled("harvest_crop", ("x", "58"), ("y", "14"), ("expectedQualifiedItemId", "(O)24"), ("expectedTargetId", "crop_1"));
         harvest.Should().NotBeNull();
         harvest!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
-        harvest.PostconditionVerification.Should().EndWith(":chore=harvestTargets");
-
-        BodyProgramTerminalResult? load = ExecuteSettled("machine_load", ("x", "1"), ("y", "1"), ("slot", "0"), ("expectedTargetId", "machine_1"));
-        load.Should().NotBeNull();
-        load!.PostconditionVerification.Should().NotContain("chore=");
+        harvest.PostconditionVerification.Should().NotContain("chore=");
+        FarmhandActionCatalog.ChoreEntry("harvest_crop").Should().Be("chore=harvestTargets");
     }
 
     private static FarmhandForEachPassResult Pass(params FarmhandForEachTargetResult[] rows) =>

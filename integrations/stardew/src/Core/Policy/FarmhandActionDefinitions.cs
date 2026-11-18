@@ -399,10 +399,10 @@ public sealed record FarmhandChoreDeclaration(bool Consumes, string? LeavesRows 
 /// What this action's SUCCESS takes out of the work its <see cref="TargetFamily"/> publishes, or null on an action whose
 /// family nobody has had to answer for yet. <see cref="FarmhandChoreDeclaration"/> states why `Clears` is the wrong field
 /// to ask and why `TargetFamily` alone cannot answer; here, one row says what the answer buys: the settlement mints
-/// <c>chore=&lt;family&gt;</c> into its own verdict line, and the Host counts what is left of that family from the reading
-/// it already holds (`host/src/fact-brief.ts#remainderSentence`). A step that consumes no family says so with a token from
-/// <see cref="FarmhandChoreDeclaration.LeavesRowsReasons"/> instead of staying silent, because silence is what the
-/// remainder clause has to report as `未测`.
+/// <c>chore=&lt;family&gt;</c> into its own evidence (<see cref="FarmhandActionCatalog.ChoreEntry"/>), and the Host counts
+/// what is left of that family from the reading it already holds (`host/src/fact-brief.ts#remainderSentence`). A step
+/// that consumes no family says so with a token from <see cref="FarmhandChoreDeclaration.LeavesRowsReasons"/> instead of
+/// staying silent, because silence is what the remainder clause has to report as `未测`.
 /// </param>
 public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false, FarmhandChargedFootprintDeclaration? ChargedFootprint = null, FarmhandChoreDeclaration? Chore = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
@@ -579,6 +579,55 @@ public static class FarmhandActionCatalog
     /// </summary>
     private const string SweepScytheRefusalDetail =
         "This swing is FOR what it can cut: a planted grass tuft and a ready or dead crop are the work, and only an immature crop is refused - so it is the swing you want on pasture and on a wheat block, and cut_grass or scythe_crop remain the one-tile spellings.";
+
+    /// <summary>The word a settlement publishes before the family its work consumed, so the reader can count what is
+    /// left of that family from the reading it already holds (`fact-brief.ts#remainderSentence`).</summary>
+    public const string ChoreField = "chore";
+
+    /// <summary>
+    /// The one family this action's WORK consumes - the family a finished step leaves a remainder in - or null.
+    ///
+    /// <para>
+    /// WHY THIS EXISTS AT ALL. Measured `round69`: a script of 16 nodes cut six weeds out of a field that has more, the
+    /// settlement said `16/16 步做成了`, and the run then sat idle for 2.8 minutes - nothing in the answer said how much
+    /// of the same chore was left. The reader can count that remainder from the world reading it already holds; what it
+    /// cannot derive is WHICH family a step consumed, and that is this catalogue's declaration.
+    /// </para>
+    /// <para>
+    /// IT READS THE DESCRIPTOR'S <see cref="FarmhandActionDescriptor.Chore"/> AND NOTHING ELSE - not `Clears`, which
+    /// answers a ROUTING question and is declared only on the nine actions that open a route, and not `TargetFamily`,
+    /// which says which family SUPPLIES the targets and is true of actions that finish nothing
+    /// (`machine_inspect`, `ship_item`). Measured `round70`: the `Clears` form answered `未测` for 14 of 14 delivered
+    /// batches, because a harvest never stood in anybody's way.
+    /// </para>
+    /// <para>
+    /// IT COSTS NO WORLD READ: the claim is a descriptor fact this catalogue already publishes.
+    /// </para>
+    /// </summary>
+    public static string? ChoreFamilyOf(string? actionId)
+    {
+        if (actionId is null) return null;
+        FarmhandActionDescriptor? descriptor = Registrations
+            .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
+        if (descriptor?.Chore is not { Consumes: true }) return null;
+        return descriptor.TargetFamily is { Length: > 0 } family ? family : null;
+    }
+
+    /// <summary>
+    /// The clause a SETTLEMENT of this action owes the reader - <c>chore=&lt;family&gt;</c> - or null on an action that
+    /// finishes no chore.
+    ///
+    /// <para>
+    /// ONE SPELLING, READ AT ONE SEAM. The clause is a field of the receipt's own `evidence.detail`, which is the string
+    /// the reader receives (`BridgeSession.TryProjectReceipt`), and it is minted where that string is composed for every
+    /// terminal - `ExecutionManager.RememberTerminal`. Measured `round71`: the clause was minted into the Body Program
+    /// executor's `route_reentrant_terminal:` postcondition instead, and three harvested crops produced a receipt that
+    /// said `crop_harvested` with no `chore=` anywhere in the log, because that postcondition is not the string the
+    /// reader reads.
+    /// </para>
+    /// </summary>
+    public static string? ChoreEntry(string? actionId) =>
+        ChoreFamilyOf(actionId) is { } family ? $"{ChoreField}={family}" : null;
 
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
