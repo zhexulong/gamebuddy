@@ -340,6 +340,29 @@ type GameSurfaceConductRule = Readonly<{
  * written, because a game module's rules read at positions between these.
  * </p>
  */
+/**
+ * The archive: the one claim about her memory that no tool description makes.
+ *
+ * <p>
+ * It used to be written by Magic Context itself, as the `magic_context` system-prompt section, and the Host only
+ * replaced its prose (`magic-context-companion-guidance.ts`). That section is the coding harness's, and it was being
+ * injected into the Game prompt on every turn of every run - measured on `round75`'s session record: a 406-character
+ * `magic_context` section at rec#3, and a `<system-reminder>` housekeeping nudge inside a tool result at rec#142 that
+ * the companion answered with a `ctx_reduce` turn of her own (rec#143). A surface's instructions belong to the
+ * surface, so the claim moved here and the extension was told to inject nothing
+ * (`runtime-core.internal.ts`, `system_prompt_injection.enabled`), which is what makes the harness section
+ * unrepresentable in the Game prompt rather than filtered out of it later.
+ * </p>
+ *
+ * <p>
+ * THE TEXT IS ENGLISH LIKE EVERY OTHER RULE HERE, and that is a deliberate difference from the file it replaces: the
+ * guidance override was written in the companion's locale, and this floor is English prose on both surfaces. The
+ * archive's mechanics are already stated by the two tools that own them (`ctx_search`'s and `ctx_expand`'s own
+ * descriptions), so what is left is the AUDIENCE - this archive is her own earlier turns, not a project's history -
+ * which no tool description can say and which is why the claim keeps one writer.
+ * </p>
+ */
+
 export const GAME_SURFACE_CONDUCT_RULES = {
   fact_batch_blocks: {
     class: "CHANNEL",
@@ -353,6 +376,13 @@ export const GAME_SURFACE_CONDUCT_RULES = {
       "a receipt's field names are machine vocabulary; the channel says what to do with them instead of reading them out.",
     exit: "surface: the receipt is rendered in the player's language where it is composed - fact-brief.ts's execution-result and its refusal lines - so no reasonCode, flag or enum value reaches her and nothing is left to translate.",
     text: "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
+  },
+  archive_is_her_own_history: {
+    class: "CHANNEL",
+    reason:
+      "the two tools that read her own earlier turns back, and what a §N§ number means - a channel of this surface, not a mechanic of the game.",
+    exit: "surface: the two mounted descriptions state the audience as well as the mechanics, so nothing is left for a floor rule to add.",
+    text: "The archive holds what is no longer in view, and everything in it is your own: `ctx_search` reads it back — what you said, decided, saw or were told, and your own earlier actions with their tool results — and `ctx_expand(tag=N)` returns one item whole. Every item carries a §N§ number, and a `[dropped §N§]` placeholder is the number of an item already in the archive.",
   },
   body_language_is_native: {
     class: "CHANNEL",
@@ -371,6 +401,7 @@ export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,
   GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,
+  GAME_SURFACE_CONDUCT_RULES.archive_is_her_own_history.text,
 ].join("\n");
 
 /**

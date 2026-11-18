@@ -7,7 +7,6 @@ import ts from "typescript";
 
 import { GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
 import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js";
-import { buildCompanionDeskGuidance } from "./magic-context-companion-guidance.js";
 
 /**
  * GATE `input_claim_stated_twice`: one instruction, one writer.
@@ -227,16 +226,6 @@ function population(): readonly Unit[] {
   for (const [id, rule] of Object.entries(GAME_SURFACE_CONDUCT_RULES))
     units.push(Object.freeze({ writer: `game-surface-prompt-floor.ts:${id}`, text: rule.text }));
   units.push(...stardewUnits());
-  units.push(
-    Object.freeze({
-      writer: "magic-context-companion-guidance.ts:DESK_GUIDANCE_EN",
-      text: buildCompanionDeskGuidance("en"),
-    }),
-    Object.freeze({
-      writer: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
-      text: buildCompanionDeskGuidance("zh-CN"),
-    }),
-  );
   for (const file of [
     "host/src/identity-profile.ts",
     "host/src/companion-prompt-assembly.ts",
@@ -366,25 +355,6 @@ const RECORDED: readonly Readonly<{
     why:
       "the shared words are line, names, already and fact: one sentence is about the world block's first line naming its " +
       "revision, the other about the fact line naming a held tool. Different referents behind the same four words.",
-  }),
-  Object.freeze({
-    slug: "只说你自己的-user-的反应和话留给他自己-村里谁笑了",
-    first: "assets/tavern/presets/amber-game.json:prompts.content",
-    second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
-    kind: "distinct",
-    why:
-      "the preset forbids speaking FOR the player — his reactions, his words, and what a villager said that she never heard — " +
-      "while the brief lists what the archive CONTAINS. The shared bigrams are 你自/自己/你说/看到, which is the vocabulary of " +
-      "a second person and of seeing, not one claim stated twice.",
-  }),
-  Object.freeze({
-    slug: "说过的事不用再总结一遍-你是发小-不是客服",
-    first: "assets/tavern/presets/amber-game.json:prompts.content",
-    second: "magic-context-companion-guidance.ts:DESK_GUIDANCE_ZH",
-    kind: "distinct",
-    why:
-      "the preset's subject is the register and the shape of the reply — do not re-summarise, you are a friend and not " +
-      "customer service — and the brief's subject is the archive's contents. They share only the bigrams 说过/过的/的事.",
   }),
   Object.freeze({
     slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",

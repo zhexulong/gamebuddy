@@ -6,7 +6,7 @@ import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-s
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, validateIdentityProfile } from "./identity-profile.js";
 import { buildChatCompanionSystemPrompt, renderIdentityProfile } from "./companion-prompt-assembly.js";
-import { CHAT_SURFACE_SKIP_SIGNATURE, COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
+import { CHAT_SURFACE_FRAME, COMPANION_ACTION_SYNTAX } from "./chat-surface-block.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -328,9 +328,9 @@ test("an authored voice that forbids asterisks keeps the style question, and the
   // The sentence Magic Context skips on is one the block actually carries, stated exactly once: two spellings is how the
   // formula grew back the first time.
   assert.equal(
-    chat.split(CHAT_SURFACE_SKIP_SIGNATURE).length - 1,
+    chat.split(CHAT_SURFACE_FRAME).length - 1,
     1,
-    "the signature Magic Context skips on is stated exactly once",
+    "the fourth-wall sentence is stated exactly once in the Chat block",
   );
 
   // WHY the card wins, executed rather than described: no consumer needs the marker. The bubble strips a beat when one

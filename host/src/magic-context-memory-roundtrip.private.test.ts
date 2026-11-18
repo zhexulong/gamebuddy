@@ -4,8 +4,8 @@
  * <p>
  * The finding this file answers: a measured 34-minute Game run called `ctx_search` zero times while calling
  * `ctx_reduce` six times, and then said "I tilled nothing, planted nothing" over a transcript holding four
- * `plant_seed` calls. Presence of the tool was already pinned by
- * `magic-context-companion-guidance.private.test.ts` and `tool-surface.private.test.ts`, and presence was never the
+ * `plant_seed` calls. Presence of the tool was already pinned by `game-prompt-harness-isolation.private.test.ts` and
+ * `tool-surface.private.test.ts`, and presence was never the
  * open question. What was open is the round trip: a note written by the companion, found again by the identity that
  * wrote it - and, when it is not, which partition swallowed it.
  * </p>

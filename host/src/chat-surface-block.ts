@@ -51,7 +51,18 @@
 export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
 
 const CHAT_SURFACE_ACTION_SYNTAX = `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`;
-const CHAT_SURFACE_FRAME =
+/**
+ * The fourth wall, which is true on this surface and false on the other.
+ *
+ * <p>
+ * It used to have a second job: this sentence was Magic Context's `system_prompt_injection.skip_signatures` value, the
+ * substring that told the extension not to inject its coding-agent block into the Chat prompt. The block is now off for
+ * both surfaces (`runtime-core.internal.ts`), so the sentence is only what it says - and the assertion that the block
+ * cannot reach either prompt is `surface-prompt-writer-isolation.test.ts`, which reads the assembled prompt instead of a
+ * substring.
+ * </p>
+ */
+export const CHAT_SURFACE_FRAME =
   "Never remind the player that this is a game, a fiction or a roleplay: they are a person you are living this with, not a reader of a story.";
 
 /** The block the assembler mounts on Chat, in the order the surface states it. */
@@ -60,22 +71,3 @@ export const CHAT_SURFACE_DIVERGENCE = [
   "The surface draws that asterisk form as the action beat, and a full-width parenthesis that opens your reply as the prosody badge set ahead of your words; a parenthesis inside a sentence stays prose, where you put it.",
   CHAT_SURFACE_FRAME,
 ].join(" ");
-
-/**
- * The Chat surface's opt-out signature for the Magic Context guidance block.
- *
- * <p>
- * Chat and Game on one continuity share ONE Magic Context config (`resolveRuntimePaths` keys both on `continuityId`), so
- * the block cannot be enabled per surface in that file. What differs between the surfaces is the tool set: Chat mounts
- * no `ctx_*` tool at all, Game mounts all five. The desk protocol names those tools, so on Chat it would be a
- * description of tools she does not have - which is exactly the case Magic Context's own
- * `system_prompt_injection.skip_signatures` documents.
- * </p>
- *
- * <p>
- * It is THIS constant rather than a literal in the config writer, because a second spelling would let an edit to the
- * Chat block silently un-skip the surface, and the failure would be invisible. `runtime-core.internal.ts` therefore
- * refuses both directions at construction: a Chat prompt that no longer carries it, and a Game prompt that somehow does.
- * </p>
- */
-export const CHAT_SURFACE_SKIP_SIGNATURE: string = CHAT_SURFACE_FRAME;

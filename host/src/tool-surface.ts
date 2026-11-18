@@ -114,9 +114,8 @@ export type DeclaredExtension = Readonly<{
  * a §N§ tag or a `[dropped §N§]` placeholder ... `message=N`, `start`/`end`: message ordinals, the positions shown in
  * `<session-history>` headings" - which is the override's two argument lines. The one claim that is NOT the tool's is the
  * audience: that this archive is her own earlier turns rather than a repository's history. That claim belongs to the
- * surface's guidance block, which is mounted as the primary section and states it (`magic-context-companion-guidance.ts`,
- * "`ctx_search` reads that archive: what you said, decided, saw or were told, including your own earlier actions and
- * their tool results"). So the claim keeps one writer, and the tool keeps its own words.
+ * Game surface's own floor, which states it once as a rule (`game-surface-prompt-floor.ts`
+ * `archive_is_her_own_history`). So the claim keeps one writer, and the tool keeps its own words.
  * </p>
  *
  * <p>

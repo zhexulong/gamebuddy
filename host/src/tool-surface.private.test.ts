@@ -379,8 +379,8 @@ export function sharedDescriptionsOf(
  * <p>
  * The paragraph was refused rather than derived. What it claimed the tools already declare: `ctx_search`'s own
  * description states the phrasing hint, and `ctx_expand`'s parameters state the tag-versus-ordinal distinction. The one
- * claim that is not the tool's - that this archive is HER earlier turns rather than a repository's history - is the
- * mounted guidance block's, and it states it once (`magic-context-companion-guidance.ts`). Keyed by class, it also
+ * claim that is not the tool's - that this archive is HER earlier turns rather than a repository's history - is the Game
+ * floor's, and it states it once (`game-surface-prompt-floor.ts` `archive_is_her_own_history`). Keyed by class, it also
  * rewrote tools its author never saw: a tool the extension registered tomorrow arrived carrying a sentence written
  * before it existed, and nothing in the tree could notice.
  * </p>
