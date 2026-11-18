@@ -229,9 +229,13 @@ function projectGameBrowserState(
       ? {}
       : { eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }) }),
     game: Object.freeze({
+      // Two facts and no third: the contract deleted `missingItems` (`0f2ca8e3`), because the Host's readiness
+      // view is binary and has no per-item list to publish - "what am I missing" is the discovery route's answer.
+      // A producer that kept writing the deleted key made every state read fail its own contract and the composed
+      // bootstrap refuse the Host with 409 `game_snapshot_mismatch`.
       prerequisites: prerequisitesMet
-        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
-        : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
+        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley" })
+        : Object.freeze({ status: "unknown" as const, detectedGame: null }),
       ...facts.instance.game,
       ...facts.attachment.game,
       ...facts.selectedWorld.game,

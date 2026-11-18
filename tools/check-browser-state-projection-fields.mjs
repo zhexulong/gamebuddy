@@ -35,7 +35,19 @@
  *   stale_constant_field_reason:<field>            a declared constant that is derived now, or has left the projection
  *   projection_field_unproduced:<field>:<file>     the contract declares it and the producer never writes it
  *   projection_field_not_in_contract:<field>:<file> the producer writes a field the contract does not declare
+ *   projection_field_unproduced:<member>.<field>   ...one level in, inside a `strictObject` member
+ *   projection_field_not_in_contract:<member>.<field>  ...one level in: the shape the member's NAME resolves to does
+ *                                                  not declare it (measured 2026-11-18: `prerequisites.missingItems`)
  *   browser_projection_population_empty            nothing was read - BLOCKED, exit 2, never green
+ *   nested_member_population_empty                 no member resolved to a shape with a literal to compare - BLOCKED
+ *
+ * WHAT IT READS, AND WHY THAT IS PART OF THE RULE. The producer side is the `game:` literal of the function declared to
+ * return `GameBrowserStateV1`, not the first `game:` literal in the file: the fact-group builders (`projectGameFacts`)
+ * write one each and come first, and a reader that took the first match compared the contract against a fact group -
+ * which is how this gate sat red and ignored instead of catching `prerequisites.missingItems` at the commit that broke
+ * it. A spread (`...facts.instance.game`) supplies members this reader cannot name, so it is a CEILING: the reading
+ * prints how many members it excused that way, and only a member that is neither written nor inside that ceiling is
+ * `projection_field_unproduced`.
  *
  * Usage:
  *   node tools/check-browser-state-projection-fields.mjs               # the gate; exit 1 on a finding, 2 on no population
@@ -200,33 +212,80 @@ function splitTopLevel(inner) {
   return elements;
 }
 
-/** The `game` object's field names, from the contract's own `strictObject`. */
-export function contractGameFields(contractSource) {
+/** The `game` object's members from the contract's own `strictObject`, as name → expression. */
+export function contractGameMembers(contractSource) {
   const code = withoutComments(contractSource);
-  const declaration = code.indexOf("export const GameBrowserStateV1Schema");
-  if (declaration < 0) throw new Error("GameBrowserStateV1Schema is not declared: this gate reads it by name");
-  const outer = code.indexOf("(", declaration);
+  const declaration = /(?:export\s+)?const\s+GameBrowserStateV1Schema\s*=/u.exec(code);
+  if (declaration === null) throw new Error("GameBrowserStateV1Schema is not declared: this gate reads it by name");
+  const outer = code.indexOf("(", declaration.index);
   const at = code.indexOf("game:", outer);
   if (at < 0) throw new Error("GameBrowserStateV1Schema declares no `game` projection");
   const open = code.indexOf("{", at);
   const body = open < 0 ? null : bracesFrom(code, open);
   if (body === null) throw new Error("the `game` projection is not an object literal this gate can read");
-  const fields = objectEntries(body).map(([name]) => name);
-  if (fields.length === 0) throw new Error("the `game` projection declares no field");
-  return fields;
+  const members = new Map(objectEntries(body));
+  if (members.size === 0) throw new Error("the `game` projection declares no field");
+  return members;
 }
 
-/** The producer's `game: Object.freeze({ … })` members, as name → expression. */
+/** The `game` object's field names, from the contract's own `strictObject`. */
+export function contractGameFields(contractSource) {
+  return [...contractGameMembers(contractSource).keys()];
+}
+
+/**
+ * The producer's `game: Object.freeze({ … })` projection members, as name → expression.
+ *
+ * THE FUNCTION IS FOUND BY ITS RETURN TYPE, not by the first `game:` literal in the file. The fact-group builders
+ * (`projectGameFacts`) also write `game: Object.freeze({ … })`, one per fact group, and they come FIRST in the file;
+ * a reader that took the first match compared the contract against the fact group and reported the six members the
+ * real projection writes as never written. That is how a gate stays red for a week and gets skipped.
+ */
 export function producedGameFields(producerSource) {
   const code = withoutComments(producerSource);
-  const at = /(?:^|\n)\s*game: Object\.freeze\(\{/u.exec(code);
-  if (at === null) throw new Error("the producer writes no `game: Object.freeze({ … })` projection");
-  const open = code.indexOf("{", at.index + at[0].length - 2);
-  const body = open < 0 ? null : bracesFrom(code, open);
-  if (body === null) throw new Error("the producer's `game` projection is not an object literal this gate can read");
+  const bodies = producerProjectionBodies(code);
+  if (bodies.length === 0) throw new Error("the producer writes no `game: Object.freeze({ … })` projection");
+  const [body] = bodies;
   const entries = objectEntries(body);
   if (entries.length === 0) throw new Error("the producer's `game` projection declares no field");
   return new Map(entries);
+}
+
+/** Every `game: Object.freeze({ … })` body inside a function declared to return the contract's own state. */
+function producerProjectionBodies(code) {
+  const bodies = [];
+  for (const match of code.matchAll(/\)\s*:\s*GameBrowserStateV1\s*\{/gu)) {
+    const open = code.indexOf("{", match.index + match[0].length - 1);
+    const fnBody = open < 0 ? null : bracesFrom(code, open);
+    if (fnBody === null) continue;
+    const at = /(?:^|\n)\s*game: Object\.freeze\(\{/u.exec(fnBody);
+    if (at === null) continue;
+    const literal = bracesFrom(fnBody, fnBody.indexOf("{", at.index + at[0].length - 1));
+    if (literal !== null) bodies.push(literal);
+  }
+  return bodies;
+}
+
+/**
+ * The member names a spread inside the projection can supply, as a CEILING.
+ *
+ * `...facts.instance.game` is not resolvable by name from here, but every name it can carry is written by one of the
+ * fact-group `game:` literals in the same file. So the union of those literals is the widest set the spread can supply:
+ * the "producer never writes it" rule is applied only to a member that is neither written explicitly nor inside that
+ * ceiling, and the reading prints how many fields were excused this way so the ceiling is never read as an exact
+ * comparison.
+ */
+export function spreadCoveredFields(producerSource) {
+  const code = withoutComments(producerSource);
+  const projection = producerProjectionBodies(code)[0];
+  const covered = new Set();
+  for (const match of code.matchAll(/(?:^|\n)\s*game: Object\.freeze\(\{/gu)) {
+    const open = code.indexOf("{", match.index + match[0].length - 1);
+    const literal = open < 0 ? null : bracesFrom(code, open);
+    if (literal === null || literal === projection) continue;
+    for (const name of new Map(objectEntries(literal)).keys()) covered.add(name);
+  }
+  return covered;
 }
 
 /** Every number a producer value writes for itself, ignoring the digits inside string literals. */
@@ -236,6 +295,57 @@ export function numericLiterals(expression) {
     .replace(/'(?:[^'\\]|\\.)*'/gu, "''")
     .replace(/`(?:[^`\\]|\\.)*`/gu, "``");
   return [...withoutStrings.matchAll(/(?<![\w$.])\d+(?:\.\d+)?(?![\w$])/gu)].map((match) => match[0]);
+}
+
+/**
+ * The contract module's own `strictObject({ … })` declarations, by name.
+ *
+ * A `game` member is usually a REFERENCE to one of these (`prerequisites: GamePrerequisiteStateV1Schema`), so the
+ * member's shape is not at the member: it is at the declaration its name points at. Resolving it here is what makes
+ * the nested reading possible without a hand-written table of "shapes to check".
+ */
+export function strictObjectDeclarations(contractSource) {
+  const code = withoutComments(contractSource);
+  const declarations = new Map();
+  for (const match of code.matchAll(/(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*strictObject\(\{/gu)) {
+    const open = code.indexOf("{", match.index + match[0].length - 1);
+    const body = open < 0 ? null : bracesFrom(code, open);
+    if (body === null) continue;
+    const members = new Map(objectEntries(body));
+    if (members.size > 0) declarations.set(match[1], members);
+  }
+  return declarations;
+}
+
+/**
+ * The object shape a contract member's expression names, as name → expression, or null for a leaf.
+ *
+ * An inline `strictObject({ … })`, or a bare name that the module declares as one, is a shape; a union, an enum, a
+ * `Type.String(...)` and a `Type.Optional(...)` are leaves whose members no producer literal can be compared to.
+ */
+export function contractMemberShape(expression, declarations, seen = new Set()) {
+  const value = expression.trim();
+  if (value.startsWith("strictObject({")) return new Map(objectEntries(bracesFrom(value, value.indexOf("{")) ?? ""));
+  if (!/^[A-Za-z_$][\w$]*$/u.test(value)) return null;
+  const declared = declarations.get(value);
+  if (declared === undefined || seen.has(value)) return null;
+  seen.add(value);
+  return declared;
+}
+
+/** Every object literal a producer expression can take as its value, one per branch it can choose between. */
+export function producerValueLiterals(expression) {
+  const literals = [];
+  for (const match of expression.matchAll(/Object\.freeze\(\s*\{/gu)) {
+    const open = expression.indexOf("{", match.index + match[0].length - 1);
+    const body = open < 0 ? null : bracesFrom(expression, open);
+    if (body !== null) literals.push(body);
+  }
+  if (literals.length === 0 && expression.trim().startsWith("{")) {
+    const body = bracesFrom(expression.trim(), 0);
+    if (body !== null) literals.push(body);
+  }
+  return literals;
 }
 
 /** The reading: which contract fields the producer answers, and which of those it answers with a literal. */
@@ -252,9 +362,13 @@ export function auditBrowserStateProjection({
 
   let fields;
   let produced;
+  let members;
+  let coveredBySpread = new Set();
   try {
-    fields = contractGameFields(contractSource);
+    members = contractGameMembers(contractSource);
+    fields = [...members.keys()];
     produced = producedGameFields(producerSource);
+    coveredBySpread = spreadCoveredFields(producerSource);
   } catch (error) {
     return {
       status: "blocked",
@@ -264,12 +378,63 @@ export function auditBrowserStateProjection({
       dispositions: [],
     };
   }
-
   const violations = [];
   const dispositions = [];
+  const declaredShapes = strictObjectDeclarations(contractSource);
+  /**
+   * ONE LEVEL IN, WHERE THE MERGE BROKE THE TREE (measured 2026-11-18, `ef9b8c15`).
+   *
+   * `0f2ca8e3` deleted `missingItems` from `GamePrerequisiteStateV1Schema` - the Host's readiness view is binary and has
+   * no per-item list - and the producer in `game-browser-state-provider.ts` kept writing it. Neither `typecheck` nor
+   * this gate saw it: the literal is wrapped in `Object.freeze`, so no excess-property check applies, and the rules
+   * above compare only the `game` object's IMMEDIATE members, where `prerequisites` is present on both sides. The
+   * product consequence was a Host that refused its own bootstrap: the composed root validates every game snapshot it
+   * projects, so `game.state.read` failed its contract with 409 `game_snapshot_mismatch` before a session existed.
+   *
+   * The row below is the same two directions as above, at the depth where a `strictObject` member is answered by an
+   * object literal: the shape comes from the declaration the member's name resolves to, and the literal comes from the
+   * producer's own branches. A member answered by a spread or a helper call is opaque here and is left to the runtime
+   * check that guards the wire (`composed-reference-game-browser.ts`) and to the provider's own validation tests.
+   */
+  let nestedExamined = 0;
+  for (const [field, contractExpression] of members) {
+    const shape = contractMemberShape(contractExpression, declaredShapes);
+    if (shape === null) continue;
+    const expression = produced.get(field);
+    if (expression === undefined) continue;
+    const literals = producerValueLiterals(expression);
+    if (literals.length === 0) continue;
+    nestedExamined += 1;
+    const written = new Set();
+    for (const literal of literals)
+      for (const name of new Map(objectEntries(literal)).keys()) {
+        written.add(name);
+        if (shape.has(name)) continue;
+        violations.push({
+          code: `projection_field_not_in_contract:${field}.${name}:${PRODUCER_PATH}`,
+          detail:
+            `the producer writes \`game.${field}.${name}\` and \`${contractExpression.trim()}\` declares no such field: ` +
+            "a value no consumer can read, and a snapshot the contract refuses",
+        });
+      }
+    // A spread inside the literal means part of the value comes from elsewhere, so an absent member is not evidence.
+    if (literals.some((literal) => literal.includes("..."))) continue;
+    for (const name of shape.keys())
+      if (!written.has(name))
+        violations.push({
+          code: `projection_field_unproduced:${field}.${name}:${PRODUCER_PATH}`,
+          detail: `the contract declares \`game.${field}.${name}\` and every literal the producer answers \`${field}\` with omits it`,
+        });
+  }
+
   for (const field of fields) {
     const expression = produced.get(field);
     if (expression === undefined) {
+      // A member a spread supplies is not a member nobody answers. The ceiling is printed, not assumed exact.
+      if (coveredBySpread.has(field)) {
+        dispositions.push({ field, derived: null, constant: null, covered: true });
+        continue;
+      }
       dispositions.push({ field, derived: null, constant: null });
       violations.push({
         code: `projection_field_unproduced:${field}:${PRODUCER_PATH}`,
@@ -338,14 +503,26 @@ export function auditBrowserStateProjection({
   }
 
   const constant = dispositions.filter((entry) => entry.constant === true).length;
+  // One member is one finding: a branch that writes the same foreign field in both arms is one defect, not two.
+  const unique = [...new Map(violations.map((violation) => [violation.code, violation])).values()];
+  // FAIL ON ZERO, one level up as well as at the top: a nested reading that found no literal to compare examined
+  // nothing, and a check whose population is empty agrees with itself.
+  if (nestedExamined === 0)
+    violations.push({
+      code: "nested_member_population_empty",
+      detail:
+        "no `game` member resolved to a `strictObject` shape the producer answers with an object literal, so the " +
+        "nested rule judged nothing: the reader is broken, not the tree",
+    });
   return {
-    status: violations.length === 0 ? "passed" : "failed",
+    status: unique.length === 0 ? "passed" : "failed",
     examined: fields.length,
+    nested: nestedExamined,
     derived: fields.length - constant,
     constant,
     declared: Object.keys(declarations).length,
     dispositions,
-    violations,
+    violations: unique,
     unreadable: [],
   };
 }
@@ -360,11 +537,17 @@ function main(argv) {
     derived: reading.derived ?? 0,
     constant: reading.constant ?? 0,
     declared: reading.declared ?? 0,
+    nested: reading.nested ?? 0,
     checks: [
       {
         id: "game_projection_population",
         status: reading.examined === 0 ? "blocked" : "passed",
         detail: `${String(reading.examined)} field(s) in the contract's \`game\` projection`,
+      },
+      {
+        id: "nested_member_population",
+        status: reading.nested === 0 ? "blocked" : "passed",
+        detail: `${String(reading.nested ?? 0)} \`game\` member(s) compared one level in against the shape its name resolves to`,
       },
       {
         id: "no_field_is_a_literal",
@@ -377,8 +560,9 @@ function main(argv) {
     process.stdout.write(`${JSON.stringify({ ...report, dispositions: reading.dispositions })}\n`);
   } else {
     process.stdout.write(
-      `browser projection fields examined ${String(report.examined)} · derived ${String(report.derived)} · ` +
-        `constant ${String(report.constant)} · declared ${String(report.declared)} · status ${report.status}\n`,
+      `browser projection fields examined ${String(report.examined)} · nested ${String(reading.nested ?? 0)} · ` +
+        `derived ${String(report.derived)} · constant ${String(report.constant)} · declared ${String(report.declared)} · ` +
+        `status ${report.status}\n`,
     );
     for (const line of reading.unreadable) process.stderr.write(`browser_projection_unreadable: ${line}\n`);
     for (const violation of reading.violations) process.stderr.write(`${violation.code}: ${violation.detail}\n`);

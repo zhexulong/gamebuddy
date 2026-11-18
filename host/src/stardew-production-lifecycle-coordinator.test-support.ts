@@ -495,7 +495,15 @@ async function createAdmissionBroker(
       headers: { origin, "content-type": "application/json" },
       body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
     });
-    assert.equal(bootstrap.status, 200);
+    // A refusal here ends the fixture before any test body runs, so the cause the broker named on the
+    // response is the only place the reason survives: `bootstrap_body_unreadable` and a composed root
+    // projection that threw are the same 409 to a reader that keeps only the status.
+    const bootstrapCause = bootstrap.headers.get("x-gamebuddy-bootstrap-cause");
+    assert.equal(
+      bootstrap.status,
+      200,
+      `the fixture's own bootstrap was refused: ${bootstrap.status} ${bootstrapCause ?? "(no cause header)"}`,
+    );
     cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     csrfToken = ((await bootstrap.json()) as { chat: { csrfToken: string } }).chat.csrfToken;
   } catch (error) {

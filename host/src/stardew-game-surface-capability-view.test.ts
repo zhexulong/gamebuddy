@@ -92,7 +92,7 @@ test("both shapes are the ones the browser contract validates", () => {
     csrfToken: "QWxhZGRpbjpvcGVuIHNlc2FtZQ",
     browserSession: { expiresAtMs: 100_000 },
     game: {
-      prerequisites: { status: "unknown" as const, detectedGame: null, missingItems: [] },
+      prerequisites: { status: "unknown" as const, detectedGame: null },
       instance: { status: "none" as const, gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked" as const, message: null },
       attachment: { status: "none" as const, generation: 0 },

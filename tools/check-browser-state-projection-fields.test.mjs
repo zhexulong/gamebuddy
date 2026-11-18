@@ -30,6 +30,7 @@ import {
   isConstantExpression,
   numericLiterals,
   PRODUCER_PATH,
+  producedGameFields,
   UNPUBLISHED_PROJECTION_FIELDS,
 } from "./check-browser-state-projection-fields.mjs";
 
@@ -75,8 +76,8 @@ test("the literal is red twice: a field no input can change, and a zero nobody m
   const root = fixtureTree(t);
   rewrite(root, PRODUCER_PATH, (source) =>
     source.replace(
-      "capabilitySummary: projectCapabilitySummary(capability),",
-      "capabilitySummary: Object.freeze({ available: false, count: 0 }),",
+      "\n      capabilitySummary: projectCapabilitySummary(views.capabilityView),",
+      "\n      capabilitySummary: Object.freeze({ available: false, count: 0 }),",
     ),
   );
   const reading = auditBrowserStateProjection({ root });
@@ -93,8 +94,8 @@ test("a derived field that answers 0 when its source is absent is still red", (t
   // for a layer that could not read the count at all.
   rewrite(root, PRODUCER_PATH, (source) =>
     source.replace(
-      "capabilitySummary: projectCapabilitySummary(capability),",
-      'capabilitySummary: capability === undefined ? Object.freeze({ status: "not_measured", count: 0 }) : Object.freeze({ status: "published", count: capability.count }),',
+      "\n      capabilitySummary: projectCapabilitySummary(views.capabilityView),",
+      '\n      capabilitySummary: capability === undefined ? Object.freeze({ status: "not_measured", count: 0 }) : Object.freeze({ status: "published", count: capability.count }),',
     ),
   );
   const reading = auditBrowserStateProjection({ root });
@@ -174,4 +175,52 @@ test("a literal is decided by shape, and a number is found outside strings only"
   assert.deepEqual(numericLiterals('Object.freeze({ status: "published", count: capability.count })'), []);
   // Digits inside a string are words, not numbers: `not_measured` must never read as a measurement.
   assert.deepEqual(numericLiterals('Object.freeze({ status: "v2", reason: "no_reader_2" })'), []);
+});
+
+/**
+ * THE REAL DEFECT, ONE LEVEL IN: `0f2ca8e3` deleted `missingItems` from `GamePrerequisiteStateV1Schema` and the producer
+ * kept writing it, so every `game.state.read` failed its own contract and the composed bootstrap answered 409
+ * `game_snapshot_mismatch` before it minted a session. The commit that shipped this is `ef9b8c15`; the same reading over
+ * a copy of that tree is the red-proof below.
+ */
+test("a member the contract deleted is red one level in, named with its path", (t) => {
+  const root = fixtureTree(t);
+  rewrite(root, PRODUCER_PATH, (source) =>
+    source.replace(
+      'Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley" })',
+      'Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })',
+    ),
+  );
+  const reading = auditBrowserStateProjection({ root });
+  assert.equal(reading.status, "failed");
+  assert.deepEqual(codes(reading), [`projection_field_not_in_contract:prerequisites.missingItems:${PRODUCER_PATH}`]);
+  assert.match(reading.violations[0].detail, /GamePrerequisiteStateV1Schema/u, "the finding names the shape it broke");
+  assert.ok(reading.nested > 0, "the nested reading examined no member, which is a blocked reading");
+});
+
+test("the nested reading is the projection, not a fact group that writes the same member name", (t) => {
+  // The reader used to take the FIRST `game: Object.freeze({ … })` in the file, and the fact groups come first: the
+  // contract was compared against `facts.instance.game` for as long as one existed. The projection is the one that
+  // answers `prerequisites` and the shared-null members, and no fact group carries a `fact` tag inside it.
+  const produced = producedGameFields(readFileSync(join(REPOSITORY_ROOT, PRODUCER_PATH), "utf8"));
+  assert.ok(
+    produced.has("prerequisites"),
+    `the reading is not the state projection: ${[...produced.keys()].join(", ")}`,
+  );
+  assert.ok(produced.has("selectedSave"));
+  assert.equal(produced.has("fact"), false, "the reading took a fact group: `fact` is the fact union's own tag");
+});
+
+test("a spread of a fact group is a ceiling, printed, and is not an unproduced field", () => {
+  // `...facts.instance.game` supplies members this reader cannot resolve by name. It must not be reported as "the
+  // producer never writes it", and the reading must say how many fields it excused this way rather than tie.
+  const reading = auditBrowserStateProjection({ root: REPOSITORY_ROOT });
+  assert.equal(
+    reading.violations.some((violation) =>
+      /^projection_field_unproduced:(?:instance|attachment|selectedWorld)/u.test(violation.code),
+    ),
+    false,
+    "a member a spread supplies was reported as unproduced",
+  );
+  assert.ok(reading.nested > 0, `the nested reading examined nothing: ${codes(reading).join(", ")}`);
 });
