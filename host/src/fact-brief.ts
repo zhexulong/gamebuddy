@@ -228,7 +228,7 @@ export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
   const speech = playerSpeech(input.inputs);
   if (speech !== "") blocks.push(speech);
-  const state = composeWorldState(input.snapshot);
+  const state = composeWorldState(input.snapshot, provedPackCounts(input.events));
   if (state !== "") blocks.push(state);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
@@ -296,10 +296,14 @@ function playerSpeech(inputs: readonly PlayerInput[]): string {
  * A session that has received nothing yet says so, in the same block: an omitted block would read as "nothing here" and
  * an invented one would be a world the Mod never published.
  */
-export function composeWorldState(reading: WorldStateReading | undefined): string {
+export function composeWorldState(
+  reading: WorldStateReading | undefined,
+  provedPack: ReadonlyMap<string, ProvedPackCount> = NO_PACK_FRESHNESS.proved,
+): string {
   if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
   const world = reading.snapshot;
   if (world === null || typeof world !== "object") return block("world-state", NOTHING_OBSERVED);
+  const freshness: PackFreshness = Object.freeze({ proved: provedPack, ageTurns: reading.ageTurns });
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
@@ -316,9 +320,9 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   if (ripeCrops !== "") parts.push(ripeCrops);
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
-  const carrying = formatCarrying(world);
+  const carrying = formatCarrying(world, freshness);
   if (carrying !== "") parts.push(carrying);
-  const seeds = formatHeldSeeds(world);
+  const seeds = formatHeldSeeds(world, freshness);
   if (seeds !== "") parts.push(seeds);
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
@@ -374,7 +378,7 @@ const MAX_CARRYING_ROWS = 8;
  * carries the slots this bound dropped (`stardew_observe` publishes the whole family) rather than counting them into a
  * silence.
  */
-function formatCarrying(world: Snapshot): string {
+function formatCarrying(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
   const seeds = plantableSeedIds(world);
@@ -384,18 +388,32 @@ function formatCarrying(world: Snapshot): string {
     // THE MAPPED ROW KEEPS THE WIRE'S OWN NAMES. An alias (`name: row.displayName`) is how the drop this function is
     // written against became invisible: a reader of the map saw `name` and `stack` and could not see that the slot had
     // been left behind. `tools/check-inventory-row-field-rendering.mjs` reads these names against the schema's own.
-    .map((row) => ({
-      displayName: row.displayName.trim(),
-      qualifiedItemId: row.qualifiedItemId,
-      slot: row.slot,
-      stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
-    }));
+    .map((row) => {
+      const proved = freshness.proved.get(row.qualifiedItemId);
+      return {
+        displayName: row.displayName.trim(),
+        qualifiedItemId: row.qualifiedItemId,
+        slot: row.slot,
+        stack: proved?.count ?? (Number.isFinite(row.stack) ? Number(row.stack) : 1),
+        source: packCountSource(proved),
+        proved: proved !== undefined,
+      };
+    });
   if (named.length === 0) return "身上没有别的东西";
   const shown = named
     .slice(0, MAX_CARRYING_ROWS)
-    .map((row) => `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]`);
+    .map(
+      (row) =>
+        `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]${row.source}`,
+    );
   const rest = named.length - shown.length;
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}`;
+  // The age covers the rows this line PRINTS: a row the bound dropped is not a count she was handed.
+  const aged = packCountsAge(
+    named.slice(0, MAX_CARRYING_ROWS).filter((row) => row.proved).length,
+    shown.length,
+    freshness.ageTurns,
+  );
+  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}${aged}`;
 }
 
 /**
@@ -410,6 +428,112 @@ function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
   const rows = world.seedSupplyTargets;
   if (!Array.isArray(rows)) return new Set();
   return new Set(rows.map((row) => row.qualifiedItemId));
+}
+
+/** One pack count the DELIVERY ITSELF proved, and the action whose receipt proves it. */
+export type ProvedPackCount = Readonly<{ count: number; actionId: string }>;
+
+/**
+ * The pack counts THIS DELIVERY has already counted, from the Mod's own receipts.
+ *
+ * <p>
+ * WHY. Measured `round75`: `<world-state>` printed `种子: 2 花椰菜种子` on all fourteen refusal turns of a stretch in
+ * which she had planted both seeds, and the deliveries in that stretch carried `inventory_after=1` and then
+ * `inventory_after=0` in their own receipts. The state line kept its mint-time number while the message it arrived in
+ * carried the corrected one: one fact, two spellings, and the stale one at the top where it reads as the present tense.
+ * </p>
+ *
+ * <p>
+ * THE QUANTITY IS THE SAME ONE, VERIFIED RATHER THAN ASSUMED. `plant_seed`'s `inventory_after` is
+ * `Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0)`
+ * (`integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs:387`), which is the same sum
+ * `seedSupplyTargets[].heldCount` is built from - so this is the Mod's own answer to the question the seed line asks,
+ * taken later. Nothing is derived here and nothing is inferred: an evidence string without `item=` and a numeric
+ * `inventory_after=` proves nothing, and a refusal carries neither.
+ * </p>
+ *
+ * <p>
+ * BOTH SHAPES REACH HER, so both are read: a bare `execution_receipt` (`receiptLine` prints its detail) and a settled
+ * body programme, whose nodes carry the same receipt detail as `node.evidence` (`program-settlement-digest.ts`). Later
+ * events win, because events are ordered oldest first and the last count is the one that is still true.
+ * </p>
+ */
+export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<string, ProvedPackCount> {
+  const proved = new Map<string, ProvedPackCount>();
+  const record = (actionId: string, detail: unknown): void => {
+    if (typeof detail !== "string" || detail === "") return;
+    const pairs = evidencePairs(detail);
+    const item = pairs.get("item");
+    if (item === undefined || item === "") return;
+    const raw = pairs.get("inventory_after");
+    if (raw === undefined || !/^\d+$/u.test(raw)) return;
+    proved.set(item, Object.freeze({ count: Number(raw), actionId: actionId === "" ? "动作" : actionId }));
+  };
+  for (const fact of events) {
+    const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "";
+    if (fact.kind === "execution_receipt") {
+      record(actionId, (fact.payload.evidence as { detail?: unknown } | undefined)?.detail);
+      continue;
+    }
+    if (fact.semanticKind !== PROGRAM_SETTLED) continue;
+    if (!Array.isArray(fact.payload.nodes)) continue;
+    for (const node of fact.payload.nodes as readonly SettledNode[])
+      record(typeof node.actionId === "string" ? node.actionId : actionId, node.evidence);
+  }
+  return proved;
+}
+
+/** The `key=value` pairs of one Mod evidence detail: `location=Farm;item=(O)472;inventory_after=0`. */
+function evidencePairs(detail: string): ReadonlyMap<string, string> {
+  const pairs = new Map<string, string>();
+  for (const part of detail.split(";")) {
+    const at = part.indexOf("=");
+    if (at <= 0) continue;
+    pairs.set(part.slice(0, at).trim(), part.slice(at + 1).trim());
+  }
+  return pairs;
+}
+
+/**
+ * What THIS DELIVERY already knows about the pack, and how old the reading is.
+ *
+ * <p>
+ * The two halves of the freshness question for a pack count, kept beside each other because a renderer that took one
+ * without the other could print a count with neither a source nor an age.
+ * </p>
+ */
+type PackFreshness = Readonly<{
+  proved: ReadonlyMap<string, ProvedPackCount>;
+  ageTurns: number;
+}>;
+
+const NO_PACK_FRESHNESS: PackFreshness = Object.freeze({ proved: new Map<string, ProvedPackCount>(), ageTurns: 0 });
+
+/**
+ * The qualifier a count carries when a receipt in THIS delivery re-counted it, or `""`.
+ *
+ * <p>
+ * A count with no qualifier reads as the present tense, which is the defect: `<world-state>` printed `种子: 2` for fifty
+ * turns while the deliveries it arrived in carried `inventory_after=0`. Naming the action is what makes "0" a statement
+ * about a moment rather than a guess - and it is derived, never written: `proved` is the Mod's own post-action sum.
+ * </p>
+ */
+function packCountSource(proved: ProvedPackCount | undefined): string {
+  return proved === undefined ? "" : `（${proved.actionId} 之后数的）`;
+}
+
+/**
+ * The aging tail of a pack line: how old the counts on it are, for the rows no receipt re-counted.
+ *
+ * <p>
+ * The age is stated ONCE rather than on every row, because it is the whole reading's age and not a row's - but the
+ * wording distinguishes the mixed case, where a bare `（3 轮前数的计数）` would read as applying to the rows a receipt
+ * has just counted.
+ * </p>
+ */
+function packCountsAge(provedRows: number, totalRows: number, ageTurns: number): string {
+  if (ageTurns < 1 || provedRows >= totalRows) return "";
+  return provedRows > 0 ? `（其余是 ${String(ageTurns)} 轮前数的计数）` : `（${String(ageTurns)} 轮前数的计数）`;
 }
 
 /**
@@ -442,12 +566,13 @@ function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
  * prevent. The zero is the whole next step: with no seed, hoeing sows nothing.
  * </p>
  */
-function formatHeldSeeds(world: Snapshot): string {
+function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): string {
   const rows = world.seedSupplyTargets;
   if (!Array.isArray(rows)) return "";
   if (rows.length === 0) return "种子: 0（背包里没有种子）";
   const seeds: string[] = [];
   const seen = new Set<string>();
+  let provedSeeds = 0;
   for (const row of rows) {
     if (seen.has(row.qualifiedItemId)) continue;
     seen.add(row.qualifiedItemId);
@@ -455,9 +580,12 @@ function formatHeldSeeds(world: Snapshot): string {
       typeof row.displayName === "string" && row.displayName.trim() !== ""
         ? row.displayName.trim()
         : row.qualifiedItemId;
-    seeds.push(Number.isFinite(row.heldCount) ? `${String(row.heldCount)} ${name}` : `${name}（数量未测）`);
+    const proved = freshness.proved.get(row.qualifiedItemId);
+    if (proved !== undefined) provedSeeds += 1;
+    const count = proved?.count ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
+    seeds.push(count === null ? `${name}（数量未测）` : `${String(count)} ${name}${packCountSource(proved)}`);
   }
-  return `种子: ${seeds.join("、")}`;
+  return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}`;
 }
 
 /**
