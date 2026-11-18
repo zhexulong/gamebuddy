@@ -212,6 +212,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:viewport-population",
   },
   {
+    path: "tools/check-live-run-closures.mjs",
+    reason:
+      "arguments: it reconciles the run directories under a live-run root (`--root DIR`, default `.live-runs`) - every one of" +
+      " them is a run that has already happened - so before any run exists there is nothing for it to examine, and it says so" +
+      " with `run_closures_not_measured` (exit 2) rather than passing on an empty population. Its rule and its falsifiers live" +
+      " in `tools/check-live-run-closures.test.mjs`, whose fixtures are real run directories including round67's own shape (a" +
+      " launch receipt with no closure, named and red); the record it reads is written by the ladder launcher on every exit," +
+      " and `tools/live-run/round-verdict.mjs` prints the same reading as its first row",
+    runsIn: "pnpm test:live-run-closures",
+  },
+  {
     path: "tools/check-presentation-delivery-account.mjs",
     reason:
       "arguments: it reconciles ONE finished run's bundle - `--run-dir DIR` or the newest under `.live-runs` - so before a" +

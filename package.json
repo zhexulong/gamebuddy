@@ -248,6 +248,7 @@
     "test:host-windows-test-preflight": "node --test tools/check-host-windows-test-preflight.test.mjs",
     "test:lane-diagnosis": "node --test tools/lib/lane-diagnosis.test.mjs",
     "test:live-run-artifact-freshness": "node --test tools/check-live-run-artifact-freshness.test.mjs",
+    "test:live-run-closures": "node --test tools/check-live-run-closures.test.mjs tools/live-run/core/run-closure.test.mjs",
     "test:local-ci-parity": "node --test tools/check-local-ci-parity.test.mjs",
     "test:memory-live": "node --test tools/live-run/memory/run-memory-live-loop.test.mjs",
     "test:multiday-loop": "node --test tools/lib/multiday-loop.test.mjs tools/lib/multiday-baseline.test.mjs",
