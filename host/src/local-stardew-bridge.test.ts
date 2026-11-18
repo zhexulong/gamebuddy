@@ -2590,15 +2590,22 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
     });
     assert.ok(sendInbound !== undefined);
     sendInbound();
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "event_pump_event_overflow",
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.equal(published.state, "disconnected");
+    // An overflow keeps its own leading code - it is a load condition the pump owns, not an arbitrary listener bug - and
+    // it names the fact the same way every other listener failure does, so the two cannot be told apart only by a
+    // reader who already knows which wrapper ran.
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "event_pump_event_overflow",
+      factKind: "day_started",
+      factId: "fact_overflow_01",
+      error: "",
     });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(listenerInvocations, 1);
     assert.equal(client.state.connected, false);
     assert.equal(client.state.authenticated, false);
-    assert.equal(client.state.latestReasonCode, "event_pump_event_overflow");
+    assert.equal(client.state.latestReasonCode, published.reasonCode);
   } finally {
     peer?.destroy();
     await close(server);
@@ -2690,7 +2697,7 @@ test("a Mod error frame settles the pending request with the Mod own reason code
   }
 });
 
-test("local Stardew bridge maps an arbitrary fact listener exception to fact_listener_failed", async () => {
+test("local Stardew bridge maps an arbitrary fact listener exception to a reason that names the fact", async () => {
   const pipeName = `gamebuddy_listener_failed_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   let sendInbound: (() => void) | undefined;
@@ -2747,27 +2754,148 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
     let laterListenerInvocations = 0;
     client.onFact(() => {
       throwingInvocations++;
-      throw new Error("arbitrary listener failure");
+      throw new Error("arbitrary_listener_failure");
     });
     client.onFact(() => laterListenerInvocations++);
     assert.ok(sendInbound !== undefined);
     sendInbound();
     // The exception never escaped receive(): the run stays alive, the thrower
     // ran once, and dispatch aborted before the later listener saw the fact.
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "fact_listener_failed",
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.equal(published.state, "disconnected");
+    // WHICH fact was in flight when it threw, WHICH id the Mod minted for it, and the error's own token. A reason that
+    // says only `fact_listener_failed` is the spelling that made round66's drop unattributable: the artifact named the
+    // wrapper and nothing the wrapper was holding.
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "fact_listener_failed",
+      factKind: "day_started",
+      factId: "fact_failed_01",
+      error: "Error:arbitrary_listener_failure",
     });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(throwingInvocations, 1);
     assert.equal(laterListenerInvocations, 0);
     assert.equal(client.state.connected, false);
-    assert.equal(client.state.latestReasonCode, "fact_listener_failed");
+    assert.equal(client.state.latestReasonCode, published.reasonCode);
   } finally {
     peer?.destroy();
     await close(server);
   }
 });
+
+test("a listener that rejects a replayed terminal receipt publishes a reason naming the receipt and the rejection", async () => {
+  // round66's own disconnect, replayed: `execution_receipt_replay_rejected:terminal_state_rewritten` was thrown by the
+  // terminal-receipt fold while an `execution_receipt` fact was being delivered, and the run published the bare
+  // `fact_listener_failed` - so the artifact could not say whether a projection, the pump or a receipt had thrown.
+  const pipeName = `gamebuddy_listener_replay_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let sendInbound: (() => void) | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type !== "hello") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_hello_listener_replay",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_listener_replay",
+              capabilities: [],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }),
+        );
+        sendInbound = () => socket.write(terminalReceiptFrame("request_replay_01", "execution_replay_01"));
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    client.onFact((fact) => {
+      if (fact.type !== "execution_receipt") return;
+      throw new Error("execution_receipt_replay_rejected:terminal_state_rewritten");
+    });
+    assert.ok(sendInbound !== undefined);
+    sendInbound();
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "fact_listener_failed",
+      factKind: "execution_receipt",
+      factId: "execution_replay_01",
+      error: "Error:execution_receipt_replay_rejected:terminal_state_rewritten",
+    });
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+/**
+ * One published disconnect reason, read back as the four things it has to say.
+ *
+ * The assertion is on the FIELDS rather than on one literal string, because the literal is today's spelling of a
+ * property: a reason that separates into a failure, a fact kind, a fact id and an error token answers "which listener
+ * failed and why", and a test that pinned the whole line would go green on any re-spelling that kept the shape.
+ */
+function namedFactReason(reasonCode: string): Readonly<{
+  failure: string;
+  factKind: string;
+  factId: string;
+  error: string;
+}> {
+  const [failure, factKind, factId, ...error] = reasonCode.split(":");
+  return { failure: failure ?? "", factKind: factKind ?? "", factId: factId ?? "", error: error.join(":") };
+}
+
+/** A terminal execution_receipt fact the Mod pushes for an execution this client never dispatched. */
+function terminalReceiptFrame(requestId: string, executionId: string): Buffer {
+  return frame({
+    protocolVersion: 1,
+    messageId: "mod_execution_receipt_replay_01",
+    correlationId: requestId,
+    timestampMs: Date.now(),
+    scope,
+    type: "execution_receipt",
+    payload: {
+      executionId,
+      requestId,
+      actionId: "move_to_tile",
+      state: "succeeded",
+      reasonCode: "completed",
+      revision: 7,
+      evidence: { fixture: "terminal_receipt_replay" },
+      origin: { kind: "programme", programId: "plan_replay_01", nodeId: "n01" },
+    },
+  });
+}
 
 test("a pending observe rejects through the normal close path when a fact listener fails", async () => {
   const pipeName = `gamebuddy_listener_pending_${process.pid}_${Date.now()}`;
@@ -2848,17 +2976,21 @@ test("a pending observe rejects through the normal close path when a fact listen
       client.onConnectionFact(resolvePromise),
     );
     client.onFact(() => {
-      throw new Error("arbitrary listener failure");
+      throw new Error("arbitrary_listener_failure");
     });
     // The admitted snapshot would satisfy the pending observe, but the thrown
     // listener rejects it through the standard close cleanup instead of
     // resolving it or leaking it to the bridge_response_timeout.
     const observe = client.observe();
     await assert.rejects(observe, /bridge_disconnected:fact_listener_failed/);
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "fact_listener_failed",
-    });
+    // The close that rejects it names the fact that was in flight too, so "the observe failed" and "why the observe
+    // failed" are one reading rather than two.
+    const named = namedFactReason((await factWithinDeadline(disconnected, "connection_fact")).reasonCode);
+    assert.equal(named.failure, "fact_listener_failed");
+    assert.equal(named.factKind, "snapshot");
+    assert.equal(named.error, "Error:arbitrary_listener_failure");
+    // A snapshot is not a world fact, so its only identity is the correlation the request was issued under.
+    assert.ok(named.factId.length > 0, "the failed fact's own id travels in the reason");
     assert.equal(client.state.connected, false);
     assert.equal(client.state.snapshot, null);
   } finally {
