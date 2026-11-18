@@ -1883,6 +1883,16 @@ export class CompanionEventPump {
   /** Re-statements delivered inside a turn something else had already opened. */
   #restatementCarried = 0;
   /**
+   * Deliveries that STATED a world block, and steers that withheld one because the turn already had it.
+   *
+   * The pair is what `worldStateDelivery` answers, and it exists because a block that is not printed is indistinguishable
+   * from a block that was lost unless the delivery counts say which happened. `withheld` is keyed by the reason it was
+   * withheld (`restated`: byte-identical to the reading she was last handed), so a reader can tell this from a steer that
+   * had no reading at all.
+   */
+  #worldStateStated = 0;
+  #worldStateWithheldRestated = 0;
+  /**
    * The world as LAST HEARD, for rendering `<world-state>` on every batch.
    *
    * <p>
@@ -1914,6 +1924,15 @@ export class CompanionEventPump {
    * </p>
    */
   #lastSnapshotDeliveredIdentity: string | undefined;
+  /**
+   * The reading a STEER has already stated inside the running turn.
+   *
+   * Kept apart from `#lastSnapshotDeliveredIdentity` because the two answer different questions: that one is what a TURN
+   * was handed (and decides `本轮无新观察` and `broughtObservation`), while this one only says a steer in THIS turn has
+   * already printed the picture. Writing the turn's field from a steer made the next turn's own block claim the reading was
+   * old - the steer states the world it joins, it does not take the reading.
+   */
+  #lastSteerStatedIdentity: string | undefined;
   /** `#deliveredBatches` when that content was composed into a batch; the difference is the age `<world-state>` states. */
   #lastSnapshotDeliveredBatch = 0;
   /**
@@ -2266,10 +2285,13 @@ export class CompanionEventPump {
     if (trace !== undefined) this.#tracesByKind[trace] = (this.#tracesByKind[trace] ?? 0) + 1;
     if (fact.kind === "snapshot") {
       const previous = this.#lastSnapshot;
-      // An OLDER reading describes an older world (`takeBatch` applies the same rule to a batch that is too large), so
-      // neither slot takes it. One guard for both slots, because two guards left the pending slot able to hold a reading
-      // the block would never render.
-      if (previous !== undefined && fact.revision < previous.revision) return;
+      // AN OLDER READING DESCRIBES AN OLDER WORLD, and the revision it carries cannot say which is older: the Mod mints a
+      // new one per dispatch and per receipt, and nothing at all when the clock walks. So the comparison is made in the
+      // reading's OWN currency (`readingClockOrdinal`) first - equal revisions with an older clock is the regressed case
+      // that put `世界（revision 46，刚刚更新）` on four turns of a farm an hour further on - and on the counter second.
+      // Neither slot takes an older reading: one guard for both, because two guards left the pending slot able to hold a
+      // reading the block would never render.
+      if (previous !== undefined && readingIsOlderThan(fact, previous)) return;
       // The world MOVED only if the reading says something else: the Mod's revision also moves when the Mod publishes a
       // receipt of its own action (`farmhandexecutioncontroller.cs`), and a counter that counts her actions cannot witness
       // a world that stood still. Keyed on content, a re-stated reading keeps the CONTENT's age and keeps the
@@ -2451,9 +2473,12 @@ export class CompanionEventPump {
     this.#restatementExamined = 0;
     this.#restatementOpened = 0;
     this.#restatementCarried = 0;
+    this.#worldStateStated = 0;
+    this.#worldStateWithheldRestated = 0;
     this.#snapshotProducedBy = undefined;
     this.#lastSnapshot = undefined;
     this.#lastSnapshotDeliveredIdentity = undefined;
+    this.#lastSteerStatedIdentity = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
     this.#lastSnapshotArrivedAtMs = 0;
     this.#lastSnapshotChangedAtMs = 0;
@@ -3772,6 +3797,42 @@ export class CompanionEventPump {
     // A steer hands these to a turn that is already running, so they are delivered content like any other - and a
     // milestone published again later must not be a reason to open a new turn for what she has already been told.
     this.#rememberDelivered(steerable);
+    // THE BLOCK A STEER MUST NOT RE-STATE, and the ONE case it still does.
+    //
+    // <p>
+    // A steer lands INTO a turn that is already running, so it arrives after everything that turn has already been shown -
+    // including her own `stardew_observe` answer, which reads the bridge's live cache. Composed in the microtask after a
+    // preempting receipt, the steer's block is the reading of THAT instant; when an observation lands in the same window the
+    // message arrives two milliseconds later stating an older world than the one in the tool result above it. Measured
+    // 2026-11-18 (`round76`): `15:02:20.870 toolResult revision 325 (20:20, 农舍 3,11)` and `15:02:20.872 steer revision 321
+    // (20:10, 农场 63,15)` - she then read the farm from inside the house and concluded the floor "won't take a foot".
+    // </p>
+    // <p>
+    // SO A RE-STATED READING IS WITHHELD AND A MOVED ONE IS STATED. The comparison is against the reading she was last
+    // HANDED (`#lastSnapshotDeliveredIdentity`, written by every delivery that rendered a block): a steer carrying the same
+    // content adds a second copy of a picture she already has in the same turn, so the block is dropped and the count says
+    // so by name (`worldStateDelivery.withheld.restated`) rather than going missing. A steer whose reading has MOVED since
+    // that delivery is the one case where the copy is news, and it is stated in full.
+    // </p>
+    const reading = this.#worldStateReading();
+    const identity = this.#lastSnapshot === undefined ? undefined : readingContentIdentity(this.#lastSnapshot);
+    const restated =
+      reading !== undefined &&
+      identity !== undefined &&
+      (identity === this.#lastSnapshotDeliveredIdentity || identity === this.#lastSteerStatedIdentity);
+    const composed = composeFactBrief({
+      inputs: [],
+      snapshot: reading,
+      // A receipt is rendered by `receiptLine` (`actionId`, state, the Mod's own `reasonCode` and evidence detail),
+      // so the obstruction arrives as the Mod's words rather than as a Host paraphrase of them.
+      events: steerable.filter((fact) => this.#owesTurn(fact)),
+      locale: DEFAULT_BRIEF_LOCALE,
+    });
+    if (restated) this.#worldStateWithheldRestated += 1;
+    else if (identity !== undefined) {
+      this.#worldStateStated += 1;
+      this.#lastSteerStatedIdentity = identity;
+    }
     return Object.freeze({
       batchId: randomUUID(),
       disposition: "steer" as const,
@@ -3779,18 +3840,10 @@ export class CompanionEventPump {
       inputs: Object.freeze([]),
       facts: Object.freeze(deliveredFacts),
       events: Object.freeze([]),
-      // A steer states the world it is already carrying: the turn it joins has `<world-state>` from its own batch, and
-      // this one repeats the same reading rather than leaving the model with no state at all - which is also why it
-      // brought no observation: it opened no turn, and the settlement that counts empty turns reads the batch that DID.
+      // A steer that states a reading states the one it is carrying; one that withholds it opened no turn and lost nothing -
+      // the batch that DID open the turn is the one the settlement counts.
       broughtObservation: false,
-      text: composeFactBrief({
-        inputs: [],
-        snapshot: this.#worldStateReading(),
-        // A receipt is rendered by `receiptLine` (`actionId`, state, the Mod's own `reasonCode` and evidence detail),
-        // so the obstruction arrives as the Mod's words rather than as a Host paraphrase of them.
-        events: steerable.filter((fact) => this.#owesTurn(fact)),
-        locale: DEFAULT_BRIEF_LOCALE,
-      }),
+      text: restated ? withoutWorldStateBlock(composed) : composed,
     });
   }
 
@@ -3995,6 +4048,10 @@ export class CompanionEventPump {
     // this exact text has been re-stated - so the parenthetical beside a re-stated reading grows while the reading does not.
     if (this.#lastSnapshot !== undefined) {
       this.#lastSnapshotDeliveredIdentity = readingContentIdentity(this.#lastSnapshot);
+      // A NEW TURN'S BLOCK SUPERSEDES WHAT A STEER SAID IN THE PREVIOUS ONE: the next steer must be allowed to state the
+      // reading it carries, because this delivery is the one that now owns it.
+      this.#lastSteerStatedIdentity = undefined;
+      this.#worldStateStated += 1;
       if (broughtObservation) this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
     }
 
@@ -4214,11 +4271,29 @@ export class CompanionEventPump {
   }
 
   /** Whether a stale reading can be refreshed at all here, and what asking has done (`WorldStateRefreshReading`). */
-  public get worldStateRefresh(): WorldStateRefreshReading {
-    return Object.freeze({
+  public get worldStateRefresh(): WorldStateRefreshReading {    return Object.freeze({
       attached: this.#worldStateRefreshPort !== undefined,
       probes: this.#worldStateRefreshProbes,
       refusals: this.#worldStateRefreshRefusals,
+    });
+  }
+
+  /**
+   * What the deliveries of this session have said about the world, and what they withheld instead.
+   *
+   * `stated` counts the blocks a delivery rendered, `withheld.restated` the steers whose block was dropped because the turn
+   * already carried that exact reading (`takeSteerableOnly`). Nothing is silently missing: a delivery that says no world is
+   * either one that had no reading yet or one counted here.
+   */
+  public get worldStateDelivery(): Readonly<{
+    stated: number;
+    withheld: Readonly<{ restated: number }>;
+    newest: number | undefined;
+  }> {
+    return Object.freeze({
+      stated: this.#worldStateStated,
+      withheld: Object.freeze({ restated: this.#worldStateWithheldRestated }),
+      newest: this.#lastSnapshot?.revision,
     });
   }
 
@@ -5221,6 +5296,93 @@ export function factContentIdentity(fact: WorldFact): string {
  */
 export function readingContentIdentity(fact: WorldFact): string {
   return canonicalFactJson(fact.payload);
+}
+
+/**
+ * A delivery's text with its `<world-state>` block removed, for the one delivery that must not re-state a reading.
+ *
+ * <p>
+ * ONE CALLER. `takeSteerableOnly` drops the block of a steer whose reading the running turn already carries, and the block
+ * is a paragraph inside the composed text, so the text is composed by the product's one composer and the block is taken out
+ * by its own markup. That is a strip, which this repository generally refuses - and it is here because the alternative was
+ * worse: passing `snapshot: undefined` makes the composer print "世界：尚未收到观察", which is a claim about the Host rather
+ * than about the world, and a steer is the last place that lie should appear.
+ * </p>
+ * <p>
+ * The block is the only part removed. Speech, `<world-facts>` and `<execution-result>` are the steer's own content and stay
+ * byte-identical, which is what the gate `a_prompt_states_an_older_world_than_it_knows` reads: a withheld block leaves no
+ * revision in the text at all rather than a smaller one.
+ * </p>
+ */
+function withoutWorldStateBlock(text: string): string {
+  return text.replace(/<world-state>\n?[\s\S]*?<\/world-state>\n?/gu, "").trimEnd();
+}
+
+/**
+ * Where a reading sits in the world's own day: the game date and the minute of it, as one ordinal.
+ *
+ * <p>
+ * WHY A READING NEEDS A CURRENCY OF ITS OWN. `revision` is the Mod's ACTION-TRANSACTION counter
+ * (`farmhandexecutioncontroller.cs:1779`): it is minted when a handler is dispatched or a receipt is published, and it does
+ * NOT move when the world does. So two observations of one farm an hour apart both carry `revision 46`, and the pump's
+ * guard - which compared `fact.revision < previous.revision` - could not tell which of the two pictures was the newer one.
+ * Measured 2026-11-18 (`round76`): `世界（revision 46，刚刚更新）` printed FOUR times from 07:20 while the clock walked to
+ * 08:20, each time labelled "just updated", and an equal-revision reading with older content replaced the newer one in
+ * `#lastSnapshot`. That is a stale world wearing the word "current" - the same class as a bag count frozen after planting.
+ * </p>
+ * <p>
+ * WHY THE GAME CLOCK IS THE CURRENCY THAT CANNOT GO BACKWARDS. Within one save the clock only advances: it runs
+ * `06:00 -> 26:00` and then the day advances and the clock restarts at `06:00`, so the DAY is the monotone half and the
+ * minute is the tie-break inside it - never the other way round. That ordering is the product's own (`formatGameClock`
+ * renders the same day and the same late-night wrap), and it is a fact the Mod reads straight off `Game1` rather than a
+ * number any layer of this Host mints, so no counter inside the Host can move it.
+ * </p>
+ * <p>
+ * `undefined` is NO CLAIM: the world-not-ready snapshot publishes zeroes, and a currency that read `0` as "older than
+ * everything" would refuse the reading that says the world is gone. A comparison without a currency on both sides falls
+ * back to the counter it replaces, which is the behaviour that shipped before this function existed.
+ * </p>
+ */
+export function readingClockOrdinal(payload: unknown): number | undefined {
+  if (payload === null || typeof payload !== "object") return undefined;
+  const record = payload as Readonly<Record<string, unknown>>;
+  const day = record.dayOfMonth;
+  const season = record.seasonIndex;
+  const year = record.year;
+  const minutes = record.timeOfDay;
+  if (
+    typeof day !== "number" ||
+    typeof season !== "number" ||
+    typeof year !== "number" ||
+    typeof minutes !== "number" ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(season) ||
+    !Number.isFinite(year) ||
+    !Number.isFinite(minutes) ||
+    day < 1 ||
+    season < 0 ||
+    year < 1 ||
+    minutes < 0
+  )
+    return undefined;
+  // 3000 is above the clock's own maximum (26:00 = 2600), so a minute can never borrow into the next day.
+  const absoluteDay = ((year - 1) * 4 + season) * 28 + (day - 1);
+  return absoluteDay * 3000 + minutes;
+}
+
+/**
+ * Whether `next` describes an OLDER world than `previous`, in the reading's own currency first and the counter second.
+ *
+ * The equality case is the defect this exists for: equal revisions with an older clock is a reading from before the one
+ * already held, and it must not replace it. Equal clocks fall through to the revision, so a warp or an action inside one
+ * clock minute is still ordered the way it always was.
+ */
+export function readingIsOlderThan(next: WorldFact, previous: WorldFact): boolean {
+  const nextClock = readingClockOrdinal(next.payload);
+  const previousClock = readingClockOrdinal(previous.payload);
+  if (nextClock !== undefined && previousClock !== undefined && nextClock !== previousClock)
+    return nextClock < previousClock;
+  return next.revision < previous.revision;
 }
 
 /**
