@@ -473,13 +473,23 @@ public sealed class FarmhandBodyProgramController
             }
             if (admissionResult is BodyNodeAdmissionRejectedResult rejected)
             {
-                this.authority.TryRejectAdmission(rejected.Challenge, rejected.Code);
+                this.TryReject(programId, node, rejected.Challenge, rejected.Code, null);
                 continue;
             }
             if (admissionResult is not BodyNodeAdmissionGrantedResult granted || this.executor is null) continue;
             BodyProgramControllerResult<HostAdmissionGrant> consumed = this.authority.TryConsumeHostGrant(granted.Grant);
             if (!consumed.IsSuccess || consumed.Value is null)
             {
+                // AN ANSWER THAT WAS TAKEN IS AN ANSWER THAT WILL NOT COME AGAIN: `TryTakeResult` removed it on its way
+                // out, so `continue` here is a node waiting for the next answer to something nobody will ask again.
+                //
+                // Past the node's own deadline the expiry settlement is the only forward path there is, and it is not
+                // optional: a node left `AwaitingHostAdmission` after its deadline holds the single-flight lock on the
+                // one embodied actor for the rest of the session. Measured 2026-11-18: `n01` of `plan_346` collided with
+                // Lewis's cutscene, its 60 s deadline passed at 23:05:21, the Host's late grant arrived at 23:05:23 and
+                // was refused `DeadlineExpired` - and the node then held the body for three in-game hours, refusing
+                // `plan_347` twice (`held_by=body_program:plan_346_…`) until the companion passed out at 02:00.
+                if (this.TrySettleExpiredAdmission(programId, node)) return;
                 this.Diagnose($"grant_not_consumed;program={programId};node={node.NodeId};code={consumed.Code}");
                 continue;
             }
@@ -556,11 +566,36 @@ public sealed class FarmhandBodyProgramController
         // The challenge is the settlement's own argument: the authority accepts a rejection only for the exact tuple it
         // minted, so nothing is settled unless the object that was SENT is still here to be presented.
         if (!this.admissionChallenges.TryGetValue(key, out NodeAdmissionChallenge? asked)) return false;
+        // IT IS KEPT UNTIL THE REJECTION PROVES ITSELF, and that ordering is the difference between a retry and a strand.
+        // Measured 2026-11-18: this dropped the challenge first, the refusal below was discarded, and the next pass had
+        // neither an answer to take nor a challenge to present - so `n01` could not be settled by anything, for three
+        // in-game hours, while its program held the only body.
+        if (!this.TryReject(programId, node, asked, "deadline_expired", refusalDetail)) return false;
         this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs};detail={refusalDetail ?? "none"}");
         this.admissionChallenges.Remove(key);
         this.admissionAttachmentGenerations.Remove(key);
-        this.authority.TryRejectAdmission(asked, "deadline_expired", refusalDetail);
         return true;
+    }
+
+    /// <summary>
+    /// Records one node rejection and REPORTS the authority's answer, so a rejection the journal refused is a line in the
+    /// log instead of a node that quietly stops moving. True means the node is now <c>Rejected</c>.
+    ///
+    /// <para>
+    /// The refusal is the same defect family as every other unnamed answer in this pump: `TryRejectAdmission` can answer
+    /// `InvalidInput` (a code outside the allowlist, or a journal that no longer holds the tuple this pump minted) and
+    /// `PersistenceWriteFailed`, and both leave the node exactly where it was. Discarding that answer
+    /// is what made the measured strand invisible - the log said the deadline was settled, and nothing said it was not.
+    /// The journal's own last persistence refusal travels with the line, because for the write failure it is the only
+    /// sentence that names the rule which refused.
+    /// </para>
+    /// </summary>
+    private bool TryReject(string programId, BodyProgramJournalNode node, NodeAdmissionChallenge challenge, string code, string? refusalDetail)
+    {
+        BodyProgramControllerResult<NodeAdmissionChallenge> rejected = this.authority.TryRejectAdmission(challenge, code, refusalDetail);
+        if (rejected.IsSuccess) return true;
+        this.Diagnose($"admission_rejection_refused;program={programId};node={node.NodeId};code={code};answer={rejected.Code};journal_refusal={this.authority.LastPersistenceRefusal ?? "none"}");
+        return false;
     }
 
     /// <summary>
@@ -589,8 +624,14 @@ public sealed class FarmhandBodyProgramController
     private bool WaitOutTheHold(string programId, BodyProgramJournalNode node, BodyProgramHold met)
     {
         if (node.DerivedDeadlineMs is not { } deadlineMs) return false;
-        if (deadlineMs < this.NowMs()) return this.TrySettleExpiredAdmission(programId, node, met.Evidence);
-        this.DiagnoseHeld(programId, node, met, deadlineMs);
+        if (deadlineMs >= this.NowMs())
+        {
+            this.DiagnoseHeld(programId, node, met, deadlineMs);
+            return true;
+        }
+        this.TrySettleExpiredAdmission(programId, node, met.Evidence);
+        // THE WAIT IS OVER EITHER WAY. Past the watchdog there is nothing left to wait FOR, so falling through on a
+        // refused settlement would hand the node to the cadence window and then to a world that is still holding it.
         return true;
     }
 

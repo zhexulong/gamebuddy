@@ -527,7 +527,18 @@ public sealed class OpenBodyProgramJournalAuthority
     /// </param>
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code, string? refusalDetail = null)
     {
-        if (!IsMutable || challenge is null || !BodyProgramValidation.IsValidRejectionCode(code))
+        // A REJECTION MUST BE WRITABLE WHEREVER AN ADMISSION COULD BE MINTED, and that is a wider question than "may a new
+        // program be submitted". `IsMutable` is the SUBMIT gate: it is false for a journal whose neighbour already holds
+        // an unknown dispatch, while that same journal still mints challenges (`SelectStartCandidate` waives recovery for a
+        // program that is not itself in recovery) and still consumes grants. Every other execution-boundary seam
+        // - consume, begin-dispatch, complete, settle-recovery-required - asks `MayOperateOnPrograms`; this one asked the
+        // narrower question, so in exactly that journal shape an admitted node could not be rejected at all.
+        //
+        // Measured 2026-11-18 (`round76`): `n01` of `plan_346` was admitted, collided with Lewis's cutscene, and its
+        // deadline settlement was answered `InvalidInput` here and discarded. The node stayed `AwaitingHostAdmission` for
+        // three in-game hours, holding the one embodied actor, and every later program was refused
+        // `held_by=body_program:plan_346_…` until the companion passed out at 02:00.
+        if (!MayOperateOnPrograms || challenge is null || !BodyProgramValidation.IsValidRejectionCode(code))
             return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == challenge.ProgramId);
         if (program is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NotFound);
