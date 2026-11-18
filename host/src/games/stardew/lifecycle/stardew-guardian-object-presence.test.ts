@@ -14,7 +14,7 @@ const NAMES = Object.freeze({
 });
 
 /** The declared answer vocabulary; every pair of them must have a defined verdict. */
-const ANSWERS: readonly StardewGuardianNamedObjectAnswer[] = ["opened", "not_found", "unclassified"];
+const ANSWERS: readonly StardewGuardianNamedObjectAnswer[] = ["opened", "not_found", "unclassified", "unmeasured"];
 
 function answeringProbe(
   playerJob: StardewGuardianNamedObjectAnswer,
@@ -54,6 +54,16 @@ test("every pair of OS answers has the conservative verdict, and one absent obje
     "not_found:unclassified": "unverifiable",
     "unclassified:not_found": "unverifiable",
     "unclassified:unclassified": "unverifiable",
+    // The probe could not run, so neither object was asked about. It is not a
+    // statement about either of them, and it wins over every pair: a probe that
+    // never ran cannot have seen one object present and the other gone.
+    "unmeasured:opened": "unmeasured",
+    "unmeasured:not_found": "unmeasured",
+    "unmeasured:unclassified": "unmeasured",
+    "unmeasured:unmeasured": "unmeasured",
+    "opened:unmeasured": "unmeasured",
+    "not_found:unmeasured": "unmeasured",
+    "unclassified:unmeasured": "unmeasured",
   });
   const examined: string[] = [];
   for (const playerJob of ANSWERS) {
@@ -70,11 +80,13 @@ test("every pair of OS answers has the conservative verdict, and one absent obje
   assert.deepEqual([...examined].sort(), Object.keys(expected).sort());
 });
 
-test("a probe that cannot answer is unverifiable rather than absent", async () => {
+test("a probe that cannot answer says so, rather than reading as a verdict about the objects", async () => {
   const verdict = await probeStardewGuardianObjects(async () => {
     throw new Error("windows_guardian_object_probe_unavailable");
   }, NAMES);
-  assert.deepEqual(verdict, { presence: "unverifiable", playerJob: "unclassified", lease: "unclassified" });
+  // `unmeasured`, not `unverifiable`: nothing was asked about either object, and the
+  // caller must be able to name that rather than report them as still owned.
+  assert.deepEqual(verdict, { presence: "unmeasured", playerJob: "unmeasured", lease: "unmeasured" });
 });
 
 test("an answer outside the declared vocabulary reads as unclassified, never as absence", async () => {

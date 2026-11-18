@@ -50,6 +50,38 @@ test("a name outside the Guardian's own grammar is never probed and is unclassif
   assert.deepEqual(verdict, { playerJob: "unclassified", lease: "unclassified" });
 });
 
+/**
+ * The blocked-measurement case, which used to be indistinguishable from a held object.
+ *
+ * The probe's transport is one PowerShell 5.1 process that compiles its C# body through
+ * the in-box `csc.exe` (`Add-Type`); a policy that forbids that binary makes the child
+ * exit non-zero, which reaches this layer as no output at all. A `SystemRoot` naming no
+ * installation is the same shape one step earlier: the resolved executable does not
+ * exist, the spawn fails, and the probe never gets to ask about either object. Both must
+ * read `unmeasured` - "we could not check" - and never as an answer about the objects.
+ */
+test("a probe whose measurement vehicle cannot run reports unmeasured, never an answer about the objects", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only in-box PowerShell resolution");
+  const saved = {
+    SystemRoot: process.env.SystemRoot,
+    SYSTEMROOT: process.env.SYSTEMROOT,
+    windir: process.env.windir,
+  };
+  try {
+    for (const name of ["SystemRoot", "SYSTEMROOT", "windir"])
+      process.env[name] = "C:\\__gamebuddy_no_such_installation__";
+    assert.deepEqual(await probeWindowsStardewGuardianObjects(freshNames("NoVehicle")), {
+      playerJob: "unmeasured",
+      lease: "unmeasured",
+    });
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test("the probe reports the objects the fixture holds as opened, and gone after it exits", async (t) => {
   if (!requireFixture(t)) return;
   const names = freshNames("Held");

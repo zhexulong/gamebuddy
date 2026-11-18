@@ -67,27 +67,36 @@ export function classifyGuardianObjectWin32Error(win32Error: number): StardewGua
 }
 
 /**
- * The production probe. It never throws: a missing PowerShell, a spawn failure,
- * a timeout, a non-zero exit, unreadable output or a malformed name are all
- * `unclassified`, because every one of them is a probe that did not measure -
- * not a measurement of absence.
+ * The production probe. It never throws.
+ *
+ * A missing PowerShell, a spawn failure, a timeout, a non-zero exit or no output at
+ * all are `unmeasured`: the probe could not run, so neither object was asked about.
+ * That is the answer a blocked in-box `csc.exe` produces - PowerShell 5.1's
+ * `Add-Type` compiles this script through it - and it is deliberately NOT
+ * `unclassified`, which would claim an answer about an object the script never
+ * reached. A malformed name, and an answer the OS gave that cannot be classified,
+ * stay `unclassified`: those are statements about the objects, not about the probe.
  */
 export const probeWindowsStardewGuardianObjects: StardewGuardianNamedObjectProbe = runProbe;
 
 async function runProbe(
   names: StardewGuardianNamedObjectNames,
 ): Promise<Readonly<{ playerJob: StardewGuardianNamedObjectAnswer; lease: StardewGuardianNamedObjectAnswer }>> {
+  const unmeasured = Object.freeze({
+    playerJob: "unmeasured" as StardewGuardianNamedObjectAnswer,
+    lease: "unmeasured" as StardewGuardianNamedObjectAnswer,
+  });
   const unclassified = Object.freeze({
     playerJob: "unclassified" as StardewGuardianNamedObjectAnswer,
     lease: "unclassified" as StardewGuardianNamedObjectAnswer,
   });
-  if (process.platform !== "win32") return unclassified;
+  if (process.platform !== "win32") return unmeasured;
   if (!GUARDIAN_OBJECT_NAME.test(names.playerJobName) || !GUARDIAN_OBJECT_NAME.test(names.leaseName))
     return unclassified;
   const powershell = resolveWindowsPowerShell();
-  if (powershell === undefined) return unclassified;
+  if (powershell === undefined) return unmeasured;
   const output = await runEncodedScript(powershell, names);
-  if (output === undefined) return unclassified;
+  if (output === undefined) return unmeasured;
   return Object.freeze({
     playerJob: answerFromOutput(output, "player_job"),
     lease: answerFromOutput(output, "lease"),

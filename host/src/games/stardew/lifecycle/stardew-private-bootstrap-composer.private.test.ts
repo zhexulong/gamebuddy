@@ -6192,6 +6192,31 @@ test("a Guardian object that exists but cannot be opened releases nothing and is
   await assert.rejects(nextLaunch(root), /stardew_bootstrap_registration_held/u);
 });
 
+test("a probe that could not run is named as such and still refuses the next launch", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const held = await heldTerminalAttempt(harness, root);
+
+  // A Host whose measurement vehicle cannot run - a blocked in-box `csc.exe` behind
+  // PowerShell 5.1's `Add-Type`, a policy that forbids the interpreter - says nothing
+  // about the two objects, so nothing may be released. It is reported by its own name,
+  // because "we could not check" and "the objects are still there" ask the player for
+  // different things even though both refuse the next launch.
+  const report = await harness.testCore.reconcileHeldBootstrapRegistration(root, async () => {
+    throw new Error("windows_guardian_object_probe_unavailable");
+  });
+
+  assert.deepEqual(report.records, [
+    { bootstrapCorrelation: held.bootstrapCorrelation, outcome: "kept_probe_unavailable", finalisation: null },
+  ]);
+  assert.equal(report.released, 0);
+  assert.equal(report.finalised, 0);
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+    bootstrapCorrelation: held.bootstrapCorrelation,
+  });
+  await assert.rejects(nextLaunch(root), /stardew_bootstrap_registration_held/u);
+});
+
 test("an empty root reports a counted zero, and a pointer that names no record is nothing to do", async () => {
   const harness = createHarness();
   assert.deepEqual(

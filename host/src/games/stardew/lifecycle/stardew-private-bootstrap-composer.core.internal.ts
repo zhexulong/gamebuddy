@@ -1584,8 +1584,19 @@ export type StardewBootstrapRegistrationReconcileOutcome =
   | "finalised"
   /** Both objects opened: the attempt still owns them, whichever state its record is in. */
   | "kept_objects_present"
-  /** One object missing, or any answer that was not a measurement. */
+  /** One object missing, or any answered object the probe could not classify. */
   | "kept_presence_unverifiable"
+  /**
+   * The probe could not run at all, so neither object was ever asked about.
+   *
+   * It is kept apart from `kept_objects_present` and `kept_presence_unverifiable`
+   * because the player has to do something different about it: a present object is
+   * the previous attempt's Guardian still holding the lease and the player Job,
+   * while this one is a Host that could not find out - a blocked in-box compiler, a
+   * PowerShell the policy does not allow - and the next launch is refused either
+   * way. Only the name of the condition distinguishes them.
+   */
+  | "kept_probe_unavailable"
   /** The registration does not name this attempt, or could not be read at all. */
   | "kept_not_bound"
   /** The owner record could not be read or validated. */
@@ -1658,8 +1669,9 @@ export type StardewBootstrapRegistrationReconcileReport = Readonly<{
  *
  * Its authority is bounded by ONE measurement: the presence verdict for the two
  * OS objects the attempt's Guardian binding names. Only `proven_dead` (both
- * `not_found`) may move a record; `present` and `unverifiable` leave everything
- * exactly as it was, whichever state the record is in.
+ * `not_found`) may move a record; `present`, `unverifiable` and `unmeasured` leave
+ * everything exactly as it was, and each reports its own outcome so a reader can
+ * tell a held object from a probe that never ran.
  *
  * A terminal record is released, not finalised: this pass releases its
  * BOOKKEEPING and never stands in for `containedRuntimeTeardown.settle`, which
@@ -1746,6 +1758,7 @@ async function reconcileHeldBootstrapAttempt(
     leaseName: record.guardian.leaseName,
   });
   if (verdict.presence === "present") return reconcileRecord(bootstrapCorrelation, "kept_objects_present");
+  if (verdict.presence === "unmeasured") return reconcileRecord(bootstrapCorrelation, "kept_probe_unavailable");
   if (verdict.presence === "unverifiable") return reconcileRecord(bootstrapCorrelation, "kept_presence_unverifiable");
   if (!isTerminalOwnerState(record.state)) return await finaliseAbsentAttempt(root, bootstrapCorrelation, record);
   try {

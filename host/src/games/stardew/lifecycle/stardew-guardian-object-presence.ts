@@ -15,16 +15,23 @@
 
 /**
  * The three answers the OS can give about one named object, already classified
- * against the exact Win32 result that produced them.
+ * against the exact Win32 result that produced them, plus the one answer that is
+ * not about the object at all.
  *
  * `opened` and `not_found` are facts about the object. Everything else the OS can
  * say - access denied because the object's DACL belongs to another principal, a
- * name that resolves to a different object kind, a probe that timed out, a child
- * that printed something unreadable - is `unclassified`, and `unclassified` is
- * NEVER treated as absence: a Job object that exists but cannot be opened still
- * owns the player's world.
+ * name that resolves to a different object kind, a child that printed something
+ * unreadable - is `unclassified`, and `unclassified` is NEVER treated as absence:
+ * a Job object that exists but cannot be opened still owns the player's world.
+ *
+ * `unmeasured` is a different fact from `unclassified`: the probe could not run at
+ * all - its own measurement vehicle is unavailable, or the process it needs refuses
+ * to start - so neither object was ever asked about. It exists because the two read
+ * the same to a player and ask for different things: `unclassified`/`present` means
+ * a previous attempt's Guardian objects are still owned by somebody, while
+ * `unmeasured` means GameBuddy could not find out whether they are.
  */
-export type StardewGuardianNamedObjectAnswer = "opened" | "not_found" | "unclassified";
+export type StardewGuardianNamedObjectAnswer = "opened" | "not_found" | "unclassified" | "unmeasured";
 
 export type StardewGuardianNamedObjectNames = Readonly<{ playerJobName: string; leaseName: string }>;
 
@@ -39,9 +46,9 @@ export type StardewGuardianNamedObjectProbe = (
 
 /**
  * The one presence verdict a reconcile may act on: `absent` releases the held
- * bootstrap pointer, `present` and `unverifiable` leave it untouched.
+ * bootstrap pointer, every other verdict leaves it untouched.
  */
-export type StardewGuardianObjectPresence = "absent" | "present" | "unverifiable";
+export type StardewGuardianObjectPresence = "absent" | "present" | "unverifiable" | "unmeasured";
 
 export type StardewGuardianObjectPresenceVerdict = Readonly<{
   presence: StardewGuardianObjectPresence;
@@ -56,8 +63,10 @@ export type StardewGuardianObjectPresenceVerdict = Readonly<{
  * The combination is deliberately asymmetric: `absent` needs BOTH objects to be
  * gone, because the Guardian drops the lease and the player Job at different
  * moments and one absent object proves nothing about the other. `present` needs
- * both to be openable. Every other pair - one present and one absent, or any
- * `unclassified` - is `unverifiable`, which releases nothing.
+ * both to be openable. `unmeasured` is the probe failing to run at all, and it
+ * wins over every other pair because a probe that never ran cannot have seen one
+ * object present and the other gone. Every other pair - one present and one
+ * absent, or any `unclassified` - is `unverifiable`, which releases nothing.
  */
 export async function probeStardewGuardianObjects(
   probe: StardewGuardianNamedObjectProbe,
@@ -69,8 +78,9 @@ export async function probeStardewGuardianObjects(
   } catch {
     // A probe that could not answer says nothing about the objects. Reading that
     // as absence is the one mistake that would hand a live player world's
-    // ownership away, so a thrown probe means "unverifiable" for both.
-    answers = { playerJob: "unclassified", lease: "unclassified" };
+    // ownership away, so a thrown probe is `unmeasured` for both: a fact about the
+    // probe, not a verdict about the objects.
+    answers = { playerJob: "unmeasured", lease: "unmeasured" };
   }
   const playerJob = normalizeAnswer(answers?.playerJob);
   const lease = normalizeAnswer(answers?.lease);
@@ -81,6 +91,7 @@ function combinePresence(
   playerJob: StardewGuardianNamedObjectAnswer,
   lease: StardewGuardianNamedObjectAnswer,
 ): StardewGuardianObjectPresence {
+  if (playerJob === "unmeasured" || lease === "unmeasured") return "unmeasured";
   if (playerJob === "not_found" && lease === "not_found") return "absent";
   if (playerJob === "opened" && lease === "opened") return "present";
   return "unverifiable";
@@ -88,5 +99,5 @@ function combinePresence(
 
 /** Anything outside the declared answers is unreadable, which is not absence. */
 function normalizeAnswer(answer: unknown): StardewGuardianNamedObjectAnswer {
-  return answer === "opened" || answer === "not_found" ? answer : "unclassified";
+  return answer === "opened" || answer === "not_found" || answer === "unmeasured" ? answer : "unclassified";
 }
