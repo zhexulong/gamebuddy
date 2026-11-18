@@ -34,6 +34,14 @@
 //
 // Debt runners that are still debt are simply not findings, so this gate never
 // asks the migrating lane to update it. The baselines only ever grow.
+
+export const gateDeclaration = {
+  id: "audit-stardew-native-local-runner-contract",
+  domain: "stardew",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

@@ -57,11 +57,13 @@ public sealed class BridgeSessionPublicationTests
              .Should().Equal("x", "y", "expectedQualifiedItemId", "expectedTargetId");
          pickupForage.Descriptor.Effect.Should().Be("write");
          pickupForage.Descriptor.Postcondition.Name.Should().Be("native_action_postcondition");
-         // The spatial precondition this action ENFORCES (`forage_target_out_of_range` from beyond Chebyshev 1)
-         // travels on the wire, so `plan_shape` can say it instead of the companion learning it from a refusal. Before
-         // this member existed the declaration stopped at the surface artifact and every action answered
-         // `approach_requirement_undeclared`.
-         pickupForage.Descriptor.Approach.Should().Be(new FarmhandActionApproachRequirementWire("adjacent", 1));
+         // `pickup_forage` WALKS to the item, so the wire says so and states no distance: measured `round65`, four
+         // `forage_target_out_of_range` were the only failure class in the run and one lily was never picked, because
+         // the request path refused the engine's Chebyshev-1 click radius instead of closing it. The `adjacent` shape
+         // this action used to publish is pinned on `ride_minecart` below, so the wire still proves it can carry both.
+         pickupForage.Descriptor.Approach.Should().Be(new FarmhandActionApproachRequirementWire("self_walked", null));
+         payload.Registrations.Single(registration => registration.ActionId == "ride_minecart")
+             .Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirementWire("adjacent", 1));
          payload.Registrations.Single(registration => registration.ActionId == "move_to_tile")
              .Descriptor!.Approach.Should().BeNull("an action that declares no precondition publishes none");
          payload.RuntimeRole.Should().Be("unattested");
@@ -111,11 +113,20 @@ public sealed class BridgeSessionPublicationTests
         JsonElement serializedPickupForage = serializedPayload.GetProperty("registrations")
             .EnumerateArray()
             .Single(registration => registration.GetProperty("actionId").GetString() == "pickup_forage");
-        serializedPickupForage.GetProperty("descriptor").GetProperty("approach")
+        JsonElement pickupForageApproach = serializedPickupForage.GetProperty("descriptor").GetProperty("approach");
+        pickupForageApproach.EnumerateObject().Select(property => property.Name).Should().Equal("relation");
+        pickupForageApproach.GetProperty("relation").GetString().Should().Be("self_walked");
+        // The other wire shape, still proved on this same frame: a DECLARED distance arrives as both members, and the
+        // serializer writes the name rather than dropping it. Without this pair the shape above could pass because the
+        // serializer stopped writing `withinTiles` at all.
+        JsonElement serializedRideMinecart = serializedPayload.GetProperty("registrations")
+            .EnumerateArray()
+            .Single(registration => registration.GetProperty("actionId").GetString() == "ride_minecart");
+        serializedRideMinecart.GetProperty("descriptor").GetProperty("approach")
             .EnumerateObject().Select(property => property.Name).Should().Equal("relation", "withinTiles");
-        serializedPickupForage.GetProperty("descriptor").GetProperty("approach").GetProperty("relation")
+        serializedRideMinecart.GetProperty("descriptor").GetProperty("approach").GetProperty("relation")
             .GetString().Should().Be("adjacent");
-        serializedPickupForage.GetProperty("descriptor").GetProperty("approach").GetProperty("withinTiles")
+        serializedRideMinecart.GetProperty("descriptor").GetProperty("approach").GetProperty("withinTiles")
             .GetInt32().Should().Be(1);
         JsonElement serializedMoveToTile = serializedPayload.GetProperty("registrations")
             .EnumerateArray()

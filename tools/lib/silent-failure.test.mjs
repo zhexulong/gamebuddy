@@ -1,4 +1,4 @@
-// red-proof: inject  dropping the witness-staleness arm from checkSilentFailures -> `× a declaration whose witness
+// red-proof: inject  dropping the witness-staleness arm from checkSilentFailures -> `✖ a declaration whose witness
 //   no longer matches the code is stale, not silently applied` (tools/lib/silent-failure.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

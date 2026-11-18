@@ -194,19 +194,12 @@ internal sealed partial class ExecutionManager
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt rejection)
             return rejection;
-        // The lantern is not the caller's to name: this action's own registration claims `tool:lantern`, so the handler
-        // takes the actor's lantern out of the pack and puts back the index the actor held. `tool_not_owned:lantern` is
-        // the refusal that survives, and it names the one fact the caller can act on - the pack has no lantern. The
-        // refusal this replaced blamed the actor's HAND for a tool the pack already carried, so a request that owned
-        // exactly what it asked for died on what the actor happened to be holding.
         if (!TrySelectDeclaredTool(Game1.player, "toggle_tool_light", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
         bool wasOn;
         bool isOn;
         try
         {
-            // Never toggle whatever the switch left in hand: the selection's own postcondition, in the same words the
-            // rest of the tool family uses for it.
             if (selection.Tool is not StardewValley.Tools.Lantern lantern)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             wasOn = lantern.on;
@@ -217,8 +210,6 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
-        // The receipt's `slot` is the one the SELECTION put in hand, never the number the request carried - that is the
-        // fact the caller's plan needs, and the Host's key set for this action is unchanged (`slot;was_on;is_on`).
         return isOn != wasOn
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_light_toggled", $"slot={selection.Slot};was_on={wasOn.ToString().ToLowerInvariant()};is_on={isOn.ToString().ToLowerInvariant()}")
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_light_postcondition_unavailable", $"slot={selection.Slot};was_on={wasOn.ToString().ToLowerInvariant()}");
@@ -242,15 +233,6 @@ internal sealed partial class ExecutionManager
             Game1.player.Items[slot] = null;
     }
 
-    /// <summary>
-    /// Begins the walk to a building the actor is not yet in contact with, for any facility action that
-    /// interacts with the building itself rather than with a single named tile.
-    ///
-    /// The multi-tile approach form takes the contact tiles, so a door-less building is reached from ANY face
-    /// and the footprint tile that answered is the one the arrival is re-checked against. Handing it the
-    /// published <c>x,y</c> instead would walk the actor to the collapsed <c>(-1,-1)</c> door point - a tile
-    /// outside the building - and then measure arrival against the same wrong tile.
-    /// </summary>
     private LocalExecutionReceipt TryBeginBuildingApproach(
         string requestId,
         string executionId,

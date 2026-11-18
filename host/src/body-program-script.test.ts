@@ -4,13 +4,16 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { EXPRESSION_ONLY_ACTION_IDS } from "./action-registry.js";
 import {
   BODY_YIELDING_PLAN_ACTION_IDS,
   type CompiledPlan,
   compilePlanScript,
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
+  PLAN_FORM_ACTION_IDS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_WORK_DESCRIPTION_BUDGET_CHARS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -141,15 +144,28 @@ const BUDGET_TOTAL_MS = PLAN_SCRIPT_BUDGET_MS.reduce((total, windowMs) => total 
 const TIMEOUT_CODE = `plan_script_timeout:${BUDGET_TOTAL_MS}ms:attempts=${PLAN_SCRIPT_BUDGET_MS.length}`;
 
 function refusalOf(result: CompiledPlan): string {
-  if (result.ok) assert.fail("expected a refusal");
+  if (result.status !== "refused") assert.fail(`expected a refusal, received ${result.status}`);
   return result.reasonCode;
 }
 
 /**
- * The calls a compile refused, read from the refusal they are part of.
+ * The compiler's own code for the FIRST refused call, in the two states that can carry one.
  *
- * A plan with even one refused call is refused WHOLE (`ok: false`), so there is nothing to read from an accepted answer:
- * `ok` means every step the author wrote is in the program.
+ * A plan whose every call was refused is `refused` and a plan with some refused is `partial`; both state the same code at
+ * the same position, and what differs between them is whether anything RUNS - which is `status`, not the code. So a test
+ * about the REFUSAL reads it here, and a test about whether the plan ran reads `status`. Asking `refusalOf` for a plan
+ * with one bad call and five good ones would demand the whole-batch void this contract no longer has.
+ */
+function firstRefusalOf(result: CompiledPlan): string {
+  if (result.status === "compiled") assert.fail("expected a refused call, received a plan that compiled every call");
+  return result.reasonCode;
+}
+
+/**
+ * The calls a compile refused, read from the answer that carries them.
+ *
+ * A plan with ANY refused call is `partial` or `refused` - never `compiled` - so there is nothing to read from a
+ * `compiled` answer: that state means every step the author wrote is in the program.
  */
 function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   call: number;
@@ -157,21 +173,21 @@ function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   reasonCode: string;
   missingArguments?: readonly string[];
 }>[] {
-  if (result.ok) assert.fail("expected a refusal: a plan with a refused call is refused whole");
+  if (result.status === "compiled")
+    assert.fail("expected refused calls: a plan that compiled every call has no refusals to read");
   return result.rejected;
 }
 
 /**
  * What became of every call the script wrote, on either answer.
  *
- * The four lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
+ * The three lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
  * builder calls the script made. That is the invariant `tools/check-plan-legal-fixpoint.mjs` asserts over the published
  * vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
  */
 function accountOf(result: CompiledPlan) {
   return {
     acceptedSteps: result.acceptedSteps,
-    merged: result.merged,
     noStepNeeded: result.noStepNeeded,
     dropped: result.dropped,
   };
@@ -179,7 +195,7 @@ function accountOf(result: CompiledPlan) {
 
 /** The action shape a refused builder call answered with, read from the result the materializer publishes. */
 function requirementOf(result: CompiledPlan) {
-  if (result.ok) assert.fail("expected a refusal");
+  if (result.status === "compiled") assert.fail("expected refused calls, received a plan that compiled every call");
   return result.requirement;
 }
 
@@ -190,11 +206,17 @@ function surfaceClaims(actionId: string): readonly Readonly<{ key: string; value
   return (action.resourceTemplate?.claims ?? []).map((claim) => ({ key: claim.key, value: claim.value }));
 }
 
-type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
+type PlanNode = Extract<CompiledPlan, { status: "compiled" }>["program"]["nodes"][number];
+
+/** The program a plan that RUNS carries. `refused` is the one state with nothing to run, so it is the one state this
+ *  helper fails on - a `partial` answer has a real program and a real program id. */
+function programOf(result: CompiledPlan) {
+  if (result.status === "refused") assert.fail(`expected a plan, received ${result.reasonCode}`);
+  return result.program;
+}
 
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
-  if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
-  return result.program.nodes;
+  return programOf(result).nodes;
 }
 
 /**
@@ -204,13 +226,14 @@ function nodesOf(result: CompiledPlan): readonly PlanNode[] {
  * without a plan nothing runs and no insertion means anything.
  */
 function insertionsOf(result: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
-  if (!result.ok) assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
+  if (result.status === "refused") assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
   return { inserted: result.inserted, count: result.insertedCount };
 }
 
 /** The node ids the compiler MINTED, which is the population a run's inserted-node reading joins on. */
 function insertedNodeIdsOf(result: CompiledPlan): readonly string[] {
-  if (!result.ok) assert.fail(`expected a plan beside its inserted node ids, received ${result.reasonCode}`);
+  if (result.status === "refused")
+    assert.fail(`expected a plan beside its inserted node ids, received ${result.reasonCode}`);
   return result.insertedNodeIds;
 }
 
@@ -642,7 +665,7 @@ test("the same script and snapshot compile to a byte-identical program and progr
   const first = compile(WATER_BY_DOOR, overrides);
   const second = compile(WATER_BY_DOOR, overrides);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
-  if (!(first.ok && second.ok)) assert.fail("both compiles must produce a plan");
+  if (first.status !== "compiled" || second.status !== "compiled") assert.fail("both compiles must produce a plan");
   assert.equal(planProgramId(11, first.program.nodes), planProgramId(11, second.program.nodes));
   // A different plan over the same world is a DIFFERENT program: the id is content-addressed, so the second
   // plan cannot be answered as the first one's duplicate.
@@ -709,9 +732,15 @@ builder.move_to_tile({ x: 12, y: 8 });
 builder.sleep();
 builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
 `);
-  // The refused step cannot exist in the plan - a node after `sleep` aims at a world that is gone - so nothing of this
-  // script runs, and the answer names the step that was thrown away beside the two that compiled around it.
-  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
+  // The refused step cannot exist in the plan - a node after `sleep` aims at a world that is gone - so it is the one
+  // call that does not become a node, and the answer names it beside the two that compiled.
+  assert.equal(result.status, "partial", "the walk and the sleep ran; the step after the reset could not");
+  assert.equal(firstRefusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "sleep"],
+    "the step written after the world reset is the one absent, and it is the last one she wrote",
+  );
   assert.deepEqual(rejectionsOf(result), [
     { call: 3, actionId: "cut_weeds", reasonCode: "plan_script_action_after_world_reset:cut_weeds:sleep" },
   ]);
@@ -882,7 +911,7 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
     const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`);
     if (worldResetting.includes(action.actionId)) {
       assert.equal(
-        refusalOf(result),
+        firstRefusalOf(result),
         `plan_script_action_after_world_reset:move_to_tile:${action.actionId}`,
         `${action.actionId} rebuilds the world, so no step may follow it - named here rather than dropped from the population`,
       );
@@ -962,9 +991,9 @@ test("with no published dismissal to write, the refusal keeps its name", () => {
     },
   ]);
   assert.equal(
-    refusalOf(result),
+    firstRefusalOf(result),
     `plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
-    "the code is the refusal's own, unchanged, and the step beside it did not run",
+    "the code is the refusal's own, unchanged: the compiler cannot write a dismissal the surface does not publish",
   );
   assert.deepEqual(
     accountOf(result).acceptedSteps,
@@ -999,7 +1028,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
   );
   assert.ok(pairs.length > 20, `the pair population is a real population, not ${pairs.length} pairs`);
   const expiredCode = (result: CompiledPlan): string | null =>
-    !result.ok && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
+    result.status === "refused" && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
   const deadEnds: string[] = [];
   const notMeasured: string[] = [];
   let asWritten = 0;
@@ -1011,7 +1040,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       notMeasured.push(`${yieldingId}->${dependentId}: ${pairExpired}`);
       continue;
     }
-    if (pair.ok) {
+    if (pair.status === "compiled") {
       asWritten += 1;
       continue;
     }
@@ -1026,7 +1055,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       notMeasured.push(`${yieldingId}->${dependentId}:${named}: ${remedyExpired}`);
       continue;
     }
-    if (!remedy.ok) {
+    if (remedy.status !== "compiled") {
       deadEnds.push(`${yieldingId}->${dependentId}: remedy ${named} does not compile (${remedy.reasonCode})`);
       continue;
     }
@@ -1154,7 +1183,7 @@ test("every action the surface declares day_advanced refuses a step written afte
   for (const actionId of dayAdvanced) {
     const result = compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`);
     assert.equal(
-      refusalOf(result),
+      firstRefusalOf(result),
       `plan_script_action_after_world_reset:move_to_tile:${actionId}`,
       `${actionId} declares day_advanced, so a plan may not write a node after it`,
     );
@@ -1335,7 +1364,7 @@ test("every declared argument, omitted, is refused with what it must be and wher
     for (const argument of action.arguments) {
       const subject = `${action.actionId}.${argument.name}`;
       const result = compile(callScript(action, { omit: [argument.name] }), { ...SOURCE_SNAPSHOT });
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${subject}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
@@ -1371,7 +1400,7 @@ test("a sparse snapshot changes the source, never the shape of the answer", () =
         { script: callScript(action, { omit: [argument.name] }) },
         { snapshot: sparse, actions: ACTIONS },
       );
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${action.actionId}.${argument.name}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${action.actionId}.${argument.name}: ${code}`);
@@ -1446,7 +1475,7 @@ test("a value of the wrong kind names the argument, its expectation, its source 
       const result = compile(callScript(action, { values: { [argument.name]: wrong.literal } }), {
         ...SOURCE_SNAPSHOT,
       });
-      const code = result.ok ? "accepted" : result.reasonCode;
+      const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_argument_not_canonical:${subject}:`;
       if (!code.startsWith(prefix)) {
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
@@ -1485,8 +1514,21 @@ test("a builder method is generated for exactly the lifecycles the Mod's Body Pr
   // `live_verified` is an admission, not a draft: the action really ran on the target game version and produced a
   // native receipt, so the Mod accepts it as a node. A Host gate that dropped it refused plans the Mod accepts, and
   // the companion then had no way to name those actions except one flat tool call per step.
-  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc", "express_emote"])
+  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc"])
     assert.ok(generated.includes(actionId), `${actionId} is live-verified and must be callable from a plan`);
+  // The one lifecycle-admitted action that is NOT here, and the reason is its kind rather than its rung: the registry
+  // declares `express_emote` (and `face_direction`) expression-only, so a gesture reaches the actor through its own
+  // mounted tool and this vocabulary excludes it - one route per action, never two (`action-route-gate.test.ts`).
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    assert.ok(
+      !generated.includes(actionId),
+      `${actionId} is declared expression-only, so it must not also be a plan step the model can write`,
+    );
+    assert.ok(
+      SURFACE.some((action) => action.actionId === actionId),
+      `${actionId} is declared expression-only but the Mod publishes no such action, so the exception exempts nothing`,
+    );
+  }
   // Every generated method's argument list is the surface's own declaration, name for name.
   const declared = new Map(
     SURFACE.map((action) => [action.actionId, Object.keys(action.argumentSchema ?? {})] as const),
@@ -1624,8 +1666,8 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
   const slowed = compile(burn(20_000_000));
   const slowedMs = performance.now() - slowedStartedAt;
   assert.ok(
-    slowed.ok,
-    `a ${slowedMs.toFixed(0)} ms compile of a finite script answered ${slowed.ok ? "" : slowed.reasonCode}`,
+    slowed.status === "compiled",
+    `a ${slowedMs.toFixed(0)} ms compile of a finite script answered ${slowed.status === "compiled" ? "" : slowed.reasonCode}`,
   );
   assert.equal(slowed.program.nodes.length, 1, "the step written after the burn is the program that compiled");
 
@@ -1639,7 +1681,7 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
     const startedAt = performance.now();
     const measured = compile(burn(iterations));
     elapsedMs = performance.now() - startedAt;
-    if (!measured.ok)
+    if (measured.status !== "compiled")
       assert.fail(`${iterations} iterations in ${elapsedMs.toFixed(0)} ms answered ${measured.reasonCode}`);
     assert.equal(measured.program.nodes.length, 1, `the step after a ${iterations}-iteration burn is the program`);
     iterations = Math.ceil(iterations * 1.5);
@@ -1661,7 +1703,7 @@ test("a compile slowed past a window is re-measured rather than refused as a pla
  */
 test("a script that throws answers with the engine's own message and the line it named", () => {
   const threwOf = (result: CompiledPlan) => {
-    if (result.ok) assert.fail("expected a refusal");
+    if (result.status !== "refused") assert.fail(`expected a refusal, received ${result.status}`);
     return result.threw;
   };
   const unparsed = compile("const steps = 2;\nbuilder.move_to_tile({ x: 10, y: 10 );");
@@ -2342,17 +2384,43 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
 const CATALOG_ACTIONS = planActionsFromRegistrations(CATALOG_REGISTRATIONS);
 
 /**
- * The vocabulary block read back out of the description: `family: action, action` per line, in the order it prints.
- * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
- * example - both of which end a sentence and then a colon - can be mistaken for one.
+ * One row of the vocabulary block: the action id and the argument names printed beside it, or `undefined` when the row
+ * carries no argument list at all.
  */
-function describedVocabulary(description: string): ReadonlyMap<string, readonly string[]> {
-  const vocabulary = new Map<string, readonly string[]>();
+type DescribedRow = Readonly<{ actionId: string; arguments: readonly string[] | undefined }>;
+
+/**
+ * The vocabulary block read back out of the description: `family: id(args), id(args)` per line, in the order it prints.
+ *
+ * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
+ * example - both of which end a sentence and then a colon - can be mistaken for one. A row WITHOUT parentheses is parsed
+ * rather than skipped: that shape is the defect the argument gate is written for, and a parser that demanded parentheses
+ * would report it as a missing action instead of a row that says nothing about what it takes.
+ */
+function describedVocabulary(description: string): ReadonlyMap<string, readonly DescribedRow[]> {
+  const vocabulary = new Map<string, readonly DescribedRow[]>();
   for (const line of description.split("\n")) {
     const match = /^([a-z][a-z0-9_]*): (.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     assert.equal(vocabulary.has(match[1]), false, `the description lists the family ${match[1]} twice`);
-    vocabulary.set(match[1], match[2].split(/,\s*/u));
+    const rows: DescribedRow[] = [];
+    for (const row of match[2].matchAll(/([a-z][a-z0-9_]*)(?:\(([^)]*)\))?/gu))
+      rows.push(
+        Object.freeze({
+          actionId: row[1]!,
+          arguments: row[2] === undefined ? undefined : Object.freeze(row[2] === "" ? [] : row[2].split(",")),
+        }),
+      );
+    // A row this reader cannot put back together is a row it would silently stop covering, so the whole line must be the
+    // list of calls it was read as - the same `id(a,b), id2()` the renderer prints.
+    assert.equal(
+      rows
+        .map((row) => (row.arguments === undefined ? row.actionId : `${row.actionId}(${row.arguments.join(",")})`))
+        .join(", "),
+      match[2],
+      `${match[1]}'s vocabulary line is not the list of builder calls this gate reads`,
+    );
+    vocabulary.set(match[1], Object.freeze(rows));
   }
   return vocabulary;
 }
@@ -2363,7 +2431,7 @@ test("the plan description names every action this session publishes, under the 
   assert.ok(described.size > 0, "the description carries the action vocabulary at all");
 
   const published = new Set(CATALOG_ACTIONS.map((action) => action.actionId));
-  const describedIds = new Set([...described.values()].flat());
+  const describedIds = new Set([...described.values()].flat().map((row) => row.actionId));
 
   // Direction 1: a published action the description never names. This is the `advance_day` defect - the companion held
   // a description that claimed the whole surface and could not read a single name out of it.
@@ -2388,12 +2456,194 @@ test("the plan description names every action this session publishes, under the 
   );
   for (const [familyId, members] of described)
     assert.deepEqual(
-      [...members].sort(),
+      members.map((row) => row.actionId).sort(),
       CATALOG_ACTIONS.filter((action) => action.familyId === familyId)
         .map((action) => action.actionId)
         .sort(),
       `${familyId} lists exactly its own actions`,
     );
+});
+
+/**
+ * Why one vocabulary row does not say what its action takes: `[]` when it does.
+ *
+ * THE POPULATION IS THE DECLARATION and the reading is the RENDERED TEXT, which is what makes this a gate rather than a
+ * registration step: `planActionVocabularyText` and `stardew_plan_shape` answer from the same `PublishedPlanAction`, so a
+ * row that prints fewer arguments than its action declares means the two routes to one fact have drifted apart - and the
+ * companion spends a turn on `plan_shape` to find out what the row did not say.
+ *
+ * Measured `round54`: her own thinking held "Sleep action is world_lifecycle builder.sleep - args? Probably x,y? ... that
+ * costs a turn ... Simpler: speak", and twelve turns of speech plus a 02:00 pass-out followed. Earlier rounds did sleep
+ * when they asked (`round41` executed `sleep` 43 times, `pass_out 0`), so the fact was in the declaration all along and
+ * only the turn was missing.
+ */
+function vocabularyRowsMissingArguments(
+  rendered: readonly PublishedPlanAction[],
+  declaration: readonly PublishedPlanAction[],
+): readonly string[] {
+  const described = describedVocabulary(planWorkDescription(rendered));
+  const rows = new Map([...described.values()].flat().map((row) => [row.actionId, row] as const));
+  const findings: string[] = [];
+  for (const action of declaration) {
+    const row = rows.get(action.actionId);
+    const declared = action.arguments.map((argument) => argument.name);
+    if (row === undefined) {
+      findings.push(`action_row_missing:${action.actionId}`);
+      continue;
+    }
+    // An action that takes nothing still prints empty parentheses, so a bare id is a row that never said so.
+    if (row.arguments === undefined) {
+      findings.push(`action_row_omits_argument_list:${action.actionId}`);
+      continue;
+    }
+    for (const argument of declared)
+      if (!row.arguments.includes(argument))
+        findings.push(`action_row_omits_declared_arguments:${action.actionId}:${argument}`);
+    for (const argument of row.arguments)
+      if (!declared.includes(argument))
+        findings.push(`action_row_names_undeclared_argument:${action.actionId}:${argument}`);
+    if (
+      row.arguments.some((argument, index) => argument !== declared[index]) &&
+      row.arguments.length === declared.length
+    )
+      findings.push(
+        `action_row_reorders_declared_arguments:${action.actionId}:declared=[${declared.join(",")}]:row=[${row.arguments.join(",")}]`,
+      );
+  }
+  return findings;
+}
+
+test("every vocabulary row carries the arguments its own declaration gives it", () => {
+  const described = describedVocabulary(planWorkDescription(CATALOG_ACTIONS));
+  const rows = [...described.values()].flat();
+  const withArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length > 0);
+  const withoutArguments = CATALOG_ACTIONS.filter((action) => action.arguments.length === 0);
+  // Zero population is BLOCKED rather than green: both shapes have to be in the population, or a renderer that printed
+  // `()` for everything would pass this gate by agreeing with an empty set.
+  assert.ok(rows.length > 0, "blocked: the description carries no vocabulary row, so this gate examined nothing");
+  assert.ok(
+    withArguments.length > 0,
+    "blocked: no plannable action declares an argument, so a row that omits one could not be named here",
+  );
+  assert.ok(
+    withoutArguments.length > 0,
+    "blocked: no plannable action takes nothing, so the empty-parentheses case is not in this population",
+  );
+  assert.deepEqual(
+    vocabularyRowsMissingArguments(CATALOG_ACTIONS, CATALOG_ACTIONS),
+    [],
+    `these rows do not print the arguments their declaration carries (${String(rows.length)} rows examined, ` +
+      `${String(withArguments.length)} actions with arguments, ${String(withoutArguments.length)} with none)`,
+  );
+});
+
+/**
+ * A DECLARATION THAT DECLARES AN ARGUMENT THE ROW DOES NOT PRINT is what this gate exists to name - so the falsifier feeds
+ * it one: a synthetic action is added to the declaration carrying an argument, and its row is rendered from a vocabulary
+ * whose copy of that action lost the argument. The gate must name that action and that argument, and nothing else.
+ */
+test("the argument-row gate names a declaration whose row drops the argument it declares", () => {
+  const patched: PublishedPlanAction = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_soil",
+    arguments: Object.freeze([{ name: "patchWidth", type: "integer", required: true as const }]),
+  });
+  const declared = Object.freeze([...CATALOG_ACTIONS, patched]);
+  const lossy = declared.map((action) =>
+    action.actionId === "patch_soil" ? Object.freeze({ ...action, arguments: Object.freeze([]) }) : action,
+  );
+  const findings = vocabularyRowsMissingArguments(lossy, declared);
+  assert.deepEqual(
+    findings,
+    ["action_row_omits_declared_arguments:patch_soil:patchWidth"],
+    "the gate reads the DECLARATION's arguments against the RENDERED row, so an argument only the declaration carries is named",
+  );
+});
+
+/**
+ * The fields `stardew_plan_shape`'s answer carries, and what a caller can DO with each.
+ *
+ * THE POPULATION IS THE ANSWER, NOT THIS TABLE: the gate below enumerates the keys of the actions `planShape` really
+ * returns, so a field added anywhere in `PublishedPlanAction` reaches it without an edit - and lands here as
+ * `agent_visible_field_is_our_bookkeeping:<field>` unless this table says what she can do with it. The reasons are the only
+ * place a field may be kept, and every entry expires: a reason naming a field the answer no longer carries is red, so this
+ * cannot become a list of excuses that outlived their fields.
+ *
+ * WHY THIS IS A GATE AND NOT A STYLE NOTE. `lifecycle` rode along in every shape answer until it was removed: the Mod's
+ * release maturity (`published`, `live_verified`, `experimental`) printed per action, which decides nothing she can act on -
+ * the vocabulary she is handed already contains exactly the plannable actions, and the Mod refuses the rest by name. A field
+ * of ours in an answer she reads costs her a guess about what to do with it, and it is invisible in any test that only
+ * asserts the answer's size.
+ */
+const PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON: Readonly<Record<string, string>> = Object.freeze({
+  actionId: "the name the script writes",
+  familyId: "the family `stardew_plan_shape` and the vocabulary grouping select by",
+  arguments: "the arguments the call must pass",
+  outputFacts: "the facts a later node can bind from this one",
+  resourceClaims: "the claims an admission refusal names",
+  toolRequirement: "the tool, upgrade level and range a step needs before it can run",
+  approachRequirement: "where the actor must stand first",
+  targetFamily: "the snapshot family whose rows carry this action's targets",
+});
+
+/**
+ * The fields of a shape answer that are our bookkeeping: `agent_visible_field_is_our_bookkeeping:<field>`.
+ *
+ * The answer is asked for every action in the vocabulary, so the population is the whole answer rather than one sampled
+ * action: a field carried by one family and not another is still a field she meets.
+ */
+function bookkeepingFieldsInPlanShape(actions: readonly PublishedPlanAction[]): readonly string[] {
+  const answer = planShape(actions, { actionIds: actions.map((action) => action.actionId) });
+  if (!answer.ok) return Object.freeze([`plan_shape_answer_refused:${answer.reasonCode}`]);
+  return Object.freeze(
+    [...new Set(answer.actions.flatMap((action) => Object.keys(action)))]
+      .filter((field) => PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON[field] === undefined)
+      .sort()
+      .map((field) => `agent_visible_field_is_our_bookkeeping:${field}`),
+  );
+}
+
+test("every field the shape answer carries is one a caller can act on", () => {
+  assert.ok(CATALOG_ACTIONS.length > 0, "blocked: the vocabulary is empty, so a shape answer could not carry a field");
+  const answer = planShape(CATALOG_ACTIONS, { actionIds: CATALOG_ACTIONS.map((action) => action.actionId) });
+  assert.equal(answer.ok, true, "blocked: the shape answer refused the vocabulary it was handed");
+  const carried = new Set(answer.ok ? answer.actions.flatMap((action) => Object.keys(action)) : []);
+  // An exemption must expire: a reason for a field the answer no longer carries is a rule nobody reads, and it would let a
+  // future field of the same name be silently excused.
+  assert.deepEqual(
+    Object.keys(PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON)
+      .filter((field) => !carried.has(field))
+      .sort(),
+    [],
+    "the reasons table names a field the shape answer does not carry, so its exemption outlived its field",
+  );
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(CATALOG_ACTIONS),
+    [],
+    `the shape answer carries fields she can do nothing with (${String(carried.size)} fields examined: ` +
+      `${[...carried].sort().join(", ")})`,
+  );
+});
+
+/**
+ * The falsifier: the field this gate removed is put back, and the gate must name it.
+ *
+ * It is the shape a future change takes - a field of ours rides along because it was convenient in the code that builds the
+ * answer - so the gate is driven through the SAME reading the test above uses, not through a second one.
+ */
+test("the shape-answer gate names our bookkeeping when it rides along again", () => {
+  // A distinct id on purpose: `planShape` answers one row per id, so a field added to an action whose id the vocabulary
+  // already carries would never reach the answer and this falsifier would pass by looking at the wrong row.
+  const withLifecycle = Object.freeze({
+    ...CATALOG_ACTIONS[0]!,
+    actionId: "patch_scythe",
+    lifecycle: "published",
+  }) as unknown as PublishedPlanAction;
+  assert.deepEqual(
+    bookkeepingFieldsInPlanShape(Object.freeze([...CATALOG_ACTIONS, withLifecycle])),
+    ["agent_visible_field_is_our_bookkeeping:lifecycle"],
+    "a field that is our release maturity rather than a fact she can act on is named, once, by its own name",
+  );
 });
 
 test("the description's example uses a published action and that action's own declared argument names", () => {
@@ -2406,6 +2656,78 @@ test("the description's example uses a published action and that action's own de
     [...(call[2] as string).matchAll(/([A-Za-z0-9_]+):/gu)].map((match) => match[1]),
     Object.keys(action.argumentSchema ?? {}),
     "the example's argument names are that action's declared ones, in order",
+  );
+});
+
+/**
+ * The one reading of the description budget, so the gate and its falsifier take the same predicate.
+ *
+ * The budget is `PLAN_WORK_DESCRIPTION_BUDGET_CHARS` - a declared constant in the product, not a number written here - and
+ * the answer names the size and the budget because that is the whole correction a later prose change needs.
+ */
+function descriptionOverBudget(actions: readonly PublishedPlanAction[]): string | undefined {
+  const description = planWorkDescription(actions);
+  return description.length <= PLAN_WORK_DESCRIPTION_BUDGET_CHARS
+    ? undefined
+    : `plan_description_exceeds_budget:${String(description.length)}:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}`;
+}
+
+/**
+ * THE PARTIAL CONTRACT REACHES THE ONE PLACE THE COMPANION LEARNS IT.
+ *
+ * `planStatus` is the field that stops an answer from claiming the whole plan ran, and a field nobody is told about is a
+ * field she will not read: the description is handed to her every Game turn and is the only place the answer's contract
+ * is stated. The rule it replaced - "one call the compiler refuses voids the whole plan" - was true until this contract
+ * and is false now, so it may not survive in the text that teaches the rule.
+ */
+test("the description teaches that a refused call costs its own call, and names the field that says so", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  assert.match(
+    description,
+    /planStatus: partial/u,
+    "the answer's own field has to be named where the contract is taught",
+  );
+  assert.doesNotMatch(
+    description,
+    /voids the whole plan/u,
+    "a rule no longer in force may not be taught: it is the sentence that made one typo cost the batch",
+  );
+});
+
+test("the plan description fits the budget its own constant declares", () => {
+  assert.ok(PLAN_WORK_DESCRIPTION_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
+  assert.equal(
+    descriptionOverBudget(CATALOG_ACTIONS),
+    undefined,
+    "every Game turn hands this description to the model, so a description over budget spends the context a plan is written in",
+  );
+});
+
+/**
+ * A vocabulary whose rows are longer must be refused by the SAME predicate - otherwise the budget only measures today's
+ * catalog and stops meaning anything the first time an action declares a long argument.
+ */
+test("the budget gate turns red when a vocabulary outgrows the declared budget", () => {
+  // The population is sized so that even a vocabulary printing bare ids would exceed the budget: the falsifier must be red
+  // for the CONSTANT, not for whatever the renderer happens to print today.
+  const args = Object.freeze(
+    Array.from({ length: 40 }, (_, index) => `veryLongArgumentName${String(index)}`).map((name) =>
+      Object.freeze({ name, type: "integer", required: true as const }),
+    ),
+  );
+  const heavy = Object.freeze(
+    Array.from({ length: 160 }, (_, index) =>
+      Object.freeze({
+        ...CATALOG_ACTIONS[0]!,
+        actionId: `heavy_action_${String(index)}`,
+        arguments: args,
+      }),
+    ),
+  );
+  assert.match(
+    descriptionOverBudget(heavy) ?? "",
+    new RegExp(`^plan_description_exceeds_budget:\\d+:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}$`, "u"),
+    "a description over the declared budget is refused by name, with its size and the budget it met",
   );
 });
 
@@ -2448,7 +2770,7 @@ function descriptionOfToolAfter(source: string, marker: string): string {
   return body.replace(/\\([\s\S])/gu, "$1");
 }
 
-test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes the companion", () => {
+test("stardew_plan_work says when it returns, what wakes the companion, and that the turn keeps composing", () => {
   // `plan_work` returns the moment the Mod accepts. That is only safe if the companion expects the outcome to arrive on
   // its own: measured 2026-11-03 (`round29`), a description that said nothing about a wake produced 48
   // `stardew_action_program_status` calls, `waitMs` median 30,000 (the cap), 248 s blocked.
@@ -2462,9 +2784,21 @@ test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes t
   );
   assert.match(
     planWork,
-    /end your turn; speak to the player when there is something to coordinate or share, or keep focused on the work/u,
-    "so the turn it should take is stated too without forcing chatter on every turn",
+    /Keep composing/u,
+    "and what the turn is for is stated: composing work, not one call and a wait",
   );
+  assert.match(
+    planWork,
+    /end the turn only when you have nothing more to plan/u,
+    'so "end the turn" means "no more to plan", never "I submitted something"',
+  );
+  // The sentence this replaces said "...so END YOUR TURN", which made one script a turn: measured `round66`, 40 turns
+  // bought 16 world-changing actions (2.2 requests a turn) while `round42` - whose description said nothing of the kind -
+  // bought 13.8 actions a turn. The anti-polling fact stays; the instruction to stop is the defect.
+  // Whether she says anything with that turn is the preset's (`说清就停`), not the tool's: a description says how to
+  // call the tool. Removed 2026-11-15 - "...so end your turn and speak to the player" made every settled plan owe a
+  // bubble, and `conversational-stance-gate.test.ts` is what keeps it out.
+  assert.doesNotMatch(planWork, /speak to the player/u, "and the description leaves speaking to the preset");
   assert.match(
     planWork,
     /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,
@@ -2625,7 +2959,7 @@ test("every argument plan_shape marks required is one whose omission the builder
         { script: callScript(action, { omit: [argument.name] }) },
         { snapshot: snapshot(SOURCE_SNAPSHOT), actions: ACTIONS },
       );
-      const code = omitted.ok ? "accepted" : omitted.reasonCode;
+      const code = omitted.status === "compiled" ? "accepted" : omitted.reasonCode;
       const refuses = code.startsWith(`plan_script_missing_argument:${action.actionId}.${argument.name}:`);
       if (argument.required === true && !refuses)
         faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
@@ -2668,20 +3002,19 @@ test("a shape call for several actions answers the ones that exist and names the
 });
 
 /**
- * ONE REFUSED CALL REFUSES THE PLAN, AND THE ANSWER STILL NAMES EVERY CALL SHE WROTE.
+ * ONE REFUSED CALL COSTS THE CALL IT NAMES, AND THE REST OF THE BATCH RUNS.
  *
  * This is the first of the fourteen voided batches measured in `.tmp/fork-why-slow.jsonl`, replayed verbatim: six calls,
  * two of which pass every argument and four of which omit `expectedQualifiedItemId` on a `harvest_crop` that declares it.
  * The companion's own words - "write 30 nodes and any one miss zeroes the batch" - are why it kept its bets at 2.8 nodes
- * per plan.
+ * per plan, and why every extra call she writes costs her a turn instead of saving one.
  *
- * The half-fix was to run the other five nodes anyway, and it cost more than the all-or-nothing it replaced: the answer
- * said `accepted: true` (round40: `accepted: true` beside `droppedCount: 15`; at `3d249ff1` the round42 talk-then-buy
- * pair) while a step the companion had planned around never ran. So the plan is refused WHOLE - nothing runs, so nothing
- * is a lie - and the answer hands back both halves of the account: the calls that were dropped, and the calls that
- * compiled, so the correction is one edit and one resubmission instead of a rediscovered plan.
+ * The rule that answered the ORIGINAL forgery (at `3d249ff1` a refused call was simply left out and the answer still said
+ * `ok: true`; round40 is `accepted: true` beside `droppedCount: 15`) was "refuse the whole plan", and it bought that
+ * honesty with the five calls that were right. `partial` keeps both: the five run under a real program id, the answer says
+ * `partial` rather than claiming the plan ran, and `dropped` names the one call that did not.
  */
-test("a refused call refuses the whole plan, and the answer names every call that was dropped or kept", () => {
+test("a refused call costs the call it names and no others, and the batch runs as partial", () => {
   const measured = `
 builder.move_to_tile({ x: 60, y: 11 });
 builder.harvest_crop({ x: 60, y: 10, expectedTargetId: "crop_72f6ce55311cf7c3" });
@@ -2693,12 +3026,30 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   const result = compile(measured, { ...SOURCE_SNAPSHOT });
   // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
   // reading is "one refused call, five that were fine", which is the property, not the session's arithmetic.
+  assert.equal(result.status, "partial", "one call did not become a step, so the answer may not say `compiled`");
   assert.equal(
-    refusalOf(result),
+    result.status === "partial" ? result.reasonCode : "compiled",
     "plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
-    "the first refused call's own code, unchanged, is the reason nothing runs",
+    "the first refused call's own code, unchanged, is the reason to fix first",
   );
-  assert.deepEqual(result.ok ? null : result.rejected, [
+  // THE FIVE THAT WERE CORRECT RUN. This is the assertion the whole state exists for: before it, one refused call voided
+  // the batch and these five had no program to be part of.
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "move_to_tile", "harvest_crop", "move_to_tile", "harvest_crop"],
+    "the refused call is the one absent, in its own position, and nothing else moved",
+  );
+  // AND WHAT RUNS IS A CANDIDATE THE MOD ACCEPTS: a partial plan is submitted like any other, so it must satisfy the
+  // wire's own shape check and the compiler's claim-rule self-check - running is not a licence to emit garbage.
+  const nodes = nodesOf(result);
+  assert.equal(
+    result.snapshotRevision,
+    snapshot(SOURCE_SNAPSHOT).revision,
+    "a partial plan carries the revision it was built against, because it is submitted against one",
+  );
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  assert.deepEqual(planResourceConflictCodes(nodes, ACTIONS), []);
+  assert.deepEqual(rejectionsOf(result), [
     {
       call: 2,
       actionId: "harvest_crop",
@@ -2715,14 +3066,70 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   assert.deepEqual(accountOf(result).acceptedSteps, ["n01", "n03", "n04", "n05", "n06"]);
   assert.equal(result.acceptedStepsCount, 5);
   assert.equal(result.droppedCount, 1);
-  assert.equal(result.mergedCount + result.noStepNeededCount, 0, "every call is in exactly one of the four lists");
+  assert.equal(result.noStepNeededCount, 0, "every call is in exactly one of the lists");
+});
+
+/**
+ * The property above, at the boundary that decides how far a refusal reaches: its POSITION in the batch.
+ *
+ * A rule that dropped the calls written AFTER the refusal would still pass a test whose bad call came last, so the same
+ * three-call batch is compiled with the refused call first, in the middle and last. Every arrangement must keep the two
+ * calls that were written correctly - which is the difference between "costs the call it names" and "costs the batch".
+ */
+test("a refused call costs only itself wherever the author wrote it", () => {
+  const first = "builder.move_to_tile({ x: 12, y: 8 });";
+  const second = "builder.move_to_tile({ x: 13, y: 8 });";
+  // `till_soil` declares `x`, `y` and `charge`, so a call with none of them is refused by the surface's own declaration.
+  const refused = "builder.till_soil({});";
+  const arrangements = [
+    ["first", `${refused}\n${first}\n${second}`],
+    ["middle", `${first}\n${refused}\n${second}`],
+    ["last", `${first}\n${second}\n${refused}`],
+  ] as const;
+  for (const [position, script] of arrangements) {
+    const result = compile(script);
+    assert.equal(result.status, "partial", `a refusal written ${position} leaves two calls that compiled`);
+    assert.equal(
+      nodesOf(result).length,
+      2,
+      `a refusal written ${position} must cost one call, not the batch: ${JSON.stringify(accountOf(result))}`,
+    );
+    assert.equal(result.droppedCount, 1, `a refusal written ${position} is named exactly once`);
+  }
+});
+
+/**
+ * THE BOUNDARY OF `partial`: A BATCH WITH NO STEP IS STILL A REFUSAL, and the code says which kind of empty it is.
+ *
+ * `partial` exists because a program with SOME of the author's steps can run. With NONE of them there is no program, so
+ * there is nothing to submit and nothing to name - and a state that ran an empty program would be the mirror image of the
+ * forgery this contract was built to stop. The three ways a script produces no step are different mistakes and are named
+ * differently: it never called a builder at all, it called one and nothing was added, or it called a method the builder
+ * does not have - which cannot be interpreted past, because the runtime cannot know what that call would have added.
+ */
+test("a script that produced no step is refused, never an empty partial plan", () => {
+  // A well-formed loop whose body calls no builder: the shape round60 sent three times, and the one that must still
+  // void - `plan_script_empty_no_builder_call` is a diagnosis of the script, not a refusal of any call it made.
+  const askedNothing = compile("for (let index = 0; index < 3; index += 1) { const tile = index; }");
+  assert.equal(askedNothing.status, "refused", "zero steps is zero program");
+  assert.equal(refusalOf(askedNothing), "plan_script_empty_no_builder_call");
+  // Every call refused: there is a count to name, and it is not the same mistake as asking for nothing.
+  const allRefused = compile("builder.till_soil({});\nbuilder.move_to_tile({});");
+  assert.equal(allRefused.status, "refused");
+  assert.equal(allRefused.droppedCount, 2);
+  assert.equal(allRefused.acceptedStepsCount, 0);
+  // A method the builder does not publish ends the SCRIPT: nothing after it can be interpreted.
+  const unknownMethod = compile("builder.for_each({ source: 'cropTargets' });");
+  assert.equal(unknownMethod.status, "refused");
+  assert.equal(refusalOf(unknownMethod), "plan_script_unknown_action:for_each");
 });
 
 /**
  * The dependent case, with the one dependency a script can actually express: `equipFor` ANSWERS a slot, and the call
  * after it consumes that answer. When the equip step is refused there is no slot, so the action that would have named it
  * must not become a node - it is refused too, not silently written with a missing argument the Mod would hit at runtime.
- * Both refusals are named against the call that caused them, and the plan they are part of runs nothing.
+ * Both refusals are named against the call that caused them, and the walk they followed still runs: a dependent refusal
+ * costs its own call, never the calls before it.
  */
 test("a call that consumes a refused call's answer does not run, and both are named", () => {
   const result = compile(
@@ -2741,14 +3148,19 @@ builder.cut_weeds({ x: 10, y: 10, slot: slot, expectedTargetId: 'weed_01' });
       { call: 3, actionId: "cut_weeds" },
     ],
   );
-  assert.equal(result.ok ? null : result.rejected[0]?.reasonCode, "plan_script_tool_slot_unresolved:cut_weeds:scythe");
+  assert.equal(
+    result.status === "compiled" ? null : rejectionsOf(result)[0]?.reasonCode,
+    "plan_script_tool_slot_unresolved:cut_weeds:scythe",
+  );
   assert.match(
-    result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""),
+    result.status === "compiled" ? "" : (rejectionsOf(result)[1]?.reasonCode ?? ""),
     /^plan_script_argument_not_canonical:cut_weeds\.slot:/u,
   );
-  assert.match(result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""), /:got:missing$/u);
+  assert.match(result.status === "compiled" ? "" : (rejectionsOf(result)[1]?.reasonCode ?? ""), /:got:missing$/u);
   assert.deepEqual(accountOf(result).acceptedSteps, ["n01"], "the walk before the refusal compiled, and is named");
   assert.equal(result.droppedCount, 2);
+  // THE WALK STILL RUNS. Two refused calls in a three-call script used to mean nothing ran at all.
+  assert.equal(nodesOf(result).length, 1, "the one step that compiled is the program");
 });
 
 /**
@@ -2761,7 +3173,7 @@ test("a batch in which nothing was accepted is still a refusal, and it names eve
 builder.claim_mail_attachment({ expectedTargetId: 'mailbox_a21663c33741df54' });
 builder.move_to_tile({ x: 10 });
 `);
-  assert.ok(!result.ok, "no accepted node is not a plan");
+  assert.equal(result.status, "refused", "no accepted node is not a plan");
   assert.match(result.reasonCode, /^plan_script_missing_argument:claim_mail_attachment\.x:/u);
   assert.deepEqual(result.missingArguments, ["x", "y"]);
   assert.equal(result.requirement?.actionId, "claim_mail_attachment");
@@ -2781,7 +3193,7 @@ builder.move_to_tile({ x: 10 });
  * vocabulary itself - never a list written here - and a zero population FAILS, because a check that examined nothing
  * agrees with itself.
  *
- * A call in NONE of the four lists is the defect the whole account exists for (an `ok` answer carrying a step that was
+ * A call in NONE of the lists is the defect the whole account exists for (an `ok` answer carrying a step that was
  * quietly thrown away); a call in TWO of them is a bookkeeping bug that would hide the first. Both are named with the
  * entry that broke, so the next reader knows which action and which list.
  */
@@ -2794,11 +3206,10 @@ test("every authored call is accounted for exactly once, across the whole publis
     examined += 1;
     const lists = {
       acceptedSteps: result.acceptedSteps,
-      merged: result.merged,
       noStepNeeded: result.noStepNeeded,
       dropped: result.dropped,
     };
-    const counted = result.acceptedStepsCount + result.mergedCount + result.noStepNeededCount + result.droppedCount;
+    const counted = result.acceptedStepsCount + result.noStepNeededCount + result.droppedCount;
     if (counted !== calls)
       faults.push(
         `${label}: ${calls} call(s) written, ${counted} accounted for (${JSON.stringify(lists)}) examined ${examined}`,
@@ -2825,4 +3236,111 @@ test("every authored call is accounted for exactly once, across the whole publis
   accountOfScript("builder.move_to_tile({ x: 12, y: 8 });\nbuilder.move_to_tile({ x: 12 });", 2, "second call refused");
   assert.ok(examined > 20, `the account was measured over ${examined} answers`);
   assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * THE LOOP SHAPES THIS TOOL COULD TEACH, each named with the property it breaks.
+ *
+ * The first four are the only batch constructs the description could carry, and exactly one of them is the shape a plan
+ * is written in: `for`. The rest are the vocabulary of the form that was removed - a second way to write a loop in a
+ * script that is already JavaScript, written in our row model rather than in hers - so their return is the defect this
+ * gate exists for, whatever spelling it comes back under.
+ */
+const LOOP_SHAPES: readonly Readonly<{ name: string; pattern: RegExp }>[] = Object.freeze([
+  Object.freeze({ name: "for", pattern: /for \(/u }),
+  Object.freeze({ name: "while", pattern: /while \(/u }),
+  Object.freeze({ name: "do", pattern: /do \{/u }),
+  Object.freeze({ name: "forEach", pattern: /\.forEach\(/u }),
+  Object.freeze({ name: "for_each", pattern: /\bfor_each\b/u }),
+  Object.freeze({ name: "where", pattern: /\bwhere\b/u }),
+  Object.freeze({ name: "occupant", pattern: /\boccupant\b/u }),
+  Object.freeze({ name: "row", pattern: /\brow\b/u }),
+  Object.freeze({ name: "source", pattern: /\bsource\b/u }),
+]);
+
+function taughtLoopShapes(description: string): readonly string[] {
+  return LOOP_SHAPES.filter((shape) => shape.pattern.test(description)).map((shape) => shape.name);
+}
+
+/**
+ * `two_ways_to_write_a_loop`, as one reading both the gate and its falsifier take.
+ *
+ * THE POPULATION IS THE TWO AUTHORITIES, not a list of wishes: the plan grammar's own form list (`PLAN_FORM_ACTION_IDS`,
+ * the ids the compiler can emit that are not published actions) and the loop vocabulary the description actually carries.
+ * The property is that there is exactly one loop shape - `for` - and no form beside it.
+ */
+function twoWaysToWriteALoopFinding(description: string, forms: readonly string[]): string | undefined {
+  const taught = taughtLoopShapes(description);
+  const verdict = `forms examined ${String(LOOP_SHAPES.length + forms.length)} · loops ${String(taught.length)} · other ${String(forms.length)}`;
+  if (forms.length > 0)
+    return `two_ways_to_write_a_loop:${forms.join(",")}: a plan form is a second way to write a loop this script can already write - ${verdict}`;
+  const other = taught.filter((shape) => shape !== "for");
+  if (taught.length !== 1 || other.length > 0)
+    return `two_ways_to_write_a_loop:${other.length === 0 ? "none" : other.join(",")}: the script is JavaScript and the batch is one \`for\` loop - ${verdict}`;
+  return undefined;
+}
+
+/**
+ * `a_script_form_is_reachable_from_the_description`, as one reading both the gate and its falsifier take.
+ *
+ * The absence of this gate is why a form can live while nobody uses it: the grammar accepted `for_each` and the
+ * description taught it, and when the teaching was withdrawn the form stayed - accepted by the grammar, named nowhere a
+ * model reads. A form the compiler accepts and the description does not teach is a call nothing can learn, so it is red
+ * BY NAME here, and the day the list stops being empty it must be taught in the same edit.
+ */
+function scriptFormReachabilityFinding(description: string, forms: readonly string[]): string | undefined {
+  for (const form of forms)
+    if (!description.includes(form))
+      return `a_script_form_is_reachable_from_the_description:${form}: the grammar accepts it and the description never teaches it`;
+  return undefined;
+}
+
+test("two_ways_to_write_a_loop: exactly one loop shape is taught and accepted", () => {
+  assert.equal(
+    twoWaysToWriteALoopFinding(planWorkDescription(CATALOG_ACTIONS), PLAN_FORM_ACTION_IDS),
+    undefined,
+    "the description teaches one loop shape over a snapshot family, and the grammar accepts no form beside it",
+  );
+  assert.deepEqual(
+    taughtLoopShapes(planWorkDescription(CATALOG_ACTIONS)),
+    ["for"],
+    "and the shape it teaches is `for`, this time read back from the rendered text rather than assumed",
+  );
+});
+
+test("two_ways_to_write_a_loop is red on a second loop shape, and names it", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  // A second way to write the same batch, in the spelling a model most plausibly reaches for.
+  const second =
+    description + "\nfor (const tile of snapshot.soilTiles) snapshot.soilTiles.forEach((t) => void t); // .forEach(\n";
+  assert.match(
+    twoWaysToWriteALoopFinding(second, []) ?? "",
+    /^two_ways_to_write_a_loop:forEach: .*forms examined \d+ · loops \d+ · other 0$/u,
+    "a description that teaches two loop shapes is refused by name, with the population it examined",
+  );
+  assert.match(
+    twoWaysToWriteALoopFinding(description, ["for_each"]) ?? "",
+    /^two_ways_to_write_a_loop:for_each: /u,
+    "and a grammar that accepts a form beside the language is refused by the form's own name",
+  );
+});
+
+test("a_script_form_is_reachable_from_the_description: every accepted form is taught", () => {
+  assert.equal(
+    scriptFormReachabilityFinding(planWorkDescription(CATALOG_ACTIONS), PLAN_FORM_ACTION_IDS),
+    undefined,
+    "no plan form exists, so every node the compiler writes is an action the description already names",
+  );
+  // ZERO POPULATION IS STATED, NOT SILENT: the list is empty by decision, and a form added to it without teaching it is
+  // the defect this gate catches - which the next case proves it still does.
+  assert.deepEqual(PLAN_FORM_ACTION_IDS, [], "the declared form list is empty: a batch is a `for` loop");
+});
+
+test("a_script_form_is_reachable_from_the_description is red on a form the description never names", () => {
+  const message = scriptFormReachabilityFinding(planWorkDescription(CATALOG_ACTIONS), ["for_each"]);
+  assert.match(
+    message ?? "",
+    /^a_script_form_is_reachable_from_the_description:for_each: /u,
+    "a form the grammar accepts and the description does not teach is refused by name",
+  );
 });

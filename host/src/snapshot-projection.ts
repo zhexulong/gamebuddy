@@ -1,5 +1,6 @@
 import type { Snapshot } from "./protocol.js";
-import { formatGameClock, seasonName } from "./game-world-vocabulary.js";
+import { seasonName } from "./game-world-vocabulary.js";
+import { formatGameClock } from "./game-world-vocabulary.js";
 
 const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
 /** The projection is smaller than the bridge frame and remains safe to attach to a turn batch. */
@@ -59,6 +60,12 @@ export interface InventoryContextProjection {
  * not printed twice and the set of tool slots stays the Mod's own answer rather than a Host predicate.
  * </p>
  * <p>
+ * THE SLOT AND THE ID ARE THE ADDRESS AND BOTH PRINT. Three actions address one pack row and no action accepts a name:
+ * `open_geode` takes `slot` + `expectedQualifiedItemId`, `deposit_silo_hay` and `put_item_in_fish_tank` take `slot`.
+ * This line used to print the count and the label only, so the model was asked for a number it had not been shown; the
+ * rank and file of that defect is `tools/check-inventory-row-field-rendering.mjs`, which reads both renderers.
+ * </p>
+ * <p>
  * `measured` is the distinction the old answer could not make. `false` means the Mod published no inventory rows at
  * all (the field is gated on the actions that read the inventory), which is a different statement from `rows: []` -
  * "nothing but tools". `omitted` is always present for the same reason: "nothing was dropped" has to be a measurement.
@@ -67,7 +74,7 @@ export interface InventoryContextProjection {
 export interface CarryingContextProjection {
   readonly revision: number;
   readonly measured: boolean;
-  readonly rows: readonly Readonly<{ slot: number; label: string; stack: number }>[];
+  readonly rows: readonly Readonly<{ slot: number; qualifiedItemId: string; label: string; stack: number }>[];
   readonly omitted: number;
 }
 
@@ -209,14 +216,20 @@ export function projectCarryingContext(
     return Object.freeze({ revision: snapshot.revision, measured: false, rows: [], omitted: 0 });
   const toolSlotNumbers = new Set(toolSlots.map((tool) => tool.slot));
   const carried = published.filter((item) => !toolSlotNumbers.has(item.slot));
-  const rows: Readonly<{ slot: number; label: string; stack: number }>[] = [];
+  const rows: Readonly<{ slot: number; qualifiedItemId: string; label: string; stack: number }>[] = [];
   let bytes = 0;
   for (const item of carried) {
     const label = boundedUtf8(item.displayName, MAX_PROJECTION_STRING_BYTES);
-    const cost = Buffer.byteLength(`${String(item.stack)}x ${label}, `, "utf8");
+    // THE ADDRESS IS PART OF WHAT A ROW COSTS. `carryingText` prints the slot and the id (`open_geode` refuses a stale
+    // pair of exactly those two), so the bound counts that line - a bound that priced a shorter one would truncate a
+    // row the text then claims to have shown whole.
+    const cost = Buffer.byteLength(
+      `${String(item.stack)}x ${label} ${item.qualifiedItemId} [slot ${String(item.slot)}], `,
+      "utf8",
+    );
     if (rows.length >= MAX_PROJECTION_CARRYING_ROWS || bytes + cost > MAX_PROJECTION_CARRYING_BYTES) break;
     bytes += cost;
-    rows.push(Object.freeze({ slot: item.slot, label, stack: item.stack }));
+    rows.push(Object.freeze({ slot: item.slot, qualifiedItemId: item.qualifiedItemId, label, stack: item.stack }));
   }
   return Object.freeze({
     revision: snapshot.revision,
@@ -286,11 +299,44 @@ export function projectPetContext(snapshot: Snapshot): readonly PetContextProjec
  * When the sleep hint starts appearing. 18:00 is where a farm day stops being worth starting another task, and the
  * number exists only so the hint is not printed all morning.
  *
- * It is deliberately NOT an engine rule: the executor ends the day on request, at any hour. If a real precondition is
- * ever added to `sleep`, this errs in the harmless direction - a hint that is too eager - and the executor's refusal is
- * what tells the caller.
+ * It is deliberately NOT an engine rule: the executor ends the day on request, at any hour, and the ONE precondition it
+ * does enforce - where she stands - is published (`sleepAdmitsHere`) and stated by the line rather than filtered here. A
+ * threshold that also hid the line outside the house would leave her with no hint at all about how the day ends.
  */
 const SLEEP_HINT_FROM_TIME_OF_DAY = 1800;
+
+/**
+ * The three forms the `Sleep:` line takes, one per state of the Mod's own `sleepAdmitsHere`.
+ *
+ * <p>
+ * WHY THE VERDICT IS A FIELD AND NOT THIS FILE'S OPINION. This line said the day ends "from wherever you are", and the
+ * night's own eligibility refuses `not_home` outside the house. The projection was not lying about the dispatch it read:
+ * `RequestLocalAdvanceDay` really does answer `accepted` after the bound actor, world readiness and admission and no
+ * location test at all - the refusal happens a few frames later on the game thread, inside
+ * `SleepAndAdvanceDayLifecycle.TryEnterEligibility`. So the condition cannot be restated here from the location NAME
+ * either: the executor admits the FarmHouse TYPE (which the Farmhand's Cabin also is) while `location` is the map's own
+ * name. The Mod therefore publishes the answer from the same `HomeOf` declaration the refusal comes from, and this table
+ * is only the wording of each answer. `snapshot-projection-executor-preconditions.test.ts` holds the line to it, and
+ * fails by naming the action if a state ever claims a day end the executor refuses.
+ * </p>
+ */
+export const SLEEP_DAY_END_TEXT = Object.freeze({
+  /** The night admits this room, so the line may say so. */
+  admitsHere: "- Sleep: `sleep()` ends the day from here - the actor walks to her own bed and the save advances",
+  /** The executor would answer `not_home`, so the line says what would change that instead of inviting the call. */
+  refusesHere:
+    "- Sleep: `sleep()` is refused here (`not_home`) - the day ends only inside your own farmhouse or cabin, so walk home first",
+  /** No verdict was published (no world ready, or a Mod older than the field): the rule, and no claim about her tile. */
+  unmeasured:
+    "- Sleep: `sleep()` ends the day only from inside your own farmhouse or cabin - the actor walks to her own bed and the save advances",
+});
+
+/** The `Sleep:` line for a published verdict: the one place the three answers are chosen. */
+export function sleepDayEndText(sleepAdmitsHere: boolean | null | undefined): string {
+  if (sleepAdmitsHere === true) return SLEEP_DAY_END_TEXT.admitsHere;
+  if (sleepAdmitsHere === false) return SLEEP_DAY_END_TEXT.refusesHere;
+  return SLEEP_DAY_END_TEXT.unmeasured;
+}
 
 export function projectGameSnapshotContext(
   snapshot: Snapshot | null | undefined,
@@ -330,7 +376,7 @@ export function projectGameSnapshotContext(
       // `observed N turns ago` clause), and two spellings of one fact let the stale one win (round35: `Sampled: 5ms ago`
       // beside `observed 9 turns ago` for a 112 s old snapshot). One owner, no number here.
       `- Snapshot Revision: #${snapshot.revision}`,
-      `- Time: ${formatGameClock(clock.timeOfDay, true)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
+      `- Time: ${formatGameClock(clock.timeOfDay, false)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
       ...(movement.holdingModal === null
         ? []
@@ -339,14 +385,11 @@ export function projectGameSnapshotContext(
             // `Actionable: true` is not the promise it looks like.
             `- Modal: ${movement.holdingModal} - owns the screen${openedBy(movement.holdingModalActionOwned)}: the game clock does not advance and no other action can run until it is cleared; dismiss_modal closes an informational menu, answer_dialogue a question`,
           ]),
-      // `sleep` has no location precondition and no clock precondition: `RequestLocalAdvanceDay` checks the bound actor,
-      // world readiness and admission, then runs the lifecycle from wherever the actor stands. So this line must claim
-      // neither, and it says exactly what the executor enforces.
-      //
-      // The threshold below is a PRESENTATION choice - a hint nobody needs at 09:00 - and must never be read as a gate.
-      ...(clock.timeOfDay >= SLEEP_HINT_FROM_TIME_OF_DAY
-        ? ["- Sleep: `sleep()` ends the day from wherever you are - the actor goes to bed and the save advances"]
-        : []),
+      // `sleep` has ONE durable precondition and it is about where she stands: the night's own eligibility refuses
+      // `not_home` outside the house a few frames after the dispatch has already answered `accepted`, which is exactly
+      // why an earlier version of this line claimed the day ends anywhere. The Mod publishes the answer
+      // (`sleepAdmitsHere`, from the same `HomeOf` declaration the refusal comes from) and `sleepDayEndText` states it.
+      ...(clock.timeOfDay >= SLEEP_HINT_FROM_TIME_OF_DAY ? [sleepDayEndText(snapshot.sleepAdmitsHere)] : []),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,
       `- Carrying: ${carryingText(inventory.carrying)}`,
@@ -380,7 +423,13 @@ export function projectGameSnapshotContext(
 function carryingText(carrying: CarryingContextProjection): string {
   if (!carrying.measured) return "not measured";
   if (carrying.rows.length === 0) return "nothing but tools";
-  const shown = carrying.rows.map((row) => `${String(row.stack)}x ${row.label}`).join(", ");
+  // THE SLOT IS THE ADDRESS. `open_geode`, `deposit_silo_hay` and `put_item_in_fish_tank` all take a pack slot, so a
+  // line that named only the label and the count asked her for a number it had not shown. Same defect as
+  // `<world-state>`'s pack sentence (`host/src/fact-brief.ts`), same family, same turn;
+  // `tools/check-inventory-row-field-rendering.mjs` holds both.
+  const shown = carrying.rows
+    .map((row) => `${String(row.stack)}x ${row.label} ${row.qualifiedItemId} [slot ${String(row.slot)}]`)
+    .join(", ");
   return `${shown}${carrying.omitted === 0 ? "" : ` (+${String(carrying.omitted)} more)`}`;
 }
 

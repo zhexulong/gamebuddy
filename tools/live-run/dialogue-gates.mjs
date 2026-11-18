@@ -135,16 +135,29 @@ export const SCHEDULED_DIALOGUE_GATES = Object.freeze([
 ]);
 
 /**
- * Whether a clock-triggered gate is due.
+ * A game clock as a minute of the day, or `null` when it cannot be read.
  *
- * `atGameTime` is the Mod's own `HHMM` string, so the comparison is against the game clock rather than the wall clock -
- * a 27-minute run covers two game days, and wall-clock ordering says nothing about which in-game morning it was.
+ * `atGameTime` is the Mod's own `HHMM` string and the snapshot publishes the same value as a number, so both spellings
+ * arrive here. They are compared in MINUTES because the digits are not a number: `"1100" < "900"` as text, and 900 is
+ * not a time either - it is 09:00, and a gate declared for 11:00 must not fire at it. `null` is a clock nobody
+ * published, which is not midnight.
  */
-export function gateIsDue(gate, { day, gameTime }) {
-  if (gate.trigger.kind === "recent_refusal") return false;
-  if (gate.trigger.day !== undefined && gate.trigger.day !== day) return false;
-  if (gate.trigger.atGameTime !== undefined && String(gameTime) !== gate.trigger.atGameTime) return false;
-  return true;
+export function gameClockMinutes(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? gameClockMinutes(String(Math.trunc(value))) : null;
+  if (typeof value !== "string") return null;
+  const match = /^(\d{1,2})(\d{2})$/u.exec(value.trim());
+  if (match === null) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  // The engine's day runs to 26:00 (a 02:00 pass-out), so the hour is bounded there and not at 24.
+  if (minutes > 59 || hours > 26) return null;
+  return hours * 60 + minutes;
+}
+
+/** A minute of the day back in the `HHMM` spelling the gates declare, for a code a reader can grep. */
+export function formatGameClock(minutes) {
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours).padStart(2, "0")}${String(minutes % 60).padStart(2, "0")}`;
 }
 
 /**
@@ -168,11 +181,20 @@ export function obstacleGateIsDue(gate, { lastRefusalAtMs }, nowMs) {
  * the same way it reports one that was never wired. The refusal evidence itself has three shapes a caller must keep
  * apart - a known refusal (judged on its age), an unreadable source, and a source that carries no receipt line at all -
  * because "no refusal happened" and "nothing was looking" are the same silence otherwise.
+ *
+ * TWO AXES, and the clock is one of them. `trigger.day` alone was read here for a whole suite's life, so a gate declared
+ * `{ day: 1, atGameTime: "1200" }` was due from the first tick of day 1: `round49` spoke the stance gate at 06:20, it
+ * took the slot the day's note needed, and the run was scored as a talk-only round it had never been given the task for.
+ * `atGameTime` is a LOWER BOUND rather than an equality because the runner cannot pre-empt a turn at exactly the minute:
+ * "not before its hour" is the interval it can honour. A clock nobody read cannot be compared, and an uncompared clock
+ * is reported as unmeasured instead of being rounded into "due".
  */
 export function planGateDeliveries(
   gates,
   {
     day,
+    // The world clock at this delivery boundary, in the Mod's `HHMM`. `null` is a clock that could not be read.
+    gameTime = null,
     lastRefusalAtMs = null,
     refusalReadError = null,
     receiptMarkers = null,
@@ -202,6 +224,18 @@ export function planGateDeliveries(
     }
     if (gate.trigger.day !== day)
       return { gate, deliver: false, reason: `gate_day_not_reached:${String(gate.trigger.day)}:at_day_${String(day)}` };
+    const declared = gameClockMinutes(gate.trigger.atGameTime);
+    if (declared !== null) {
+      const now = gameClockMinutes(gameTime);
+      if (now === null)
+        return { gate, deliver: false, reason: `gate_clock_not_measured:${String(gate.trigger.atGameTime)}` };
+      if (now < declared)
+        return {
+          gate,
+          deliver: false,
+          reason: `gate_not_yet_due:${String(gate.trigger.atGameTime)}:at_${formatGameClock(now)}`,
+        };
+    }
     return { gate, deliver: true, reason: null };
   });
 }
@@ -238,4 +272,186 @@ export function assessDialogueGates({ replies, context }) {
     findings.push({ id: gate.id, state, reason: outcome.reason });
   }
   return { findings, failed: findings.filter((finding) => finding.state === "failed").length };
+}
+
+/**
+ * Whether the run actually TOLD the companion what the day was for, and whether a gate spoke over it.
+ *
+ * <p>
+ * `round49` (`multiday_routine`, day 1) delivered exactly one player message and it was not the day's note: the stance
+ * gate's prompt reached her session, `镇上办事` appeared nowhere in the run, she answered a question correctly, submitted
+ * nothing, and the round was scored as a talk-only round. Nothing noticed, because every existing check asked what the
+ * harness SENT (a task purpose, a delivery reason) and none asked what ARRIVED. This reads the session's own user
+ * messages, so an admission the Host accepted and never delivered is visible as the lie it is.
+ * </p>
+ * <p>
+ * Three findings, because they have three different owners: the note is the harness's, the ordering is the same
+ * harness's, and the hour is the planner's. The gate that presupposes the day's work is `turn-initiative-split`, whose
+ * prompt asks which job comes first and whose assertion accepts any sentence naming a weed or a rock - delivered over a
+ * lost note, it reports a PASS for behaviour it never observed. So the ordering is an assertion in its own right, and
+ * it is about ORDER: a note that arrives after the gate has still been preempted.
+ * </p>
+ * <p>
+ * `scheduled` is one entry per day the loop scheduled, carrying the note text OR a stable fragment of it taken from the
+ * same table that writes the note (`{ day, task, note }`). `inputs` is what the harness submitted, in order, each
+ * `{ day, channel: "harness"|"gate", gateId, text, gameTime, declaredGameTime, admitted }` - recorded at the submission
+ * so the cause of a missing note is a measurement and not a guess. `sessionTexts` is the session record's user messages,
+ * or `null` when no record could be read.
+ * </p>
+ */
+export function assessPlayerInputSchedule({
+  schedulesDayNotes = false,
+  scheduled = [],
+  inputs = [],
+  sessionTexts = null,
+  sessionReason = null,
+} = {}) {
+  const daysScheduled = Array.isArray(scheduled) ? scheduled : [];
+  const submitted = Array.isArray(inputs) ? inputs : [];
+  const received = Array.isArray(sessionTexts) ? sessionTexts : null;
+  const reading = (delivered) =>
+    `days scheduled ${String(daysScheduled.length)} · notes delivered ${String(delivered)}`;
+  // A scenario that schedules no note is not a scenario that passed: it is a scenario this reading is not about, and it
+  // says so instead of publishing a zero that reads like a measurement.
+  if (schedulesDayNotes !== true)
+    return Object.freeze({
+      applicable: false,
+      measured: received !== null,
+      reading: reading(0),
+      findings: Object.freeze([]),
+      passed: true,
+      verdictCode: null,
+    });
+  // A run that was supposed to be told what to do and scheduled no day measured nothing. That is not a pass, and it is
+  // not the same finding as a day whose note was lost.
+  if (daysScheduled.length === 0) {
+    return Object.freeze({
+      applicable: true,
+      measured: received !== null,
+      reading: reading(0),
+      findings: Object.freeze([
+        Object.freeze({ code: "day_notes_not_scheduled", day: null, task: null, cause: "no_day_scheduled" }),
+      ]),
+      passed: false,
+      verdictCode: "day_notes_not_scheduled",
+    });
+  }
+  const notes = dayNoteFindings({ scheduled: daysScheduled, submitted, received, sessionReason });
+  const findings = Object.freeze(
+    [...notes.findings, ...gateDeliveryFindings({ submitted, received, notePositions: notes.notePositions })].map(
+      (finding) => Object.freeze(finding),
+    ),
+  );
+  return Object.freeze({
+    applicable: true,
+    measured: received !== null,
+    reading: reading(notes.notesDelivered),
+    findings,
+    passed: findings.length === 0,
+    verdictCode: findings[0]?.code ?? null,
+  });
+}
+
+/**
+ * Where a probe appears in the session's own user messages, or `-1`.
+ *
+ * `null` is a record nobody could read, which is not a record that does not contain the line.
+ */
+const sessionPositionOf = (received, probe) => {
+  if (received === null || typeof probe !== "string" || probe.trim().length === 0) return -1;
+  return received.findIndex((text) => typeof text === "string" && text.includes(probe.trim()));
+};
+
+/** WHY a day's note is absent, from the submission record: never sent, sent and refused, or sent and accepted into nothing. */
+function noteAbsenceCause({ submitted, day, note }) {
+  const forDay = submitted.filter(
+    (input) =>
+      input?.day === day &&
+      input?.channel === "harness" &&
+      typeof input?.text === "string" &&
+      input.text.includes(note),
+  );
+  if (forDay.length === 0) return "never_submitted";
+  return forDay.some((input) => input.admitted === true) ? "admitted_but_absent_from_session" : "admission_refused";
+}
+
+/** One finding per scheduled day: did its note arrive, and if not, why. */
+function dayNoteFindings({ scheduled, submitted, received, sessionReason }) {
+  const findings = [];
+  const notePositions = new Map();
+  if (received === null)
+    findings.push({
+      code: `day_note_delivery_not_measured:${String(sessionReason ?? "session_unbound")}`,
+      day: null,
+      task: null,
+      cause: "session_unreadable",
+    });
+  for (const entry of scheduled) {
+    const day = entry?.day ?? null;
+    const task = entry?.task ?? null;
+    const note = typeof entry?.note === "string" ? entry.note : null;
+    // A note built from a task id the prompt table does not cover is the defect the table's own comment records
+    // (`town_errand`): the day was handed the literal string "undefined" instead of a task.
+    if (note === null || note.trim().length === 0) {
+      findings.push({
+        code: `day_note_text_missing:${String(day)}:${String(task)}`,
+        day,
+        task,
+        cause: "prompt_table_has_no_entry",
+      });
+      continue;
+    }
+    const at = sessionPositionOf(received, note);
+    if (at >= 0) {
+      notePositions.set(day, at);
+      continue;
+    }
+    // An unreadable record is already named once, above. Blaming each of its days for "not delivered" would be the
+    // instrument's absence dressed as the harness's failure.
+    if (received === null) continue;
+    findings.push({
+      code: `day_note_not_delivered:${String(day)}:${String(task)}`,
+      day,
+      task,
+      cause: noteAbsenceCause({ submitted, day, note }),
+    });
+  }
+  return { findings, notePositions, notesDelivered: notePositions.size };
+}
+
+/** For each gate that spoke: whether it spoke over the day's note, and whether it kept the hour it declares. */
+function gateDeliveryFindings({ submitted, received, notePositions }) {
+  const findings = [];
+  for (const input of submitted) {
+    if (input?.channel !== "gate") continue;
+    const gateId = String(input.gateId ?? "unknown_gate");
+    const day = input.day ?? null;
+    // ORDER: the note has to have been given before a gate whose premise is the day's work. A gate prompt that never
+    // arrived cannot have preempted anything, so only a gate the session actually holds is judged.
+    const gateAt = received === null ? -1 : sessionPositionOf(received, input.text);
+    const noteAt = notePositions.get(day);
+    if (gateAt >= 0 && (noteAt === undefined || gateAt < noteAt))
+      findings.push({ code: `dialogue_gate_preempted_the_day_note:${gateId}:${String(day)}`, day, gateId });
+    // WHEN it spoke, against the hour it declares. The planner refuses to deliver before that hour; this is the reading
+    // that catches a delivery which reached the session some other way.
+    const declared = gameClockMinutes(input.declaredGameTime ?? null);
+    if (declared === null) continue;
+    const actual = gameClockMinutes(input.gameTime ?? null);
+    if (actual === null)
+      findings.push({
+        code: `dialogue_gate_fire_time_not_measured:${gateId}:${String(day)}`,
+        day,
+        gateId,
+        cause: "clock_unreadable",
+      });
+    else if (actual < declared)
+      findings.push({
+        code: `dialogue_gate_fired_early:${gateId}:${String(input.declaredGameTime)}:${formatGameClock(actual)}`,
+        day,
+        gateId,
+        declaredGameTime: String(input.declaredGameTime),
+        gameTime: formatGameClock(actual),
+      });
+  }
+  return findings;
 }

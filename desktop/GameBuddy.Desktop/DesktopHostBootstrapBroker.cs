@@ -175,7 +175,10 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         }
         catch
         {
-            await CloseAsync(CancellationToken.None).ConfigureAwait(false);
+            // The session failed before any child published an exit deadline, so there is no budget to
+            // draw on: the one thing still being waited for is the guardian's containment of the roles
+            // it created, and its own ceiling is the declared number for that.
+            await CloseAsync(new ShutdownBudget(GuardianSupervisorLease.ContainmentCeilingMs), CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -614,23 +617,48 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
 
-    internal async Task CloseAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Ends this brokered session under the quit's one budget.
+    ///
+    /// The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
+    /// reclamation waits for, so a child that is reclaiming must never be waiting behind this
+    /// launcher's own containment. Disposing the server end closes the one instance the child is
+    /// connected to; the child observes the loss on its own session and leaves by itself.
+    /// </summary>
+    internal async Task CloseAsync(ShutdownBudget budget, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(budget);
         if (closed) return;
         closed = true;
         sessionClosing?.Cancel();
-        // The Host-facing pipe goes FIRST. Closing it is the controller EOF the child's own exit
-        // reclamation waits for, so a child that is reclaiming must never be waiting behind this
-        // launcher's own containment. Disposing the server end closes the one instance the child is
-        // connected to; the child observes the loss on its own session and leaves by itself.
         server.Dispose();
         try
         {
-            // Only then does the launcher give up the guardian it relays to, through the same settlement
-            // every other attempt end uses: control EOF, a bounded wait, the kill as the watchdog over it,
-            // and the record that follows that answer. The native guardian exits on the control EOF this
-            // closes, which is how the roles it created are contained on this side even when the child
-            // never got to ask for it.
+            // Only then does the launcher give up the guardian it relays to. The native guardian exits
+            // on the control EOF this closes, which is how the roles it created are contained on this
+            // side even when the child never got to ask for it.
+            //
+            // This is the wait that draws on the quit's one budget: the guardian may need its
+            // containment ceiling and may never spend more than the quit has left, so what it costs
+            // is inside both the number the player waits and the number the record carries.
+            if (guardian is not null)
+            {
+                // The settlement below re-reads the same number: what is left of the quit after this
+                // wait is spent, so the attempt's own settlement can no longer wait past the quit.
+                guardian.BindContainmentCeiling(budget.Take(GuardianSupervisorLease.ContainmentCeilingMs));
+                try
+                {
+                    await guardian.CloseControlAndWaitForExitAsync(budget.Take(GuardianSupervisorLease.ContainmentCeilingMs), cancellationToken).ConfigureAwait(false);
+                }
+                catch (GuardianLaunchUnavailableException)
+                {
+                    // A guardian that outlived what the budget had left is what the settlement below
+                    // kills; the quit has already spent its declared number and adds no second one.
+                }
+            }
+            // Then the attempt itself, through the same settlement every other attempt end uses:
+            // control EOF, a bounded wait, the kill as the watchdog over it, and the record that
+            // follows that answer.
             await SettleAttemptAsync().ConfigureAwait(false);
         }
         catch
@@ -640,7 +668,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync() => await CloseAsync(CancellationToken.None).ConfigureAwait(false);
+    public async ValueTask DisposeAsync() => await CloseAsync(new ShutdownBudget(GuardianSupervisorLease.ContainmentCeilingMs), CancellationToken.None).ConfigureAwait(false);
 
     private static bool ExactObject(JsonElement value, params string[] expected) => value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(property => property.Name).SequenceEqual(expected, StringComparer.Ordinal);
     private static bool IsHex(string value) => value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');

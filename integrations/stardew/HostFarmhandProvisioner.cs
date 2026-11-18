@@ -24,16 +24,14 @@ internal sealed class HostFarmhandProvisioner
     private FarmhandSessionAdvertisement? lastAdvertisement;
     private FarmhandAttachmentRequest? pendingSaveRequest;
     private FarmhandBinding? pendingBinding;
-    private long pendingSaveAtUnixMs;
     private string? lastRequestId;
     private FarmhandAttachmentResponse? lastResponse;
     private long nextAdvertisementAtMs;
     private bool pendingSaveObserved;
     private bool pendingSaveWriteFailed;
-    private bool pendingSaveTimedOut;
     private bool quarantined;
     private Cabin? pendingCreatedCabin;
-    private long pendingCreatedFarmhandId;
+    private long? pendingCreatedFarmhandId;
 
     private HostFarmhandProvisioner(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig config, string sessionDirectory, bool allowNativeAutomationWorldReady)
     {
@@ -59,6 +57,17 @@ internal sealed class HostFarmhandProvisioner
     }
 
     internal bool IsAwaitingSave => this.pendingSaveRequest is not null && !this.pendingSaveObserved;
+
+    /// <summary>
+    /// Whether this Host must ask the engine to save the binding it has just staged.
+    ///
+    /// The engine raises <c>Saving</c>/<c>Saved</c> only from its own save cycle, and a Mod's save data
+    /// lands with that cycle: a binding staged outside one is not durable, and the manifest that lets the
+    /// companion join is only issued once it is. So the precondition is real, and who creates it is not
+    /// the player - the Host asks, through the same native <c>SaveGameMenu</c> the player's own save
+    /// uses, and the engine performs it.
+    /// </summary>
+    internal bool RequestsNativeSave => this.IsAwaitingSave && this.config.TriggerNativeSaveAfterBinding;
 
     /// <summary>Publishes only Host-owned fixture readiness diagnostics.</summary>
     internal bool PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
@@ -107,48 +116,6 @@ internal sealed class HostFarmhandProvisioner
         }
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.pendingSaveRequest is not null && !this.pendingSaveTimedOut && now - this.pendingSaveAtUnixMs > 60_000)
-        {
-            FarmhandAttachmentRequest request = this.pendingSaveRequest;
-            if (!this.pendingSaveObserved)
-            {
-                this.pendingSaveRequest = null;
-                this.pendingBinding = null;
-                this.RollbackCreatedFarmhand();
-                this.pendingSaveObserved = false;
-                this.pendingSaveWriteFailed = false;
-                this.pendingSaveTimedOut = false;
-                FarmhandAttachmentResponse response = new()
-                {
-                    SchemaVersion = FarmhandProvisioningProtocol.Version,
-                    RequestId = request.RequestId,
-                    State = "rejected",
-                    ReasonCode = "save_persistence_timeout",
-                    UpdatedAtUnixMs = now,
-                };
-                this.lastRequestId = request.RequestId;
-                this.lastResponse = response;
-                this.WriteResponse(response);
-            }
-            else
-            {
-                // The native save owns its iterator. Keep the transaction until
-                // Saved arrives, and leave the response in awaiting_save so the
-                // App cannot mistake the timeout marker for the final result.
-                this.pendingSaveTimedOut = true;
-                FarmhandAttachmentResponse response = new()
-                {
-                    SchemaVersion = FarmhandProvisioningProtocol.Version,
-                    RequestId = request.RequestId,
-                    State = "awaiting_save",
-                    ReasonCode = "save_persistence_timeout",
-                    UpdatedAtUnixMs = now,
-                };
-                this.lastRequestId = request.RequestId;
-                this.lastResponse = response;
-                this.WriteResponse(response);
-            }
-        }
         if (now >= this.nextAdvertisementAtMs)
         {
             this.PublishAdvertisement(now);
@@ -168,10 +135,9 @@ internal sealed class HostFarmhandProvisioner
         if (!this.pendingSaveObserved)
             this.RollbackCreatedFarmhand();
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.lastRequestId = null;
         this.lastResponse = null;
         this.RemovePublishedFiles();
@@ -179,7 +145,7 @@ internal sealed class HostFarmhandProvisioner
 
     internal void OnSaving()
     {
-        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null || this.pendingSaveTimedOut)
+        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null)
             return;
         this.pendingSaveObserved = true;
         this.PersistPendingBinding();
@@ -227,14 +193,9 @@ internal sealed class HostFarmhandProvisioner
             return;
 
         bool saveWriteFailed = this.pendingSaveWriteFailed;
-        bool saveTimedOut = this.pendingSaveTimedOut;
         string? manifestPath = null;
         FarmhandProvisioningResult result;
-        if (saveTimedOut)
-        {
-            result = new("rejected", "save_persistence_timeout");
-        }
-        else if (saveWriteFailed)
+        if (saveWriteFailed)
         {
             result = new("rejected", "save_persistence_failed");
         }
@@ -284,16 +245,12 @@ internal sealed class HostFarmhandProvisioner
             }
         }
 
-        // A timeout after Saving means the native save may already contain the
-        // binding. Keep that durable state, but withhold the manifest; a later
-        // request must pass a fresh save gate. Write failures roll back in OnSaving.
         this.pendingSaveRequest = null;
         this.pendingBinding = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
         FarmhandAttachmentResponse response = new()
         {
             SchemaVersion = FarmhandProvisioningProtocol.Version,
@@ -380,7 +337,7 @@ internal sealed class HostFarmhandProvisioner
         // facts across that lifecycle boundary.
         if (!Context.IsWorldReady)
             return "host_not_ready";
-        if (this.pendingSaveTimedOut || this.pendingSaveRequest is not null || Game1.game1.IsSaving)
+        if (this.pendingSaveRequest is not null || Game1.game1.IsSaving)
             return "host_not_ready";
         if (!Game1.options.enableServer || !NativeLanEndpoint.TryRead(out _))
             return "host_not_ready";
@@ -518,99 +475,44 @@ internal sealed class HostFarmhandProvisioner
         if (Game1.game1.IsSaving)
             return new("rejected", "save_in_progress");
 
-        Farmer? farmhand = cabin.owner;
-        bool createdFarmhand = false;
         if (existingBinding is not null)
         {
             if (existingBinding.CabinId != request.CabinId || (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != existingBinding.FarmhandId.ToString()))
                 return new("rejected", "binding_conflict");
-            farmhand = Game1.GetPlayer(existingBinding.FarmhandId, onlyOnline: false);
-            if (farmhand is null || cabin.OwnerId != existingBinding.FarmhandId)
+            if (Game1.GetPlayer(existingBinding.FarmhandId, onlyOnline: false) is null || cabin.OwnerId != existingBinding.FarmhandId)
                 return new("rejected", "bound_farmhand_missing");
         }
-        else
-        {
-            if (farmhand is null)
-            {
-                if (request.ExpectedFarmhandId.Length > 0)
-                    return new("rejected", "new_binding_requires_empty_expected_id");
-                try
-                {
-                    cabin.CreateFarmhand();
-                    farmhand = cabin.owner;
-                    createdFarmhand = farmhand is not null;
-                }
-                catch (Exception exception)
-                {
-                    this.monitor.Log($"GameBuddy failed to create a native Farmhand through Cabin.CreateFarmhand(): {exception.GetType().Name}.", LogLevel.Error);
-                    return new("rejected", "native_farmhand_creation_failed");
-                }
-                if (farmhand is null)
-                    return new("rejected", "native_farmhand_creation_failed");
-                try
-                {
-                    this.InitializeCreatedFarmhand(farmhand);
-                    this.pendingCreatedCabin = cabin;
-                    this.pendingCreatedFarmhandId = farmhand.UniqueMultiplayerID;
-                }
-                catch (Exception exception)
-                {
-                    this.RollbackCreatedFarmhand(cabin, farmhand);
-                    this.monitor.Log($"GameBuddy failed to initialize the native Farmhand profile: {exception.GetType().Name}.", LogLevel.Error);
-                    return new("rejected", "farmhand_profile_initialization_failed");
-                }
-            }
-            else if (request.ExpectedFarmhandId.Length == 0)
-            {
-                return new("rejected", "cabin_busy");
-            }
-            else if (request.ExpectedFarmhandId != farmhand.UniqueMultiplayerID.ToString())
-            {
-                return new("rejected", "expected_farmhand_mismatch");
-            }
 
-            if (!farmhand.isCustomized.Value)
-            {
-                if (createdFarmhand)
-                    this.RollbackCreatedFarmhand(cabin, farmhand);
-                this.monitor.Log(
-                    $"GameBuddy refused a first binding: the created Farmhand was not initialized (customized={farmhand.isCustomized.Value}, id={farmhand.UniqueMultiplayerID}, name='{farmhand.Name}'); the request expected an empty id ({request.ExpectedFarmhandId.Length}).",
-                    LogLevel.Error);
-                return new("rejected", "farmhand_not_initialized");
-            }
-
-        }
+        TargetFarmhand target = this.PrepareTargetFarmhand(cabin, request.ExpectedFarmhandId);
+        if (target.RefusalReason.Length > 0)
+            return new("rejected", target.RefusalReason);
+        Farmer farmhand = target.Farmhand!;
+        bool createdFarmhand = target.Created;
 
         string expectedName = Utility.FilterDirtyWords(this.config.FarmhandName);
-        string? firstBindingRejection = FirstBindingRejection(
-            farmhand.UniqueMultiplayerID,
-            farmhand.isCustomized.Value,
-            farmhand.Name,
-            farmhand.displayName,
-            expectedName,
-            request.ExpectedFarmhandId);
-        if (firstBindingRejection is not null)
+        if (farmhand.UniqueMultiplayerID == 0)
+        {
+            // Zero is the ONE value that is not a Farmhand id: the engine draws the id with `Utility.RandomLong`
+            // (`StardewValley.Locations/Cabin.cs:52-59`), a signed 64-bit value that is negative for half of all draws and
+            // is never reassigned afterwards, and this protocol's own `TryParseNativeId` refuses the same one value.
+            if (createdFarmhand)
+                this.RollbackCreatedFarmhand(cabin, farmhand);
+            this.monitor.Log("GameBuddy refused a first binding: the Farmhand the Cabin owns carries no multiplayer id (0), which is the one value the provisioning protocol cannot name.", LogLevel.Error);
+            return new("rejected", "farmhand_id_unassigned");
+        }
+        if (farmhand.Name != expectedName || farmhand.displayName != expectedName)
         {
             if (createdFarmhand)
                 this.RollbackCreatedFarmhand(cabin, farmhand);
-            if (firstBindingRejection == "farmhand_not_initialized")
-                this.monitor.Log(
-                    $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
-                    LogLevel.Error);
-            return new("rejected", firstBindingRejection);
+            this.monitor.Log(
+                $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
+                LogLevel.Error);
+            return new("rejected", "farmhand_profile_mismatch");
         }
         if (cabin.OwnerId != farmhand.UniqueMultiplayerID)
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "cabin_identity_mismatch");
-        }
+            return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "cabin_identity_mismatch");
         if (farmhand.isActive())
-        {
-            if (createdFarmhand)
-                this.RollbackCreatedFarmhand(cabin, farmhand);
-            return new("rejected", "target_farmhand_busy");
-        }
+            return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "target_farmhand_busy");
         if (existingBinding is null)
         {
             this.pendingBinding = new FarmhandBinding
@@ -628,38 +530,26 @@ internal sealed class HostFarmhandProvisioner
             this.pendingBinding = null;
         }
         this.pendingSaveRequest = request;
-        this.pendingSaveAtUnixMs = now;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
         if (!createdFarmhand)
         {
             this.pendingCreatedCabin = null;
-            this.pendingCreatedFarmhandId = 0;
+            this.pendingCreatedFarmhandId = null;
         }
         return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
     }
 
     /// <summary>
-    /// Why the first binding refuses a Farmhand, or <c>null</c> when it accepts it.
-    /// A Farmhand id is SMAPI's 64-bit snowflake, so its sign is part of the value
-    /// and only <c>0</c> means "no identity assigned yet" — the rule
-    /// <see cref="FarmhandProvisioningProtocol.TryParseNativeId"/> already applies to
-    /// every id on the wire. Only the id, the customization and the two names decide
-    /// here; the expected id is compared as an equality, which is sign-neutral.
+    /// The refusal for a Farmhand that was prepared and can no longer be bound: the Farmhand this request created is
+    /// taken out of the save first, because one that exists only because this request made it must not survive a
+    /// binding that never happened. Every refusal after <see cref="PrepareTargetFarmhand"/> shares that consequence.
     /// </summary>
-    internal static string? FirstBindingRejection(
-        long farmhandId,
-        bool isCustomized,
-        string? name,
-        string? displayName,
-        string expectedName,
-        string expectedFarmhandId)
+    private FarmhandProvisioningResult RefusePreparedFarmhand(Cabin cabin, Farmer farmhand, bool createdFarmhand, string reasonCode)
     {
-        if (farmhandId == 0 || !isCustomized || name != expectedName || displayName != expectedName)
-            return "farmhand_not_initialized";
-        if (expectedFarmhandId.Length > 0 && expectedFarmhandId != farmhandId.ToString())
-            return "expected_farmhand_mismatch";
-        return null;
+        if (createdFarmhand)
+            this.RollbackCreatedFarmhand(cabin, farmhand);
+        return new("rejected", reasonCode);
     }
 
     /// <summary>
@@ -756,14 +646,160 @@ internal sealed class HostFarmhandProvisioner
             && request.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private void InitializeCreatedFarmhand(Farmer farmhand)
+    /// <summary>
+    /// What a Cabin's Farmhand resolved to: the identity this request binds, or the reason there is none.
+    /// <see cref="RefusalReason"/> is empty exactly when <see cref="Farmhand"/> is the companion profile.
+    /// </summary>
+    private readonly record struct TargetFarmhand(Farmer? Farmhand, bool Created, string RefusalReason)
+    {
+        internal static TargetFarmhand Refused(string reasonCode) => new(null, false, reasonCode);
+    }
+
+    /// <summary>
+    /// Resolves the Cabin's Farmhand into the companion identity this request binds, and INITIALIZES it when it carries
+    /// no profile yet.
+    ///
+    /// <para>
+    /// WHY AN EXISTING FARMHAND IS INITIALIZED HERE AND NOT ONLY A CREATED ONE. <c>isCustomized</c> is not a property of
+    /// "created a moment ago" - it is a property of "no profile yet" - and a run that created the Farmhand and did not
+    /// finish (a crash, a native save that failed, a request refused after the identity had been written) leaves
+    /// exactly that Farmhand in the Cabin. Treating it as a precondition made such a save permanently unbindable: every
+    /// later request named the identity the Cabin already owned, was refused before anything was attempted, and the
+    /// only route left was deleting a Farmhand the save had already written. So the initializer runs for whichever
+    /// Farmhand the Cabin owns, and this method answers a refusal only when the attempt itself does not take.
+    /// </para>
+    /// <para>
+    /// WHAT IS NEVER ROLLED BACK. Only a Farmhand THIS call created is tracked for rollback, so a refusal can never
+    /// delete an identity that existed before the request: the next request finds it, initializes it, and binds it.
+    /// </para>
+    /// </summary>
+    private TargetFarmhand PrepareTargetFarmhand(Cabin cabin, string expectedFarmhandId)
+    {
+        Farmer? farmhand = cabin.owner;
+        bool created = false;
+        if (farmhand is null)
+        {
+            if (expectedFarmhandId.Length > 0)
+                return TargetFarmhand.Refused("new_binding_requires_empty_expected_id");
+            try
+            {
+                cabin.CreateFarmhand();
+                farmhand = cabin.owner;
+                created = farmhand is not null;
+            }
+            catch (Exception exception)
+            {
+                this.monitor.Log($"GameBuddy failed to create a native Farmhand through Cabin.CreateFarmhand(): {exception.GetType().Name}.", LogLevel.Error);
+                return TargetFarmhand.Refused("native_farmhand_creation_failed");
+            }
+            if (farmhand is null)
+                return TargetFarmhand.Refused("native_farmhand_creation_failed");
+        }
+        else
+        {
+            if (expectedFarmhandId.Length == 0)
+                return TargetFarmhand.Refused("cabin_busy");
+            if (expectedFarmhandId != farmhand.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                return TargetFarmhand.Refused("expected_farmhand_mismatch");
+        }
+
+        if (!farmhand.isCustomized.Value)
+        {
+            try
+            {
+                this.InitializeFarmhandProfile(farmhand);
+            }
+            catch (Exception exception)
+            {
+                if (created)
+                    this.RollbackCreatedFarmhand(cabin, farmhand);
+                this.monitor.Log($"GameBuddy failed to initialize the native Farmhand profile: {exception.GetType().Name}.", LogLevel.Error);
+                return TargetFarmhand.Refused("farmhand_profile_initialization_failed");
+            }
+            if (!farmhand.isCustomized.Value)
+            {
+                // The attempt above ran and the profile still reports no customization. This is the ONLY place this
+                // code is produced: it is the postcondition of the attempt, never a precondition on the request.
+                if (created)
+                    this.RollbackCreatedFarmhand(cabin, farmhand);
+                this.monitor.Log($"GameBuddy refused a binding: the Farmhand profile did not take the initialization (id={farmhand.UniqueMultiplayerID}, name='{farmhand.Name}').", LogLevel.Error);
+                return TargetFarmhand.Refused("farmhand_not_initialized");
+            }
+        }
+        if (created)
+        {
+            this.pendingCreatedCabin = cabin;
+            this.pendingCreatedFarmhandId = farmhand.UniqueMultiplayerID;
+        }
+        return new TargetFarmhand(farmhand, created, string.Empty);
+    }
+
+    /// <summary>
+    /// Hands a Farmhand to the engine's own initialization, then writes the profile the engine's own customization
+    /// writes, then re-derives the Farmhand's state through the engine. After this the Farmhand is not "an object in
+    /// the save": it is the same state a loaded, playable player has.
+    ///
+    /// <para>
+    /// WHY <c>SaveGame.loadDataToFarmer</c> AND NOT A LIST OF FIELDS. The engine runs that method over EVERY Farmhand in
+    /// the save on every load (<c>StardewValley/SaveGame.cs:867-870</c>, the method at <c>StardewValley/SaveGame.cs:1325</c>): it builds the
+    /// renderer, applies gender, accessory, shirt, pants colour, skin, hair colour, hair style, shoes and eyes through
+    /// the Farmer's own setters, pads the toolbox to `maxItems`, calls `ConvertClothingOverrideToClothesItems` and
+    /// `UpdateClothing`, and parks the player beside the bed. A Farmhand that <c>Cabin.CreateFarmhand()</c> built at
+    /// runtime is the ONLY Farmer in the game that has never been through it - which is exactly the difference between
+    /// "exists as an object" and "initialised player". Calling it here means this Host inherits whatever the engine's
+    /// own initialization does to a Farmer, instead of keeping a second, hand-maintained copy of that work.
+    /// </para>
+    /// <para>
+    /// WHY THE FOUR WRITES AFTER IT, AND WHY THEY CANNOT BE A CALL. The engine writes a name, a display name, a
+    /// favourite thing and `isCustomized` in exactly one place - `CharacterCustomization.optionButtonClick("OK")`,
+    /// <c>StardewValley.Menus/CharacterCustomization.cs:1696-1699</c> - which is private, acts on `Game1.player` of the process that
+    /// shows the menu, and only runs from a human's click. There is no public engine entry point for it, so this Host
+    /// performs those four writes itself. It is not optional and it is not cosmetic: a Farmhand with
+    /// `isCustomized == false` is the engine's own UNCLAIMED Farmhand (`StardewValley/Farmer.cs:1558`), `GameServer.authCheck`
+    /// refuses it (`StardewValley.Network/GameServer.cs:490`), `Client.setUpGame` answers it by opening
+    /// `CharacterCustomization` (`StardewValley.Network/Client.cs:226-229`), and `Game1` gates its own input on the same flag
+    /// (`StardewValley/Game1.cs:6458`) - a native menu and an input gate a non-UI client can never pass.
+    /// </para>
+    /// <para>
+    /// WHY THE LAST <c>ResetFarmhandState</c>. It is the engine's own state derivation for a Farmhand whose profile has
+    /// just arrived, and the engine runs it on exactly that event: `NetWorldState.SaveFarmhand` clones the arriving
+    /// profile into the world-state slot and then resets the state (`StardewValley.Network/NetWorldState.cs:748-755`). Running it last
+    /// re-derives home, wake-up position and per-day state from the profile written above, rather than leaving the
+    /// Farmhand on the state `Cabin.CreateFarmhand` derived before any profile existed.
+    /// </para>
+    /// <para>
+    /// It makes no assumption that this process created the Farmer: everything it does is the engine's own work on an
+    /// instance that is ALREADY in the save, which is why the same call is the answer for both a Farmhand created a
+    /// moment ago and one an earlier run left without a profile (<see cref="PrepareTargetFarmhand"/>).
+    /// </para>
+    /// </summary>
+    private void InitializeFarmhandProfile(Farmer farmhand)
+    {
+        SaveGame.loadDataToFarmer(farmhand);
+        this.WriteCompanionProfile(farmhand);
+        Game1.netWorldState.Value.ResetFarmhandState(farmhand);
+    }
+
+    /// <summary>
+    /// The four writes the engine's own customization performs, and nothing else: name, display name, favourite thing,
+    /// <c>isCustomized</c>.
+    ///
+    /// <para>
+    /// They are their own method because they are one seam with one authority - the engine's OK branch
+    /// (<c>StardewValley.Menus/CharacterCustomization.cs:1696-1699</c>) - and because the engine's own initialization cannot run in a
+    /// process with no loaded content, so this half is the half the headless suite drives. `gameVersion`,
+    /// `gameVersionLabel` and an empty `userID` ride along: they are what makes the save record this Farmhand as
+    /// created by THIS game version rather than by the migration path, and what keeps an unclaimed Farmhand claimable
+    /// by the platform user that joins it.
+    /// </para>
+    /// </summary>
+    private void WriteCompanionProfile(Farmer farmhand)
     {
         string filteredName = Utility.FilterDirtyWords(this.config.FarmhandName);
         farmhand.Name = filteredName;
         farmhand.displayName = filteredName;
         farmhand.favoriteThing.Value = Utility.FilterDirtyWords(this.config.FavoriteThing);
         farmhand.isCustomized.Value = true;
-        farmhand.ConvertClothingOverrideToClothesItems();
         farmhand.gameVersion = Game1.version;
         farmhand.gameVersionLabel = Game1.versionLabel;
         farmhand.userID.Value = string.Empty;
@@ -771,12 +807,12 @@ internal sealed class HostFarmhandProvisioner
 
     private void RollbackCreatedFarmhand()
     {
-        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId == 0)
+        if (this.pendingCreatedCabin is null || this.pendingCreatedFarmhandId is not long createdId)
             return;
-        Farmer? farmhand = Game1.GetPlayer(this.pendingCreatedFarmhandId, onlyOnline: false);
+        Farmer? farmhand = Game1.GetPlayer(createdId, onlyOnline: false);
         this.RollbackCreatedFarmhand(this.pendingCreatedCabin, farmhand);
         this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = 0;
+        this.pendingCreatedFarmhandId = null;
     }
 
     private void RollbackCreatedFarmhand(Cabin cabin, Farmer? farmhand)
@@ -787,7 +823,7 @@ internal sealed class HostFarmhandProvisioner
             && (farmhand is null || this.pendingCreatedFarmhandId == farmhand.UniqueMultiplayerID))
         {
             this.pendingCreatedCabin = null;
-            this.pendingCreatedFarmhandId = 0;
+            this.pendingCreatedFarmhandId = null;
         }
     }
 
@@ -964,7 +1000,6 @@ internal sealed class HostFarmhandProvisioner
         this.pendingBinding = null;
         this.pendingSaveObserved = false;
         this.pendingSaveWriteFailed = false;
-        this.pendingSaveTimedOut = false;
         this.RollbackCreatedFarmhand();
         this.lastAdvertisement = null;
         this.lastRequestId = null;

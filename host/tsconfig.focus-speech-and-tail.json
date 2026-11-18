@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/framework-roleplay-gate.test.ts",
+    "src/prompt-field-delivery.private.test.ts",
+    "src/tavern/default-companion-preset.test.ts"
+  ]
+}

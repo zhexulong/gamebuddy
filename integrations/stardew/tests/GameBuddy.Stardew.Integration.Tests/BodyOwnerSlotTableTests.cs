@@ -53,7 +53,7 @@ public sealed class BodyOwnerSlotTableTests
             new[]
             {
                 "body_owned_by_navigation", "body_owned_by_travel", "body_owned_by_movement", "body_owned_by_approach",
-                "body_owned_by_ride", "body_owned_by_day_advance", "body_owned_by_activity",
+                "body_owned_by_ride", "body_owned_by_night", "body_owned_by_activity",
             },
             "the frozen refusal vocabulary is what an Agent recovers from");
     }

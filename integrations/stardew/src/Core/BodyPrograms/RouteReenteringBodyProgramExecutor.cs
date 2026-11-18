@@ -108,6 +108,44 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         return ToTerminal(grant, execution, receipt);
     }
 
+    /// <summary>
+    /// The suffix this file's own PASS lines carry for a chore family, or nothing on a pass that finished none.
+    ///
+    /// <para>
+    /// A PASS IS NOT A SETTLEMENT OF ONE ACTION: its rows may name different actions, so the family it finished is the
+    /// aggregation <see cref="PassChoreFamily"/> derives and not any one row's declaration. The clause a single settled
+    /// action owes the reader is minted elsewhere and only once - where the receipt's `evidence.detail` is composed
+    /// (<see cref="FarmhandActionCatalog.ChoreEntry"/>).
+    /// </para>
+    /// </summary>
+    internal static string ChoreSuffix(string? family) =>
+        family is null ? string.Empty : $":{FarmhandActionCatalog.ChoreField}={family}";
+
+    /// <summary>
+    /// The ONE chore a pass finished, or null when its rows do not agree on one.
+    ///
+    /// A pass is `by_kind` or an area strip, so its rows can name different actions: a strip through weeds and stones
+    /// removes two kinds of thing and there is no single "what is left of it". The answer is then nothing rather than
+    /// a guess - the settlement says the remainder was not measured, which is the truth.
+    /// </summary>
+    internal static string? PassChoreFamily(FarmhandForEachPassResult pass)
+    {
+        ArgumentNullException.ThrowIfNull(pass);
+        var families = new HashSet<string>(StringComparer.Ordinal);
+        foreach (FarmhandForEachTargetResult row in pass.Targets)
+        {
+            if (row.Outcome != FarmhandForEachTargetOutcome.Succeeded) continue;
+            if (row.Steps is { Count: > 0 } steps)
+            {
+                foreach (FarmhandForEachStepResult step in steps)
+                    if (FarmhandActionCatalog.ChoreFamilyOf(step.ActionId) is { } stepped) families.Add(stepped);
+                continue;
+            }
+            if (FarmhandActionCatalog.ChoreFamilyOf(row.Target?.ActionId) is { } single) families.Add(single);
+        }
+        return families.Count == 1 ? families.First() : null;
+    }
+
     /// <summary>A refusal before any native dispatch: it has a reason and no effect, so it carries the reason only.</summary>
     /// <param name="hint">
     /// What the caller can act on when the reason alone is not enough - a failed `for_each` pass states its counts here,
@@ -377,6 +415,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         {
             case BodyProgramNodeOutcome.Succeeded:
                 IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
+                // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
+                // action whose work consumes a family, minted where that string is composed for every terminal
+                // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
+                // a journal field rather than the settlement a reader receives. Minted here as well it was a second
+                // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
+                // no `chore=` in the log.
                 return new BodyProgramTerminalResult(
                     execution,
                     BodyProgramNodeOutcome.Succeeded,
@@ -500,7 +544,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // identity is the lineage a reader needs to find this attempt.
                 LastReceiptId(pass) ?? execution.ExecutionId,
                 aggregate,
-                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}",
+                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(PassChoreFamily(pass))}",
                 DominantReason(pass),
                 FailureHint(pass),
                 FailureDetail(pass));
@@ -512,7 +556,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             // identity is the lineage a reader needs to find this attempt.
             LastReceiptId(pass) ?? execution.ExecutionId,
             aggregate,
-            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}");
+            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}{ChoreSuffix(PassChoreFamily(pass))}");
     }
 
     /// <summary>

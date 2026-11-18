@@ -8,17 +8,12 @@ using StardewValley.Characters;
 
 namespace GameBuddy.Stardew;
 
-// Native handler bodies remain action/family-owned. All parts share the one
-// FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalRefillWateringCan(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        // Ask before walking: a pack that cannot satisfy the action's own `tool:watering_can` claim is refused now
-        // rather than after an approach leg the action could never finish, and a can that needs no water is refused
-        // before the walk for the same reason. The slot the caller named is recorded, never obeyed.
         DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "refill_watering_can");
         if (can.RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusal, slot));
@@ -27,10 +22,6 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. The can and the
-        // water tile are validated above; both are re-resolved after the walk inside
-        // the closure, because another actor or the player can take the spot while
-        // walking.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -49,17 +40,8 @@ internal sealed partial class ExecutionManager
         return this.ExecuteRefillWateringCan(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes refill_watering_can against the current world, re-validating the can and the
-    /// water tile because an approach leg may have taken several ticks. The can is not the
-    /// caller's to name: the action's own registration claims `tool:watering_can`, so this
-    /// selects the best owned can it needs and restores the actor's own selection afterwards.
-    /// Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteRefillWateringCan(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "refill_watering_can", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusalCode, slot));
         ExecutionState state;
@@ -84,8 +66,7 @@ internal sealed partial class ExecutionManager
             int after = wateringCan.WaterLeft;
             bool succeeded = ReferenceEquals(Game1.player.Items[selection.Slot], wateringCan) && before < max && after == max;
             evidence = $"target={expectedTargetId};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "watering_can_refilled", "watering_can_refill_postcondition_unavailable");
         }
         finally
         {
@@ -128,7 +109,6 @@ internal sealed partial class ExecutionManager
             if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty",
                     $"water_left={wateringCan.WaterLeft};slot={selection.Slot}");
-            // The charge is refused BEFORE the tool is charged, so a refusal can never leave `toolPower` written.
             if (RefuseToolCharge(charge, wateringCan, Game1.player, targetX, targetY) is { } chargeRefusal)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(wateringCan)}");
 
@@ -140,12 +120,15 @@ internal sealed partial class ExecutionManager
             // derived from the charge. The named crop's own read below stays the COMPLETION condition.
             HashSet<Vector2> wateredBefore = AreaToolFootprint.Observe(targetX, targetY, tile => location.GetHoeDirtAtTile(tile) is { } scanDirt && scanDirt.isWatered());
             float staminaBefore = Game1.player.Stamina;
+            // PRICED BEFORE THE NATIVE CALL, like every tool family: a swing can grant the level this formula reads,
+            // and the engine charges the level the actor held when it swung. See `ExecuteBreakRock` for the measured
+            // case (`round73`: 270 -> 268 charged 2.0 against a printed 1.9).
+            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f * (charge + 1) - (Game1.player.FarmingLevel * 0.1f);
             UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore, charge);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
             // WateringCan reads the SAME charge for its stamina as for its footprint (`WateringCan.cs:169`: `2 * (power + 1)`),
             // unlike the hoe, whose stamina keeps the `power` argument and is therefore flat in the charge.
-            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f * (charge + 1) - (Game1.player.FarmingLevel * 0.1f);
             // Water is spent by the charge, not by the tiles: `WaterLeft -= power + 1` (`WateringCan.cs:189-191`), so a
             // charge-4 watering of 18 tiles costs 5 units, and a bottomless can costs none.
             int waterExpectedCost = wateringCan.IsBottomless ? 0 : charge + 1;
@@ -165,8 +148,6 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            // Requested and applied are the same integer BY CONSTRUCTION - a charge above the held can's ceiling is
-            // refused, never clamped - so the pair is this receipt's proof that nothing was silently downgraded.
             evidence["charge_requested"] = charge.ToString(CultureInfo.InvariantCulture);
             evidence["charge_applied"] = charge.ToString(CultureInfo.InvariantCulture);
             evidence["window"] = AreaToolFootprint.Window(targetX, targetY);
@@ -194,11 +175,6 @@ internal sealed partial class ExecutionManager
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteHarvestCrop(executionId, admittedRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs));
 
-    /// <summary>
-    /// The harvest terminal step: re-validates the target and runs the native grab-harvest.
-    /// Called directly when the actor is already in range and from the approach continuation
-    /// after a walk, so both paths run the same checks and produce the same evidence.
-    /// </summary>
     private LocalExecutionReceipt ExecuteHarvestCrop(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
     {
 
@@ -257,7 +233,7 @@ internal sealed partial class ExecutionManager
             executionId,
             ExecutionState.Rejected,
             "inventory_full",
-            $"item={expectedQualifiedHarvestItemId};refused_qualities={string.Join(",", capacity.RefusedQualities)};admitted_qualities={string.Join(",", capacity.AdmittedQualities)}");
+            $"item={expectedQualifiedHarvestItemId};refused_qualities={QualityList(capacity.RefusedQualities)};admitted_qualities={QualityList(capacity.AdmittedQualities)}");
     }
 
     bool regrowsAfterHarvest = crop.RegrowsAfterHarvest();
@@ -318,13 +294,31 @@ internal sealed partial class ExecutionManager
     string harvestedQuality = gainedQualities.Length == 0
         ? "unknown"
         : string.Join(",", gainedQualities);
-    string qualityCountsBefore = string.Join(",", qualityBefore.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
-    string qualityCountsAfter = string.Join(",", qualityAfter.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+    string qualityCountsBefore = QualityCensus(qualityBefore);
+    string qualityCountsAfter = QualityCensus(qualityAfter);
     ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
     string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
     return this.RememberTerminal(requestId, executionId, state, reasonCode,
         $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
     }
+
+    /// <summary>
+    /// A quality census as one field value, or `none` when the pack holds none of the item.
+    ///
+    /// THE EMPTY STRING IS NOT THIS MOD'S SPELLING FOR ABSENT. Every other absent reading on a receipt says `none`
+    /// (`phase_after=none`, `held_after=none`, `owner=none`, `drops` in the furniture family), and the receipts' own
+    /// parser refuses an empty value because that is how it rejects junk. `quality_counts_before=` therefore made every
+    /// harvest from an empty pack unreadable, while the same harvest from a non-empty pack read fine - the shape that is
+    /// hardest to notice, because the ordinary case passes.
+    /// </summary>
+    private static string QualityCensus(Dictionary<int, int> counts) =>
+        counts.Count == 0
+            ? "none"
+            : string.Join(",", counts.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+
+    /// <summary>The same spelling for a quality list: `none` rather than nothing.</summary>
+    private static string QualityList(IReadOnlyList<int> qualities) =>
+        qualities.Count == 0 ? "none" : string.Join(",", qualities);
 
     /// <summary>
     /// The live pack, in the shape the native capacity predicate reads it (<c>Farmer.cs:4763-4765</c>).
@@ -411,10 +405,6 @@ internal sealed partial class ExecutionManager
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        // Out of the native interaction radius: walk in and then plant, like `plant_seed`, `water_crop`,
-        // `fertilize_tile` and `scythe_crop` in this same file. Refusing here told the Agent the tile was
-        // unavailable with `target=x,y` as its only evidence, and a sapling tile does not move away, so the
-        // refusal was a dead end rather than a race it could win by re-observing.
         if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
@@ -433,12 +423,6 @@ internal sealed partial class ExecutionManager
         return this.ExecutePlantSapling(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The plant_sapling terminal step: re-reads the slot, the item, the tile and the target identity, then
-    /// runs the native wild-tree-seed placement. Called directly when the actor is already in range and from
-    /// the approach continuation after a walk, so both routes run the same checks and produce the same
-    /// evidence - a walk takes ticks, and the slot can empty or the tile can be taken in the meantime.
-    /// </summary>
     private LocalExecutionReceipt ExecutePlantSapling(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object sapling
@@ -451,10 +435,6 @@ internal sealed partial class ExecutionManager
         if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
             || !string.Equals(BuildTreeSaplingTargetId(location, slot, targetX, targetY, sapling.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY}");
-        // Reach is re-checked here as well as at the request path, because this body is reached by BOTH routes and
-        // a walk takes ticks. A sapling tile is static, so the only arrival failure it has is a walk that stopped
-        // short: `approach=did_not_arrive`, with no `moved while you walked` case to name. `clear_debris` states its
-        // own static-target reach in the same words rather than leaning on the leg.
         if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach", $"target={targetX},{targetY};reach=1;approach=did_not_arrive");
 
@@ -501,12 +481,6 @@ internal sealed partial class ExecutionManager
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecutePlaceWoodFence(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
-    /// <summary>
-    /// Executes place_wood_fence against the current world, re-validating the slot,
-    /// the source and the placement geometry because an approach leg may have taken
-    /// several ticks. Shared by the in-range path and the post-approach path so the
-    /// two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecutePlaceWoodFence(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (expectedQualifiedItemId != "(O)322")
@@ -553,8 +527,6 @@ internal sealed partial class ExecutionManager
         bool inventoryDecremented = afterCount == beforeCount - 1;
         bool validFenceHealth = float.IsFinite(health) && float.IsFinite(maxHealth) && health > 0f && maxHealth >= health;
         bool succeeded = placementHandled && sourceEmptyBefore && isFence && !isGate && validFenceHealth && inventoryDecremented;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "wood_fence_placed" : "wood_fence_postcondition_unavailable";
         if (succeeded)
         {
             this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", RequireDisplayName("(O)322"), IsFence: true, IsGate: false, health, maxHealth);
@@ -564,7 +536,7 @@ internal sealed partial class ExecutionManager
             this.woodFenceResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "wood_fence_placed", "wood_fence_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -584,12 +556,6 @@ internal sealed partial class ExecutionManager
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecutePlaceCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
-    /// <summary>
-    /// Executes place_crab_pot against the current world, re-validating the slot, the
-    /// source and the placement geometry because an approach leg may have taken several
-    /// ticks. Shared by the in-range path and the post-approach path so the two cannot
-    /// drift.
-    /// </summary>
     private LocalExecutionReceipt ExecutePlaceCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (expectedQualifiedItemId != "(O)710")
@@ -626,18 +592,12 @@ internal sealed partial class ExecutionManager
         StardewValley.Object? placed = farm.objects.TryGetValue(tile, out StardewValley.Object? candidate) ? candidate : null;
         StardewValley.Objects.CrabPot? crabPot = placed as StardewValley.Objects.CrabPot;
         int afterCount = CountQualifiedItem(Game1.player, "(O)710");
-        // Native CrabPot.updateOffset legitimately leaves directionOffset at
-        // Vector2.Zero for an all-water neighborhood. Finiteness, ownership,
-        // and target-bound overlay facts are the observable placement contract;
-        // nonzero offset is not a source-proven universal postcondition.
         bool validOffset = crabPot is not null && float.IsFinite(crabPot.directionOffset.Value.X) && float.IsFinite(crabPot.directionOffset.Value.Y);
         IReadOnlyList<BridgeCrabPotOverlayTile> overlayTiles = crabPot is null
             ? Array.Empty<BridgeCrabPotOverlayTile>()
             : BuildCrabPotOverlayFacts(crabPot);
         bool succeeded = placementHandled && crabPot is not null && crabPot.QualifiedItemId == "(O)710"
             && crabPot.owner.Value == Game1.player.UniqueMultiplayerID && validOffset && afterCount == beforeCount - 1;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "crab_pot_placed" : "crab_pot_postcondition_unavailable";
         if (succeeded)
         {
             this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
@@ -647,7 +607,7 @@ internal sealed partial class ExecutionManager
             this.crabPotResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_placed", "crab_pot_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalBaitCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -667,11 +627,6 @@ internal sealed partial class ExecutionManager
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecuteBaitCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
 
-    /// <summary>
-    /// Executes bait_crab_pot against the current world, re-validating the bait item
-    /// and the pot because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         Farmer player = Game1.player;
@@ -681,9 +636,6 @@ internal sealed partial class ExecutionManager
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY}");
-        // THE POT'S OWN VERDICT, ASKED BEFORE THE WRITE: `probe: true` runs the acceptance test (an `Object` in the bait
-        // category, while `NeedsBait` still holds) and writes nothing, so an item the pot would refuse is named here
-        // rather than driven through the native entry.
         if (!crabPot.performObjectDropInAction(bait, probe: true, player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_accepted_by_pot", $"target={targetX},{targetY};item={expectedQualifiedItemId};pot=(O)710;bait_present={(crabPot.bait.Value is not null).ToString().ToLowerInvariant()}");
         int beforeCount = CountQualifiedItem(player, expectedQualifiedItemId);
@@ -693,11 +645,9 @@ internal sealed partial class ExecutionManager
         finally { player.CurrentToolIndex = previousSlot; }
         int afterCount = CountQualifiedItem(player, expectedQualifiedItemId);
         bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == expectedQualifiedItemId && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
-        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
         if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
         string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_baited", "bait_crab_pot_postcondition_unavailable", evidence);
     }
 
     public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs) =>
@@ -756,21 +706,11 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
-        // Scope-bound actor proof. Authorization precedes the world/location
-        // readiness checks: a caller that is not the scope-bound actor is refused
-        // for that reason rather than for where it happens to be standing.
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        // Shared mechanical admission (identity → actionability → deadline →
-        // body exclusivity), behavior-equivalent to the inline sequence it
-        // replaced: identical reasonCodes, identical order. Geometry, target
-        // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool)
@@ -804,25 +744,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteClearDebris(executionId, requestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs);
     }
 
-    /// <summary>
-    /// Executes clear_debris against the current world, re-validating the tool and the clump because an approach leg may
-    /// have taken several ticks - the clump can be felled, damaged or replaced while the actor walks. One native hit per
-    /// request; the postcondition is read from the live clump, not assumed.
-    ///
-    /// <para>
-    /// The stamina gate is now a per-INTENT clearance lease (<see cref="ClearanceLease"/>) driving
-    /// <see cref="SingleClearExecutor"/>: the same <see cref="ToolStaminaGuard"/> floor and the same
-    /// `insufficient_stamina` refusal, plus a bounded, deadline-carrying budget that reports what the fresh world
-    /// says afterwards. The lease authorises exactly this one clump and is fixed at issue, so nothing here can widen
-    /// it mid-walk.
-    /// </para>
-    ///
-    /// <para>
-    /// MOD-INTERNAL. The lease is decided and spent inside this Mod process; it is not a bridge/Host contract and no
-    /// lease field appears on the wire or in a snapshot. The `debris_cleared` success evidence keeps its exact key set
-    /// because the Host pins it, so the lease's own facts go to the trace line and to the non-success evidence.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt ExecuteClearDebris(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool)
@@ -863,12 +784,6 @@ internal sealed partial class ExecutionManager
         float perSwingStamina = ToolStaminaGuard.PerSwingCharge(toolSkillLevel, tool.IsEfficient);
         float expectedClearCost = ToolStaminaGuard.EstimatedCost(swingsRequired, toolSkillLevel, tool.IsEfficient);
 
-        // ONE intent, ONE clear, ONE lease. The intent is this request; its blockers are exactly the clump in hand,
-        // and its deadline is the request's own - a lease cannot outlive the request that opened it.
-        //
-        // Only this clump is declared. A second blocker the world reveals after the swing is NOT added here: the
-        // executor reports the fresh state and the caller decides whether another intent is worth opening. That is
-        // the difference between a companion that clears one rock and one that spends the player's day doing it.
         ClearBlockerTile blocker = new(
             (int)clump.Tile.X,
             (int)clump.Tile.Y,
@@ -883,8 +798,6 @@ internal sealed partial class ExecutionManager
                 BlockerPresent: true,
                 BlockerTargetId: expectedTargetId,
                 ExpectedCost: expectedClearCost,
-                // The family's own reach, not a distance from the anchor: a 2x2 clump is hit from any tile beside its
-                // footprint, and the anchor reading refuses a walk that landed exactly where it was sent.
                 InToolReach: IsDebrisFootprintWithinChebyshev(Game1.player, clump, 1),
                 Stopped: false),
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -901,6 +814,7 @@ internal sealed partial class ExecutionManager
         float staminaBefore = Game1.player.Stamina;
         string activeToolKind;
         int swingCount = 0;
+        float perSwingStaminaCost = 0f;
         try
         {
             if (Game1.player.CurrentTool is not Tool activeTool)
@@ -912,17 +826,17 @@ internal sealed partial class ExecutionManager
                 Hoe => "hoe",
                 _ => "tool",
             };
+            // PRICED BEFORE THE FIRST SWING: clearing a clump grants foraging/mining/farming experience, so a level
+            // earned by the swing must not change the cost the swing is compared against. See `ExecuteBreakRock` for
+            // the measured case.
+            int skillLevelBefore = activeToolKind switch
+            {
+                "axe" => Game1.player.ForagingLevel,
+                "pickaxe" => Game1.player.MiningLevel,
+                _ => Game1.player.FarmingLevel,
+            };
+            perSwingStaminaCost = activeTool.IsEfficient ? 0f : 2f - (skillLevelBefore * 0.1f);
             Vector2 hitTile = clump.Tile;
-            // A 2x2 boulder carries 4 health and a stump more, while one native swing removes one point. A single
-            // `UseNativeToolOnTile` therefore leaves the clump standing, and reporting that as a non-terminal
-            // `PartiallySucceeded` was a deadlock rather than progress: the router maps only Succeeded/Failed/Rejected/
-            // Cancelled to a terminal, everything else stays bound-Running forever while the ledger replays the SAME
-            // receipt for the SAME RequestId (`RouteReenteringBodyProgramExecutor.ToTerminal`, default branch). So keep
-            // swinging the same equipped tool on the same clump until it falls, exactly as `chop_tree_source` does for a
-            // stump and `cut_weeds` does for a two-health weed - the repeated native seam a holding player executes.
-            //
-            // The cap is the same shape as its siblings (cut_weeds 8, chop_tree_source 12) and exists so a target the
-            // tool cannot damage ends in a named refusal instead of an endless loop.
             const int maximumSwingCount = 16;
             StardewValley.TerrainFeatures.ResourceClump? standing = clump;
             while (standing is not null && standing.health.Value > 0f && swingCount < maximumSwingCount)
@@ -942,33 +856,17 @@ internal sealed partial class ExecutionManager
 
         float staminaAfter = Game1.player.Stamina;
         float staminaDelta = staminaAfter - staminaBefore;
-        // Cleared debris uses the player's equipped tool; Axe/Hoe deduct from the
-        // passed power (tap => 2*1 - level*0.1) while Pickaxe overrides power with
-        // toolPower.Value (tap => 0, so 2*(0+1) - level*0.1). Both evaluate to
-        // 2 - level*0.1 for a basic tap; keep the formula explicit per tool.
-        float expectedStaminaCost = 0f;
-        if (Game1.player.CurrentTool is Tool activeToolForCost && activeToolKind == "axe")
-            expectedStaminaCost = activeToolForCost.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
-        else if (activeToolKind == "pickaxe")
-            expectedStaminaCost = (Game1.player.CurrentTool is Tool pickForCost && pickForCost.IsEfficient) ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
-        else if (activeToolKind == "hoe")
-            expectedStaminaCost = (Game1.player.CurrentTool is Tool hoeForCost && hoeForCost.IsEfficient) ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        expectedStaminaCost *= swingCount;
+        // Axe/Hoe deduct from the passed power (tap => 2*1 - level*0.1) while Pickaxe overrides power with
+        // toolPower.Value (tap => 0, so 2*(0+1) - level*0.1). Both evaluate to 2 - level*0.1 for a basic tap, so
+        // the price is the same expression for every tool this family drives; it was read above, before the swing.
+        float expectedStaminaCost = perSwingStaminaCost * swingCount;
 
         StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         float healthAfter = remaining?.health.Value ?? 0f;
         bool cleared = remaining is null;
 
-        // The ONE clear is recorded with what the engine ACTUALLY took, not with the estimate that authorised it.
-        // A lease that charged the estimate would spend the player's day on a number nobody measured.
-        //
-        // After this call the executor cannot start another swing from this intent - it refuses by name - so the
-        // shape below is the only one this action can produce: one clump cleared, then a fresh reading of the world.
         executor.RecordClear(staminaDelta);
 
-        // RE-OBSERVE from the world the clear just changed, and report it rather than act on it. The tile this
-        // request was about is reachable when the clump is gone, the tile is walkable again, and the actor's own
-        // walkable component contains it - three facts, each of which the native predicates answer.
         bool targetReachable = cleared
             && StardewBodyController.IsWalkableTile(location, Game1.player, new Vector2(targetX, targetY))
             && (StardewBodyController.BuildWalkableComponent(location, Game1.player) is not { } component
@@ -977,24 +875,16 @@ internal sealed partial class ExecutionManager
             ? System.Array.Empty<ClearBlockerTile>()
             : new[] { blocker };
         SingleClearFollowUp followUp = executor.Reobserve(ClearReobservation.FromReachability(targetReachable, stillInTheWay));
-        // The lease's facts are written HERE rather than into the success detail: the Host pins that detail's exact
-        // key set, and a lease is not a wire fact. Nothing about this line is a contract.
         this.monitor.Log($"[clear-lease] request={requestId};{followUp.Evidence}", LogLevel.Trace);
 
-        // A clump that survives the bounded swing cap ends `Uncertain`, the same shape `cut_weeds` and
-        // `chop_tree_source` use when their postcondition cannot be reached. It must NOT end `PartiallySucceeded`:
-        // that state is non-terminal to the Body Program router, which keeps the node bound-Running and replays the
-        // same receipt for the same RequestId for ever. "I could not finish this" is a fact the caller can act on;
-        // "still running" is a hang.
-        return this.RememberTerminal(
+        return this.SettlePostcondition(
             requestId,
             executionId,
-            cleared ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            cleared ? "debris_cleared" : "debris_not_cleared",
+            cleared,
+            "debris_cleared",
+            "debris_not_cleared",
             cleared
                 ? $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=true;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}"
-                // The failure path is not Host-pinned, so it carries the lease's own report: what was still in the
-                // way and that the next step is the caller's decision, not another swing from this intent.
                 : $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=false;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};{followUp.Evidence}");
     }
 
@@ -1024,9 +914,6 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!TryFindBreakableClump(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.ResourceClump? clump, out string toolKind, out int requiredUpgrade))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clump_target_moved", DescribeClumpTargetRefusal(targetX, targetY));
-        // Ask before walking, exactly as the declared-tool actions do: a pack that cannot satisfy THIS clump's own
-        // requirement is refused now rather than after an approach leg it could never finish. Resolving it needs the
-        // clump, which is why this preflight follows the identity check rather than preceding it.
         DeclaredToolResolution packTool = ResolveOwnedTool(Game1.player.Items, toolKind, requiredUpgrade);
         if (packTool.RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ClumpToolRefusalCode(toolRefusal), DescribeClumpToolRefusal(expectedTargetId, targetX, targetY, clump!.parentSheetIndex.Value, toolKind, requiredUpgrade, packTool));
@@ -1051,11 +938,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteBreakResourceClump(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// Executes break_resource_clump against the current world, re-resolving the clump, its reach and its tool
-    /// requirement because an approach leg may have taken several ticks and any of the three can have changed while the
-    /// actor walked. Shared by the in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteBreakResourceClump(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
@@ -1073,13 +955,8 @@ internal sealed partial class ExecutionManager
             int parent = clump!.parentSheetIndex.Value;
             float healthBefore = clump.health.Value;
             float staminaBefore = Game1.player.Stamina;
-            // The exact number of native hits this clump needs, from the engine's own damage formula and the health it
-            // is carrying right now - a clump already damaged by an earlier request needs fewer.
             float damagePerSwing = Math.Max(1f, (selection.Tool.UpgradeLevel + 1) * 0.75f);
             int swingsRequired = Math.Max(1, (int)Math.Ceiling(healthBefore / damagePerSwing));
-            // +4 rather than a fixed ceiling: the count is derived from live state, so a small headroom covers a
-            // fractional-health clump and still ends a target the tool cannot finish in a named refusal instead of a
-            // loop. It is not a budget on the action - one request clears one clump.
             int swingCap = swingsRequired + 4;
             // The stamina red line, priced against the swings this clump actually needs. The engine does not refuse a
             // swing for lack of stamina; it lets it run negative and then faints the actor (Game1.cs:6452), which halves
@@ -1140,8 +1017,7 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = (perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture);
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "clump_broken" : "postcondition_not_observed";
+            (state, reasonCode) = PostconditionVerdict(succeeded, "clump_broken", "postcondition_not_observed");
         }
         finally
         {
@@ -1151,10 +1027,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.BreakResourceClump, evidence));
     }
 
-    /// <summary>
-    /// The detail one `clump_target_moved` carries: the tile that was asked for, and the layer that refused it. A clump
-    /// that is no longer in the collection is a WORLD fact (the caller re-observes), not a bad request.
-    /// </summary>
     private static string DescribeClumpTargetRefusal(int targetX, int targetY)
     {
         string token = new RefusalLayerToken(RefusalLayerKind.Clump, $"absent@{targetX},{targetY}").Format();
@@ -1254,7 +1126,6 @@ internal sealed partial class ExecutionManager
             ? "clump_tool_too_weak"
             : resolutionRefusal;
 
-    /// <summary>The detail one refused clump-tool request carries, from the same resolution that refused it.</summary>
     private static string DescribeClumpToolRefusal(string expectedTargetId, int targetX, int targetY, int parent, string toolKind, int requiredUpgrade, DeclaredToolResolution resolution)
     {
         string token = new RefusalLayerToken(RefusalLayerKind.Tool, toolKind).Format();
@@ -1326,14 +1197,6 @@ internal sealed partial class ExecutionManager
         return tiles;
     }
 
-    /// <summary>
-    /// Whether the actor is within <paramref name="radius"/> Chebyshev steps of ANY tile the clump occupies, which is
-    /// the reach a native tool swing needs: it lands on a tile one step from where the farmer stands.
-    ///
-    /// Deliberately not <c>IsDebrisTargetWithinPlayerRadius</c>: that one answers the DISCOVERY question ("may this
-    /// clump be offered") over <c>TargetDiscoveryRadius</c> = 6, and reusing it as the execution gate admitted a swing
-    /// from six tiles away at a tile the swing could not reach.
-    /// </summary>
     internal static bool IsDebrisFootprintWithinChebyshev(Farmer player, StardewValley.TerrainFeatures.ResourceClump clump, int radius) =>
         DebrisFootprint(clump).Any(tile =>
             Math.Abs(tile.X - (int)player.Tile.X) <= radius
@@ -1357,14 +1220,10 @@ internal sealed partial class ExecutionManager
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        // Ask before walking: a pack that cannot satisfy the action's own `tool:scythe` claim is refused now rather
-        // than after an approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
         if (ResolveDeclaredTool(Game1.player.Items, "scythe_crop").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusal, slot));
         if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
         {
-            // Out of the native interaction radius: walk in and then swing, like `harvest_crop` and
-            // `water_crop` in this same file.
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
@@ -1430,8 +1289,6 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
-        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "scythe_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusalCode, slot));
         ExecutionState state;
@@ -1487,7 +1344,6 @@ internal sealed partial class ExecutionManager
             // no native path deducts stamina for a melee swing, so the expected
             // embodied cost is exactly zero.
             float expectedStaminaCost = 0f;
-            // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
             bool succeeded = cropGone && (deadCrop || debrisGained);
             evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
             state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;

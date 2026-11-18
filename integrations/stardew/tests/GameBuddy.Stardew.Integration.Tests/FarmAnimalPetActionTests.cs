@@ -188,7 +188,7 @@ public sealed class FarmAnimalPetActionTests
     [Fact]
     public void DiscoveryPublishesOnlyAnimalsThisActorHasNotPettedToday()
     {
-        string discovery = MethodBody(Read(ControllerFile), "private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverFarmAnimalPetTargets"), "private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(");
 
         discovery.Should().Contain("location.animals.Values", "farm animals live in the farm AND inside every barn/coop");
         // The day marker is still the engine's own per-farmer, per-day `wasPet` - read as the GUARD it now is, and

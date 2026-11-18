@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, type PendingBatch } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch } from "./event-pump.js";
 
 /**
  * `events` is the PRESENTATION projection, not a second copy of the facts.
@@ -23,23 +23,31 @@ test("semantic events are not duplicated into the events projection", async () =
     },
   };
 
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    correlationId: "route-1",
-    revision: 1,
-    payload: { kind: "route_progress", reasonCode: "body_trace", pad: "x".repeat(400) },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: "route-1",
+      revision: 1,
+      payload: { kind: "route_progress", reasonCode: "body_trace", pad: "x".repeat(400) },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
   // A semantic event alone is not a delivery trigger - `hasPendingDelivery` stays false until an ordinary or
   // salient fact arrives. Adding one here is what makes the batch exist at all; the assertion is about what the
   // batch CONTAINS, not about whether it happened.
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    correlationId: "world-1",
-    revision: 2,
-    payload: { kind: "day_started" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      correlationId: "world-1",
+      sourceEventId: "world-1",
+      revision: 2,
+      semanticKind: "day_started",
+      payload: { kind: "day_started" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   await pump.flush(sink);
   const batch = delivered[0]!;
@@ -67,13 +75,18 @@ test("the kinds canonicalPresentationSource reads are still present in events", 
     },
   };
 
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    correlationId: "world-1",
-    revision: 2,
-    payload: { kind: "day_started" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      correlationId: "world-1",
+      sourceEventId: "world-1",
+      revision: 2,
+      semanticKind: "day_started",
+      payload: { kind: "day_started" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   await pump.flush(sink);
   const batch = delivered[0]!;
@@ -92,21 +105,29 @@ test("a batch of only semantic events carries no duplicate payload at all", asyn
     },
   };
   for (let index = 0; index < 40; index += 1) {
-    pump.enqueueFact({
-      source: "stardew_mod",
-      kind: "semantic_event",
-      correlationId: `route-${String(index)}`,
-      revision: index,
-      payload: { kind: "route_progress", reasonCode: "body_trace", pad: "y".repeat(400), index },
-    });
+    pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "semantic_event",
+        correlationId: `route-${String(index)}`,
+        revision: index,
+        payload: { kind: "route_progress", reasonCode: "body_trace", pad: "y".repeat(400), index },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
   }
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "world_fact",
-    correlationId: "world-1",
-    revision: 100,
-    payload: { kind: "day_started" },
-  });
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "world_fact",
+      correlationId: "world-1",
+      sourceEventId: "world-1",
+      revision: 100,
+      semanticKind: "day_started",
+      payload: { kind: "day_started" },
+    },
+    FACT_PRODUCER.adapterIngress,
+  );
 
   await pump.flush(sink);
   const batch = delivered[0]!;

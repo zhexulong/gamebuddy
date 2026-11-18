@@ -109,15 +109,16 @@ test(
       if (parsed.type !== "hello_ack") return;
       const actions = planActionsFromRegistrations(parsed.payload.registrations);
 
-      // The declaring half: `pickup_forage` enforces `forage_target_out_of_range` beyond Chebyshev 1,
-      // and says so before the companion is refused.
-      const declaring = planShape(actions, { actionIds: ["pickup_forage"] });
-      assert.equal(declaring.ok, true);
-      if (!declaring.ok) return;
-      assert.deepEqual(declaring.actions[0]?.approachRequirement, {
+      // The reversed half: `pickup_forage` USED to enforce `forage_target_out_of_range` beyond Chebyshev 1 and say so
+      // here; its request path now walks to the item (measured `round65`: four such refusals were the only failure
+      // class in the run and one lily was never picked), so the same pipeline answers `self_walked` with no distance.
+      const walks = planShape(actions, { actionIds: ["pickup_forage"] });
+      assert.equal(walks.ok, true);
+      if (!walks.ok) return;
+      assert.deepEqual(walks.actions[0]?.approachRequirement, {
         declared: true,
-        relation: "adjacent",
-        withinTiles: 1,
+        relation: "self_walked",
+        withinTiles: null,
       });
 
       // The measured defect's own action, through the same pipeline: `cut_weeds` walks the actor in, so the answer

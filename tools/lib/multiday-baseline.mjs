@@ -430,14 +430,172 @@ function nightEndedDayOfMonth(night, record) {
 }
 
 /**
+ * A PROMISE TO GO TO BED THAT WAS NEVER TAKEN, which is the cause of a night the engine had to end.
+ *
+ * <p>
+ * Measured 2026-11-13 (`round47`). At 22:00 she dispatched `enter_exit` into `FarmHouse:3,11` - the tile beside her own
+ * bed - and then stood there. Her delivered lines over the next turns were 「就睡，别撑到一点半了——斧头往墙角一靠，这就躺平」,
+ * 「都十二点了」 and 「手里还攥着斧柄，松开手，这觉才算真睡下去」. She dispatched NINE turns of it and submitted `sleep`
+ * zero times in fifty-nine turns, so at 26:00 the engine took the night (`night_ended_pass_out_day_4`), and the only
+ * thing the run's account could say about it was `pass_out` - the CONSEQUENCE. Asked afterwards she answered exactly
+ * that: 「我把「我在文字里躺下了」当成「我已经躺下了」」.
+ * </p>
+ *
+ * <p>
+ * `pass_out` is a consequence, not a cause. `WorldModel.cs:193` is where the Mod decides the actor has been passed out
+ * (`facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime`, the constants at `:110`/`:114` being
+ * the engine's own `-15f` and `2600` from `Game1.cs:6452`), and `Sensory/StardewSalientEventHooks.cs:64-75` is where
+ * that crossing is published as `night_ended_pass_out_day_<TotalDays>`. Both observe the engine taking a night that was
+ * never ended by her, which is why a reading is needed and why a *postcondition* is not the right instrument: nothing
+ * was attempted and refused. A promise is a decision that was never carried out, and the only record of it is the line
+ * she delivered.
+ * </p>
+ *
+ * <p>
+ * THE WORDS ARE A DECLARED LIST, NOT A STEM. Every phrase below is one she actually delivered: 「就睡」, 「躺平」 and
+ * 「睡下去」 on the round47 evening above, and `go to bed` / `going to bed` on 2026-10-28 (run `game-1793210285549`,
+ * day 5), where her own thinking read "Going to bed would be good. Let me check if there's a sleep action" and the same
+ * 2:00 pass-out took the night. A form of committing to bed that is not in this list is a form the reading will miss -
+ * the fix is to name it here, never to widen the match to bare 「睡」, which is in half of every night's narration.
+ * </p>
+ *
+ * <p>
+ * A NEGATED COMMITMENT IS NOT A COMMITMENT. The same words behind a declared negating prefix are read as a refusal, so
+ * 「今晚不躺平了，干到天亮」 - a companion choosing to work the night - cannot be reported as a promise she broke.
+ * </p>
+ */
+export const SLEEP_PROMISE_PHRASES = Object.freeze([
+  // Measured 2026-11-13 (`round47`), the evening she stood in the farmhouse until 02:00.
+  "就睡",
+  "躺平",
+  "睡下去",
+  // Measured 2026-10-28 (run `game-1793210285549`, day 5), the same defect in the other locale.
+  "go to bed",
+  "going to bed",
+]);
+
+/** Prefixes that turn one of the phrases above into a refusal to do it. */
+export const SLEEP_PROMISE_NEGATIONS = Object.freeze(["不", "没", "别", "not ", "never "]);
+
+/**
+ * How many turns a promise has before the reading calls it unkept.
+ *
+ * <p>
+ * MEASURED, not chosen: on `round47` the farmhouse was entered on delivered turn 38 (`time_milestone_day_4_2200` at the
+ * same boundary), the commitment was delivered on turn 39, and the engine's pass-out landed on turn 47 - EIGHT turns
+ * from the promise to the consequence, NINE from the door to it. Three is the window this repository already waits
+ * before it calls narration without work a finding the next turn must answer (`NARRATION_WITHOUT_WORK_TURNS`, the same
+ * three turns), so the same three turns here name the missing `sleep` five turns before the pass-out could take the
+ * night - and a companion standing on her own bed tile who means it needs one turn, not four.
+ * </p>
+ *
+ * <p>
+ * The window does not pretend the promise is void after three turns: a `sleep` submitted later still ends the night, it
+ * is simply not the promise being kept. A reading that waited for the consequence would only re-spell `pass_out`.
+ * </p>
+ */
+export const SLEEP_PROMISE_TURNS = 3;
+
+/** The reading a promise leaves behind when nothing was submitted inside the window. */
+const SLEEP_PROMISED_NOT_TAKEN = "sleep_promised_not_taken";
+
+/**
+ * The commitment a delivered turn's lines carry, or `null`. First match wins, scanning the lines in the order she spoke
+ * them, so the phrase reported is the one that actually opened the promise.
+ */
+export function sleepPromiseIn(lines) {
+  for (const line of Array.isArray(lines) ? lines : []) {
+    if (typeof line !== "string") continue;
+    const text = line.trim();
+    if (text.length === 0) continue;
+    const lowered = text.toLowerCase();
+    for (const phrase of SLEEP_PROMISE_PHRASES) {
+      const at = lowered.indexOf(phrase.toLowerCase());
+      if (at < 0) continue;
+      const before = lowered.slice(Math.max(0, at - 6), at);
+      if (SLEEP_PROMISE_NEGATIONS.some((negation) => before.endsWith(negation))) continue;
+      return Object.freeze({ phrase, line: text });
+    }
+  }
+  return null;
+}
+
+/**
+ * Every promise to go to bed in a run's turn stream that no `sleep` submission followed, each as a NAMED reading.
+ *
+ * <p>
+ * The turn stream is the runner's own `sessionTurns`: the lines it PRESENTED for that turn and whether a `sleep`
+ * submission happened during it, from either dispatch channel. This is the only record of a decision that was announced
+ * and never carried out - the receipts cannot show an action nobody submitted, and the night's cause can only say the
+ * engine ended it.
+ * </p>
+ *
+ * <p>
+ * FOUR ANSWERS, never three. `examined` is the population the reading ran over; `promiseTurns` says how many of those
+ * turns delivered a commitment (kept or not, so a `0` here is a statement about the run, not about the list);
+ * `turnsWithoutSleepRecord` counts turns whose submission record is absent, which is NOT MEASURED rather than "nothing
+ * was submitted" - and a window holding one of those is not judged (`windowsNotMeasured`), so an unrecorded turn cannot
+ * silently become the evidence that she never went to bed.
+ * </p>
+ */
+export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS } = {}) {
+  const stream = Array.isArray(turns) ? turns : [];
+  const window = Number.isInteger(withinTurns) && withinTurns > 0 ? withinTurns : SLEEP_PROMISE_TURNS;
+  const readings = [];
+  let promiseTurns = 0;
+  let turnsWithoutSleepRecord = 0;
+  let windowsNotMeasured = 0;
+  for (const [index, turn] of stream.entries()) {
+    if (typeof turn?.sleepSubmitted !== "boolean") {
+      turnsWithoutSleepRecord += 1;
+      continue;
+    }
+    const promise = sleepPromiseIn(turn?.spokenLines);
+    if (promise === null) continue;
+    promiseTurns += 1;
+    const ahead = stream.slice(index, index + window);
+    if (ahead.some((entry) => typeof entry?.sleepSubmitted !== "boolean")) {
+      windowsNotMeasured += 1;
+      continue;
+    }
+    if (ahead.some((entry) => entry.sleepSubmitted === true)) continue;
+    const number = index + 1;
+    readings.push(
+      Object.freeze({
+        day: Number.isInteger(turn?.day) ? turn.day : null,
+        turn: number,
+        phrase: promise.phrase,
+        utterance: promise.line,
+        // The spelling a reader greps for and a verdict quotes: `<reading>:<turn>:<utterance>`.
+        code: `${SLEEP_PROMISED_NOT_TAKEN}:${String(number)}:${promise.line}`,
+      }),
+    );
+  }
+  return Object.freeze({
+    examined: stream.length,
+    promiseTurns,
+    turnsWithoutSleepRecord,
+    windowsNotMeasured,
+    readings: Object.freeze(readings),
+  });
+}
+
+/**
  * Judge one run's day records against the baseline's rules. Every rule can fail on its own and names
  * itself, so a red result says which single-game fact was missing instead of "multi-day timed out".
+ *
+ * `sleepPromises` is the run's own turn-stream reading (`sleepPromisesNotTaken().readings`), or `null` when nobody
+ * measured it. It is an INPUT and never a second judgement: a night the engine took is still counted as a pass-out -
+ * that is the consequence - and the promise, when there is one, is named as the cause of it, ahead of the settlement
+ * menu that never came because the night ended before she went to bed. `null` is `not_measured` and says so on the
+ * reading; an empty list is the measurement answering "no promise was delivered".
  */
 export function assessMultiDayBaseline({
   dayRecords,
   daysRequested = null,
   worldDayStarts = null,
   worldNightEndings = null,
+  sleepPromises = null,
 } = {}) {
   const violations = [];
   if (!Array.isArray(dayRecords)) {
@@ -480,6 +638,14 @@ export function assessMultiDayBaseline({
   // world crossed is a crossed night, and the failure its lifecycle reported is a finding about that lifecycle's own
   // observation - not about the night. Collected here so a reader sees both halves at once.
   const lifecycleDisagreements = [];
+  // WHAT THE RUN'S OWN TURNS SAID, when the caller measured it: `null` is NOT MEASURED, and every entry beside it names
+  // the night the engine had to end and what she promised instead. Published per pass-out night so a reader cannot see
+  // the consequence (`pass_out`) without the cause when one was measured, and cannot read "nobody promised" where the
+  // answer is "nobody looked".
+  const promises = Array.isArray(sleepPromises)
+    ? sleepPromises.filter((entry) => isPlainObject(entry) && typeof entry.code === "string")
+    : null;
+  const passOutCauses = [];
   for (const [index, record] of dayRecords.entries()) {
     const where = `dayRecords[${String(index)}]`;
     if (!isPlainObject(record)) {
@@ -561,7 +727,31 @@ export function assessMultiDayBaseline({
         Object.freeze({ night: index + 1, day: Number.isInteger(record.day) ? record.day : null, code: disagreement }),
       );
     }
-    if (cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
+    if (cause === NIGHT_CAUSE_PASS_OUT) {
+      passOutNights += 1;
+      // THE CAUSE, NAMED BEFORE THE CONSEQUENCES IT PRODUCED.
+      //
+      // `pass_out` says the ENGINE ended the night, which is what happened and not why: she was passed out because she
+      // never went to bed. Measured 2026-11-13 (`round47`): entered `FarmHouse:3,11` at 22:00, said 「就睡」 and 「这就躺平」,
+      // submitted `sleep` zero times in fifty-nine turns, and the run's own account reported the pass-out - while the
+      // only rule that fired on that night was `first_night_shipping_menu_never_dismissed`, a menu she never reached
+      // because the engine took the night first. The promise is pushed HERE, before the menu rules below, so the night's
+      // cause is the first thing the assessment says about it rather than the settlement it never got to.
+      const promise =
+        promises === null
+          ? null
+          : (promises.find((entry) => Number.isInteger(record.day) && entry.day === record.day) ?? null);
+      if (promise !== null) violations.push(violation(promise.code, `${where}.cause`));
+      passOutCauses.push(
+        Object.freeze({
+          night: index + 1,
+          day: Number.isInteger(record.day) ? record.day : null,
+          code: promise?.code ?? null,
+          reason:
+            promise !== null ? SLEEP_PROMISED_NOT_TAKEN : promises === null ? "not_measured" : "no_promise_delivered",
+        }),
+      );
+    }
     // `sleep` is a claim that the COMPANION's own `advance_day` crossed the night, and only the lifecycle receipt that
     // `advance_day` starts can show it. A record claiming one while the ONLY witness is the calendar (no receipt at all,
     // so no lifecycle existed) is stating an event nobody observed - which is exactly the shape that read as "the
@@ -768,6 +958,10 @@ export function assessMultiDayBaseline({
     // The nights whose lifecycle reported a failure while the world crossed them. A reading, not a violation: the night
     // crossed, and naming it red would say the opposite. `[]` means every lifecycle agreed with the world.
     lifecycleDisagreements: Object.freeze(lifecycleDisagreements),
+    // Every promise to go to bed the run's own turn stream carried with no `sleep` behind it, and - per pass-out night -
+    // which one of them the engine's pass-out was the consequence of. `sleepPromisesNotTaken: null` is NOT MEASURED.
+    sleepPromisesNotTaken: promises === null ? null : Object.freeze([...promises]),
+    passOutCauses: Object.freeze(passOutCauses),
     worldDaysCrossed,
     dayCountWitness,
     // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
@@ -802,6 +996,7 @@ const CHECKED_RULES = Object.freeze([
   "night_day_started_edge_not_observed",
   "night_cause_claims_a_sleep_without_a_receipt",
   "night_mechanism_unobserved",
+  "sleep_promised_not_taken",
   "night_raised_unclosable_menu",
   "level_up_menu_not_resolved",
   "level_up_branch_chosen_by_harness",

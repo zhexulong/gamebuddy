@@ -197,6 +197,38 @@ public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Rele
 
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
 public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
+
+/// <summary>
+/// Which programme node an execution belongs to, as this journal states it.
+///
+/// <para>
+/// THE JOURNAL IS THE ONLY LAYER THAT CAN SAY IT. <see cref="NodeExecutionBinding"/> is minted at the admission boundary
+/// and kept on the node for the node's whole life, so "which plan asked for this execution" is a durable fact here and
+/// nowhere else. Everything downstream carried only an `executionId`, so a consumer that needed to know whether a
+/// `succeeded` receipt was a STEP of a programme or a LONE outcome had to infer it from what happened to be running - and
+/// that inference is what opened 57, 79 and 82 turns in `round57`, `round59` and `round62` against 224 dispatches.
+/// </para>
+/// <para>
+/// THE THIRD MEMBER IS THE POINT. <see cref="Standalone"/> and <see cref="OfNode"/> are COMPLETE statements - this journal
+/// read the whole document and knows. <see cref="Unattributed"/> says it could not answer, and it exists so that condition
+/// is NAMED by the reader (`unattributed_execution:&lt;id&gt;`) instead of being spelled as an absent field that the
+/// reader resolves for itself.
+/// </para>
+/// </summary>
+public sealed record BodyProgramExecutionOrigin(BodyProgramExecutionOriginKind Kind, string? ProgramId, string? NodeId)
+{
+    /// <summary>One exact node attempt owns this execution.</summary>
+    public static BodyProgramExecutionOrigin OfNode(string programId, string nodeId) =>
+        new(BodyProgramExecutionOriginKind.Node, programId, nodeId);
+
+    /// <summary>No node owns this execution: a flat action, and a statement the journal is able to make.</summary>
+    public static BodyProgramExecutionOrigin Standalone { get; } = new(BodyProgramExecutionOriginKind.Standalone, null, null);
+
+    /// <summary>This journal cannot answer. A named defect, never an absence a reader resolves by itself.</summary>
+    public static BodyProgramExecutionOrigin Unattributed { get; } = new(BodyProgramExecutionOriginKind.Unattributed, null, null);
+}
+
+public enum BodyProgramExecutionOriginKind { Node = 1, Standalone = 2, Unattributed = 3 }
 /// <summary>
 /// Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.
 ///
@@ -525,6 +557,20 @@ internal static class BodyProgramValidation
     internal static bool MayCarryRefusalDetail(BodyProgramNodeState state) => state
         is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.PartiallySucceeded;
     /// <summary>
+    /// The states that PROVED an effect, and are therefore the only ones that may carry
+    /// <see cref="BodyProgramJournalNode.Evidence"/> or <see cref="BodyProgramJournalNode.PostconditionVerification"/>.
+    ///
+    /// <para>
+    /// ONE DECLARATION, THREE READERS: <see cref="OpenBodyProgramJournalAuthority.TryComplete"/> decides what to STORE with it,
+    /// the wire validator (<c>BridgeProtocol.IsProofShape</c>) decides what it will ACCEPT by it, and the projection carries
+    /// what was stored. Three hand-written state lists would be three chances to disagree about a field that only one state
+    /// shape may carry at all. `PartiallySucceeded` is in the set for the reason it is in
+    /// <see cref="MayCarryRefusalDetail"/>: a `for_each` pass that did forty-five of sixty rows proved those forty-five.
+    /// </para>
+    /// </summary>
+    internal static bool MayCarryProof(BodyProgramNodeState state) => state
+        is BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded;
+    /// <summary>
     /// The one state that may carry a <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>: the one whose whole meaning
     /// is "the outcome could not be determined", so the reason there is a diagnostic and not a cause.
     /// </summary>
@@ -542,7 +588,8 @@ internal static class BodyProgramValidation
     /// </summary>
     internal const string RowActionNotEnabledPrefix = "row_action_not_enabled:";
     /// <summary>
-    /// The rejection codes the Host may answer one node's admission with.
+    /// The rejection codes the Host may answer one node's admission with, plus the three the MOD answers for a challenge
+    /// its own transport refused to carry.
     ///
     /// <para>
     /// The closed set is deliberate: a rejection is a durable veto against the node, so only words this product can
@@ -552,9 +599,17 @@ internal static class BodyProgramValidation
     /// act on. This is the ADR-006 amendment `FarmhandBodyProgramController` names where it declines to widen the set for
     /// `admission_unavailable`: those causes are properties of the ATTACHMENT; this one is a property of the node.
     /// </para>
+    /// <para>
+    /// `enqueue_failed`, `admission_not_delivered` and `challenge_not_serialisable` widen it for the other end of the pipe:
+    /// a challenge the transport refused to take never left this process, so no Host answer can ever arrive for that attempt
+    /// and the node would otherwise wait forever while nothing counted it (measured `round73`, `plan_311` n15). They are not
+    /// attachment verdicts - an attachment can come back, but it cannot answer a question it was never asked - so they settle
+    /// the node with a NAME instead of leaving it `AwaitingHostAdmission`.
+    /// </para>
     /// </summary>
     internal static bool IsValidRejectionCode(string? value) => value is "policy_denied" or "deadline_expired" or "resource_conflict" or "catalog_stale"
         or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch"
+        or "enqueue_failed" or "admission_not_delivered" or "challenge_not_serialisable"
         || (value is not null && IsReasonCode(value) && value.StartsWith(RowActionNotEnabledPrefix, StringComparison.Ordinal)
             && IsIdentifier(value[RowActionNotEnabledPrefix.Length..]));
     /// <summary>
@@ -622,6 +677,68 @@ internal static class BodyProgramValidation
         _ => new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.Boolean => "boolean", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue)
     };
     internal static bool IsValidSelector(BodyProgramDestinationSelector? selector) => selector is not null && ((selector.Kind == "label" && IsPlayerText(selector.Label) && selector.Ref is null) || (selector.Kind == "ref" && selector.Label is null && IsNavigationRef(selector.Ref)));
+
+    /// <summary>
+    /// The closed SHAPE of a destination selector on the wire: `kind` names the arm, that arm carries the value, and the
+    /// arm that does not apply is either absent or explicitly `null` - because this product writes it BOTH ways.
+    ///
+    /// <para>
+    /// MEASURED (round42, round60, round67): the navigation result publishes a selector through
+    /// `BridgeNavigationDestinationSelector`, whose arms are `JsonIgnoreCondition.Never`, so a label selector is on the
+    /// wire as `{"kind":"label","label":"Mine","ref":null}`; every reader of the same closed shape demanded exactly
+    /// the two keys of the arm that is present, and refused it. The companion copied the object `find_destination` had
+    /// just handed it and was answered `destination_selector[one_of:label,ref]`. So the absent arm's spelling is NOT a
+    /// fact any reader may key on: absent and `null` mean the same thing, and there is exactly one place that says so.
+    /// </para>
+    /// <para>
+    /// What is still refused, deliberately: an unknown key (a selector never carries `route`, `tile`, `x` or a legacy
+    /// `destinationRef`), a key that is not a string or `null`, a duplicate key, and BOTH arms present - a selector names
+    /// one destination one way. The content of the named arm is the caller's rule, not this one's.
+    /// </para>
+    /// </summary>
+    internal static bool TryReadSelectorShape(JsonElement value, out string? kind, out string? label, out string? reference)
+    {
+        kind = null;
+        label = null;
+        reference = null;
+        if (value.ValueKind != JsonValueKind.Object) return false;
+        bool kindSeen = false, labelSeen = false, refSeen = false, wellFormed = true;
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            bool isString = property.Value.ValueKind == JsonValueKind.String;
+            bool isAbsentArm = isString || property.Value.ValueKind == JsonValueKind.Null;
+            switch (property.Name)
+            {
+                case "kind":
+                    wellFormed &= !kindSeen && isString;
+                    kindSeen = true;
+                    kind = isString ? property.Value.GetString() : null;
+                    break;
+                case "label":
+                    wellFormed &= !labelSeen && isAbsentArm;
+                    labelSeen = true;
+                    label = isString ? property.Value.GetString() : null;
+                    break;
+                case "ref":
+                    wellFormed &= !refSeen && isAbsentArm;
+                    refSeen = true;
+                    reference = isString ? property.Value.GetString() : null;
+                    break;
+                default:
+                    wellFormed = false;
+                    break;
+            }
+        }
+        return wellFormed && kindSeen;
+    }
+
+    /// <summary>The selector a closed shape names, or null when the arm it names is not the arm it has.</summary>
+    internal static BodyProgramDestinationSelector? SelectorFromShape(string? kind, string? label, string? reference) => kind switch
+    {
+        "label" when reference is null => new BodyProgramDestinationSelector("label", label, null),
+        "ref" when label is null => new BodyProgramDestinationSelector("ref", null, reference),
+        _ => null,
+    };
     internal static bool IsValidArrival(BodyProgramDestinationArrival? arrival)
     {
         if (arrival is null || (arrival.Reason is not ("destination_arrived" or "already_at_destination")) || arrival.Destination is null)
@@ -629,7 +746,19 @@ internal static class BodyProgramValidation
         return IsPlayerText(arrival.Destination.Label)
             && (arrival.Destination.ContextLabel is null || IsPlayerText(arrival.Destination.ContextLabel));
     }
-    private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.Trim().Length > 0 && value.Normalize(System.Text.NormalizationForm.FormC) == value;
+    /// <summary>
+    /// The ONE label rule: a bounded, self-trimmed, NFC name.
+    ///
+    /// <para>
+    /// There were three spellings of it - the execution door checked the length alone, the candidate adapter checked
+    /// trimming, and the journal readers checked NFC - so a label one door accepted was refused by the next. A label
+    /// that does not equal its own `Trim()` is not a location name (`find_destination` normalizes its query and would
+    /// match it), and a label that is not NFC has two byte sequences for one name in an ORDINAL comparison. One rule
+    /// answers all three readers, and `CandidateAdapterRejectsSelectorBoundaryWhitespace` pins it.
+    /// </para>
+    /// </summary>
+    private static bool IsPlayerText(string? value) => value is not null && value.Length is >= 1 and <= 128
+        && value.Trim().Length > 0 && value == value.Trim() && value.Normalize(System.Text.NormalizationForm.FormC) == value;
     private static bool IsNavigationRef(string? value)
     {
         if (value is null || !value.StartsWith("dr1_", StringComparison.Ordinal) || value.Length != 26) return false;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { isForEachLoopDocument, type PlanForEachLoop } from "./body-program-for-each.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import {
   hasExactKeys,
   hasExactKeysOrOptional,
@@ -45,7 +45,6 @@ import {
   isItemTargetFact,
   isLanternSlotFact,
   isLevelUpChoiceFact,
-  isMachineInputCount,
   isMachineTargetFact,
   isMailboxTargetFact,
   isMineElevatorFloorFact,
@@ -196,6 +195,30 @@ export type ExecutionState = (typeof EXECUTION_STATES)[number];
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 
+/**
+ * Which programme an execution belongs to, as the MOD's OWN JOURNAL states it.
+ *
+ * <p>
+ * WHY THIS IS ON THE WIRE. A receipt used to carry an `executionId` and nothing about the plan that asked for it, so a
+ * consumer that had to know whether a `succeeded` receipt was a STEP of a programme or a LONE outcome had to infer it
+ * from what happened to be running - and inference of that shape is what produced `turns opened 66 {adapter_ingress: 57}`
+ * (`round57`), `88 {adapter_ingress: 79}` (`round59`) and `82 {adapter_ingress: 82}` (`round62`) against 224 programme
+ * dispatches. The Mod's journal already binds every execution to the exact node that started it
+ * (`NodeExecutionBinding`, minted at the admission boundary), so the fact can say it instead of being guessed at.
+ * </p>
+ * <p>
+ * THREE MEMBERS, AND THE THIRD IS THE POINT. `standalone` says "no programme owns this execution" and `programme` says
+ * which one does; both are COMPLETE statements the journal can make. `unattributed` says the journal could not answer -
+ * a journal this build could not read, or one that set an older document aside - and it exists so that condition is
+ * NAMED (`unattributed_execution:<id>`) rather than spelled as an absent field the reader resolves for itself, by time or
+ * by whatever is in flight. Every guess this repository made about a receipt came from exactly that absence.
+ * </p>
+ */
+export type ExecutionOrigin =
+  | Readonly<{ kind: "programme"; programId: string; nodeId: string }>
+  | Readonly<{ kind: "standalone" }>
+  | Readonly<{ kind: "unattributed" }>;
+
 type ActiveExecution = Readonly<{
   executionId: string;
   requestId: string;
@@ -225,6 +248,19 @@ export type Snapshot = Readonly<{
   stamina: number;
   health: number;
   actionable: boolean;
+  /**
+   * Whether the LOCATION half of the night's own eligibility admits where the actor stands.
+   *
+   * `SleepAndAdvanceDayLifecycle.HomeOf` is the executor's one declaration of it: the same test `TryEnterEligibility`
+   * refuses `not_home` from, and the same one `WalkToBed` asks for the bed spot. The projection's Sleep line states
+   * where the day can end from this field, because the rule cannot be read off `location` on this side: the executor
+   * admits the FarmHouse TYPE (which the Farmhand's Cabin also is), while `location` is the map's own name.
+   *
+   * Only the location half: a paused clock, an open menu, a running event, a pass-out and the co-op minimum are
+   * separate and transient, so `true` does not promise `sleep` succeeds now. Absent when no world is ready; older Mod
+   * snapshots omit it.
+   */
+  sleepAdmitsHere?: boolean | null;
   capabilities: readonly string[];
   catalogRevision: number;
   enabledActionIds: readonly string[];
@@ -623,7 +659,10 @@ export type Snapshot = Readonly<{
     ownerId: string;
     baitStack: number;
   }>[];
-  /** Nearby native ResourceClump targets paired with a usable tool slot. */
+  /** Nearby native ResourceClump targets paired with a usable tool slot. `w`/`h` are the clump's own
+   * `ResourceClump.width`/`height` - the tiles it spans - with `x`/`y` as the LEFT-TOP origin. They are
+   * omitted by a Mod older than the projection and then mean one tile, which is what an entity published
+   * as a bare coordinate always meant. */
   debrisTargets?: readonly Readonly<{
     targetId: string;
     slot: number;
@@ -633,6 +672,8 @@ export type Snapshot = Readonly<{
     toolKind: string;
     requiredUpgradeLevel: number;
     health: number;
+    w?: number;
+    h?: number;
   }>[];
   /**
    * Nearby ordinary breakable stone sources for the bounded native Pickaxe path. `health` is the rock's remaining
@@ -1127,6 +1168,11 @@ export type Snapshot = Readonly<{
      * is a legal rotation and a sentinel that reads as a value gets compared as one. */
     rotation: number | null;
     rotations: number | null;
+    /** The footprint in tiles, `x`/`y` being its LEFT-TOP origin. A piece of furniture answers with its
+     * own sprite-derived `Furniture.getTilesWide()`/`getTilesHigh()` - a bed is 2x3 - and every other kind
+     * with the 1x1 tile it occupies. Absent means one tile, which is the only other thing a row can mean. */
+    w?: number;
+    h?: number;
   }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
@@ -1146,6 +1192,11 @@ export type Snapshot = Readonly<{
     buildDays: number;
     buildingId: string;
     daysOfConstructionLeft: number;
+    /** The footprint the structure occupies in tiles, `x`/`y` being its LEFT-TOP origin: a `built` row's own
+     * `Building.tilesWide`/`tilesHigh`, a `build_site` row's declared `Data/Buildings` size. Absent means one
+     * tile, which is the reading every row carried before the field existed. */
+    w?: number;
+    h?: number;
   }>[];
   /** The day's posted help-wanted quests the actor can name, and whether today's has already been
    * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
@@ -1432,12 +1483,18 @@ export type TileAreaRequest = Readonly<{ x: number; y: number; w: number; h: num
  * `tillable` is the Hoe's own admission predicate, `passable` the planner's own step test, and `occupant` the engine's
  * stored thing on the tile (`none` when free). There is no `fixture` field: a fixture plants real engine entities, so
  * the occupant and soil facts already carry it.
+ *
+ * TWO OCCUPANT FIELDS, TWO VOCABULARIES: `occupant` names the engine's runtime TYPE, and `occupantKind` names what
+ * stands there in the words a `for_each` `where: [{ occupant: ... }]` filter uses (`TileOccupancy.Of`, the function the
+ * pass's own row reads). A weed is `object` in the first and `weed` in the second; a crop tile is `none` in the first
+ * and `crop` in the second, so a filter written against `occupant` claims nothing.
  */
 export type TileAreaRow = Readonly<{
   x: number;
   y: number;
   tillable: boolean;
   occupant: string;
+  occupantKind: string;
   hoed: boolean;
   watered: boolean;
   crop: boolean;
@@ -1612,6 +1669,16 @@ export type ExecutionReceipt = Readonly<{
   requestId: string;
   /** Exact Mod-authored action lineage; Host must never infer it from tool context. */
   actionId: string;
+  /**
+   * The programme this execution belongs to, as the Mod's journal states it - never inferred by the Host.
+   *
+   * REQUIRED ON THE WIRE AND OPTIONAL IN THIS TYPE, on purpose: `validateReceipt` refuses a frame that does not carry it,
+   * so every receipt that reaches this type through the bridge has one - while a test or a tool that READS a receipt for
+   * another purpose (`execution-correlation-ledger.test.ts`'s cancel sender) does not have to invent a statement it is not
+   * making. The pump treats an absent one as NO STATEMENT (`factExecutionOrigin`), which owes a turn rather than being
+   * filed as somebody's step.
+   */
+  origin?: ExecutionOrigin;
   state: ExecutionState;
   reasonCode: string;
   revision: number;
@@ -1684,6 +1751,14 @@ type BodyTrace = Readonly<{
   requestId: string;
   tick: number;
   revision: number;
+  /**
+   * The same provenance a receipt for this execution carries, from the same journal lookup.
+   *
+   * A body trace is the SAME STEP stated a second way (`event-pump.ts#IN_FLIGHT_SEMANTIC_PROGRESS_KINDS`), so a producer
+   * that stated the programme on the receipt and not here would leave half the turn-opening facts guessing. Required on the
+   * wire (`validateBodyTrace`), optional in this reading type for the same reason as `ExecutionReceipt.origin`.
+   */
+  origin?: ExecutionOrigin;
   location?: string;
   tile?: Readonly<{ x: number; y: number }>;
 }>;
@@ -1841,14 +1916,14 @@ type BodyProgramDestinationSelector = Readonly<{ kind: "label"; label: string } 
 /**
  * Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload.
  *
- * `loop` is the one DECLARATIVE kind: the `for_each` plan form carried whole, because expansion happens on the game
- * thread against live state and a pre-resolved row list would be the observation-bound behaviour the form exists to
- * remove. Its grammar is owned by `body-program-for-each.ts`, the same module the plan compiler writes it with.
+ * THERE IS NO DECLARATIVE KIND. `loop` used to be one: the `for_each` plan form carried whole, because expansion happened
+ * on the game thread against live state. The script is JavaScript, so a batch is a `for` over a snapshot family and every
+ * node this compiler writes is an ordinary action with scalar arguments - which is also what makes the program readable
+ * on the way back in.
  */
 type BodyProgramRuntimeValue =
   | Readonly<{ type: "integer" | "string" | "boolean"; canonicalValue: string }>
-  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>
-  | (Readonly<{ type: "loop" }> & PlanForEachLoop);
+  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>;
 type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
 type BodyProgramNode = Readonly<{
   nodeId: string;
@@ -1970,6 +2045,31 @@ export const MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = 512;
 
 /** The Mod's own bound on a recovery diagnostic (`BodyProgramValidation.MaximumRecoveryDiagnosticLength`). */
 export const MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH = 4096;
+
+/**
+ * The states a node may carry `evidence` / `postconditionVerification` on: the ones where it PROVED an effect.
+ *
+ * The wire half of one rule the Mod already states once - `OpenBodyProgramJournalAuthority.TryComplete`'s
+ * `provesEffect = outcome is Succeeded or PartiallySucceeded`, which decides both the validation and the assignment
+ * (`Evidence = provesEffect ? result.Evidence : null`). `partially_succeeded` is in the set because a `for_each` pass that
+ * did forty-five of sixty rows proved those forty-five; `failed`/`cancelled`/`rejected`/`recovery_required` prove nothing and
+ * carry the reason instead (ADR-006). A state this set names and the journal forbids, or one it omits and the journal
+ * writes, is a frame one side sends and the other refuses.
+ */
+export const BODY_PROGRAM_PROOF_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set([
+  "succeeded",
+  "partially_succeeded",
+]);
+
+/**
+ * The Mod's own bound on one proof field, verbatim.
+ *
+ * `BodyProgramValidation.IsOpaqueTerminalProof` is 1..4096 and control-character free, and it is not a number chosen for
+ * this wire: the aggregate a `for_each` pass writes into `Evidence` is built to the same 4096
+ * (`RouteReenteringBodyProgramExecutor.MaximumAggregateChars`) and counts the rows it could not fit. A smaller ceiling
+ * here would truncate a table that is already whole, which is the drop this field exists to stop.
+ */
+export const MAX_BODY_PROGRAM_PROOF_LENGTH = 4096;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 type BodyProgramDiagnostic = Readonly<{
   severity: string;
@@ -2021,6 +2121,23 @@ type BodyProgramNodeStatus = Readonly<{
    * that then has to say "no reason" would be saying something it already knew to be false.
    */
   recoveryDiagnostic?: string | null;
+  /**
+   * The pass's own row table - the Mod's `BodyProgramJournalNode.Evidence`, verbatim.
+   *
+   * One `for_each` node settles sixty tiles, and this is the sixty rows: which tile, which action, which state, which
+   * reason, and what was on it. A node that proved an effect carries it and no other state may; `round63`'s
+   * `plan_239_2793c52c60b8cadf` node `n02` settled `succeeded` and its own bundle kept `{nodeId, actionId, state}` and
+   * none of the table.
+   */
+  evidence?: string | null;
+  /**
+   * The pass's own verdict line - the Mod's `BodyProgramJournalNode.PostconditionVerification`, verbatim:
+   * `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`.
+   *
+   * The only field that says how many of the rows in `evidence` did the thing, and the only place a `partially_succeeded`
+   * batch says so on the row itself.
+   */
+  postconditionVerification?: string | null;
   /**
    * The action this node runs, from the journal's own compiled descriptor.
    *
@@ -2112,6 +2229,23 @@ export type BodyProgramEventsResult = Readonly<{
   highWater: number;
 }>;
 
+/**
+ * The player's action policy, pushed to a RUNNING Mod.
+ *
+ * The SAME two denial keys `config.json` carries, holding the same values that `writeStardewModActionPolicyIntoConfig`
+ * merges into the document - one shape, two carriers: the file for the next world load, this frame for the world that is
+ * already running. The Mod reads them into the `FarmhandActionPolicy` record its own config document binds to, through the
+ * bridge's one camelCase codec, so neither side keeps a second schema for the same policy.
+ *
+ * Only the denial half travels. Consent is deny-by-exception on the Mod's own registration catalog, so a frame can only
+ * ever narrow the published action surface - and a push the Mod refuses is answered with an `error` naming the policy,
+ * never by silently applying part of it.
+ */
+export type FarmhandActionPolicyRequest = Readonly<{
+  deniedActions: readonly string[];
+  deniedActionFamilies: readonly string[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<
@@ -2157,6 +2291,7 @@ export type BridgeMessage =
   | Envelope<"cancel_request", CancelRequestPayload>
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
+  | Envelope<"farmhand_action_policy_request", FarmhandActionPolicyRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
   | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
@@ -2196,6 +2331,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "cancel_request",
   "companion_presentation_request",
   "system_notice_request",
+  "farmhand_action_policy_request",
   "system_notice_receipt",
   "companion_presentation_receipt",
   "player_control_receipt",
@@ -2233,6 +2369,7 @@ export const SNAPSHOT_KEYS = [
   "currentToolSlotItem",
   "inventorySlots",
   "actionable",
+  "sleepAdmitsHere",
   "capabilities",
   "catalogRevision",
   "pendingLevelUps",
@@ -2532,7 +2669,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isOpaqueId(payload.sourceEventId) &&
         typeof payload.text === "string" &&
         payload.text.trim().length > 0 &&
-        payload.text.length <= 4_000 &&
+        payload.text.length <= MAX_COMPANION_PRESENTATION_TEXT_CHARS &&
         isBcp47Locale(payload.locale)
         ? null
         : "invalid_companion_presentation_request";
@@ -2549,6 +2686,15 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         isBcp47Locale(payload.locale)
         ? null
         : "invalid_system_notice_request";
+    case "farmhand_action_policy_request":
+      // Two keys, and the same two the config document carries. Each list is identifier-shaped and may be empty (the
+      // catalogue's default consent set). No length is imposed beyond the frame's own byte bound: the population is the
+      // Mod's registration catalog, which grows, and a second cap here would be a number no code derives from.
+      return hasExactKeys(payload, ["deniedActions", "deniedActionFamilies"]) &&
+        isOpaqueIdList(payload.deniedActions) &&
+        isOpaqueIdList(payload.deniedActionFamilies)
+        ? null
+        : "invalid_farmhand_action_policy_request";
     case "system_notice_receipt":
       return hasExactKeys(payload, ["noticeId", "revision"]) &&
         isOpaqueId(payload.noticeId) &&
@@ -2832,24 +2978,10 @@ function isAdmissionOpaque(value: unknown): value is string {
 }
 function isBodyCanonicalValue(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.type === "destination_selector") {
-    const destination = value.destination;
+  if (value.type === "destination_selector")
     return (
-      hasExactKeys(value, ["type", "destination"]) &&
-      isRecord(destination) &&
-      ((hasExactKeys(destination, ["kind", "label"]) &&
-        destination.kind === "label" &&
-        typeof destination.label === "string" &&
-        destination.label.length >= 1 &&
-        destination.label.length <= 128 &&
-        destination.label.trim().length > 0 &&
-        destination.label.normalize("NFC") === destination.label) ||
-        (hasExactKeys(destination, ["kind", "ref"]) &&
-          destination.kind === "ref" &&
-          typeof destination.ref === "string" &&
-          /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u.test(destination.ref)))
+      hasExactKeys(value, ["type", "destination"]) && readDestinationSelector(value.destination, "argument") !== null
     );
-  }
   if (
     !hasExactKeys(value, ["type", "canonicalValue"]) ||
     typeof value.canonicalValue !== "string" ||
@@ -3132,11 +3264,12 @@ function validateTileAreaResult(value: Record<string, unknown>): string | null {
 function isTileAreaRow(value: unknown): value is TileAreaRow {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["x", "y", "tillable", "occupant", "hoed", "watered", "crop", "passable"]) &&
+    hasExactKeys(value, ["x", "y", "tillable", "occupant", "occupantKind", "hoed", "watered", "crop", "passable"]) &&
     Number.isSafeInteger(value.x) &&
     Number.isSafeInteger(value.y) &&
     typeof value.tillable === "boolean" &&
     isBoundedNonEmptyString(value.occupant, 64) &&
+    isBoundedNonEmptyString(value.occupantKind, 64) &&
     typeof value.hoed === "boolean" &&
     typeof value.watered === "boolean" &&
     typeof value.crop === "boolean" &&
@@ -3213,7 +3346,7 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
       value.entries === null &&
       value.nextCursor === null &&
       value.candidates === null &&
-      isNavigationSelector(value.destination) &&
+      readDestinationSelector(value.destination, "result") !== null &&
       value.unlockState === "unknown"
       ? null
       : "invalid_navigation_read_result";
@@ -3245,21 +3378,94 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
     : "invalid_navigation_read_result";
 }
 
-function isExecutionNavigationDestinationSelector(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  return value.kind === "label"
-    ? hasExactKeys(value, ["kind", "label"]) && isBoundedNonEmptyString(value.label, 128)
-    : value.kind === "ref" &&
-        hasExactKeys(value, ["kind", "ref"]) &&
-        typeof value.ref === "string" &&
-        /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+/**
+ * Where a destination selector is being read: the two doors whose CONTENT rules differ, and nothing else.
+ *
+ * `argument` is a value the companion NAMES a destination with - an `execution_request` argument, a body-program runtime
+ * value, the canonical argument a plan node carries - and `result` is a value the Mod REPORTS in a
+ * `navigation_read_result`.
+ */
+export type DestinationSelectorPosition = "argument" | "result";
+
+/** A selector that NAMES one destination: the arm it names carries the value an actor can be sent to. */
+export type NamedDestinationSelector =
+  | Readonly<{ kind: "label"; label: string; ref: null }>
+  | Readonly<{ kind: "ref"; label: null; ref: string }>;
+
+/** The Mod's canonical navigation run handle (`BridgeProtocol.IsNavigationHandle`, `dr1_` plus 22 base64url characters). */
+const NAVIGATION_RUN_REF = /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u;
+
+/**
+ * The Mod's ONE label rule (`BodyProgramValidation.IsPlayerText`): a bounded, self-trimmed, NFC name.
+ *
+ * A label that does not equal its own `Trim()` is not a location name - `find_destination` normalizes its query, so the
+ * name it resolves is not the one written here - and a label that is not NFC has two byte sequences for one name in an
+ * ordinal comparison. The Mod refuses both at its authoring door, so accepting them here would only move the refusal to
+ * a later round trip.
+ */
+function isPlayerText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value.trim().length > 0 &&
+    value === value.trim() &&
+    value.normalize("NFC") === value
+  );
 }
 
-function isNavigationSelector(value: unknown): value is NavigationSelector {
-  if (!isRecord(value) || !hasExactKeys(value, ["kind", "label", "ref"])) return false;
-  return value.kind === "label"
-    ? isBoundedNonEmptyString(value.label, 128) && value.ref === null
-    : value.kind === "ref" && value.label === null && (value.ref === null || isOpaqueId(value.ref));
+/**
+ * The ONE reading of a destination selector: `kind` plus the arm it names.
+ *
+ * <p>
+ * WHY ONE READER. `find_destination` answers with a selector whose absent arm is on the wire as `null` - the Mod writes
+ * both arms of `BridgeNavigationDestinationSelector` (`JsonIgnoreCondition.Never`), so a label selector arrives as
+ * `{"kind":"label","label":"Mine","ref":null}` - and the companion copies that object straight back into the next
+ * call. The Host read the same closed shape three times with two different arities: the result door demanded all three
+ * keys, the argument doors demanded exactly the two of the arm that is present. So the object a tool had just handed the
+ * model was refused by the Host's own reader (`invalid_navigation_destination`, `invalid_body_program_request`) while the
+ * Mod's one reader had accepted it since `TryReadSelectorShape`. The absent arm's SPELLING is not a fact any reader may
+ * key on: absent and `null` mean the same thing, they are stated once here, and a door with its own rule is a second
+ * spelling of the same fact.
+ * </p>
+ * <p>
+ * WHAT THE SHAPE IS. `kind` and the arm it names are required; the arm it does not name may be absent OR `null`; no other
+ * key is admitted (a selector never carries `route`, `tile` or `x`, and a duplicate key is refused where the envelope is
+ * parsed, before any reader sees the object); and both arms present is refused, because a selector names one destination
+ * one way.
+ * </p>
+ * <p>
+ * THE ONE FIELD WHOSE RULE DIFFERS BY POSITION IS `ref`, and the reason is what each door is FOR. An ARGUMENT must name
+ * a destination the actor can be sent to, so `kind: "ref"` requires the canonical run handle (the Mod's
+ * `IsValidSelector` -> `IsNavigationRef`). A RESULT may say "this is a place, and I have no run handle for it": the wire
+ * admits `ref: null` there (`$defs/navigationSelector`) and the Mod's own result door admits it
+ * (`BridgeProtocol.IsValidNavigationDestinationSelector`), so refusing it would close the bridge on a document the Mod is
+ * entitled to send. The same asymmetry exists for a label's text - the Mod's authoring door requires player text while
+ * its result door checks the bound alone (`isPlayerText` above, `isBoundedNonEmptyString` below) - and each of those is
+ * stated once, here.
+ * </p>
+ */
+export function readDestinationSelector(value: unknown, position: "argument"): NamedDestinationSelector | null;
+export function readDestinationSelector(value: unknown, position: "result"): NavigationSelector | null;
+export function readDestinationSelector(
+  value: unknown,
+  position: DestinationSelectorPosition,
+): NavigationSelector | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null;
+  if (!hasOnlyKeys(value, ["kind", "label", "ref"])) return null;
+  // An absent arm and a `null` arm are the same fact; the only value the wire admits for either is a string.
+  const label = value.label ?? null;
+  const ref = value.ref ?? null;
+  if ((label !== null && typeof label !== "string") || (ref !== null && typeof ref !== "string")) return null;
+  if (value.kind === "label") {
+    if (label === null || ref !== null) return null;
+    const accepted = position === "argument" ? isPlayerText(label) : isBoundedNonEmptyString(label, 128);
+    return accepted ? { kind: "label", label, ref: null } : null;
+  }
+  if (value.kind !== "ref" || label !== null) return null;
+  if (ref === null) return position === "result" ? { kind: "ref", label: null, ref: null } : null;
+  const accepted = position === "argument" ? NAVIGATION_RUN_REF.test(ref) : isOpaqueId(ref);
+  return accepted ? { kind: "ref", label: null, ref } : null;
 }
 
 function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapEntry {
@@ -3269,7 +3475,7 @@ function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapE
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
     (value.nodeRef === null || isOpaqueId(value.nodeRef)) &&
-    (value.destination === null || isNavigationSelector(value.destination))
+    (value.destination === null || readDestinationSelector(value.destination, "result") !== null)
   );
 }
 
@@ -3279,7 +3485,7 @@ function isNavigationSearchCandidate(value: unknown): value is NavigationSearchC
     hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
-    isNavigationSelector(value.destination) &&
+    readDestinationSelector(value.destination, "result") !== null &&
     value.unlockState === "unknown"
   );
 }
@@ -3335,6 +3541,15 @@ export type ExecutionRequestReading = Readonly<{
   args: Readonly<Record<string, unknown>>;
   snapshot: Snapshot;
   nowMs: number;
+  /**
+   * The per-action deadline windows the `deadlineMs` row is judged against.
+   *
+   * A field rather than a closure over the module constant for the same reason `nowMs` is one: the row's own test has to
+   * be able to state a DIFFERENT declaration (a 300 s window, an action the declaration does not carry) or it can only
+   * ever confirm today's table against itself. Every reading `executionRequestReading` builds carries
+   * `EXECUTION_REQUEST_DEADLINE_WINDOWS`.
+   */
+  deadlineWindows: Readonly<Record<string, number>>;
 }>;
 
 function requirement(
@@ -3378,8 +3593,9 @@ export function executionRequestReading(
   request: Readonly<Record<string, unknown>>,
   snapshot: Snapshot,
   nowMs: number,
+  deadlineWindows: Readonly<Record<string, number>> = EXECUTION_REQUEST_DEADLINE_WINDOWS,
 ): ExecutionRequestReading {
-  return { request, args: isRecord(request.args) ? request.args : {}, snapshot, nowMs };
+  return { request, args: isRecord(request.args) ? request.args : {}, snapshot, nowMs, deadlineWindows };
 }
 
 /** The exact argument set the action's own Mod-side wire parser pins (`BridgeProtocol.ExecutionArgumentProperties`). */
@@ -3559,32 +3775,6 @@ function textOnlyRow(maxLength: number): ExecutionRequestRequirement {
   );
 }
 
-/**
- * The opaque family target the same snapshot published AT THAT TILE: the horse, the mine entrance, the ladder.
- *
- * The tile alone is not enough and the id alone is not enough. The id is re-resolved on the Mod's game thread against the
- * live world, so a pair that only one of the two could satisfy is a request the snapshot did not offer.
- */
-function publishedTargetRow(
-  shape: string,
-  refusal: string,
-  family: (snapshot: Snapshot) => readonly Readonly<{ targetId: string; x: number; y: number }>[] | undefined,
-): ExecutionRequestRequirement {
-  return requirement(
-    "args.expectedTargetId, args.x, args.y",
-    shape,
-    refusal,
-    (reading) =>
-      family(reading.snapshot)?.some(
-        (target) =>
-          target.targetId === reading.args.expectedTargetId &&
-          target.x === reading.args.x &&
-          target.y === reading.args.y,
-      ) === true,
-    withArg("x", 12),
-  );
-}
-
 /** The `{x, y, expectedTargetId}` shape, refused under the one code the action's own handler names. */
 function tileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
   return [tileRow(refusal), targetRow(refusal)];
@@ -3621,6 +3811,160 @@ function toolTileItemAndTarget(
  * envelope's fact and the names are the action's, so the more specific code is the one that belongs to the payload.
  */
 export const EXECUTION_REQUEST_ARGUMENT_CEILING = 8;
+
+/**
+ * The deadline window this validator admits for each action: the Mod's own declaration, one entry per action.
+ *
+ * The ceiling this replaces was chosen by NAME, inside the `deadlineMs` row:
+ *
+ *   `action === "navigate_to_destination" || action === "sleep" ? 600_000 : 60_000`
+ *
+ * Every other action was therefore capped at 60 s, while `game-tools.ts` sizes the same request's deadline from the
+ * watchdog the Mod PUBLISHES for that action (`descriptor.watchdogMs`, clamped to the bridge's 600 s maximum). Two
+ * Host files disagreeing about one number, at the point of refusal, with neither side named: an action whose Mod window
+ * is longer than a minute but whose id is not one of those two literals was refused `invalid_deadline` before the game
+ * ever saw the request, and the only place that could have said why was a `||` between two strings.
+ *
+ * The owner is the Mod. `FarmhandActionDeadlineAdmission.WindowMs`
+ * (`integrations/stardew/src/Core/Policy/FarmhandActionDeadlineWindow.cs`) bounds a request with that action's own
+ * `WatchdogMs`, and `action-deadline-windows.v1.json` publishes the result of that rule for every registered action.
+ * This table is that declaration on the Host side, in the artifact's own order so the two can be read side by side, and
+ * `execution-request-deadline-window.test.ts` holds it equal to the artifact in BOTH directions: a window the Mod
+ * lengthens without this table following is red there and named, which is what the name list it replaced could never
+ * be - it would have kept answering 60 s, silently, forever.
+ *
+ * WHY AN ACTION THIS TABLE DOES NOT CARRY IS REFUSED RATHER THAN GIVEN A DEFAULT. The Mod has such a number
+ * (`FarmhandActionDeadlineAdmission.UnpublishedActionWindowMs`, the ordinary 60 s) and it is the window of an action
+ * that publishes NO watchdog. An action the artifact does not name is not the same thing: the two entries below that are
+ * not 60 s are exactly the actions whose declared window is longer than the ordinary one, so inheriting 60 s here is the
+ * silent cap this table exists to remove. An id the declaration does not carry gets no window
+ * (`declaredDeadlineWindow` answers `null`) and the `deadlineMs` row refuses it `invalid_deadline`. That can only be a
+ * Host-side shortfall: `satisfies Record<ExecutionRequest["action"], number>` makes a missing ACTION a compile error,
+ * and the test above makes a missing WINDOW red.
+ *
+ * The three actions the artifact carries and this union does not (`inspect_world_map`, `find_destination`,
+ * `observe_scene`) are read-only: they publish no `execution_request`, so they have no dispatch deadline to bound.
+ */
+export const EXECUTION_REQUEST_DEADLINE_WINDOWS: Readonly<Record<ExecutionRequest["action"], number>> = Object.freeze({
+  move_to_tile: 60_000,
+  equip_tool: 60_000,
+  travel: 60_000,
+  ride_minecart: 60_000,
+  ride_bus: 60_000,
+  select_mine_elevator_floor: 60_000,
+  use_raft: 60_000,
+  mount_transport: 60_000,
+  enter_mine: 60_000,
+  use_mine_ladder: 60_000,
+  enter_exit: 60_000,
+  till_soil: 60_000,
+  pickup_forage: 60_000,
+  pickup_item: 60_000,
+  water_crop: 60_000,
+  plant_seed: 60_000,
+  fertilize_tile: 60_000,
+  machine_inspect: 60_000,
+  machine_load: 60_000,
+  machine_collect_output: 60_000,
+  collect_animal_product: 60_000,
+  feed_animal: 60_000,
+  use_item: 60_000,
+  harvest_crop: 60_000,
+  place_wood_fence: 60_000,
+  place_crab_pot: 60_000,
+  bait_crab_pot: 60_000,
+  place_owned_object: 60_000,
+  remove_placed_item: 60_000,
+  move_placed_furniture: 60_000,
+  break_container: 60_000,
+  rotate_furniture: 60_000,
+  remove_fence: 60_000,
+  put_item_in_fish_tank: 60_000,
+  place_item_on_pedestal: 60_000,
+  chop_tree: 60_000,
+  break_rock: 60_000,
+  clear_hoedirt: 60_000,
+  dig_artifact_spot: 60_000,
+  refill_watering_can: 60_000,
+  navigate_to_destination: 600_000,
+  clear_debris: 60_000,
+  break_resource_clump: 60_000,
+  fish_here: 60_000,
+  npc_relationship: 60_000,
+  pet_animal: 60_000,
+  pet_farm_animal: 60_000,
+  water_pet_bowl: 60_000,
+  water_slime_hutch_trough: 60_000,
+  interact_npc_with_item: 60_000,
+  talk_to_npc: 60_000,
+  express_emote: 60_000,
+  face_direction: 60_000,
+  chest_store: 60_000,
+  chest_retrieve: 60_000,
+  chop_stump: 60_000,
+  plant_sapling: 60_000,
+  cut_weeds: 60_000,
+  cut_grass: 60_000,
+  clear_cask: 60_000,
+  dress_mannequin: 60_000,
+  set_sign_display: 60_000,
+  deposit_silo_hay: 60_000,
+  toggle_tool_light: 60_000,
+  withdraw_silo_hay: 60_000,
+  use_obelisk: 60_000,
+  toggle_animal_door: 60_000,
+  use_warp_item: 60_000,
+  pan_ore: 60_000,
+  claim_mail_attachment: 60_000,
+  load_building_chest: 60_000,
+  collect_building_chest_output: 60_000,
+  scythe_crop: 60_000,
+  sweep_scythe: 60_000,
+  harvest_bush: 60_000,
+  harvest_fruit_tree: 60_000,
+  shake_tree: 60_000,
+  take_pedestal_item: 60_000,
+  toggle_fence_gate: 60_000,
+  craft_item: 60_000,
+  cook_recipe: 60_000,
+  collect_crab_pot_output: 60_000,
+  shop_purchase: 60_000,
+  ship_item: 60_000,
+  equip_wearable: 60_000,
+  unequip_wearable: 60_000,
+  dismount_transport: 60_000,
+  dismiss_modal: 60_000,
+  answer_dialogue: 60_000,
+  respond_level_up: 60_000,
+  sleep: 600_000,
+  send_multiplayer_chat: 60_000,
+  color_placed_object: 60_000,
+  clear_fish_pond: 60_000,
+  build_farm_building: 60_000,
+  accept_daily_quest: 60_000,
+  accept_special_order: 60_000,
+  claim_museum_reward: 60_000,
+  name_entity: 60_000,
+  redeem_prize_ticket: 60_000,
+  tailor_clothing: 60_000,
+  dye_clothing_with_item: 60_000,
+  open_geode: 60_000,
+});
+
+/**
+ * The window this declaration carries for one action, or `null` when it carries none.
+ *
+ * `null` is not a number and must never be read as one: the `deadlineMs` row refuses a request it cannot bound, so a
+ * declaration that lost an entry fails closed on the first dispatch instead of admitting it under yesterday's 60 s.
+ * `windows` is a parameter rather than the module constant because the reading carries the declaration it is judged
+ * against - `executionRequestReading` builds every reading with this table, and the falsifier beside this row's test
+ * states a 300 s window and an absent one to prove the value is READ rather than known.
+ */
+export function declaredDeadlineWindow(windows: Readonly<Record<string, number>>, action: unknown): number | null {
+  if (typeof action !== "string" || !Object.hasOwn(windows, action)) return null;
+  const window = windows[action];
+  return typeof window === "number" && Number.isFinite(window) && window > 0 ? window : null;
+}
 
 /**
  * The fields of the execution-request payload the Host validates, in the order it decides them.
@@ -3688,15 +4032,17 @@ export const EXECUTION_REQUEST_REQUIREMENTS: readonly ExecutionRequestRequiremen
   ),
   requirement(
     "deadlineMs",
-    "a finite number at or after now and no more than the action's own ceiling beyond it",
+    "a finite number at or after now, no later than the deadline window the Mod declares for this action",
     "invalid_deadline",
     (reading) => {
       const { deadlineMs, action } = reading.request;
       if (typeof deadlineMs !== "number" || !Number.isFinite(deadlineMs) || deadlineMs < reading.nowMs) return false;
-      // A co-op night waits on other players' native ready state, a host save and a new-day transition, so it shares
-      // the navigation ceiling rather than the ordinary one-minute action ceiling.
-      const ceiling = action === "navigate_to_destination" || action === "sleep" ? 600_000 : 60_000;
-      return deadlineMs <= reading.nowMs + ceiling;
+      // The ceiling is the window the Mod DECLARES for this action (`EXECUTION_REQUEST_DEADLINE_WINDOWS`), not a name
+      // list of the two ids someone remembered: a night and a walk wait on native state and declare ten minutes, and an
+      // action that declares three has to be admitted to three. An id the declaration does not carry has no window and
+      // is refused rather than capped - see the declaration for why 60 s is not a safe default here.
+      const window = declaredDeadlineWindow(reading.deadlineWindows, action);
+      return window !== null && deadlineMs <= reading.nowMs + window;
     },
     (reading) => ({ ...reading, request: { ...reading.request, deadlineMs: reading.nowMs - 1 } }),
   ),
@@ -3746,7 +4092,7 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
       "args.destination",
       "the label-or-ref selector discovery published",
       "invalid_navigation_destination",
-      (reading) => isExecutionNavigationDestinationSelector(reading.args.destination),
+      (reading) => readDestinationSelector(reading.args.destination, "argument") !== null,
       withArg("destination", { kind: "label" }),
     ),
   ],
@@ -3769,8 +4115,10 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     // nothing here models pricing or stock.
     integerRow("quantity", 1, null, "invalid_quantity"),
   ],
-  // The station tile plus one exact published ride. Both x/y and the opaque selector are mandatory: unlike `travel`
-  // there is no "plain" form, so a missing selector is a malformed request rather than an ordinary warp.
+  // The station tile plus the opaque ride selector. Both x/y and the selector are mandatory: unlike `travel` there is
+  // no "plain" form, so a missing selector is a malformed request rather than an ordinary warp. WHICH ride that selector
+  // names is the game thread's to say: `ResolveMinecartRide` re-derives it from the station tile's own `MinecartTransport`
+  // action and answers `minecart_target_changed` when the station no longer offers it.
   ride_minecart: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_minecart_station"),
@@ -3784,20 +4132,6 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
         typeof reading.args.expectedTargetId === "string" &&
         /^minecart_[a-f0-9]{16}$/u.test(reading.args.expectedTargetId),
       withArg("expectedTargetId", "minecart_not_a_selector"),
-    ),
-    requirement(
-      "args.expectedTargetId, args.x, args.y",
-      "one ride this exact snapshot advertised from that station tile",
-      "invalid_minecart_station",
-      (reading) =>
-        Array.isArray(reading.snapshot.minecartTargets) &&
-        reading.snapshot.minecartTargets.some(
-          (target) =>
-            target.targetId === reading.args.expectedTargetId &&
-            target.stationX === reading.args.x &&
-            target.stationY === reading.args.y,
-        ),
-      withArg("x", 12),
     ),
   ],
   // Only the opaque floor target: the floor SET is derived by the Mod from the live lowest level reached, so there is no
@@ -3923,53 +4257,35 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
   // held one.
   load_building_chest: [exactArgs(["x", "y", "slot", "expectedTargetId"], "invalid_execution_request")],
   collect_building_chest_output: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  // The raft slot and the water tile it is used on. That the tile IS water, and that the actor can reach it, are the
+  // handler's own admission: `RequestLocalUseRaft` asks `isWaterTile` of the live location, which is a wider set than the
+  // four cardinal neighbours discovery publishes.
   use_raft: [
     exactArgs(["slot", "x", "y"], "invalid_args"),
     slotRow("invalid_raft_target"),
     tileRow("invalid_raft_target"),
-    requirement(
-      "args.x, args.y",
-      "a raft site this exact snapshot published",
-      "invalid_raft_target",
-      (reading) =>
-        Array.isArray(reading.snapshot.raftTargets) &&
-        reading.snapshot.raftTargets.some((target) => target.x === reading.args.x && target.y === reading.args.y),
-      withArg("y", 12),
-    ),
   ],
+  // The horse is resolved by its opaque id from the location's own characters (`ResolveHorseTarget`), and the mount walks
+  // to it once it is out of reach, so the id is a name rather than a claim about where the horse stands now.
   mount_transport: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_horse_target"),
     opaqueArgRow("expectedTargetId", "invalid_horse_target"),
-    publishedTargetRow(
-      "the horse this exact snapshot published at that tile",
-      "invalid_horse_target",
-      (snapshot) => snapshot.horseTargets,
-    ),
   ],
+  // `ResolveMineEntrance` reads the tile's own `Action` property and the level that property declares, so the entrance is
+  // a place the actor can walk to rather than a row discovery happened to publish inside its radius.
   enter_mine: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_mine_entrance"),
     opaqueArgRow("expectedTargetId", "invalid_mine_entrance"),
-    publishedTargetRow(
-      "the mine entrance this exact snapshot published at that tile",
-      "invalid_mine_entrance",
-      (snapshot) => snapshot.mineEntranceTargets,
-    ),
   ],
-  // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id the
-  // `mineEntranceTargets` row published - because both are rows of that one family and the Mod is the side that can tell
-  // the kinds apart. The Host only proves the pair was published; which ladder it names is decided on the game thread,
-  // where a row of the other kind is refused by name with the action that owns it.
+  // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id - because both are
+  // rows of one family and the Mod is the side that can tell the kinds apart: `ResolveMineLadderTarget` re-scans the
+  // level's Buildings layer, and a row of the other kind comes back refused by name with the action that owns it.
   use_mine_ladder: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     tileRow("invalid_mine_exit_ladder"),
     opaqueArgRow("expectedTargetId", "invalid_mine_exit_ladder"),
-    publishedTargetRow(
-      "the ladder this exact snapshot published at that tile",
-      "invalid_mine_exit_ladder",
-      (snapshot) => snapshot.mineEntranceTargets,
-    ),
   ],
   // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit lives
   // at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a transition
@@ -4041,16 +4357,13 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
     ...tileAndTarget("invalid_machine_target"),
   ],
+  // The machine's own `Data/Machines` rows decide which inputs it takes and how many it consumes, and `ResolveLoadInput`
+  // accepts ANY backpack slot holding the named item - not only the first slot discovery published a row for. So neither
+  // the slot nor the pair is a Host-side question: `MachineLoadRefusal` answers from the live machine and names the inputs
+  // it does take (`machine_load_unsupported_input`).
   machine_load: [
     exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
     ...toolTileItemAndTarget("invalid_machine_load_target", qualifiedItemRow("invalid_machine_load_target")),
-    requirement(
-      "args.slot, args.expectedQualifiedItemId",
-      "the load the machine's own published row offers",
-      "machine_load_input_not_published",
-      (reading) => validateMachineLoadAgainstPublishedRow(reading.args, reading.snapshot) === null,
-      withArg("slot", 3),
-    ),
   ],
   machine_collect_output: [
     exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
@@ -4278,6 +4591,130 @@ function argumentRulesFor(action: unknown): readonly ExecutionRequestRequirement
   return isExecutionAction(action) ? EXECUTION_REQUEST_ARGUMENT_RULES[action] : [];
 }
 
+/** What a row of this declaration is allowed to be doing when it reads the snapshot it is judged against. */
+export type ExecutionRequestSnapshotReadBucket = "transport" | "policy" | "game-owned" | "stale-snapshot";
+
+/**
+ * One row that reads a snapshot field, and why that read is not a second authority on the state of the world.
+ *
+ * The three admitted buckets are the three claims a Host-side preflight may make: `transport` (the envelope's own shape, a
+ * field of the request compared with the snapshot it is dispatched against), `policy` (what the Host permits at all), and
+ * `game-owned` (a fact the game thread decides, recorded here only because some reader had to name it). `stale-snapshot` -
+ * a request refused because a cached row is older than the game - is the one bucket this validator may never use, which is
+ * why it is a member rather than an absence: `execution-request-snapshot-authority.test.ts` fails on it by name.
+ */
+export type ExecutionRequestSnapshotRead = Readonly<{
+  /** The row's own `field`. Paired with `shape` it is the row's content identity, so the table cannot drift by position. */
+  field: string;
+  shape: string;
+  bucket: ExecutionRequestSnapshotReadBucket;
+  reason: string;
+}>;
+
+/**
+ * Every row of the two declarations below that reads a snapshot field, and the bucket that read belongs to.
+ *
+ * The population is NOT this table. `execution-request-snapshot-authority.test.ts` walks every row of both declarations with
+ * the snapshot replaced by a recording proxy, so the set of rows that read a snapshot field is measured from the rows
+ * themselves; this table only says which bucket each measured read is in, and an unmeasured entry (a row that stopped
+ * reading) or an unclassified row (a row that started) is red there by name.
+ *
+ * Two rows are admitted. `expectedRevision` compares a field of the request with the revision of the snapshot that request
+ * was built against - `executeGameAction` writes both from the one snapshot it holds, so the comparison cannot fail on
+ * staleness, and the revision a caller actually raced against is compared with the Mod's live one on the game thread.
+ * `capabilities` is the Host's own restrictive projection: the tool surface it mounts and the requests it forwards are
+ * both limited to what the Mod advertised (ADR 635), and whether the action is still ENABLED for this body is the Mod's
+ * own refusal from live policy. Neither is a claim about where a minecart is.
+ */
+export const EXECUTION_REQUEST_SNAPSHOT_READS: readonly ExecutionRequestSnapshotRead[] = Object.freeze([
+  {
+    field: "expectedRevision",
+    shape: "the revision of the snapshot the request is dispatched against",
+    bucket: "transport",
+    reason:
+      "the request's own field, compared with the snapshot that request was constructed from; the caller's revision is judged against the game's live one by the Mod",
+  },
+  {
+    field: "action",
+    shape: "declared in the snapshot's live capabilities",
+    bucket: "policy",
+    reason:
+      "the Host may only forward what its own tool surface advertised, and the Mod still refuses an action its live EnabledActionSet does not offer",
+  },
+]);
+
+/**
+ * One world fact this validator used to decide from a snapshot row, and the game-thread refusal that answers it instead.
+ *
+ * These are the rows that were DELETED rather than refreshed. Each read a discovery family - a minecart at a station, a
+ * raft site, a horse at a tile, a mine entrance, a ladder, a machine's load row - as though the cached projection were the
+ * world. The Mod re-resolves every one of them from live native state before it acts, and answers with a code that names
+ * what it found; the six codes below are read from the Mod's own sources by
+ * `execution-request-snapshot-authority.test.ts`, so this table is a handoff that is checked rather than a comment saying a
+ * handoff happened. `producer` is repo-relative.
+ */
+export type ExecutionRequestWorldFact = Readonly<{
+  action: ExecutionRequest["action"];
+  /** The snapshot field the Host read, and no longer reads, to decide this action. */
+  snapshotField: keyof Snapshot;
+  /** The code the Mod answers with from the live game thread where the Host used to refuse. */
+  gameRefusal: string;
+  /** The Mod source that produces `gameRefusal`. */
+  producer: string;
+  reason: string;
+}>;
+
+export const EXECUTION_REQUEST_WORLD_FACTS_OWED_TO_THE_GAME: readonly ExecutionRequestWorldFact[] = Object.freeze([
+  {
+    action: "ride_minecart",
+    snapshotField: "minecartTargets",
+    gameRefusal: "minecart_target_changed",
+    producer: "integrations/stardew/farmhandexecutioncontroller.minecartactions.cs",
+    reason:
+      "discovery publishes only stations within its radius, so a station the player walked away from and back to is a ride the snapshot does not offer and the level still does",
+  },
+  {
+    action: "use_raft",
+    snapshotField: "raftTargets",
+    gameRefusal: "raft_target_not_water",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "discovery publishes the four cardinal neighbours that are water; the handler's own admission is `isWaterTile` on the live location, which is a wider set than the row that was refusing",
+  },
+  {
+    action: "mount_transport",
+    snapshotField: "horseTargets",
+    gameRefusal: "horse_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveHorseTarget` re-reads the location's own characters by the opaque id, and the mount walks to the horse once it is out of reach",
+  },
+  {
+    action: "enter_mine",
+    snapshotField: "mineEntranceTargets",
+    gameRefusal: "mine_entrance_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveMineEntrance` reads the tile's own `Action` property, so the entrance is a place the actor can walk to, not a row discovery happened to publish inside its radius",
+  },
+  {
+    action: "use_mine_ladder",
+    snapshotField: "mineEntranceTargets",
+    gameRefusal: "mine_exit_ladder_target_unavailable",
+    producer: "integrations/stardew/farmhandexecutioncontroller.transportactions.cs",
+    reason:
+      "`ResolveMineLadderTarget` re-scans the level's Buildings layer for the exit tile and names the kind it found, which is the one fact the Host could not tell from the shared id family",
+  },
+  {
+    action: "machine_load",
+    snapshotField: "machineTargets",
+    gameRefusal: "machine_load_unsupported_input",
+    producer: "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
+    reason:
+      "discovery publishes the FIRST backpack slot a machine accepts, while `ResolveLoadInput` accepts any slot holding the named item - the row refused a load the machine performs",
+  },
+]);
+
 /**
  * The whole-number ranges one action's arguments pin, in declaration order.
  *
@@ -4316,9 +4753,14 @@ export function firstExecutionRequestRefusal(
  * long; the ladder is now `EXECUTION_REQUEST_REQUIREMENTS` and `EXECUTION_REQUEST_ARGUMENT_RULES` above, and the answer
  * to "which field did it refuse" is a row's `field` rather than a branch a reader has to count.
  */
-export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
+export function validateExecutionRequest(
+  value: unknown,
+  snapshot: Snapshot,
+  nowMs = Date.now(),
+  deadlineWindows: Readonly<Record<string, number>> = EXECUTION_REQUEST_DEADLINE_WINDOWS,
+): string | null {
   if (!isRecord(value)) return "invalid_request";
-  const reading = executionRequestReading(value, snapshot, nowMs);
+  const reading = executionRequestReading(value, snapshot, nowMs, deadlineWindows);
   const envelopeVerdict = firstExecutionRequestRefusal(EXECUTION_REQUEST_REQUIREMENTS, reading);
   if (envelopeVerdict !== null) return envelopeVerdict;
   return firstExecutionRequestRefusal(argumentRulesFor(reading.request.action), reading);
@@ -4617,6 +5059,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   }
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
+  // The night's location verdict, which the projection's Sleep line reads: a number here would be read as a verdict by
+  // a `=== true` test and silently refuse a night the executor admits.
+  if (
+    value.sleepAdmitsHere !== undefined &&
+    value.sleepAdmitsHere !== null &&
+    typeof value.sleepAdmitsHere !== "boolean"
+  )
+    return "invalid_snapshot:sleepAdmitsHere";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
   // Time context: bounded non-negative integers, so no consumer can be handed a
   // nonsense clock. Zero is the "unknown" value the Mod uses when the world is
@@ -4750,6 +5200,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.actorDispositionActionOwned === undefined || typeof value.actorDispositionActionOwned === "boolean") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
+    (value.sleepAdmitsHere === undefined ||
+      value.sleepAdmitsHere === null ||
+      typeof value.sleepAdmitsHere === "boolean") &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     // The tool slot and the item occupying it, the pair `currentTool` is answered with: a slot is a non-negative
     // integer and the occupant is a qualified id or absent. Both were named only by the diagnostic.
@@ -4846,7 +5299,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
+  const allowedKeys = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence", "origin"];
   if ("observation" in value) allowedKeys.push("observation");
   if ("piggybackedScene" in value) allowedKeys.push("piggybackedScene");
   if ("nativeNotices" in value) allowedKeys.push("nativeNotices");
@@ -4858,6 +5311,7 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
+    validateExecutionOrigin(value.origin) === null &&
     Number.isSafeInteger(value.revision) &&
     (value.evidence === null || isRecord(value.evidence)) &&
     (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
@@ -4888,6 +5342,26 @@ function isNativeNotices(value: unknown): value is readonly string[] {
         item.trim().length > 0,
     )
   );
+}
+
+/**
+ * One execution's provenance, as the tagged union it is: the id pair is present exactly when a programme owns the
+ * execution, and nothing else is.
+ *
+ * A `programme` with no `nodeId`, a `standalone` that names one, an unknown member and a bare string are all refused -
+ * so "which programme" cannot be half-stated, and the Host never has to choose which half to believe.
+ */
+export function validateExecutionOrigin(value: unknown): string | null {
+  if (!isRecord(value)) return "invalid_execution_origin";
+  if (value.kind === "programme")
+    return hasExactKeys(value, ["kind", "programId", "nodeId"]) &&
+      isOpaqueId(value.programId) &&
+      isOpaqueId(value.nodeId)
+      ? null
+      : "invalid_execution_origin";
+  if (value.kind === "standalone" || value.kind === "unattributed")
+    return hasExactKeys(value, ["kind"]) ? null : "invalid_execution_origin";
+  return "invalid_execution_origin";
 }
 
 export function validateLocalObservation(value: unknown): string | null {
@@ -5039,44 +5513,14 @@ function isOrderingPredecessors(value: unknown): boolean {
 function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "destination_selector")
-    return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
-  // THE LOOP FORM IS A DECLARATIVE ARGUMENT, DISCRIMINATED BY `type` LIKE EVERY OTHER ONE, so it can never be mistaken for
-  // a `{ type: "string", canonicalValue }` holding the same JSON. Its grammar is read from the one module the plan
-  // compiler writes it with (`body-program-for-each.ts`), so the producer and the validator cannot drift apart.
-  //
-  // WHAT THIS ACCEPTANCE DOES NOT SAY. The Mod's own reader does not know this kind, and that is deliberate: a form the
-  // Mod cannot expand must not look executable at the wire boundary. `plan_work` answers
-  // `for_each_execution_unavailable` for exactly the nodes whose action id the attached Mod does not publish, so no
-  // program carrying a loop is ever sent. This validator describes what the Host can COMPILE and READ BACK.
-  if (value.type === "loop") return isForEachLoopDocument(value);
+    return (
+      hasExactKeys(value, ["type", "destination"]) && readDestinationSelector(value.destination, "argument") !== null
+    );
   return (
     (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
     hasExactKeys(value, ["type", "canonicalValue"]) &&
     typeof value.canonicalValue === "string" &&
     value.canonicalValue.length <= 512
-  );
-}
-/** Mirrors the C# IsValidBodyProgramSelector: scalar labels are trimmed, run ids are canonical 26-char navigation refs. */
-function isBodyProgramDestinationSelector(value: unknown): value is BodyProgramDestinationSelector {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "label") return hasExactKeys(value, ["kind", "label"]) && isBodyProgramSelectorLabel(value.label);
-  if (value.kind === "ref")
-    return (
-      hasExactKeys(value, ["kind", "ref"]) &&
-      typeof value.ref === "string" &&
-      /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref)
-    );
-  return false;
-}
-function isBodyProgramSelectorLabel(value: unknown): value is string {
-  // Mirrors the C# ReadPlayerText FormC gate: only already-canonicalized NFC labels are exchangeable.
-  return (
-    typeof value === "string" &&
-    value.length >= 1 &&
-    value.length <= 128 &&
-    value === value.trim() &&
-    value.trim().length > 0 &&
-    value.normalize("NFC") === value
   );
 }
 function isBodyProgramFactReference(value: unknown): boolean {
@@ -5262,7 +5706,17 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     hasExactKeysOrOptional(
       value,
       ["nodeId", "state", "nodeAttempt", "admissionAttempt", "actionId"],
-      ["rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "x", "y"],
+      [
+        "rejectionCode",
+        "failureCode",
+        "hint",
+        "refusalDetail",
+        "recoveryDiagnostic",
+        "evidence",
+        "postconditionVerification",
+        "x",
+        "y",
+      ],
     ) &&
     isOpaqueId(value.nodeId) &&
     isOpaqueId(value.actionId) &&
@@ -5287,6 +5741,19 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     (value.recoveryDiagnostic === undefined ||
       value.recoveryDiagnostic === null ||
       value.state === "recovery_required") &&
+    // The two PROOF fields a batch node carries, on the same footing: the Mod's own bound and the Mod's own state rule
+    // (`BODY_PROGRAM_PROOF_NODE_STATES`). Admitting the keys without the rule would let a `rejected` node present a row
+    // table it never produced - the one reading ADR-006 forbids - and refusing the keys is what made this field
+    // unreachable in the first place (`hasExactKeysOrOptional` refuses an unlisted key, and
+    // `local-stardew-bridge.ts` answers that refusal by closing the transport).
+    isOptionalBoundedReason(value.evidence, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.evidence === undefined ||
+      value.evidence === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+    isOptionalBoundedReason(value.postconditionVerification, MAX_BODY_PROGRAM_PROOF_LENGTH) &&
+    (value.postconditionVerification === undefined ||
+      value.postconditionVerification === null ||
+      BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
@@ -5402,10 +5869,20 @@ function isBodyTraceCategory(value: unknown): value is BodyTrace["category"] {
 }
 
 function validateBodyTrace(value: Record<string, unknown>): string | null {
-  return hasOnlyKeys(value, ["category", "executionId", "requestId", "tick", "revision", "location", "tile"]) &&
+  return hasOnlyKeys(value, [
+    "category",
+    "executionId",
+    "requestId",
+    "tick",
+    "revision",
+    "origin",
+    "location",
+    "tile",
+  ]) &&
     isBodyTraceCategory(value.category) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
+    validateExecutionOrigin(value.origin) === null &&
     typeof value.tick === "number" &&
     Number.isSafeInteger(value.tick) &&
     value.tick >= 0 &&
@@ -5525,28 +6002,6 @@ function isReasonCode(value: unknown): value is string {
 }
 function validToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value);
-}
-/**
- * A machine load must be the load the machine's own data offered: when the dispatched snapshot publishes that machine,
- * `slot` and `expectedQualifiedItemId` must be the pair on its row (`loadInputSlot`/`loadInputQualifiedItemId`), and the
- * row must name a positive `loadInputStack`. The Mod re-derives all three from the live machine on the game thread, so a
- * request that CONTRADICTS the row it copied is refused before the write instead of being reconciled onto whatever now
- * stands there.
- *
- * A machine the snapshot no longer lists is NOT refused here. It is either busy now or gone, and both are refusals the
- * Mod already names from the live world - including the one that matters: a request re-sent with the identity of a load
- * that already happened must reach the Mod, which replays that request's own receipt instead of letting the Host turn a
- * stale snapshot into a failure for an action the world already performed.
- */
-function validateMachineLoadAgainstPublishedRow(args: Record<string, unknown>, snapshot: Snapshot): string | null {
-  const targets = snapshot.machineTargets;
-  if (!Array.isArray(targets)) return null;
-  const match = targets.find((target) => target.targetId === args.expectedTargetId);
-  if (match === undefined) return null;
-  if (match.loadInputSlot !== args.slot) return "machine_load_input_not_published";
-  if (match.loadInputQualifiedItemId !== args.expectedQualifiedItemId) return "machine_load_input_not_published";
-  if (!isMachineInputCount(match.loadInputStack)) return "machine_load_input_not_published";
-  return null;
 }
 
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [
@@ -5758,6 +6213,16 @@ function isNonNegativeInt32(value: unknown): value is number {
 }
 function isUniqueOpaqueIdArray(value: unknown): value is readonly string[] {
   return isStringArray(value) && value.every(isOpaqueId) && new Set(value).size === value.length;
+}
+/**
+ * Identifier-shaped list that may repeat a member.
+ *
+ * The action-policy frame carries the two denial lists verbatim from the player's record, and a record that names one
+ * family twice would be refused by a uniqueness rule the Mod itself does not impose (its own reader collapses the list
+ * into a set). Refusing here would make one of the two carriers stricter than the other for the same payload.
+ */
+function isOpaqueIdList(value: unknown): value is readonly string[] {
+  return isStringArray(value) && value.every(isOpaqueId);
 }
 function isValidRuntimeAttestation(role: unknown, generation: unknown): boolean {
   return role === "farmhand_client"

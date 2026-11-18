@@ -12,8 +12,8 @@ import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtim
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
 import {
-  buildChatCompanionSystemPrompt,
   DEFAULT_IDENTITY_PROFILE,
   identityProfileHash,
   identityProfileMetadata,
@@ -623,8 +623,9 @@ test("Chat construction refuses a Chat the transcript authority archived", async
 
 test("Chat construction takes the companion language from the player's stored preference", async () => {
   // The runtime must not carry a locale of its own: the same root read by the
-  // management surface is what decides what the companion speaks, and the prompt's
-  // single language authority follows it.
+  // management surface is what decides the run's language. Since 2026-11-22 the locale states no INSTRUCTION - the
+  // chain-of-thought language is the preset's Main, because the canon has no dedicated language setting - so the fact
+  // reaches the prompt the way the assembler still owns it: the word that labels the player's own turn.
   const value = await fixture();
   let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
@@ -641,16 +642,17 @@ test("Chat construction takes the companion language from the player's stored pr
       ),
     );
     assert.equal(prepared.presentation.profile.locale, "en-US");
-    // And that value is exactly what the prompt's language line will say.
+    // And that value is exactly what the prompt's player-turn label will say.
     const prompt = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, prepared.presentation.profile.locale);
-    assert.match(prompt, /Consistently think, reason, and converse in English/u);
-    assert.doesNotMatch(prompt, /Chinese/u);
+    assert.match(prompt, /^You: /mu);
+    assert.doesNotMatch(prompt, /^你: /mu);
     // A second construction on the same root sees the update: the preference is
     // durable state, not a mount-time snapshot.
     await store.update(english.revision, { action: "setLocale", locale: "zh-CN" });
     assert.equal(await resolveCompanionLocale(value.runtimeRoot), "zh-CN");
     const chinese = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
-    assert.match(chinese, /Consistently think, reason, and converse in Chinese \(Simplified\)/u);
+    assert.match(chinese, /^你: /mu);
+    assert.doesNotMatch(chinese, /^You: /mu);
     void paths;
   } finally {
     await value.binding.close();

@@ -15,15 +15,15 @@ namespace GameBuddy.Stardew;
 /// </para>
 ///
 /// <para>
-/// It reaches outward exactly twice, and neither is a reference back to the manager's own state:
-/// <see cref="IActiveBodyOwnership"/> answers whether an execution still owns the actor (and receives the one modal
-/// lease release, from <see cref="Remember"/>), while the injected publication writes the <c>body_idle</c> trace, which
-/// belongs to the manager because it carries its tick and its revision.
+/// It reaches outward exactly once: <see cref="IActiveBodyOwnership"/> answers whether an execution still owns the
+/// actor (and receives the one modal lease release, from <see cref="Remember"/>). The idle transition that this store
+/// retires used to be announced as a <c>body_idle</c> fact; that announcement was a trace of the body rather than a change
+/// of the world, so it is gone and this store no longer publishes anything.
 /// </para>
 /// </summary>
 internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
 {
-    /// <summary>The one bound on both remembered receipts and the public trace: the same number, one spelling.</summary>
+    /// <summary>The one bound on remembered receipts.</summary>
     internal const int MaximumRememberedReceipts = 256;
 
     private readonly Dictionary<string, LocalExecutionReceipt> receiptsByRequestId = new(StringComparer.Ordinal);
@@ -49,12 +49,10 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     /// </summary>
     private readonly Dictionary<string, long> publishedReceiptRevisionByExecutionId = new(StringComparer.Ordinal);
     private readonly IActiveBodyOwnership ownership;
-    private readonly Action<string, string> publishBodyIdleTrace;
 
-    internal ExecutionReceiptStore(IActiveBodyOwnership ownership, Action<string, string> publishBodyIdleTrace)
+    internal ExecutionReceiptStore(IActiveBodyOwnership ownership)
     {
         this.ownership = ownership;
-        this.publishBodyIdleTrace = publishBodyIdleTrace;
     }
 
     /// <summary>
@@ -76,6 +74,15 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     /// </summary>
     internal LocalExecutionReceipt Remember(LocalExecutionReceipt receipt)
     {
+        // A SETTLED RECEIPT IS NEVER REWRITTEN BY A LATER PROGRESS TRANSITION. The one funnel stores every receipt it
+        // is handed, and a body controller can still report a step of an execution that was already answered (round66:
+        // `rejected` at revision 840 for the request, then `tool_approach_completed` for the walk underneath it). Storing
+        // the second would leave every reader - exact receipt query, idempotent replay, held request - answering with a
+        // state the execution already left, so the settled receipt stands and the late one is refused.
+        if (!receipt.State.IsTerminal()
+            && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? settled)
+            && settled.State.IsTerminal())
+            return settled;
         if (!this.receiptsByRequestId.ContainsKey(receipt.RequestId))
         {
             this.receiptOrder.Enqueue(receipt.RequestId);
@@ -126,9 +133,9 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     }
 
     /// <summary>
-    /// Publishes the one idle transition for an execution only after every manager-owned representation of that
-    /// execution has been released. This deliberately is not part of generic terminal receipt tracing: native
-    /// animations may retain ownership after a terminal observation.
+    /// Retires an execution's one pending idle transition once every manager-owned representation of that execution has
+    /// been released. This deliberately is not part of generic terminal receipt tracing: native animations may retain
+    /// ownership after a terminal observation.
     /// </summary>
     internal void PublishIdleAfterRelease(string executionId, string requestId)
     {
@@ -140,13 +147,12 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
 
     internal void DrainPendingIdleAfterRelease()
     {
-        foreach ((string executionId, string requestId) in this.pendingIdleByExecutionId.ToArray())
+        foreach ((string executionId, _) in this.pendingIdleByExecutionId.ToArray())
         {
             if (this.ownership.HasOwnership(executionId) || !this.idlePublishedExecutionIds.Add(executionId))
                 continue;
             this.pendingIdleByExecutionId.Remove(executionId);
-            if (!this.navigationExecutionIds.Remove(executionId))
-                this.publishBodyIdleTrace(executionId, requestId);
+            this.navigationExecutionIds.Remove(executionId);
         }
     }
 

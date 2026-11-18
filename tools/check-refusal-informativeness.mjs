@@ -56,6 +56,14 @@
  * *                    `refusal_names_nothing_actionable soil_not_diggable:<file>:<line>`, exit 1
  * *                    (tools/check-refusal-informativeness.test.mjs, "FALSIFIER: the measured soil verdict")
  */
+
+export const gateDeclaration = {
+  id: "check-refusal-informativeness",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

@@ -5,12 +5,11 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
-  TURN_PRODUCTION,
-  TURN_SUPPRESSION,
-  turnAccountLine,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
+  turnAccountLine,
+  turnProductionOf,
 } from "./event-pump.js";
 import {
   attachNativeCompanionContent,
@@ -21,7 +20,10 @@ import {
   type NativeCompanionPartSuppression,
   type NativeCompanionTurnBubble,
   readAssistantMessageFacts,
+  type TurnWithheldReason,
 } from "./native-companion-content.js";
+import { isOpaqueSource, presentationSourceOf } from "./presentation-lease.js";
+import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 
 export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
@@ -29,18 +31,54 @@ export type NativeGameCompanionContent = Readonly<{
 }>;
 
 /**
- * Why one of a turn's assistant text parts never reached the player.
+ * The text no projection ever saw, because this turn carried no presentation source.
  *
  * <p>
- * Two layers can withhold a part, and each one names its own: the projection says what it
-deliberately withheld (`NativeCompanionPartSuppression`, carried on `onMessageText`), and this loop
-names the text no projection ever saw. `no_presentation_lease` is that second family's only member
-today - the turn carried no presentation source, so no projection was attached and nothing else could
-report its parts. It is declared here rather than in the projection's own enum because the projection
-can never produce it, and a member no code path sets is decoration.
+ * A world fact opens a presentation lease only when the fact is one of the salient kinds (`opensPresentationLease`), so a
+ * turn opened by any other fact is answered with no projection attached at all. It is declared here rather than in the
+ * projection's own enum because the projection can never produce it, and a member no code path sets is decoration.
  * </p>
  */
-export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | "no_presentation_lease";
+export const NO_PRESENTATION_LEASE = "no_presentation_lease" as const;
+
+/**
+ * The block this loop appends to a turn whose words the surface cannot show.
+ *
+ * <p>
+ * `no_presentation_lease` names a loss AFTER the fact: her text was composed into a turn that no projection was attached
+ * to. The loss is upstream of delivery - the model was asked a turn and answered it - so the correction belongs at the
+ * invitation, and this is that invitation's one statement about the surface: on a turn that cannot be shown, say so where
+ * the model reads its turn.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-17 (`round65`): 26 turns opened, every one of them answered with text, 17 bubbles delivered and 10 lost
+ * to `no_presentation_lease`. The delivered ones were not the turns the surface admitted on purpose: a receipt-opened turn
+ * only presented when the Mod's HUD happened to draw a line (`native_notice`), which rides the same batch. Admission by
+ * coincidence is why the same body action presented in one batch and vanished in the next.
+ * </p>
+ */
+export const NO_SPEECH_SURFACE_BLOCK = "speech-surface" as const;
+
+export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | typeof NO_PRESENTATION_LEASE;
+
+/**
+ * Every name a turn's bubble can be withheld under, as this loop can see them: the projection's closed list plus the one
+ * cause only this layer knows (a turn that carried no presentation lease).
+ */
+export type CompanionTurnWithheldReason = TurnWithheldReason | typeof NO_PRESENTATION_LEASE;
+
+/**
+ * What one turn's bubble did, as this loop answers it: the bubble it handed over, or the named reason there was none.
+ *
+ * <p>
+ * THE TURN ENDS EITHER WAY. `delivered: 0` is not "nothing happened, keep waiting" - it is the turn's answer, and the
+ * reason is what a caller switches on to say why the player saw no bubble. The projection's `deliverTurn` answers the same
+ * shape for the turns it covers; this type adds the cause it cannot see.
+ * </p>
+ */
+export type CompanionTurnDelivery = Readonly<
+  { delivered: 1; bubble: NativeCompanionTurnBubble } | { delivered: 0; reason: CompanionTurnWithheldReason }
+>;
 
 /**
  * The ending of a turn whose assistant message carried neither text nor a tool call.
@@ -134,6 +172,17 @@ export class CompanionLoop {
     private readonly voiceSink?: import("./voice.js").ChatVoiceSpeechPublisher,
     private readonly volatileContext?: CompanionTurnVolatileContext,
     private readonly reloadModelSelection?: CompanionTurnModelReload,
+    /**
+     * This run's span recorder, for the two steps of a turn that are not the model's own call.
+     *
+     * <p>
+     * `delivery` is the batch reaching Pi - model reload, world-book bind, send, queue admission - and it is where a
+     * message that landed 56 s after the previous answer sat unexplained (round62, 15:12:11 -> 15:13:07). `turn.tail`
+     * is the turn's own ending after its last words. Neither is a model round trip, and before this the wall clock had
+     * no record of either.
+     * </p>
+     */
+    private readonly runTrace?: RunTrace,
   ) {
     this.#turnObserver = turnObserver;
   }
@@ -161,6 +210,22 @@ export class CompanionLoop {
 
   public get pump(): CompanionEventPump {
     return this.#pump;
+  }
+
+  /**
+   * What the LAST turn that reached delivery answered: its bubble, or the name of what withheld it.
+   *
+   * <p>
+   * `undefined` means the last turn never reached delivery at all - it was stopped, refused, unaccepted or never settled -
+   * which is a different fact from "it reached delivery and produced no bubble". It is published because a caller (a run's
+   * evidence, a preview harness, the acceptance gate) has to be able to read a turn's delivery as a value it can switch
+   * on; a delivered turn whose bubble never arrived used to be visible only as `bubbles 0` in a stderr line.
+   * </p>
+   */
+  #lastTurnDelivery: CompanionTurnDelivery | undefined;
+
+  public get lastTurnDelivery(): CompanionTurnDelivery | undefined {
+    return this.#lastTurnDelivery;
   }
 
   /** A player request is accepted but has not yet emitted Pi's exact message_start. */
@@ -204,17 +269,24 @@ export class CompanionLoop {
    * </p>
    */
   public async flush(): Promise<CompanionTurnOutcome | undefined> {
-    const outcome = await this.#pump.flush({
+    const flushed = await this.#pump.flush({
       deliver: async (batch) => {
         // Only the real Pi-consumed batch may activate presentation lineage.
         const sourceEventId = canonicalPresentationSource(batch);
         const batchId = isOpaqueSource(batch.batchId) ? batch.batchId : undefined;
+        const turnLocale = canonicalTurnLocale(batch);
+        // THE INVITATION AND THE ADMISSION ARE ONE DECISION. A turn with no lease is still answered - the pump opened it
+        // because an outcome asked for a decision - so the only honest thing the surface can do is say so in the turn
+        // itself. Without this the model was asked a question it could only answer into a void: 10 of `round65`'s 26
+        // turns spoke into it, and the run counted their words as `no_presentation_lease` after the fact.
+        const turnText = sourceEventId === undefined ? batch.text + speechSurfaceStatement(turnLocale) : batch.text;
         const completion = this.#deliverAndObserve(
-          batch.text,
+          turnText,
           batch.disposition,
           sourceEventId,
           batchId,
-          canonicalTurnLocale(batch),
+          turnLocale,
+          carriedFactKinds(batch),
         );
         this.#inFlight = completion;
         try {
@@ -224,22 +296,42 @@ export class CompanionLoop {
         }
       },
     });
-    this.#reportTurnDecision();
-    return outcome;
+    // THE THREE ANSWERS ARE SWITCHED ON, not collapsed into `undefined`. A call that owed no turn is not a delivery and is
+    // not printed; the facts it declined to deliver are carried into the next batch, and `carriedInto` proves where they
+    // went. A hold is neither, and a caller that read it as "nothing happened" would be reading the same value as "no turn
+    // was owed" - the collapse this union exists to remove.
+    switch (flushed.kind) {
+      case "opened":
+        this.#reportTurnDecision();
+        return flushed.turn;
+      case "not_owed":
+        this.#carryDecisions += 1;
+        return undefined;
+      case "held":
+        return undefined;
+    }
+  }
+
+  /** How many flush calls this loop saw answered "not owed": one reading of the only-new-shape traffic in a run's log. */
+  #carryDecisions = 0;
+
+  public get carriedDecisions(): number {
+    return this.#carryDecisions;
   }
 
   /**
-   * One line per examined turn decision, in the shape the invariant is read back in.
+   * One line per OPENED turn, in the shape the invariant is read back in.
    *
-   * An OPENED turn prints the account alone; a suppression prints its own reason first, because the reason is the only
-   * thing that tells "she had nothing new" from "a turn was lost".
+   * A call that owed no turn prints nothing: it is not a decision the run paid for, and a run's log no longer carries one
+   * line per programme STEP saying "there was nothing to do" (the `GAME_TURN_SUPPRESSED` line, which `round64` printed
+   * 126 times). What those calls did is counted in the account (`not owed N {reason: count}`), printed with the next turn
+   * that opens, and the facts they declined are proved under `carried`.
    */
   #reportTurnDecision(): void {
     const account = this.#pump.turnAccount;
     const decision = account.lastDecision;
-    if (decision === undefined || decision.reason === TURN_SUPPRESSION.nothingPending) return;
-    const marker = decision.kind === "opened" ? "GAME_TURN_ACCOUNT" : `GAME_TURN_SUPPRESSED ${decision.reason}`;
-    process.stderr.write(`${marker} ${turnAccountLine(account)}\n`);
+    if (decision === undefined || decision.kind !== "opened") return;
+    process.stderr.write(`GAME_TURN_ACCOUNT ${turnAccountLine(account)}\n`);
   }
 
   /**
@@ -273,6 +365,7 @@ export class CompanionLoop {
     sourceEventId: string | undefined,
     batchId: string | undefined,
     turnLocale: string | undefined,
+    carried: readonly string[],
   ): Promise<CompanionTurnOutcome> {
     let accepted = false;
     let settled = false;
@@ -351,12 +444,12 @@ export class CompanionLoop {
     let presentedTextParts = 0;
     const suppressedByReason = new Map<CompanionTurnPartSuppression, number>();
     /**
-     * What this turn's delivery took, in the unit the player experiences: the BUBBLE.
+     * What this turn's delivery took, in the unit the player experiences: the BUBBLE, and the name when there was none.
      *
      * <p>
      * MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49 bubbles - one
      * every 13 seconds, 2.04 messages per turn - because every assistant message was presented as a reply of its own.
-     * The surface's unit is now the turn (`native-companion-content.ts` `deliverTurn`), so `presentedTextPieces` counts
+     * The surface's unit is now the turn (`native-companion-content.ts` `deliverTurn`), so `turnDelivery.delivered` counts
      * the bubbles this turn committed (0 or 1) and `textMessageIds` names the messages those bubbles rolled up. A part is
      * a block of model text, a bubble is one commit the player saw; publishing both is what lets a run's own
      * `presentation.pieceCount` reconcile against this record instead of reading the difference as missing turns.
@@ -369,13 +462,19 @@ export class CompanionLoop {
      * sounds are now inside the turn's bubble and a split is a second bubble, which is why the record carries one bubble
      * count rather than a text/ahead pair.
      * </p>
+     * <p>
+     * ONE ANSWER, SET ONCE: `deliverTurn` is called at exactly one point in this method, and `undefined` here means the
+     * turn never reached it (a stopped, refused or unsettled turn), which is a different fact from "it reached delivery
+     * and produced nothing". Every consumer below reads this field rather than reconstructing an answer of its own.
+     * </p>
      */
-    let presentedTextPieces = 0;
+    let turnDelivery: CompanionTurnDelivery | undefined;
+    // The field answers the turn being delivered now, so a turn that never reaches delivery cannot leave the previous
+    // turn's answer standing as if it belonged to this one.
+    this.#lastTurnDelivery = undefined;
     /** The assistant messages whose text this turn's bubble rolled up, in arrival order. */
     let textMessages = 0;
     const textMessageIds: string[] = [];
-    /** What the turn's one bubble cost when it was presented, or `null` when the turn presented none. */
-    let turnBubble: NativeCompanionTurnBubble | null = null;
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     /**
@@ -390,6 +489,26 @@ export class CompanionLoop {
       if (this.#activity.current === "speaking") return;
       this.#activity.transition("speaking");
     };
+    /**
+     * The batch reaching Pi, and the turn's own ending, as two spans on the run clock.
+     *
+     * <p>
+     * The delivery span opens here - the model reload, the world-book bind, `sendUserMessage` and Pi's own queue
+     * admission are all inside it - and closes at `message_start`, the event that proves Pi consumed THIS batch. A
+     * batch handed over during a turn Pi is still finishing waits in that queue, and that wait is not inside any
+     * model round trip: round62 sat 56 s in exactly this gap. The tail span opens after each assistant message and
+     * closes when Pi settles the turn, so "the last words are out, the turn is not over" is a measured step.
+     * </p>
+     */
+    const batchSpanAttributes = Object.freeze({
+      disposition,
+      ...(batchId === undefined ? {} : { batchId }),
+    });
+    const deliverySpan: RunTraceSpanHandle | undefined = this.runTrace?.begin(
+      RUN_SPAN_NAMES.delivery,
+      batchSpanAttributes,
+    );
+    let tailSpan: RunTraceSpanHandle | undefined;
     // TURN CREATED. A batch became a turn, so she is thinking about it from this moment - published before anything
     // below can fail, because a turn that dies in the next statement is exactly the silence the player has to be able
     // to read as an ending rather than as a crash.
@@ -456,8 +575,8 @@ export class CompanionLoop {
         // in a settlement-driven turn that this loop counted and no projection ever saw).
         if (assistantFacts.textParts > 0 && nativeContentObserver === undefined)
           suppressedByReason.set(
-            "no_presentation_lease",
-            (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
+            NO_PRESENTATION_LEASE,
+            (suppressedByReason.get(NO_PRESENTATION_LEASE) ?? 0) + assistantFacts.textParts,
           );
         if (assistantFacts.hasText) {
           producedText = true;
@@ -467,6 +586,15 @@ export class CompanionLoop {
         }
         if (assistantFacts.hasToolCall) producedToolCall = true;
         if (assistantFacts.failed) assistantFailed = true;
+        // THE UNIT OF SILENCE IS THIS RECORD. The pump's counters are keyed by the DELIVERED BATCH, so a batch that said
+        // a line and then worked without one is `worked` and its silence disappears - a batch carrying any text can never
+        // be tool-only (`round60`: 169 assistant turns, 36 of them silent, every counter `0`). A message is a turn in
+        // Pi's own record, so it is counted the moment it lands, in the same member vocabulary the batch uses.
+        this.#pump.noteAssistantTurn(assistantFacts);
+        if (this.runTrace !== undefined) {
+          tailSpan?.end();
+          tailSpan = this.runTrace.begin(RUN_SPAN_NAMES.turnTail, batchSpanAttributes);
+        }
       };
       /**
        * Open this turn's presentation lineage and its listeners, at the moment Pi consumed the exact batch.
@@ -535,10 +663,7 @@ export class CompanionLoop {
                 }
                 const content = Object.freeze({ sourceEventId, text });
                 const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                if (presentation !== undefined) {
-                  presentedTextPieces += 1;
-                  nativeContentFinal = presentation;
-                }
+                if (presentation !== undefined) nativeContentFinal = presentation;
                 await presentation;
               },
               onMessageText: (outcome) => {
@@ -592,6 +717,8 @@ export class CompanionLoop {
        */
       const settleTurn = (aborted: boolean): void => {
         settled = true;
+        tailSpan?.end(aborted ? { aborted: true } : undefined);
+        tailSpan = undefined;
         // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
         // that never produced a final message left no recorded outcome, and the tail of this method
         // returned `completed` for a run the player had cancelled. The content observer's own
@@ -619,6 +746,7 @@ export class CompanionLoop {
         if (event.type === "message_end") noteAssistantMessage(event.message);
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
           accepted = true;
+          deliverySpan?.end({ accepted: true });
           if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
           openTurnPresentation();
           if (sourceEventId !== undefined && batchId !== undefined)
@@ -694,7 +822,14 @@ export class CompanionLoop {
       // unaccepted or unsettled turn): a stopped or uncertain turn does not speak after the fact. The
       // final observer callback is serialized independently of Pi's settlement notification, so
       // `close()` below drains the bubble's own presentation before the lineage closes.
-      turnBubble = nativeContentObserver?.deliverTurn() ?? null;
+      //
+      // EVERY TURN THAT GETS HERE ANSWERS, and the answer is a result: the bubble it committed, or the name of what
+      // withheld it. A turn with no projection attached at all - no presenter, or no presentation lease for the fact that
+      // opened it - is the loop's own case, and it names itself here instead of leaving `undefined` to read as silence.
+      turnDelivery =
+        nativeContentObserver === undefined
+          ? Object.freeze({ delivered: 0 as const, reason: NO_PRESENTATION_LEASE })
+          : nativeContentObserver.deliverTurn();
       try {
         await nativeContentObserver?.close();
       } catch (error) {
@@ -744,14 +879,17 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
-      // What this turn DID, in the three states the pump acts on separately: `worked` clears the narration run, `spoke`
-      // extends it, `said_nothing` ends it. `producedText` and not `producedToolCall` is the second half, because a
-      // message that ASKED for a tool and ran none did not narrate.
-      this.pump.turnProduction = producedWork
-        ? TURN_PRODUCTION.worked
-        : producedText
-          ? TURN_PRODUCTION.spoke
-          : TURN_PRODUCTION.saidNothing;
+      // Both spans close on every ending, including the paths that never reached Pi's settlement, so a turn that was
+      // cancelled or refused leaves a measured ending instead of an open span that reads like a frozen stage.
+      deliverySpan?.end();
+      tailSpan?.end();
+      // What this turn DID, in the four states the pump acts on separately: a turn that worked clears the narration run,
+      // a turn that only spoke extends it, and the two silent members end it - of which `workedSilently` is the one that
+      // makes an acting-and-quiet turn landable, because `worked` alone collapsed "did the work and said what it did"
+      // with "did the work and said nothing about it". `producedText` and not the bubble count is the second half: a
+      // part the surface withheld is a delivery gap with its own accounting (`delivery_mismatch`, `suppressed{...}`), and
+      // reading it as her silence would name a defect in the pipeline as a choice she made.
+      this.pump.turnProduction = turnProductionOf(producedWork, producedText);
       // One line per turn that had text to deliver: THREE populations, each counted where it was measured - the parts Pi's
       // stream produced, the parts the projection reported as presented, and the parts it named as withheld with a reason.
       // The record carries no residual: a stored difference reads like a fourth measurement and, summed across turns with
@@ -765,17 +903,31 @@ export class CompanionLoop {
       // player saw - and publishing both is what lets a run reconcile its own `presentation.pieceCount` against this
       // account instead of reading the difference as missing turns. `messages` is the roll-up's own input: the messages
       // whose text the bubble had to fit, named so "28 messages arrived as 27 bubbles" is visible rather than inferred.
-      if (assistantTextParts > 0 || presentedTextPieces > 0) {
+      // The bubble's own answer rides here: the bubble when one left, and the NAME of the withholding when none did, so a
+      // turn that produced nothing presentable is a stated ending in the run's own log rather than `bubbles: 0`.
+      if (writesTurnDeliveryRecord(turnDelivery, assistantTextParts)) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
+        const delivered = deliveredBubbles(turnDelivery);
+        // THE BUBBLE'S OWN ACCOUNT, taken before the record is written because it is read from what the turn ended
+        // with; `bubbleNotDeliveredAccount` says what counts as a bubble that never arrived, and why it may name ONE
+        // reason even when several layers withheld the turn's parts.
+        const suppressedBubbles = bubbleNotDeliveredAccount(suppressedByReason, delivered, assistantTextParts);
         process.stderr.write(
           `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify({
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
-            bubbles: presentedTextPieces,
+            bubbles: delivered,
+            suppressedBubbles,
             messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
-            ...(turnBubble === null ? {} : { bubble: turnBubble }),
+            ...turnDeliveryOutcome(turnDelivery),
+            // THE TURN'S OWN REASON, beside the loss. `lost 9 {no_presentation_lease: 9}` says a bubble was withheld and
+            // nothing about the turn, so "invited but not admitted" (the batch carried only an outcome) and "admitted but
+            // broken" (the batch was admissible and the projection still withheld) printed as the same word. `lease` is
+            // this turn's admission; `carried` is what the turn was made of, in the pump's own kind names.
+            lease: Object.freeze({ admitted: sourceEventId !== undefined }),
+            carried: Object.freeze([...carried]),
           })}\n`,
         );
         const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
@@ -783,16 +935,27 @@ export class CompanionLoop {
           process.stderr.write(
             `delivery_mismatch:produced=${String(assistantTextParts)};presented=${String(presentedTextParts)};suppressed=${String(suppressedParts)};missing=${String(missingParts)}\n`,
           );
-        // The bubble's ceiling, when it cut the turn's speech. Named with the turn's own identity because it is a
-        // CADENCE fact: more than one bubble's worth was said inside one turn, and the answer to that is fewer, shorter
-        // turns - not a bigger bubble (`identity-profile.ts` states this same ceiling to the model). A non-zero count of
-        // characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
+        // The bubble's ceiling cut the turn's speech, and the tail had nowhere to go: one bubble per turn is the whole
+        // contract, `onFinalText` is this surface's only channel, and nothing can be retracted. The ceiling is the
+        // presentation transport's own (`MAX_COMPANION_PRESENTATION_TEXT_CHARS`), so this fires only on a turn the wire
+        // would have refused outright, and the loss is named on the bubble record the run's account reads. A non-zero count
+        // of characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
         // landed inside a sentence.
-        if (turnBubble !== null && turnBubble.truncatedChars > 0)
+        if (
+          turnDelivery?.delivered === 1 &&
+          (turnDelivery.bubble.truncatedChars > 0 || turnDelivery.bubble.sentencesDropped > 0)
+        )
           process.stderr.write(
-            `bubble_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
+            `speech_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnDelivery.bubble.truncatedChars)}:${String(turnDelivery.bubble.sentencesDropped)}\n`,
           );
       }
+      // THE DELIVERY READING REACHES THE ACCOUNT. That line above is per turn and per process; a run's account is where
+      // "a bubble was delivered and nobody was told" has to be visible, so the same two measurements are handed to the
+      // pump that prints it. `no_presentation_lease` is one of the reasons: a turn that carried no presentation source had
+      // its text counted by this loop and seen by no projection (measured 2026-11-16, `round64`: batch 6's bubble was
+      // delivered and withheld, and nothing in the account said so).
+      this.pump.noteDelivery({ bubbles: turnDelivery?.delivered ?? 0, lost: Object.fromEntries(suppressedByReason) });
+      this.#lastTurnDelivery = turnDelivery;
       if (batchId !== undefined) {
         try {
           this.volatileContext?.clear(batchId);
@@ -890,6 +1053,20 @@ function canonicalTurnLocale(batch: PendingBatch): string | undefined {
 }
 
 /**
+ * What this turn was made of, in the pump's own kind names, sorted.
+ *
+ * <p>
+ * The delivery record's `carried` field: a reader reconciling `lost N {no_presentation_lease: N}` against a turn has to be
+ * able to say WHICH turn was lost. `carried: ["execution_receipt"]` is a turn that carried only an outcome, which is the
+ * class that has no lease; `carried: ["execution_receipt", "world_fact"]` is the same outcome with the Mod's HUD line
+ * riding beside it, which is what made `round65`'s admission a coincidence.
+ * </p>
+ */
+function carriedFactKinds(batch: PendingBatch): readonly string[] {
+  return Object.freeze([...new Set(batch.facts.map((fact) => String(fact.kind)))].sort());
+}
+
+/**
  * Selects the canonical cause only from a real Pi-consumed batch. Events are
  * already deterministically sorted by CompanionEventPump; held snapshot and
  * progress facts never grant presentation authority.
@@ -907,47 +1084,88 @@ function canonicalPresentationSource(batch: PendingBatch): string | undefined {
   // Bounded sensory lease: only explicitly salient world-fact kinds may open a
   // companion turn (e.g. day_started / time_milestone morning greetings). Every
   // other world-trigger batch still gets no native presentation lineage.
+  //
+  // THE ONE READING, and the pump asks the same function before it opens the turn (`presentation-lease.ts`), so "this
+  // fact can present" cannot be true one layer down and false here.
   const factSources = events
-    .filter((event) => event.kind === "world_fact" && opensPresentationLease(event.semanticKind))
-    .map((event) => event.sourceEventId)
-    .filter(isOpaqueSource);
+    .map((event) => presentationSourceOf(event))
+    .filter((source): source is string => source !== undefined);
   return factSources.length > 0 ? factSources.at(-1) : undefined;
 }
 
 /**
- * White-listed fact kinds allowed to mint a bounded presentation lease.
+ * The turn's own statement about its surface, appended where the model reads the turn.
  *
- * Two families qualify, and a member is added only with the sentence that justifies it.
- *
- * SENSORY. `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the
- * Host's (see `companion-arrival-fact.ts`): she has just arrived on the farm and the world clock gave its
- * first reading, the one proactive turn the product owes the player at arrival. `native_notice` is the
- * Host's too (`native-notice-fact.ts`): the game itself said something about the hour and the companion
- * may answer it out loud. `night_ended_pass_out` is the Mod's verdict on how the night ended. Each rides
- * the lease for the same reason - a reply that reaches the model but not the chat is a decision the
- * player never sees.
- *
- * OUTCOME. `program_settled` is the one-line ledger of a plan that stopped (`program-settlement-digest.ts`).
- * The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
- * it is deliberately NOT held); without a lease the answer to that news was counted - and lost - as text
- * nobody was shown. An outcome is not progress, so its volume is one per program, never one per tile.
- *
- * Progress and every other world fact keep today's silence: the per-tile traffic (`route_progress`, the
- * receipt states) is what fills a session, and a bubble per harvested crop is not a companion.
+ * <p>
+ * A turn that carries no presentation lease is still a turn: the pump opened it because an OUTCOME asked for a decision, and
+ * the model answers outcomes. What the surface owes that turn is the truth about itself, so the model is told its words
+ * will not be shown and can act instead of narrating - the difference between a turn that was never asked to speak and one
+ * whose speech was thrown away after the fact.
+ * </p>
  */
-function opensPresentationLease(kind: string | undefined): boolean {
-  return (
-    kind === "day_started" ||
-    kind === "time_milestone" ||
-    kind === "companion_arrival" ||
-    kind === "native_notice" ||
-    kind === "night_ended_pass_out" ||
-    kind === "program_settled"
-  );
+export function speechSurfaceStatement(locale: string | undefined): string {
+  const says =
+    locale !== undefined && locale.toLowerCase().startsWith("zh")
+      ? "这一回合你的话不会显示给玩家。世界需要的话就行动，不必对着看不见的聊天说话。"
+      : "This turn's words are not shown to the player. Act if the world calls for it; do not speak into a surface that cannot show it.";
+  return `\n\n<${NO_SPEECH_SURFACE_BLOCK}>\n${says}\n</${NO_SPEECH_SURFACE_BLOCK}>`;
 }
 
-function isOpaqueSource(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+/**
+ * What the turn's bubble answer contributes to its delivery record: the bubble when one left, and the NAME of the
+ * withholding when none did.
+ *
+ * `deliverTurn` used to answer `null` for five different endings, so this record had nothing to print but `bubbles: 0`.
+ * The spread is a function because the nested choice is a decision the record's writer should not have to make three
+ * levels deep inside a template literal.
+ */
+function turnDeliveryOutcome(turnDelivery: CompanionTurnDelivery | undefined): Readonly<Record<string, unknown>> {
+  if (turnDelivery === undefined) return Object.freeze({});
+  return turnDelivery.delivered === 1
+    ? Object.freeze({ bubble: turnDelivery.bubble })
+    : Object.freeze({ withheld: turnDelivery.reason });
+}
+
+/** The bubble count the turn answered with, in the unit the player experienced: zero or one. */
+function deliveredBubbles(turnDelivery: CompanionTurnDelivery | undefined): number {
+  return turnDelivery?.delivered ?? 0;
+}
+
+/** Does this turn have a delivery record at all: text to account for, or a bubble that arrived without any? */
+function writesTurnDeliveryRecord(
+  turnDelivery: CompanionTurnDelivery | undefined,
+  assistantTextParts: number,
+): boolean {
+  return assistantTextParts > 0 || deliveredBubbles(turnDelivery) > 0;
+}
+
+/**
+ * The bubbles a turn OWED and did not get, keyed by why - the missing half of the `bubbles` count.
+ *
+ * `bubbles: 0` is TWO different endings and the account could not tell them apart: a turn whose every part the
+ * projection withheld, and a turn that spoke no line at all. The first is a delivery gap with a reason and the second is
+ * silence, and a reader reconciling `textParts` against `bubbles` had to guess which one it was looking at - measured
+ * 2026-11-09 (`round41`): 59 presented pieces across 13 delivery records, and nothing said why the two populations
+ * differed.
+ *
+ * ONE BUBBLE PER TURN, so this answer names AT MOST ONE REASON and its value is always 1. This surface has one channel
+ * for a turn (`onFinalText`), so a turn that committed no bubble lost exactly one bubble; a map keyed by every withheld
+ * reason would sum to more bubbles than the turn ever owed, and a bubble counted twice is worse than one counted zero
+ * times. When several layers withheld the turn's parts, the one named is the layer that withheld the most of them (ties
+ * broken by the reason's own spelling, so the record is stable), and the per-part detail stays where it belongs - in
+ * `suppressed`, beside the parts it counts.
+ */
+function bubbleNotDeliveredAccount(
+  suppressedByReason: ReadonlyMap<string, number>,
+  delivered: number,
+  assistantTextParts: number,
+): Readonly<Record<string, number>> {
+  if (delivered !== 0 || assistantTextParts === 0) return Object.freeze({});
+  const [primary] = [...suppressedByReason.entries()].sort(
+    ([leftReason, leftCount], [rightReason, rightCount]) =>
+      rightCount - leftCount || leftReason.localeCompare(rightReason),
+  );
+  return primary === undefined ? Object.freeze({}) : Object.freeze({ [primary[0]]: 1 });
 }
 
 /**

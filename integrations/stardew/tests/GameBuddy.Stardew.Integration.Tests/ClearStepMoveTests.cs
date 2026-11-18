@@ -163,7 +163,7 @@ public sealed class ClearStepMoveTests
         arrival.Should().Contain("AssessClearApproachArrival");
 
         // The two-answer enum is the whole rule, and it has no third "cleared" outcome the walk could act on.
-        Enum.GetNames(typeof(StardewBodyController.ClearApproachArrival))
+        Enum.GetNames<StardewBodyController.ClearApproachArrival>()
             .Should().BeEquivalentTo(new[] { "BlockerGone", "BlockerStillPresent" });
     }
 

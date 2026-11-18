@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { fail } from "./lib/gate-preamble.mjs";
 
 const execFileAsync = promisify(execFileCallback);
 
@@ -24,13 +25,6 @@ export const EXPECTED_ASSEMBLY_VERSION = "1.6.15.24356";
 export const EXPECTED_SMAPI_VERSION = "4.5.2";
 export const TARGET_ASSEMBLY_NAME = "Stardew Valley.dll";
 export const SMAPI_ASSEMBLY_NAME = "StardewModdingAPI.dll";
-
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 
 async function sha256(filePath) {
   const hash = createHash("sha256");

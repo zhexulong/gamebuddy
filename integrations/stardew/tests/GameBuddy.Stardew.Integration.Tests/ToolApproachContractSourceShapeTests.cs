@@ -78,27 +78,72 @@ public sealed class ToolApproachContractSourceShapeTests
 
     // ---- 1. the refusal became an approach -----------------------------------
 
+    /// <summary>
+    /// A request half's whole body, whichever shape it has: a statement body is a brace-balanced block, and an
+    /// expression body runs to its own semicolon. The parameter list is skipped by its own parentheses first, because an
+    /// expression-bodied request half has no brace of its own while the lambdas it hands the seam do - reading from the
+    /// first <c>{</c> would return a lambda's block instead of the handler.
+    /// </summary>
+    private static string RequestHalf(string source, string signature)
+    {
+        int declaration = source.IndexOf(signature, StringComparison.Ordinal);
+        declaration.Should().BeGreaterThanOrEqualTo(0, $"{signature} must exist");
+        int open = declaration + signature.Length - 1;
+        int depth = 0;
+        int close = open;
+        for (; close < source.Length; close++)
+        {
+            if (source[close] == '(') depth++;
+            else if (source[close] == ')' && --depth == 0) break;
+        }
+
+        int cursor = close + 1;
+        while (cursor < source.Length && source[cursor] is ' ' or '\n' or '\r' or '\t') cursor++;
+        if (source[cursor] == '{') return BalancedBody(source, cursor);
+
+        int parentheses = 0;
+        int braces = 0;
+        for (int index = cursor; index < source.Length; index++)
+        {
+            switch (source[index])
+            {
+                case '(': parentheses++; break;
+                case ')': parentheses--; break;
+                case '{': braces++; break;
+                case '}': braces--; break;
+                case ';' when parentheses == 0 && braces == 0: return source[cursor..(index + 1)];
+            }
+        }
+
+        throw new InvalidOperationException($"unterminated request half {signature}");
+    }
+
     [Fact]
     public void OutOfRangeToolRequest_AdmitsAnApproach_InsteadOfRefusing()
     {
-        string body = MethodBody(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
+        string body = RequestHalf(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
             "public LocalExecutionReceipt RequestLocalChopTreeSource(");
 
-        // Every position-independent precondition is evaluated BEFORE the geometry
-        // decision, so an approach is only started for a tool/target that could
-        // actually succeed on arrival. The tool half is the action's OWN claim, not
-        // the caller's slot: an empty pack refuses `tool_not_owned:axe` here.
+        // Every position-independent precondition is evaluated BEFORE the geometry decision, so an approach is only
+        // started for a tool/target that could actually succeed on arrival. The tool half is the action's OWN claim, not
+        // the caller's slot: an empty pack refuses `tool_not_owned:axe` here. Both live in the gate the handler hands the
+        // seam, and the seam runs that gate before its reach test (pinned by
+        // `TileTargetRequestSeamTests.TheSeamAuthorizesAdmitsResolvesWalksThenExecutesInThatOrder`); the reach itself is
+        // the tool family's own predicate, so the walk still happens only for a target a swing can land on.
         int axeCheck = body.IndexOf("ResolveDeclaredTool(Game1.player.Items, \"chop_tree\")", StringComparison.Ordinal);
-        int targetCheck = body.IndexOf("tree_chop_target_changed", StringComparison.Ordinal);
-        int geometry = body.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
-        int approach = body.IndexOf("TryBeginToolApproach", StringComparison.Ordinal);
+        int targetCheck = body.IndexOf("DescribeTreeChopSourceRefusal(location, targetX, targetY, expectedTargetId)", StringComparison.Ordinal);
+        int reach = body.IndexOf("inReach: IsTileWithinToolReach", StringComparison.Ordinal);
         axeCheck.Should().BeGreaterThanOrEqualTo(0);
         targetCheck.Should().BeGreaterThanOrEqualTo(0);
-        geometry.Should().BeGreaterThanOrEqualTo(0);
-        approach.Should().BeGreaterThanOrEqualTo(0);
-        axeCheck.Should().BeLessThan(geometry, "the tool must be validated before deciding to walk");
-        targetCheck.Should().BeLessThan(geometry, "the target must be validated before deciding to walk");
-        geometry.Should().BeLessThan(approach, "the approach is the out-of-range branch");
+        reach.Should().BeGreaterThanOrEqualTo(0);
+        axeCheck.Should().BeLessThan(targetCheck, "the tool must be validated before the target is resolved");
+        targetCheck.Should().BeLessThan(reach, "the target must be validated before the walk is decided");
+
+        // The refusal the target half owes is still `tree_chop_target_changed`, now stated by the resolver the gate
+        // hands the seam rather than spelled inline in the handler.
+        RequestHalf(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
+                "private static TileTargetRefusal? DescribeTreeChopSourceRefusal(")
+            .Should().Contain("tree_chop_target_changed", "the resolver owes the same named refusal the handler used to spell");
 
         body.Should().NotContain("\"target_out_of_range\"",
             "an in-range planner refusal is now `target_out_of_reach`, and out-of-range walks instead of refusing");
@@ -107,12 +152,14 @@ public sealed class ToolApproachContractSourceShapeTests
     [Fact]
     public void InRangeToolRequest_ExecutesImmediately_ThroughTheSharedBody()
     {
-        string body = MethodBody(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
+        string body = RequestHalf(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
             "public LocalExecutionReceipt RequestLocalChopTreeSource(");
 
-        // The in-range path and the post-approach path must be the same execution
-        // body; duplicating it would let the two drift.
-        body.Should().Contain("return this.ExecuteChopTreeSource(");
+        // The in-range path and the post-approach path must be the same execution body; duplicating it would let the two
+        // drift. The seam takes ONE delegate and runs it both ways, so the handler names it once and cannot fork it.
+        body.Should().Contain("this.ExecuteChopTree(executionId, admittedRequestId,",
+            "the one body the seam runs in range is the one it runs on arrival");
+        body.Should().NotContain("arrivalExecutionId", "the arrival identity is the seam's, not this request half's");
     }
 
     // ---- 2. arrival is not the terminal ---------------------------------------
@@ -171,13 +218,13 @@ public sealed class ToolApproachContractSourceShapeTests
         // approach could act on a world that changed while walking. Every migrated action
         // therefore has an `Execute*` body that re-validates before the native call.
         string source = Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs");
-        (string Action, string Signature)[] migrated =
+        (string Action, string Signature, string Executor)[] migrated =
         {
-            ("chop_tree", "private LocalExecutionReceipt ExecuteChopTreeSource("),
-            ("break_rock", "private LocalExecutionReceipt ExecuteBreakRockSource("),
+            ("chop_tree", "private LocalExecutionReceipt ExecuteChopTree(", "ExecuteChopTree"),
+            ("break_rock", "private LocalExecutionReceipt ExecuteBreakRock(", "ExecuteBreakRock"),
         };
 
-        foreach ((string action, string signature) in migrated)
+        foreach ((string action, string signature, string executor) in migrated)
         {
             string body = MethodBody(source, signature);
             body.Should().Contain("ExecutionState.Rejected", $"{action} must be able to refuse after re-validating");
@@ -186,21 +233,22 @@ public sealed class ToolApproachContractSourceShapeTests
             int native = body.IndexOf("UseNativeToolOnTile(", StringComparison.Ordinal);
             native.Should().BeGreaterThanOrEqualTo(0, $"{action} must drive the native tool");
             reject.Should().BeLessThan(native, $"{action} must re-validate the world before the native call");
-            // The post-approach path must not be a copy of the in-range path.
-            CountOccurrences(source, $"private LocalExecutionReceipt Execute{action.Split('_')[0]}").Should().BeLessThanOrEqualTo(1);
+            // The post-approach path must not be a copy of the in-range path. Derived from the executor name the loop
+            // already names, so this counts the body it was written about.
+            CountOccurrences(source, $"private LocalExecutionReceipt {executor}(").Should().Be(1, $"{action} declares its execution body once");
         }
 
-        // The request path must hand the mechanism a closure into that body, so the
-        // post-approach execution reuses the in-range execution instead of duplicating it.
+        // The request path must hand the seam a delegate into that body, so the post-approach execution reuses the
+        // in-range execution instead of duplicating it - and it may not name an arrival identity of its own.
         int start = source.IndexOf("public LocalExecutionReceipt RequestLocalChopTreeSource(", StringComparison.Ordinal);
-        int end = source.IndexOf("private LocalExecutionReceipt ExecuteChopTreeSource(", StringComparison.Ordinal);
+        int end = source.IndexOf("private static TileTargetRefusal? DescribeTreeChopSourceRefusal(", StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0);
         end.Should().BeGreaterThan(start);
         string request = source.Substring(start, end - start);
-        request.Should().Contain("this.ExecuteChopTreeSource(arrivalExecutionId, arrivalRequestId",
-            "the approach closure must call the same execution body the in-range path uses");
-        request.Should().Contain("return this.ExecuteChopTreeSource(executionId, requestId",
-            "the in-range path must use that same body");
+        request.Should().Contain("execute: (executionId, admittedRequestId) => this.ExecuteChopTree(executionId, admittedRequestId,",
+            "the closure the seam carries must call the same execution body the in-range path uses");
+        request.Should().NotContain("arrivalExecutionId",
+            "the seam owns the arrival identity; a handler that still names one is wiring its own leg");
     }
 
     // ---- 4. every ownership path can release it ------------------------------
@@ -283,8 +331,10 @@ public sealed class ToolApproachContractSourceShapeTests
     [Fact]
     public void DeadlineExpiry_SettlesTheApproach_ExactlyOnce()
     {
-        string controller = Read("integrations/stardew/farmhandexecutioncontroller.cs");
-        string body = MethodBody(controller, "if (this.activeToolApproach is { } settledToolApproach)");
+        // The deadline pass is the frame loop's, so it is read from whichever partial declares Update rather than
+        // from a path: a path turns a move into a red gate here.
+        string loop = ControllerPartials.Declaring("Update");
+        string body = MethodBody(loop, "if (this.activeToolApproach is { } settledToolApproach)");
 
         body.Should().Contain("tool_approach_deadline_expired");
         body.Should().Contain("ExecutionState.Expired");

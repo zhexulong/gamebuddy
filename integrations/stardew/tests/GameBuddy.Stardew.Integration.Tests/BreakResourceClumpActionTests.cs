@@ -261,7 +261,7 @@ public sealed class BreakResourceClumpActionTests
     public void DiscoveryReadsTheResourceClumpCollectionAndRunsWhenThisActionIsAdvertised()
     {
         string controller = Read(Controller);
-        string discovery = MethodBody(controller, "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(");
 
         discovery.Should().Contain("location.resourceClumps");
         // The capability word is the ACTION ID. A family keyed on an id nobody advertises publishes nothing in any
@@ -300,7 +300,7 @@ public sealed class BreakResourceClumpActionTests
     {
         // Furniture was invisible because a family read `objects`; mine rocks because a guard named the wrong id. This
         // action's entities are `ResourceClump`s and they live in exactly one collection.
-        MethodBody(Read(Controller), "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(")
+        MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(")
             .Should().Contain("for (int index = 0; index < location.resourceClumps.Count");
     }
 

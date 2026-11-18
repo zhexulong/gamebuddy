@@ -18,17 +18,24 @@
  * </p>
  *
  * <p>
+ * THE HEAD OF THE MESSAGE IS SPEECH, and it is not a block. The player's own words are the first text in the message,
+ * character for character what they typed, outside every block and under no label: a person talking to their companion
+ * is not a field of the machine's report. Until `2026-11-14` they arrived inside `<player-note>` and were split by an
+ * attribution rule (`player-note.ts`) that guessed, per sentence, whether the words were his own business or a job for
+ * her - machinery that existed only because speech had been presented as data. An imperative addressed to her is hers
+ * and a statement about him is context; nothing has to classify that, and nothing does any more.
+ * </p>
+ *
+ * <p>
  * WHICH BLOCK A FACT BELONGS IN is a property of the fact, not of the batch:
  * </p>
  *
  * <ul>
- *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact: his text split by whose
- *       each sentence is, one label per run (`player-note.ts` reads the note);</li>
  *   <li>`<world-state>` - the snapshot as a paragraph: clock, date, weather, where, stamina, what she carries, and the
  *       nearby target families with their tiles;</li>
- *   <li>`<in-flight>` - the programme she has DISPATCHED and not yet seen settle: what `action_program_status` would
- *       answer, with its own words drawing the line between dispatched and done;</li>
- *   <li>`<world-facts>` - the events: receipts, dialogue, stalls, milestones, arrivals, lifecycles;</li>
+ *   <li>`<world-facts>` - the DECISIONS: a refusal, a notice, an arrival, the transport going away. Not a stream of
+ *       "the world changed" - she calls `stardew_observe` when she wants to know, and a successful step of a programme she
+ *       dispatched is stated by `<execution-result>`;</li>
  *   <li>`<execution-result>` - what a submitted programme DID, in sentences. A settlement is deliberately NOT also a
  *       `<world-facts>` line: the two blocks would then state one outcome twice, and the aggregate is the only place a
  *       run of twenty node rows becomes a sentence.</li>
@@ -42,22 +49,29 @@
  */
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
+import { CARRIED_BACKLOG_SEMANTIC_KIND } from "./event-pump.js";
 import {
+  formatBodyState,
   formatGameClock,
   formatGameEnvironmentFacts,
+  formatRipeCrops,
   MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
-import { playerNoteLines } from "./player-note.js";
-import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
-import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
+import { MAX_WORLD_FACT_LINES, boundedField } from "./model-field-budget.js";
+import { ROW_TILE_FIELD_PAIRS, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
+import type { Snapshot } from "./protocol.js";
 
 /**
  * The closed set of block names a delivery may use.
  *
- * ORDER IS THE READING ORDER, and `<in-flight>` sits between the world and the news on purpose: what is true now, then
- * what she has already set in motion and not yet seen land, then what happened.
+ * ORDER IS THE READING ORDER: what is true now, then what she has to decide on, then what a call of hers did.
+ *
+ * `<in-flight>` IS GONE (`design/fact-authority.md` §1b, 2026-11-16). It printed a row per unfinished node of a
+ * programme she had already dispatched - "dispatched is not done" repeated every turn - where the settlement is the
+ * answer and states the same nodes with their bounded evidence. Measured `round64`: 401 admitted "facts" for 8 opened
+ * turns, 260 of them one tile of her body moving, stated twice.
  *
  * THE PROMPT FLOOR NAMES EVERY ONE OF THESE (`identity-profile.ts`), and it reads the list and the count from this
  * array rather than restating them: its paragraph is built from `FACT_BRIEF_BLOCKS.length` and a
@@ -66,26 +80,9 @@ import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protoco
  * window is why `fact-brief.private.test.ts` now asserts the stated count equals this array's length. The closed set is this
  * list.
  */
-export const FACT_BRIEF_BLOCKS = Object.freeze([
-  "player-note",
-  "world-state",
-  "in-flight",
-  "world-facts",
-  "execution-result",
-] as const);
+export const FACT_BRIEF_BLOCKS = Object.freeze(["world-state", "world-facts", "execution-result"] as const);
 
 export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
-
-/**
- * The most fact lines `<world-facts>` names before it counts the rest.
- *
- * The pump already bounds how many facts a batch may hold (`MAX_PENDING_*`) and how large the whole delivery may be
- * (`MAX_BATCH_BYTES`), and the byte bound is what protects the context. This cap is the SECOND bound, and it exists
- * because dropping the oldest fact is right for a run and wrong for a REPORT: a batch of ninety receipts answered "what
- * just happened" with the thirty newest ones and said nothing about the sixty it left out. So the line count is
- * bounded where the sentences are composed, and the remainder is named.
- */
-const MAX_WORLD_FACT_LINES = 24;
 
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
@@ -122,13 +119,20 @@ export function worldStateStaleThreshold(published: number): number {
 }
 
 /**
- * The one spelling of the stale token: `world_state_stale:<turns>;<revision>;<ageMs>`.
+ * The one spelling of the stale token: `world_state_stale:<turns>;<revision>;<contentAgeMs>`.
  *
  * The block, the `<world-facts>` line and the Host's published line all carry this exact string, so a reader - a model,
  * a log grep, a run audit - never has to reconcile two renderings of one number.
+ *
+ * THE NUMBER IS THE CONTENT'S AGE, not the reading's: the token says "this picture is invalid", and a picture re-read a
+ * second ago is exactly as invalid as it was before the re-read. The reading's own age travels beside it on the fact
+ * (`ageMs`), because "nobody has looked for five minutes" and "we looked and the world still says what we cannot see" are
+ * different conditions that a run has to tell apart.
  */
-export function worldStateStaleCode(reading: Readonly<{ ageTurns: number; revision: number; ageMs: number }>): string {
-  return `world_state_stale:${String(reading.ageTurns)};${String(reading.revision)};${String(reading.ageMs)}`;
+export function worldStateStaleCode(
+  reading: Readonly<{ ageTurns: number; revision: number; contentAgeMs: number }>,
+): string {
+  return `world_state_stale:${String(reading.ageTurns)};${String(reading.revision)};${String(reading.contentAgeMs)}`;
 }
 
 /** One node row of a settled programme, as `program-settlement-digest.ts` publishes it. */
@@ -139,6 +143,27 @@ type SettledNode = Readonly<{
   reasonCode?: string;
   hint?: string;
   reasonDetail?: string;
+  /**
+   * The node's own proof, verbatim, from the Mod's `BodyProgramJournalNode.Evidence`.
+   *
+   * TWO SHAPES, ONE FIELD, because the producer puts both here. A `for_each` settles ONE node for sixty tiles, so its
+   * evidence is the pass's own row table - `round63` read it as `{"nodeId":"n02","actionId":"for_each","state":
+   * "succeeded"}`: fifteen tiles tilled, forty-five untouched, and not one tile named. A single settled action's evidence
+   * is instead the receipt's own detail (`crop_harvested`'s `location=…;tile=…`, projected one-to-one onto
+   * `evidence.detail`), and that is the string `ExecutionManager.RememberTerminal` appends `;chore=<family>` to.
+   *
+   * SO THIS IS THE FIELD A SETTLEMENT NAMES ITS CHORE IN, and a reader that looks only at `postconditionVerification`
+   * (a journal verdict line) finds nothing: `round73`, 205 mints in the log and 9 of 9 remainders saying `未测`.
+   */
+  evidence?: string;
+  /**
+   * The tile the step's own arguments name, when they name one - the same field `stardew_action_program_status` answers
+   * with, and the one thing that says WHERE a step's work landed. Absent for the thirteen families whose rows carry no
+   * tile and for a pass, whose rows are in `evidence` instead.
+   */
+  tile?: Readonly<{ x: number; y: number }>;
+  /** The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`. */
+  postconditionVerification?: string;
 }>;
 
 /**
@@ -153,13 +178,21 @@ export type WorldStateReading = Readonly<{
   revision: number;
   ageTurns: number;
   /**
-   * Milliseconds since the reading's own revision was admitted.
+   * Milliseconds since the world was last READ, by any caller and whether or not it said anything new.
    *
-   * The turn age is what the block is judged by, and this is the wall-clock half of the same fact: a turn can take a
-   * minute, so fifty turns is thirty minutes or three hours, and only one of those numbers is about the world she is
-   * describing. Measured from the revision, so a re-stated copy of one reading never looks fresher than it is.
+   * The reading half of the freshness question: a world re-read every thirty seconds is a world nobody has lost sight of,
+   * and a run that reported otherwise told the model its picture was old when the Mod had answered seconds ago
+   * (`round66`, `round67`).
    */
   ageMs: number;
+  /**
+   * Milliseconds since this reading's CONTENT was first admitted: how old the picture is.
+   *
+   * The turn age (`ageTurns`) and this one say the same thing in two units, and both are about the content because that
+   * is what the stale token invalidates. A re-read that finds the world unchanged refreshes `ageMs` and leaves this
+   * running - which is the difference between "nobody looked" and "we looked, and it still says this".
+   */
+  contentAgeMs: number;
 }>;
 
 /** What one delivered batch shows the model. The snapshot is state, everything else is news. */
@@ -172,25 +205,18 @@ export type FactBriefInput = Readonly<{
    * block composed from that slot would be absent from every later batch - the blindness this brief exists to end.
    */
   snapshot: WorldStateReading | undefined;
-  /** The events, in the order the batch delivers them. */
-  events: readonly WorldFact[];
   /**
-   * The programmes the Mod's journal still shows in flight, as the ledger every status read already fills.
+   * The decisions this delivery states, in the order it delivers them.
    *
-   * Omitted means "nothing is unsettled", and that is a different statement from an empty block: a `<in-flight>` holding
-   * no rows would tell the model that a programme exists with nothing in it, which is never true and would teach it that
-   * the block is noise.
+   * NOT "everything the batch carried": the frame carries what arrived, and this carries what the model is owed - her
+   * own call's result, a refusal, a notice, an arrival, the bridge going away (`design/fact-authority.md` §1b). A
+   * programme's step and a clock mark are not in this list: she asks `stardew_observe` for the world, and the settlement
+   * states the work.
    */
-  inFlight?: InFlightProgrammeReading;
+  events: readonly WorldFact[];
   /** The language the player wrote in. The brief is Chinese; this is what a caller checks it against. */
   locale: string;
 }>;
-
-/** No programme in flight: the reading a batch carries when the journal has nothing unsettled to name. */
-export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
-  programmes: Object.freeze([]),
-  omittedProgrammes: 0,
-});
 
 /**
  * The whole model-facing text of one delivery.
@@ -200,27 +226,50 @@ export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
  */
 export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
-  const note = composePlayerNote(input.inputs);
-  if (note !== "") blocks.push(note);
+  const speech = playerSpeech(input.inputs);
+  if (speech !== "") blocks.push(speech);
   const state = composeWorldState(input.snapshot);
   if (state !== "") blocks.push(state);
-  const inFlight = composeInFlight(input.inFlight ?? NOTHING_IN_FLIGHT);
-  if (inFlight !== "") blocks.push(inFlight);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
   const factBlock = composeWorldFacts(facts);
   if (factBlock !== "") blocks.push(factBlock);
-  const resultBlock = composeExecutionResult(settlements);
+  const resultBlock = composeExecutionResult(settlements, input.snapshot);
   if (resultBlock !== "") blocks.push(resultBlock);
   return blocks.join("\n");
 }
 
-/** The player's own words, verbatim, split by whose each sentence is (`player-note.ts` reads the note). Empty when
- * nobody said anything. */
-function composePlayerNote(inputs: readonly PlayerInput[]): string {
-  const lines = playerNoteLines(inputs.map((input) => input.text));
-  if (lines.length === 0) return "";
-  return block("player-note", lines.join("\n"));
+/**
+ * The player's own words, verbatim, as the head of the message: outside every block and under no label.
+ *
+ * <p>
+ * NOTHING IS ADDED, REMOVED OR REORDERED. Not trimmed, not re-punctuated, not joined into sentences: the text is what
+ * the person typed, and one message per input, in arrival order. A blank input is dropped rather than rendered as an
+ * empty line, which is the one thing a caller can hand over that is not words.
+ * </p>
+ *
+ * <p>
+ * It is deliberately not wrapped in a block. A block is the machine's channel, and the prompt floor tells her that
+ * everything in a block is written by the machine; putting speech in one made the person a field of a report, which is
+ * the defect `<player-note>` carried for three days of live runs.
+ * </p>
+ *
+ * <p>
+ * IT IS NOT FILTERED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Passed through unchanged, a player who types a
+ * block's own markup (`<world-state>`, `</world-state>`) puts that markup in the message, and position alone no longer
+ * tells their words from the machine's report. It is left alone because this channel has ONE sender: `player_text` is
+ * minted by the authenticated control surface of the person this companion belongs to (`companion-control-server.ts`),
+ * so imitating a block imitates it to themselves - there is no third party to deceive, and the words grant nothing.
+ * Everything they could ask for is still admitted by the Mod against the live world on the game thread
+ * (`FarmhandCapabilitySurface`), and a run's verdicts read receipts rather than prose. Escaping or stripping the markup
+ * would silently edit what the player said, which is the one thing this function promises not to do.
+ * </p>
+ */
+function playerSpeech(inputs: readonly PlayerInput[]): string {
+  return inputs
+    .map((input) => input.text)
+    .filter((text) => text !== "")
+    .join("\n");
 }
 
 /**
@@ -254,17 +303,23 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
-      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了；先看一眼再动手）`,
+      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.contentAgeMs / 1000))} 秒之前，世界已经不是这样了）`,
     );
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
   const health = formatOwnHealth(world);
   if (health !== "") parts.push(health);
+  const body = formatBodyState(world, true);
+  if (body !== "") parts.push(body);
+  const ripeCrops = formatRipeCrops(world, true);
+  if (ripeCrops !== "") parts.push(ripeCrops);
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);
   if (carrying !== "") parts.push(carrying);
+  const seeds = formatHeldSeeds(world);
+  if (seeds !== "") parts.push(seeds);
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
@@ -303,20 +358,106 @@ const MAX_CARRYING_ROWS = 8;
  * is `displayName` - the wire's own spelling, the one the shipping bin and every other reader uses. ABSENT means the Mod
  * did not publish the family at all - the field is gated on the actions that read the inventory - and stays silent,
  * which is a different statement from `身上没有别的东西`.
+ *
+ * THE PLANTABLE SEEDS ARE NOT PRINTED TWICE: the ids `seedSupplyTargets` names are left out here and printed by
+ * `formatHeldSeeds`, which states the count AND the one thing this list cannot - that a measured empty one means she can
+ * sow nothing. One count in two sentences would be two readings of one fact, and the seed half has a consumer (the tilled
+ * ground waiting for it) this list does not serve.
+ *
+ * THE SLOT AND THE ID ARE THE ADDRESS, AND BOTH ARE PRINTED. `slot` and `expectedQualifiedItemId` are the pair
+ * `open_geode` demands (`host/src/protocol.ts:3748`), `slot` alone is what `deposit_silo_hay` and
+ * `put_item_in_fish_tank` demand - and this line used to drop the slot it was handed, so the number she is asked for was
+ * a number she was never shown. The row's `displayName` is the label and cannot substitute: two stacks of the same item
+ * share a name, and no action accepts a name. Both are the wire's own values, printed unmodified.
+ *
+ * THE CAP NAMES WHERE THE REST IS. A truncated row cannot be addressed from here, so the sentence says which reading
+ * carries the slots this bound dropped (`stardew_observe` publishes the whole family) rather than counting them into a
+ * silence.
  */
 function formatCarrying(world: Snapshot): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
+  const seeds = plantableSeedIds(world);
   const named = rows
     .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
+    .filter((row) => !seeds.has(row.qualifiedItemId))
+    // THE MAPPED ROW KEEPS THE WIRE'S OWN NAMES. An alias (`name: row.displayName`) is how the drop this function is
+    // written against became invisible: a reader of the map saw `name` and `stack` and could not see that the slot had
+    // been left behind. `tools/check-inventory-row-field-rendering.mjs` reads these names against the schema's own.
     .map((row) => ({
-      name: row.displayName.trim(),
+      displayName: row.displayName.trim(),
+      qualifiedItemId: row.qualifiedItemId,
+      slot: row.slot,
       stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
     }));
   if (named.length === 0) return "身上没有别的东西";
-  const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
+  const shown = named
+    .slice(0, MAX_CARRYING_ROWS)
+    .map((row) => `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]`);
   const rest = named.length - shown.length;
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}`;
+}
+
+/**
+ * The qualified ids of the seeds she is holding, as the supply family states them.
+ *
+ * ONE AUTHORITY, TWO SPELLINGS REFUSED. `seedSupplyTargets` is the Mod's own answer to "which seeds in this pack can be
+ * planted" - it reads `Object.SeedsCategory` on the game thread - and its `heldCount` is summed from the same
+ * `inventoryItemFacts` rows this pack list prints. So the seed half of the pack is printed once, from that family:
+ * whichever renderer prints the count, the other one leaves those ids alone.
+ */
+function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return new Set();
+  return new Set(rows.map((row) => row.qualifiedItemId));
+}
+
+/**
+ * The seeds she can actually plant, and how many of each.
+ *
+ * <p>
+ * WHY IT IS HERE. Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and never said
+ * whether she held a seed, so her own thinking answered it - `Note 让种地，但我背包似乎没种子？` - and she did not check the
+ * pack and did not plan to buy one; she went and chopped trees instead. The tile fact was true and she could not act on
+ * it. The two readings that decide whether hoeing is worth anything are the can's water (`formatCarriedCanWater`) and
+ * this one.
+ * </p>
+ *
+ * <p>
+ * THE ZERO IS THE FACT, AND IT IS MEASURED. `seedSupplyTargets` is published only while `plant_seed` is advertised, and
+ * the Mod answers with an empty row set only when no pack slot holds an `Object.SeedsCategory` item - so `[]` is "she
+ * holds no plantable seed", the sentence that turns her guess into a plan. A family the snapshot does not carry prints
+ * NOTHING: absent is not zero, exactly as for the can and for the pack list.
+ * </p>
+ *
+ * <p>
+ * THE COUNT IS THE WIRE'S OWN, NEVER A DEFAULT. A row's `heldCount` is absent when the pack rows were not published at
+ * all, and then the seed is named without a number rather than counted as `0`. Rows are (seed x shop), so the seeds are
+ * de-duplicated by id and the seed's first row states its count.
+ * </p>
+ *
+ * <p>
+ * NO SHOP IS NAMED BESIDE IT. The rows carry where a seed she HOLDS is sold (`shopLocation` / `shopDestination`), and a
+ * zero-seed actor has no row at all - so a counter named beside the zero would be the one invention this line exists to
+ * prevent. The zero is the whole next step: with no seed, hoeing sows nothing.
+ * </p>
+ */
+function formatHeldSeeds(world: Snapshot): string {
+  const rows = world.seedSupplyTargets;
+  if (!Array.isArray(rows)) return "";
+  if (rows.length === 0) return "种子: 0（背包里没有种子）";
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.qualifiedItemId)) continue;
+    seen.add(row.qualifiedItemId);
+    const name =
+      typeof row.displayName === "string" && row.displayName.trim() !== ""
+        ? row.displayName.trim()
+        : row.qualifiedItemId;
+    seeds.push(Number.isFinite(row.heldCount) ? `${String(row.heldCount)} ${name}` : `${name}（数量未测）`);
+  }
+  return `种子: ${seeds.join("、")}`;
 }
 
 /**
@@ -424,80 +565,6 @@ function composeNearbyTargets(world: Snapshot): readonly string[] {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The work she has dispatched and not yet seen land.
-// ---------------------------------------------------------------------------------------------------------------
-
-/**
- * What the block says about every row it just printed: dispatched is not done.
- *
- * <p>
- * THIS SENTENCE IS THE FIX, and it is a STATEMENT rather than an instruction. Measured 2026-11-11 (`round46`):
- * `plan_work` was accepted at 07:25:53 with `settled: false, remaining: 2`; she spoke 11 s later
- * (`*推开门，晨风凉凉地扑在脸上* 门前这片草和石头还横着呢…`), corrected the plan at 07:26:17, spoke again 9 s after that
- * (`*靴底踩着屋里的木地板往西挪*`), and the world was first observed moving at 07:26:34. Neither batch said a step was
- * outstanding, so "I sent it" and "it happened" were the same sentence to her. A "don't narrate work you haven't
- * done" rule would be the wrong shape - she was not told the work was outstanding, so the rule would be scolding her
- * for the batch's silence. This line is the fact the batch owed her.
- * </p>
- */
-const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于一步都还没做成。";
-
-/**
- * `<in-flight>`: the programme she has dispatched, with its own words drawing the line at `settled`.
- *
- * <p>
- * WHAT IT ANSWERS WITHOUT BEING ASKED. `stardew_action_program_status` answered this and cost the run 29 of 96 turns
- * (`round43`): every field below is that tool's own rendering, taken from the ledger it reports from
- * (`program-status-wait.ts#programStatusProgress`), so a batch and a status call cannot disagree about a node's state
- * or its clock.
- * </p>
- *
- * <p>
- * IT ALSO NAMES ITSELF, and that is redundant on purpose rather than the design. The prompt floor names every block
- * (`identity-profile.ts`, from `FACT_BRIEF_BLOCKS`), so the block's own first line is no longer the only place its
- * meaning comes from: `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` stays readable as nothing but
- * what it is, which is what a batch needs when a reader - a person, a run audit, or the model - arrives with no floor
- * in hand.
- * </p>
- *
- * <p>
- * ABSENT, NEVER EMPTY. An `<in-flight>` with no rows would read as "a programme exists and has no nodes" - the one
- * reading this block must never give - so a reading with no programme renders nothing at all.
- * </p>
- */
-function composeInFlight(reading: InFlightProgrammeReading): string {
-  if (reading.programmes.length === 0) return "";
-  const lines: string[] = [];
-  for (const programme of reading.programmes) lines.push(...inFlightProgrammeLines(programme));
-  if (reading.omittedProgrammes > 0) lines.push(`其余 ${String(reading.omittedProgrammes)} 个还没结算的计划未列出`);
-  return block("in-flight", lines.join("\n"));
-}
-
-/**
- * One unsettled programme: the token and how much of it is done, one row per journal node, and the line that says which
- * half of the ledger these rows are.
- *
- * The rows are the journal's OWN: `index` is the position the journal lists the node at, `state` is the Mod's token
- * verbatim (`pending`, `host_admitted`, `running`), and `actionId` is the Mod's own action name. Not translated: a batch
- * that said 准备中 where the tool says `pending` would be two vocabularies for one fact, and the model holds both.
- */
-function inFlightProgrammeLines(programme: InFlightProgramme): readonly string[] {
-  const lines = [
-    `in_flight:settled=${String(programme.settled)};total=${String(programme.total)};remaining=${String(programme.remaining)}（计划 ${programme.programId} 还没结算）`,
-  ];
-  for (const node of programme.nodes) {
-    const action = node.actionId ?? node.nodeId;
-    lines.push(
-      `- ${String(node.index + 1)}/${String(programme.total)} ${action} ${node.state}（已等 ${String(Math.round(node.observedInStateMs / 1000))} 秒）`,
-    );
-  }
-  if (programme.omitted > 0)
-    lines.push(`其余 ${String(programme.omitted)} 步未列出（这个计划一共 ${String(programme.total)} 步）`);
-  lines.push(NOT_YET_TRUE);
-  return lines;
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // The events.
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -563,6 +630,9 @@ function factLine(fact: WorldFact): string {
       return receiptLine(fact, at);
     case "semantic_event": {
       const kind = typeof fact.payload.kind === "string" ? fact.payload.kind : "semantic_event";
+      // THE ONE SEMANTIC EVENT THAT IS A STATEMENT OF ITS OWN, because it says what is UNREAD rather than what happened:
+      // it is long enough to need the counts, and `- carried_backlog` told the model nothing (`round72`'s five facts).
+      if (kind === CARRIED_BACKLOG_SEMANTIC_KIND) return carriedBacklogLine(fact, at);
       const words = SEMANTIC_KIND_ZH[kind] ?? kind;
       const reason = typeof fact.payload.reasonCode === "string" ? `（${fact.payload.reasonCode}）` : "";
       return `- ${at}${words}${reason}`;
@@ -608,49 +678,6 @@ function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
   return boundedField("evidence", (evidence as { detail?: unknown }).detail) ?? "";
 }
 
-/**
- * A node hint's ceiling, which is the wire's own number: `protocol.ts:isBodyProgramNodeStatus` refuses a frame carrying a
- * longer one, so a hint that arrived through the bridge can never meet this ceiling, let alone a smaller one.
- *
- * `fact-brief.private.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
- * bound the Mod's journal enforces.
- */
-const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
-
-/**
- * The ceiling every Mod-authored field this file prints is held to, and where each number comes from.
- *
- * <p>
- * TWO KINDS OF FIELD, TWO KINDS OF NUMBER. A node's `hint` and `reasonDetail` are bounded by their PRODUCER: the Mod's
- * journal refuses a hint over 256 characters and a refusal detail over 512
- * (`BodyProgramValidation.MaximumNodeHintLength` / `MaximumNodeRefusalDetailLength`), and `protocol.ts` refuses a frame
- * over the same two numbers. Printing them up to those bounds is printing them WHOLE, and a smaller number is a Host
- * opinion about a field the Mod already sized.
- * </p>
- *
- * <p>
- * WHAT A SMALLER ONE COST, measured 2026-11-11 (`round45`). All 15 failed `for_each` hints reached this file between 169
- * and 255 characters (median 248) and all 15 of their details between 480 and 507, against a flat 160 ceiling: 30 cuts in
- * one run's model-visible text. The ledger survived every cut and the per-code tail - `no_safe_clear:crop:scythe_crop=3;
- * no_rule_matched:ground_58_9=1;…`, the part that says WHICH rows failed - was exactly what fell off, mid-token. The
- * ceiling was wrong, not the text.
- * </p>
- *
- * <p>
- * A receipt's `evidence.detail` is the other kind: the wire declares no bound on an `evidence` object, so 160 here is the
- * Host's own measured share of one `<world-facts>` line. Measured in the same run, a receipt's evidence is 200-600
- * characters of proof facts - a tool result's job to carry, not one line's.
- * </p>
- */
-export const MODEL_FIELD_CEILINGS = Object.freeze({
-  hint: MAX_BODY_PROGRAM_NODE_HINT_CHARS,
-  reasonDetail: MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH,
-  evidence: 160,
-});
-
-/** Every Mod-authored field this file prints under a ceiling. */
-export type ModelVisibleField = keyof typeof MODEL_FIELD_CEILINGS;
-
 function worldFactLine(fact: WorldFact, at: string): string {
   const kind = fact.semanticKind ?? "";
   switch (kind) {
@@ -678,14 +705,6 @@ function worldFactLine(fact: WorldFact, at: string): string {
         : [];
       return `- ${at}${speaker}说：「${pages.join(" ")}」${choices.length === 0 ? "" : `（可以答：${choices.join(" / ")}）`}`;
     }
-    case "companion_arrival": {
-      // The fact carries its own model-facing sentence (the Host's words: she has just arrived, and this is the day's
-      // first clock reading). Printing only 她到了 would drop the instruction that makes her open the morning, and with
-      // it the opening `companionArrivalAlreadySaid` looks for.
-      const own = fact.contextProjection?.text;
-      if (typeof own === "string" && own.trim() !== "") return `- ${at}${own.trim()}`;
-      return `- ${at}${WORLD_FACT_KIND_ZH.companion_arrival ?? "她到了"}`;
-    }
     case "native_notice": {
       // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the
       // game itself said ("It's getting late..."), and a line that only said 有个提示 would drop the words.
@@ -701,17 +720,86 @@ function worldFactLine(fact: WorldFact, at: string): string {
       return `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`;
     }
     case "execution_stalled": {
-      // The fact exists to say WHICH execution stopped moving and for how long, so the Mod's own identity and labels are
-      // printed verbatim beside the words - the same rule a receipt's `reasonCode` follows.
+      // WHICH execution, WHY the body is waiting, and FOR HOW LONG are all the Mod's own statements (`reason=
+      // entity_block` and `stalled_ticks` on its `stalled_waiting` verdict), printed verbatim beside the action they are
+      // about - the same rule a receipt's `reasonCode` follows. Nothing here is a duration the Host measured.
       const action = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "动作";
-      const elapsed = Number(fact.payload.elapsedMs);
-      const seconds = Number.isFinite(elapsed) ? Math.round(elapsed / 1000) : undefined;
-      const last = typeof fact.payload.lastFactKind === "string" ? `，最后一条 ${fact.payload.lastFactKind}` : "";
-      return `- ${at}${action} 卡住不动了${seconds === undefined ? "" : `（已 ${String(seconds)} 秒没有消息${last}）`}`;
+      const reason = typeof fact.payload.reason === "string" ? fact.payload.reason : "";
+      const waited = Number(fact.payload.waitedMs);
+      const seconds = Number.isFinite(waited) ? Math.round(waited / 1000) : undefined;
+      const parts: string[] = [];
+      if (seconds !== undefined) parts.push(`已等 ${String(seconds)} 秒`);
+      if (reason !== "") parts.push(`原因 ${reason}`);
+      return `- ${at}${action} 卡住不动了${parts.length === 0 ? "" : `（${parts.join("，")}）`}`;
     }
     default:
       return genericWorldFactLine(fact, at, kind);
   }
+}
+
+/**
+ * The Host's own backlog: `N 份结果没读到`, and which families they are.
+ *
+ * <p>
+ * WHY THIS LINE EXISTS AT ALL. `round72`: five terminal receipts were carried, no turn opened for them (a receipt has no
+ * presentation identity), and the run sat idle for 166 s while the work they answered had already happened. The pump now
+ * opens ONE turn when the backlog has waited (`CARRIED_BACKLOG_BOUND_MS`), and this is what that turn says: the count, how
+ * long the oldest waited, and the families - in the same `factShapeName` spelling the account's `no_surface_for` and `lost`
+ * braces use, so a reader can join the message to the ledger by name.
+ * </p>
+ *
+ * <p>
+ * IT IS NOT A WORLD-CHANGE LINE, and the sentence is written to be unable to read as one: it says what is UNREAD, never
+ * what the world did. The receipts themselves are rendered beside it by `receiptLine` (they always owed her the news; they
+ * could not OPEN a turn), so this line is the reason the turn exists rather than a summary that replaces them.
+ * </p>
+ *
+ * <p>
+ * NOTHING IS INVENTED. `held` is the pump's ledger size, `families` and their counts are the shapes in it, and
+ * `oldestHeldMs` is the wait the pump measured, converted to seconds at the one place the text is composed. A payload this
+ * file cannot read prints what it can rather than a zero: a sentence that said `0 份` would be the one lie this fact cannot
+ * afford.
+ * </p>
+ */
+function carriedBacklogLine(fact: WorldFact, at: string): string {
+  const held = Number(fact.payload.held);
+  const counted = familyCounts(fact.payload);
+  const named = familyNames(fact.payload);
+  const omitted = Number(fact.payload.omittedFamilies);
+  const waitedMs = Number(fact.payload.oldestHeldMs);
+  const waited = Number.isFinite(waitedMs) ? `（最早的一份等了 ${String(Math.round(waitedMs / 1000))} 秒）` : "";
+  const families = named
+    .map((family) => (counted[family] === undefined ? family : `${family} ${String(counted[family])}`))
+    .join("、");
+  const rest = Number.isFinite(omitted) && omitted > 0 ? ` 等 ${String(omitted)} 类` : "";
+  const count = Number.isFinite(held) && held > 0 ? String(held) : countedTotal(counted);
+  // HELD 0 IS NOT A STATEMENT, IT IS THE ABSENCE OF ONE. The pump cannot mint this fact with an empty ledger
+  // (`#backlogIsDue`), and a line that said `有 0 份结果没读到` would be the one lie this fact cannot afford - so a payload
+  // that says nothing is rendered as nothing rather than as a zero.
+  if (count === "0") return "";
+  return `- ${at}有 ${count} 份结果没读到${waited}${families === "" ? "" : `：${families}${rest}`}`;
+}
+
+/** The families a backlog fact names, in the pump's own order (oldest first), from its own bounded list. */
+function familyNames(payload: Readonly<Record<string, unknown>>): readonly string[] {
+  const families = payload.families;
+  if (!Array.isArray(families)) return [];
+  return families.filter((family): family is string => typeof family === "string" && family !== "");
+}
+
+/** How many facts of each family the pump counted, so the count beside a name is its own and not a guess. */
+function familyCounts(payload: Readonly<Record<string, unknown>>): Readonly<Record<string, number>> {
+  const byFamily = payload.byFamily;
+  if (byFamily === null || typeof byFamily !== "object") return {};
+  const counted: Record<string, number> = {};
+  for (const [family, count] of Object.entries(byFamily as Record<string, unknown>))
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) counted[family] = count;
+  return counted;
+}
+
+/** The whole population, for a payload that lost its own `held`: the counts still close to the number of facts. */
+function countedTotal(counted: Readonly<Record<string, number>>): string {
+  return String(Object.values(counted).reduce((total, count) => total + count, 0));
 }
 
 /**
@@ -733,8 +821,8 @@ function genericWorldFactLine(fact: WorldFact, at: string, kind: string): string
 }
 
 /** `<execution-result>`: what a submitted programme did, in sentences, one per settlement. */
-function composeExecutionResult(settlements: readonly WorldFact[]): string {
-  const lines = settlements.map(settlementLine).filter((line) => line !== "");
+function composeExecutionResult(settlements: readonly WorldFact[], reading: WorldStateReading | undefined): string {
+  const lines = settlements.map((settlement) => settlementLine(settlement, reading)).filter((line) => line !== "");
   return lines.length === 0 ? "" : block("execution-result", lines.join("\n"));
 }
 
@@ -746,20 +834,341 @@ function composeExecutionResult(settlements: readonly WorldFact[]): string {
  * `hint` and its own `reasonDetail`, each bounded, with its `reasonCode` beside them - never a Host paraphrase, and never
  * a bare count.
  */
-function settlementLine(fact: WorldFact): string {
+function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined): string {
   const total = Number(fact.payload.total);
   const counts = fact.payload.counts;
   const done =
     counts !== null && typeof counts === "object" ? Number((counts as Record<string, unknown>).succeeded ?? 0) : 0;
   const head = Number.isFinite(total) ? `${done}/${total} 步做成了` : "计划收尾了";
   const nodes = Array.isArray(fact.payload.nodes) ? (fact.payload.nodes as readonly SettledNode[]) : [];
+  // WHAT THE STEPS PROVED, for every node that reported a row table - including one whose own state is `succeeded`,
+  // because the table IS that node's answer: a `for_each` of sixty tiles proves which sixty, and `succeeded` alone does
+  // not. Printed before the shortfalls, in the order the effect happened and then what did not.
+  const proofs = nodes
+    .filter((node) => node.state === "succeeded")
+    .map((node) => proofLine(node))
+    .filter((words): words is string => words !== "");
   const failures = nodes
     .filter((node) => typeof node.state === "string" && node.state !== "succeeded")
     .map((node) => failureWords(node))
     .filter((words): words is string => words !== "");
+  const said = [...proofs, ...failures];
   const omitted = Number(fact.payload.omitted);
   const more = Number.isFinite(omitted) && omitted > 0 ? `（另有 ${omitted} 步未列出）` : "";
-  return `- ${head}${more}${failures.length === 0 ? "" : `：${failures.join("；")}`}`;
+  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}；${remainderSentence(nodes, reading)}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What is LEFT of the chore a settlement finished.
+//
+// WHY IT IS HERE. Measured `round69`: a script of 16 nodes cleared `weeds_cut 6`, and every health counter read 0 -
+// `travel_postcondition_mismatch 0`, `destination_locked 0`, `nothing_pending 0`, `due 0` - and then the run sat idle
+// for 2.8 minutes. Six weeds out of a field that has more, and the answer she was handed said `16/16 步做成了`: a
+// settlement that never says what is left reads as a finished job, and there is nothing in it to plan the next turn
+// from. The one thing every settlement omitted was the remainder of the chore it had just finished.
+//
+// WHAT IT COSTS. Nothing. The population is the reading this SAME message already carries (`<world-state>`), and the
+// tiles it subtracts are the ones the settlement's own node rows prove were worked - `tile` on a single node, the
+// pass's own row table for a `for_each`. No world query is made here and none may be: a second read would answer about
+// a world later than the settlement, so the remainder could contradict the answer it sits beside.
+//
+// THE ONE THING THE HOST CANNOT DERIVE is WHICH family a step's work consumes. That is the Mod's declaration (its
+// descriptor's `Chore` claim, whose family is the `TargetFamily` it addressed - NOT its `Clears`, which answers a routing
+// question and is declared only on the actions that open a route, so asking it here answered `未测` for 14 of round70's
+// 14 delivered batches), and the Mod mints it into the SETTLEMENT's own evidence as `chore=<family>`. A settlement whose
+// steps say nothing about their chore states `剩下的：未测` rather than staying silent.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** How many chore families one settlement's remainder names before it counts the rest. */
+const MAX_REMAINDER_FAMILIES = 4;
+
+/** How many of a family's remaining tiles it names - the same six the world block spends on a family it names there. */
+const MAX_REMAINDER_TILES = 6;
+
+/** One tile, as the reading and a node's own proof both spell it. */
+type RemainderTile = Readonly<{ x: number; y: number }>;
+
+/** What one finished chore has left, taken from the reading the settlement is delivered with. */
+type ChoreRemainder = Readonly<{
+  family: string;
+  /** The word the world block uses for the same rows, so one family cannot be named two ways in one message. */
+  label: string;
+  left: number;
+  /** Up to `MAX_REMAINDER_TILES` of the tiles still carrying the chore, nearest to her first. */
+  nearest: readonly RemainderTile[];
+}>;
+
+/** The three states a chore family can be in, each named: work left, work done, rows this reading never carried. */
+type ChoreReading = Readonly<{
+  left: readonly ChoreRemainder[];
+  done: readonly ChoreRemainder[];
+  unmeasured: readonly string[];
+}>;
+
+/**
+ * The Mod's token for the family a step's work consumed: `chore=<family>`, a field of its own.
+ *
+ * A FIELD'S NAME, NOT A POSITION. It is minted at the settlement's seam (`ExecutionManager.RememberTerminal`, which
+ * appends `;chore=<family>` to the receipt's evidence - `evidence.detail` on the wire) and a pass states the same field
+ * on its own `for_each_pass:` verdict line, so the field arrives after a `;` in one place and a `:` in the other. What
+ * this reader keys on is the name: the family is the run of identifier characters after `chore=` wherever it appears.
+ *
+ * WHY THAT MATTERS RATHER THAN reading the line it used to sit on: the mint MOVED once already (`4c25331c`, measured
+ * `round71`), and a reader that required `:`-separated `key=value` segments read every settled settlement as `未测` -
+ * `round73`, 205 mints in the log and 9 of 9 clauses saying the Mod had said nothing.
+ */
+const CHORE_FIELD = "chore=";
+
+/** The characters a wire family key is made of (`harvestTargets`, `weedTargets`, `woodFenceTargets`). */
+const FAMILY_KEY = /[A-Za-z0-9_]/;
+
+/**
+ * The states in which a node PROVED it did something.
+ *
+ * `partially_succeeded` is included on purpose: a pass that worked forty-five of sixty rows cleared forty-five, and
+ * omitting it would report those forty-five tiles as work still to do.
+ */
+const PROVEN_EFFECT_STATES: ReadonlySet<string> = new Set(["succeeded", "partially_succeeded"]);
+
+/**
+ * The one sentence a settlement owes about what is left of its own chore.
+ *
+ * BOTH POLARITIES ARE REQUIRED. `还剩 杂草 14 处（最近 (66,15) …）` is what lets the next turn continue the job;
+ * `这一类没剩（杂草）` is what lets her stop. A settlement that always said there was more would be as wrong as the
+ * one this replaces, in the other direction.
+ *
+ * A THIRD ANSWER IS NAMED RATHER THAN SILENT: no reading in this delivery, or steps that never said which family they
+ * worked, or a reading that does not carry the family at all. Each is a statement about what could not be measured,
+ * which is a different fact from "nothing is left" and must never be spelled as one.
+ */
+function remainderSentence(nodes: readonly SettledNode[], reading: WorldStateReading | undefined): string {
+  const chores = choreReading(nodes, reading);
+  if (chores === undefined) return `${REMAINDER_LEAD}未测（${unmeasuredReason(reading, [])}）`;
+  const named = chores.left.slice(0, MAX_REMAINDER_FAMILIES);
+  const unmeasuredSuffix =
+    chores.unmeasured.length === 0
+      ? ""
+      : `；${chores.unmeasured.slice(0, MAX_REMAINDER_FAMILIES).join("、")} 这一回合的观察里没有`;
+  if (named.length > 0) {
+    const parts = named.map(
+      (chore) => `${chore.label} ${String(chore.left)} 处（最近 ${chore.nearest.map(tileWord).join(" ")}）`,
+    );
+    const rest = chores.left.length - named.length;
+    return `${REMAINDER_LEAD}${parts.join("、")}${rest > 0 ? ` 等 ${String(chores.left.length)} 类` : ""}${unmeasuredSuffix}`;
+  }
+  if (chores.done.length > 0)
+    return `${REMAINDER_LEAD}没剩（${chores.done
+      .slice(0, MAX_REMAINDER_FAMILIES)
+      .map((chore) => chore.label)
+      .join("、")}）${unmeasuredSuffix}`;
+  return `${REMAINDER_LEAD}未测（${unmeasuredReason(reading, chores.unmeasured)}）`;
+}
+
+/**
+ * The words every remainder answer opens with, so ONE rule decides what a settlement says about its own remainder.
+ *
+ * It is a lead rather than three separate sentences because the answer is a fact of one shape with three values -
+ * work left, none left, and could-not-be-measured - and a reader (or an audit) that finds this word has found the
+ * answer whatever its value is.
+ */
+const REMAINDER_LEAD = "剩下的：";
+
+/** Why a remainder could not be measured, in the one condition that applies. */
+function unmeasuredReason(reading: WorldStateReading | undefined, families: readonly string[]): string {
+  if (reading === undefined || reading.snapshot === null || typeof reading.snapshot !== "object")
+    return "这一回合没有世界观察";
+  if (families.length > 0) return `这一回合的观察里没有 ${families.join("、")}`;
+  return "这一份结算没说是哪一类活";
+}
+
+/** A tile, spelled the one way this file spells a coordinate. */
+function tileWord(tile: RemainderTile): string {
+  return `(${String(tile.x)},${String(tile.y)})`;
+}
+
+/**
+ * What each chore one settlement finished has left, from the settlement's own rows and the reading beside it.
+ *
+ * `undefined` means the question cannot be asked at all: no reading in this delivery, or not one settled step that
+ * names the family it worked. A family the reading does not publish is `unmeasured`, never `0` - an absent family is
+ * one the Mod did not measure, and the whole vocabulary of this block turns on that distinction.
+ */
+function choreReading(nodes: readonly SettledNode[], reading: WorldStateReading | undefined): ChoreReading | undefined {
+  const worked = new Map<string, RemainderTile[]>();
+  for (const node of nodes) {
+    const family = choreFamilyOf(node);
+    if (family === undefined) continue;
+    const tiles = worked.get(family) ?? [];
+    tiles.push(...workedTiles(node));
+    worked.set(family, tiles);
+  }
+  if (worked.size === 0) return undefined;
+  if (reading === undefined) return undefined;
+  const snapshot = reading.snapshot;
+  if (snapshot === null || typeof snapshot !== "object") return undefined;
+  const actor = snapshot.tile;
+  const reach = (tile: RemainderTile): number =>
+    Number.isFinite(actor?.x) && Number.isFinite(actor?.y)
+      ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y))
+      : 0;
+  const left: ChoreRemainder[] = [];
+  const done: ChoreRemainder[] = [];
+  const unmeasured: string[] = [];
+  for (const [family, workedTilesOfFamily] of worked) {
+    const label = TARGET_FAMILY_LABELS[family] ?? family;
+    const rows = (snapshot as unknown as Record<string, unknown>)[family];
+    if (!Array.isArray(rows)) {
+      unmeasured.push(label);
+      continue;
+    }
+    const taken = new Set(workedTilesOfFamily.map((tile) => `${String(tile.x)},${String(tile.y)}`));
+    let remaining = 0;
+    const rest: RemainderTile[] = [];
+    for (const row of rows) {
+      const tile = row === null || typeof row !== "object" ? undefined : rowTileOf(row as Record<string, unknown>);
+      // A ROW THIS READING CANNOT PLACE IS STILL A ROW: counted as work left, and it cannot be named - the same rule
+      // the world block follows for a family whose rows carry no tile.
+      if (tile === undefined) {
+        remaining += 1;
+        continue;
+      }
+      if (taken.has(`${String(tile.x)},${String(tile.y)}`)) continue;
+      remaining += 1;
+      rest.push(tile);
+    }
+    const remainder: ChoreRemainder = Object.freeze({
+      family,
+      label,
+      left: remaining,
+      nearest: Object.freeze(
+        rest
+          .sort((a, b) => reach(a) - reach(b) || a.x - b.x || a.y - b.y)
+          .slice(0, MAX_REMAINDER_TILES)
+          .map((tile) => Object.freeze({ x: tile.x, y: tile.y })),
+      ),
+    });
+    (remaining > 0 ? left : done).push(remainder);
+  }
+  if (left.length === 0 && done.length === 0 && unmeasured.length === 0) return undefined;
+  // The family with the most work left first, so a cap becomes "the rest is smaller" rather than a lottery.
+  left.sort((a, b) => b.left - a.left || a.family.localeCompare(b.family));
+  return Object.freeze({ left: Object.freeze(left), done: Object.freeze(done), unmeasured: Object.freeze(unmeasured) });
+}
+
+/**
+ * The family whose work one settled step consumed, as the Mod minted it: `…;chore=weedTargets`.
+ *
+ * <p>
+ * READ BY THE FIELD'S OWN NAME, FROM EVERY FIELD OF THE SETTLEMENT THAT CAN CARRY IT. The family arrives from the
+ * descriptor that declares it rather than from a table here that could drift from that declaration, and the two places
+ * one settlement can state it are the receipt's evidence (a single settled action - `RememberTerminal` appends
+ * `;chore=<family>`) and a pass's own `for_each_pass:` verdict line (`:chore=<family>`). Splitting either on ONE
+ * separator was the whole of `round73`: the settlement's evidence is `;`-separated, so a `:`-split found nothing, and 9
+ * of 9 remainders said `未测` beside 205 mints in the log.
+ * </p>
+ * <p>
+ * Present only on a step whose action declares that its success TAKES its family's row out of the world: a step that
+ * reads or loads a machine has no chore, and neither has one that clears a route (`clearing is a different question`).
+ * </p>
+ */
+function choreFamilyOf(node: SettledNode): string | undefined {
+  if (typeof node.state !== "string" || !PROVEN_EFFECT_STATES.has(node.state)) return undefined;
+  for (const field of [node.evidence, node.postconditionVerification]) {
+    if (typeof field !== "string") continue;
+    const family = choreNamedIn(field);
+    if (family !== undefined) return family;
+  }
+  return undefined;
+}
+
+/**
+ * The family one field of a settlement names, or `undefined` when it names none.
+ *
+ * The token is found wherever it stands - start of the field, after a `;`, after a `:` - and its value ends at the first
+ * byte a family key cannot hold. A `chore=` that continues an identifier (`my_chore=`) is not this field and is skipped,
+ * so a future key whose name merely ENDS in `chore` cannot be read as this one.
+ */
+function choreNamedIn(field: string): string | undefined {
+  for (let at = field.indexOf(CHORE_FIELD); at >= 0; at = field.indexOf(CHORE_FIELD, at + 1)) {
+    const before = field[at - 1];
+    if (before !== undefined && FAMILY_KEY.test(before)) continue;
+    let end = at + CHORE_FIELD.length;
+    while (end < field.length && FAMILY_KEY.test(field[end] as string)) end += 1;
+    const family = field.slice(at + CHORE_FIELD.length, end);
+    if (family !== "") return family;
+  }
+  return undefined;
+}
+
+/**
+ * The tiles one settled step proves it worked: its own tile, or the pass's own row table.
+ *
+ * A `for_each` settles ONE node for up to sixty-four rows, and its aggregate
+ * (`{"state":…,"succeeded":N,…,"rows":[{"x":…,"y":…,"state":"succeeded"}]}`) is where those rows live - the
+ * same document the settlement prints. Reading it is reading the producer's own table, never a second derivation.
+ */
+function workedTiles(node: SettledNode): readonly RemainderTile[] {
+  if (node.tile !== undefined) return [node.tile];
+  if (typeof node.evidence !== "string") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(node.evidence);
+  } catch {
+    return [];
+  }
+  if (parsed === null || typeof parsed !== "object") return [];
+  const rows = (parsed as { rows?: unknown }).rows;
+  if (!Array.isArray(rows)) return [];
+  const tiles: RemainderTile[] = [];
+  for (const row of rows) {
+    if (row === null || typeof row !== "object") continue;
+    const entry = row as Record<string, unknown>;
+    if (entry.state !== "succeeded") continue;
+    const tile = rowTileOf(entry);
+    if (tile !== undefined) tiles.push(tile);
+  }
+  return tiles;
+}
+
+/**
+ * The tile a row stands on, through the wire's own placement contract.
+ *
+ * NOT a guess and not a second table: `ROW_TILE_FIELD_PAIRS` is the declaration the world block places its rows with
+ * (`x`/`y` for seventy-two families, `sourceX`/`sourceY` for `doorTargets` and `warps`), so a row this function cannot
+ * place is one that block cannot place either.
+ */
+function rowTileOf(row: Record<string, unknown>): RemainderTile | undefined {
+  for (const [xField, yField] of ROW_TILE_FIELD_PAIRS) {
+    const x = row[xField];
+    const y = row[yField];
+    if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return undefined;
+}
+/**
+ * One node's own proof of what it did: its action, the pass's verdict line, and the row table - all the Mod's bytes.
+ *
+ * <p>
+ * NOTHING IS SUMMARISED HERE, and that is the point rather than an omission. A sixty-row table rendered as `60 格`/`45 格`
+ * is the same drop one layer further out: the model already receives the count, and what it cannot reconstruct is WHICH
+ * tile and what was on it. So the two fields are printed verbatim, in the producer's own spelling, under the producer's
+ * own names' order - the `for_each_pass:decided=…` line first, because it is the sentence, and the table second, because
+ * it is the evidence.
+ * </p>
+ *
+ * <p>
+ * WHY NO CEILING FROM `MODEL_FIELD_CEILINGS`. That table exists to stop a HOST-sized share of a line being spent on a
+ * field whose producer declares no bound (`a receipt's evidence.detail`); these two are bounded at their producer
+ * (1..4096, `BodyProgramValidation.IsOpaqueTerminalProof`) and the row table counts what it could not fit into that
+ * number itself (`rowsOmitted`). A Host ceiling below the producer's would cut a table that is already whole, and it would
+ * cut it at a `;` boundary that means nothing in a JSON document - the operator this file already recorded for `hint`.
+ * </p>
+ */
+function proofLine(node: SettledNode): string {
+  const words = proofTail(node);
+  if (words === undefined) return "";
+  const action = typeof node.actionId === "string" ? node.actionId : (node.nodeId ?? "一步");
+  return `${action} ${words}`;
 }
 
 /**
@@ -784,8 +1193,10 @@ function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
   // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
-  // introduces the code, so the two halves stay distinguishable in the line.
-  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail)]
+  // introduces the code, so the two halves stay distinguishable in the line. A node that ALSO carries a row table - the
+  // `partially_succeeded` half of a batch - keeps it beside its reason, because the rows that did happen and the reason
+  // for the ones that did not are one answer about one node.
+  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail), proofTail(node)]
     .filter((part): part is string => part !== undefined)
     .join("｜");
   const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
@@ -793,51 +1204,16 @@ function failureWords(node: SettledNode): string {
 }
 
 /**
- * How a cut names what it withheld: how many whole fields a line did not show, and - when one field alone is over the
- * ceiling - that field's own length against the ceiling it met. One spelling each, so a run audit greps one name.
- */
-const FIELDS_NOT_SHOWN = "fields_not_shown";
-const FIELD_OVER_CEILING = "field_over_ceiling";
-
-/**
- * One Mod-authored field's share of a line, cut at its own ceiling - on a FIELD boundary, never inside one.
+ * The two proof fields, joined as one part of a line - or nothing at all when the node carried neither.
  *
- * <p>
- * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`), and slicing it at the character ceiling produced a
- * token that looks like a fact and is not one: a 254-character proof cut at 160 ended mid-value (`stamina_bef`), and the
- * only thing the line then added was `[evidence_detail_over_ceiling:254:160]` - the byte arithmetic of a budget, which
- * tells a reader the budget was exceeded and nothing about what it lost. So every field is either printed WHOLE or not
- * printed at all, and the line says how many whole fields it did not show.
- * </p>
- *
- * <p>
- * A single field that alone exceeds the ceiling cannot be shown at any prefix, so it is replaced by
- * `[field_over_ceiling:<length>:<ceiling>]`: the field is named as withheld, and the two numbers are the ones that decide
- * whether the frame should have arrived at all. At the ceiling the value prints exactly as the Mod wrote it, because the
- * point of `MODEL_FIELD_CEILINGS` is that a field inside its producer's bound is printed whole.
- * </p>
+ * The action is not named here: `failureWords` already opens with it, and `proofLine` names it for the succeeded node,
+ * so a `partially_succeeded` row reads `for_each 没做成（…）` once rather than once per half.
  */
-function boundedField(field: ModelVisibleField, value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const text = value.trim();
-  if (text === "") return undefined;
-  const ceiling = MODEL_FIELD_CEILINGS[field];
-  if (text.length <= ceiling) return text;
-  const fields = text.split(";");
-  const oversized = fields.find((entry) => entry.length > ceiling);
-  if (oversized !== undefined) return `[${FIELD_OVER_CEILING}:${String(oversized.length)}:${String(ceiling)}]`;
-  // The notice's own room is reserved before each field is tried, so the count never pushes the text past the ceiling.
-  const notice = (dropped: number): string => `…[${FIELDS_NOT_SHOWN}:${String(dropped)}]`;
-  const kept: string[] = [];
-  let length = 0;
-  for (const entry of fields) {
-    const grown = kept.length === 0 ? entry.length : length + 1 + entry.length;
-    if (grown + notice(fields.length - kept.length).length > ceiling) break;
-    kept.push(entry);
-    length = grown;
-  }
-  const dropped = fields.length - kept.length;
-  return kept.length === 0 ? notice(dropped) : `${kept.join(";")}${notice(dropped)}`;
+function proofTail(node: SettledNode): string | undefined {
+  const words = [node.postconditionVerification, node.evidence]
+    .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+    .join("｜");
+  return words === "" ? undefined : words;
 }
 
 /**

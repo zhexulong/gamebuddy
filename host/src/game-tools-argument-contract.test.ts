@@ -4,15 +4,10 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
-import {
-  ROW_DERIVED_STEP_ARGUMENTS,
-  STEP_ARGUMENTS_STILL_OMISSIBLE,
-  planWorkDescription,
-  planActionsFromRegistrations,
-} from "./body-program-script.js";
+import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { planWorkDescription, planActionsFromRegistrations } from "./body-program-script.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
+import { buildCandidateToolSchema, createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import {
   type ActionRegistration,
   type ActionRegistrationDescriptor,
@@ -607,23 +602,45 @@ function exampleArgumentNames(body: string): readonly string[] {
   return names;
 }
 
-type PlanExample = Readonly<{ action: string; names: readonly string[]; source: "builder" | "step" }>;
+type PlanExample = Readonly<{
+  action: string;
+  names: readonly string[];
+  /** The double-quoted values the example states, by name - the half a closed-set argument is judged on. */
+  strings: readonly (readonly [string, string])[];
+  source: "builder" | "step";
+}>;
+
+/**
+ * The string values a plan example states, by argument name.
+ *
+ * The names beside this are not enough for an argument the surface declares as a CLOSED SET: `emote: "happy"` and
+ * `emote: "joyful"` supply the same name and only one of them is a call the Mod admits, so a gate that reads names alone
+ * passes the example it exists to refuse. Only the double-quoted spelling the examples use is read; a value the reader
+ * cannot see is reported as absent rather than passed.
+ */
+function exampleStringValues(body: string): readonly (readonly [string, string])[] {
+  return [...body.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"/gu)].map((match) =>
+    Object.freeze([match[1]!, match[2]!] as const),
+  );
+}
 
 /**
  * Every example the plan tool's own description prints, read off the rendered text.
  *
- * Both shapes are read because both are copied: a `builder.<action>({...})` call on a line of its own, and a loop step
- * written as `{ action: "<id>", ... }` - including the one the prose teaches mid-sentence. Nothing else in the description
- * is parsed: a line that is not a whole builder call, and an object that names no action, are not examples.
+ * One shape is read, because one shape is copied: a `builder.<action>({...})` call, on a line of its own or inside the
+ * loop the example is about. Nothing else in the description is parsed - a line that carries no whole builder call
+ * teaches no call a caller could copy.
  */
 function planExamples(description: string): readonly PlanExample[] {
   const examples: PlanExample[] = [];
   for (const line of description.split("\n")) {
-    const builder = /^\s*builder\.([a-z0-9_]+)\(\{(.*)\}\);?\s*$/u.exec(line);
-    if (builder !== null)
-      examples.push({ action: builder[1]!, names: exampleArgumentNames(builder[2]!), source: "builder" });
-    for (const step of line.matchAll(/\{ action: "([a-z0-9_]+)"([^}]*)\}/gu))
-      examples.push({ action: step[1]!, names: exampleArgumentNames(step[2]!), source: "step" });
+    for (const builder of line.matchAll(/builder\.([a-z0-9_]+)\(\{([^}]*)\}\)/gu))
+      examples.push({
+        action: builder[1]!,
+        names: exampleArgumentNames(builder[2]!),
+        strings: exampleStringValues(builder[2]!),
+        source: "builder",
+      });
   }
   return examples;
 }
@@ -632,11 +649,8 @@ function planExamples(description: string): readonly PlanExample[] {
  * An argument a plan example omits and a caller would have to add before the example would run.
  *
  * The example is a STRONGER instruction than the argument list - a caller copies it - so an example that leaves out a
- * wire-required argument teaches a call the compiler refuses (`loop_do_argument_missing:charge`) or the validator refuses
- * (`invalid_args`). Two facts decide what an example must carry, and neither is invented here: a loop step's row supplies
- * `x`, `y` and the minted target id (`ROW_DERIVED_STEP_ARGUMENTS`), and the two names the compiler still tolerates are
- * `STEP_ARGUMENTS_STILL_OMISSIBLE` - the loop form's own measured gap, which this gate must not turn into a second, silent
- * one.
+ * wire-required argument teaches a call the compiler refuses or the validator refuses (`invalid_args`). Every rendered
+ * example is a whole builder call, so every argument the wire pins is one the example must carry.
  */
 test("every plan example carries the arguments the wire requires of it", () => {
   const registrations = publishedSurface().map(registrationFor);
@@ -651,13 +665,7 @@ test("every plan example carries the arguments the wire requires of it", () => {
     if (pinned === undefined) continue;
     examined.push(`${example.source}:${example.action}`);
     const supplied = new Set(example.names);
-    const required =
-      example.source === "builder"
-        ? pinned
-        : pinned.filter(
-            (name) => !ROW_DERIVED_STEP_ARGUMENTS.includes(name) && !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name),
-          );
-    for (const argument of required)
+    for (const argument of pinned)
       if (!supplied.has(argument)) findings.push(`plan_example_omits_argument:${example.action}:${argument}`);
   }
 
@@ -672,8 +680,143 @@ test("every plan example carries the arguments the wire requires of it", () => {
 });
 
 /**
- * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
+ * The words a MOUNTED TOOL admits for one closed-set argument, read out of the schema the mount builds.
  *
+ * `buildCandidateToolSchema` renders a closed set as a union of literals (`anyOf: [{ const: ... }]`), which is what the
+ * model is shown, so this reads the surface the caller actually copies rather than a second description of it.
+ */
+function closedSetOf(schema: unknown): readonly string[] {
+  if (typeof schema !== "object" || schema === null) return [];
+  const record = schema as Readonly<{ anyOf?: readonly Readonly<{ const?: unknown }>[]; const?: unknown }>;
+  const members = record.anyOf ?? (record.const === undefined ? [] : [{ const: record.const }]);
+  return members.map((member) => member.const).filter((value): value is string => typeof value === "string");
+}
+
+/**
+ * The closed-set words a gesture takes are on its MOUNTED TOOL, and the plan no longer teaches a row for it.
+ *
+ * <p>
+ * This test used to assert the other way round: `express_emote` was a plan example (`c63a5763`), and the gate read that
+ * example's `emote: "<word>"` against the Mod's declared enum. The registry now declares that action - and
+ * `face_direction` - expression-only, so the plan builder generates no method for either and the example row is gone. A
+ * gate left reading that row would be a test of a section that no longer exists, so it asserts the two facts that
+ * replaced it: NO example teaches an expression route, and the closed set is carried by the tool a Game session mounts.
+ * </p>
+ *
+ * <p>
+ * The population is every closed-set argument of every action the registry declares expression-only, taken from the
+ * Mod's published surface, so an action that gains a second argument joins this gate without an edit - and a word the
+ * mount stops publishing fails here by name rather than in a live run.
+ * </p>
+ */
+test("an expression action is no longer a plan example, and its closed set is on the tool a Game session mounts", () => {
+  const actions = planActionsFromRegistrations(publishedSurface().map(registrationFor));
+  const description = planWorkDescription(actions);
+  const expressionOnly = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
+  assert.deepEqual(
+    planExamples(description)
+      .filter((example) => expressionOnly.has(example.action))
+      .map((example) => `plan_example_teaches_an_expression_route:${example.action}`),
+    [],
+    "a gesture is one step by nature; an example here is a call the compiler now refuses as plan_script_unknown_action",
+  );
+
+  const byId = new Map(publishedSurface().map((action) => [action.actionId, action] as const));
+  const examined: string[] = [];
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
+    const action = byId.get(actionId);
+    assert.ok(action !== undefined, `${actionId} is declared expression-only but the Mod publishes no such action`);
+    const closed = Object.entries(action.argumentSchema ?? {}).filter(([, schema]) => schema.enum !== undefined);
+    assert.ok(closed.length > 0, `blocked: ${actionId} declares no closed-set argument, so this gate examines nothing`);
+    const registration = registrationFor(action);
+    assert.ok(registration.descriptor !== undefined, `${actionId} publishes no descriptor for its mount arm to read`);
+    const schema = buildCandidateToolSchema(actionId, registration.descriptor) as unknown as Readonly<{
+      properties?: Readonly<Record<string, unknown>>;
+    }>;
+    for (const [name, declared] of closed) {
+      const values = closedSetOf(schema.properties?.[name]);
+      assert.deepEqual(
+        values,
+        [...(declared.enum ?? [])],
+        `${actionId}.${name}: the mounted tool's closed set must be the one the Mod declares, in its own order`,
+      );
+      examined.push(`${actionId}.${name}=${String(values.length)}`);
+    }
+  }
+  assert.ok(examined.length > 0, "blocked: no expression action's closed set was read, so this gate examines nothing");
+});
+
+/**
+ * A whole-number value a mounted tool ADMITS and the Host's own validator REFUSES.
+ *
+ * <p>
+ * The suite's other probes hand each declared argument its schema's FLOOR, which is how a schema that declares too
+ * little is caught; none of them ever hands it the CEILING, so a schema that declares too MUCH passed every one of
+ * them. That is the defect this test exists for, and it had already shipped: measured 2026-11-16, fifteen
+ * descriptor-derived mounts described `x`/`y` and `slot` as any whole number up to 100000, while `tileRow`/`slotRow`
+ * answered `invalid_*_tile`/`invalid_*_slot` above 1000 and 36 - 34 values the schemas admitted and the Host refused. The model was told the value was admissible and the
+ * Host refused the call built from it before the bridge - the `charge` class one layer down, where the schema and the
+ * validator disagree about the RANGE instead of about the argument set.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS THE TOOLS THE HOST REALLY BUILDS: every registration comes from the generated
+ * `action-surface.v1.json`, `createStardewActionTools` builds the set a session is handed, and each whole-number
+ * argument that declares a ceiling contributes one probe. THE AUTHORITY IS THE VALIDATOR ITSELF - the refusal
+ * compared is the product's own `reasonCode`, not a second description of the range written here.
+ * </p>
+ *
+ * <p>
+ * TWO CONTROLS decide whether an argument can be probed at all, because a refusal does not say WHY it refused. Some
+ * tools take a tile or a slot that must equal one the snapshot published, so EVERY value but that one is refused and
+ * the ceiling says nothing about the range; those actions are excluded and NAMED, never counted as measured. The
+ * controls are the schema's own floor and the next value up: where both are accepted, the range really is what the
+ * validator is judging.
+ * </p>
+ */
+test("every whole-number value a mounted tool admits is one the Host's own validator accepts", async () => {
+  const mounted = mountedTools();
+  assert.ok(mounted.length > 0, "blocked: no tool was mounted, so this gate examines nothing");
+  const findings: string[] = [];
+  const notMeasured: string[] = [];
+  let examined = 0;
+  for (const tool of mounted) {
+    const required = declaredArgumentKeys(tool.schema, true);
+    const args = argsFor(tool.schema, required, tool.action);
+    for (const key of required) {
+      const node = propertiesOf(tool.schema)[key] as JsonObject | undefined;
+      if (node?.type !== "integer" && node?.type !== "number") continue;
+      if (typeof node.maximum !== "number") continue;
+      const floor = typeof node.minimum === "number" ? node.minimum : 1;
+      // The controls: two values INSIDE the declared range. A refusal at either means this action pins the value to
+      // one the snapshot published, so the ceiling is not a statement about its range.
+      const inside = floor + 1 <= node.maximum ? floor + 1 : node.maximum;
+      const control = await tool.call(args);
+      const interior = await tool.call({ ...args, [key]: inside });
+      if (control.refusal !== null || interior.refusal !== null) {
+        notMeasured.push(`${tool.action}.${key}:${control.refusal ?? interior.refusal}`);
+        continue;
+      }
+      examined += 1;
+      const ceiling = await tool.call({ ...args, [key]: node.maximum });
+      if (ceiling.refusal !== null)
+        findings.push(`host_offers_a_value_the_wire_refuses:${tool.name}:${key}=${node.maximum}:${ceiling.refusal}`);
+    }
+  }
+  assert.ok(
+    examined > 0,
+    "blocked: no mounted tool declares a bounded whole-number argument whose range the validator judges, so every schema agrees with itself",
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    `a value the schema admits and the validator refuses is a call the model is told it may make: ${findings.join(" | ")}` +
+      ` [not measured, the action pins the value to a published target: ${notMeasured.join(", ")}]`,
+  );
+});
+
+/**
+ * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
  * Every other test here compares statements about the schema - its names, its bounds, what the mount forwards. This one
  * hands the schema's own required arguments to `validateExecutionRequest`, so the two halves are tied by behaviour: while
  * the schema lacked `charge`, the arguments it declared were refused with `invalid_args` before the bridge, which is the

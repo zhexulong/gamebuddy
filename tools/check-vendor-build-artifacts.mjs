@@ -55,6 +55,14 @@
  *            exit 1; moving it back reports `examined 2, violations []`
  *            (tools/check-vendor-build-artifacts.test.mjs drives the same function over a fixture tree).
  */
+
+export const gateDeclaration = {
+  id: "check-vendor-build-artifacts",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";

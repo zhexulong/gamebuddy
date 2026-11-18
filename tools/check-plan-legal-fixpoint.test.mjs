@@ -26,12 +26,14 @@ import {
   carriesSteps,
   checksOf,
   loadPlanCompiler,
+  PRE_BATCH_FIX_REVISION,
   PRE_FIX_REVISION,
   readModalTargetedActionIds,
   readPlanCallTally,
   readPlanLegalFixpoint,
   readPublishedActions,
   remediesNamedIn,
+  runStateOf,
   scriptFor,
   statusOf,
   summaryOf,
@@ -82,7 +84,50 @@ function shapeOf(script) {
   return steps[2] === undefined ? "pair" : "remedied";
 }
 
+/**
+ * THE REFUSED-CALL BATCH, as the gate writes it: two moves the gate pins, with the injected call between them.
+ *
+ * The tiles are `x: 5` and `x: 6`, which no pair script can contain: `valueOf` writes every integer as `0`, so every
+ * script the pair reading builds carries `0` in `x` and `y`. One marker identifies the batch for the doubles below
+ * without giving them a second idea of what a script is.
+ */
+const REFUSAL_BATCH_MARK = 'builder.move_to_tile({ "x": 5, "y": 5 });';
+
+/**
+ * A batch answered the way a compiler that costs ONE refused call answers it: two steps run, the third is named.
+ *
+ * This is the shape the real compiler produces and the one the gate's fourth assertion demands. The doubles below answer
+ * it for the batch scripts so their failure - whichever one it is - is the failure they were written for.
+ */
+function partialBatchOf(script) {
+  const steps = stepsIn(script);
+  const reason = `plan_script_missing_argument:${steps[1]}.injected:integer[whole]:snapshot.tile.x`;
+  return {
+    status: "partial",
+    scriptSource: script,
+    snapshotRevision: 1,
+    reasonCode: reason,
+    rejected: [{ call: 2, actionId: steps[1], reasonCode: reason }],
+    rejectedCount: 1,
+    program: { nodes: [steps[0], steps[2]].map((actionId) => ({ actionId })) },
+    inserted: [],
+    insertedCount: 0,
+    insertedNodeIds: [],
+    layoutFactsAbsent: [],
+    layoutFactsAbsentCount: 0,
+    acceptedSteps: ["n01", "n03"],
+    acceptedStepsCount: 2,
+    merged: [],
+    mergedCount: 0,
+    noStepNeeded: [],
+    noStepNeededCount: 0,
+    dropped: [`n02:${reason}`],
+    droppedCount: 1,
+  };
+}
+
 function programOf(script) {
+  if (script.includes(REFUSAL_BATCH_MARK)) return partialBatchOf(script);
   return {
     ok: true,
     reasonCode: undefined,
@@ -128,7 +173,7 @@ test("the gate names the round42 pair a dead end on the revision that produced i
   // The call-accounting assertion cannot be measured on a compiler that keeps no account, and says so instead of passing.
   assert.match(
     output,
-    /plan_legal_fixpoint answers examined \d+ · ok \d+ · refused \d+ · forged [1-9]\d* · accounted 0$/mu,
+    /plan_legal_fixpoint answers examined \d+ · compiled \d+ · partial \d+ · refused \d+ · forged [1-9]\d* · accounted 0$/mu,
   );
   assert.match(output, /plan_legal_fixpoint status failed$/mu, "the verdict line has to say why it failed");
 });
@@ -289,14 +334,23 @@ test("a call the account loses, doubles or cuts off is a fault with its own name
  * zero rather than a green tick over nothing.
  */
 test("a compiler that answers no account blocks the call-accounting check, never passes it", () => {
+  /**
+   * THE ACCOUNT IS THE ONE FIELD THIS DOUBLE LACKS, and nothing else: the batch is answered as the partial plan it really
+   * is (the fourth assertion reads that, and a compiler that voided the batch there would be a second defect reported over
+   * the one this test is about), while `acceptedSteps` - the field the accounting assert measures - is absent.
+   */
   const judged = readPlanLegalFixpoint({
-    compile: (script) => ({
-      ok: true,
-      reasonCode: undefined,
-      rejected: [],
-      rejectedCount: 0,
-      program: { nodes: stepsIn(script).map((actionId, index) => ({ nodeId: `n${index + 1}`, actionId })) },
-    }),
+    compile: (script) => {
+      if (script.includes(REFUSAL_BATCH_MARK))
+        return { ...partialBatchOf(script), acceptedSteps: undefined, acceptedStepsCount: undefined };
+      return {
+        ok: true,
+        reasonCode: undefined,
+        rejected: [],
+        rejectedCount: 0,
+        program: { nodes: stepsIn(script).map((actionId, index) => ({ nodeId: `n${index + 1}`, actionId })) },
+      };
+    },
     actions,
     bodyYieldingActionIds: ["talk_to_npc"],
     modalTargetedActionIds: MODAL_TARGETED,
@@ -310,6 +364,7 @@ test("a compiler that answers no account blocks the call-accounting check, never
       ["modal_target_declaration", "passed"],
       ["no_forged_success", "passed"],
       ["call_accounting", "blocked"],
+      ["refused_call_cost", "passed"],
     ],
   );
   assert.equal(statusOf(judged), "blocked", "nothing failed, and one rule was not measured");
@@ -327,7 +382,8 @@ test("the tally reads a forged answer's shape and call, and an honest one names 
   ]);
   assert.deepEqual(honest, {
     examined: 1,
-    ok: 1,
+    compiled: 1,
+    partial: 0,
     refused: 0,
     measured: 1,
     forged: [],
@@ -354,6 +410,137 @@ test("the tally reads a forged answer's shape and call, and an honest one names 
     "forged_success:pair:talk_to_npc->shop_purchase:n02:plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal",
   ]);
   assert.deepEqual(forged.faults, []);
+});
+
+/**
+ * THE FOURTH ASSERTION'S OWN RED PROOF, on real history and on the tree under review.
+ *
+ * `6d6fde60` is the commit before this lane: its compiler is the one that answered one refused call by voiding the batch,
+ * and the gate has to name every site where that happened - so the proof is not "the gate can be turned red by an
+ * injected double", it is "the gate is red on the compiler that shipped the defect". The working tree must be green on
+ * the same reading, with a population that is not zero: 295 sites today, every one of them costing exactly its own call.
+ *
+ * red-proof: history  `--revision 6d6fde60` -> `refused_call_cost sites examined N · per-call 0 · whole-batch N` and one
+ *            `a_refused_call_voids_the_batch:<site>` per site, naming the refusal code that took the batch with it
+ */
+test("one refused call costs only itself, measured on every per-call refusal site the surface can produce", (t) => {
+  const current = spawnGate([]);
+  const output = `${current.stdout}${current.stderr}`;
+  assert.equal(current.status, 0, `the tree under review has to pass this gate:\n${output.slice(0, 4000)}`);
+  const reading = output.split("\n").find((line) => line.startsWith("plan_legal_fixpoint refused_call_cost "));
+  assert.ok(reading, `the refusing-cost population was not printed:\n${output.slice(0, 4000)}`);
+  const counted = /sites examined (\d+) · per-call (\d+) · whole-batch (\d+)$/u.exec(reading);
+  assert.ok(counted, `the population line has to name all three counts: ${reading}`);
+  assert.ok(Number(counted[1]) > 0, "a population of zero is blocked, never green");
+  assert.equal(Number(counted[2]), Number(counted[1]), `every measured site must cost one call: ${reading}`);
+  assert.equal(Number(counted[3]), 0, `no site may cost the batch: ${reading}`);
+
+  // AND THE SAME READING ON THE COMPILER THAT SHIPPED THE DEFECT: every site voids its batch, and each one is named.
+  const history = spawnGate(["--revision", PRE_BATCH_FIX_REVISION]);
+  const historical = `${history.stdout}${history.stderr}`;
+  if (/plan_fixpoint_history_skipped:/u.test(historical))
+    return t.skip(
+      `revision ${PRE_BATCH_FIX_REVISION} is not in this checkout, so the historical red cannot be measured`,
+    );
+  const historicalReading = historical
+    .split("\n")
+    .find((line) => line.startsWith("plan_legal_fixpoint refused_call_cost "));
+  assert.ok(historicalReading, `the historical population was not printed:\n${historical.slice(0, 4000)}`);
+  const before = /sites examined (\d+) · per-call (\d+) · whole-batch (\d+)$/u.exec(historicalReading);
+  assert.ok(before, `the historical population line has to name all three counts: ${historicalReading}`);
+  assert.equal(
+    Number(before[2]),
+    0,
+    `on ${PRE_BATCH_FIX_REVISION} no site may yet cost only its own call: ${historicalReading}`,
+  );
+  assert.equal(Number(before[3]), Number(before[1]), `every site voided the batch there: ${historicalReading}`);
+  const named = historical.split("\n").find((line) => line.startsWith("a_refused_call_voids_the_batch:"));
+  assert.ok(named, `the site that cost the batch was not named:\n${historical.slice(0, 4000)}`);
+  assert.match(named, /^a_refused_call_voids_the_batch:[a-z0-9_]+\.[a-z0-9_]+:the batch answered refused/u);
+});
+
+/** A double that voids the batch, so the fourth assertion is seen red on a compiler this suite controls. */
+test("an answer that voids the batch is named by site, not reported as a clean run", () => {
+  const judged = readPlanLegalFixpoint({
+    compile: (script) =>
+      script.includes(REFUSAL_BATCH_MARK)
+        ? { ok: false, reasonCode: "plan_script_missing_argument:injected", rejected: [] }
+        : programOf(script),
+    actions,
+    bodyYieldingActionIds: ["talk_to_npc"],
+    modalTargetedActionIds: MODAL_TARGETED,
+  });
+  assert.deepEqual(judged.pairs.deadEnds, [], "the pair reading is untouched: this finding is the new one alone");
+  assert.ok(judged.refusedCallCost.wholeBatch.length > 0);
+  assert.equal(judged.refusedCallCost.wholeBatch.length, judged.refusedCallCost.sites);
+  assert.match(judged.refusedCallCost.wholeBatch[0], /^a_refused_call_voids_the_batch:[a-z0-9_]+\.[a-z0-9_]+:/u);
+  assert.equal(
+    checksOf(judged).find((entry) => entry.id === "refused_call_cost")?.status,
+    "failed",
+    "the rule has to be its own entry in the report, with its own verdict",
+  );
+  assert.equal(statusOf(judged), "failed");
+});
+
+/**
+ * A PARTIAL PLAN REPORTED AS A SUCCESS, in each of the three ways the answer can tell that lie.
+ *
+ * These are the shapes the old contract could not produce and the new one must never produce: `partial` beside a success
+ * marker, `partial` naming no refused call, and `partial` with no program to run. Each is a different silence, so each gets
+ * its own name.
+ */
+test("a partial answer reported as a success, or naming nothing, is a finding with its own name", () => {
+  const batch = partialBatchOf(`${REFUSAL_BATCH_MARK}\nbuilder.injected({});\nbuilder.move_to_tile({});`);
+  const tally = (answer) =>
+    readPlanCallTally([
+      {
+        shape: "batch:sample",
+        script: `${REFUSAL_BATCH_MARK}\nbuilder.injected({});\nbuilder.move_to_tile({});`,
+        compiled: answer,
+      },
+    ]);
+
+  const asSuccess = tally({ ...batch, ok: true });
+  assert.deepEqual(
+    asSuccess.forged,
+    ["forged_success:batch:sample:reported_ok_while_partial"],
+    "an answer that says it refused a call may not also say it succeeded",
+  );
+
+  const unnamed = tally({ ...batch, dropped: [], droppedCount: 0, rejected: [], rejectedCount: 0 });
+  assert.ok(
+    unnamed.faults.includes(
+      "plan_partial_unannounced:batch:sample:the answer says one of its calls did not compile and names none of them",
+    ),
+    `a partial answer that names no refused call is the same silence in a new spelling: ${JSON.stringify(unnamed.faults)}`,
+  );
+
+  const programless = tally({ ...batch, program: { nodes: [] } });
+  assert.ok(
+    programless.faults.some((line) => line.startsWith("plan_partial_without_a_program:batch:sample:")),
+    `a partial plan runs part of the work, so it must carry the program it runs: ${JSON.stringify(programless.faults)}`,
+  );
+});
+
+/**
+ * THE ONE PLACE THE TWO SPELLINGS OF AN ANSWER MEET, pinned because the historical red proofs depend on it.
+ *
+ * Today's compiler answers `status: "compiled" | "partial" | "refused"`; the one at a pinned revision answers `ok: true`
+ * (every call became a step) or `ok: false` (a plan-level refusal that ran nothing). A reading that could only speak the
+ * new field would report every historical answer as `undefined` - which is neither a pass nor a finding, it is a silence
+ * in the one place this gate exists to break them.
+ */
+test("an answer's state is read in whichever spelling the answer carries it", () => {
+  assert.equal(runStateOf({ status: "compiled", ok: true }), "compiled");
+  assert.equal(
+    runStateOf({ status: "partial", ok: false }),
+    "partial",
+    "the state wins over a field that used to mean it",
+  );
+  assert.equal(runStateOf({ status: "refused" }), "refused");
+  assert.equal(runStateOf({ ok: true }), "compiled", "an answer from before the state existed");
+  assert.equal(runStateOf({ ok: false, reasonCode: "plan_script_threw:TypeError" }), "refused");
+  assert.equal(runStateOf(null), "refused", "an answer that is not there ran nothing");
 });
 
 test("a plan-level refusal whose named remedy compiles is repaired, not a dead end", () => {

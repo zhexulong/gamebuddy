@@ -17,12 +17,9 @@ import { Type } from "typebox";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { type CompanionIdentity, createCompanionRuntime } from "./runtime.js";
 import {
-  applyToolDescriptionOverrides,
   assertToolSurface,
-  CLASS_DESCRIPTION_OVERRIDES,
   type CompanionSurface,
   DENIED_TOOL_CLASSES,
-  GAME_SESSION_INSPECTION_DESCRIPTION,
   PERMITTED_TOOL_CLASSES,
   planToolSurface,
   TOOL_CAPABILITY_CLASSES,
@@ -105,15 +102,6 @@ async function loadFixtureExtension(
   });
   await loader.reload();
   return { loader, settingsManager };
-}
-
-/** One registered tool's description, read back from the loader's own registry. */
-function registeredDescription(loader: DefaultResourceLoader, name: string): string {
-  for (const extension of loader.getExtensions().extensions) {
-    const entry = extension.tools.get(name) as { definition?: { description?: unknown } } | undefined;
-    if (entry?.definition?.description !== undefined) return String(entry.definition.description);
-  }
-  throw new Error(`tool ${name} is not registered with this loader`);
 }
 
 /** What the loader registered, in the one shape the plan reads: the extension entry and its tool names. */
@@ -361,87 +349,48 @@ test("the Chat surface stays a dialogue surface: the same extension's tools do n
 });
 
 /**
- * THE MOUNTED WORDS, IN HER SITUATION.
+ * The fingerprint of a class-keyed wording: two tools of one class carrying the SAME description.
+ *
+ * A description belongs to the tool, so two tools that share one are evidence that something above them wrote it - which
+ * is exactly what the deleted override did, and why the property can be read without this file quoting a sentence.
+ * Exported so the falsifier drives the SAME reading over a mounted set the product does not build.
+ */
+export function sharedDescriptionsOf(
+  byClass: ReadonlyMap<string, readonly { name: string; description: string }[]>,
+): readonly string[] {
+  const shared: string[] = [];
+  for (const [toolClass, tools] of byClass)
+    for (const [index, tool] of tools.entries())
+      for (const other of tools.slice(index + 1))
+        if (tool.description === other.description)
+          shared.push(`${toolClass}: ${tool.name} and ${other.name} carry one description`);
+  return shared;
+}
+
+/**
+ * NO SURFACE GIVES A WHOLE CLASS ONE WORDING, AND THIS IS THE READING THAT KEEPS IT SO.
  *
  * <p>
- * The Magic Context extension registers `ctx_search` and `ctx_expand` with the wording of a coding agent's
- * session: "everything that ever happened in this project, not just what is on your desk". The Game surface is
- * where a farmhand who has just forgotten her own morning reads them, and on a 34-minute run she never called
- * either one while using `ctx_reduce` six times - the tool that shrinks. A description that has to be translated
- * before it applies to her is a description that does not apply to her.
+ * The Game surface used to replace every session-inspection tool's description with one hand-written paragraph, keyed by
+ * capability class - because the Magic Context extension writes for a coding agent, and the Game surface is where a
+ * farmhand who has just forgotten her own morning reads it.
  * </p>
  *
  * <p>
- * The override is one table keyed by the surface's own capability classes, so a tool the extension registers
- * later arrives with the class's wording and no edit here. There is no list of names anywhere: the population is
- * the plan's classification, which is the module's own statement of what a session-inspection tool is.
+ * The paragraph was refused rather than derived. What it claimed the tools already declare: `ctx_search`'s own
+ * description states the phrasing hint, and `ctx_expand`'s parameters state the tag-versus-ordinal distinction. The one
+ * claim that is not the tool's - that this archive is HER earlier turns rather than a repository's history - is the
+ * mounted guidance block's, and it states it once (`magic-context-companion-guidance.ts`). Keyed by class, it also
+ * rewrote tools its author never saw: a tool the extension registered tomorrow arrived carrying a sentence written
+ * before it existed, and nothing in the tree could notice.
+ * </p>
+ *
+ * <p>
+ * The population is a real session's mounted tools, grouped by the plan's own classes, and the case is BLOCKED rather
+ * than green when no class mounts two tools.
  * </p>
  */
-test("the Game surface mounts its archive tools with the recall wording, not the desk metaphor", async () => {
-  await withRoot(async (root) => {
-    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup"]);
-    const statusTool = fixtureTool("companion_status");
-    const plan = planToolSurface({
-      surface: "game",
-      groups: [{ toolClass: "host_control", tools: [statusTool] }],
-      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
-      registered: registeredExtensionTools(loader),
-    });
-    assert.equal(registeredDescription(loader, "notes_lookup"), "notes_lookup fixture");
-
-    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
-
-    assert.equal(
-      registeredDescription(loader, "notes_lookup"),
-      CLASS_DESCRIPTION_OVERRIDES.game.session_inspection,
-      "every tool the plan classifies as session inspection mounts with the class's wording",
-    );
-    assert.equal(
-      statusTool.description,
-      "companion_status fixture",
-      "a tool of another class is untouched: the override is keyed by class, not applied to the whole surface",
-    );
-  });
-});
-
-test("a tool the extension registers later arrives already carrying the class's wording", async () => {
-  await withRoot(async (root) => {
-    // The population is the plan, so a tool nothing had heard of at authoring time is covered by being registered
-    // under the extension whose class the Host declares. This is the property that a name list cannot have.
-    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup", "later_lookup"]);
-    const plan = planToolSurface({
-      surface: "game",
-      groups: [],
-      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
-      registered: registeredExtensionTools(loader),
-    });
-    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
-    for (const name of ["notes_lookup", "later_lookup"])
-      assert.equal(registeredDescription(loader, name), GAME_SESSION_INSPECTION_DESCRIPTION);
-  });
-});
-
-test("the Chat surface's copy of the same tools is unchanged", async () => {
-  await withRoot(async (root) => {
-    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup"]);
-    const plan = planToolSurface({
-      surface: "chat",
-      groups: [{ toolClass: "host_control", tools: [fixtureTool("companion_status")] }],
-      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
-      registered: registeredExtensionTools(loader),
-    });
-    assert.deepEqual([...plan.mounted], ["companion_status"], "Chat mounts no session inspection tool");
-    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
-    assert.equal(
-      registeredDescription(loader, "notes_lookup"),
-      "notes_lookup fixture",
-      "Chat has no entry in the table, so the registered words stay the extension's own",
-    );
-    assert.deepEqual(Object.keys(CLASS_DESCRIPTION_OVERRIDES.chat), [], "Chat overrides no class's wording");
-  });
-});
-
-test("the real Game surface mounts ctx_search and ctx_expand with that wording", async () => {
+test("each mounted tool carries its own words, not its class's", async () => {
   await withRoot(async (root) => {
     const runtime = await createCompanionRuntime(
       identity,
@@ -452,33 +401,88 @@ test("the real Game surface mounts ctx_search and ctx_expand with that wording",
       undefined,
       false,
       undefined,
-      "game_archive_wording_01",
+      "game_tool_descriptions_unrewritten",
       undefined,
       "game",
     );
     try {
       const mounted = runtime.session.agent.state.tools;
-      const search = mounted.find((tool) => tool.name === "ctx_search");
-      const expand = mounted.find((tool) => tool.name === "ctx_expand");
-      assert.ok(search !== undefined, "the Game surface mounts ctx_search");
-      assert.ok(expand !== undefined, "the Game surface mounts ctx_expand");
-      assert.equal(search.description, GAME_SESSION_INSPECTION_DESCRIPTION);
-      assert.equal(expand.description, GAME_SESSION_INSPECTION_DESCRIPTION);
-      assert.doesNotMatch(
-        search.description,
-        /desk|archive in this project|commit history/iu,
-        "the mounted words are about her own turns, not about a coding agent's working tree",
+      const byClass = new Map<string, { name: string; description: string }[]>();
+      for (const tool of mounted) {
+        const toolClass = toolClassOf(runtime.toolSurface, tool.name);
+        const held = byClass.get(toolClass) ?? [];
+        held.push({ name: tool.name, description: tool.description });
+        byClass.set(toolClass, held);
+      }
+      const multiToolClasses = [...byClass.entries()].filter(([, tools]) => tools.length >= 2);
+      // Zero population is BLOCKED: with no class mounting two tools, "a class shares one wording" would be an
+      // assertion over nothing.
+      assert.ok(
+        multiToolClasses.length > 0,
+        `no class mounts two tools, so 'a class shares one wording' was never measured: ${[...byClass.entries()]
+          .map(([toolClass, tools]) => `${toolClass} ${String(tools.length)}`)
+          .join(", ")}`,
       );
-      // The population is the plan: every session-inspection tool this surface mounts carries the class wording,
-      // so nothing reaches her with the extension's own vocabulary.
-      const inspection = mounted
-        .filter((tool) => toolClassOf(runtime.toolSurface, tool.name) === "session_inspection")
-        .map((tool) => tool.name);
-      assert.ok(inspection.length >= 2, `the surface mounts session inspection tools: ${inspection.join(", ")}`);
-      for (const tool of mounted.filter((candidate) => inspection.includes(candidate.name)))
-        assert.equal(tool.description, GAME_SESSION_INSPECTION_DESCRIPTION, `${tool.name} kept the old wording`);
+      const shared = sharedDescriptionsOf(byClass);
+      assert.deepEqual(
+        shared,
+        [],
+        "a class that shares one description was given it from above: a tool's words are its own registration's",
+      );
+      // The archive family is the class this whole case is about, and it has to be mounted for the reading to mean
+      // anything at all.
+      const inspection = byClass.get("session_inspection") ?? [];
+      assert.ok(
+        inspection.length >= 2,
+        `the Game surface mounts the session inspection family: ${inspection.map((tool) => tool.name).join(", ")}`,
+      );
+      process.stdout.write(
+        `mounted tools examined ${String(mounted.length)} · classes with two or more ${String(multiToolClasses.length)} · session_inspection ${String(inspection.length)} · shared descriptions ${String(shared.length)}\n`,
+      );
     } finally {
       runtime.session.dispose();
     }
   });
+});
+
+test("the reading reds when a class is given one wording", () => {
+  // THE FALSIFIER. The same reading, over a mounted set the product does not build: the deleted override gave every tool
+  // of the class one paragraph, which is exactly the shape below.
+  assert.deepEqual(
+    sharedDescriptionsOf(
+      new Map([
+        [
+          "session_inspection",
+          [
+            { name: "ctx_search", description: "Your own earlier turns, read back from the archive." },
+            { name: "ctx_expand", description: "Your own earlier turns, read back from the archive." },
+          ],
+        ],
+      ]),
+    ),
+    ["session_inspection: ctx_search and ctx_expand carry one description"],
+    "two tools handed one wording must red, or the case above is decoration",
+  );
+  // And the same reading over two tools that say different things must stay green: a reading that reds everything is as
+  // useless as one that reds nothing.
+  assert.deepEqual(
+    sharedDescriptionsOf(
+      new Map([
+        [
+          "session_inspection",
+          [
+            { name: "ctx_search", description: "Search the archive." },
+            { name: "ctx_expand", description: "Recover original content." },
+          ],
+        ],
+      ]),
+    ),
+    [],
+  );
+  // A class with one tool has nothing to compare, which is why the case above is blocked rather than passed when no class
+  // mounts two.
+  assert.deepEqual(
+    sharedDescriptionsOf(new Map([["host_control", [{ name: "companion_status", description: "status" }]]])),
+    [],
+  );
 });

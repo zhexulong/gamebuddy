@@ -57,11 +57,21 @@
  *            claim whose chain breaks the line after `expect` (`toBeVisible`) - each named rather than
  *            read as a journey that asserts nothing.
  */
+
+export const gateDeclaration = {
+  id: "check-assertion-substance",
+  domain: "data",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertionsOf, journeySpecs, nodeAssertBindings, parseTests } from "./lib/journey-source.mjs";
+import { assertionsOf, journeySpecs, parseTests } from "./lib/journey-source.mjs";
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = "tools/assertion-substance-baseline.json";
@@ -192,9 +202,7 @@ function report({ reading, held, findings, gaps }) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const reading = auditAssertionSubstance({ root });
   // Zero tests is the tree having moved, not every journey asserting well: `--update` over it would also write
   // an empty baseline and erase the recorded debt.

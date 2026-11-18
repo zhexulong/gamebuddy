@@ -12,6 +12,7 @@ import {
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { sameTile, validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const EXPECTED_ACTIONS = ["cancel_active_execution", "move_to_tile", "travel", "observe_scene"];
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "move_to_tile", "observe_scene", "travel"].sort();
@@ -41,7 +42,7 @@ export async function runWiaPassOutSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "wia_pass_out", requiredActions: EXPECTED_ACTIONS });
   try {
     let snapshot = await observeFresh(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -196,6 +197,7 @@ function adjacent(left, right) {
     Math.abs(left.y - right.y) <= 1
   );
 }
+
 function chooseDistantSoilTile(snapshot) {
   const player = { x: snapshot.tile?.x, y: snapshot.tile?.y };
   if (!Number.isInteger(player.x) || !Number.isInteger(player.y)) return null;
@@ -227,15 +229,4 @@ function parseTargetCoordinates(value) {
   const match = typeof value === "string" ? value.match(/^([\d.]+),([\d.]+)$/) : null;
   if (!match) return { x: null, y: null };
   return { x: Number(match[1]), y: Number(match[2]) };
-}
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

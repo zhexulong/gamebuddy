@@ -115,16 +115,40 @@ export type DesktopHostAssemblyInput = Readonly<{
 }>;
 
 /**
- * The desktop entry's pre-launch Mod step, one hop from the bootstrap wire.
- *
- * `host/src/bootstrap/wire/README.md` keeps the wire free of game modules and game
- * policy, so the game-facing step is reached through this composition seam; the
- * module it delegates to owns discovery and the deployment decision and never
- * rejects, so a player whose game is missing, locked or already current still gets
- * the app. The returned token is the bounded outcome the wire announces.
+ * One announced launch preparation: the stage token the launcher prints as its last stage,
+ * and the bounded outcome that stage reached. Both are the wire's own token shape, so the
+ * wire can publish a preparation the composition root performed without knowing what it is.
  */
-export async function deployCompanionGameMod(artifactRoot: string): Promise<CompanionGameModDeploymentOutcome> {
-  return await ensureCompanionGameModDeployed(artifactRoot);
+export type DesktopHostLaunchPreparation = Readonly<{
+  stage: string;
+  outcome: CompanionGameModDeploymentOutcome;
+}>;
+
+/**
+ * The stage every launch preparation announces, and the base of every outcome token the
+ * deployment reports (`companion-mod-installed`, `companion-mod-current`, ...). The outcome
+ * vocabulary belongs to the deployment module; naming the stage here is what keeps the two
+ * from drifting apart silently.
+ */
+const COMPANION_MOD_STAGE = "companion-mod";
+
+/**
+ * What a launch of this generation performs before the Host composition is built: the
+ * player's own installation is brought to the content this generation ships, and the step
+ * never rejects, so a player whose game is missing, locked or several still gets the app.
+ *
+ * It is declared and performed here, not by the bootstrap wire, because this is game
+ * assembly: the composition root is the one layer that knows which adapter it selects, and
+ * the wire is the one layer that must not (`bootstrap/** -/→ any game, Mod, action or game
+ * recipe`, `host/src/composition/README.md`). The wire receives the two bounded tokens and
+ * publishes them on its own status channel; it never learns which installation, which game
+ * or which Mod they are about.
+ */
+export async function prepareDesktopHostLaunch(artifactRoot: string): Promise<DesktopHostLaunchPreparation> {
+  return Object.freeze({
+    stage: COMPANION_MOD_STAGE,
+    outcome: await ensureCompanionGameModDeployed(artifactRoot),
+  });
 }
 
 /**

@@ -43,7 +43,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 import { WORLD_STATE_STALE_TURNS, worldStateStaleThreshold } from "./fact-brief.js";
 import type { Snapshot } from "./protocol.js";
 
@@ -173,9 +173,9 @@ const FROZEN_WINDOW: readonly WorldFact[] = Object.freeze([
  * asserted below so this helper cannot drift from it).
  */
 async function deliverTurn(pump: CompanionEventPump, fact: WorldFact): Promise<PendingBatch | undefined> {
-  pump.enqueueFact(fact);
+  pump.enqueueFact(fact, FACT_PRODUCER.worldStateStale);
   const stale = pump.takeWorldStateStaleFact();
-  if (stale !== undefined) pump.enqueueFact(stale);
+  if (stale !== undefined) pump.enqueueFact(stale, FACT_PRODUCER.worldStateStale);
   const batches: PendingBatch[] = [];
   await pump.flush({
     async deliver(batch) {
@@ -248,12 +248,20 @@ test("a fresh observation is the end of the staleness, not a second warning abou
   await deliverTurn(pump, snapshotFact(352));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS + 1; turn++)
     await deliverTurn(pump, worldFact("time_milestone", "1200", turn));
-  // The world is observed again, and that observation is itself a member of the closed list: it opens the very turn
-  // that delivers it (`TURN_OPENING.observation`), so the age of the reading is measured from here.
-  await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400 } as Snapshot));
+  // The world is observed again. The observation itself opens no turn (`TURN_OPENING`), so it is delivered by the FIRST
+  // turn that opens for another reason - here the next milestone - and the age of the reading is measured from that turn.
+  // The observation MOVES the clock, because a reading is its content: a re-observation that only bumped the revision is
+  // the reading she already had, and the age would keep running from the one she was shown.
+  await deliverTurn(pump, snapshotFact(400, { ...STUCK_READING, revision: 400, timeOfDay: 640 } as Snapshot));
   const after: WorldFact[] = [];
-  for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS - 1; turn++) {
+  for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS; turn++) {
     const batch = await deliverTurn(pump, worldFact("time_milestone", "1300", 100 + turn));
+    if (turn === 1)
+      assert.equal(
+        batch?.broughtObservation,
+        true,
+        "the first turn after the observation is the one that carries it, and says so in the block",
+      );
     after.push(...staleFactsOf(batch));
   }
   assert.deepEqual(after, [], "the reading was one turn old again, so there is nothing stale to name");
@@ -279,7 +287,7 @@ test("the world saying it moved is the other half of the claim: a warp alone mak
   // checking in - and each of those turns carries one more proof that her body is on the Farm.
   seen.push(...staleFactsOf(await deliverTurn(pump, warpFact(364))));
   for (let turn = 1; turn <= WORLD_STATE_STALE_TURNS; turn++) {
-    pump.enqueueFact(bodyTrace("Farm", 39, 15, turn));
+    pump.enqueueFact(bodyTrace("Farm", 39, 15, turn), FACT_PRODUCER.worldStateStale);
     pump.enqueuePlayerInput({
       source: "player_text",
       inputId: `input_${String(turn)}`,
@@ -350,7 +358,7 @@ test("the Host admits the stale fact on the same path the stall fact uses", () =
   const admitAt = source.indexOf("this.loop.pump.takeWorldStateStaleFact");
   assert.ok(admitAt > 0, "the Host must ask the pump for the stale fact, or the fact is never published");
   assert.ok(
-    source.indexOf("this.acceptHostMintedFact(fact)", admitAt) > admitAt,
+    source.indexOf("this.acceptHostMintedFact(fact, FACT_PRODUCER.worldStateStale)", admitAt) > admitAt,
     "the stale fact must travel the one path every Host-minted fact uses",
   );
   assert.match(

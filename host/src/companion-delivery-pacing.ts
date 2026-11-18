@@ -1,3 +1,4 @@
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
 
 /**
@@ -27,7 +28,15 @@ export type CompanionReactionPace = Readonly<{
   byLanguage: Readonly<Record<string, readonly string[]>>;
 }>;
 
-/** The most characters one delivered piece may carry. */
+/**
+ * The most characters one delivered piece may carry.
+ *
+ * <p>
+ * A surface only declares one where something outside it refuses more: the Game surface's is the presentation transport's
+ * own ceiling, read from `MAX_COMPANION_PRESENTATION_TEXT_CHARS` rather than chosen here. A number invented at this layer
+ * deletes speech the transport would have carried - 80 did, cutting 3,920 characters the chat line was built to keep.
+ * </p>
+ */
 export type CompanionLengthBudget = Readonly<{ maxChars: number }>;
 
 /**
@@ -49,10 +58,19 @@ export type CompanionDeliveryPacing = Readonly<{
  *
  * <p>
  * What each mechanism does on the bubble's own unit (one prompt turn, one bubble): `reaction` is the
- * interjection at the HEAD of that bubble's text, `lengthBudget` is the ceiling the bubble is cut to, and
+ * interjection at the HEAD of that bubble's text, `lengthBudget` is the transport's ceiling - the most one
+ * `companion_presentation_request` may carry, which is 50 times what the bubble's own two lines hold - and
  * `typing` paces the mid-message working remark, which only the message unit has - a turn's speech cannot
  * leave before the turn ends, so there is nothing to delay. Keeping the record whole means the surface
  * still names all three even where one of them has nowhere to apply.
+ * </p>
+ *
+ * <p>
+ * THE BUDGET IS NOT THE BUBBLE'S SIZE, and treating it as one was the defect: the Mod draws the same text in the chat
+ * line (which keeps scroll-back and reaches the rest of the lobby) and in a two-line bubble of 448 px that clamps itself
+ * with a visible `…` - `integrations/stardew/CompanionBubble.cs`, `ModEntry.cs` "the chat line is the authority for the
+ * receipt". The bubble's clamp is the surface's own, visible on screen and not a loss; the only thing the Host may cut
+ * is what the wire would refuse.
  * </p>
  */
 export const GAME_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
@@ -70,18 +88,16 @@ export const GAME_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
       ja: Object.freeze(["うん。", "ん。", "あ。", "へえ。"]),
     }),
   }),
-  lengthBudget: Object.freeze({ maxChars: 80 }),
+  lengthBudget: Object.freeze({ maxChars: MAX_COMPANION_PRESENTATION_TEXT_CHARS }),
 });
 
 /**
  * The Chat surface's pacing when the player turns the switch ON.
  *
- * Same three mechanisms as the game bubble, except the length budget. A bubble
- * is a separate item each time, so splitting a long remark into two bubbles is
- * coherent; a transcript row is ONE message, and its final text is the durable
- * record, so a budget there cannot shorten a message without losing the text
- * before the last piece. Typing pace and the opening sound stay, because those
- * two are what make the reply read as speech rather than as output.
+ * Same three mechanisms as the game bubble, except the length budget. A Chat transcript row is not sent over the
+ * presentation transport at all, so that transport's ceiling does not apply to it: a row is ONE message and its final
+ * text is the durable record, so a budget here could not shorten a message without losing text the record keeps. Typing
+ * pace and the opening sound stay, because those two are what make the reply read as speech rather than as output.
  */
 export const CHAT_PACED_DELIVERY: CompanionDeliveryPacing = Object.freeze({
   typing: Object.freeze({
@@ -204,18 +220,21 @@ export function budgetedSpeechPieces(text: string, budget: CompanionLengthBudget
 }
 
 /**
- * The head of one turn's speech that fits a single bubble, and what keeping it cost.
+ * The head of one turn's speech that fits the transport, and what keeping it cost.
  *
  * <p>
- * A bubble holds `budget.maxChars`, so a turn whose whole speech is longer than that cannot arrive
- * whole - and one bubble per turn means the tail is what goes, not a second bubble. The cut lands on
- * the last complete sentence that fits, using the same sentence units `budgetedSpeechPieces` splits
- * on, so a bubble never ends inside a quote, a stage beat or a scaffolding frame.
+ * Its one job is the wire's ceiling: one `companion_presentation_request` carries `budget.maxChars` characters, and the
+ * Mod refuses more rather than drawing it (`companion_presentation_text_too_long`). Below that a turn arrives whole - the
+ * chat line is the authority and keeps every line the player scrolled past - so nothing here ever asks a reply to be
+ * shorter than the transport carries. A bubble that shows two lines and a `…` is the Mod's own clamp on text it
+ * received complete, and it is not a loss this function reports.
  * </p>
  * <p>
- * One sentence longer than the budget has no boundary to cut at, so it is cut at the character
- * ceiling instead: `sentencesDropped` 0 beside a non-zero `truncatedChars` is that shape and the
- * only one, which is what tells a reader the reply had no complete sentence to stop at.
+ * When it does cut, the cut lands on the last complete sentence that fits, using the same sentence units
+ * `budgetedSpeechPieces` splits on, so a line never ends inside a quote, a stage beat or a scaffolding frame; one
+ * sentence longer than the ceiling has no boundary to cut at and is cut at the character ceiling instead (that is the
+ * shape `sentencesDropped` 0 beside a non-zero `truncatedChars` names). Either way the loss is COUNTED on the record the
+ * caller reads (`NativeCompanionTurnBubble.truncatedChars`, `sentencesDropped`), never deleted in silence.
  * </p>
  */
 export function budgetedSpeechHead(

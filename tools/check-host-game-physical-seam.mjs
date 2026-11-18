@@ -2,7 +2,19 @@
  * red-proof: inject  a games/stardew module importing bootstrap/roots/stardew-private-mod-profile-staging ->
  *                    verdict `blocked`, violation `game_imports_generic_layer` naming that importer, target and
  *                    line 1, exit 1 (tools/check-host-game-physical-seam.mjs)
+ * red-proof: history the tree at 65dcc6b3, where the wire awaited `deployCompanionGameMod` from the composition root ->
+ *   `bootstrap_names_game_symbol` naming `host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts` line 14,
+ *   identifier `deployCompanionGameMod`, token `game`, plus `bootstrap_calls_game_typed_value` on its call site at
+ *   line 172, verdict `blocked` (re-run of the checker over `git archive HEAD host/src`)
  */
+
+export const gateDeclaration = {
+  id: "check-host-game-physical-seam",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { builtinModules, createRequire } from "node:module";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
@@ -86,6 +98,16 @@ const APPROVED_STARDew_RAW_BUILTIN_MODULES = new Set(["node:child_process"]);
 // see -- words only one game's world uses.
 const GENERIC_RUNTIME_PREFIX = "containment/runtime/";
 const GAME_PROPER_NOUNS = Object.freeze(["cabin", "farmhand", "junimo", "pelican"]);
+// `host/src/composition/README.md`: "bootstrap/**, containment/runtime/** ─/→ any game, Mod, action or game
+// recipe". A game identity (`stardew`, derived from `games/`) and a proper noun (`cabin`, ...) are not the only
+// words that sentence forbids, and reading import PATHS alone could not see the one call that broke it: the wire
+// awaited `deployCompanionGameMod` from the generic composition root, so the target of the import was a generic
+// layer module, the identity never appeared, and the gate reported `passed` over a bootstrap that staged a game
+// installation at boot. The concept the sentence names - a game, a Mod - is therefore vocabulary here too, and
+// the layer it is answered against is the wire: `containment/runtime` is spelled with those words on purpose (its
+// game-facing contract is `game-runtime.ts`) and its own identifier rule above already covers it.
+const WIRE_LAYER = "bootstrap";
+const WIRE_FORBIDDEN_NOUNS = Object.freeze(["game", "mod"]);
 function shown(path, root = repositoryRoot) {
   return relative(root, path).replaceAll("\\", "/");
 }
@@ -255,6 +277,52 @@ function violation(kind, importer, specifier, target, line, detail, root) {
 }
 function scriptKind(path) {
   return [".js", ".jsx", ".mjs", ".cjs"].includes(extname(path)) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+}
+/** The name an imported binding carries into the importing file, and where it came from. */
+function importedBindings(file) {
+  const bindings = new Map();
+  file.forEachChild(function visit(node) {
+    if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      if (clause !== undefined && clause.namedBindings !== undefined && ts.isNamedImports(clause.namedBindings)) {
+        for (const element of clause.namedBindings.elements) {
+          bindings.set(element.name.text, {
+            imported: (element.propertyName ?? element.name).text,
+            specifier: node.moduleSpecifier.text,
+            line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  });
+  return bindings;
+}
+/**
+ * The declared return type of one exported declaration, as written.
+ *
+ * It is read off the declaration rather than resolved through the type checker: the question is whether the
+ * importer can NAME a game, a Mod or an installation, and an annotation that spells one already answers it. A
+ * declaration whose type is inferred reports `null`, which is the honest reading - nothing was written down to
+ * judge - and an inferred game type therefore reaches the call-site rule only through its own name.
+ */
+function declaredReturnType(file, name) {
+  let declared = null;
+  file.forEachChild(function visit(node) {
+    if (declared !== null) return;
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+      declared = node.type?.getText() ?? null;
+      return;
+    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+      const initializer = node.initializer;
+      if (initializer !== undefined && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)))
+        declared = initializer.type?.getText() ?? null;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  });
+  return declared;
 }
 function architectureBareSpecifier(specifier) {
   const first = specifier.replace(/^node:/, "").split(/[\\/]/)[0];
@@ -592,6 +660,88 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
         );
     }
   }
+  // The wire's own names and call sites. `host/src/bootstrap/README.md` says the wire "does not know Stardew
+  // lifecycle policy or game-specific guardian behavior" and the composition README says it may not reach "any
+  // game, Mod, action or game recipe": both sentences are about what the file NAMES, and the import-path rule
+  // above cannot see a name - `deployCompanionGameMod` lives in the generic composition root, so the path rule had
+  // nothing to report while the wire staged a game installation at boot.
+  //
+  // The population excludes the paths this gate itself declares game-facing in `ALLOWED_STARDew_GENERIC_IMPORTERS`
+  // (`bootstrap/roots/stardew-private-mod-profile-staging`, whose README owns "published Stardew artifact provenance
+  // verification"). The exclusion is therefore not a second list: it is read from the one declaration the gate
+  // already carries, and it expires the day that row is deleted. `callSites` is printed because a tree whose wire
+  // imports nothing to call would otherwise agree with itself; the run is already blocked when the tree holds no
+  // production module at all.
+  const wireFiles = productionFiles.filter(
+    (path) => layer(path, root) === WIRE_LAYER && !ALLOWED_STARDew_GENERIC_IMPORTERS.has(sourcePath(path, root)),
+  );
+  const wireVocabulary = new Set([...identities, ...GAME_PROPER_NOUNS, ...WIRE_FORBIDDEN_NOUNS]);
+  const parsedTargets = new Map();
+  const targetOf = (path) => {
+    const cached = parsedTargets.get(path);
+    if (cached !== undefined) return cached;
+    const parsed = ts.createSourceFile(
+      path,
+      readFileSync(path, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKind(path),
+    );
+    parsedTargets.set(path, parsed);
+    return parsed;
+  };
+  let wireCallSites = 0;
+  for (const path of wireFiles) {
+    const file = targetOf(path);
+    const bindings = importedBindings(file);
+    for (const binding of bindings.values()) {
+      const token = vocabularyTokens(binding.imported).find((candidate) => wireVocabulary.has(candidate));
+      if (token === undefined) continue;
+      violations.push({
+        ...violation(
+          "bootstrap_names_game_symbol",
+          path,
+          binding.specifier,
+          null,
+          binding.line,
+          "bootstrap_wire_must_not_name_a_game_mod_or_installation",
+          root,
+        ),
+        identifier: binding.imported,
+        token,
+      });
+    }
+    const calls = [];
+    file.forEachChild(function visit(node) {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) calls.push(node);
+      ts.forEachChild(node, visit);
+    });
+    for (const call of calls) {
+      const binding = bindings.get(call.expression.text);
+      if (binding === undefined) continue;
+      wireCallSites += 1;
+      const resolution = resolveSource(path, binding.specifier, canonicalRoot);
+      if (resolution.kind !== "resolved") continue;
+      const declared = declaredReturnType(targetOf(resolution.target), binding.imported);
+      if (declared === null) continue;
+      const token = vocabularyTokens(declared).find((candidate) => wireVocabulary.has(candidate));
+      if (token === undefined) continue;
+      violations.push({
+        ...violation(
+          "bootstrap_calls_game_typed_value",
+          path,
+          binding.specifier,
+          resolution.target,
+          file.getLineAndCharacterOfPosition(call.getStart(file)).line + 1,
+          `bootstrap_wire_calls_a_value_whose_declared_type_names_${token}`,
+          root,
+        ),
+        identifier: binding.imported,
+        declared,
+        token,
+      });
+    }
+  }
   violations.sort(
     (a, b) =>
       (a.target === null && a.kind === "game_imports_desktop_raw_module" ? -1 : 0) -
@@ -606,6 +756,7 @@ export function checkHostGamePhysicalSeam({ root = repositoryRoot } = {}) {
     violations,
     blocked,
     vocabulary: { examined: genericRuntimeFiles.length, gameIdentities: identities },
+    wire: { files: wireFiles.length, callSites: wireCallSites },
   };
 }
 
@@ -614,7 +765,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   if (report.verdict !== "passed") console.error(JSON.stringify(report, null, 2));
   else
     console.log(
-      `host game physical seam: passed (${report.inspectedFiles.length} production files; generic runtime vocabulary read ${report.vocabulary.examined} source(s) against ${report.vocabulary.gameIdentities.length} game identit${report.vocabulary.gameIdentities.length === 1 ? "y" : "ies"} plus ${GAME_PROPER_NOUNS.length} game noun(s))`,
+      `host game physical seam: passed (${report.inspectedFiles.length} production files; generic runtime vocabulary read ${report.vocabulary.examined} source(s) against ${report.vocabulary.gameIdentities.length} game identit${report.vocabulary.gameIdentities.length === 1 ? "y" : "ies"} plus ${GAME_PROPER_NOUNS.length} game noun(s); wire read ${report.wire.files} file(s) and ${report.wire.callSites} imported call site(s))`,
     );
   process.exitCode = report.verdict === "passed" ? 0 : (report.blocked?.length ?? 0) > 0 ? 2 : 1;
 }

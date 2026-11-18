@@ -340,14 +340,13 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         // written in. Two facts, two fields: a tile's `occupant` is what a declaration is read against, and `container` is
         // where it is stored.
         string container = "none";
-        string occupant = FarmhandForEachHealing.NoOccupant;
+        string occupant = TileOccupancy.Of(this.farm, x, y);
 
         foreach (ResourceClump clump in this.farm.resourceClumps)
         {
             if (clump.Tile != tile) continue;
             occupied = true;
             container = "resourceClump";
-            occupant = StardewBodyController.ClumpOccupant(clump.parentSheetIndex.Value);
             kind = ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _)
                 ? ClearableKind.Map("resourceClump", toolKind) ?? FarmhandForEachKindActions.ObjectKind
                 : FarmhandForEachKindActions.ObjectKind;
@@ -358,11 +357,8 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         {
             occupied = true;
             container = "object";
-            string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
-            // An object this pass cannot name is `object` - the word the tile query publishes for it - and no declaration
-            // clears that word, so a refused row on such a tile is refused BY NAME instead of guessed at.
-            occupant = detail.Length > 0 ? detail : "object";
-            kind = ClearableKind.Map("object", detail) ?? FarmhandForEachKindActions.ObjectKind;
+            // The same word the rectangle publishes for this tile, because it is the same predicate per action.
+            kind = ClearableKind.Map("object", TileOccupancy.ObjectKind(item)) ?? FarmhandForEachKindActions.ObjectKind;
         }
 
         HoeDirt? dirt = null;
@@ -375,34 +371,31 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
             {
                 case Grass:
                     occupied = true;
-                    occupant = "grass";
                     kind = ClearableKind.Map("terrain", "grass") ?? FarmhandForEachKindActions.GroundKind;
                     break;
                 case HoeDirt hoed:
                     dirt = hoed;
                     occupied = hoed.crop is not null;
-                    occupant = hoed.crop is null ? FarmhandForEachHealing.NoOccupant : "crop";
                     kind = hoed.crop is null
                         ? FarmhandForEachKindActions.SoilKind
                         : ClearableKind.Map("terrain", "crop") ?? FarmhandForEachKindActions.GroundKind;
                     break;
-                // A TREE is the one terrain feature whose two phases are two different published actions, so the two
-                // words are the two `Clears` occupants those actions declare: a standing tree and its stump.
-                case Tree tree:
-                    occupied = true;
-                    occupant = tree.stump.Value ? "tree_stump" : "tree";
-                    break;
+                // Every other feature stands on the tile - a tree's two phases (a standing tree and its stump) are the
+                // classifier's two words - and `occupied` is all this pass needs from them.
                 default:
                     occupied = true;
-                    occupant = "terrain";
                     break;
             }
         }
 
-        // `doesTileHaveProperty` answers the property's VALUE as a string (or null when the tile has none), which is how
-        // the Hoe itself reads `Diggable`.
-        bool tillable = this.farm.doesTileHaveProperty(x, y, "Diggable", "Back") is not null;
-        if (!occupied && dirt is null && tillable) kind = FarmhandForEachKindActions.EmptyTillableKind;
+        // The ONE tillability answer, asked rather than re-derived. This line used to read the map's `Diggable`
+        // property alone, so a tile that already carried a `HoeDirt` - or a grass tile, or one under a wall - answered
+        // `tillable: true` here and `till_soil` refused it at the same revision (round57: `not_matched=0 of decided=16`
+        // while two dispatched rows were `HoeDirt`, and `inspect_tiles` called exactly those two `tillable: false`).
+        bool tillable = ExecutionManager.IsTillableTile(this.farm, x, y);
+        // `occupied` and `tillable` are the two halves of the kind: a bare tile the Hoe admits is `empty_tillable`,
+        // and `tillable` already answers false for anything carrying a feature, a crop or a placed object.
+        if (!occupied && tillable) kind = FarmhandForEachKindActions.EmptyTillableKind;
         if (kind == FarmhandForEachKindActions.SoilKind) container = "terrain";
 
         var fields = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)

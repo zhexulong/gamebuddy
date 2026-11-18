@@ -10,6 +10,14 @@
  * red-proof: inject  the same literal spelled in a second module -> `duplicated_authority:<id>:<path>:<line>`
  *                    (tools/lib/duplicated-authority.test.mjs, "a literal in two modules is caught")
  */
+
+export const gateDeclaration = {
+  id: "check-duplicated-authority",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DECLARED, findDuplicatedAuthorities, formatFinding } from "./lib/duplicated-authority.mjs";

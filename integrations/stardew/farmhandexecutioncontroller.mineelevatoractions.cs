@@ -42,7 +42,6 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
-    /// <summary>The elevator's tile index in the Buildings layer of a MineShaft.</summary>
     private const int MineElevatorTileIndex = 112;
     /// <summary>Native ceiling: the elevator works only at mineLevel &lt;= 120 (MineShaft.cs:3067).</summary>
     private const int HighestElevatorMineLevel = 120;
@@ -100,12 +99,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return false;
     }
 
-    /// <summary>
-    /// Snapshot projection, published only when the native selection is actually
-    /// legal right now: a MineShaft carrying the elevator tile, at a level the
-    /// elevator serves (mineLevel &lt;= 120). Off that, the empty list is the honest
-    /// answer because the action would refuse.
-    /// </summary>
     private IReadOnlyList<BridgeMineElevatorFloorTarget> DiscoverMineElevatorFloors()
     {
         Farmer? player = Game1.player;
@@ -139,13 +132,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             : this.ledger.NewExecutionId(request.RequestId);
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
-            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
-            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
-            // the failure-mode collapse the review flagged.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        // One body at a time, exactly like the other travel-family actions: the
-        // specification owns the body until the Warped edge releases it.
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null
@@ -154,9 +142,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RejectBodyOwned(request.RequestId, executionId);
         }
 
-        // Native facility first: a MineShaft with the elevator tile. A location that
-        // has no elevator cannot select a floor, and this is also what stops the
-        // action from being usable from the entrance map.
         if (!TryFindMineElevatorTile(actor.currentLocation, out int elevatorX, out int elevatorY))
             return this.RememberTerminal(
                 request.RequestId,
@@ -180,8 +165,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "missing_expected_target_id", null);
         string targetId = request.Args.ExpectedTargetId;
 
-        // Re-derive the offered set on the game thread: the client's id is matched
-        // against live progress, never parsed into a level.
         int lowestLevelReached = MineShaft.lowestLevelReached;
         int? selectedFloor = null;
         foreach (int floor in SelectableMineFloors(lowestLevelReached))
@@ -210,16 +193,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "mine_elevator_floor_already_current",
                 $"floor={floorToSelect}");
 
-        // A floor this surface cannot answer is refused BY NAME before the warp, exactly like the ladder descent:
-        // the elevator is just a shorter route to the same hostile floor. Floor 0 is the mine ENTRANCE map - the way
-        // out - so it is not a descent and this guard does not apply to it.
         if (floorToSelect != 0
             && this.RefuseDescentIntoMonsters(request.RequestId, executionId, shaft, floorToSelect, attempt: "elevator") is { } refusedFloor)
             return refusedFloor;
 
-        // Floor 0 targets the mine entrance map; every other floor targets a
-        // generated level, and the native layout repositions the actor on arrival,
-        // so the postcondition for those is "reached the level", not a fixed tile.
         string targetLocation = floorToSelect == 0
             ? MineEntranceLocation
             : $"{GeneratedMineLevelPrefix}{floorToSelect}";

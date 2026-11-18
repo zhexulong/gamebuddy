@@ -12,6 +12,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { parseEvidence } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "break_resource_clump";
 /** The action's own success word (`ExecuteBreakResourceClump`: `succeeded` only when the clump left the layer). */
@@ -146,7 +147,7 @@ export async function runBreakResourceClumpSmoke(
     if (terminal.state !== "succeeded" || terminal.reasonCode !== SUCCESS_CODE)
       throw new Error(`break_resource_clump_failed:${terminal.state}:${terminal.reasonCode}`);
 
-    const evidence = parseStrictEvidence(terminal.evidence);
+    const evidence = parseEvidence(terminal.evidence);
     const after = await waitForFreshSnapshot(client, {
       minRevision: terminal.revision,
       timeoutMs: postconditionTimeoutMs,
@@ -442,21 +443,6 @@ function chooseWrongTool(snapshot, requiredToolKind) {
   if (candidates.length > 0)
     return { slot: candidates[0].slot, category: candidates[0].category, label: candidates[0].label };
   throw new Error(`break_resource_clump_no_wrong_tool_available:${requiredToolKind}`);
-}
-
-function parseStrictEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  const fields = Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-  return fields;
 }
 
 function postconditionReason({ clumpGone, toolRestored, receiptMatchesWorld }) {

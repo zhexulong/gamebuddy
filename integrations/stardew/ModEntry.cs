@@ -11,11 +11,11 @@ using GameBuddy.Stardew.Handlers;
 using GameBuddy.Stardew.Sensory;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
-using StardewValley.BellsAndWhistles;
 using StardewValley.Menus;
 using StardewValley.Tools;
 
@@ -129,7 +129,7 @@ public sealed partial class ModEntry : Mod
     private long hostAutomationDeadlineUnixMs;
     private LiveGameLocaleWait? hostAutomationLocaleWait;
     private long nextFarmhandProvisionerAttemptAtMs;
-    private bool hostAutomationSaveMenuOpened;
+    private bool nativeSaveMenuOpened;
     private bool hostAutomationObservedAiClient;
     private bool hostAutomationObservedAiClientExit;
     private bool nativeLocalPlayerFixtureStarted;
@@ -152,6 +152,8 @@ public sealed partial class ModEntry : Mod
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
+    // Presentation only: a client shows the companion's lines it has heard about, and forgets them on their own clock.
+    private readonly CompanionBubbleBoard companionBubbles = new();
     private StardewSalientEventHooks? salientEventHooks;
     private NpcDialoguePager? npcDialoguePager;
     private ModalTransitionObserver? modalTransitionObserver;
@@ -159,6 +161,13 @@ public sealed partial class ModEntry : Mod
 
     public override void Entry(IModHelper helper)
     {
+        // The ONE config.json read. It is startup state and stays: a policy the player set while the
+        // game was closed cannot arrive as a message, because there was no pipe to deliver it on, so
+        // the file is the only path for it. After this line the document is never re-read - a live
+        // change arrives as a `farmhand_action_policy_request` frame (`HandleFarmhandActionPolicy`),
+        // which is the same payload the Host's own projection writes here. `config.json` remains the
+        // Mod's own write target (`PersistVerifiedFarmhandScope`), which is why the pushed policy is
+        // never copied into `this.config`: this field keeps describing what is on disk.
         this.config = helper.ReadConfig<ModConfig>();
         // One Perfetto trace per run, next to the SMAPI log. Created before anything else so the first span of a
         // run is not missing, and owned by a timer thread that keeps flushing even when the tick stops returning.
@@ -189,10 +198,13 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
+        helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
+        // The declared slot travels into the Mod's own log: the draw site is an event subscription, so nothing in a live
+        // run's log would otherwise say which engine passes a companion line is drawn over (see CompanionBubbleSlot).
+        this.Monitor.Log($"[companion-bubble] slot={CompanionBubbleSlot}", LogLevel.Trace);
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
-        helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded AI Farmhand directive/route/body execution trace evidence.", this.TraceCommand);
         // Fixture console mechanics are registered only under an explicit valid
         // NativeLocalPlayerFixture admission. Handlers additionally revalidate
         // the same admission on the game thread before executing, so a stale or
@@ -361,7 +373,6 @@ public sealed partial class ModEntry : Mod
             // pathing-behaviour work, so it is activated the same way the xUnit
             // seam probes are (a GAMEBUDDY_STARDEW_* variable set by the external
             // harness) rather than by a field in a user profile.
-            this.pathPredicateProbe = PathPredicateProbe.TryStart(this.Monitor);
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -588,7 +599,14 @@ public sealed partial class ModEntry : Mod
 
     private void OnModMessageReceived(object? sender, ModMessageReceivedEventArgs e)
     {
-        if (e.FromModID != this.ModManifest.UniqueID || e.Type != PlayerControlProtocol.MessageType)
+        if (e.FromModID != this.ModManifest.UniqueID)
+            return;
+        if (e.Type == CompanionBubble.MessageType)
+        {
+            this.ShowReceivedCompanionBubble(e);
+            return;
+        }
+        if (e.Type != PlayerControlProtocol.MessageType)
             return;
         // Record wire arrival before role/lifecycle admission so an early guard
         // cannot masquerade as a failed host-to-AI transport.
@@ -910,7 +928,6 @@ public sealed partial class ModEntry : Mod
         FarmhandExecutionJournal executionJournal = new(new SmapiGlobalDataPersistence(this.Helper.Data));
         state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
             receipt => this.PublishReceipt(state, receipt),
-            trace => this.PublishBodyTrace(state, trace),
             executionJournal,
             executionScope);
         // The profile's declared co-op night minimum governs the wire action too,
@@ -1200,10 +1217,6 @@ public sealed partial class ModEntry : Mod
         this.MarkTickPhase("window_mode");
         Volatile.Write(ref this.tickWatchdogPhase, "window_mode");
         this.ApplyWindowModeTick();
-        // Before any role or lifecycle gate, because this is the one piece of presentation that must run on EVERY
-        // client: the human watching the companion is on the host client, which returns below without ever reaching
-        // the AI-screen work.
-        this.FollowCompanionBubbles();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
         {
@@ -1339,9 +1352,7 @@ public sealed partial class ModEntry : Mod
         // This tick is past every gate, so a gate span opened by an earlier tick ends here - before the work it was
         // excluding from the timeline.
         ModTrace.NoteTickGatePassed();
-        this.LogStageOnce("capability_publication");
-        this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
-        this.LogStageOnce("capability_publication_done");
+
             this.LogStageOnce("observe_bridge_generation");
         this.ObserveBridgeGeneration(nativeLocalState);
         this.LogStageOnce("observe_bridge_generation_done");
@@ -1394,7 +1405,7 @@ public sealed partial class ModEntry : Mod
         this.TryStartFarmhandProvisioner();
         this.hostFarmhandProvisioner?.Update();
         this.TryObserveNativeAutomationClientExit();
-        this.TryTriggerNativeAutomationSave();
+        this.TryTriggerNativeSave();
         this.VerifySharedWorldTalkToNpcJoin();
         this.TryInitializeNativeFixtureScenario();
         // A co-op night has one lifecycle per farmer: the Host process arms one
@@ -1417,7 +1428,6 @@ public sealed partial class ModEntry : Mod
             return;
 
         ScreenEmbodimentState state = this.GetEmbodimentState();
-        this.RefreshFarmhandCapabilityPublication(state, e.Ticks);
         this.ObserveBridgeGeneration(state);
         this.ObserveNativeChatPipeDeliveries(state);
         this.ObserveNavigationPipeDeliveries(state);
@@ -1822,9 +1832,9 @@ public sealed partial class ModEntry : Mod
             savedState.Executions!.ObserveDayAdvanceSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
-        // still settling. Release the fixture latch at the authoritative Saved
+        // still settling. Release the latch at the authoritative Saved
         // edge so a newly pending attachment can request its own native save.
-        this.hostAutomationSaveMenuOpened = false;
+        this.nativeSaveMenuOpened = false;
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
@@ -1833,7 +1843,7 @@ public sealed partial class ModEntry : Mod
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.companionSessionHosting?.End();
         this.worldCreationBootstrap?.OnReturnedToTitle();
-        this.hostAutomationSaveMenuOpened = false;
+        this.nativeSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
         this.farmhandProvisioner = null;
         this.nativeLocalPlayerFixtureStarted = false;
@@ -1874,13 +1884,6 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.CreateSnapshot(), BridgeProtocol.JsonOptions), LogLevel.Info);
     }
 
-    private void TraceCommand(string command, string[] args)
-    {
-        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
-            return;
-        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.Trace, BridgeProtocol.JsonOptions), LogLevel.Info);
-    }
-
     private void CancelCommand(string command, string[] args)
     {
         if (!this.RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state))
@@ -1889,37 +1892,59 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
-    /// <summary>Game-thread only policy reload. It can only re-publish the fixed catalog's enabled subset.</summary>
-    private void RefreshFarmhandCapabilityPublication(ScreenEmbodimentState state, uint currentTick)
+    /// <summary>
+    /// One pushed action policy. The Host sends the same two denial keys `config.json` carries, so a
+    /// player's settings save reaches a RUNNING world as a message on the authenticated bridge rather
+    /// than as a disk poll; <see cref="Entry"/> says why the file is still read once at startup.
+    /// </summary>
+    private string? HandleFarmhandActionPolicy(ScreenEmbodimentState state, string json, string? correlationId)
     {
+        if (!BridgeProtocol.TryDeserializeInbound(json, "farmhand_action_policy_request", out BridgeEnvelope<FarmhandActionPolicy>? request, out string parseReason, "deniedActions", "deniedActionFamilies")
+            || request is null)
+        {
+            this.Monitor.Log($"GameBuddy rejected a malformed Farmhand action policy push: {parseReason}.", LogLevel.Warn);
+            return this.SerializeError(state, correlationId, parseReason);
+        }
+        // The pushed pair is laid OVER the startup-loaded config rather than replacing it. The file
+        // owns everything the policy does not - the bridge credentials, the fixture fields and the
+        // test-only ExperimentalActions opt-in - and a frame that carried those would be a second
+        // config authority. The copy is local: `this.config` keeps matching config.json on disk, so
+        // the scope persist below never writes a Host-pushed policy back as the player's own.
+        ModConfig pushed = this.config with
+        {
+            DeniedActions = request.Payload.DeniedActions,
+            DeniedActionFamilies = request.Payload.DeniedActionFamilies,
+        };
+        if (!this.ApplyFarmhandActionPolicy(state, pushed))
+        {
+            this.Monitor.Log("GameBuddy refused a pushed Farmhand action policy that names something the catalogue does not declare.", LogLevel.Warn);
+            return this.SerializeError(state, correlationId, "invalid_farmhand_action_policy");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Game-thread only policy application. It can only re-publish the fixed catalog's enabled subset,
+    /// so a pushed policy can never add an action the Mod does not register. Returns false when the
+    /// policy itself is refused, before any publication is derived from it.
+    /// </summary>
+    private bool ApplyFarmhandActionPolicy(ScreenEmbodimentState state, ModConfig policy)
+    {
+        if (!policy.HasValidActionPolicy)
+            return false;
         if (state.CapabilityPublication is null || state.BridgeSession is null || state.LocalPipeBridge is null)
-            return;
-        // The reload re-reads config.json, so it is gated to the frozen 120-tick
-        // interval instead of running on every frame; see
-        // FarmhandPolicyRefreshThrottle for the bound and why it counts ticks.
-        if (!state.PolicyRefreshThrottle.ShouldRefresh(currentTick))
-            return;
-        ModConfig refreshed;
-        try { refreshed = this.Helper.ReadConfig<ModConfig>(); }
-        catch (Exception exception)
+            return true;
+        FarmhandCapabilityPublication next = state.CapabilityPublication.WithEnabledActions(policy.EnabledActionSet);
+        if (!ReferenceEquals(next, state.CapabilityPublication))
         {
-            this.Monitor.Log($"GameBuddy ignored unreadable Farmhand action policy reload: {exception.GetType().Name}.", LogLevel.Warn);
-            return;
+            state.CapabilityPublication = next;
+            long generation = state.LocalPipeBridge.CurrentGeneration;
+            string correlationId = Guid.NewGuid().ToString("N");
+            if (generation != 0 && state.BridgeSession.TryCreateCatalogUpdate(generation, state.LastPublishedCatalogRevision, correlationId, out string json)
+                && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
+                state.LastPublishedCatalogRevision = next.CapabilityRevision;
         }
-        if (!refreshed.HasValidActionPolicy)
-        {
-            this.Monitor.Log("GameBuddy ignored invalid Farmhand action policy reload.", LogLevel.Warn);
-            return;
-        }
-        FarmhandCapabilityPublication next = state.CapabilityPublication.WithEnabledActions(refreshed.EnabledActionSet);
-        if (ReferenceEquals(next, state.CapabilityPublication))
-            return;
-        state.CapabilityPublication = next;
-        long generation = state.LocalPipeBridge.CurrentGeneration;
-        string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && state.BridgeSession.TryCreateCatalogUpdate(generation, state.LastPublishedCatalogRevision, correlationId, out string json)
-            && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
-            state.LastPublishedCatalogRevision = next.CapabilityRevision;
+        return true;
     }
 
     private void ObserveBridgeGeneration(ScreenEmbodimentState state)
@@ -2028,6 +2053,7 @@ public sealed partial class ModEntry : Mod
                     "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
                     "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
                     "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
+                    "farmhand_action_policy_request" => this.HandleFarmhandActionPolicy(state, inbound.Json, correlationId),
                     _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
 
@@ -2101,8 +2127,9 @@ public sealed partial class ModEntry : Mod
     /// <summary>
     /// Delivers the answer to every execution request the Mod held for a transient body hold. The execution
     /// pump resolves them while it ticks, so this runs right after it: the answer is the dispatch's own
-    /// receipt, or the named refusal the bounded wait ended in, and it carries the correlation of the request
-    /// it answers rather than a fresh one.
+    /// receipt, or the named hold the bounded wait ended in - a refusal of the dispatch, never a receipt, because a
+    /// request that was never started has no execution state to state. Either way it carries the correlation of the
+    /// request it answers rather than a fresh one.
     /// </summary>
     private void DeliverHeldExecutionResponses(ScreenEmbodimentState state)
     {
@@ -2331,17 +2358,6 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy dropped semantic event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
-    private void PublishBodyTrace(ScreenEmbodimentState state, ExecutionTrace trace)
-    {
-        if (state.LocalPipeBridge is null || state.BridgeSession is null)
-            return;
-        long generation = state.LocalPipeBridge.CurrentGeneration;
-        string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && state.BridgeSession.TryCreateBodyTraceEvent(generation, trace, correlationId, out string json)
-            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
-            this.Monitor.Log("GameBuddy dropped body trace event due to closed/backpressured bridge.", LogLevel.Warn);
-    }
-
     private void PublishLifecycle(ScreenEmbodimentState state, string lifecycleState, string reasonCode)
     {
         if (state.LocalPipeBridge is null || state.BridgeSession is null)
@@ -2528,35 +2544,27 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// The in-world half of one companion line: text over her head, in the world,
-    /// where a player already looking at her reads it without looking away.
+    /// The in-world half of one companion line: the engine's own speech bubble over her head, where a player already
+    /// looking at her reads it without looking away.
     ///
     /// <para>
-    /// The seam is the engine's own text sprite, not <c>showTextAboveHead</c>: on the
-    /// target version that method is declared by <c>NPC</c> alone and the companion is a
-    /// <c>Farmer</c>, which has no <c>*AboveHead*</c> member at all. A
-    /// <c>TemporaryAnimatedSprite</c> carrying <c>text</c> with
-    /// <c>extraInfoForEndBehavior = -777</c> is the engine's primitive for text over an
-    /// arbitrary character (<c>TemporaryAnimatedSprite.draw</c> routes it to
-    /// <c>SpriteText.drawString</c>), and <c>Multiplayer.broadcastSprites</c> is the
-    /// engine's own sync path for it - <c>temporarySprites</c> is a plain list, so the
-    /// broadcast IS the sync and there is no world state to mirror.
+    /// Two steps, one line. This client shows it locally and broadcasts it to the other clients, because SMAPI does not
+    /// deliver a ModMessage to its own sender - and the local half is also what single-player draws, where there is no
+    /// peer to send to. Every client that receives it draws it in its own above-always-front layer from the speaker's
+    /// own standing pixel (<see cref="DrawCompanionBubbles"/>), which is why the human on the host client sees the line
+    /// over the farmer they are watching.
     /// </para>
     /// <para>
-    /// The APPEARANCE is now three things the engine alone could not give a text sprite: a panel behind the glyphs
-    /// (white text on snow and in the dark was unreadable), a position re-derived from her every frame (the text branch
-    /// of <c>TemporaryAnimatedSprite.draw</c> draws at <c>GlobalToLocal(position)</c> and never reads
-    /// <c>attachedCharacter</c>, so a spawn-time position hangs in the air behind her), and an alpha that follows the
-    /// line's own elapsed ticks rather than a loop count that ends on a cut. <see cref="CompanionBubble"/> owns all
-    /// three, and <see cref="FollowCompanionBubbles"/> is the per-frame half - the only code in the Mod that runs on
-    /// every client, because the human watching the companion is on the HOST client, which never reaches this method.
+    /// WHAT CROSSES THE WIRE IS THE LINE, NOT A DRAWING. The previous shape broadcast two sprites - glyphs and a panel
+    /// assembled from the bubble's centre tile - because a broadcast sprite must be something the receiving client can
+    /// reload from a content asset name. What arrived was a right-angled rectangle with no corners, no edges and no
+    /// tail. Now the wire carries the speaker and the text, and the engine's own 9-slice box and pointer are drawn around
+    /// it over her head (<see cref="CompanionBubble.Draw"/>) - the box the game's own speech bubbles use, with the glyphs
+    /// in the dialogue face rather than the pet-name font, so the line is as readable as a villager's.
     /// </para>
     /// <para>
-    /// Topology: only the AI screen reaches this method (the host role has no bridge),
-    /// so the emission is the Farmhand's and <c>broadcastSprites</c> carries it - to the
-    /// master's own world through <c>processIncomingMessage</c> case 7, and from there
-    /// to every other client, because type 7 is in <c>isClientBroadcastType</c> and
-    /// <c>GameServer</c> rebroadcasts it to all players but the sender. No new transport.
+    /// Topology: only the AI screen reaches this method (the host role has no bridge). The message goes to the Mod's own
+    /// UniqueID on every connected player; SMAPI filters the peers that cannot receive it.
     /// </para>
     /// </summary>
     private void TryShowCompanionBubble(Farmer farmhand, string text, string locale)
@@ -2581,33 +2589,21 @@ public sealed partial class ModEntry : Mod
             return;
         }
 
-        // Same egress identity as the chat write: the exact static field with the
-        // exact native type. The field is not public on every target build, so the
-        // identity check is the only legal way to reach the engine's own broadcast.
-        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
-            || field!.GetValue(null) is not Multiplayer multiplayer)
-        {
-            this.Monitor.Log("[companion-bubble] skipped;reason=multiplayer_seam_not_exact", LogLevel.Trace);
-            return;
-        }
-
         try
         {
+            this.companionBubbles.Show(farmhand.UniqueMultiplayerID, text, CompanionBubbleNowMs());
+            this.Helper.Multiplayer.SendMessage(
+                new CompanionBubbleMessage(farmhand.UniqueMultiplayerID, text),
+                CompanionBubble.MessageType,
+                new[] { this.ModManifest.UniqueID },
+                playerIDs: null);
+            // This line is the last fact the Mod owns about the broadcast: SMAPI reports nothing about delivery, and
+            // what each client does with it is that client's own draw. It names the tile and the text length rather
+            // than the text - the line is already in the chat log, and repeating it here would log the companion's
+            // speech twice.
             Point standing = farmhand.StandingPixel;
-            int width = SpriteText.getWidthOfString(text);
-            int height = SpriteText.getHeightOfString(text);
-            // Two sprites, one line: the panel is drawn by the engine (a stretched interior tile of the vanilla small
-            // bubble, so the receiving client reloads it from its asset name), and the glyph run sits on top of it.
-            TemporaryAnimatedSprite panel = CompanionBubble.PanelSprite(farmhand, width, height);
-            TemporaryAnimatedSprite line = CompanionBubble.TextSprite(farmhand, text, width);
-            multiplayer.broadcastSprites(location, panel, line);
-            // The engine's receipt is the broadcast returning; what it does with the sprite afterwards is not reported by
-            // the engine, so this line is the last fact this Mod owns about the bubble. It names the tile and the text
-            // length rather than the text - the line is already in the chat log, and repeating it here would log the
-            // companion's speech twice.
             this.Monitor.Log(
-                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};ticks={CompanionBubble.Ticks}",
+                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};duration_ms={CompanionBubble.DurationMs}",
                 LogLevel.Trace);
         }
         catch (Exception exception)
@@ -2618,28 +2614,143 @@ public sealed partial class ModEntry : Mod
     }
 
     /// <summary>
-    /// The per-frame half of every live companion bubble: where the speaker is now, and how far into its life the line
-    /// is. Runs for the whole world, on every client that renders it - the AI client because it owns her body, and the
-    /// human's host client because that is where she is being watched.
+    /// One companion line arriving from the client that owns her body. The receiving client does not trust it beyond
+    /// what a line can be (a speaker and a bounded text), because everything else it needs - where she stands, what
+    /// layer to draw in - is the receiving client's own world state.
+    /// </summary>
+    private void ShowReceivedCompanionBubble(ModMessageReceivedEventArgs e)
+    {
+        if (!Context.IsWorldReady)
+            return;
+        CompanionBubbleMessage? message;
+        try { message = e.ReadAs<CompanionBubbleMessage>(); }
+        catch
+        {
+            this.Monitor.Log("GameBuddy rejected malformed companion-bubble ModMessage.", LogLevel.Warn);
+            return;
+        }
+        if (!CompanionBubble.IsValid(message, out string reasonCode))
+        {
+            this.Monitor.Log($"GameBuddy rejected companion-bubble ModMessage: {reasonCode}.", LogLevel.Warn);
+            return;
+        }
+        this.companionBubbles.Show(message!.SpeakerPlayerId, message.Text, CompanionBubbleNowMs());
+        this.Monitor.Log(
+            $"[companion-bubble] received;speaker={message.SpeakerPlayerId};chars={message.Text.Length}",
+            LogLevel.Trace);
+    }
+
+    /// <summary>
+    /// WHERE A COMPANION LINE SITS IN THE ENGINE'S FRAME - DECIDED HERE, IN CODE, BECAUSE THE DRAW SITE ALONE DOES NOT SAY IT.
     ///
     /// <para>
-    /// It walks the location's own sprite list because the bubble is NOT here: on the host client the sprite was
-    /// recreated from the wire, so there is no reference to hold. The walk is one integer and one null check per
-    /// sprite - the same list the engine itself walks every frame to draw them - and it touches nothing that is not
-    /// one of ours (<see cref="CompanionBubble.IsCompanionBubble"/>).
+    /// SLOT: ABOVE THE WEATHER, OUTSIDE THE LIGHTMAP. The consequence, in the engine's own terms: rain and snow are
+    /// painted before this slot (<c>Game1.cs:14123</c>, <c>drawWeather</c>), so weather never falls in front of a line she
+    /// is saying; and the lightmap pass (<c>Game1.cs:14135</c>, <c>DrawLightmapOnScreen</c>) is painted before it too, so
+    /// the <c>ReverseSubtract</c> blend it applies (<c>Game1.cs:1185</c>) never darkens her words - at 02:00 the bubble
+    /// stays at full brightness while the world it hangs in is dimmed.
+    /// </para>
+    /// <para>
+    /// THE GAME'S OWN WORLD-SPACE LABELS ARE NOT ON THIS LAYER, and the difference is written down rather than assumed: a
+    /// character's words above their head (<c>NPC.cs:5223</c>, drawn from <c>NPC.draw</c>), a hovered sign's own text
+    /// (<c>Object.cs:5494</c>) and a pet bowl's name (<c>PetBowl.cs:137</c>) are all drawn inside the map's own draw -
+    /// below the weather and inside the lightmap - so the engine darkens them with the world. This slot is what an
+    /// event-based draw reaches: <c>Game1.cs:14200</c>, <c>hooks.OnRendered(RenderSteps.World, ...)</c>, is the seam
+    /// SMAPI raises as <c>Display.RenderedWorld</c>, and it runs after both of those passes. Reaching the engine's own
+    /// layer again would mean reinstating the draw-layer postfix this file removed because one frame entered it once per
+    /// declaration.
+    /// </para>
+    /// <para>
+    /// THE VISUAL RESULT HAS NOT BEEN LOOKED AT: <c>live: not measured</c>. This declares the slot and its consequence,
+    /// not what a player sees. If a companion line must be darkened with the world, THIS declaration is what changes -
+    /// and <c>CompanionBubbleTests</c> fails the moment the draw site moves without it.
     /// </para>
     /// </summary>
-    private void FollowCompanionBubbles()
+    internal const string CompanionBubbleSlot = "above_weather_outside_lightmap";
+
+    /// <summary>
+    /// Draws the live companion lines once per frame, from SMAPI's own world-draw event.
+    ///
+    /// <para>
+    /// <c>Display.RenderedWorld</c> is raised once per frame at the end of the world's draw - <c>Game1.cs:14200</c>,
+    /// <c>hooks.OnRendered(RenderSteps.World, spriteBatch, ...)</c> - before the UI is drawn: the place SMAPI documents
+    /// for drawing in world space, and where content lands over the world and under menus, HUD and cursor. Its
+    /// <c>e.SpriteBatch</c> is <c>Game1.spriteBatch</c> (<c>RenderedWorldEventArgs.SpriteBatch</c>), the batch the engine
+    /// draws the world into, and SMAPI opens it for the event when the engine has already closed it
+    /// (<c>SCore.cs:1315-1326</c>: <c>if (!spriteBatch.IsOpen(...)) Game1.spriteBatch.Begin(Deferred, AlphaBlend,
+    /// PointClamp)</c>). So the draw needs no batch of its own and no <c>Begin</c>.
+    /// </para>
+    /// <para>
+    /// This replaces a postfix installed on EVERY declaration of <c>GameLocation.drawAboveAlwaysFrontLayer</c> in the
+    /// loaded assembly. That mechanism entered the postfix once per declaration - an override calling <c>base</c> reached
+    /// the base declaration in the same frame - which is why a per-location-type cache had to decide which entry was the
+    /// real one, and why two "unavailable" messages existed for the case where no declaration could be patched. An event
+    /// fires once per frame and has no install to fail.
+    /// </para>
+    /// </summary>
+    private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)
     {
-        if (!Context.IsWorldReady || Game1.currentLocation is not GameLocation location)
+        if (Game1.currentLocation is not { } location)
             return;
-        foreach (TemporaryAnimatedSprite sprite in location.temporarySprites)
+        this.DrawCompanionBubbles(location, e.SpriteBatch);
+    }
+
+    /// <summary>
+    /// The per-frame half of every live companion line: where the speaker is NOW, and one bubble per line.
+    ///
+    /// <para>
+    /// The position still has to be re-derived every frame: she walks. The bubble is drawn around the bottom-centre it
+    /// is given, so it holds no reference to the speaker and has no place to re-anchor from - the per-frame work is one
+    /// <c>StandingPixel</c> read (cached by the engine against her position), one camera conversion and the draw.
+    /// Nothing is allocated per frame, and no sprite exists to be tracked: a line that is over is dropped by
+    /// <see cref="CompanionBubbleBoard.Expire"/> before anything is drawn.
+    /// </para>
+    /// <para>
+    /// The camera conversion is unchanged by the move off the patched layer: <c>Game1.GlobalToLocal</c> is the transform
+    /// the batch is drawn in at both points, so the bubble lands on the same pixel it did before.
+    /// </para>
+    /// </summary>
+    private void DrawCompanionBubbles(GameLocation location, SpriteBatch batch)
+    {
+        if (!Context.IsWorldReady)
+            return;
+        this.companionBubbles.Expire(CompanionBubbleNowMs());
+        foreach (CompanionBubbleLine line in this.companionBubbles.Lines)
         {
-            if (!CompanionBubble.IsCompanionBubble(sprite) || sprite.attachedCharacter is not Character speaker)
+            Farmer? speaker = FindFarmer(location, line.SpeakerPlayerId);
+            if (speaker is null)
+            {
+                // She is not on this map - a scene change ends the line, because there is no head to hang it over.
                 continue;
-            CompanionBubble.Follow(sprite, speaker);
+            }
+            // Her own frame height bounds the bubble twice over: the anchor is lifted by it, and the box may not grow
+            // taller than the space it lifts through, so a long line wraps and is cut instead of climbing the screen.
+            int spriteHeight = speaker.Sprite.SpriteHeight;
+            CompanionBubble.Draw(
+                batch,
+                line.Text,
+                Game1.GlobalToLocal(CompanionBubble.BottomCenter(speaker.StandingPixel, spriteHeight)),
+                spriteHeight);
         }
     }
+
+    /// <summary>The farmer in this location with that multiplayer id, or null when she is somewhere else.</summary>
+    private static Farmer? FindFarmer(GameLocation location, long playerId)
+    {
+        foreach (Farmer farmer in location.farmers)
+        {
+            if (farmer.UniqueMultiplayerID == playerId)
+                return farmer;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The engine's elapsed game time in milliseconds: the clock a line's lifetime is measured on, so a paused game does
+    /// not age a bubble that nobody could have read.
+    /// </summary>
+    private static long CompanionBubbleNowMs() =>
+        (long)(Game1.currentGameTime?.TotalGameTime.TotalMilliseconds ?? 0d);
 
     /// <summary>
     /// Best-effort embodied companion presentation. Turns the companion to
@@ -3118,12 +3229,6 @@ public sealed partial class ModEntry : Mod
         internal long StopObservationEpoch { get; set; }
         internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }
-        /// <summary>
-        /// Ticks the per-frame action-policy reload. The owner froze the bound:
-        /// an edit to `config.json` reaches the capability surface within 120
-        /// ticks (2 s at 60 Hz). See FarmhandPolicyRefreshThrottle.
-        /// </summary>
-        internal FarmhandPolicyRefreshThrottle PolicyRefreshThrottle { get; } = new();
         internal Queue<NativeChatPipeDelivery> NativeChatPipeDeliveries { get; } = new();
         internal Queue<NavigationPipeDelivery> NavigationPipeDeliveries { get; } = new();
         internal Queue<ExecutionResponsePipeDelivery> ExecutionResponsePipeDeliveries { get; } = new();

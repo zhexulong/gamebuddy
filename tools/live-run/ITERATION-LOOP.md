@@ -31,6 +31,16 @@ what it cost                 wall clock, submissions, in-game time reached
 
 A guess is not an answer. If an artifact does not say, the next step is a probe, not a change.
 
+## A behaviour difference is an input difference, or it is ruled out before it is a finding
+
+Two runs that behaved differently were handed different input, or they were not, and only the input says which:
+`round53` -> `round54` (0 -> 10 plans) cost a day of inference because the delivered prompt, tools and vocabulary rows
+were never diffed. Every run now writes `input-manifest.json` beside its `result.json`, and
+`node tools/compare-run-inputs.mjs <runA> <runB>` prints what moved per section with the line itself
+(`input_manifest_not_measured:<run>`, exit 2, means nothing was compared - never "no differences"). So attribute a
+behavioural difference between two runs to a section that changed there, or explicitly rule the input out with that
+reading: "she chose X" without it is not a finding.
+
 ## Probes are allowed and preferred over reasoning
 
 Tonight's expensive mistakes were all "I reasoned about the predicate instead of running it". A probe that prints the

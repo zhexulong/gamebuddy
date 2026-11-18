@@ -25,6 +25,7 @@ import {
   type FarmhandPolicyIdentity,
   type ExecutionReceiptQuery,
   type ExecutionRequest,
+  type FarmhandActionPolicyRequest,
   type NavigationReadRequest,
   type NavigationReadResult,
   type ObserveSceneRequest,
@@ -84,6 +85,69 @@ export function classifyFactListenerFailure(error: unknown): string {
   return token === error.name ? token : `${error.name}:${token}`;
 }
 
+/** The shape of a protocol identifier a reason code may carry: a kind from an enum, never prose. */
+const REASON_KIND_TOKEN = /^[a-z][a-z0-9_]{0,63}$/u;
+/** The shape of the ids the Mod and the Host mint: opaque, and bounded so one reason cannot carry a payload. */
+const REASON_ID_TOKEN = /^[A-Za-z0-9_-]{1,64}$/u;
+
+/**
+ * The reason a closed bridge publishes when a FACT LISTENER threw: which fact, which id, and the error's own token.
+ *
+ * <p>
+ * MEASURED 2026-11-17 (`round66`): the run's only failure was `fact_listener_failed`, thrown by a listener while an
+ * `execution_receipt` was being delivered - and the artifact could not say which listener, over which fact, or why. The
+ * thrown error was `execution_receipt_replay_rejected:terminal_state_rewritten`, a name the wrapper HAD in hand and
+ * dropped. The same drop recurred on the best run of that night, which is why the wrapper's name alone is no longer an
+ * acceptable answer: a reason that does not name its own cause sends the next reader to the wrong layer.
+ * </p>
+ * <p>
+ * ONE SPELLING for every wrapper: the bridge's own fact listeners and the launcher's integration event source both
+ * compose their reason here, so the two cannot drift into two vocabularies that a reader has to cross-reference.
+ * </p>
+ * <p>
+ * Everything in the result is a bounded protocol token - a message type, a semantic kind from the wire's unions, an id
+ * the Mod minted, and an error's identifier-shaped prefix - never a frame, a payload, a path, or player text.
+ * `event_pump_event_overflow` keeps its own leading code because it is a LOAD condition the pump owns, not an arbitrary
+ * listener bug, and its token is the reason's own name, so it is printed once.
+ * </p>
+ */
+export function factListenerFailureReasonCode(fact: unknown, error: unknown): string {
+  const record = typeof fact === "object" && fact !== null ? (fact as Record<string, unknown>) : {};
+  const payload =
+    typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : {};
+  // A world fact's semantic kind is the narrowest name it has: the bridge message carries it on the wire payload, the
+  // converted fact carries it as `semanticKind`, and only then does the transport's own type (`world_fact`) have to do.
+  const factKind =
+    firstBoundedToken([payload.kind, record.semanticKind, record.type, record.kind], REASON_KIND_TOKEN) ??
+    "unnamed_fact";
+  const factId = firstBoundedToken(
+    [
+      record.executionId,
+      payload.executionId,
+      record.requestId,
+      payload.requestId,
+      record.eventId,
+      payload.eventId,
+      record.sourceEventId,
+      record.correlationId,
+    ],
+    REASON_ID_TOKEN,
+  );
+  const detail = classifyFactListenerFailure(error);
+  const overflow = error instanceof Error && error.message === "event_pump_event_overflow";
+  const tokens = [overflow ? "event_pump_event_overflow" : "fact_listener_failed", factKind];
+  if (factId !== null) tokens.push(factId);
+  if (!overflow) tokens.push(detail);
+  return tokens.join(":");
+}
+
+function firstBoundedToken(candidates: readonly unknown[], pattern: RegExp): string | null {
+  for (const candidate of candidates) if (typeof candidate === "string" && pattern.test(candidate)) return candidate;
+  return null;
+}
+
 /**
  * The shape of a bridge message type as the wire spells it (`program_events_result`, `snapshot`, ...).
  *
@@ -110,6 +174,9 @@ export type LocalStardewBridgeDiagnostic = Readonly<{
     // Emitted immediately before the close a refused frame causes, naming the frame's own type and the validator code:
     // `bridge_frame_refused:<kind>:<validatorCode>` (see `publishFrameRefusal`).
     | "bridge_frame_refused"
+    // Emitted when a body-program answer arrives for a request this client already stopped waiting for. The frame is
+    // NAMED and dropped; it does not close the attachment (see the `#abandonedCorrelations` check in `receive`).
+    | "bridge_late_reply_dropped"
     // Emitted just before a fact listener's failure closes the transport, carrying the bounded failure token so
     // the close is attributable (see the catch in `receive`).
     | "native_chat_bridge_fact_listener_failed";
@@ -121,6 +188,15 @@ type PendingRequest = Readonly<{
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>;
+
+/**
+ * How many abandoned correlations one bridge generation remembers.
+ *
+ * A timeout is rare (the deadline is 5 s against a Mod that normally answers in milliseconds), so this is sized for a
+ * game thread that froze for minutes rather than for steady state - and it is a DRAIN, not a log: the oldest entry is
+ * evicted when the bound is reached, so the set cannot grow with the process's lifetime.
+ */
+const ABANDONED_CORRELATION_MEMORY = 64;
 
 type BodyNodeAdmissionHandler = (challenge: BodyNodeAdmissionChallenge) => Promise<BodyNodeAdmissionResult>;
 type BodyNodeAdmissionBinder = (handler: BodyNodeAdmissionHandler) => void;
@@ -160,6 +236,20 @@ type OutboundRequestType =
  */
 export class LocalStardewBridgeClient implements StardewBridgeConnection {
   readonly #pending = new Map<string, PendingRequest>();
+  /**
+   * Correlations whose request this client STOPPED WAITING FOR.
+   *
+   * <p>
+   * Deleting a pending request on its deadline is not the same as never having asked: the peer's answer to it is
+   * merely late, and `receive` has to be able to tell the two apart. Without this record the only exit available for
+   * a late body-program answer is the one for a frame answering nothing - closing the attachment - which loses the
+   * live game to our own timer. Measured round65: a `program_status` passed its 5 s deadline while the game thread was
+   * busy, the Mod's answer arrived with the next flush, and the bridge closed on
+   * `body_program_protocol_invalid:unsolicited:got=program_status_result;pending=none`. The game then ran for another
+   * twenty minutes with the Host unable to reach it, `PROVIDER_RETRY` 0 and `reconnect` 0.
+   * </p>
+   */
+  readonly #abandonedCorrelations = new Set<string>();
   #authenticated = false;
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
@@ -575,6 +665,28 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       throw new Error("unexpected_companion_presentation_response");
   }
 
+  /**
+   * Push the player's action policy to a RUNNING Mod.
+   *
+   * One-way on purpose, and the answer is not a receipt frame: the Mod applies the policy and republishes its
+   * capability through the `catalog_update` it already emits for every policy change, which this client already
+   * validates (`#enabledActionIds`) and treats as the authoritative enabled set. Awaiting a second, correlated receipt
+   * for the same fact would be two spellings of one answer.
+   *
+   * Returns false - it never throws for a disconnected pipe - when there is no running world to tell. That is a state
+   * rather than a failure: the durable record was already committed and the next world load reads it from
+   * `config.json`, which is the half of this payload that a pipe cannot deliver.
+   */
+  public pushActionPolicy(policy: FarmhandActionPolicyRequest): boolean {
+    if (!this.transport.connected || !this.#authenticated) return false;
+    try {
+      this.transport.send(newEnvelope("farmhand_action_policy_request", this.scope, policy, randomUUID()));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Fixed Host-owned system copy; it is never a Pi/model presentation. */
   public async presentSystemNotice(request: SystemNoticeRequest): Promise<void> {
     this.requireAuthenticated();
@@ -809,6 +921,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     return new Promise<BridgeMessage>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(correlationId);
+        this.#rememberAbandoned(correlationId);
         reject(new Error(deadlineMs === undefined ? "bridge_response_timeout" : "bridge_connect_deadline_exceeded"));
       }, timeoutMs);
       this.#pending.set(correlationId, { type, resolve: resolvePromise, reject, timer });
@@ -820,6 +933,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         reject(error);
       }
     });
+  }
+
+  /** Remember that this correlation WAS asked and is no longer awaited, bounded by `ABANDONED_CORRELATION_MEMORY`. */
+  #rememberAbandoned(correlationId: string): void {
+    this.#abandonedCorrelations.add(correlationId);
+    if (this.#abandonedCorrelations.size > ABANDONED_CORRELATION_MEMORY) {
+      const oldest = this.#abandonedCorrelations.values().next().value;
+      if (oldest !== undefined) this.#abandonedCorrelations.delete(oldest);
+    }
   }
 
   private receive(json: string): void {
@@ -868,6 +990,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       message.type === "cancel_request" ||
       message.type === "companion_presentation_request" ||
       message.type === "system_notice_request" ||
+      message.type === "farmhand_action_policy_request" ||
       message.type === "program_submit" ||
       message.type === "program_status" ||
       message.type === "program_events" ||
@@ -949,6 +1072,18 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       return;
     }
     if (isBodyProgramResponse(message.type) && (pending === undefined || !isBodyProgramRequest(pending.type))) {
+      // A reply to a request this client STOPPED WAITING FOR is late news, never a protocol violation. `request`'s own
+      // deadline removed the correlation, so the peer's answer arrives with nothing to match it - and closing the
+      // attachment for that loses the live game to our own timer. The rule is the snapshot channel's, stated there and
+      // applied here: our own lateness never tears down the bridge. A frame answering a correlation this client never
+      // sent stays fatal below, because that is the shape a foreign or replayed frame arrives in.
+      if (pending === undefined && this.#abandonedCorrelations.delete(message.correlationId)) {
+        const kind =
+          typeof message.type === "string" && FRAME_KIND_PATTERN.test(message.type) ? message.type : "unknown";
+        for (const listener of this.#diagnosticListeners)
+          listener({ stage: "bridge_late_reply_dropped", reasonCode: `bridge_late_reply_dropped:${kind}` });
+        return;
+      }
       this.transport.close(
         `body_program_protocol_invalid:unsolicited:got=${String(message.type)};pending=${String(pending?.type ?? "none")}`,
       );
@@ -1095,17 +1230,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         // the existing close/state cleanup path: pending requests are rejected
         // by onClose and no later inbound fact is accepted on this generation.
         //
-        // WHICH listener failed, and why, is named before closing. Discarding the cause made every one of these
-        // closes read as the same unattributable `fact_listener_failed` (measured 2026-10-17: a run died 23s in
-        // and neither the shape of the error nor the fact type was recoverable from the artifact). The report is
-        // bounded: an error's own name/message token, never a frame, payload, or player text.
-        const reasonCode =
-          error instanceof Error && error.message === "event_pump_event_overflow"
-            ? "event_pump_event_overflow"
-            : "fact_listener_failed";
-        const detail = classifyFactListenerFailure(error);
+        // WHICH listener failed, and why, is named in the reason itself: the fact that was being delivered, the id the
+        // Mod minted for it, and the error's own token. A bare `fact_listener_failed` made every one of these closes
+        // read as the same unattributable fault (measured 2026-10-17 and again 2026-11-17, twice on one night), and a
+        // reader could not tell a projection bug from the pump from a receipt fold. The report is bounded by the same
+        // function that composes every other listener-failure reason: protocol enums and opaque ids, never a frame,
+        // payload, or player text.
+        const reasonCode = factListenerFailureReasonCode(message, error);
         for (const listener of this.#diagnosticListeners)
-          listener({ stage: "native_chat_bridge_fact_listener_failed", reasonCode: `${reasonCode}:${detail}` });
+          listener({ stage: "native_chat_bridge_fact_listener_failed", reasonCode });
         this.transport.close(reasonCode);
         return;
       }

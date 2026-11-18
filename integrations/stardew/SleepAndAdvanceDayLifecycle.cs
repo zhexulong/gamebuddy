@@ -158,6 +158,21 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private string? engineCrossingMenuDetail;
 
     /// <summary>
+    /// The menu instance this lifecycle has already tried to release, so one refusal is one attempt.
+    ///
+    /// Same reason as <see cref="committedShippingSummary"/>, different cost: a menu whose `readyToClose` answers false, or
+    /// whose cancel throws, would otherwise be met again sixty times a second for the rest of the night.
+    /// </summary>
+    private IClickableMenu? releasedUnrecognisedMenu;
+
+    /// <summary>
+    /// Every distinct reading this night produced for a menu no part of it raised, in order, for the receipt and the
+    /// evidence file. Bounded by type x phase x outcome rather than by frames: the same menu standing for a whole model
+    /// turn is one fact, not three thousand.
+    /// </summary>
+    private readonly List<string> unrecognisedOvernightMenus = new();
+
+    /// <summary>
     /// Terminal outcome handed back to the owning execution. The lifecycle is the
     /// mechanism owner; the wire receipt is still minted by the one execution
     /// ledger, so both the evidence file and the bridge receipt describe the same
@@ -539,6 +554,20 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </summary>
     internal static bool RefusesForPausedClock(bool timePasses, bool ownSleepPrompt) => !timePasses && !ownSleepPrompt;
 
+    /// <summary>
+    /// The room this night's own eligibility admits: the farmhouse, and the cabin the Farmhand lives in (a Cabin is a
+    /// FarmHouse, so both answer here). Answers null outside them, which is the <c>not_home</c> refusal.
+    ///
+    /// <para>
+    /// ONE DECLARATION, THREE READERS: the eligibility gate refuses from it, <see cref="WalkToBed"/> needs the same
+    /// house to ask for its bed spot, and the snapshot publishes <c>sleepAdmitsHere</c> from it. The projection that tells
+    /// the companion where her day can end reads that published answer rather than restating the rule - it said "from
+    /// wherever you are" while this gate was already refusing `not_home`, because the check lives here (a few frames
+    /// after `RequestLocalAdvanceDay` answered `accepted`) and not in the dispatch the projection's author read.
+    /// </para>
+    /// </summary>
+    internal static FarmHouse? HomeOf(GameLocation? location) => location as FarmHouse;
+
     private bool TryEnterEligibility(out string reason)
     {
         reason = "ok";
@@ -563,7 +592,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (Game1.eventUp) { reason = "event_up"; return false; }
         // Cabin derives from FarmHouse, so this admits the AI Farmhand's own
         // cabin as well as the host's farmhouse.
-        if (Game1.currentLocation is not FarmHouse) { reason = "not_home"; return false; }
+        if (HomeOf(Game1.currentLocation) is null) { reason = "not_home"; return false; }
         // A co-op night must not be started alone, and this MUST hold before the
         // multiplayer branch is chosen: `Game1.IsMultiplayer` is
         // `otherFarmers.Count > 0`, so a host that sleeps while its partner is
@@ -770,7 +799,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private const int BedWalkNodeBudget = 10000;
 
     private bool WalkToBed()
-    {        if (Game1.player.currentLocation is not FarmHouse farmHouse)
+    {        if (HomeOf(Game1.player.currentLocation) is not { } farmHouse)
             return false;
         Point bedSpot = farmHouse.GetPlayerBedSpot();
         var bedTile = new Vector2(bedSpot.X, bedSpot.Y);
@@ -888,15 +917,28 @@ internal sealed class SleepAndAdvanceDayLifecycle
         BindingFlags.Instance | BindingFlags.NonPublic);
 
     /// <summary>
-    /// Every menu the engine can put on screen for the night, and the step that moves each one.
+    /// The menus the engine's own end-of-night stack raises, and the step that moves each one.
     ///
     /// <para>
-    /// THE POPULATION IS THE ENGINE'S, declared once because TWO questions read it: which menu this lifecycle may close
-    /// (the settlement sheet, and nothing else), and which menus own a frame of the wait for the crossing.
-    /// `showEndOfNightStuff` (Game1.cs:9112-9161) makes exactly these three pushes onto `Game1.endOfNightMenus`, and the
-    /// new day does not begin until that stack has drained - the gate is
-    /// `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null` (Game1.cs:4292-4305). A menu
-    /// standing there is therefore never a modal the actor is stuck behind: each one has a step, and this table names it.
+    /// THIS IS THE STACK, NOT THE WHOLE NIGHT. `showEndOfNightStuff` (Game1.cs:9112-9161) makes exactly three pushes
+    /// onto `Game1.endOfNightMenus` - `ShippingMenu` (9121), `SaveGameMenu` (9128, and the fallback at 9159) and one
+    /// `LevelUpMenu` per pending level (9132) - and the new day does not begin until that stack has drained: the gate is
+    /// `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null` (Game1.cs:4292-4305). Each of
+    /// those three therefore owns a frame of the wait for the crossing, and this table names the step that moves it.
+    /// </para>
+    /// <para>
+    /// THE NIGHT HAS A SECOND MENU SOURCE, AND IT IS NOT IN THIS TABLE. The day-start farm event prints and asks, and the
+    /// engine will not drain what it raises either: `Utility.pickFarmEvent` (Utility.cs:4559-4687) and
+    /// `pickPersonalFarmEvent` (Utility.cs:4739-4788) can mount a `NamingMenu` (QuestionEvent.cs:123, BirthingEvent.cs:92,
+    /// PlayerCoupleBirthingEvent.cs:173) or a `DialogueBox` (QuestionEvent.cs:42/61/79/83, BirthingEvent.cs:84,
+    /// PlayerCoupleBirthingEvent.cs:141/160, SoundInTheNightEvent.cs:180). Neither may be declared here: closing a naming
+    /// prompt drops the animal or the baby that prompt exists to create, and answering a box is the companion's decision,
+    /// not a lifecycle's. They are handled as what they are - menus this table does not know -
+    /// by <see cref="DecideOvernightMenuStep"/> and the named release below.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS PINNED AGAINST THE ENGINE by `OvernightMenuPopulationTests`: it reads the pushes and the farm
+    /// events out of the decompiled source and fails by name on a type that has neither a step here nor a release.
     /// </para>
     /// <para>
     /// The level-up member is not an accommodation: a companion earns experience while it works, so a night that raises
@@ -954,6 +996,92 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
     /// <summary>The same lookup for a standing menu. The engine's own instance is the caller's; its type is the fact.</summary>
     internal static OvernightMenu? OvernightMenuFor(IClickableMenu? activeMenu) => OvernightMenuFor(activeMenu?.GetType());
+
+    /// <summary>
+    /// What a standing menu means to the overnight step: a declared step of the night, one of the two surfaces this
+    /// lifecycle already owns, or something neither the declaration nor this lifecycle raised.
+    ///
+    /// <para>
+    /// THE THIRD ANSWER IS A DECISION, NOT A NULL. `OvernightMenuFor` answering null used to mean "not mine, keep
+    /// spending the budget": the phases then waited for a rollover a standing menu was blocking, nothing in the product
+    /// could move it, and the only terminal left was the lifecycle's wall clock
+    /// (<c>lifecycle_deadline_exceeded</c>) with the companion still behind it. The engine's farm events are exactly
+    /// this case, and so is any mod screen: the day does not begin until `activeClickableMenu` is null
+    /// (Game1.cs:4292-4305).
+    /// </para>
+    /// </summary>
+    internal enum OvernightMenuStep
+    {
+        /// <summary>No menu is standing.</summary>
+        NothingStanding,
+
+        /// <summary>A declared member of <see cref="OvernightMenus"/>: the entry's own step applies.</summary>
+        Declared,
+
+        /// <summary>The engine's bed prompt, which this lifecycle's own phases answer (`NativeSleepPrompt`).</summary>
+        OwnSleepPrompt,
+
+        /// <summary>The native ready barrier, whose own budget owns it in the multiplayer and pass-out phases.</summary>
+        ReadyBarrier,
+
+        /// <summary>A menu nothing here raised: name it, say what was done, and release it.</summary>
+        NotRecognised,
+    }
+
+    /// <summary>
+    /// Which of the four readings applies to the menu standing on this frame.
+    ///
+    /// The declaration is asked FIRST, so a member can never be released by the fallback: the two surfaces below are
+    /// inputs rather than type tests because the same `DialogueBox` is this lifecycle's own bed prompt on one frame and a
+    /// stranger's message box on the next - the type cannot tell them apart, and `NativeSleepPrompt.IsStanding` can.
+    /// </summary>
+    internal static OvernightMenuStep DecideOvernightMenuStep(Type? menuType, bool ownSleepPrompt, bool readyBarrier)
+    {
+        if (menuType is null)
+            return OvernightMenuStep.NothingStanding;
+        if (OvernightMenuFor(menuType) is not null)
+            return OvernightMenuStep.Declared;
+        if (ownSleepPrompt)
+            return OvernightMenuStep.OwnSleepPrompt;
+        if (readyBarrier)
+            return OvernightMenuStep.ReadyBarrier;
+        return OvernightMenuStep.NotRecognised;
+    }
+
+    /// <summary>What releasing a menu the overnight step does not know actually did.</summary>
+    internal enum OvernightMenuRelease
+    {
+        /// <summary>The menu's own cancel ran, and the slot is free.</summary>
+        Released,
+
+        /// <summary>The engine refused: `readyToClose` answered false, so the menu is not this lifecycle's to close yet.</summary>
+        Refused,
+
+        /// <summary>The cancel seam threw. The menu is still standing and the reading says so.</summary>
+        Failed,
+    }
+
+    /// <summary>
+    /// The named reading for a menu the overnight step does not know: what stood, on which day, in which phase, and what
+    /// was done about it. Never a silent success - a night that released a stranger's menu has to be able to say which.
+    ///
+    /// Commas, not the `;` the trace lines use, because this reading is also published in the flat `key=value;...`
+    /// receipt and a second spelling of it there is how the two would come to disagree.
+    /// </summary>
+    internal static string DescribeOvernightMenuNotRecognised(
+        Type menuType,
+        int day,
+        string phase,
+        OvernightMenuRelease release)
+        => $"overnight_menu_not_recognised:{menuType.Name},day={day},phase={phase},action={DescribeOvernightMenuRelease(release)}";
+
+    /// <summary>The receipt vocabulary for <see cref="OvernightMenuRelease"/>.</summary>
+    internal static string DescribeOvernightMenuRelease(OvernightMenuRelease release) => release switch
+    {
+        OvernightMenuRelease.Released => "released",
+        OvernightMenuRelease.Refused => "refused",
+        _ => "failed",
+    };
 
     /// <summary>
     /// Whether a standing menu is the morning-after settlement this lifecycle commits.
@@ -1155,6 +1283,76 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>
+    /// Release a menu the overnight step does not recognise, and report whether this frame carried one.
+    ///
+    /// <para>
+    /// THE ENGINE'S OWN CANCEL, NOT A FIELD WRITE. `Game1.exitActiveMenu()` (Game1.cs:6128-6131) only nulls the slot: a
+    /// `DialogueBox` released that way keeps `Game1.dialogueUp` true, so the box's own cancel is used
+    /// (`DialogueBox.cs:192-220`, the same seam this class already uses for a question left over from an ended day);
+    /// every other menu goes through `exitThisMenu()` (IClickableMenu.cs:865-893), which runs the `cleanupBeforeExit` and
+    /// exit function its type put on the close path - the path the engine's own escape key takes
+    /// (IClickableMenu.cs:772-785).
+    /// </para>
+    /// <para>
+    /// `readyToClose` is the engine's veto, and it is respected: a menu that answers false is recorded as
+    /// `action=refused` and left standing rather than forced. Forcing it would be this lifecycle taking a decision the
+    /// menu's own author said was not available yet.
+    /// </para>
+    /// </summary>
+    private bool ReleaseUnrecognisedOvernightMenu()
+    {
+        IClickableMenu? standing = Game1.activeClickableMenu;
+        if (DecideOvernightMenuStep(
+                standing?.GetType(),
+                NativeSleepPrompt.IsStanding(standing as DialogueBox),
+                standing is ReadyCheckDialog) != OvernightMenuStep.NotRecognised)
+            return false;
+        if (ReferenceEquals(standing, this.releasedUnrecognisedMenu))
+            return true;
+
+        // Recorded BEFORE the seam runs, like the settlement commit: a cancel that threw has still been attempted once.
+        this.releasedUnrecognisedMenu = standing;
+        OvernightMenuRelease release = ReleaseOvernightMenu(standing!);
+        string reading = DescribeOvernightMenuNotRecognised(
+            standing!.GetType(),
+            Game1.Date.TotalDays,
+            this.phase.ToString(),
+            release);
+        if (!this.unrecognisedOvernightMenus.Contains(reading))
+        {
+            this.unrecognisedOvernightMenus.Add(reading);
+            this.trace.Add(reading);
+            this.monitor.Log($"GameBuddy sleep lifecycle released a menu it does not recognise: {reading}.", LogLevel.Warn);
+        }
+
+        return true;
+    }
+
+    private OvernightMenuRelease ReleaseOvernightMenu(IClickableMenu menu)
+    {
+        try
+        {
+            if (menu is DialogueBox box)
+            {
+                box.closeDialogue();
+                return OvernightMenuRelease.Released;
+            }
+
+            if (!menu.readyToClose())
+                return OvernightMenuRelease.Refused;
+            menu.exitThisMenu();
+            return OvernightMenuRelease.Released;
+        }
+        catch (Exception error)
+        {
+            // An exception from engine code may not escape into the game loop: the menu is still standing and the
+            // receipt says which type threw rather than reading as a night that simply ended.
+            this.trace.Add($"overnight_menu_release_threw;exception={error.GetType().Name}");
+            return OvernightMenuRelease.Failed;
+        }
+    }
+
+    /// <summary>
     /// Deal with the engine's own end-of-night menu while this lifecycle waits for its crossing, and report whether this
     /// frame belonged to that crossing.
     ///
@@ -1189,6 +1387,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </returns>
     private bool AdvanceEngineCrossingMenu()
     {
+        // A menu the declaration does not claim is decided FIRST: the engine will not drain it, so leaving it to a wait
+        // below can only spend that wait's budget on a frame the wait does not own. See ReleaseUnrecognisedOvernightMenu.
+        if (this.ReleaseUnrecognisedOvernightMenu())
+            return true;
         OvernightMenu? standing = OvernightMenuFor(Game1.activeClickableMenu);
         if (standing is null)
             return false;
@@ -1410,6 +1612,11 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 return false;
 
             default:
+                // A menu no part of this lifecycle raised blocks the save exactly as the engine's own menus do, and the
+                // engine will not drain it either - so it is released here, BEFORE the frame is charged to the budget.
+                // Charging it would report `save_boundary_not_observed` about a save the menu was holding.
+                if (this.ReleaseUnrecognisedOvernightMenu())
+                    return this.finished;
                 // No save is in flight and none was seen. Give the native pipeline a
                 // bounded window, then continue: the day fact is the authority, and a
                 // client observes the rollover over the network without saving at all.
@@ -1596,6 +1803,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
             // (Game1.cs:4292-4305), so a receipt that crossed a night where one was mounted and says `none` here hides
             // the step the lifecycle took to get there.
             $"engine_crossing_menu={DescribeSettlementMenuOutcome(this.engineCrossingMenuOutcome)}",
+            // The menus nothing here raised, by name, with the day, the phase and what was done about them. Published
+            // unconditionally: "none" is the ordinary case, and a release that happened has to be readable from the
+            // receipt rather than only from the in-memory trace.
+            $"overnight_menu_not_recognised={(this.unrecognisedOvernightMenus.Count == 0 ? "none" : string.Join('|', this.unrecognisedOvernightMenus))}",
         };
         if (this.dayBaselineCaptured)
         {
@@ -1661,6 +1872,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
             chain.Add("day_started");
         if (this.engineCrossingMenuOutcome is SettlementMenuOutcome.Committed or SettlementMenuOutcome.AlreadyCommitted)
             chain.Add("engine_crossing_menu");
+        if (this.unrecognisedOvernightMenus.Any(
+                reading => reading.EndsWith(",action=released", StringComparison.Ordinal)))
+            chain.Add("overnight_menu_released");
         if (this.settlementMenuOutcome is SettlementMenuOutcome.Committed or SettlementMenuOutcome.AlreadyCommitted)
             chain.Add("shipping_summary_committed");
         return chain.ToArray();
@@ -1687,6 +1901,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["targetVersion"] = new Dictionary<string, object?> { ["game"] = Game1.version },
             ["settlement"] = settlement,
             ["settlementMenu"] = DescribeSettlementMenuOutcome(this.settlementMenuOutcome),
+            ["overnightMenusNotRecognised"] = this.unrecognisedOvernightMenus.ToArray(),
             ["trace"] = this.trace.ToArray(),
             ["eventChain"] = this.BuildEventChain(),
         };

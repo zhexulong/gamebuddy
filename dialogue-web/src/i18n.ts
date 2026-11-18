@@ -1296,6 +1296,8 @@ const en = {
   // The board's one line. Each states one published fact, and the three are three
   // different answers: how much the game says the companion can do, a game that is
   // here and has published nothing, and a session with no game in it at all.
+  gameBoardPublishedLead: "The game reports {{count}} things your companion can do with you.",
+  gameBoardUnpublishedLead: "This session has not published what your companion can do with you yet.",
   gameBoardLinePublished: "{{count}} things your companion can do with you.",
   gameBoardLineAttachedEmpty: "The game is here and has published nothing yet.",
   gameBoardLineNoGame: "No game is running, so nothing is published yet.",
@@ -2353,6 +2355,8 @@ const zh: Messages = {
   // 绝不是手写的能力清单：每句话都是某一个已发布事实的玩家语言，
   // 因此原始枚举、操作 id 或能力 id 永远不会出现在界面上（design/104 §10）。
   gameBoardTitle: "和伙伴一起能做的事",
+  gameBoardPublishedLead: "游戏公布了 {{count}} 件同伴可以和你一起做的事。",
+  gameBoardUnpublishedLead: "这次会话还没有公布同伴可以和你一起做的事。",
   gameBoardLinePublished: "伙伴可以和你一起做 {{count}} 件事。",
   gameBoardLineAttachedEmpty: "游戏已经在，但还没有公布可做的事。",
   gameBoardLineNoGame: "还没有游戏在运行，因此没有可公布的事。",

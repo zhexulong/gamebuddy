@@ -142,7 +142,7 @@ function composedRoot(options: FixtureOptions = {}) {
         companionName: null,
         selectedWorld: null,
         selectedSave: null,
-        capabilitySummary: { available: false, count: 0 },
+        capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" },
         latestOutcome: "none",
       },
     },
@@ -1493,7 +1493,7 @@ test("defect 10: a published capability surface still renders one card per fact"
   const root = composedRoot();
   const published = JSON.stringify({
     ...root,
-    game: { ...root.game, game: { ...root.game.game, capabilitySummary: { available: true, count: 4 } } },
+    game: { ...root.game, game: { ...root.game.game, capabilitySummary: { status: "published", count: 4 } } },
   });
   for (const pattern of ["**/api/composed-reference-game/v1/bootstrap", "**/api/composed-reference-game/v1/state"])
     await page.route(pattern, (route) => route.fulfill({ status: 200, contentType: "application/json", body: published }));

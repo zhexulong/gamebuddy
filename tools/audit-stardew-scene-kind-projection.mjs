@@ -31,6 +31,14 @@
 //
 // Authority direction is one-way: the C# enum decides, every other layer must
 // equal it. A layer that is a superset is a bug, not forward compatibility.
+
+export const gateDeclaration = {
+  id: "audit-stardew-scene-kind-projection",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

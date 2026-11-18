@@ -786,6 +786,7 @@ async function createIntegrationFixture(
         authority: "SEMANTIC" as const,
         runEnter: async () => connectedSemanticGameLeaseFixture(),
         recoverDeadOwner: async () => undefined,
+        pushActionPolicy: () => false,
         close: async () => undefined,
       }),
   });

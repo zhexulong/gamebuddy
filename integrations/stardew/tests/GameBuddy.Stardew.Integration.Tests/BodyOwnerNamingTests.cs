@@ -104,7 +104,7 @@ public sealed class BodyOwnerNamingTests
         // ActiveDayAdvance is manager-private, so the slot is seeded uninitialized and only the KIND is knowable.
         LocalExecutionReceipt receipt = Refuse(("activeDayAdvance", null));
 
-        receipt.ReasonCode.Should().Be("body_owned_by_day_advance");
+        receipt.ReasonCode.Should().Be("body_owned_by_night");
         receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=sleep;interruptible=false;phase=committed;cancel_safe=false");
     }
 

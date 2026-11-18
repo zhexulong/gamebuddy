@@ -1,66 +1,83 @@
-import {
-  assertRequiredCapabilities,
-  connectNativeLocalClient,
-  executeFresh,
-  observeFresh,
-  readNativeClientConfig,
-  summarizeReceipt,
-  waitForTerminal,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
-import { loadHostTestModule } from "./lib/host-test-module.mjs";
+// Stardew-local withdraw_silo_hay smoke.
+//
+// The lifecycle - the fixture-config refusal, observe-fresh and the capability check, the requestId mint and the
+// execute, the terminal wait and its identity, the evidence parse and the stale reread, the stale re-send, the
+// bootstrap and the exit code - is `tools/lib/native-local-runner-scaffold.mjs`. What is left here is what is
+// actually about taking Hay out of a Silo.
+//
+// The receipt is not the proof. Two things are observed directly:
+//   1. the declared Given is one Hay in a Farm Silo, so ONE real withdrawal
+//      drains it — the run then reads the silo's own `hay` projection and the
+//      actor's carried Hay out of a FRESH snapshot, not out of the receipt;
+//   2. with the store empty, the same target must be REFUSED with a World that
+//      did not move. That is the negative case: an action that reports success
+//      without changing anything, or that silently no-ops on an empty silo, fails
+//      here rather than passing on a green receipt.
+//
+// The runner never chooses the target tile or the item: both come from the
+// discovery projection the Mod publishes, and the Mod re-resolves them on the
+// game thread.
+
+import { defineSmokeScenario, runSmokeScenarioMain } from "./lib/native-local-runner-scaffold.mjs";
 
 const ACTION = "withdraw_silo_hay";
+/** The action's own success word (`ExecuteWithdrawSiloHay`: one Hay left the silo and arrived in the pack). */
+const SUCCESS_CODE = "silo_hay_taken";
+/** The one `NativeLocalPlayerFixture.FixtureScenario` this gate arms (gate descriptor `native_withdraw_silo_hay_v1`). */
+const FIXTURE_SCENARIO = "native_withdraw_silo_hay_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 const HAY_QUALIFIED_ITEM_ID = "(O)178";
 
-/**
- * withdraw_silo_hay live contract.
- *
- * The receipt is not the proof. Two things are observed directly:
- *   1. the declared Given is one Hay in a Farm Silo, so ONE real withdrawal
- *      drains it — the run then reads the silo's own `hay` projection and the
- *      actor's carried Hay out of a FRESH snapshot, not out of the receipt;
- *   2. with the store empty, the same target must be REFUSED with a World that
- *      did not move. That is the negative case: an action that reports success
- *      without changing anything, or that silently no-ops on an empty silo, fails
- *      here rather than passing on a green receipt.
- *
- * The runner never chooses the target tile or the item: both come from the
- * discovery projection the Mod publishes, and the Mod re-resolves them on the
- * game thread.
- */
-export async function runWithdrawSiloHaySmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
-  const trace = [];
-  try {
-    const snapshot = await observeFresh(client, { actionable: true });
-    assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
+const scenario = defineSmokeScenario({
+  action: ACTION,
+  fixtureScenario: FIXTURE_SCENARIO,
+  successCode: SUCCESS_CODE,
+  refusesConfig: false,
+  requiredCapabilities: REQUIRED_CAPABILITIES,
+  projection: { collections: ["siloTargets", "inventoryItemFacts"] },
+
+  /** Read the advertised silo and the pack's own carried Hay before anything is sent. */
+  prepare: ({ snapshot }) => {
     const target = chooseAdjacentSiloTarget(snapshot);
-    const carriedBefore = carriedHay(snapshot);
+    return { snapshot, plan: { target, carriedBefore: carriedHay(snapshot) } };
+  },
 
-    const requestId = `native_local_withdraw_silo_hay_${Date.now()}`;
-    const accepted = await executeFresh(client, {
-      requestId,
-      idempotencyKey: `${requestId}_idem`,
-      action: ACTION,
-      args: { x: target.x, y: target.y, expectedTargetId: target.targetId },
-      snapshot,
-      timeoutMs: 30_000,
-    });
-    trace.push({
-      step: "withdraw",
-      action: ACTION,
-      target: target.targetId,
-      siloHayBefore: target.hay,
-      carriedBefore,
-      receipt: summarizeReceipt(accepted),
-    });
-    const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-    if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
-      throw new Error("silo_withdraw_terminal_identity_mismatch");
-    if (terminal.state !== "succeeded" || terminal.reasonCode !== "silo_hay_taken")
-      throw new Error(`silo_withdraw_failed:${terminal.reasonCode}`);
+  describePlan: ({ target, carriedBefore }) => ({
+    target: target.targetId,
+    tile: `${target.x},${target.y}`,
+    siloHayBefore: target.hay,
+    carriedBefore,
+  }),
 
-    const evidence = parseEvidence(terminal.evidence);
+  request: ({ target }) => ({ args: { x: target.x, y: target.y, expectedTargetId: target.targetId } }),
+
+  /**
+   * The negative case, declared to the template: the store is empty after the one withdrawal, so the SAME target must
+   * be refused and neither half of the transfer may move.
+   */
+  negative: {
+    args: ({ target }) => ({ x: target.x, y: target.y, expectedTargetId: target.targetId }),
+    refusedCodes: ["silo_empty"],
+    unchanged: ({ before, after }) => {
+      const targetId = before.siloTargets?.find((entry) => entry?.targetId)?.targetId ?? null;
+      if (targetId === null) return "no_silo_advertised_after_the_refusal";
+      const siloBefore = siloHayFor(before, targetId);
+      const siloAfter = siloHayFor(after, targetId);
+      if (siloAfter !== siloBefore) return `silo_hay:${siloBefore}->${siloAfter}`;
+      const carriedBefore = carriedHay(before);
+      const carriedAfter = carriedHay(after);
+      return carriedAfter === carriedBefore ? null : `carried_hay:${carriedBefore}->${carriedAfter}`;
+    },
+  },
+
+  /**
+   * Both halves of the transfer, each read from the world: the receipt's own numbers must agree with the pack, the
+   * silo store must fall by exactly one AND the carried Hay must rise by exactly one. Either half alone is not a
+   * transfer — the silo half alone cannot tell a withdrawal from destruction, and the pack half alone cannot tell it
+   * from a gift.
+   */
+  async assertPostcondition({ evidence, plan, after }) {
+    const { target, carriedBefore } = plan;
     assertEvidence(evidence, "silo_hay_before", String(target.hay));
     assertEvidence(evidence, "silo_hay_after", String(target.hay - 1));
     assertEvidence(evidence, "silo_hay_decreased", "true");
@@ -68,10 +85,6 @@ export async function runWithdrawSiloHaySmoke(client, receipts, _config, { termi
     assertEvidence(evidence, "carried_after", String(carriedBefore + 1));
     assertEvidence(evidence, "carried_hay_increased", "true");
 
-    // The world change, re-read after the terminal: silo store down by exactly one
-    // AND carried Hay up by exactly one. Either half alone is not the transfer.
-    const after = await observeFresh(client, { actionable: true });
-    assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const siloHayAfter = siloHayFor(after, target.targetId);
     const carriedAfter = carriedHay(after);
     if (siloHayAfter !== target.hay - 1)
@@ -79,56 +92,19 @@ export async function runWithdrawSiloHaySmoke(client, receipts, _config, { termi
     if (carriedAfter !== carriedBefore + 1)
       throw new Error(`silo_withdraw_world_carried_unchanged:${carriedAfter}:${carriedBefore + 1}`);
 
-    // Negative case: the store is empty now, so the SAME target must be refused and
-    // nothing may change. A success here (or a silent no-op) is the failure.
-    const negativeRequestId = `native_local_withdraw_silo_hay_empty_${Date.now()}`;
-    const negativeAccepted = await executeFresh(client, {
-      requestId: negativeRequestId,
-      idempotencyKey: `${negativeRequestId}_idem`,
-      action: ACTION,
-      args: { x: target.x, y: target.y, expectedTargetId: target.targetId },
-      snapshot: after,
-      timeoutMs: 30_000,
-    });
-    trace.push({
-      step: "withdraw_empty",
-      action: ACTION,
-      target: target.targetId,
-      receipt: summarizeReceipt(negativeAccepted),
-    });
-    const negativeTerminal = await waitForTerminal(receipts, negativeAccepted, terminalTimeoutMs);
-    if (negativeTerminal.state !== "rejected" || negativeTerminal.reasonCode !== "silo_empty")
-      throw new Error(`silo_withdraw_empty_not_refused:${negativeTerminal.state}/${negativeTerminal.reasonCode}`);
-
-    const unchanged = await observeFresh(client, { actionable: true });
-    assertRequiredCapabilities(unchanged, REQUIRED_CAPABILITIES);
-    const siloHayUnchanged = siloHayFor(unchanged, target.targetId);
-    const carriedUnchanged = carriedHay(unchanged);
-    if (siloHayUnchanged !== siloHayAfter || carriedUnchanged !== carriedAfter)
-      throw new Error(`silo_withdraw_empty_moved_world:${siloHayUnchanged}/${carriedUnchanged}`);
-
     return {
-      state: "passed",
-      topology: "native_local_player_fixture",
-      reasonCode: "silo_hay_taken",
       target: target.targetId,
       siloHay: { before: target.hay, after: siloHayAfter },
       carriedHay: { before: carriedBefore, after: carriedAfter },
-      negative: { reasonCode: negativeTerminal.reasonCode, siloHay: siloHayUnchanged, carriedHay: carriedUnchanged },
       evidence,
-      receipt: summarizeReceipt(terminal),
-      trace,
     };
-  } catch (error) {
-    return {
-      state: "blocked",
-      topology: "native_local_player_fixture",
-      reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
-      trace,
-    };
-  }
-}
+  },
+});
+
+export const runWithdrawSiloHaySmoke = (client, receipts, config, options) =>
+  scenario.run(client, receipts, config, options);
+
+if (import.meta.main) await runSmokeScenarioMain(scenario);
 
 /** The silo the fixture stands the actor at: an advertised target already in reach. */
 function chooseAdjacentSiloTarget(snapshot) {
@@ -164,30 +140,4 @@ function siloHayFor(snapshot, targetId) {
 function assertEvidence(evidence, key, expected) {
   if (evidence[key] !== expected)
     throw new Error(`silo_withdraw_evidence_${key}:${evidence[key] ?? "missing"}:${expected}`);
-}
-
-function parseEvidence(evidence) {
-  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(
-    detail
-      .split(";")
-      .map((pair) => {
-        const index = pair.indexOf("=");
-        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-      })
-      .filter(Boolean),
-  );
-}
-
-if (import.meta.main) {
-  const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runWithdrawSiloHaySmoke(session.client, session.receipts, config);
-    console.log(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
-  }
 }

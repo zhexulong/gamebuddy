@@ -92,6 +92,14 @@
  *                    the run says so, rather than passing in silence
  *                    (tools/check-release-generation-self-contained.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-release-generation-self-contained",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, resolve } from "node:path";

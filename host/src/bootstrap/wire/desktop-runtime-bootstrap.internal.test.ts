@@ -1172,8 +1172,8 @@ async function drive(session) {
   }
 }
 
-async function mockDeployCompanionGameMod() {
-  return fixture.modOutcome ?? "companion-mod-current";
+async function mockPrepareDesktopHostLaunch() {
+  return Object.freeze({ stage: "companion-mod", outcome: fixture.modOutcome ?? "companion-mod-current" });
 }
 
 function mockComposition(_rootLayoutCapability, session, assemblyInput) {
@@ -1196,7 +1196,7 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   return { async close() { await operationTask; await session.close(); return cleanExitReason; } };
 }
 
-await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition, deployCompanionGameMod: mockDeployCompanionGameMod } });
+await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition, prepareDesktopHostLaunch: mockPrepareDesktopHostLaunch } });
 const { runDesktopHostBootstrap } = await import(fixture.bootstrapUrl);
 try {
   await runDesktopHostBootstrap(fixture.moduleDirectory);
@@ -1394,11 +1394,15 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   const compositionCall =
     /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,\s*\)/;
   assert.match(source, compositionCall);
-  // The game-facing Mod step is reached through the composition seam and never
-  // through a game import of this wire: the step and its named outcome are
-  // announced as two bounded status frames before the Host composition starts.
-  assert.match(sourceShape, /await writeStatus\("companion-mod"\);/);
-  assert.match(sourceShape, /await writeStatus\(await deployCompanionGameMod\(artifactRoot\)\);/);
+  // The launch preparation belongs to the composition root: this wire receives the stage and the
+  // outcome as two bounded tokens and publishes them, so the file that must stay game-free names
+  // no game, no installation and no Mod. `tools/check-host-game-physical-seam.mjs` reads the same
+  // property from the imported names and call sites, which is what survives a rename.
+  assert.match(sourceShape, /const preparation = await prepareDesktopHostLaunch\(artifactRoot\);/);
+  assert.match(sourceShape, /await writeStatus\(preparation\.stage\);/);
+  assert.match(sourceShape, /await writeStatus\(preparation\.outcome\);/);
+  assert.doesNotMatch(source, /deployCompanionGameMod|CompanionGameModDeploymentOutcome/);
+  assert.doesNotMatch(sourceShape, /"companion-mod"/);
   assert.match(sourceShape, /new WeakSet<object>\(\)/);
   assert.match(sourceShape, /new WeakMap<object, DesktopRootLayout>\(\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
@@ -1469,7 +1473,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
       ...["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"].map(
         (stage) => `await writeStatus("${stage}")`,
       ),
-      "deployCompanionGameMod(artifactRoot)",
+      "prepareDesktopHostLaunch(artifactRoot)",
       "createDesktopProductCompositionForBootstrap(",
       "await writeAcknowledgement(frame)",
     ],

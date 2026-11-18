@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
+import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
+import { CompanionLoop, NO_PRESENTATION_LEASE } from "./companion-loop.js";
+import { FACT_PRODUCER } from "./event-pump.js";
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   NATIVE_BUBBLE_DELIVERY_UNIT,
   NATIVE_BUBBLE_SCAFFOLDING,
   NATIVE_BUBBLE_STAGE_DIRECTION,
+  TURN_WITHHELD,
+  TURN_WITHHELD_REASONS,
   type NativeCompanionContentEvent,
   type NativeCompanionContentSinks,
   type NativeCompanionMessageText,
   type NativeCompanionTurnBubble,
+  type NativeCompanionTurnDelivery,
 } from "./native-companion-content.js";
 
 /**
@@ -128,6 +135,17 @@ function soundOf(turnId = "player_source_1"): string {
   return sound!;
 }
 
+/**
+ * The bubble one delivery committed, or a failure that names what withheld it.
+ *
+ * Every case below goes through this rather than through a `null` check: a withholding is a named answer now, and a
+test that read it as "no bubble" would be the same collapse this seam exists to remove.
+ */
+function deliveredBubble(delivery: NativeCompanionTurnDelivery): NativeCompanionTurnBubble {
+  if (delivery.delivered === 0) assert.fail(`the turn withheld its one bubble: ${delivery.reason}`);
+  return delivery.bubble;
+}
+
 test("a turn that also calls tools says everything it said in ONE bubble, in order", async () => {
   const fx = fakeSession();
   const recorded = record();
@@ -143,7 +161,7 @@ test("a turn that also calls tools says everything it said in ONE bubble, in ord
     assistant([text("种子得先去买。"), toolCall, text("回头再浇水。")], "toolUse"),
   );
   streamMessage(fx, ["都弄好了。"], assistant([text("都弄好了。")], "stop"));
-  const bubble = observer.deliverTurn();
+  const bubble = deliveredBubble(observer.deliverTurn());
   await observer.close();
 
   assert.deepEqual(
@@ -221,60 +239,68 @@ test("a turn that said nothing delivers nothing at all", async () => {
   await observer.close();
 
   assert.deepEqual(recorded.bubbles, [], "a turn with no speakable text has no bubble: absent, never empty");
-  assert.equal(bubble, null);
+  assert.deepEqual(
+    bubble,
+    { delivered: 0, reason: TURN_WITHHELD.nothingToSay },
+    "a turn that said nothing still ENDED, and its answer names that",
+  );
   assert.deepEqual(recorded.messages, [{ textParts: 1, suppression: "empty_after_projection" }]);
 });
 
-test("the bubble stops at the last complete sentence that fits, and says what that cost", async () => {
+test("a 108-character turn arrives whole: nothing below the transport is cut", async () => {
   const fx = fakeSession();
   const recorded = record();
   const observer = attachBubble(fx, recorded.sinks);
-  // The first three messages of a real round46b turn, verbatim: 89 characters of speech inside one prompt turn, which
-  // one bubble cannot hold.
+  // The first three messages of a real round46b turn, verbatim, with the middle one carried a clause further: 108
+  // characters of speech inside one prompt turn. The delivery used to cut this at 80 (77 with the sound) and delete the
+  // tail that the chat line keeps for scroll-back; the transport carries 4,000 and the bubble clamps itself on screen.
   const said = [
     "三格宽二十格长，种子还差五十八颗——先去把地方看明白，再盘算钱够不够跑一趟镇上。",
-    "先从屋里出去，站到门口才能量出那条长垄的边。",
+    "先从屋里出去，站到门口才能量出那条长垄的边，顺手看看门前那条水渠到底通不通。",
     "门前这片草和石头还横着呢，等脚踩上去才知道要从哪头下手。",
   ];
+  const speech = said.join(" ");
+  // The premise the case names, checked rather than assumed: this is the length the old ceiling could not carry.
+  assert.equal(speech.length, 108, "this case is the 108-character turn; the fixture must still be one");
   said.forEach((part, index) =>
     streamMessage(fx, [part], assistant([text(part), toolCall], index === said.length - 1 ? "stop" : "toolUse")),
   );
-  const bubble = observer.deliverTurn();
+  const bubble = deliveredBubble(observer.deliverTurn());
   await observer.close();
 
-  const speech = said.join(" ");
-  const sound = soundOf();
   const delivered = recorded.bubbles[0]!;
-  assert.ok(bubble !== null);
-  assert.ok(delivered.length <= GAME_DELIVERY_PACING.lengthBudget!.maxChars, "never wider than the bubble");
-  assert.ok(delivered.startsWith(`${sound} `), "the sound is the head of the bubble, spent from the same ceiling");
-  const spoken = delivered.slice(sound.length + 1);
-  assert.ok(speech.startsWith(spoken), `the bubble is the head of the turn's speech: ${JSON.stringify(delivered)}`);
-  assert.ok(spoken.length < speech.length, "this case must actually truncate");
-  assert.ok(spoken.endsWith("。"), "the cut lands on a sentence end, never inside one");
-  assert.equal(bubble!.truncatedChars, speech.length - spoken.length);
-  assert.equal(bubble!.sentencesDropped, said.length - said.filter((part) => spoken.includes(part)).length);
-  assert.ok(bubble!.sentencesDropped > 0, "the sentences that did not fit are counted");
+  assert.deepEqual(recorded.bubbles, [`${soundOf()} ${speech}`], "the turn reaches the line exactly as she said it");
+  assert.equal(
+    bubble.truncatedChars,
+    0,
+    "the bubble's own clamp is the Mod's, and it is not a loss this delivery took",
+  );
+  assert.equal(bubble.sentencesDropped, 0);
+  assert.equal(bubble.chars, delivered.length);
+  assert.ok(delivered.length <= MAX_COMPANION_PRESENTATION_TEXT_CHARS, "and it is inside what the wire carries");
 });
 
-test("one sentence longer than the ceiling is cut at the ceiling, and the count says no sentence fitted", async () => {
+test("a turn past the transport's ceiling is cut there, and the bubble's own record names the loss", async () => {
   const fx = fakeSession();
   const recorded = record();
   const observer = attachBubble(fx, recorded.sinks);
-  const oneLongSentence = `${"这是一句很长很长的自言自语".repeat(8)}。`;
+  // One sentence longer than the ceiling: no sentence boundary for the cut to stop at, so it lands on the character
+  // ceiling itself. The bound is the transport's declaration, never a number typed here.
+  const oneLongSentence = `${"这".repeat(MAX_COMPANION_PRESENTATION_TEXT_CHARS)}。`;
   streamMessage(fx, [oneLongSentence], assistant([text(oneLongSentence)], "stop"));
-  const bubble = observer.deliverTurn();
+  const bubble = deliveredBubble(observer.deliverTurn());
   await observer.close();
 
   const sound = soundOf();
   const delivered = recorded.bubbles[0]!;
-  assert.ok(bubble !== null);
-  assert.equal(delivered.length, GAME_DELIVERY_PACING.lengthBudget!.maxChars);
+  assert.equal(delivered.length, MAX_COMPANION_PRESENTATION_TEXT_CHARS, "cut at the wire's own bound, not below it");
   assert.equal(
-    bubble!.truncatedChars,
-    oneLongSentence.length - (GAME_DELIVERY_PACING.lengthBudget!.maxChars - sound.length - 1),
+    bubble.truncatedChars,
+    oneLongSentence.length - (MAX_COMPANION_PRESENTATION_TEXT_CHARS - sound.length - 1),
+    "the characters the wire refused are counted on the record the caller reads",
   );
-  assert.equal(bubble!.sentencesDropped, 0, "no complete sentence fitted, so none was dropped whole");
+  assert.ok(bubble.truncatedChars > 0, "this case must actually truncate, or the naming is never exercised");
+  assert.equal(bubble.sentencesDropped, 0, "no complete sentence fitted, so none was dropped whole");
   assert.ok(delivered.startsWith(`${sound} `));
 });
 
@@ -288,8 +314,12 @@ test("a revoked turn speaks nothing, and one turn cannot deliver twice", async (
   const second = observer.deliverTurn();
   await observer.close();
 
-  assert.notEqual(first, null);
-  assert.equal(second, null, "the turn's one bubble was already delivered");
+  assert.equal(first.delivered, 1, "the turn's first and only bubble left");
+  assert.deepEqual(
+    second,
+    { delivered: 0, reason: TURN_WITHHELD.alreadyDelivered },
+    "the turn's one bubble was already delivered, and the answer says which way it ended",
+  );
   assert.equal(recorded.bubbles.length, 1);
 
   const stopped = fakeSession();
@@ -300,7 +330,11 @@ test("a revoked turn speaks nothing, and one turn cannot deliver twice", async (
   const afterStop = stoppedObserver.deliverTurn();
   await stoppedObserver.close();
 
-  assert.equal(afterStop, null, "a revoked turn is not a turn that spoke");
+  assert.deepEqual(
+    afterStop,
+    { delivered: 0, reason: TURN_WITHHELD.stopped },
+    "a revoked turn is not a turn that spoke",
+  );
   assert.deepEqual(stoppedRecord.bubbles, [], "nothing is presented after STOP");
 });
 
@@ -331,7 +365,7 @@ test("a provider refusal is a refusal, not a bubble", async () => {
   // The refusal withheld the failing message; the turn's earlier sentence is still speech the player has not heard,
   // so the bubble carries it rather than dropping the whole turn on the provider's refusal.
   assert.deepEqual(recorded.bubbles, [`${soundOf()} 先出门去农场。`]);
-  assert.notEqual(bubble, null);
+  assert.equal(bubble.delivered, 1);
 });
 
 test("the bubble's parts report stays per message, because the delivery account is measured there", async () => {
@@ -350,3 +384,309 @@ test("the bubble's parts report stays per message, because the delivery account 
 /** The type this file also pins: `deliverTurn` reports the bubble, and nothing else. */
 const bubbleType: NativeCompanionTurnBubble = Object.freeze({ chars: 0, truncatedChars: 0, sentencesDropped: 0 });
 assert.equal(bubbleType.chars, 0);
+
+/**
+ * ONE DELIVERY ANSWER PER TURN, AND EVERY ANSWER NAMES WHERE IT WENT.
+ *
+ * <p>
+ * The population is EVERY delivery result the pipeline can produce: each member of the projection's closed
+ * withhold list (`TURN_WITHHELD_REASONS`), the loop's own `no_presentation_lease` - the case `round64` recorded as a
+ * bubble the player never saw - and one ordinary turn that delivers. Each is driven through the real pipeline: the
+ * observer for the projection's own answers, the loop and its pump for the two the pipeline composes.
+ * </p>
+ * <p>
+ * The property is that a delivery RESULT, never an absence. A turn that ends with nothing to present has ended, and the
+ * caller must be able to read that as a named answer. `deliverTurn` answered `null` for five different situations, and a
+ * caller awaiting a bubble had nothing to switch on - the shape in which a turn withholds all its text and nobody can
+ * tell it apart from a turn still waiting.
+ * </p>
+ * <p>
+ * A reason the closed list grows without a case here is a failure too: the coverage assertion is derived from the list, so
+ * a new member cannot arrive unexamined.
+ * </p>
+ */
+type DeliveryObservation = Readonly<{
+  site: string;
+  /** The delivery answer as the pipeline produced it, untyped on purpose: this checker must not trust its shape. */
+  answer: unknown;
+  /** Did the turn itself settle? A delivery inside a turn that never ended is not a delivery. */
+  settled: boolean;
+  /** How many bubbles the presentation sink actually received, when the case can read it. */
+  presented?: number;
+}>;
+
+/** The names a withheld delivery may carry: the projection's closed list, plus the loop's own no-lease member. */
+const NAMED_WITHHOLDINGS: readonly string[] = Object.freeze([...TURN_WITHHELD_REASONS, NO_PRESENTATION_LEASE]);
+
+function tallyDeliveries(observations: readonly DeliveryObservation[]): Readonly<{
+  delivered: number;
+  withheld: number;
+  hung: number;
+  findings: readonly string[];
+  line: string;
+}> {
+  const findings: string[] = [];
+  const examined: string[] = [];
+  let delivered = 0;
+  let withheld = 0;
+  let hung = 0;
+  for (const observation of observations) {
+    if (!observation.settled) {
+      hung += 1;
+      findings.push(`turn_withheld_entirely_never_settles:${observation.site}:the_turn_never_settled`);
+      continue;
+    }
+    const answer = observation.answer;
+    const read = typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : undefined;
+    const count = read?.delivered;
+    const reason = read?.reason;
+    if (count === 1) {
+      delivered += 1;
+      continue;
+    }
+    if (count === 0 && typeof reason === "string" && NAMED_WITHHOLDINGS.includes(reason)) {
+      withheld += 1;
+      examined.push(reason);
+      continue;
+    }
+    // Neither a bubble nor a name: the answer a caller cannot act on, which is the hang in its first form.
+    hung += 1;
+    findings.push(
+      `turn_withheld_entirely_never_settles:${observation.site}:delivery_names_nothing:${JSON.stringify(answer)}`,
+    );
+  }
+  return Object.freeze({
+    delivered,
+    withheld,
+    hung,
+    findings: Object.freeze(findings),
+    line: `deliveries examined ${String(observations.length)} · delivered ${String(delivered)} · withheld-named ${String(withheld)} · hung ${String(hung)} · examined reasons {${[...new Set(examined)].sort().join(", ")}}`,
+  });
+}
+
+/** One assistant message read the way Pi streams it: start, one text part per delta, then the message itself. */
+function streamSaid(emit: (event: NativeCompanionContentEvent) => void, said: readonly string[]): void {
+  const start = assistant([], "stop");
+  emit({ type: "message_start", message: start });
+  said.forEach((part, index) => {
+    emit({
+      type: "message_update",
+      message: start,
+      assistantMessageEvent: { type: "text_start", contentIndex: index, partial: start },
+    });
+    emit({
+      type: "message_update",
+      message: start,
+      assistantMessageEvent: { type: "text_delta", contentIndex: index, delta: part, partial: start },
+    });
+  });
+  emit({
+    type: "message_end",
+    message: assistant(
+      said.map((part) => text(part)),
+      "stop",
+    ),
+  });
+}
+
+/** A session that consumes one batch, streams the exact text it was given, and settles - the loop's real seam. */
+function turnSession(said: readonly string[]) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown): void => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    session: Object.freeze({
+      async sendUserMessage(batch: string): Promise<void> {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+        streamSaid((event) => emit(event), said);
+        emit({ type: "agent_settled", aborted: false });
+      },
+      async abort(): Promise<void> {},
+      clearQueue(): void {},
+      async waitForIdle(): Promise<void> {},
+      subscribe(listener: (event: unknown) => void): () => void {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    }),
+  };
+}
+
+test("turn_withheld_entirely_never_settles: every delivery names what reached the player or why nothing did", async () => {
+  const observations: DeliveryObservation[] = [];
+
+  // THE PROJECTION'S OWN ANSWERS, each driven through the observer that produces it.
+  const delivered = fakeSession();
+  const deliveredRecord = record();
+  const deliveredObserver = attachBubble(delivered, deliveredRecord.sinks);
+  streamSaid(delivered.emit, ["我回来了。"]);
+  const oneBubble = deliveredObserver.deliverTurn();
+  const repeated = deliveredObserver.deliverTurn();
+  await deliveredObserver.close();
+  observations.push({ site: "one_paragraph", answer: oneBubble, settled: true });
+  observations.push({ site: "already_delivered", answer: repeated, settled: true });
+
+  const silent = fakeSession();
+  const silentRecord = record();
+  const silentObserver = attachBubble(silent, silentRecord.sinks);
+  streamSaid(silent.emit, ["*转过身微笑*"]);
+  const allWithheld = silentObserver.deliverTurn();
+  await silentObserver.close();
+  observations.push({ site: "nothing_to_say", answer: allWithheld, settled: true });
+
+  const stopped = fakeSession();
+  const stoppedRecord = record();
+  const stoppedObserver = attachBubble(stopped, stoppedRecord.sinks);
+  streamSaid(stopped.emit, ["我回来了。"]);
+  stoppedObserver.revoke();
+  const afterStop = stoppedObserver.deliverTurn();
+  await stoppedObserver.close();
+  observations.push({ site: "stopped", answer: afterStop, settled: true });
+
+  // A surface whose unit is the message owes no turn bubble, and says so instead of answering nothing.
+  const messageUnitSession = fakeSession();
+  const messageUnitRecord = record();
+  const messageUnitObserver = attachNativeCompanionContent(messageUnitSession.session, messageUnitRecord.sinks, {
+    deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
+    stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
+    scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
+    pacing: GAME_DELIVERY_PACING,
+    turn: { id: "player_source_1", locale: "zh-CN" },
+  });
+  messageUnitObserver.open();
+  const messageUnitAnswer = messageUnitObserver.deliverTurn();
+  await messageUnitObserver.close();
+  observations.push({ site: "message_unit", answer: messageUnitAnswer, settled: true });
+
+  // THE PIPELINE'S OWN ANSWERS: the loop composes the delivery for every turn it runs, and the pump must open the next
+  // turn after a withheld one. A hang here is the defect: the first turn never settles, so no later turn is ever owed.
+  const pumpAfter = async (
+    site: "all_withheld" | "no_lease" | "spoken",
+    said: readonly string[],
+    opener: (loop: CompanionLoop) => void,
+  ): Promise<DeliveryObservation> => {
+    const presented: string[] = [];
+    const loop = new CompanionLoop(turnSession(said).session as never, {
+      beginPlayerBatch(): void {},
+      endBatch(): void {},
+      async presentNativeAssistantContent(content): Promise<void> {
+        if (content.text.length > 0) presented.push(content.text);
+      },
+    });
+    opener(loop);
+    const settled = await Promise.race([
+      loop.flush().then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ]);
+    const answer = loop.lastTurnDelivery;
+    // THE NEXT TURN. A withheld delivery that leaves the pump holding the turn is the hang this gate exists for.
+    loop.pump.enqueueFact(
+      {
+        source: "stardew_mod",
+        kind: "semantic_event",
+        eventId: "after_withheld",
+        sourceEventId: "after_withheld",
+        correlationId: "after_withheld",
+        revision: 9,
+        occurredAtMs: 9,
+        payload: { kind: "day_started", day: 3 },
+      },
+      FACT_PRODUCER.adapterIngress,
+    );
+    const nextOpened = await Promise.race([
+      loop.flush().then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ]);
+    assert.ok(nextOpened, "the turn after a withheld one must still be owed and delivered");
+    return Object.freeze({ site: site, answer, settled, presented: presented.length });
+  };
+  observations.push(
+    await pumpAfter("all_withheld", ["*转过身微笑*"], function player_input(loop) {
+      loop.pump.enqueuePlayerInput({
+        source: "player_text",
+        inputId: "input_withheld",
+        eventId: "player_source_withheld",
+        locale: "zh-CN",
+        text: "在吗？",
+        timestampMs: 1,
+      });
+    }),
+  );
+  // A turn opened by a world fact that opens NO presentation lease - the shape `round64` recorded as a bubble nobody saw.
+  // The loop has no projection to ask, so it is the loop that must name the withholding.
+  observations.push(
+    await pumpAfter("no_lease", ["我回来了。"], function world_fact(loop) {
+      loop.pump.enqueueFact(
+        {
+          source: "stardew_mod",
+          kind: "semantic_event",
+          eventId: "no_lease_event",
+          sourceEventId: "no_lease_event",
+          correlationId: "no_lease_event",
+          revision: 2,
+          occurredAtMs: 2,
+          payload: { kind: "warped" },
+        },
+        FACT_PRODUCER.adapterIngress,
+      );
+    }),
+  );
+  observations.push(
+    await pumpAfter("spoken", ["我回来了。"], function player_input(loop) {
+      loop.pump.enqueuePlayerInput({
+        source: "player_text",
+        inputId: "input_spoken",
+        eventId: "player_source_spoken",
+        locale: "zh-CN",
+        text: "在吗？",
+        timestampMs: 1,
+      });
+    }),
+  );
+
+  const tallied = tallyDeliveries(observations);
+  process.stdout.write(`\n${tallied.line}\n`);
+  // H FIRST, SO A FAILURE NAMES THE SITE THAT HUNG rather than only the coverage gap it left behind.
+  assert.deepEqual(tallied.findings, [], `every delivery must settle and name its answer: ${tallied.line}`);
+  assert.equal(tallied.hung, 0, tallied.line);
+  // THE ANSWER AND THE SINK ARE READ TOGETHER: `delivered: 1` that never reached `onFinalText` would name something that
+  // did not happen, and `delivered: 0` that still presented would be a bubble nobody accounted for.
+  for (const observation of observations) {
+    if (observation.presented === undefined) continue;
+    const answer = typeof observation.answer === "object" && observation.answer !== null ? observation.answer : {};
+    const counted = (answer as { delivered?: unknown }).delivered === 1 ? 1 : 0;
+    assert.equal(
+      observation.presented,
+      counted,
+      `${observation.site}: the delivery answer and the presentation sink disagree`,
+    );
+  }
+  // THE POPULATION IS THE AUTHORITY: every member of the closed lists must have been driven, so this gate cannot pass by
+  // examining a subset somebody remembered.
+  const examined = new Set(
+    observations
+      .map((observation) => observation.answer)
+      .filter(
+        (answer): answer is { delivered: 0; reason: string } =>
+          typeof answer === "object" && answer !== null && (answer as { reason?: unknown }).reason !== undefined,
+      )
+      .map((answer) => answer.reason),
+  );
+  assert.deepEqual(
+    [...examined].sort(),
+    [...NAMED_WITHHOLDINGS].sort(),
+    "every name a withheld delivery can carry must be driven here, derived from the closed lists",
+  );
+  assert.ok(tallied.delivered >= 2, `${tallied.line}: a delivered turn must be in the population`);
+
+  // THE FALSIFIER, run against the same checker: an answer with no name and an answer that never settled both read as
+  // hung, which is what the pre-change `null` was.
+  const falsifier = tallyDeliveries([
+    { site: "synthetic_null", answer: null, settled: true },
+    { site: "synthetic_unnamed", answer: { delivered: 0 }, settled: true },
+    { site: "synthetic_hang", answer: { delivered: 0, reason: TURN_WITHHELD.nothingToSay }, settled: false },
+  ]);
+  assert.equal(falsifier.hung, 3, `the checker must call all three nameless answers hung: ${falsifier.line}`);
+  assert.equal(falsifier.withheld, 0);
+});

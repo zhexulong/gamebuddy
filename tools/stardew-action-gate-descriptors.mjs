@@ -8,6 +8,11 @@
  * is NOT lifecycle authority: an action's lifecycle lives in the Mod catalog
  * (FarmhandActionDefinition), and promotion to `published` requires an
  * independent review the live run alone cannot supply.
+ *
+ * A row names where its live gate LIVES - a runner file or a smoke contract - and
+ * `tools/lib/stardew-action-gate-route.mjs` is the only place that resolves it. Before
+ * that split, "this action is gated" and "this runner exists" were the same statement,
+ * so no runner could ever be retired.
  */
 export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("move_to_tile", 1, "run-stardew-native-local-player-move-smoke.mjs", "target_reached"),
@@ -77,13 +82,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // Promoted 2026-10-12 after its native-local live gate passed on all five checks: the pond emptied
   // (occupants 1 -> 0, fish type -> none), the receipt agreed with the world, the published target DISAPPEARED
   // from discovery, the ejected fish were OBSERVED as ground itemTargets, and a stale target was refused by name.
-  gate(
-    "clear_fish_pond",
-    1,
-    "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
-    "fish_pond_cleared",
-    "native_clear_fish_pond_v1",
-  ),
+  gate("clear_fish_pond", 1, null, "fish_pond_cleared", "native_clear_fish_pond_v1", "contract"),
   gate(
     "harvest_crop",
     1,
@@ -334,15 +333,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // The elevator's floor selection only exists inside MineElevatorMenu's click
   // handler, so it is its own action rather than an `enter_mine` argument (Lane L3
   // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
-  // runner proves the terminal, the world arriving on the requested LEVEL, and the
-  // floor-set projection following. Live evidence: fixtures/stardew/RUNBOOK.md 36.
-  gate(
-    "toggle_animal_door",
-    1,
-    "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
-    "animal_door_toggled",
-    "native_toggle_animal_door_v1",
-  ),
+  // contract proves the terminal, the world arriving on the requested LEVEL, the
+  // floor-set projection following, and the door the refusal left open. Promoted
+  // 2026-11-14 after a live slice passed every check, `afterStale` included.
+  gate("toggle_animal_door", 1, null, "animal_door_toggled", "native_toggle_animal_door_v1", "contract"),
   gate(
     "select_mine_elevator_floor",
     1,
@@ -356,35 +350,11 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // (architecture/game-action-model.md 'lifecycle 与发布终点'), so live_verified is
   // the release endpoint and these are now part of the published set.
   gate("cut_grass", 1, "run-stardew-native-local-player-cut-grass-smoke.mjs", "grass_cut", "native_cut_grass_v1"),
-  gate(
-    "harvest_bush",
-    1,
-    "run-stardew-native-local-player-harvest-bush-smoke.mjs",
-    "bush_harvested",
-    "native_harvest_bush_v1",
-  ),
-  gate(
-    "harvest_fruit_tree",
-    1,
-    "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
-    "fruit_tree_harvested",
-    "native_harvest_fruit_tree_v1",
-  ),
-  gate("shake_tree", 1, "run-stardew-native-local-player-shake-tree-smoke.mjs", "tree_shaken", "native_shake_tree_v1"),
-  gate(
-    "take_pedestal_item",
-    1,
-    "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-    "pedestal_item_taken",
-    "native_take_pedestal_item_v1",
-  ),
-  gate(
-    "toggle_fence_gate",
-    1,
-    "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
-    "fence_gate_toggled",
-    "native_toggle_fence_gate_v1",
-  ),
+  gate("harvest_bush", 1, null, "bush_harvested", "native_harvest_bush_v1", "contract"),
+  gate("harvest_fruit_tree", 1, null, "fruit_tree_harvested", "native_harvest_fruit_tree_v1", "contract"),
+  gate("shake_tree", 1, null, "tree_shaken", "native_shake_tree_v1", "contract"),
+  gate("take_pedestal_item", 1, null, "pedestal_item_taken", "native_take_pedestal_item_v1", "contract"),
+  gate("toggle_fence_gate", 1, null, "fence_gate_toggled", "native_toggle_fence_gate_v1", "contract"),
 
   // World-object lane (2026-10-08): three actions on objects occupying world tiles.
   gate("clear_cask", 1, "run-stardew-native-local-player-clear-cask-smoke.mjs", "cask_cleared", "native_clear_cask_v1"),
@@ -417,13 +387,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_toggle_tool_light_v1",
   ),
   gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
-  gate(
-    "mount_transport",
-    1,
-    "run-stardew-native-local-player-mount-transport-smoke.mjs",
-    "horse_mounted",
-    "native_mount_transport_v1",
-  ),
+  gate("mount_transport", 1, null, "horse_mounted", "native_mount_transport_v1", "contract"),
   gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
   // WIA §4.2: the two modal-handling primitives. Promoted to live_verified on owner ruling
   // (2026-10-06) after both crossed the live gate: a real native-local run each, with its own
@@ -532,13 +496,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "entity_named",
     "native_name_entity_v1",
   ),
-  gate(
-    "accept_daily_quest",
-    1,
-    "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
-    "daily_quest_accepted",
-    "native_accept_daily_quest_v1",
-  ),
+  gate("accept_daily_quest", 1, null, "daily_quest_accepted", "native_accept_daily_quest_v1", "contract"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate(
     "accept_special_order",
@@ -654,6 +612,35 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // Its fixture world (`native_fish_here_v1`) arms exactly that Given and casts nothing: a rod
   // that takes bait with bait in it, the morning's stamina, and the actor beside castable water.
   gate("fish_here", 1, "run-stardew-native-local-player-fish-here-smoke.mjs", "fish_caught", "native_fish_here_v1"),
+  gate(
+    "break_resource_clump",
+    1,
+    "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+    "clump_broken",
+    "native_clear_debris_resource_clump_v1",
+  ),
+  gate(
+    "rotate_furniture",
+    1,
+    "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+    "furniture_rotated",
+    "native_rotate_furniture_v1",
+  ),
+  gate(
+    "remove_fence",
+    1,
+    "run-stardew-native-local-player-remove-fence-smoke.mjs",
+    "fence_removed",
+    "native_remove_fence_v1",
+  ),
+  gate("open_geode", 1, "run-stardew-native-local-player-open-geode-smoke.mjs", "geode_opened", "native_open_geode_v1"),
+  gate(
+    "sweep_scythe",
+    1,
+    "run-stardew-native-local-player-sweep-scythe-smoke.mjs",
+    "scythe_sweep_cut",
+    "native_cut_weeds_v1",
+  ),
 ]);
 
 /**
@@ -743,10 +730,8 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // not something the fixture placed.
   // The turn is the piece's own `Furniture.rotate`, and a piece whose data allows fewer than two
   // rotations is refused by name rather than turned into a silent no-op.
-  rotate_furniture: "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
   // The fence's own `performToolAction` returns false on every branch, so success can only be the
   // fence GONE from the location's objects plus the drops it produced.
-  remove_fence: "run-stardew-native-local-player-remove-fence-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under
@@ -827,12 +812,15 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // slice: one ResourceClump cleared through `ResourceClump.performToolAction`, with the tool
   // selected from the CLUMP's own switch and restored afterwards. Its Given is the clump world
   // the `clear_debris` fixture already owns, so this entry adds a route, not a capability.
-  break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
   // `open_geode` is registered Experimental in the Mod catalog and has a native-local slice: one
   // geode cracked at Clint's own counter through `GeodeMenu`'s own click, animation and delivery,
   // with the menu closed before the receipt is written. The fixture supplies the geode and the
   // exit that leads to the shop; reaching the counter and the crack are production actions.
-  open_geode: "run-stardew-native-local-player-open-geode-smoke.mjs",
+  // The SAME published shop_purchase action over the fixture's blacksmith counter: the tool-upgrade entry, whose goods
+  // never enter the pack - the engine records the upgrade in `Farmer.toolBeingUpgraded` and discards the entry it
+  // charged for (`Tool.cs:875-895`, `ShopMenu.cs:1369-1378`). One runner, two worlds, because no single world stands in
+  // two shops; the published gate above keeps its own terminal and its own scenario.
+  shop_purchase_tool_upgrade: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
 });
 
 /**
@@ -856,6 +844,25 @@ export const STARDEW_SHARED_WORLD_ACTION_SCENARIOS = Object.freeze({
   talk_to_npc: "native_farmhand_talk_to_npc_v1",
 });
 
-function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
-  return Object.freeze({ actionId, identityVersion, runner, terminalReasonCode, fixtureScenario });
+/**
+ * One gate row.
+ *
+ * `gateRoute` is where the action's live gate LIVES, and it is the fact that lets a runner be retired:
+ *
+ *   "runner"    (the default) `tools/<runner>` is the gate. The row names the file, so the file is the gate.
+ *   "contract"  `contracts/smoke/<actionId>.json` is the gate, run by `tools/run-native-action-slice.mjs`. A contract
+ *               row names NO runner: it states in JSON what the action must do, which is a fact that survives the
+ *               runner that first proved it.
+ *
+ * A row that names neither is refused here, at import, rather than by a reader that could not tell "no gate" from
+ * "gate not found". Resolution lives in `tools/lib/stardew-action-gate-route.mjs` and nowhere else.
+ */
+function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null, gateRoute = "runner") {
+  const declared = gateRoute === "contract" ? null : runner;
+  if (gateRoute !== "runner" && gateRoute !== "contract")
+    throw new Error(`stardew_gate_row_route_unknown:${actionId}:${String(gateRoute)}`);
+  if (gateRoute === "contract" && runner !== null)
+    throw new Error(`stardew_gate_row_contract_row_names_a_runner:${actionId}:${runner}`);
+  if (declared !== null && typeof declared !== "string") throw new Error(`stardew_gate_row_runner_missing:${actionId}`);
+  return Object.freeze({ actionId, identityVersion, runner: declared, terminalReasonCode, fixtureScenario, gateRoute });
 }

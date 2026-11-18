@@ -50,10 +50,7 @@ test("a live host advertisement with no usable cabin is a named failure, never a
           }),
         );
     });
-    assert.equal(
-      fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state,
-      "awaiting_player_host_attestation",
-    );
+    assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "player_host_attested");
     await assert.rejects(
       () => fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read")),
       /stardew_player_host_cabin_unavailable/,
@@ -168,10 +165,7 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
       ownership: "gamebuddy_direct_spawn",
       lastStopOutcome: "none",
     });
-    assert.equal(
-      fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state,
-      "awaiting_player_host_attestation",
-    );
+    assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "player_host_attested");
     const transaction = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1");
     const aiConfig = JSON.parse(
       await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"),

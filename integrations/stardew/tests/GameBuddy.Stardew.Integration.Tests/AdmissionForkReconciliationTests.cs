@@ -29,8 +29,12 @@ public sealed class AdmissionForkReconciliationTests
     /// <summary>The split spelling (`player_menu_open` / `player_event_active` / `player_cannot_move`): empty too.</summary>
     private static readonly Dictionary<string, int> ForkedSplitGuards = new(StringComparer.Ordinal);
 
-    /// <summary>How many entry points in each file already call the shared admission.</summary>
-    /// <summary>How many entry points in each file call the shared admission. Measured, not remembered.</summary>
+    /// <summary>
+    /// How many entry points in each file call the shared admission. Measured, not remembered - and the seam counts,
+    /// because a file that hands every one of its request halves to <c>RequestLocalTileTarget</c> reaches the one
+    /// admission once per site instead of once per copy. The seam is where the pedestal, fence-gate, bush, fruit-tree and
+    /// tree requests, the four authorized farming requests and the machine and container halves now admit.
+    /// </summary>
     private static readonly Dictionary<string, int> ConvergedSites = new(StringComparer.Ordinal)
     {
         ["farmhandexecutioncontroller.actorstateactions.cs"] = 3,
@@ -41,7 +45,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.crabpotactions.cs"] = 1,
         ["farmhandexecutioncontroller.craftingactions.cs"] = 1,
         ["farmhandexecutioncontroller.facilityactions.cs"] = 5,
-        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 5,
+        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 12,
         ["farmhandexecutioncontroller.fishingactions.cs"] = 1,
         ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
         ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
@@ -50,17 +54,19 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.chatactions.cs"] = 1,
         ["farmhandexecutioncontroller.questactions.cs"] = 1,
         ["farmhandexecutioncontroller.pondactions.cs"] = 1,
-        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 5,
+        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 10,
         ["farmhandexecutioncontroller.modalactions.cs"] = 3,
         ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,
         ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
+        ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
         ["farmhandexecutioncontroller.petbowlactions.cs"] = 1,
         ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 10,
         ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
         ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,
         ["farmhandexecutioncontroller.transportactions.cs"] = 4,
+        ["farmhandexecutioncontroller.treebushactions.cs"] = 3,
         ["farmhandexecutioncontroller.worldobjectactions.cs"] = 4,
         ["farmhandexecutioncontroller.buildfarmbuildingactions.cs"] = 1,
         ["farmhandexecutioncontroller.nameentityactions.cs"] = 1,
@@ -72,9 +78,8 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.colorobjectactions.cs"] = 1,
         ["farmhandexecutioncontroller.geodeactions.cs"] = 1,
         ["farmhandexecutioncontroller.furnituredecorationactions.cs"] = 4,
-        // The one seam the pedestal, fence-gate, bush, fruit-tree, tree and the authorized farming requests admit
-        // through, so their partials reach the shared admission once instead of twelve times.
-        ["farmhandexecutioncontroller.tiletargetrequest.cs"] = 1,
+        // The seam itself: two forwarding forms plus the one admission they end in.
+        ["farmhandexecutioncontroller.tiletargetrequest.cs"] = 3,
         // The identity preamble itself, which ends in the one admission on behalf of every action that uses it.
         ["farmhandexecutioncontroller.cs"] = 1,
     };
@@ -126,13 +131,15 @@ public sealed class AdmissionForkReconciliationTests
         // exactly the state this test makes visible.
         //
         // Both spellings count, because both reach the one authority: `AdmitExecution` is the mechanical gate,
-        // `AdmitLocalExecution` is the identity preamble that ends in it. A file that bypasses BOTH is still
-        // read as unconverged, which is what this table makes visible.
+        // `AdmitLocalExecution` is the identity preamble that ends in it, and `RequestLocalTileTarget` is the seam whose
+        // request halves hand it the identity, the gate, the reach and the body. A file that bypasses ALL of them is
+        // still read as unconverged, which is what this table makes visible.
         Dictionary<string, int> converged = new(StringComparer.Ordinal);
         foreach ((string fileName, string source) in HandlerSources())
         {
             int count = CountOccurrences(source, "this.AdmitExecution(")
-                + CountOccurrences(source, "this.AdmitLocalExecution(");
+                + CountOccurrences(source, "this.AdmitLocalExecution(")
+                + CountOccurrences(source, "this.RequestLocalTileTarget(");
             if (count > 0) converged[fileName] = count;
         }
         converged.Should().BeEquivalentTo(

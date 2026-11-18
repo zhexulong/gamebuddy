@@ -4,13 +4,14 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import {
-  buildChatCompanionSystemPrompt,
   type IdentityProfile,
   identityProfileMacros,
   identityProfileMetadata,
   readIdentityProfile,
   writeIdentityProfile,
 } from "../identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
+import { COMPANION_ACTION_SYNTAX } from "../chat-surface-block.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -244,15 +245,16 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
     assert.ok(profile.characterVoice !== undefined);
     assert.equal(profile.characterVoice.source, "card");
     const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
-    const floorMarker = "Never mention prompts, instructions, models, or systems, and never explain how you work.";
-    const voiceMarker = "【角色演出指导（Character Voice & Directives）】";
-    assert.ok(prompt.includes(voiceMarker), "the rendered prompt must carry the character-voice section");
+    // The floor marker is the product's own exported constant, not a sentence transcribed here: the
+    // framework sentence this used to quote moved to the persona on 2026-11-22, and an anchor the
+    // change deletes makes the ordering assertion below pass on `indexOf` = -1.
+    const floorMarker = COMPANION_ACTION_SYNTAX;
     // Derived from the card's OWN directive rather than from a phrase quoted here:
     // a literal rule name in this file is a second copy of card text, and it goes
     // stale the moment the card is rewritten - which is exactly what happened when
     // 动率先于言 (act first, speak second) was replaced as the cause of a reply that
     // read as an action report. What this case owns is POSITION and COMPLETENESS, so
-    // it asserts the whole directive arrives and arrives after the floor.
+    // it asserts the whole directive arrives and arrives after the surface block.
     //
     // Rendered through the same macro table the prompt renders with: the card writes
     // `{{user}}`, the prompt can only carry the run's word for the player, so the raw
@@ -260,13 +262,16 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
     const directive = renderMacros(profile.characterVoice.text, identityProfileMacros(profile, "zh-CN"));
     assert.ok(prompt.includes(directive), "the card's whole directive must reach the prompt, not a prefix of it");
     assert.ok(
-      prompt.indexOf(directive) > prompt.indexOf(floorMarker) &&
-        prompt.indexOf(voiceMarker) > prompt.indexOf(floorMarker),
-      "the card's directive must render AFTER the Host floor on the default path",
+      prompt.indexOf(directive) > prompt.indexOf(floorMarker),
+      "the card's directive must render AFTER the surface block on the default path",
     );
     assert.ok(
-      prompt.indexOf(directive) > prompt.indexOf(voiceMarker),
-      "the directive must sit inside its own labelled section",
+      prompt.trimEnd().endsWith("CARD DIRECTIVES>>>"),
+      "and the card's block is closed by the Host's own marker, so the author's text never holds the last position",
+    );
+    assert.ok(
+      prompt.includes(`<<<CARD DIRECTIVES\n${directive}\nCARD DIRECTIVES>>>`),
+      "the author's text arrives whole, inside the section markers the block declares",
     );
   } finally {
     await release(root);

@@ -26,8 +26,21 @@ import {
   WAIT_ROLLOVER_MENUS,
 } from "./multiday-baseline.mjs";
 
-/** Poll spacing while a night rolls over (the same cadence the deterministic crossing uses). */
-const POLL_INTERVAL_MS = 250;
+/**
+ * The longest the watcher will go without looking at the world, when nothing wakes it sooner.
+ *
+ * It used to be 250 ms, and that cadence was measured on `round56`: **742** observations inside ONE night window of
+ * 208.6 s (period median 289 ms, longest run 208.6 s unbroken), to detect an event - a day rollover - that happens about
+ * once per twenty real minutes. The product has no publisher timer (the Mod publishes when asked, or on a real
+ * transition), so those 742 asks bought 742 rebuilds of a whole snapshot on the game thread and nothing else: 618 of the
+ * run's 624 suppressed flushes carried no fact at all, and each of them was one of these asks.
+ *
+ * Two seconds is a third of the engine's own clock tick (ten in-game minutes is about seven real seconds at the shipped
+ * rate), so a clock that moved is still sampled at least three times before the next tick, and it is one sixtieth of the
+ * shortest hold this loop waits out (`eventWaitMs` = 120 s). A caller that has the world's facts passes `waitForLook`
+ * (`worldFactWake`), and then this is not the cadence at all - it is the ceiling a silent world falls back to.
+ */
+const LOOK_CEILING_MS = 2_000;
 
 /** How many times ONE menu type may be dismissed before its persistence is a named stop. */
 const MAX_DISMISS_ATTEMPTS = 3;
@@ -158,7 +171,13 @@ export async function watchRollover(
   {
     dayBefore,
     timeoutMs,
-    pollIntervalMs = POLL_INTERVAL_MS,
+    // The longest the loop will go without looking again; `waitForLook` is what normally ends the wait sooner.
+    lookCeilingMs = LOOK_CEILING_MS,
+    // WHAT WAKES THE LOOP. A timer by default; a caller holding the world's own facts passes a function that resolves
+    // on the next statement the world makes and falls back to the ceiling (see `worldFactWake`). The distinction is not
+    // stylistic: the timer is why a night was observed at 3.56 Hz for 208.6 s, and the fact is the event it was
+    // watching for. Resolved below rather than here, because a destructuring default cannot read `sleep`.
+    waitForLook = null,
     // How long an `event` hold may stand before it is a named stop rather than a world still loading. A day-start
     // transition is the common case and clears in about two seconds; a SAVE can hold it for tens of seconds, so the
     // bound is generous and the calendar (above) is what decides a crossing, not this clock.
@@ -174,6 +193,8 @@ export async function watchRollover(
 ) {
   const menus = [];
   const attempts = new Map();
+  // The cadence: the caller's trigger when it has one, else the interval between two looks.
+  const lookWhen = waitForLook ?? sleep;
   // Menu types whose close the ENGINE is completing: waited for, never re-sent.
   const deadline = now() + timeoutMs;
   // The hold under watch and the facts under it: how long the same menu has stood, how long NOTHING the Mod publishes
@@ -310,8 +331,55 @@ export async function watchRollover(
         dayAfter: dayNow,
       });
     }
-    await sleep(pollIntervalMs);
+    await lookWhen(lookCeilingMs);
   }
+}
+
+/**
+ * Wake the watcher on a FACT, so its cadence is the world's rather than a timer's.
+ *
+ * <p>
+ * The loop's own record is the argument. `round56` observed one night 742 times at 3.56 Hz over 208.6 s, and 618 of the
+ * run's 624 suppressed flushes carried no fact at all - the reader asking, over and over, while the Mod had nothing to
+ * say. The Mod does speak when something happens (`time_milestone` every ten game minutes, `snapshot_changed` on a warp,
+ * `night_ended_pass_out` at 02:00, `day_started` at the boundary), so a fact is the event the watcher is actually
+ * waiting for, and a timer is only the answer to a world that has gone quiet.
+ * </p>
+ * <p>
+ * `factPublished()` is called from the run's fact listener and `wait(ceilingMs)` is `watchRollover`'s `waitForLook`. A
+ * statement that arrives while nobody is waiting is REMEMBERED, so one that lands between the observe and the wait cannot
+ * be lost and cost a full ceiling of latency; and a statement that arrives while a waiter stands wakes exactly that
+ * waiter, so the loop looks once per statement instead of once per tick.
+ * </p>
+ */
+export function worldFactWake() {
+  const waiting = new Set();
+  let arrived = false;
+  return Object.freeze({
+    factPublished() {
+      // Nobody waiting means the loop is between a look and its own wait; the flag is what that next wait reads.
+      if (waiting.size === 0) {
+        arrived = true;
+        return;
+      }
+      for (const wake of [...waiting]) wake();
+    },
+    wait(ceilingMs) {
+      if (arrived) {
+        arrived = false;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        const wake = () => {
+          waiting.delete(wake);
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(wake, ceilingMs);
+        waiting.add(wake);
+      });
+    },
+  });
 }
 
 /**
@@ -591,20 +659,24 @@ export function crossingsFromEvidence({
  * was woken roughly 1.3 times per programme at about 18 s a wake, to be told only "carry on".
  *
  * A settlement is not a reason. It is the moment the harness learns that what it was waiting for has stopped, and the
- * only thing that makes the stop interesting is that nothing else can move: the body has no pass left to continue, the
- * world has been quiet for a bound, and the day's objective is still open. Then she is the only thing left that can
- * decide. Anything else waits - the Mod's own pass owns the next move.
+ * only thing that makes the stop interesting is that the body has no pass left to continue AND something has happened
+ * that she has to answer. Anything else waits - the Mod's own pass owns the next move.
+ *
+ * THERE USED TO BE A CLOCK HERE, AND IT IS GONE. Measured 2026-11-13 (`round47`, 64 delivered turns): 523.2 s of a
+ * 1,153.8 s run was idle between turns, and 16 of the 30 idle gaps after turn 34 sat in a 19-22 s band - the quiet bound
+ * below elapsing and then prompting her to carry on, for a world that had published nothing. A milestone is a thing that
+ * happened; a twenty-second clock is the absence of a thing happening, and paying a model turn for that absence is the
+ * harness deciding when a companion should have thought of something. What may open a turn is a fact - a stall, a stale
+ * reading, the evening's own question, the player - and the reasons below are those facts and no others.
  *
  * THE REASONS ARE A CLOSED SET, and
- * `tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs` refuses a sixth: every prompt call site in the
- * runner must declare one of these, and each one must have a producer a test can reach. Adding a reason is therefore a
- * change to this set, not a string at a call site.
+ * `tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs` refuses a member with no producer: every prompt
+ * call site in the runner must declare one of these, and each one must have a producer a test can reach. Adding a reason
+ * is therefore a change to this set, not a string at a call site.
  */
 export const WAKE_REASON = Object.freeze({
   /** A day (or the run) begins: the harness asks her what she will do. Never caused by a settlement. */
   dayStart: "day_start",
-  /** The day's objective is open, the body has nothing to continue, and the world has been quiet for the bound. */
-  continuation: "continuation",
   /** The Host published `execution_stalled`: the body is NOT continuing, so she is the only thing left that can decide. */
   stallWake: "stall_wake",
   /**
@@ -662,22 +734,21 @@ export const WAKE_SUPPRESSION = Object.freeze({
   objectiveMet: "objective_met",
   /** A programme is running, or an admission has no terminal yet: the Mod's pass will re-enter on its own. */
   bodyStillWorking: "body_still_working",
-  /** Nothing has moved, but not for long enough to say nothing will. */
-  quietPeriod: "quiet_period",
   /** The day-end offer was already made and is unanswered: an offer repeated until answered is the ping this removes. */
   alreadyOffered: "already_offered",
+  /**
+   * Nothing has stopped and nothing has happened: the harness has nothing to add, so no prompt is owed.
+   *
+   * This is what the quiet bound used to answer with a wake after twenty seconds. A companion whose body is idle and
+   * whose objective is open is not thereby owed a turn - she is owed one when the world says something (a stall, a stale
+   * reading) or when the day's own shape asks a question (the evening's offer). While none of that is true, the honest
+   * reading is this one, and the run account counts it so a long silence is visible rather than indistinguishable from a
+   * stall.
+   */
+  waitingForTheWorld: "waiting_for_the_world",
 });
 
 export const WAKE_SUPPRESSION_REASONS = Object.freeze(Object.values(WAKE_SUPPRESSION));
-
-/**
- * How long nothing may move before a quiet world counts as stopped.
- *
- * The same bound the runner's own `waitForSessionQuiet` already waits out inside a turn, so a wake and the turn that
- * follows it cannot disagree about what "quiet" means. A Stardew action that is still running publishes a receipt or a
- * progress fact far more often than this; a body that has finished publishes nothing at all.
- */
-export const QUIET_BOUND_MS = 20_000;
 
 /**
  * The day's objective, in three states rather than two.
@@ -727,8 +798,7 @@ export function objectiveProgressKey(reading) {
  * published reading has stood still.
  *
  * AN UNMEASURED SPAN OR PROGRESS IS NOT A STALL. A `null` or `NaN` on either side answers `advancing` with `because`
- * naming what was missing, so "we could not tell" can never licence the day-end reason - the discipline
- * `WAKE_SUPPRESSION.quietPeriod` already keeps for an unmeasured quiet.
+ * naming what was missing, so "we could not tell" can never licence the day-end reason.
  */
 export function readObjectiveState({ objectiveMet = false, sinceProgressMs = null, spanMs = null } = {}) {
   if (objectiveMet === true)
@@ -762,8 +832,12 @@ export function readObjectiveState({ objectiveMet = false, sinceProgressMs = nul
  *
  * `objectiveMet`, `objectiveProgressSinceMs` and `objectiveSpanMs` are the objective's three states (see
  * `readObjectiveState`): what the purpose judge said, how long its reading has stood still, and the run's own measured
- * turn cadence. They are READ here rather than inferred from `quietMs`, because a quiet session and a still objective
- * are different facts and a run can have either without the other.
+ * turn cadence. They are READ here rather than inferred from silence, because a quiet session and a still objective are
+ * different facts and a run can have either without the other.
+ *
+ * THERE IS NO QUIET INPUT. This decision used to take `quietMs` and a `quietBoundMs` and wake her once the world had been
+ * silent for the bound; both are gone (see `WAKE_REASON`). A fact that stops arriving is not news, and a caller that
+ * still hands one of them a duration gets this decision's answer for the facts, not a timer wearing the reason's name.
  */
 export function decideWake({
   objectiveMet,
@@ -771,8 +845,6 @@ export function decideWake({
   objectiveSpanMs = null,
   programRunning = false,
   admissionPending = false,
-  quietMs = null,
-  quietBoundMs = QUIET_BOUND_MS,
   lateDay = false,
   dayEndOffered = false,
   stalled = false,
@@ -787,22 +859,26 @@ export function decideWake({
   if (stalled === true) return Object.freeze({ wake: true, reason: WAKE_REASON.stallWake });
   if (programRunning === true || admissionPending === true)
     return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.bodyStillWorking });
-  // A stale reading outranks the quiet period, and is not a quiet period: the world has been speaking and her picture of
-  // it has not moved, so "nothing has moved for long enough to say nothing will" is the wrong claim about it. It sits
-  // BELOW the in-flight check because a running programme owns the next move and publishes its own facts.
+  // A stale reading is a FACT about her picture rather than a reading of silence: the world has been speaking and the
+  // block she would be handed has not moved, so the one move that fixes it is an observation. It sits BELOW the in-flight
+  // check because a running programme owns the next move and publishes its own facts.
   if (worldStateStale === true) return Object.freeze({ wake: true, reason: WAKE_REASON.staleWorld });
-  // An unmeasured quiet is not quiet: "we could not tell" must not licence a wake.
-  if (!Number.isFinite(quietMs) || quietMs < quietBoundMs)
-    return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.quietPeriod });
-  // THE ORDER OF THE TWO "cannot go on" REASONS IS THE POINT, and it continues the order above: `stale_world` (we cannot
-  // see what the world is) outranks `objective_unreachable_for_today` (we can see it, and the objective is not moving in
-  // it). A stale reading means an observation is the one move that fixes her picture, so that question comes first; a
-  // still objective means the rest of the day is a decision about the day, which is the second. Both are wakes, so the
-  // ordering costs only the first reason's name - and that name is what a reader of `wakes.byReason` reads beside a
-  // frozen block.
-  if (objective.state !== OBJECTIVE_STATE.achieved && lateDay !== true)
-    return Object.freeze({ wake: true, reason: WAKE_REASON.continuation, objective });
-  if (objective.state === OBJECTIVE_STATE.stalled) {
+  // NOTHING FROM HERE DOWN IS A CLOCK. Every branch left is a question about the DAY, asked of facts the world published:
+  // the purpose judge's own answer, whether the day is nearly over, and whether the day's one question has been asked.
+  // THE ORDER OF THE TWO DAY QUESTIONS IS THE POINT, and it continues the order above: `stale_world` (we cannot see what
+  // the world is) outranks `objective_unreachable_for_today` (we can see it, and the objective is not moving in it). A
+  // stale reading means an observation is the one move that fixes her picture, so that question comes first; a still
+  // objective means the rest of the day is a decision about the day, which is the second.
+  // A DAY WHOSE WORK IS DONE is the judge's own word, and the only question left is the day itself: past the evening it
+  // offers, once. `objectiveMet` before the evening is a suppression rather than a wake, and always was.
+  if (objective.state === OBJECTIVE_STATE.achieved) {
+    if (lateDay !== true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.objectiveMet, objective });
+    if (dayEndOffered === true)
+      return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered, objective });
+    return Object.freeze({ wake: true, reason: WAKE_REASON.dayEndOffer, objective });
+  }
+  // A STILL OBJECTIVE PAST THE EVENING is a day that cannot finish, so the rest of it is a decision - asked once.
+  if (objective.state === OBJECTIVE_STATE.stalled && lateDay === true) {
     if (dayEndOffered === true)
       return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered, objective });
     return Object.freeze({
@@ -821,11 +897,10 @@ export function decideWake({
       ]),
     });
   }
-  if (objective.state === OBJECTIVE_STATE.advancing)
-    return Object.freeze({ wake: true, reason: WAKE_REASON.continuation, objective });
-  if (lateDay !== true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.objectiveMet, objective });
-  if (dayEndOffered === true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered, objective });
-  return Object.freeze({ wake: true, reason: WAKE_REASON.dayEndOffer, objective });
+  // EVERYTHING ELSE IS THE HARNESS SAYING NOTHING. Her objective is open and still moving, or still and the day has hours
+  // left in it: either way the next move is hers inside the turn she has, and no fact here gives the harness something to
+  // add. NAMED RATHER THAN SILENT, because "the harness waited" and "the harness was never asked" must not read alike.
+  return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.waitingForTheWorld, objective });
 }
 
 /**

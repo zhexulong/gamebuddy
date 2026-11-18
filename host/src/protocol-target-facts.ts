@@ -548,16 +548,13 @@ export function isFertilizerTargetFact(value: unknown): boolean {
 export function isDebrisTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "targetId",
-      "slot",
-      "x",
-      "y",
-      "parentSheetIndex",
-      "toolKind",
-      "requiredUpgradeLevel",
-      "health",
-    ]) &&
+    hasExactKeysOrOptional(
+      value,
+      ["targetId", "slot", "x", "y", "parentSheetIndex", "toolKind", "requiredUpgradeLevel", "health"],
+      // The clump's own `width`/`height`, with `x`/`y` its left-top origin. OPTIONAL and read as ONE tile when absent,
+      // because a Mod older than the projection publishes neither and one tile is what its bare coordinate meant.
+      ["w", "h"],
+    ) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -575,8 +572,23 @@ export function isDebrisTargetFact(value: unknown): boolean {
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
     value.health > 0 &&
-    value.health <= 100
+    value.health <= 100 &&
+    optionalExtent(value.w) &&
+    optionalExtent(value.h)
   );
+}
+
+/**
+ * One side of a row's footprint, in tiles: absent (which every reader takes as one tile), or an integer of at least one.
+ *
+ * The upper bound is a real bound and not a fencepost. The largest structure the engine places declares 8x8 in
+ * `Data/Buildings`, so 64 admits every honest row and refuses a number that would make a renderer print a rectangle no
+ * map holds. ZERO is refused by name: a `NetInt` whose initializer never ran divides to 0, and a zero-tile footprint is
+ * not a place any caller can walk to - publishing it would be worse than publishing nothing, because it reads as a
+ * measurement.
+ */
+export function optionalExtent(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 64);
 }
 
 export function isArtifactSpotTargetFact(value: unknown): boolean {
@@ -1627,18 +1639,13 @@ export function isMailboxTargetFact(value: unknown): boolean {
 export function isWorldObjectTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "targetId",
-      "kind",
-      "location",
-      "x",
-      "y",
-      "slot",
-      "qualifiedItemId",
-      "displayName",
-      "rotation",
-      "rotations",
-    ]) &&
+    hasExactKeysOrOptional(
+      value,
+      ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName", "rotation", "rotations"],
+      // The footprint, with `x`/`y` its left-top origin. Optional for the same reason the two fields above are: a Mod
+      // older than the projection publishes neither, and one tile is what a bare coordinate meant.
+      ["w", "h"],
+    ) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     // `placed_furniture` is a piece standing in `location.furniture` - where the room's own bed, sofa and rug live, and
@@ -1675,7 +1682,9 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
     isCurrentRotationFact(value.rotation) &&
     isRotationCycleFact(value.rotations) &&
     (value.kind !== "placed_furniture" || (value.rotation !== null && value.rotations !== null)) &&
-    (value.kind === "placed_furniture" || (value.rotation === null && value.rotations === null))
+    (value.kind === "placed_furniture" || (value.rotation === null && value.rotations === null)) &&
+    optionalExtent(value.w) &&
+    optionalExtent(value.h)
   );
 }
 /** `Furniture.currentRotation`: one quarter-turn of the engine's own cycle, or the explicit `null`. */
@@ -1848,19 +1857,26 @@ export function isTailoringTargetFact(value: unknown): boolean {
 export function isFarmBuildingTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "targetId",
-      "kind",
-      "location",
-      "x",
-      "y",
-      "buildingType",
-      "displayName",
-      "buildCost",
-      "buildDays",
-      "buildingId",
-      "daysOfConstructionLeft",
-    ]) &&
+    hasExactKeysOrOptional(
+      value,
+      [
+        "targetId",
+        "kind",
+        "location",
+        "x",
+        "y",
+        "buildingType",
+        "displayName",
+        "buildCost",
+        "buildDays",
+        "buildingId",
+        "daysOfConstructionLeft",
+      ],
+      // The footprint the structure occupies, `x`/`y` being its left-top origin: a `built` row's own
+      // `Building.tilesWide`/`tilesHigh`, a `build_site` row's declared `Data/Buildings` size. Optional, and one tile when
+      // absent - the reading every row carried before the field existed.
+      ["w", "h"],
+    ) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     (value.kind === "build_site" || value.kind === "built") &&
@@ -1881,7 +1897,9 @@ export function isFarmBuildingTargetFact(value: unknown): boolean {
     typeof value.buildingId === "string" &&
     typeof value.daysOfConstructionLeft === "number" &&
     Number.isSafeInteger(value.daysOfConstructionLeft) &&
-    value.daysOfConstructionLeft >= -1
+    value.daysOfConstructionLeft >= -1 &&
+    optionalExtent(value.w) &&
+    optionalExtent(value.h)
   );
 }
 

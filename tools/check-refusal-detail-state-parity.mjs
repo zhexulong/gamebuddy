@@ -41,6 +41,14 @@
  *   does not -> `refusal_detail_state_set_drift:partially_succeeded:host`
  *   (tools/check-refusal-detail-state-parity.test.mjs replays it from the real Host source)
  */
+
+export const gateDeclaration = {
+  id: "check-refusal-detail-state-parity",
+  domain: "product",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";

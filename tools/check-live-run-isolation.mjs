@@ -20,6 +20,14 @@
  *   node tools/check-live-run-isolation.mjs            # offline: sandboxes, locks, pipes, canary
  *   node tools/check-live-run-isolation.mjs --live     # two real fixture lanes in parallel (needs a game)
  */
+
+export const gateDeclaration = {
+  id: "check-live-run-isolation",
+  domain: "data",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,

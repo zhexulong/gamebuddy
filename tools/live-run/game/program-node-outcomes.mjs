@@ -26,6 +26,13 @@ import { planBatchAnswer } from "../../../host/dist-test/program-status-wait.js"
  * `journalNodes` is a status snapshot's `nodes` (or the durable journal's own node rows, already named in the wire's
  * vocabulary): the same rows the digest reads. A row that carries no reason therefore has NO `reasonCode` key - absent,
  * never null and never a placeholder - so a reader can tell "the Mod did not say" from "the Mod said this".
+ *
+ * `evidence` AND `postconditionVerification` ARE COPIED, and they are the reason this file's own doc exists twice: a
+ * `for_each` node settles sixty tiles as ONE node, so its `{nodeId, actionId, state}` is a row that says `succeeded` and
+ * nothing about which tiles it succeeded on. `round63`'s own bundle kept `{"nodeId":"n02","actionId":"for_each",
+ * "state":"succeeded"}` for `plan_239_2793c52c60b8cadf` while the Mod's journal held the pass's verdict line and its
+ * sixty-row table, and `program-node-outcomes.test.mjs` pins the copy so a future projection that stops copying them fails
+ * by name instead of quietly shrinking the bundle back to two facts.
  */
 export function programNodeOutcomes(compiledNodes, journalNodes) {
   const compiled = (Array.isArray(compiledNodes) ? compiledNodes : []).map((node) =>
@@ -51,6 +58,12 @@ export function programNodeOutcomes(compiledNodes, journalNodes) {
         ...(row.reasonCode === undefined ? {} : { reasonCode: row.reasonCode }),
         ...(row.hint === undefined ? {} : { hint: row.hint }),
         ...(row.tile === undefined ? {} : { tile: row.tile }),
+        // The batch's own proof, under the Mod's own names, uncut and unsummarised: `evidence` is the row table and
+        // `postconditionVerification` is the `for_each_pass:decided=…` line beside it.
+        ...(row.evidence === undefined ? {} : { evidence: row.evidence }),
+        ...(row.postconditionVerification === undefined
+          ? {}
+          : { postconditionVerification: row.postconditionVerification }),
       }),
     );
   }

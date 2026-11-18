@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   bodyProgramJournalPath,
   createBodyProgramJournalFallback,
   executionsFromJournalEvents,
   stardewDataPath,
 } from "./stardew-body-program-journal.mjs";
+import { BODY_PROGRAM_JOURNAL_ARCHIVE_NAME } from "./stardew-native-local-player-fixture.mjs";
 
 /**
  * One journal document in the shape the Mod actually writes (`WindowsBodyProgramJournalStore.cs`, schemaVersion 1),
@@ -301,4 +305,99 @@ test("the journal is opened once, and only when an outcome is actually asked for
   fallback.outcomeFor(programId);
   fallback.state();
   assert.equal(reads, 1, "six failed queries read the journal once, not once per program");
+});
+
+/**
+ * A FROZEN SAMPLE LIVES WHERE NOTHING WIPES IT, AND EVERY TRACKED FILE IN IT EXISTS ON DISK.
+ *
+ * The defect this closes, measured 2026-11-15 three times in one day: the frozen sample sat in
+ * `tools/body-program-journal/`, which is also the directory a run DELETES. `archiveBodyProgramJournal` does
+ * `rm(join(evidenceDir, BODY_PROGRAM_JOURNAL_ARCHIVE_NAME), { recursive: true, force: true })`, and a run's evidence
+ * root is `<repo>/tools` - `launch-ladder-live.mjs` writes its result file there and hands `dirname(resultPath)` to
+ * `restore` - so every run removed `README.md` and `sample-2026-11-15.json` and re-created the directory holding the
+ * live pair instead. The sample is a measurement; a measurement inside a runner's output directory is output.
+ *
+ * The guard did not catch it for a second reason worth keeping: it took its population from `git ls-files`, which
+ * lists a tracked-but-deleted path as present. Only reading the bytes can tell "tracked" from "still here".
+ *
+ * POPULATION is what git tracks under the samples directory (not a scan of the worktree, which is not where the
+ * sample lives). PROPERTY is that the directory a run wipes tracks nothing at all, that every tracked file here EXISTS
+ * ON DISK, that each one is a frozen `sample-<date>.json` or the README that explains it, and that the sample's bytes
+ * are pinned - "frozen" has to mean "will not be regenerated", and a pin is the only reading of that which turns red.
+ */
+test("the repo's frozen journal sample lives outside the directory a run deletes, and is present on disk", () => {
+  const directory = "tools/body-program-journal-samples";
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  const ignored = (path) => {
+    try {
+      git("check-ignore", "--quiet", "--", path);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // A run REMOVES this path recursively before copying the live scope in, so a tracked file there is a file a run
+  // deletes. The name comes from the fixture - the code that does the removal - rather than from this file, because a
+  // second hand-written spelling is a gate that agrees with itself while the fixture moves somewhere else.
+  const wipeTarget = join("tools", BODY_PROGRAM_JOURNAL_ARCHIVE_NAME);
+  const trackedInWipeTarget = git("ls-files", "-z", "--", wipeTarget)
+    .split("\0")
+    .filter((path) => path.length > 0);
+  assert.deepEqual(
+    trackedInWipeTarget,
+    [],
+    `wipe_target_tracked:${wipeTarget} - a run deletes ${wipeTarget} and copies the live journal in its place, so no tracked file may live there; move it to ${directory} (and delete the stale copy here)`,
+  );
+
+  const tracked = git("ls-files", "-z", "--", directory)
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .map((path) => path.slice(directory.length + 1));
+  assert.ok(tracked.length > 0, `blocked: git tracks nothing under ${directory}, so this gate examined nothing`);
+
+  // `git ls-files` lists a tracked-but-deleted path, so "tracked" is not "here": a run that deleted the sample leaves
+  // the index agreeing and the bytes gone. Read the disk; a missing byte is the defect, not a reason to skip the file.
+  for (const path of tracked) {
+    assert.ok(
+      existsSync(join(root, directory, path)),
+      `frozen_sample_missing:${directory}/${path} - tracked and gone from disk: something deleted a frozen sample, and a sample whose bytes are gone measures nothing`,
+    );
+  }
+
+  // The two names a scope directory holds. `journal.json` is the journal and `.journal.lock` is the store's lease -
+  // both are written by a run, so the only directory that may hold them is the one a run owns. `wipe_target_tracked`
+  // above already refuses a tracked one (and prints the path), so what is left to assert here is the ignore itself: a
+  // narrowed .gitignore turns the next re-harvest into an untracked file instead of a dirty one. Compared as git
+  // spells it (`/`) rather than as `join` spells it - on Windows `join` yields a backslash, and the comparison would
+  // never match, which is a check that cannot go red.
+  for (const live of ["journal.json", ".journal.lock"]) {
+    const trackedLiveName = `${wipeTarget}/${live}`;
+    assert.ok(
+      ignored(trackedLiveName),
+      `live_journal_not_ignored:${live} - a re-harvest of ${trackedLiveName} would make the tree dirty and hide real changes`,
+    );
+  }
+
+  for (const path of tracked) {
+    assert.match(
+      path,
+      /^(README\.md|sample-\d{4}-\d{2}-\d{2}\.json)$/u,
+      `unexpected_tracked:${path} - only a frozen sample and the README that explains it may be tracked here`,
+    );
+  }
+
+  const samples = tracked.filter((path) => path.startsWith("sample-"));
+  assert.ok(samples.length > 0, `blocked: ${directory} tracks no frozen sample, so no measurement is preserved`);
+
+  // The pin is the property, not a registration: rewriting a committed sample is exactly the defect this refuses.
+  const sample = "sample-2026-11-15.json";
+  assert.equal(
+    createHash("sha256")
+      .update(readFileSync(join(root, directory, sample)))
+      .digest("hex"),
+    "38246d9dbaf9ccbfb91fa1a303b9766f0f17ebdbee6cb8d2e46ec7cd6264c387",
+    `frozen_sample_rewritten:${sample} - a frozen sample keeps its bytes; a fresher journal is a NEW dated sample`,
+  );
 });

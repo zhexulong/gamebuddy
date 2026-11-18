@@ -101,8 +101,20 @@ public sealed class ExecutionTerminalUniquenessTests
             "the wait ends in exactly one answer, carrying the receipt the fact channel published");
     }
 
+    /// <summary>
+    /// THE SHAPE THAT ENDED round73 (and round66 before it), replayed: a request is parked because the body is held, the
+    /// bounded wait ends with the hold still in force, and the SAME request is dispatched afterwards and succeeds.
+    ///
+    /// <para>
+    /// The wait must answer the pending request and mint NOTHING: no receipt, no revision, no published fact. A request
+    /// that was never dispatched has not started, so the execution identity it would run under is unspent, and the
+    /// `succeeded` that arrives later is that execution's FIRST outcome - legal, and not the rewrite of a terminal the
+    /// Host refuses (`execution_receipt_replay_rejected:terminal_state_rewritten`, measured 2026-11-17 at revision 840
+    /// and again on 2026-11-20 at 252 s, 1.4 s apart, both under one executionId).
+    /// </para>
+    /// </summary>
     [Fact]
-    public void AParkedWaitThatExpiresPublishesOneTerminalFact_AndAnswersItOnce()
+    public void AWaitThatEndsWithoutDispatching_PublishesNothing_SoTheLaterSuccessIsTheExecutionsFirstOutcome()
     {
         Harness harness = Harness.Create("parked-expired", bodyHeld: true);
         harness.Dispatch(out _, out string parkedReason);
@@ -113,9 +125,78 @@ public sealed class ExecutionTerminalUniquenessTests
         harness.DrainDeferred();
         harness.Handler.Invocations.Should().Be(0, "an expired wait never dispatches");
 
+        // THE WAIT STATES NOTHING: no fact, no ledger row, and an answer on the refusal channel instead.
+        harness.PublishedCount().Should().Be(0,
+            "a receipt here would claim a terminal for an execution that never started, which is what the Host refuses");
+        harness.TryStoredReceipt(out _).Should().BeFalse(
+            "and it would spend the request's identity: the executionId it binds is the one its real outcome must carry");
+        harness.RefusalReasonCode().Should().NotBeNull("the pending request is still answered, as the hold that ended it");
+
+        // FALSIFIER: the hold clears, the SAME request is dispatched, and its success is the execution's ONE outcome.
+        harness.FreeTheBody();
+        harness.Dispatch(out BridgeEnvelope<BridgeReceipt>? response, out string reason);
+        reason.Should().Be("accepted", "the identity was never spent, so the request is a first dispatch rather than a replay");
+        response!.Payload.State.Should().Be("succeeded");
+        harness.Handler.Invocations.Should().Be(1, "the request that waited out the hold is the one that ran");
+
         harness.TerminalsOf(Harness.TerminalChannel.Published).Should().HaveCount(1,
-            "the named refusal that ends a wait is published once, like any other terminal");
-        harness.TerminalsOf(Harness.TerminalChannel.Answered).Should().HaveCount(1);
+            "one execution, one published outcome - and it is the success it really had");
+        harness.TerminalsOf(Harness.TerminalChannel.Published)[0].Should().EndWith(":terminal_action_succeeded:succeeded");
+    }
+
+    [Fact]
+    public void AProgressReceiptIsNotAFact_AndItsStepRidesTheSettlement()
+    {
+        Harness harness = Harness.Create("trace-fold", bodyTrace: true);
+
+        harness.Dispatch(out BridgeEnvelope<BridgeReceipt>? response, out string reason);
+        reason.Should().Be("accepted");
+        response.Should().NotBeNull("a synchronous dispatch still answers its own request");
+        response!.Payload.State.Should().Be("accepted",
+            "the answer to a dispatch is the receipt the body minted for it, and it is not the fact channel");
+
+        // MEASURED round66: 46 `accepted` and 16 `running` receipts over 17 world-changing actions. One execution is
+        // one fact, and it is the settled one.
+        harness.ReceiptsOf(Harness.TerminalChannel.Published).Should().Equal(
+            new[] { "succeeded/terminal_action_succeeded" },
+            "the trace transitions are folded into the settlement, not published beside it");
+        harness.ReceiptsOf(Harness.TerminalChannel.Answered).Should().Equal(new[] { "accepted/accepted" });
+
+        // ...and the information is not lost: the settlement now says what the walk said, and how many steps it folded.
+        string? detail = harness.PublishedDetailOf("terminal_action_succeeded");
+        detail.Should().Contain("steps=2", "the settlement must say how many steps it folded");
+        detail.Should().Contain("accepted@", "the walk's own dispatch step belongs in the settlement's evidence");
+        detail.Should().Contain("tool_approach_completed@", "the approach step belongs in the settlement's evidence");
+    }
+
+    /// <summary>
+    /// THE SHAPE THAT ENDED round66. On 2026-11-17 a `cut_weeds` execution was refused `rejected` at revision 840
+    /// because the body was owned by a movement, and three seconds later the walk underneath it published
+    /// `running/tool_approach_completed` at revision 842 for the SAME executionId. The Host's receipt-order audit did
+    /// exactly what it is for - `execution_receipt_replay_rejected:terminal_state_rewritten` - and the session ended
+    /// 223 s before the operator stopped it. ONE execution must never carry a second state, on either channel.
+    /// </summary>
+    [Fact]
+    public void ALateProgressTransitionAfterTheTerminalIsNeitherPublishedNorStored()
+    {
+        Harness harness = Harness.Create("late-trace", bodyTrace: true);
+        harness.Dispatch(out _, out _);
+        int published = harness.PublishedCount();
+        LocalExecutionReceipt settled = harness.StoredReceipt();
+
+        ((IExecutionLedger)harness.Executions).RememberTerminal(
+            harness.RequestId,
+            settled.ExecutionId,
+            ExecutionState.Running,
+            "tool_approach_completed",
+            "tile=9,22;target=9,22;arrival=exact;path=stardew_native");
+
+        harness.PublishedCount().Should().Be(published,
+            "a state published after the terminal is a second state for one executionId, which is the one thing a "
+            + "settled execution must never carry");
+        harness.StoredReceipt().State.Should().Be(ExecutionState.Succeeded,
+            "and it must not rewrite the ledger either: an exact receipt query, an idempotent replay and a held "
+            + "request all answer with what is stored here");
     }
 
     /// <summary>
@@ -152,7 +233,65 @@ public sealed class ExecutionTerminalUniquenessTests
 
         internal TerminalActionHandler Handler { get; }
 
-        internal static Harness Create(string suffix, bool bodyHeld = false)
+        internal string RequestId => this.request.Payload.RequestId;
+
+        internal int PublishedCount() => this.publishedFrames.Count;
+
+        /// <summary>The receipt the ledger holds for this request - what a replay, a query and a held request read.</summary>
+        internal LocalExecutionReceipt StoredReceipt()
+        {
+            this.TryStoredReceipt(out LocalExecutionReceipt stored).Should().BeTrue();
+            return stored;
+        }
+
+        /// <summary>Whether the ledger holds a receipt for this request at all.</summary>
+        internal bool TryStoredReceipt(out LocalExecutionReceipt stored) =>
+            this.Executions.TryGetReceipt(this.RequestId, out stored);
+
+        /// <summary>
+        /// The reason code of the refusal the wait answered with: the bridge's own error frame, or null when no refusal
+        /// was delivered. A refusal is not a receipt - it names the hold without claiming an execution state.
+        /// </summary>
+        internal string? RefusalReasonCode()
+        {
+            foreach (JsonElement frame in this.answeredFrames)
+            {
+                if (frame.GetProperty("type").GetString() != "error") continue;
+                return frame.GetProperty("payload").GetProperty("reasonCode").GetString();
+            }
+            return null;
+        }
+
+        /// <summary>Every receipt one channel carried, as `state/reasonCode` - progress INCLUDED, which is the point.</summary>
+        internal IReadOnlyList<string> ReceiptsOf(TerminalChannel channel)
+        {
+            var receipts = new List<string>();
+            IEnumerable<JsonElement> frames = channel == TerminalChannel.Published ? this.publishedFrames : this.answeredFrames;
+            foreach (JsonElement frame in frames)
+            {
+                if (frame.GetProperty("type").GetString() != "execution_receipt") continue;
+                JsonElement payload = frame.GetProperty("payload");
+                receipts.Add($"{payload.GetProperty("state").GetString()}/{payload.GetProperty("reasonCode").GetString()}");
+            }
+            return receipts;
+        }
+
+        /// <summary>The evidence detail one published receipt carried, or null when that reason code was never published.</summary>
+        internal string? PublishedDetailOf(string reasonCode)
+        {
+            foreach (JsonElement frame in this.publishedFrames)
+            {
+                if (frame.GetProperty("type").GetString() != "execution_receipt") continue;
+                JsonElement payload = frame.GetProperty("payload");
+                if (payload.GetProperty("reasonCode").GetString() != reasonCode) continue;
+                if (!payload.TryGetProperty("evidence", out JsonElement evidence) || evidence.ValueKind != JsonValueKind.Object)
+                    return null;
+                return evidence.TryGetProperty("detail", out JsonElement detail) ? detail.GetString() : null;
+            }
+            return null;
+        }
+
+        internal static Harness Create(string suffix, bool bodyHeld = false, bool bodyTrace = false)
         {
             var scope = new BridgeScope("stardew", $"save-{suffix}", $"world-{suffix}", "1001", $"companion-{suffix}");
             var publication = FarmhandCapabilityPublication.Initial(
@@ -169,7 +308,7 @@ public sealed class ExecutionTerminalUniquenessTests
                 });
             Farmer actor = CreateActor(bodyHeld);
             executions.SetTestActorResolver(() => actor);
-            var handler = new TerminalActionHandler(executions);
+            var handler = new TerminalActionHandler(executions, bodyTrace);
             var router = new FarmhandActionRouter();
             router.Register(
                 FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "move_to_tile"),
@@ -283,8 +422,13 @@ public sealed class ExecutionTerminalUniquenessTests
     private sealed class TerminalActionHandler : IFarmhandActionHandler
     {
         private readonly ExecutionManager executions;
+        private readonly bool bodyTrace;
 
-        internal TerminalActionHandler(ExecutionManager executions) => this.executions = executions;
+        internal TerminalActionHandler(ExecutionManager executions, bool bodyTrace = false)
+        {
+            this.executions = executions;
+            this.bodyTrace = bodyTrace;
+        }
 
         internal int Invocations { get; private set; }
 
@@ -309,12 +453,36 @@ public sealed class ExecutionTerminalUniquenessTests
                 return admissionAnswer;
 
             this.Invocations++;
-            return ledger.RememberTerminal(
+            if (!this.bodyTrace)
+                return ledger.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Succeeded,
+                    "terminal_action_succeeded",
+                    $"tile={request.Args.X},{request.Args.Y}");
+
+            // THE SHAPE EVERY WALKING ACTION HAS (`movementactions.cs`, `resourcetoolactions.cs`): the dispatch is
+            // answered with an `accepted` receipt, the body narrates its approach while it walks, and the settlement
+            // arrives later. All three go through the one funnel, under one executionId.
+            LocalExecutionReceipt accepted = ledger.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Accepted,
+                "accepted",
+                $"target={request.Args.X},{request.Args.Y};approach=adjacent");
+            ledger.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Running,
+                "tool_approach_completed",
+                $"tile={request.Args.X},{request.Args.Y};target={request.Args.X},{request.Args.Y};arrival=exact;path=stardew_native");
+            ledger.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Succeeded,
                 "terminal_action_succeeded",
                 $"tile={request.Args.X},{request.Args.Y}");
+            return accepted;
         }
     }
 }

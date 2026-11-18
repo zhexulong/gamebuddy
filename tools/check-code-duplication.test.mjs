@@ -22,40 +22,73 @@
  *                    the next reading has no findings at all; a group that grew -> the payload is the recorded entries
  *                    byte for byte and `clone_group_grew` still fails; an unrecorded group -> no entry is ever added, now
  *                    or on the run after; no baseline file -> `baseline_shrink_refused`.
+ * red-proof: inject  a tree whose baseline records one group and whose fourth copy has landed -> the CLI
+ *                    `--root <fixture> --write-baseline` prints `baseline_write_refused: 1 group(s) are new or grew`,
+ *                    exits 1 and leaves the baseline file byte-identical; with no baseline it prints `baseline_created`,
+ *                    and with the fourth copy removed it prints `baseline_written` - so the refusal is a condition on
+ *                    the tree, not a refusal to write.
+ * red-proof: inject  one recorded group at three runner sites beside one recorded group at three host sites ->
+ *                    `debt: 2 groups · 6 sites · of which runners 1 groups / 3 sites`; the same groups unrecorded ->
+ *                    `debt: 0 groups · 0 sites …` beside `new 2`; one runner site beside two host sites ->
+ *                    `of which runners 1 groups / 1 sites`; a blocked reading -> `debt: not measured · <reason>`.
+ * red-proof: inject  three tools files sharing only an import preamble and a const -> `syntax-floor 1 (3 sites) ·
+ *                    duplication 0 (0 sites)` and status `passed`; the same three files with one function body copied
+ *                    instead -> `duplication 1 (3 sites)` and `clone_group:<n>tokens:3sites:` naming all three,
+ *                    status `failed` - the only variable between the two trees is whether the block below the preamble is
+ *                    a body, so the split is what decides the verdict.
+ * red-proof: inject  a tree whose three copies are committed -> the finding carries `attribution.commit`,
+ *                    `attribution.date` and the commit subject beside its `detail`; the same tree with no commit ->
+ *                    `unrecorded (no commit holds <file>)` and the verdict is unchanged.
+ * red-proof: inject  a group recorded in the baseline whose text is an import preamble ->
+ *                    `syntax_floor_clone_baselined:<hash>`, status `failed`, and `--record-shrinks` deletes that entry
+ *                    (`removed 1`) without adding anything.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  attributionLine,
   baselinePayload,
   baselineWriteRefusal,
   censusLine,
   checkCodeDuplication,
   configDisagreements,
+  debtLine,
+  declaredLine,
   evaluateGroups,
+  FACADE,
+  FORMATS,
   facadeLine,
   firstLineOf,
   groupClones,
   groupHash,
+  groupKind,
+  hasStatementBlock,
   IGNORES,
   isFacadeOnly,
+  isRunnerSite,
   MIN_LINES,
   MIN_TOKENS,
   normaliseSitePath,
   readBaseline,
+  readDeclarations,
   recordShrinks,
   runJscpd,
+  SOURCE_TREES,
+  STRUCTURAL,
   serialiseBaseline,
   tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";
+import { RUNNER_FILE, runnerFiles } from "./check-native-local-runner-scaffold.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const GATE = join(REPO, "tools/check-code-duplication.mjs");
 const workspaces = [];
 
 after(() => {
@@ -105,6 +138,19 @@ const pipeline = (name, handler) =>
 
 const copies = (names) => Object.fromEntries(names.map((name) => [`host/src/${name}.cs`, pipeline(name, "Execute")]));
 
+/** A second admission body, different enough to be its own group: what an unrecorded `new` family looks like. */
+const otherFamily = (name) =>
+  [
+    `    public LocalExecutionReceipt RequestLocalClaim${name}(string requestId, int slot, int targetX, int targetY)`,
+    "    {",
+    "        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;",
+    "        this.revision++;",
+    '        string executionId = Guid.NewGuid().ToString("N");',
+    "        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();",
+    "        return this.Execute(requestId, slot, targetX, targetY, executionId, nowMs);",
+    "    }",
+  ].join("\n");
+
 /**
  * The other thing the controllers repeat once the eight-step body is folded behind a seam: one method per action
  * sharing the catalogue's envelope, and the one delegation each of them performs. The parameters are one per line
@@ -135,7 +181,18 @@ const pair = ({ fragment, tokens = 50, first, second }) => ({
   secondFile: { name: second, start: 1 },
 });
 
-const FRAGMENT = "line one\nline two\nline three\nline four\nline five";
+/**
+ * A five-line STRUCTURAL fragment: a body, because that is the population the ratchet holds (THE UNIT). It is written as
+ * a body rather than as five anonymous lines so every case below measures the rule the gate actually applies - a floor
+ * fragment would be counted and never fail, and asserting "no finding" against one would prove nothing.
+ */
+const FRAGMENT = [
+  "function replay(receipt) {",
+  "  const terminal = lookup(receipt);",
+  "  if (terminal === null) return playback(receipt);",
+  "  return terminal;",
+  "}",
+].join("\n");
 
 const threeCopies = () =>
   groupClones(
@@ -196,7 +253,7 @@ test("a new group is named with every site and its first line", () => {
   assert.equal(reading.findings[0].code, "clone_group");
   assert.match(
     reading.findings[0].detail,
-    /^clone_group:50tokens:3sites: host\/src\/a\.ts:1, host\/src\/b\.ts:1, host\/src\/c\.ts:1 :: line one$/,
+    /^clone_group:50tokens:3sites: host\/src\/a\.ts:1, host\/src\/b\.ts:1, host\/src\/c\.ts:1 :: function replay\(receipt\) \{$/,
   );
 });
 
@@ -495,7 +552,7 @@ test("the façade case: one envelope at three sites passes, is counted, and is n
   assert.deepEqual(reading.findings, []);
   assert.match(
     censusLine(reading),
-    /^files examined 3 · clone groups 1 · of which facade-only 1 · duplication 0 · new 0 · grown 0 · baselined 0$/,
+    /^files examined 3 · clone groups 1 · of which facade-only 1 · syntax-floor 0 \(0 sites\) · duplication 0 \(0 sites\) · new 0 · grown 0 · baselined 0$/,
   );
   assert.match(
     facadeLine(reading.facade[0]),
@@ -642,4 +699,623 @@ test("a real shrink recorded against jscpd's report turns the same tree green, a
   assert.equal(after.status, "passed");
   assert.equal(after.stale, 0);
   assert.equal(after.duplication.length, 1);
+});
+
+/** A site in the native-local smoke-runner family, spelled as the family's own gate derives it. */
+const runnerSite = (name) => `tools/run-stardew-native-local-player-${name}-smoke.mjs`;
+
+/**
+ * A second body, so a runner group and a host group are two groups rather than one text: it has to be STRUCTURAL too, or
+ * the debt line would be measuring the floor (THE UNIT).
+ */
+const RUNNER_FRAGMENT = [
+  "async function runSmoke(client, receipts) {",
+  "  const accepted = await submit(client, receipts);",
+  '  if (accepted.state !== "accepted") throw new Error("not_accepted");',
+  "  return waitForTerminal(receipts, accepted);",
+  "}",
+].join("\n");
+
+/** One recorded group at three runner sites: the debt the L1 extraction is retiring. */
+const runnerCopies = () =>
+  groupClones(
+    [
+      pair({ fragment: RUNNER_FRAGMENT, first: runnerSite("alpha"), second: runnerSite("bravo") }),
+      pair({ fragment: RUNNER_FRAGMENT, first: runnerSite("alpha"), second: runnerSite("charlie") }),
+    ],
+    REPO,
+  );
+
+test("the debt line counts the recorded groups, their sites, and the runner share in one unit", () => {
+  const groups = [...runnerCopies(), ...threeCopies()];
+  const reading = evaluateGroups({ groups, baseline: baselinePayload(groups) });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.debt.groups, reading.baselined, "the debt population and `baselined` are one number");
+  assert.deepEqual(reading.debt, { groups: 2, sites: 6, runnerGroups: 1, runnerSites: 3 });
+  assert.equal(debtLine(reading), "debt: 2 groups · 6 sites · of which runners 1 groups / 3 sites");
+});
+
+test("debt counts what the baseline records, so an unrecorded tree full of clones has none", () => {
+  // The falsifier for reading the line as a verdict: these two groups are real duplication and both are `new`, which is
+  // the finding - the debt line says only what the ratchet is already carrying.
+  const reading = evaluateGroups({ groups: [...runnerCopies(), ...threeCopies()], baseline: { groups: [] } });
+  assert.equal(reading.newGroups, 2);
+  assert.equal(debtLine(reading), "debt: 0 groups · 0 sites · of which runners 0 groups / 0 sites");
+});
+
+test("a group is runner debt when any of its sites is a runner, and only its runner sites are counted", () => {
+  const shared = groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: runnerSite("delta"), second: "host/src/a.ts" }),
+      pair({ fragment: FRAGMENT, first: runnerSite("delta"), second: "host/src/b.ts" }),
+    ],
+    REPO,
+  );
+  const mixed = evaluateGroups({ groups: shared, baseline: baselinePayload(shared) });
+  assert.equal(debtLine(mixed), "debt: 1 groups · 3 sites · of which runners 1 groups / 1 sites");
+  const hostOnly = evaluateGroups({ groups: threeCopies(), baseline: baselinePayload(threeCopies()) });
+  assert.equal(debtLine(hostOnly), "debt: 1 groups · 3 sites · of which runners 0 groups / 0 sites");
+});
+
+test("a blocked reading has no debt to report, and says so instead of printing zero", () => {
+  assert.equal(
+    debtLine({ status: "blocked", reason: "code_duplication_examined_no_files" }),
+    "debt: not measured · code_duplication_examined_no_files",
+  );
+});
+
+test("the runner predicate is the family's own population, and the template is not in it", () => {
+  // Derived, not remembered: every file the scaffold gate scans is attributed here, and the module the migration extracts
+  // INTO is not a runner - so a runner added or renamed tomorrow needs no edit in this gate.
+  const runners = runnerFiles({ root: REPO });
+  assert.ok(runners.length > 100, `the family has members: ${runners.length}`);
+  assert.ok(
+    runners.every((file) => isRunnerSite(file)),
+    "every runner `check-native-local-runner-scaffold.mjs` scans is attributed by this gate",
+  );
+  for (const file of runners) assert.ok(RUNNER_FILE.test(basename(file)), `${file} is a runner by the family's rule`);
+  assert.equal(isRunnerSite("tools/lib/native-local-runner-primitives.mjs"), false);
+  assert.equal(isRunnerSite("host/src/run-stardew-native-local-player-x-smoke.mjs"), false);
+  assert.equal(isRunnerSite("tools/check-code-duplication.mjs"), false);
+});
+
+/**
+ * A throwaway tree shaped like this repository: every declared source tree exists (jscpd fails on a path that is not
+ * there), and each tokenised format has one file of its own, because the CLI reads the real `SOURCE_TREES`/`FORMATS` and a
+ * format with no file is a blocked reading rather than a small one. They are twelve lines because jscpd does not count a
+ * shorter file as a source at all, and they share no shape with each other or with the families under test.
+ */
+const repoShaped = (files) =>
+  workspace(
+    {
+      ...files,
+      "host/src/anchor.ts": [
+        "interface AnchorShape {",
+        "  width: number;",
+        "  label: string;",
+        "}",
+        "",
+        "export function anchorWidth(shape: AnchorShape): number {",
+        "  const doubled = shape.width * 2;",
+        "  const labelled = shape.label.trim();",
+        "  if (labelled.length === 0) return doubled;",
+        "  const weight = labelled.length > 3 ? 3 : 1;",
+        "  return doubled + weight;",
+        "}",
+        "",
+      ].join("\n"),
+      "tools/anchor.mjs": [
+        "const anchorLevels = new Map();",
+        "export function recordAnchor(name, value) {",
+        "  const previous = anchorLevels.get(name);",
+        "  if (previous !== undefined) return previous;",
+        "  const next = Math.max(0, Number(value));",
+        "  anchorLevels.set(name, next);",
+        "  for (const key of anchorLevels.keys())",
+        "    if (key.startsWith('_')) anchorLevels.delete(key);",
+        "  return anchorLevels.get(name);",
+        "}",
+        "export const anchorNames = () => [...anchorLevels.keys()].sort();",
+        "export default anchorLevels;",
+        "",
+      ].join("\n"),
+      "integrations/stardew/anchor.md": "# anchor\n",
+      "host/scripts/anchor.md": "# anchor\n",
+      "dialogue-web/src/anchor.md": "# anchor\n",
+      "packages/anchor.md": "# anchor\n",
+      "desktop/anchor.md": "# anchor\n",
+    },
+    { trees: SOURCE_TREES, formats: FORMATS },
+  );
+
+/** The gate's own CLI over a throwaway tree - the door `--root` exists for. */
+const cli = (root, ...args) =>
+  spawnSync(process.execPath, [GATE, "--root", root, ...args], { encoding: "utf8", timeout: 300_000 });
+
+/**
+ * Everything staged, then committed. Attribution reads `git log`, so a fixture that wants one has to have a commit -
+ * with an identity given on the command line, because a throwaway tree has no configuration of its own.
+ */
+const commitAll = (root, message = "fixture: the tree the gate reads") =>
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.email=gate@example.invalid",
+      "-c",
+      "user.name=gate",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-q",
+      "-m",
+      message,
+    ],
+    { cwd: root, stdio: "ignore" },
+  );
+
+const baselineFileOf = (root) => join(root, "tools/duplicate-code-baseline.json");
+
+test("--write-baseline refuses a grown group and leaves the baseline byte-identical", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+
+  const created = cli(root, "--write-baseline");
+  assert.equal(created.status, 0, created.stdout);
+  assert.match(created.stdout, /baseline_created: 1 group\(s\) -> tools\/duplicate-code-baseline\.json/);
+  const recorded = readFileSync(baselineFileOf(root), "utf8");
+
+  const green = cli(root);
+  assert.equal(green.status, 0, green.stdout);
+  assert.match(green.stdout, /^debt: 1 groups · 3 sites · of which runners 0 groups \/ 0 sites$/m);
+
+  // A fourth copy lands and is staged, so it is inside the population the gate measures.
+  writeFileSync(join(root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
+  git(root, ["add", "host/src/Delta.cs"]);
+  const grew = cli(root);
+  assert.equal(grew.status, 1, grew.stdout);
+  assert.match(grew.stdout, /clone_group_grew:[0-9a-f]{12}: now 4 sites at \d+ tokens, the baseline recorded 3 sites/);
+
+  // The claim this refutes: that `--write-baseline` is how new duplication gets packed into the record.
+  const refused = cli(root, "--write-baseline");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(
+    refused.stdout,
+    /baseline_write_refused: 1 group\(s\) are new or grew - the baseline may only record a shrink/,
+  );
+  assert.equal(
+    readFileSync(baselineFileOf(root), "utf8"),
+    recorded,
+    "a refused write leaves the baseline byte-identical",
+  );
+
+  // The other direction: the refusal is a condition on the tree, not a refusal to write. With the fifth copy gone the same
+  // file records again - and records the same tree, so the write is not drifting the record either.
+  rmSync(join(root, "host/src/Delta.cs"));
+  git(root, ["rm", "-q", "--cached", "host/src/Delta.cs"]);
+  const written = cli(root, "--write-baseline");
+  assert.equal(written.status, 0, written.stdout);
+  assert.match(written.stdout, /baseline_written: 1 group\(s\)/);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "the written tree is the tree already recorded");
+});
+
+test("--write-baseline still refuses an unrecorded group, and still creates the first baseline", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const noBaseline = cli(root);
+  assert.equal(noBaseline.status, 1, noBaseline.stdout);
+  assert.match(noBaseline.stdout, /^debt: 0 groups · 0 sites · of which runners 0 groups \/ 0 sites$/m);
+  assert.match(noBaseline.stdout, /clone_group:\d+tokens:3sites: host\/src\/Alpha\.cs:\d+/);
+
+  assert.equal(existsSync(baselineFileOf(root)), false, "a read run writes nothing");
+  const created = cli(root, "--write-baseline");
+  assert.equal(created.status, 0, created.stdout);
+  assert.match(created.stdout, /baseline_created: 1 group\(s\)/);
+  assert.equal(existsSync(baselineFileOf(root)), true);
+
+  // A family the record has never seen is `new`, and `new` is refused however large the count is.
+  const recorded = readFileSync(baselineFileOf(root), "utf8");
+  for (const name of ["Echo", "Foxtrot", "Golf"])
+    writeFileSync(join(root, `host/src/${name}.cs`), otherFamily(name), "utf8");
+  git(root, ["add", "host/src"]);
+  const refused = cli(root, "--write-baseline");
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stdout, /baseline_write_refused: [1-9]\d* group\(s\) are new or grew/);
+  assert.equal(readFileSync(baselineFileOf(root), "utf8"), recorded, "an unrecorded group is never banked");
+});
+
+test("the debt site count moves by the copies that moved, which is the unit it claims to be", () => {
+  // Four recorded sites, then one copy deleted: the number falls by ONE, and the record is stale until the shrink is
+  // recorded - so a reader subtracting what they removed can tell the shrink apart from a token count that drifted.
+  const four = groupClones(
+    [
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/c.ts" }),
+      pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/d.ts" }),
+    ],
+    REPO,
+  );
+  const baseline = baselinePayload(four);
+  const before = evaluateGroups({ groups: four, baseline });
+  assert.equal(before.debt.sites, 4);
+  const after = evaluateGroups({ groups: threeCopies(), baseline });
+  assert.equal(after.debt.sites, 3);
+  assert.equal(after.stale, 1, "the record still says four sites, so the shrink has to be recorded");
+
+  // One copy further and the group is below the rule: it leaves the population and takes all three sites with it.
+  const twoCopies = groupClones([pair({ fragment: FRAGMENT, first: "host/src/a.ts", second: "host/src/b.ts" })], REPO);
+  const gone = evaluateGroups({ groups: twoCopies, baseline });
+  assert.deepEqual(gone.debt, { groups: 0, sites: 0, runnerGroups: 0, runnerSites: 0 });
+  assert.equal(debtLine(gone), "debt: 0 groups · 0 sites · of which runners 0 groups / 0 sites");
+});
+
+/**
+ * THE UNIT, as one table: the same scanner reads every one of these, and the only question that separates a finding from
+ * a census count is whether the matched text contains a block of statements (THE UNIT, in the gate's header). Each row is
+ * a shape that exists in this tree today - the import preamble `clone_group_grew` was raised about, the runner's terminal
+ * members, the C# parameter list, the truncated window jscpd hands over when a match ends mid-body.
+ */
+const FLOOR_SHAPES = {
+  "an import preamble and the two consts beside it": [
+    'import path from "node:path";',
+    'import process from "node:process";',
+    'import { fileURLToPath } from "node:url";',
+    'const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");',
+    'const gate = "stardew_open_ground_claims/v1";',
+  ].join("\n"),
+  "brace and paren closers, which are the end of somebody else's body": ["});", "}", ");"].join("\n"),
+  "one error-shaping statement":
+    'throw new Error(`break_container_source_evidence_${key}:${evidence[key] ?? "missing"}`);',
+  "a type literal whose members are separated by semicolons":
+    "input: Readonly<{ messageId: string; targetIndex?: number }>,",
+  "a literal's members, so `evidence,` and its neighbours": [
+    "evidence,",
+    "receipt: summarizeReceipt(terminal),",
+    "trace,",
+  ].join("\n"),
+  "a brace inside a message, which is not a block": ['const message = "{ not a block; }";', "const count = 1;"].join(
+    "\n",
+  ),
+};
+
+const STRUCTURAL_SHAPES = {
+  "a function body": [
+    "function replay(receipt) {",
+    "  const terminal = lookup(receipt);",
+    "  return terminal;",
+    "}",
+  ].join("\n"),
+  "a body the window cuts off before its closing brace": [
+    "function parseEvidence(evidence) {",
+    '  const detail = typeof evidence?.detail === "string" ? evidence.detail : "";',
+    "  const result = {};",
+    '  for (const field of detail.split(";")) {',
+    '    const separator = field.indexOf("=");',
+  ].join("\n"),
+  "a C# constructor body": [
+    "public FarmingActionHandler(ExecutionManager executions)",
+    "{",
+    "    this.executions = executions;",
+    "}",
+  ].join("\n"),
+  "a handler that shapes a terminal in its catch": [
+    "  } catch (error) {",
+    "    return {",
+    '      state: "blocked",',
+    "      trace,",
+    "    };",
+    "  }",
+  ].join("\n"),
+};
+
+test("the floor is counted and never a finding: every shape the language forces on a file of that kind", () => {
+  for (const [name, fragment] of Object.entries(FLOOR_SHAPES))
+    assert.notEqual(groupKind(fragment), STRUCTURAL, `${name} is not structural`);
+  for (const [name, fragment] of Object.entries(FLOOR_SHAPES))
+    assert.equal(hasStatementBlock(fragment), false, `${name}: no block of statements`);
+});
+
+test("a body is structural: a function, a constructor, a handler's catch, and a window cut off mid-body", () => {
+  for (const [name, fragment] of Object.entries(STRUCTURAL_SHAPES))
+    assert.equal(groupKind(fragment), STRUCTURAL, `${name} is a block of statements`);
+});
+
+test("a declaration envelope is a façade before it is the floor, because that rule still wins", () => {
+  // The precedence is the rule's own history (FACADE, in the gate's header): the catalogue envelope exists to be released,
+  // and a parameter list with no body in it is that envelope's text. Neither bucket decides a verdict; the census says
+  // which one the split put it in, and this pins which.
+  assert.equal(groupKind(["(int X, int Y) actor,", "(int X, int Y) target,", "int slot,"].join("\n")), FACADE);
+  assert.equal(
+    groupKind(
+      [
+        "    public LocalExecutionReceipt RequestLocalClaimMuseumReward(",
+        "        string requestId,",
+        "        int slot)",
+      ].join("\n"),
+    ),
+    FACADE,
+  );
+});
+
+test("a floor group is counted in the census and passes, and the same three files with a body copied are red", () => {
+  // The falsifier for the unit, on jscpd's own report: the SAME three files, differing only in whether the block below the
+  // shared preamble is copied. Nothing about the preamble changes, so the only variable is the body.
+  const preamble = [
+    'import path from "node:path";',
+    'import process from "node:process";',
+    'import { readFileSync } from "node:fs";',
+    'import { fileURLToPath } from "node:url";',
+    "",
+    'const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");',
+    'export const READING_KIND = "syntax_floor_fixture/v1";',
+    "",
+  ].join("\n");
+  const ownBody = (name, number) =>
+    [
+      `export function ${name}Reading(input) {`,
+      `  const scaled = input * ${number};`,
+      `  const labelled = "${name}" + String(scaled);`,
+      "  return labelled;",
+      "}",
+      "",
+    ].join("\n");
+  const sharedBody = [
+    "export function sharedReading(input) {",
+    "  const scaled = input * 7;",
+    '  const labelled = "shared" + String(scaled);',
+    "  return labelled;",
+    "}",
+    "",
+  ].join("\n");
+  const files = (body) => ({
+    "tools/alpha.mjs": preamble + body("alpha", 3),
+    "tools/bravo.mjs": preamble + body("bravo", 5),
+    "tools/charlie.mjs": preamble + body("charlie", 9),
+    // One C# file, because `csharp` is a declared format and a format with no file is a BLOCKED reading rather than none.
+    "integrations/stardew/anchor.cs": [
+      "internal static class AnchorReading",
+      "{",
+      "    internal static int Level(string name)",
+      "    {",
+      "        int parsed = int.TryParse(name, out int value) ? value : 0;",
+      "        return Math.Max(0, parsed);",
+      "    }",
+      "}",
+      "",
+    ].join("\n"),
+  });
+
+  const floor = repoShaped(files(ownBody));
+  const floorReading = checkCodeDuplication({
+    root: floor.root,
+    trees: floor.trees,
+    formats: floor.formats,
+    baseline: null,
+  });
+  assert.equal(floorReading.status, "passed", censusLine(floorReading));
+  assert.equal(floorReading.syntaxFloor.length, 1);
+  assert.equal(floorReading.duplication.length, 0);
+  assert.match(
+    censusLine(floorReading),
+    /· syntax-floor 1 \(3 sites\) · duplication 0 \(0 sites\) · new 0 · grown 0 · baselined 0$/,
+  );
+
+  const structural = repoShaped(files(() => sharedBody));
+  const structuralReading = checkCodeDuplication({
+    root: structural.root,
+    trees: structural.trees,
+    formats: structural.formats,
+    baseline: null,
+  });
+  assert.equal(structuralReading.status, "failed", censusLine(structuralReading));
+  assert.equal(structuralReading.duplication.length, 1, censusLine(structuralReading));
+  assert.match(
+    structuralReading.findings[0].detail,
+    /^clone_group:\d+tokens:3sites: tools\/alpha\.mjs:\d+, tools\/bravo\.mjs:\d+, tools\/charlie\.mjs:\d+ :: /,
+  );
+});
+
+test("a finding names the commit behind its site, and says unrecorded when no commit holds it", () => {
+  // "Predates this lane" is the answer this gate used to accept. It is a commit hash now, and a tree with no commit at
+  // all reads `unrecorded` rather than nothing - the two readings a reader has to be able to tell apart.
+  const committed = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  commitAll(committed.root, "the three copies land");
+  const reading = checkCodeDuplication({
+    root: committed.root,
+    trees: committed.trees,
+    formats: committed.formats,
+    baseline: null,
+  });
+  const finding = reading.findings.find((entry) => entry.code === "clone_group");
+  assert.ok(finding !== undefined);
+  assert.match(finding.attribution.commit, /^[0-9a-f]{7,}$/);
+  assert.equal(finding.attribution.subject, "the three copies land");
+  assert.match(finding.attribution.date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(
+    reading.duplication[0].sites.some((site) => site.file === finding.attribution.site.file),
+    "the attributed site is one of the group's own sites",
+  );
+  assert.match(finding.detail, /^clone_group:/, "the attribution lives beside the rule's reading, not inside it");
+  assert.match(
+    attributionLine(finding.attribution),
+    /^[0-9a-f]{7,} \d{4}-\d{2}-\d{2} the three copies land \(host\/src\//,
+  );
+
+  const uncommitted = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const noCommit = checkCodeDuplication({
+    root: uncommitted.root,
+    trees: uncommitted.trees,
+    formats: uncommitted.formats,
+    baseline: null,
+  });
+  assert.equal(noCommit.status, "failed");
+  assert.match(
+    attributionLine(noCommit.findings.find((entry) => entry.code === "clone_group").attribution),
+    /^unrecorded \(no commit holds /,
+  );
+});
+
+test("a baseline that records the floor is named by its own code, and --record-shrinks deletes it", () => {
+  // The record was written under the old unit, which counted the import preamble as debt. Under the split it is not a
+  // finding and not a pass either: it is a record of something the gate no longer claims is duplication, and the only
+  // honest move is to delete it - which is what `--record-shrinks` does, and what `--write-baseline` may not be used for.
+  const fragment = FLOOR_SHAPES["an import preamble and the two consts beside it"];
+  const floor = groupClones(
+    [
+      pair({ fragment, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment, first: "host/src/a.ts", second: "host/src/c.ts" }),
+    ],
+    REPO,
+  );
+  const recorded = baselinePayload(floor);
+  const reading = evaluateGroups({ groups: floor, baseline: recorded });
+  assert.deepEqual(
+    reading.findings.map((entry) => entry.code),
+    ["syntax_floor_clone_baselined"],
+  );
+  assert.match(reading.findings[0].detail, /^syntax_floor_clone_baselined:[0-9a-f]{12}: the baseline records 3 sites/);
+  assert.equal(reading.floorBaselined, 1);
+  assert.match(censusLine(reading), / · syntax_floor_baselined 1$/);
+
+  const outcome = recordShrinks({ reading, baseline: recorded });
+  assert.deepEqual(outcome.removed, [groupHash(fragment)]);
+  assert.deepEqual(outcome.payload.groups, []);
+  assert.deepEqual(outcome.after.findings, []);
+});
+
+/**
+ * THE DECLARATION DOOR. The door exists so a group whose fix belongs to another lane is named with an owner instead of
+ * being read as "predates this lane", and every case below is the door refusing something: a fourth copy, a shrunken
+ * group, a group that is gone, an entry with no reason, and a baseline write that would bank the entry as debt.
+ */
+const declarationOf = (hash, sites, overrides = {}) => ({
+  hash,
+  sites,
+  tokens: 50,
+  owner: "a lane that owns the partial",
+  reason: "the copies share an admission preamble that lane folds",
+  ...overrides,
+});
+
+test("a declared group passes at its declared size, stays in the duplication census, and is printed with its owner", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 3)],
+  });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.declared.length, 1);
+  assert.equal(reading.duplication.length, 1);
+  assert.match(
+    censusLine({ ...reading, status: "passed", examined: 1342 }),
+    /duplication 1 \(3 sites\) · declared 1 · new 0/,
+  );
+  assert.match(
+    declaredLine(groups[0], declarationOf(groups[0].hash, 3)),
+    /^ {2}declared:[0-9a-f]{12}: 3 sites at 50 tokens · a lane that owns the partial · the copies share an admission preamble that lane folds :: function replay\(receipt\) \{$/,
+  );
+});
+
+test("a declared group that gained a site is red: a declaration never buys the copy that arrives tomorrow", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 2)],
+  });
+  assert.equal(reading.findings.length, 1);
+  assert.equal(reading.findings[0].code, "clone_group_grew");
+  assert.match(
+    reading.findings[0].detail,
+    /^clone_group_grew:[0-9a-f]{12}: now 3 sites at 50 tokens, tools\/duplicate-code-declarations\.json declared 2 sites \(a lane that owns the partial\)/,
+  );
+});
+
+test("a declared group that lost a site, or left the population, is a stale declaration the reader must delete", () => {
+  const groups = threeCopies();
+  const shrank = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 4)],
+  });
+  assert.equal(shrank.findings[0].code, "stale_clone_declaration");
+  assert.match(shrank.findings[0].detail, /declares 4 sites and the tree has 3/);
+  assert.equal(shrank.staleDeclarations, 1);
+  const gone = evaluateGroups({
+    groups: [],
+    baseline: { groups: [] },
+    declarations: [declarationOf("0123456789ab", 3)],
+  });
+  assert.equal(gone.findings[0].code, "stale_clone_declaration");
+  assert.match(gone.findings[0].detail, /no longer has as duplication/);
+});
+
+test("--write-baseline records the undeclared population, so a declared group is never banked as debt", () => {
+  const groups = threeCopies();
+  const reading = evaluateGroups({
+    groups,
+    baseline: { groups: [] },
+    declarations: [declarationOf(groups[0].hash, 3)],
+  });
+  assert.deepEqual(baselinePayload(reading.undeclared).groups, []);
+  assert.equal(baselinePayload(reading.duplication).groups.length, 1);
+});
+
+test("--record-shrinks reads the declarations, so the reading it prints after a write is the tree it recorded", () => {
+  const groups = threeCopies();
+  const declarations = [declarationOf(groups[0].hash, 3)];
+  const reading = evaluateGroups({ groups, baseline: { groups: [] }, declarations });
+  const outcome = recordShrinks({ reading, baseline: { groups: [] } });
+  assert.deepEqual(outcome.removed, []);
+  assert.equal(outcome.after.newGroups, 0, "a declared group is not new debt after the write");
+  assert.equal(outcome.after.declared.length, 1);
+  assert.match(censusLine({ ...outcome.after, status: "passed", examined: 0 }), /declared 1 · new 0 · grown 0/);
+});
+
+test("a declaration with no reason, no owner, no site count, or a duplicated hash is an error, not a reading", () => {
+  const root = mkdtempSync(join(tmpdir(), "gamebuddy-declarations-"));
+  workspaces.push(root);
+  mkdirSync(join(root, "tools"), { recursive: true });
+  const file = join(root, "tools/duplicate-code-declarations.json");
+  const write = (declarations) => writeFileSync(file, JSON.stringify({ declarations }), "utf8");
+  const valid = declarationOf("0123456789ab", 3);
+  write([valid]);
+  assert.deepEqual(readDeclarations({ root }), [valid]);
+  write([{ ...valid, reason: "  " }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:reason:0123456789ab/u);
+  write([{ ...valid, owner: "" }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:owner:0123456789ab/u);
+  write([{ ...valid, sites: 2 }]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:sites:0123456789ab/u);
+  write([valid, valid]);
+  assert.throws(() => readDeclarations({ root }), /duplicate_code_declarations_malformed:duplicate_hash:0123456789ab/u);
+  rmSync(file);
+  assert.deepEqual(readDeclarations({ root }), [], "no file is nothing declared, not an error");
+});
+
+test("a declared group turns the CLI green with its owner printed, and the entry expires when the copies move", () => {
+  const { root } = repoShaped(copies(["Alpha", "Bravo", "Charlie"]));
+  const residuals = cli(root, "--residuals");
+  const hash = residuals.stdout.match(/residual:([0-9a-f]{12}):/u)?.[1];
+  assert.ok(hash, residuals.stdout);
+  mkdirSync(join(root, "tools"), { recursive: true });
+  writeFileSync(
+    join(root, "tools/duplicate-code-declarations.json"),
+    JSON.stringify({
+      declarations: [{ hash, sites: 3, tokens: 50, owner: "another lane", reason: "that lane folds this preamble" }],
+    }),
+    "utf8",
+  );
+  git(root, ["add", "-A"]);
+
+  const green = cli(root);
+  assert.equal(green.status, 0, green.stdout);
+  assert.match(green.stdout, /declared 1 · new 0 · grown 0/u);
+  assert.match(green.stdout, new RegExp(` {2}declared:${hash}: 3 sites at \\d+ tokens · another lane · `, "u"));
+  assert.match(green.stdout, /"declared":1/u);
+
+  writeFileSync(join(root, "host/src/Delta.cs"), copies(["Delta"])["host/src/Delta.cs"], "utf8");
+  git(root, ["add", "-A"]);
+  const grew = cli(root);
+  assert.equal(grew.status, 1, grew.stdout);
+  assert.match(grew.stdout, new RegExp(`clone_group_grew:${hash}: now 4 sites`, "u"));
 });

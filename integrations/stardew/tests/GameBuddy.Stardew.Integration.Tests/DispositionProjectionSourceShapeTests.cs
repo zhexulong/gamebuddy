@@ -100,20 +100,22 @@ public class DispositionProjectionSourceShapeTests
     [Fact]
     public void TheSnapshotReadsTheDispositionTheControllerAlreadyComputed()
     {
-        // One authority: Update() computes it once (farmhandexecutioncontroller.cs:1070), the snapshot
-        // PROJECTS that value. A second ComputeDisposition call in the snapshot path would be a second
-        // authority that could disagree with admission and the body loop within the same tick.
-        string controller = ReadSource("integrations", "stardew", "farmhandexecutioncontroller.cs");
-        controller.Should().Contain("this.disposition = WorldModel.ComputeDisposition(Game1.player);");
+        // One authority: Update() computes it once, the snapshot PROJECTS that value. A second ComputeDisposition call
+        // in the snapshot path would be a second authority that could disagree with admission and the body loop within
+        // the same tick. The count runs over the WHOLE controller family, because "once" is a property of the class and
+        // not of whichever partial happens to declare the tick.
+        string loop = ControllerPartials.Declaring("Update");
+        loop.Should().Contain("this.disposition = WorldModel.ComputeDisposition(Game1.player);");
 
         // Every occurrence of the call must be an assignment to the field: one per tick, never inside the
         // snapshot construction.
+        string family = ControllerPartials.All();
         int calls = 0;
         int assignments = 0;
         int from = 0;
-        while ((from = controller.IndexOf("WorldModel.ComputeDisposition(", from, StringComparison.Ordinal)) >= 0)
+        while ((from = family.IndexOf("WorldModel.ComputeDisposition(", from, StringComparison.Ordinal)) >= 0)
         {
-            string line = controller[..from].Split('\n')[^1];
+            string line = family[..from].Split('\n')[^1];
             // A comment may mention the call: the controller's own XML doc writes it with parens. Only an
             // executable occurrence counts, so documentation lines are skipped.
             if (!line.TrimStart().StartsWith("///", StringComparison.Ordinal))
@@ -129,7 +131,7 @@ public class DispositionProjectionSourceShapeTests
         string models = ReadSource("integrations", "stardew", "src", "Core", "Models", "BridgeProtocolModels.cs");
         models.Should().Contain("string ActorDispositionKind = \"idle\"");
 
-        string snapshotBuild = controller;
+        string snapshotBuild = ControllerPartials.Read(ControllerPartials.Main);
         snapshotBuild.Should().Contain("ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind)");
         snapshotBuild.Should().Contain("ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind");
         snapshotBuild.Should().Contain("ActorDispositionActionOwned: this.disposition.ModalActionOwned");

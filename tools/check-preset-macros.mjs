@@ -53,6 +53,14 @@
  * `macro_unknown:support_email`, exit 1; a preset with no `{{...}}` at all -> `preset_macros_none_found`,
  * `status blocked`, exit 1.
  */
+
+export const gateDeclaration = {
+  id: "check-preset-macros",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

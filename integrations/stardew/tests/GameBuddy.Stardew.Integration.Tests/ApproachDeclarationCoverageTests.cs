@@ -20,16 +20,21 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
-/// THE POPULATION IS DERIVED, NEVER LISTED. The registrations come from <see cref="FarmhandActionCatalog"/>, the action
-/// to handler-method mapping from the <c>Handlers/</c> switch arms, and the "does it walk" fact from the method body that
-/// mapping names - so a new action, a renamed handler or a moved leg moves this gate with it. A hand-written list here
-/// would pass forever after the first rename.
+/// THE POPULATION IS EVERY REGISTERED EXECUTION ROW - NOT THE ADMITTED ONES. It used to be the rows the Agent surface
+/// publishes (no <c>Experimental</c> row, no row without a target family), and that population was itself the defect:
+/// measured 2026-11-14, <c>remove_fence</c> and <c>break_resource_clump</c> began their approach leg while registered
+/// <c>Experimental</c>, so this gate said nothing about them until <c>834cab0e</c> promoted both, and
+/// <c>place_item_on_pedestal</c> sat in exactly that silence. A gate whose population is the set it is meant to police
+/// cannot see a member before it is admitted; the missing declaration lives on the ROW, so the row is what this reads.
+/// The action-id-to-method mapping comes from the <c>Handlers/</c> switch arms, the "does it walk" fact from the method
+/// body that mapping names, and the declaration from the catalog - so a new action, a renamed handler or a moved leg
+/// moves this gate with it, and a row cannot buy silence by staying off the surface.
 /// </para>
 ///
 /// <para>
-/// WHAT IT DOES NOT COVER, printed on every run rather than left to a query: the target-bearing actions whose handlers
-/// neither walk nor measure a tile distance (<c>craft_item</c>, <c>shop_purchase</c>, the actor's own attachment state,
-/// ...). Silence is the truth for them, and naming a relation would be an invented precondition - <c>move_placed_furniture</c>
+/// WHAT IT DOES NOT COVER, printed on every run rather than left to a query: the actions whose handlers neither walk
+/// nor measure a tile distance (<c>craft_item</c>, <c>shop_purchase</c>, the actor's own attachment state, ...).
+/// Silence is the truth for them, and naming a relation would be an invented precondition - <c>move_placed_furniture</c>
 /// answers the question with the engine's own whole-room furniture reach, which a tile distance would misstate.
 /// </para>
 /// </summary>
@@ -37,23 +42,13 @@ public sealed class ApproachDeclarationCoverageTests
 {
     private const string HandlersDirectory = "integrations/stardew/Handlers";
     private const string ModDirectory = "integrations/stardew";
+    private const string DefinitionsPath = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 
     /// <summary>
-    /// Every way a request path can begin walking the actor in. Four spellings because there are four seams, not
-    /// because the fact has four meanings: the tool family's approach leg, the building-contact form of it,
-    /// <c>pickup_item</c>'s own debris approach, which predates both, and the tile-target request seam the pedestal,
-    /// fence-gate, bush, fruit-tree and tree actions hand their request to. That seam begins the tool leg for all five,
-    /// and <c>TileTargetRequestSeamTests.TheSeamAdmitsResolvesWalksThenExecutesInThatOrder</c> pins that it still does.
+    /// Every way a request path can begin walking the actor in, shared with `ApproachBeforeRefusalTests`. The same six
+    /// seams answer both gates' questions - see <see cref="HandlerApproachFacts"/>.
     /// </summary>
-    private static readonly string[] ApproachLegMarkers =
-    {
-        "TryBeginToolApproach(",
-        "TryBeginBuildingApproach(",
-        "new LocalMoveSpec(",
-        "new LocalApproachSpec(",
-        "new LocalItemPickupSpec(",
-        "this.RequestLocalTileTarget(",
-    };
+    private static readonly string[] ApproachLegMarkers = HandlerApproachFacts.ApproachLegMarkers;
 
     /// <summary>The predicates that make a handler refuse from a distance instead of walking.</summary>
     private static readonly string[] TileDistanceMarkers =
@@ -79,6 +74,12 @@ public sealed class ApproachDeclarationCoverageTests
             ["pan_ore"] = "PanNativeReachTiles",
         };
 
+    /// <summary>
+    /// One reading of the repository per test run: the rows, the size of the handler population, and the two things the
+    /// reading drops (read-only registrations, handler arms with no registration).
+    /// </summary>
+    private static readonly Lazy<Measurement> Measured = new(Measure);
+
     private readonly ITestOutputHelper output;
 
     public ApproachDeclarationCoverageTests(ITestOutputHelper output)
@@ -89,46 +90,58 @@ public sealed class ApproachDeclarationCoverageTests
     [Fact]
     public void EveryActionWhoseHandlerClosesTheDistanceDeclaresSelfWalked()
     {
-        IReadOnlyList<CoverageRow> population = Population();
+        Measurement measured = Measured.Value;
 
-        IReadOnlyList<CoverageRow> walking = population.Where(row => row.Walks).ToList();
+        List<CoverageRow> walking = measured.Rows.Where(row => row.Walks).ToList();
         walking.Should().NotBeEmpty("the derivation must find the actions whose handlers walk, or this gate reads nothing");
 
-        // The denominator is what the surface MUST answer for: every action whose handler walks (derived from the handler
-        // sources, so deleting a declaration cannot shrink it) plus every action that already answers with a distance.
-        // A missing declaration therefore reads `declared 59 of 64`, not `59 of 63` - the gate's own denominator cannot
-        // be repaired by the defect it is looking for.
-        int required = walking.Count + population.Count(row => !row.Walks && row.Declared is not null);
-        int declaredSelfWalked = walking.Count(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked);
-        this.output.WriteLine($"declared {declaredSelfWalked} of {required}");
+        // The population is the denominator, and it comes from the handlers: `undeclared` can only be 0 because every
+        // walking row says so, never because the row left the population. Printed whole, because "declared 61 of 67"
+        // makes the reader do the arithmetic to learn how many are missing.
+        List<CoverageRow> undeclared = walking
+            .Where(row => row.Declared != FarmhandActionApproachRequirement.SelfWalked)
+            .ToList();
+        this.output.WriteLine(
+            $"handlers examined {measured.HandlersExamined} · begin an approach leg {walking.Count} · declared "
+                + $"{walking.Count - undeclared.Count} · undeclared {undeclared.Count}");
+        this.output.WriteLine(
+            $"read-only registrations (no request path to read): {measured.ReadOnlyRegistrations}");
 
-        IReadOnlyList<CoverageRow> remainder = population.Where(row => !row.Walks && row.Declared is null).ToList();
-        IReadOnlyList<string> deliberate =
+        List<CoverageRow> remainder = measured.Rows.Where(row => !row.Walks && row.Declared is null).ToList();
+        List<string> deliberate =
             remainder.Where(row => row.Body.Contains("IsCloseEnoughToFarmer(", StringComparison.Ordinal))
                 .Select(row => row.ActionId)
                 .ToList();
-        IReadOnlyList<string> enforcing = remainder.Where(row => row.MeasuresTileDistance).Select(row => row.ActionId).ToList();
+        List<string> enforcing = remainder.Where(row => row.MeasuresTileDistance).Select(row => row.ActionId).ToList();
         this.output.WriteLine(
-            "not covered by an approach relation (handler closes no distance): "
-                + string.Join(", ", remainder.Select(row => row.ActionId)));
+            $"not covered by an approach relation (handler closes no distance): {remainder.Count} actions");
         this.output.WriteLine(
-            $"  {deliberate.Count} of these answer with the engine's own whole-room furniture reach, which a tile distance would misstate: "
+            $"  {deliberate.Count} answer with the engine's own whole-room furniture reach, which a tile distance would misstate: "
                 + string.Join(", ", deliberate));
         this.output.WriteLine(
             "  measuring a tile distance and declaring nothing: "
                 + string.Join(", ", enforcing));
 
+        // Every execution row must resolve to a handler arm: a row this gate cannot resolve is a row it cannot
+        // police, and the census above would read smaller while still saying `undeclared 0`.
+        List<string> unresolved = measured.Rows.Where(row => row.Method is null).Select(row => row.Site).ToList();
+        unresolved.Should().BeEmpty(
+            "these rows are registered execution actions, so some handler must serve them - the action id to method "
+                + "mapping this gate reads has drifted, and a row it cannot resolve is a row it cannot police:\n  "
+                + string.Join("\n  ", unresolved));
+
+        // Every handler arm must belong to a registration, or the surface offers nothing for it.
+        measured.UnregisteredHandlerArms.Should().BeEmpty(
+            "a handler arm whose action id no registration publishes is an action the surface never offers - either the "
+                + "arm is dead or the registration is missing:\n  " + string.Join("\n  ", measured.UnregisteredHandlerArms));
+
         // The gate proper: an action the handler walks for must declare exactly that, and nothing else. `adjacent` here
         // would be the same false sentence the catalog refused to publish before this relation existed.
-        List<string> missing = walking
-            .Where(row => row.Declared != FarmhandActionApproachRequirement.SelfWalked)
-            .Select(row => row.ActionId)
-            .ToList();
-        missing.Should().BeEmpty(
+        undeclared.Select(row => row.Site).Should().BeEmpty(
             "approach_requirement_undeclared on a self-walking action: the model cannot tell \"no constraint\" from "
                 + "\"nobody decided\", so it plans a move it does not need or drops the action. Actions whose handler "
-                + "begins an approach leg but whose registration does not declare `self_walked`:\n  "
-                + string.Join("\n  ", missing));
+                + "begins an approach leg but whose registration does not declare `self_walked`, with the handler site "
+                + "and the registration site:\n  " + string.Join("\n  ", undeclared.Select(row => row.Site)));
 
         // The ratchet on the remainder: the day one of them starts enforcing a distance, silence stops being true and
         // this fails by name - except the entries whose premise is asserted right below.
@@ -143,7 +156,7 @@ public sealed class ApproachDeclarationCoverageTests
 
         foreach ((string actionId, string premise) in UndeclaredDistanceEnforcement)
         {
-            CoverageRow row = population.Single(candidate => candidate.ActionId == actionId);
+            CoverageRow row = measured.Rows.Single(candidate => candidate.ActionId == actionId);
             row.MeasuresTileDistance.Should().BeTrue(
                 $"{actionId} is exempted because it enforces {premise}; the exemption must expire when it stops");
             row.Body.Should().Contain(premise, $"{actionId}'s exemption names the constant it enforces");
@@ -155,25 +168,24 @@ public sealed class ApproachDeclarationCoverageTests
     [Fact]
     public void ASelfWalkedDeclarationIsBackedByAnApproachLeg()
     {
-        // The other direction, over EVERY registration rather than the target-bearing ones: a `self_walked` on an action
-        // that does not walk is a lie in the dangerous direction - it tells the model to skip the `move_to_tile` that was
-        // the only thing putting its body in reach, and the action then refuses from six tiles away (the `enter_exit`
-        // shape this family of declarations exists to end). `ride_bus` is the standing example of an action that
-        // declares nothing on purpose; declaring `self_walked` there would be exactly this defect.
-        IReadOnlyList<CoverageRow> rows = Rows();
+        // The other direction, over EVERY execution row: a `self_walked` on an action that does not walk is a lie in the
+        // dangerous direction - it tells the model to skip the `move_to_tile` that was the only thing putting its body
+        // in reach, and the action then refuses from six tiles away (the `enter_exit` shape this family of declarations
+        // exists to end). `ride_bus` is the standing example of an action that declares nothing on purpose; declaring
+        // `self_walked` there would be exactly this defect.
+        IReadOnlyList<CoverageRow> rows = Measured.Value.Rows;
         rows.Should().Contain(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked,
             "the catalog declares the relation somewhere, or this gate reads nothing");
 
         List<string> unbacked = rows
             .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && !row.Walks)
-            .Select(row => row.ActionId)
+            .Select(row => row.Site)
             .ToList();
 
         unbacked.Should().BeEmpty(
             "self_walked_without_an_approach_leg: these registrations declare that the action closes the distance, but "
                 + "their handler never begins an approach leg. Either the leg moved (point this gate at it) or the "
-                + "declaration is a false precondition:\n  "
-                + string.Join("\n  ", unbacked));
+                + "declaration is a false precondition:\n  " + string.Join("\n  ", unbacked));
     }
 
     [Fact]
@@ -195,59 +207,70 @@ public sealed class ApproachDeclarationCoverageTests
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Every visible, target-bearing execution action, with the two facts the handler source answers about it.
+    /// Every registered EXECUTION row with the two facts the handler source answers about it, plus the size of the
+    /// populations this reading passed over.
     ///
-    /// <c>TargetFamily</c> is the descriptor's own word for "this action addresses something a snapshot publishes", so
-    /// the population is the surface's answer rather than a list of ids here. Read-only actions and the actions off the
-    /// Agent surface (experimental) are excluded: they are not published to a caller at all.
+    /// Read-only registrations are counted and skipped: they answer an observation, not a request path, so there is no
+    /// handler body that could begin an approach leg. Every other row is in - <c>Experimental</c>, unpublished, without
+    /// a target family - because the declaration is a property of the row, and a row the Agent surface has not admitted
+    /// yet is exactly the row that goes wrong when it finally is.
     /// </summary>
-    private static IReadOnlyList<CoverageRow> Population()
-    {
-        IReadOnlyList<CoverageRow> population = Rows()
-            .Where(row => row.Kind == FarmhandOperationKind.Execution
-                && row.Lifecycle != FarmhandActionLifecycle.Experimental
-                && row.TargetFamily is not null)
-            .ToList();
-        population.Should().NotBeEmpty("the surface publishes target-bearing actions, or this gate reads nothing");
-
-        // The gate cannot decide an action it cannot find a handler for, and silently dropping it would make the
-        // population look smaller and greener.
-        List<string> unresolved = population.Where(row => row.Method is null).Select(row => row.ActionId).ToList();
-        unresolved.Should().BeEmpty(
-            "these actions are on the surface with a target family, so some handler must serve them - the action id to "
-                + "method mapping this gate reads has drifted:\n  " + string.Join("\n  ", unresolved));
-        return population.Where(row => row.Method is not null).ToList();
-    }
-
-    /// <summary>Every registration that carries a descriptor, with the handler facts derived from the sources.</summary>
-    private static IReadOnlyList<CoverageRow> Rows()
+    private static Measurement Measure()
     {
         IReadOnlyDictionary<string, string> handlers = HandlerMethods();
-        IReadOnlyDictionary<string, string> sources = ControllerSources();
+        IReadOnlyDictionary<string, string> sources = HandlerSources();
+        IReadOnlyDictionary<string, int> registrationLines = RegistrationLines();
+
         var rows = new List<CoverageRow>();
+        var registered = new HashSet<string>(StringComparer.Ordinal);
+        int readOnly = 0;
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
+            registered.Add(registration.ActionId);
             if (registration.Descriptor is not { } descriptor)
                 continue;
+            if (registration.Kind != FarmhandOperationKind.Execution)
+            {
+                readOnly++;
+                continue;
+            }
 
-            string? method = handlers.TryGetValue(registration.ActionId, out string? declared) ? declared : null;
-            string body = method is null
-                ? string.Empty
-                : StripLineComments(MethodBody(sources, method) ?? string.Empty);
+            string? method = handlers.TryGetValue(registration.ActionId, out string? handlerMethod) ? handlerMethod : null;
+            (string File, int Line, int BodyLine, string Body)? site = method is null ? null : MethodSite(sources, method);
+            string body = site is null ? string.Empty : StripLineComments(site.Value.Body);
+            (string Marker, int Index) leg = ApproachLegMarkers
+                .Select(marker => (Marker: marker, Index: body.IndexOf(marker, StringComparison.Ordinal)))
+                .Where(candidate => candidate.Index >= 0)
+                .OrderBy(candidate => candidate.Index)
+                .FirstOrDefault();
+
+            // The leg's own line, not the declaration's: the pair the next reader needs is "where the walk starts"
+            // and "where the row says nothing". Stripping comments never removes a newline, so an index that survived
+            // the strip counts the same lines in the source body.
+            int? legLine = leg.Marker is null || site is null
+                ? null
+                : site.Value.BodyLine + body.Take(leg.Index).Count(character => character == '\n');
             rows.Add(new CoverageRow(
                 registration.ActionId,
-                registration.Kind,
                 registration.Lifecycle,
-                descriptor.TargetFamily,
                 descriptor.Approach,
                 method,
+                site?.File,
+                site?.Line,
+                legLine,
+                leg.Marker,
+                registrationLines.TryGetValue(registration.ActionId, out int rowLine) ? rowLine : null,
                 body,
-                ApproachLegMarkers.Any(marker => body.Contains(marker, StringComparison.Ordinal)),
+                leg.Marker is not null,
                 TileDistanceMarkers.Any(marker => body.Contains(marker, StringComparison.Ordinal))));
         }
 
-        rows.Should().NotBeEmpty("the catalog registers actions, or this gate reads nothing");
-        return rows;
+        rows.Should().NotBeEmpty("the catalog registers execution actions, or this gate reads nothing");
+        return new Measurement(
+            rows,
+            handlers.Count,
+            readOnly,
+            handlers.Keys.Where(actionId => !registered.Contains(actionId)).OrderBy(actionId => actionId, StringComparer.Ordinal).ToList());
     }
 
     /// <summary>The action id to handler method mapping, from the one place the Mod binds them.</summary>
@@ -257,7 +280,12 @@ public sealed class ApproachDeclarationCoverageTests
         foreach (string file in Directory.GetFiles(RepositorySourcePath(HandlersDirectory), "*.cs"))
         {
             string source = File.ReadAllText(file);
-            foreach (Match match in Regex.Matches(source, "\"([a-z0-9_]+)\"\\s*=>\\s*(?:this\\.executions\\.)?([A-Za-z0-9_]+)\\("))
+
+            // `this.executions.X(` is the execution controller, `this.X(` a method on the handler itself
+            // (`navigate_to_destination` hands its request to `Navigate`, which is not a controller request path).
+            foreach (Match match in Regex.Matches(
+                source,
+                "\"([a-z0-9_]+)\"\\s*=>\\s*(?:this\\.(?:executions\\.)?)?([A-Za-z0-9_]+)\\("))
             {
                 methods[match.Groups[1].Value] = match.Groups[2].Value;
             }
@@ -267,8 +295,12 @@ public sealed class ApproachDeclarationCoverageTests
         return methods;
     }
 
-    /// <summary>The execution controller's own partials, keyed by file name: the bodies the handler arms reach.</summary>
-    private static IReadOnlyDictionary<string, string> ControllerSources()
+    /// <summary>
+    /// Every C# file a handler arm can reach its method body through: the execution controller's partials, and the
+    /// handler files themselves for the few arms that route through a method of their own rather than a controller
+    /// request path. Keyed by a display name, so a failure names the file a reader can open.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> HandlerSources()
     {
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs"))
@@ -276,37 +308,69 @@ public sealed class ApproachDeclarationCoverageTests
             sources[Path.GetFileName(file)] = File.ReadAllText(file);
         }
 
+        foreach (string file in Directory.GetFiles(RepositorySourcePath(HandlersDirectory), "*.cs"))
+        {
+            sources[$"{HandlersDirectory}/{Path.GetFileName(file)}"] = File.ReadAllText(file);
+        }
+
         sources.Should().NotBeEmpty("the controller partials hold the request paths the approach legs live in");
         return sources;
     }
 
-    /// <summary>
-    /// The body of the first <c>LocalExecutionReceipt &lt;name&gt;(</c> in any partial, whole: a statement body is a
-    /// brace-balanced block and an EXPRESSION body runs to its own semicolon. The parameter list is skipped by its own
-    /// parentheses first, because an expression-bodied request half has no brace of its own while the lambdas it hands
-    /// the seam do - reading from the first <c>{</c> would return a lambda's block instead of the handler.
-    /// </summary>
-    private static string? MethodBody(IReadOnlyDictionary<string, string> sources, string method)
+    /// <summary>The line of each execution registration in the definitions file, so a failure can name the row.</summary>
+    private static IReadOnlyDictionary<string, int> RegistrationLines()
     {
-        foreach (string source in sources.Values)
+        string source = File.ReadAllText(Path.Combine(RepositorySourcePath(ModDirectory), "src/Core/Policy/FarmhandActionDefinitions.cs"));
+        var lines = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (Match match in Regex.Matches(source, "\\bE\\(\"([a-z0-9_]+)\""))
         {
-            int signature = source.IndexOf($"LocalExecutionReceipt {method}(", StringComparison.Ordinal);
-            if (signature >= 0)
-                return BodyOf(source, signature);
+            if (!lines.ContainsKey(match.Groups[1].Value))
+                lines[match.Groups[1].Value] = LineOf(source, match.Index);
+        }
+
+        lines.Should().NotBeEmpty("the definitions file declares the rows, or this gate cannot name one");
+        return lines;
+    }
+
+    /// <summary>
+    /// The file, line and body of the first <c>LocalExecutionReceipt &lt;name&gt;(</c> in any source, whole: a statement
+    /// body is a brace-balanced block and an EXPRESSION body runs to its own semicolon. The parameter list is skipped by
+    /// its own parentheses first, because an expression-bodied request half has no brace of its own while the lambdas it
+    /// hands the seam do - reading from the first <c>{</c> would return a lambda's block instead of the handler.
+    /// </summary>
+    private static (string File, int Line, int BodyLine, string Body)? MethodSite(IReadOnlyDictionary<string, string> sources, string method)
+    {
+        foreach ((string file, string source) in sources)
+        {
+            int declaration = source.IndexOf($"LocalExecutionReceipt {method}(", StringComparison.Ordinal);
+            if (declaration < 0)
+                continue;
+
+            (int Start, string Body)? body = BodyOf(source, declaration);
+            if (body is null)
+                return null;
+
+            int line = LineOf(source, declaration);
+            return (file, line, LineOf(source, body.Value.Start), body.Value.Body);
         }
 
         return null;
     }
 
-    private static string? BodyOf(string source, int declaration)
+    /// <summary>The 1-based line an index sits on.</summary>
+    private static int LineOf(string source, int index) =>
+        source.Take(index).Count(character => character == '\n') + 1;
+
+    private static (int Start, string Body)? BodyOf(string source, int declaration)
     {
         int opening = source.IndexOf('(', declaration);
         int cursor = AfterBalanced(source, opening);
         while (cursor < source.Length && source[cursor] is ' ' or '\n' or '\r' or '\t') cursor++;
         if (cursor >= source.Length) return null;
-        return source[cursor] == '{'
+        string? body = source[cursor] == '{'
             ? source[cursor..AfterBraced(source, cursor)]
             : ExpressionBody(source, cursor);
+        return body is null ? null : (cursor, body);
     }
 
     /// <summary>The index just past the construct whose opening parenthesis is at <paramref name="open"/>.</summary>
@@ -387,14 +451,33 @@ public sealed class ApproachDeclarationCoverageTests
         throw new DirectoryNotFoundException($"repository path not found: {relative}");
     }
 
+    private sealed record Measurement(
+        IReadOnlyList<CoverageRow> Rows,
+        int HandlersExamined,
+        int ReadOnlyRegistrations,
+        IReadOnlyList<string> UnregisteredHandlerArms);
+
     private sealed record CoverageRow(
         string ActionId,
-        FarmhandOperationKind Kind,
         FarmhandActionLifecycle Lifecycle,
-        string? TargetFamily,
         FarmhandActionApproachRequirement? Declared,
         string? Method,
+        string? HandlerFile,
+        int? HandlerLine,
+        int? LegLine,
+        string? LegMarker,
+        int? RowLine,
         string Body,
         bool Walks,
-        bool MeasuresTileDistance);
+        bool MeasuresTileDistance)
+    {
+        /// <summary>The pair a reader needs: where the leg is, and where the silence is.</summary>
+        public string Site =>
+            $"{this.ActionId} ({this.Lifecycle}) - "
+            + (this.HandlerFile is null
+                ? "no handler arm resolves to a method for it"
+                : $"handler {this.HandlerFile}:{(this.LegLine ?? this.HandlerLine)?.ToString() ?? "?"}"
+                    + (this.LegMarker is null ? string.Empty : $" begins `{this.LegMarker}`"))
+            + $", registration {DefinitionsPath}:{this.RowLine?.ToString() ?? "?"}";
+    }
 }

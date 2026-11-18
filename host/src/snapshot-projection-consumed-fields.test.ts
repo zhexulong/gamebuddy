@@ -76,9 +76,9 @@ test("bounded companion projection renders snapshot time and calendar fields", (
   assert.equal(lateNightLastDay.clock.seasonIndex, 3);
   assert.equal(lateNightLastDay.clock.year, 4);
   // Rendered into the bounded text too: late night shows a wall clock.
-  assert.match(lateNightLastDay.text, /23:50/);
+  assert.match(lateNightLastDay.text, /11:50 PM/);
   assert.match(lateNightLastDay.text, /Winter/);
-  assert.match(early.text, /00:00/);
+  assert.match(early.text, /12:00 AM/);
   assert.match(early.text, /Spring/);
 
   // Positive control: situational fields still project distinctly.
@@ -169,7 +169,22 @@ test("bounded companion projection says what she is carrying, and tells 'nothing
     ],
     "the tool slot is the Mod's own `toolSlots` answer and is not repeated here",
   );
-  assert.match(carried.text, /Carrying: 40x Parsnip Seeds, 5x Copper Ore/u);
+  assert.match(carried.text, /Carrying: 40x Parsnip Seeds \(O\)472 \[slot 7\], 5x Copper Ore \(O\)378 \[slot 9\]/u);
+  // THE SLOT IS THE ROW'S OWN, not a constant beside a label: the same two stacks at other slots must print those
+  // slots. `open_geode`, `deposit_silo_hay` and `put_item_in_fish_tank` all take a pack slot, so a line without one
+  // asked the model for a number it had not shown - the defect `tools/check-inventory-row-field-rendering.mjs` holds.
+  const moved = project({
+    ...baseSnapshot,
+    toolSlots: [{ slot: 0, label: "Axe" }],
+    inventoryItemFacts: [
+      { slot: 0, qualifiedItemId: "(T)Axe", displayName: "Axe", stack: 1 },
+      { slot: 21, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", stack: 40 },
+      { slot: 33, qualifiedItemId: "(O)378", displayName: "Copper Ore", stack: 5 },
+    ],
+  });
+  if (!moved.available) throw new Error("projection_unavailable");
+  assert.match(moved.text, /Carrying: 40x Parsnip Seeds \(O\)472 \[slot 21\], 5x Copper Ore \(O\)378 \[slot 33\]/u);
+  assert.equal(/\[slot 7\]/u.test(moved.text), false, "a slot the snapshot did not publish is never printed");
 
   // Three different worlds, three different lines: carrying nothing but tools, and never having been told.
   const toolsOnly = project({

@@ -10,6 +10,13 @@
 //   node tools/check-stardew-dialogue-stream.mjs <result.json> [--expect-speaker Gus] [--session <session.jsonl>]
 // Exit: 0 passed, 2 blocked OR unobserved (an unobserved run is NEVER a pass).
 
+export const gateDeclaration = {
+  id: "check-stardew-dialogue-stream",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 
 const DIALOGUE_KIND = "npc_dialogue_presented";

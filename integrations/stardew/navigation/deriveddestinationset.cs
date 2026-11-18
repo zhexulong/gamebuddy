@@ -8,7 +8,6 @@ using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.GameData.Characters;
 using StardewValley.GameData.Locations;
-using StardewValley.GameData.Objects;
 using StardewValley.GameData.Shops;
 using StardewValley.TokenizableStrings;
 using StardewValley.WorldMaps;
@@ -242,7 +241,6 @@ internal sealed class DerivedDestinationSet
         {
             IReadOnlyDictionary<string, CharacterData> characters = DataLoader.Characters(Game1.content);
             IReadOnlyDictionary<string, ShopData> shops = DataLoader.Shops(Game1.content);
-            IReadOnlyDictionary<string, ObjectData> objects = DataLoader.Objects(Game1.content);
 
             Dictionary<string, int> indexByIdentity = new(StringComparer.Ordinal);
             for (int i = 0; i < destinations.Count; i++)
@@ -283,7 +281,7 @@ internal sealed class DerivedDestinationSet
                 List<string> terms = new() { shopKey };
                 foreach (ShopItemData item in (pair.Value.Items ?? Enumerable.Empty<ShopItemData>()).OrderBy(item => item.Id, StringComparer.Ordinal))
                 {
-                    string? itemName = GetItemDisplayName(item, objects);
+                    string? itemName = GetItemDisplayName(item);
                     if (itemName is not null)
                         terms.Add(itemName);
                 }
@@ -335,19 +333,32 @@ internal sealed class DerivedDestinationSet
         return null;
     }
 
-    private static string? GetItemDisplayName(ShopItemData item, IReadOnlyDictionary<string, ObjectData> objects)
+    /// <summary>
+    /// The shop item's searchable name: the row's own display name when it declares one, else the engine's own item reader.
+    ///
+    /// <para>
+    /// WHY NOT THE OBJECT TABLE. The retired code sliced the value after its type tag and looked the remainder up in
+    /// `DataLoader.Objects`: a `(W)`, `(F)` or `(BC)` row shares nothing with an object but its NUMBER, so the lookup
+    /// either answered with an item of an entirely different kind or missed and dropped the row. The field is
+    /// `ISpawnItemData.ItemId`, "either a qualified item ID, or an item query like ALL_ITEMS"
+    /// (`StardewValley.GameData.xml:1863-1865`), and `ItemRegistry.GetData` reads both id forms and every item type
+    /// (`ItemRegistry.cs:316-323`).
+    /// </para>
+    ///
+    /// <para>
+    /// A stated reason is NOT a search term: adding `display_name_unresolved:&lt;id&gt;` to the recall list would make a
+    /// destination match a query for that phrase, so an unnamed value contributes nothing here - it is still named on the
+    /// path that publishes it to the player.
+    /// </para>
+    /// </summary>
+    private static string? GetItemDisplayName(ShopItemData item)
     {
         string? direct = ParseSearchableText(item.ObjectDisplayName);
         if (direct is not null)
             return direct;
         string itemId = item.ItemId ?? string.Empty;
-        int closingBracket = itemId.IndexOf(')');
-        if (closingBracket < 0 || closingBracket + 1 >= itemId.Length)
-            return null;
-        string key = itemId.Substring(closingBracket + 1);
-        return objects.TryGetValue(key, out ObjectData? objectData)
-            ? ParseSearchableText(objectData.DisplayName)
-            : null;
+        string name = ItemDisplayName.Resolve(itemId, ItemRegistry.GetData(itemId)?.DisplayName);
+        return ItemDisplayName.IsReason(name) ? null : ParseSearchableText(name);
     }
 
     private static string? ParseSearchableText(string? text)

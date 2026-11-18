@@ -43,9 +43,10 @@ public sealed class NavigationExecutionManagerTests
         // The approach was armed through the fake seam, but no primitive LocalMove/
         // Travel receipt was generated: the ledger holds exactly this one lineage.
         harness.Armed.Should().NotBeEmpty();
-        // Navigation receipt state remains public, but route/progress traces may
-        // carry live location/tile and are intentionally never published.
-        harness.Manager.Trace.Should().BeEmpty();
+        // The body-trace channel that used to carry route/progress per tile is gone: the executor publishes the answer
+        // and nothing about the body on the way to it, so there is no field here that could expose a live location.
+        // What remains observable is the lineage's receipt, and arming the approach does not change it.
+        harness.Stored("req_admit").State.Should().Be(ExecutionState.Accepted);
     }
 
     [Fact]
@@ -273,9 +274,8 @@ public sealed class NavigationExecutionManagerTests
         harness.CompleteWarp(SourceFarm, "Mine", 20, 20);
         harness.Stored("req_term").State.Should().Be(ExecutionState.Failed);
 
-        // Exactly one execution lineage is present; Navigation never publishes
-        // body traces (including terminal/idle), which could expose route state.
-        harness.Manager.Trace.Should().BeEmpty();
+        // Exactly one execution lineage is present. There is no body-trace channel left to carry route state: the
+        // executor publishes the settlement and nothing about the body on the way to it.
         LocalExecutionReceipt replay = harness.Manager.RequestNavigate("req_term", Label("Mine"), Deadline());
         replay.Should().Be(harness.Stored("req_term"));
     }
@@ -297,8 +297,7 @@ public sealed class NavigationExecutionManagerTests
         harness.Manager.TryGetReceipt("req_nosafe", out LocalExecutionReceipt? stored).Should().BeTrue();
         stored!.State.Should().Be(ExecutionState.Rejected);
         stored.ExecutionId.Should().Be(receipt.ExecutionId);
-        // No accepted lineage, no execution_started trace, no active ownership.
-        harness.Manager.Trace.Any(t => t.Category == "execution_started").Should().BeFalse();
+        // No accepted lineage and no active ownership.
         harness.Manager.CancelActiveForFixture("teardown").ReasonCode.Should().Be("no_active_execution");
     }
 
@@ -333,18 +332,21 @@ public sealed class NavigationExecutionManagerTests
         running.State.Should().Be(ExecutionState.Running);
         running.Evidence.Should().Be("navigation=running;phase=approaching");
         running.Evidence!.Should().NotContain("10,10").And.NotContain("target=").And.NotContain("tile=");
-        harness.Manager.Trace.Should().BeEmpty();
     }
 
     [Fact]
-    public void NavigationLineage_NeverPublishesPositionBearingBodyTrace()
+    public void NavigationLineage_ApproachProgressCarriesNoPositionInItsReceipt()
     {
         var harness = new ManagerHarness(NotAtFarm());
         harness.Manager.RequestNavigate("req_no_trace", Label("Mine"), Deadline());
         harness.Emit(ExecutionState.MeaningfulProgress, "controller_progress", "target=10,10");
         harness.Emit(ExecutionState.Failed, "native_path_ended", "route_broken");
 
-        harness.Manager.Trace.Should().BeEmpty();
+        // The only statement the bridge now receives about the approach is this lineage's receipt, and it must carry
+        // neither the private target coordinate nor a tile from the body's own progress.
+        LocalExecutionReceipt settled = harness.Stored("req_no_trace");
+        settled.State.Should().Be(ExecutionState.Failed);
+        settled.Evidence!.Should().NotContain("10,10").And.NotContain("target=").And.NotContain("tile=");
     }
 
     [Fact]
@@ -401,7 +403,6 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         receipt.ReasonCode.Should().Be("navigation_completed");
         receipt.ExecutionId.Should().Be(accepted.ExecutionId);
         harness.Manager.IsBodySettled.Should().BeTrue();
-        harness.Manager.Trace.Should().BeEmpty();
     }
 
     [Fact]
@@ -692,7 +693,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
     }
 
     [Fact]
-    public void MultiHop_NoPublicBodyTrace()
+    public void MultiHop_PublishesOnlyItsOneSettlement()
     {
         NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
         NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
@@ -715,7 +716,11 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.Manager.Update();
         harness.CompleteWarp("Mountain", "Mine", 4, 4);
 
-        harness.Manager.Trace.Should().BeEmpty();
+        // Two hops, two warps and two settled approaches reach the bridge as ONE statement: the lineage's settlement.
+        LocalExecutionReceipt settled = harness.Stored("req_mt_trace");
+        settled.State.Should().Be(ExecutionState.Succeeded);
+        settled.ReasonCode.Should().Be("navigation_completed");
+        harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
     [Fact]
@@ -854,6 +859,58 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.Manager.IsBodySettled.Should().BeTrue();
         harness.Armed.Should().HaveCount(1);
         harness.Commits.Should().Be(1);
+    }
+
+    [Fact]
+    public void PersistentPostWarpHold_IsBoundedByOneWindow_AndSettlesInsteadOfHoldingTheBodyForever()
+    {
+        // The body may not be held with no way out. After the first warp the destination reads locked (a hold the fresh
+        // world keeps reporting) while the manager's OWN actionability probe answers true - two readings of one question
+        // that disagree. Every retry inside the window re-read `destination_locked`, and re-arming the window from that
+        // retry meant the window it was supposed to bound could never expire: the navigation kept the body with no
+        // terminal, published nothing, and the caller's ten-minute deadline was the only thing left that could end it.
+        var harness = new PersistentLockHarness();
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_lock_persist", Label("Mine"), Deadline());
+        accepted.State.Should().Be(ExecutionState.Accepted, $"{accepted.ReasonCode} / {accepted.Evidence}");
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.Commits.Should().Be(1);
+
+        // The warp lands and the world it lands in is still locked.
+        harness.CompleteWarp("Farm", "Mountain", 2, 2);
+        harness.Armed.Should().HaveCount(1, "a locked read arms nothing");
+        harness.Manager.IsBodySettled.Should().BeFalse("the lineage still owns the body inside its window");
+
+        // Drive well past the window. The window is armed ONCE per warp and its retries do not move it.
+        for (int i = 0; i < 400; i++)
+            harness.Manager.Update();
+
+        LocalExecutionReceipt terminal = harness.Stored("req_lock_persist");
+        terminal.ExecutionId.Should().Be(accepted.ExecutionId);
+        terminal.State.Should().Be(ExecutionState.Rejected);
+        terminal.ReasonCode.Should().Be("destination_locked");
+        harness.Manager.IsBodySettled.Should().BeTrue("an owner that can hold the body must have a way out");
+
+        // The way out NAMES ITSELF. MEASURED round68: this terminal read
+        // `destination=Town;phase=awaiting_warp;grace_expired=true;actionable=false;never_retry=true` and the run ended,
+        // because nothing in it said what held her or what to do next. The hold comes from the one vocabulary that
+        // describes a held body, the window states its own length, and the ledger's `never_retry` is not published as if
+        // it were an instruction about the world.
+        terminal.Evidence.Should().Contain("held_by=", "a refusal has to say WHAT holds the actor");
+        terminal.Evidence.Should().Contain("grace_expired=true");
+        terminal.Evidence.Should().Contain("window_ticks=180", "the wait that ended states its own length");
+        terminal.Evidence.Should().NotContain("never_retry=true", "nothing was mutated by ending the wait");
+        (terminal.Evidence!.Contains("next_step=", StringComparison.Ordinal)
+            || terminal.Evidence!.Contains("admissible_actions=", StringComparison.Ordinal))
+            .Should().BeTrue($"and what to do next, from the hold's own countermeasure ({terminal.Evidence})");
+
+        // And the way out is single: further ticks do not mint a second terminal.
+
+        // And the way out is single: further ticks do not mint a second terminal.
+        for (int i = 0; i < 10; i++)
+            harness.Manager.Update();
+        harness.Stored("req_lock_persist").ReasonCode.Should().Be("destination_locked");
     }
 
     // ── helpers ──
@@ -1050,6 +1107,142 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         {
             this.Manager.TryGetReceipt(requestId, out LocalExecutionReceipt? receipt).Should().BeTrue();
             return receipt!;
+        }
+    }
+
+    /// <summary>
+    /// A multi-hop navigation whose destination stays LOCKED after the first warp, while the manager's own actionability
+    /// probe keeps answering true. The two readings answer one question differently, which is the state a bound must
+    /// survive: nothing else in the run will ever make that window advance.
+    /// </summary>
+    private sealed class PersistentLockHarness
+    {
+        private readonly PersistentLockWorldSource source;
+
+        internal PersistentLockHarness()
+        {
+            NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+            NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+            this.source = new PersistentLockWorldSource(
+                beforeWarp: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+                afterWarp: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+            this.Manager = new ExecutionManager(new DummyMonitor(), Surface());
+            var references = new NavigationReferenceStore();
+            var destinations = new[]
+            {
+                new NavigationDestination("stardew", "Mine", "Mine", null),
+                new NavigationDestination("stardew", "Mountain", "Mountain", null),
+            };
+            var set = new DerivedDestinationSet("generation_01", new NavigationSourceNode("root", null, null, null, Array.Empty<NavigationSourceNode>()), destinations);
+            this.Manager.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(references, "runtime_01", Scope, () => set, this.source, new PersistentLockConnectivitySource(this.source)));
+            this.Manager.SetNavigationApproachNative(new NavigationApproachNative(
+                (spec, farmer, tick) => { this.Armed.Add(spec); return (true, "accepted"); },
+                (farmer, leg) => new StardewValley.Warp(leg.SourceX, leg.SourceY, leg.TargetLocation, leg.TargetX, leg.TargetY, flipFarmer: false, npcOnly: false),
+                (farmer, warp) => { this.Commits++; },
+                _ => true));
+            this.Manager.SetNavigationLifecycleTestAuthorization(() => true);
+            // The manager's own reading of "may the player act" answers TRUE for the whole window, while the world read
+            // the routing consumes keeps reporting a hold. That disagreement is the state the fixture holds still: the
+            // deferred replan runs on every tick and every run re-reads the lock.
+            this.Manager.SetNavigationPlayerActionableProbe(() => true);
+        }
+
+        internal ExecutionManager Manager { get; }
+
+        internal List<LocalMoveSpec> Armed { get; } = new();
+
+        internal int Commits { get; private set; }
+
+        internal void EmitApproachSucceeded() =>
+            this.Manager.EmitNavigationApproachTransition(ExecutionState.Succeeded, "target_reached", "tile=1,2;target=2,2");
+
+        internal void CompleteWarp(string oldLocation, string newLocation, int newTileX, int newTileY)
+        {
+            this.source.Warp();
+            this.Manager.CompleteNavigationAfterWarp(true, oldLocation, newLocation, newTileX, newTileY);
+        }
+
+        internal LocalExecutionReceipt Stored(string requestId)
+        {
+            this.Manager.TryGetReceipt(requestId, out LocalExecutionReceipt? receipt).Should().BeTrue();
+            return receipt!;
+        }
+    }
+
+    /// <summary>Two views, switched once by the warp: before it the route is open, after it the destination is locked.</summary>
+    private sealed class PersistentLockWorldSource : INavigationWorldSource
+    {
+        private readonly NavigationWorldView beforeWarp;
+        private readonly NavigationWorldView afterWarp;
+        private bool warped;
+
+        internal PersistentLockWorldSource(NavigationWorldView beforeWarp, NavigationWorldView afterWarp)
+        {
+            this.beforeWarp = beforeWarp;
+            this.afterWarp = afterWarp;
+        }
+
+        internal void Warp() => this.warped = true;
+
+        /// <summary>Every leg either view knows, with the location it leaves from: a leg names its source by its entry in
+        /// this list, not by a field, because the wire's leg record carries only the two tiles and the target.</summary>
+        internal IReadOnlyList<(string Source, NavigationTransitionLeg Leg)> AllLegs
+        {
+            get
+            {
+                var legs = new List<(string Source, NavigationTransitionLeg Leg)>();
+                foreach ((string source, NavigationWorldView view) in new[]
+                {
+                    (this.beforeWarp.CurrentSourceLocation ?? "Farm", this.beforeWarp),
+                    (this.afterWarp.CurrentSourceLocation ?? "Mountain", this.afterWarp),
+                })
+                {
+                    foreach (NavigationTransitionLeg leg in view.OrdinaryLegs)
+                        legs.Add((source, leg));
+                }
+
+                return legs;
+            }
+        }
+
+        public NavigationWorldView CurrentView(NavigationDestinationBinding binding) =>
+            this.warped ? this.afterWarp : this.beforeWarp;
+    }
+
+    /// <summary>Connectivity derived from whichever view the world source is reporting, so the two cannot disagree.</summary>
+    private sealed class PersistentLockConnectivitySource : INavigationConnectivitySource
+    {
+        private readonly PersistentLockWorldSource world;
+
+        internal PersistentLockConnectivitySource(PersistentLockWorldSource world) => this.world = world;
+
+        public bool TryCreateCurrentOrdinaryWarpTopology(
+            NavigationDestinationBinding acceptedBinding,
+            out NavigationOrdinaryWarpTopology? topology,
+            out string reasonCode)
+        {
+            // Every leg either view knows about, so the route exists before the warp and the locked read that follows it
+            // is the ONLY thing that changes: the hold, not the map.
+            NavigationWorldView view = this.world.CurrentView(acceptedBinding);
+            string current = view.CurrentSourceLocation ?? "Farm";
+            var sources = new Dictionary<string, List<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                [acceptedBinding.CanonicalDestinationIdentity] = new List<NavigationTransitionLeg>(),
+            };
+            foreach ((string source, NavigationTransitionLeg leg) in this.world.AllLegs)
+            {
+                if (!sources.TryGetValue(source, out List<NavigationTransitionLeg>? from))
+                    sources[source] = from = new List<NavigationTransitionLeg>();
+                from.Add(leg);
+                if (!sources.ContainsKey(leg.TargetLocation))
+                    sources[leg.TargetLocation] = new List<NavigationTransitionLeg>();
+            }
+
+            topology = new NavigationOrdinaryWarpTopology(
+                current,
+                sources.Select(kvp => new NavigationOrdinaryWarpLegs(kvp.Key, kvp.Value)).ToArray());
+            reasonCode = "accepted";
+            return true;
         }
     }
 

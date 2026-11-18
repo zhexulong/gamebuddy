@@ -2,6 +2,11 @@
 // red-proof: inject  renaming the schema's `cropTargets` property in protocol/bridge-v1.schema.json -> exit 1,
 //   `[missing_envelope_schema_field] 1: water_crop`, `1 gap(s)`
 //   (protocol/bridge-v1.schema.json)
+// red-proof: history 8 executed over the Mod sources of 9bb16fda - the revision round57 measured - -> exit 1,
+//   `tillability producers examined 11 · agree 2 · different word 1 (buildable) · disagree 8`, naming
+//   FarmhandForEachFarmWorld.cs:393 (`assigns tillable from this.farm.doesTileHaveProperty(x, y, "Diggable", "Back")`),
+//   farmhandexecutioncontroller.cs:3212 (the projection's own clause list), and the five ModEntry.Fixtures sites.
+//   The same script over the fixed tree -> exit 0, `examined 5 · agree 4 · different word 1 · disagree 0`.
 // Discovery-channel audit for the Stardew action surface.
 //
 // An action is not usable just because it is registered: the Agent must also be
@@ -32,6 +37,14 @@
 // Any hole in the chain is silent: the game state exists, the Mod sends it, and
 // the Agent still cannot act. This tool reports per-action holes rather than a
 // single pass/fail, and exits non-zero when a target-bearing action has one.
+
+export const gateDeclaration = {
+  id: "audit-stardew-discovery-channels",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -398,13 +411,239 @@ export function contentTableRegistry(query) {
 }
 
 /**
+ * The one function that answers "can this tile be hoed", and the boolean projection the publications read.
+ *
+ * <p>
+ * `DescribeSoilRefusal` is the authority because it is what `till_soil` itself refuses on
+ * (`farmhandexecutioncontroller.resourcetoolactions.cs` asks it at both the request and the execution site); the
+ * boolean is a projection of it rather than a second clause list. The names are the population's two ends, declared
+ * once here so a rename is a finding instead of a silently empty scan.
+ * </p>
+ */
+export const TILLABILITY_AUTHORITY = "DescribeSoilRefusal";
+export const TILLABILITY_PROJECTION = "IsTillableTile";
+
+/**
+ * Members that read the engine's `Diggable` property while answering a DIFFERENT word.
+ *
+ * <p>
+ * This bucket is not an exemption list and must not become one. An entry here says the member answers another
+ * question - `IsBuildableAtLocation` answers `buildable`, which the engine itself treats as implied by `Diggable` -
+ * so two words that happen to read one property stay two words. "We have not got to it yet" is a defect, not an
+ * entry; the gate fails a stale entry the moment the member stops reading the property, and the test asserts that the
+ * words the source actually answers are distinct and that none of them is `tillable` - a bucket holding the same word
+ * twice would be a pattern rather than a different question.
+ * </p>
+ */
+export const TILLABILITY_DIFFERENT_WORD = Object.freeze([
+  {
+    symbol: "IsBuildableAtLocation",
+    word: "buildable",
+    why: "a farm building's footprint is placeable ground, not the hoe's admission; the engine's own isBuildable accepts Diggable as one sufficient arm of a rule with its own Buildable property and rectangle",
+  },
+]);
+
+/**
+ * Every producer of a tillability answer, and whether it reaches the one authority.
+ *
+ * <p>
+ * The population is scanned, not listed: a tillability answer in this Mod is either a READ of the map's own
+ * `Diggable` property or a PUBLICATION of a field named `tillable` (`bool tillable = ...`, `["tillable"] = ...`,
+ * `Tillable: ...`). Both shapes are found by their text, so a fourth producer written tomorrow is a finding without
+ * this file changing - which is the property the previous population, the wire's `tileAreaRow`, did not have: it
+ * examined the rectangle and never saw the `for_each` row where the disagreement actually shipped.
+ * </p>
+ * <p>
+ * "Agree" is a chain, not a claim: a read agrees only inside the authority's own body (or inside a declared
+ * different word), a publication agrees only when its expression calls the projection, and the projection agrees only
+ * when it calls the authority and carries no clause of its own. A projection that grows a second `Diggable` read is
+ * exactly the re-derivation this measures.
+ * </p>
+ */
+export function tillabilityProducers(modSources) {
+  const measured = modSources !== null;
+  const sources = modSources ?? [];
+  const authority = memberRange(sources, TILLABILITY_AUTHORITY);
+  const projection = memberRange(sources, TILLABILITY_PROJECTION);
+  const otherWords = TILLABILITY_DIFFERENT_WORD.map((entry) => ({
+    ...entry,
+    range: memberRange(sources, entry.symbol),
+  }));
+  const { rows, words } = tillabilitySites(sources, authority, otherWords);
+
+  // The two ends of the chain are producers in their own right, so they are counted even while they agree: the walk
+  // that answers the question, and the boolean every publication reads. A population that only listed the sites that
+  // had gone wrong could not say "examined 5, agree 4".
+  if (authority !== null) rows.push(oneWalk(authority));
+  if (projection !== null) rows.push(oneBoolean(projection));
+
+  const gaps = [];
+  if (measured) {
+    if (authority === null) gaps.push({ subject: TILLABILITY_AUTHORITY, gap: "tillability_authority_missing" });
+    if (projection === null) gaps.push({ subject: TILLABILITY_PROJECTION, gap: "tillability_projection_missing" });
+    for (const entry of otherWords)
+      if (entry.range === null || !entry.range.text.includes('"Diggable"'))
+        gaps.push({ subject: entry.symbol, gap: `tillability_different_word_stale:${entry.symbol}` });
+    if (rows.length === 0) gaps.push({ subject: "tillability", gap: "tillability_producers_unread" });
+    if (otherWords.length > 0 && words.length === 0)
+      gaps.push({ subject: "tillability", gap: "tillability_different_words_unread" });
+  }
+  for (const found of rows)
+    if (!found.agrees && found.word === null) gaps.push({ subject: found.site, gap: "tillability_producer_disagrees" });
+
+  return {
+    measured,
+    examined: rows.length,
+    agree: rows.filter((found) => found.agrees).length,
+    differentWord: rows.filter((found) => !found.agrees && found.word !== null).length,
+    disagree: rows.filter((found) => !found.agrees && found.word === null).length,
+    words,
+    rows,
+    gaps,
+  };
+}
+
+/** The one walk, counted as a producer of the answer it owns. */
+function oneWalk(authority) {
+  const found = {
+    site: `${authority.path}:${authority.line}`,
+    kinds: [`is the one walk (${TILLABILITY_AUTHORITY})`],
+    agrees: true,
+    word: null,
+    why: [],
+  };
+  if (!authority.text.includes('"Diggable"'))
+    refuse(found, `${TILLABILITY_AUTHORITY} no longer reads the map's Diggable property, so it answers nothing`);
+  return found;
+}
+
+/** The boolean every publication reads, counted beside the walk it must be a projection of. */
+function oneBoolean(projection) {
+  const found = {
+    site: `${projection.path}:${projection.line}`,
+    kinds: [`is the one boolean (${TILLABILITY_PROJECTION})`],
+    agrees: true,
+    word: null,
+    why: [],
+  };
+  if (!projection.text.includes(`${TILLABILITY_AUTHORITY}(`))
+    refuse(found, `does not ask ${TILLABILITY_AUTHORITY}, so it is a second clause list rather than a projection`);
+  if (projection.text.includes('"Diggable"'))
+    refuse(found, "reads the map's Diggable property itself, which is the re-derivation this measures");
+  return found;
+}
+
+/**
+ * Every site in the Mod's sources that answers the question, one row per `path:line`.
+ *
+ * <p>
+ * A site can be several things at once - the `for_each` row both read the property and assigned the local - so the kinds
+ * accumulate on one row and a reader sees one place to fix rather than two spellings of one defect.
+ * </p>
+ */
+function tillabilitySites(sources, authority, otherWords) {
+  const sites = new Map();
+  const at = (source, index, kind) => {
+    const key = `${source.path}:${lineOf(source.source, index)}`;
+    const existing = sites.get(key);
+    if (existing !== undefined) {
+      if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
+      return existing;
+    }
+    const created = { site: key, kinds: [kind], agrees: true, word: null, why: [] };
+    sites.set(key, created);
+    return created;
+  };
+  const words = [];
+  for (const source of sources) {
+    for (const match of source.source.matchAll(/"Diggable"/gu))
+      if (!insideRange(authority, source.path, match.index))
+        judgeRead(
+          at(source, match.index, "reads the map's Diggable property"),
+          source.path,
+          match.index,
+          otherWords,
+          words,
+        );
+    for (const match of source.source.matchAll(/\bbool\s+tillable\s*=\s*([^;]+);/gu)) {
+      const found = at(source, match.index, "assigns a local `tillable`");
+      if (!match[1].includes(`${TILLABILITY_PROJECTION}(`))
+        refuse(found, `assigns tillable from ${match[1].trim()} instead of ${TILLABILITY_PROJECTION}(`);
+    }
+    for (const match of source.source.matchAll(/\bTillable\s*:\s*([^,\n]+)/gu)) {
+      const found = at(source, match.index, "publishes a `Tillable` field");
+      if (!match[1].includes(`${TILLABILITY_PROJECTION}(`))
+        refuse(found, `publishes Tillable: ${match[1].trim()} instead of ${TILLABILITY_PROJECTION}(`);
+    }
+  }
+  return { rows: [...sites.values()], words };
+}
+
+/** One read of the map property: the authority itself (never reached here), a declared different word, or the finding. */
+function judgeRead(found, sourcePath, index, otherWords, words) {
+  const other = otherWords.find((entry) => insideRange(entry.range, sourcePath, index));
+  if (other === undefined) {
+    refuse(
+      found,
+      `reads the engine's Diggable outside ${TILLABILITY_AUTHORITY}: a tillability answer is that one walk, or a call to ${TILLABILITY_PROJECTION}`,
+    );
+    return;
+  }
+  if (!words.includes(other.word)) words.push(other.word);
+  found.word = other.word;
+  refuse(found, `answers ${other.word}, a different word: ${other.why}`);
+}
+
+function refuse(found, why) {
+  found.agrees = false;
+  found.why.push(why);
+}
+
+/**
+ * The body of one named member, as offsets into its own source, so two readers can ask "is this site inside that
+ * function" without a second, home-made parser.
+ *
+ * <p>
+ * The declaration is matched rather than the call site for the reason the tile-area hop already learned: a body sliced
+ * from a CALL reads the calling method, so "what does this function do" would answer with its caller's lines.
+ * </p>
+ */
+function memberRange(modSources, member) {
+  const declaration = new RegExp(`(?:[A-Za-z_][\\w<>.,?\\[\\]]*\\s+)${member}\\s*\\(`, "u");
+  for (const source of modSources ?? []) {
+    const match = declaration.exec(source.source);
+    if (match === null) continue;
+    const open = source.source.indexOf("{", match.index + match[0].length);
+    if (open < 0) continue;
+    const end = balancedEnd(source.source, open, "{", "}");
+    return {
+      path: source.path,
+      start: open,
+      end,
+      line: lineOf(source.source, match.index),
+      text: source.source.slice(open, end + 1),
+    };
+  }
+  return null;
+}
+
+function insideRange(range, sourcePath, index) {
+  return range !== null && range.path === sourcePath && index > range.start && index < range.end;
+}
+
+function lineOf(source, index) {
+  return source.slice(0, index).split("\n").length;
+}
+
+/**
  * The facts a tile-area row publishes, and the Mod function that owns each one.
  *
  * <p>
  * The declaration lives where the projection lives (`TileAreaQuery.PublishedFacts`), because that is the code that
  * computes them; this hop only asks whether it still answers for the wire. The population is the schema's own
  * `tileAreaRow` properties, so a field added to the wire and not to the table is a finding, and a table entry the wire no
- * longer carries is a finding too - which is what keeps this from being a hand-maintained list that can only drift.
+ * longer carries is a finding too - which is what keeps this from being a hand-maintained list that can only drift. The
+ * fact names are read as the wire spells them, which is camelCase (`occupantKind`), not snake_case.
  * </p>
  * <p>
  * The `SharedWith` column is the part with teeth: a fact whose owner is shared with ANOTHER publication must be
@@ -416,7 +655,7 @@ export function contentTableRegistry(query) {
 export function tileAreaFactOwners(query) {
   const block = query.match(/PublishedFacts\s*=\s*\[?\s*\{([\s\S]*?)\n\s*\};/u)?.[1];
   if (typeof block !== "string") return [];
-  return [...block.matchAll(/\(\s*"([a-z_]+)"\s*,\s*"([A-Za-z.]+)"\s*,\s*(?:null|"([A-Za-z.]+)")\s*\)/gu)].map(
+  return [...block.matchAll(/\(\s*"([A-Za-z_]+)"\s*,\s*"([A-Za-z.]+)"\s*,\s*(?:null|"([A-Za-z.]+)")\s*\)/gu)].map(
     (match) => ({ fact: match[1], owner: match[2], sharedWith: match[3] ?? null }),
   );
 }
@@ -442,15 +681,7 @@ export function tileAreaFacts(query, schema, modSources) {
     // member is preceded by its return type, which is what distinguishes the two.
     const bodyOf = (symbol) => {
       const member = memberOf(symbol);
-      if (member === null) return null;
-      const declaration = new RegExp(`(?:[A-Za-z_][\\w<>.,?\\[\\]]*\\s+)${member}\\s*\\(`, "u");
-      for (const source of modSources ?? []) {
-        const match = declaration.exec(source.source);
-        if (match === null) continue;
-        const open = source.source.indexOf("{", match.index + match[0].length);
-        return open < 0 ? null : source.source.slice(open, balancedEnd(source.source, open, "{", "}") + 1);
-      }
-      return null;
+      return member === null ? null : (memberRange(modSources, member)?.text ?? null);
     };
     const ownerBody = entry === undefined ? null : bodyOf(entry.owner);
     const sharedBody = entry === undefined ? null : bodyOf(entry.sharedWith);
@@ -481,6 +712,26 @@ function balancedEnd(source, start, open, close) {
     }
   }
   return source.length - 1;
+}
+
+/**
+ * The gaps of hop 7: every fact a tile-area row publishes must name the function that computes it, and a shared owner
+ * must be what the other publication's own body calls.
+ */
+function tileAreaGaps(tileArea, tileAreaSource) {
+  const gaps = [];
+  if (tileArea.population.length === 0) gaps.push({ subject: "tileAreaRow", gap: "tile_area_rows_unread" });
+  if (tileAreaSource === undefined) gaps.push({ subject: TILE_AREA_QUERY_FILE, gap: "tile_area_query_missing" });
+  for (const row of tileArea.rows) {
+    if (row.duplicated) gaps.push({ subject: row.fact, gap: `tile_area_fact_duplicated:${row.fact}` });
+    else if (!row.declared) gaps.push({ subject: row.fact, gap: `tile_area_fact_unowned:${row.fact}` });
+    if (row.declared && !row.ownerDefined)
+      gaps.push({ subject: row.fact, gap: `tile_area_fact_owner_missing:${row.fact}:${row.owner}` });
+    if (row.sharedCallsOwner === false)
+      gaps.push({ subject: row.fact, gap: `tile_area_fact_two_spellings:${row.fact}:${row.sharedWith ?? "none"}` });
+  }
+  for (const fact of tileArea.orphans) gaps.push({ subject: fact, gap: `tile_area_fact_unpublished:${fact}` });
+  return gaps;
 }
 
 function lower(name) {
@@ -724,32 +975,20 @@ export function auditDiscoveryChannels({
     });
 
   // ---- hop 7: the facts one tile-area row publishes ---------------------------
+  // ---- hops 7 and 8: one row's facts, and every producer of a tillability answer ------
   //
-  // The rectangle query answers a fact per tile, and every one of them has to name the function that computes it. The
-  // population is the wire's own row definition, so a field the Mod starts publishing without an owner stops the audit;
-  // the checks read the Mod's sources, so an owner that was renamed or a shared fact that stopped being shared is a
-  // finding rather than a comment nobody re-read.
+  // Hop 7 examines the rectangle's row, which is exactly why it went green while the `for_each` row handed the
+  // companion two rows `till_soil` refused at the same revision: the third producer of the word was outside what hop 7
+  // looked at. Hop 8's population is scanned out of the sources rather than taken from one row definition, so the next
+  // site that answers "can this tile be hoed" is a finding without this file changing.
   const tileAreaSource = (modSources ?? []).find((entry) => entry.path.endsWith(TILE_AREA_QUERY_FILE));
   const tileArea =
     modSources === null
       ? { measured: false, population: [], declared: [], rows: [], orphans: [] }
       : tileAreaFacts(tileAreaSource?.source ?? "", schema, modSources);
-  if (modSources !== null) {
-    if (tileArea.population.length === 0) gaps.push({ subject: "tileAreaRow", gap: "tile_area_rows_unread" });
-    if (tileAreaSource === undefined) gaps.push({ subject: TILE_AREA_QUERY_FILE, gap: "tile_area_query_missing" });
-    for (const row of tileArea.rows) {
-      if (row.duplicated) gaps.push({ subject: row.fact, gap: `tile_area_fact_duplicated:${row.fact}` });
-      else if (!row.declared) gaps.push({ subject: row.fact, gap: `tile_area_fact_unowned:${row.fact}` });
-      if (row.declared && !row.ownerDefined)
-        gaps.push({ subject: row.fact, gap: `tile_area_fact_owner_missing:${row.fact}:${row.owner}` });
-      if (row.sharedCallsOwner === false)
-        gaps.push({
-          subject: row.fact,
-          gap: `tile_area_fact_two_spellings:${row.fact}:${row.sharedWith ?? "none"}`,
-        });
-    }
-    for (const fact of tileArea.orphans) gaps.push({ subject: fact, gap: `tile_area_fact_unpublished:${fact}` });
-  }
+  if (modSources !== null) gaps.push(...tileAreaGaps(tileArea, tileAreaSource));
+  const tillability = tillabilityProducers(modSources);
+  gaps.push(...tillability.gaps);
 
   return Object.freeze({
     schema: "gamebuddy-stardew-discovery-channel-audit/v1",
@@ -789,6 +1028,15 @@ export function auditDiscoveryChannels({
       shared: tileArea.rows.filter((row) => row.sharedCallsOwner === true).length,
       rows: tileArea.rows,
     }),
+    tillability: Object.freeze({
+      measured: tillability.measured,
+      examined: tillability.examined,
+      agree: tillability.agree,
+      differentWord: tillability.differentWord,
+      disagree: tillability.disagree,
+      words: tillability.words,
+      rows: tillability.rows,
+    }),
     gaps,
     ok: gaps.length === 0,
   });
@@ -808,9 +1056,7 @@ function readEngineGame1() {
   ]) {
     try {
       return readFileSync(path.join(ROOT, relative), "utf8");
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return null;
 }
@@ -856,6 +1102,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         .map((row) => `${row.fact}->${row.owner ?? "none"}`)
         .join(", ")}\n`,
     );
+  const tillability = report.tillability;
+  if (tillability.measured)
+    process.stdout.write(
+      `  tillability producers examined ${tillability.examined} · agree ${tillability.agree} · different word ${tillability.differentWord} (${tillability.words.join(", ") || "none"}) · disagree ${tillability.disagree}\n`,
+    );
+  for (const row of tillability.rows)
+    if (!row.agrees)
+      process.stdout.write(`    ${row.word === null ? "DISAGREE" : "other-word"} ${row.site}: ${row.why.join("; ")}\n`);
   process.stdout.write(
     report.ok ? "  all target-bearing actions have a complete discovery chain\n" : `  ${report.gaps.length} gap(s)\n`,
   );

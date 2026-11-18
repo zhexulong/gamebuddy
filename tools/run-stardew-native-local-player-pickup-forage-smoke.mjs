@@ -17,6 +17,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 /** Load the emitted Host client from the local dist-test artifact. */
 async function loadDistTestClient(entry) {
@@ -52,7 +53,7 @@ export async function runPickupForageSmoke(
   const startedAt = Date.now();
   /** The ground summary the Agent received, kept for the live evidence record. */
   let observedGround = null;
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "pickup_forage" });
   try {
     let snapshot = await observeForageActionable(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -488,16 +489,7 @@ function parseSafeInteger(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-}
+
 function targetSummary(target) {
   return {
     targetId: target.targetId,

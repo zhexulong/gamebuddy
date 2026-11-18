@@ -17,26 +17,19 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// rows are its business is the predicate's question, so "every dry crop in this patch" is a field test on the same rows
 /// rather than a second source.
 ///
-/// WHY POSITION GUARDS EXIST AT ALL. Trellis crops (green bean, hops, grape) grow into impassable tiles, so a real farm
-/// leaves a walkable column between trellis columns and plants a filler crop between trellis rows - hops with coffee is a
-/// standard summer layout. Those decisions depend on POSITION, not on what the tile contains, so a dispatch keyed on the
-/// row's kind alone gives every empty tillable tile the same action and the same seed. The intercropped test below is the
-/// case such a table cannot express, asserted per tile with nothing coalesced.
+/// WHY THE FILTER IS LOAD-BEARING. A rectangle is a region, not an intent: over the 20 loop passes that reported their
+/// rows, 898 rows were decided and 700 of them (78.0%) were `not_matched` - tiles the rectangle held and the caller
+/// excluded. So the two spellings the corpus writes (`occupant` in 30 of 38 loop calls, `field`+`in` in 7) are what makes a
+/// loop usable, and the ORDER of a `Where` list is a CONJUNCTION: the intercropped-and-empty test below is the case a
+/// dispatch keyed on the row's kind alone cannot express, asserted per tile with nothing coalesced.
 /// </summary>
 public sealed class FarmhandForEachRulesTests
 {
-    private static FarmhandForEachPredicate Field(string field, FarmhandForEachComparison comparison, params string[] values) =>
-        new(field, comparison, values.Select(FarmhandForEachValue.Of).ToArray());
+    private static FarmhandForEachPredicate Field(string field, params string[] values) =>
+        new(field, values.Select(FarmhandForEachValue.Of).ToArray());
 
-    private static FarmhandForEachPredicate Number(string field, FarmhandForEachComparison comparison, double value) =>
-        new(field, comparison, new[] { FarmhandForEachValue.Of(value) });
-
-    private static FarmhandForEachPredicate Stride(string axis, int every, int offset) =>
-        new(null, FarmhandForEachComparison.In, Array.Empty<FarmhandForEachValue>())
-        {
-            Axis = axis,
-            Stride = new FarmhandForEachStride(every, offset),
-        };
+    private static FarmhandForEachPredicate Number(string field, params double[] values) =>
+        new(field, values.Select(FarmhandForEachValue.Of).ToArray());
 
     private static Dictionary<string, FarmhandForEachValue> Row(string kind, params (string Name, FarmhandForEachValue Value)[] extra)
     {
@@ -44,6 +37,10 @@ public sealed class FarmhandForEachRulesTests
         foreach ((string name, FarmhandForEachValue value) in extra) fields[name] = value;
         return fields;
     }
+
+    /// <summary>A row as the live world reports it: what stands there, and the kind its classifier names.</summary>
+    private static Dictionary<string, FarmhandForEachValue> Occupied(string occupant, string kind = "ground") =>
+        Row(kind, (FarmhandForEachHealing.OccupantField, FarmhandForEachValue.Of(occupant)));
 
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
         new(x, y, w, h);
@@ -70,7 +67,7 @@ public sealed class FarmhandForEachRulesTests
     {
         var loop = new FarmhandForEachLoop(
             Rect(12, 4, 2, 1),
-            new[] { Field("readyForHarvest", FarmhandForEachComparison.Eq, "true") },
+            new[] { Field("readyForHarvest", "true") },
             new FarmhandForEachEffect(new FarmhandForEachStep("harvest_crop")));
         loop.IsValid.Should().BeTrue();
 
@@ -90,48 +87,54 @@ public sealed class FarmhandForEachRulesTests
     }
 
     /// <summary>
-    /// THE INTERCROPPED CASE, per tile, nothing coalesced: hops on columns 0,3,6..., coffee on 1,4,7..., path on 2,5,8...
+    /// THE CONJUNCTION, per tile, nothing coalesced: ONE row has to be BOTH empty and tillable.
+    ///
+    /// <para>
+    /// This is the pair the corpus writes twice (`[{ occupant: "none" }, { field: "tillable", in: [true] }]`) and it only
+    /// means anything as AND: a tilled tile is not empty, a grass tile is not tillable, and a `till_soil` pass that read
+    /// either half would turn the grass into dirt. The four tiles below are the four combinations, and the assertion is
+    /// that exactly ONE of them is claimed.
+    /// </para>
     /// </summary>
     [Fact]
-    public void AnInterleavedTwoSeedPatternDecidesPerTileAndAPathIsCountedAsLeftAlone()
+    public void TheEmptyAndTillableConjunctionClaimsOnlyTheRowThatIsBoth()
     {
-        var hops = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) }, new FarmhandForEachEffect(new FarmhandForEachStep("plant_seed", new Dictionary<string, string> { ["seed"] = "hops" })));
-        var coffee = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect(new FarmhandForEachStep("plant_seed", new Dictionary<string, string> { ["seed"] = "coffee" })));
-        var path = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) }, null);
-
-        var rows = FarmhandForEachRules.AreaRows(hops.Source).ToArray();
-        rows.Should().HaveCount(60, "20 columns by 3 rows is one intent and the measured patch");
-
-        // The first row, tile by tile, as the three loops together decide it: one winner per tile, by position only.
-        var firstRow = rows
-            .Where(row => row.LocalRow == 0)
-            .OrderBy(row => row.LocalColumn)
-            .Select(row =>
+        var loop = new FarmhandForEachLoop(
+            Rect(60, 18, 4, 1),
+            new[]
             {
-                foreach (FarmhandForEachLoop loop in new[] { hops, coffee, path })
-                {
-                    FarmhandForEachRowDecision decision = FarmhandForEachRules.Decide(loop, row.X, row.Y, row.LocalColumn, row.LocalRow, Row("empty_tillable"));
-                    if (decision.Outcome == FarmhandForEachRowOutcome.Dispatched) return decision.Effect!.Steps[0].Arguments!["seed"];
-                    if (decision.Outcome == FarmhandForEachRowOutcome.LeftAlone) return "path";
-                }
-                return "unmatched";
-            })
-            .ToArray();
+                new FarmhandForEachPredicate(FarmhandForEachHealing.OccupantField, new[] { FarmhandForEachValue.Of("none") }),
+                new FarmhandForEachPredicate("tillable", new[] { FarmhandForEachValue.Of(true) }),
+            },
+            new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
 
-        firstRow.Should().Equal(
-            "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops",
-            "coffee", "path", "hops", "coffee", "path", "hops", "coffee", "path", "hops", "coffee");
-        firstRow.Should().NotContain("unmatched", "every column of the patch is a deliberate decision");
+        // The four tiles of the row, one per combination of the two tests.
+        var both = Occupied("none", "ground");
+        both["tillable"] = FarmhandForEachValue.Of(true);
+        var emptyButNotTillable = Occupied("none", "grass");
+        emptyButNotTillable["tillable"] = FarmhandForEachValue.Of(false);
+        var tillableButOccupied = Occupied("weed", "weed");
+        tillableButOccupied["tillable"] = FarmhandForEachValue.Of(true);
+        var neither = Occupied("stone", "rock");
+        neither["tillable"] = FarmhandForEachValue.Of(false);
+
+        FarmhandForEachRules.Decide(loop, 60, 18, 0, 0, both).Outcome.Should().Be(FarmhandForEachRowOutcome.Dispatched);
+        FarmhandForEachRules.Decide(loop, 61, 18, 1, 0, emptyButNotTillable).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
+        FarmhandForEachRules.Decide(loop, 62, 18, 2, 0, tillableButOccupied).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
+        FarmhandForEachRules.Decide(loop, 63, 18, 3, 0, neither).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
     }
 
     /// <summary>`do: null` is a deliberate path; a row no predicate claimed is a different outcome and is reported.</summary>
     [Fact]
     public void LeftAloneAndNotMatchedAreDifferentOutcomesAndAMissedRowNamesItsKindAndTile()
     {
-        var path = new FarmhandForEachLoop(Rect(60, 18, 3, 1), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) }, null);
+        var path = new FarmhandForEachLoop(
+            Rect(60, 18, 3, 1),
+            new[] { new FarmhandForEachPredicate(FarmhandForEachHealing.OccupantField, new[] { FarmhandForEachValue.Of("none") }) },
+            null);
 
-        FarmhandForEachRules.Decide(path, 62, 18, 2, 0, Row("empty_tillable")).Outcome.Should().Be(FarmhandForEachRowOutcome.LeftAlone);
-        FarmhandForEachRules.Decide(path, 60, 18, 0, 0, Row("empty_tillable")).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
+        FarmhandForEachRules.Decide(path, 61, 18, 1, 0, Occupied("none")).Outcome.Should().Be(FarmhandForEachRowOutcome.LeftAlone);
+        FarmhandForEachRules.Decide(path, 60, 18, 0, 0, Occupied("weed", "weed")).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
         FarmhandForEachRules.NoRuleMatchedReasonCode("rock", 61, 18).Should().Be("no_rule_matched:rock@61,18");
     }
 
@@ -161,7 +164,7 @@ public sealed class FarmhandForEachRulesTests
             "the walk is a reordering of the rectangle, never a different set of tiles");
         rows.Select(row => (row.LocalColumn, row.LocalRow)).Should().BeEquivalentTo(
             EveryLocalIndex(width, height),
-            "a row's position inside the source is what a position guard tests, and it is unchanged");
+            "a row's position inside the source is what its dispatch identity is minted from, and it is unchanged");
         for (int localRow = 0; localRow < height; localRow++)
         {
             int[] columns = rows.Where(row => row.LocalRow == localRow).Select(row => row.LocalColumn).ToArray();
@@ -220,33 +223,53 @@ public sealed class FarmhandForEachRulesTests
             "one source is what the row enumerator walks; a second kind here would be a source a caller could write and nothing could expand, which is the drift the Host's `PLAN_FOR_EACH_SOURCES` is asserted equal to this array for");
     }
 
-    /// <summary>A stride that can never claim an index is refused: a dead guard looks exactly like a forgotten row.</summary>
+    /// <summary>A predicate that names no field, no values or too many values claims nothing and is refused.</summary>
     [Fact]
-    public void AStrideThatCanNeverClaimAnIndexIsInvalid()
+    public void APredicateThatClaimsNothingIsInvalid()
     {
-        new FarmhandForEachStride(3, 3).IsValid.Should().BeFalse();
-        new FarmhandForEachStride(0, 0).IsValid.Should().BeFalse();
-        Stride(FarmhandForEachPredicate.ColOperator, 3, 1).IsValid.Should().BeTrue();
-        new FarmhandForEachPredicate(null, FarmhandForEachComparison.In, Array.Empty<FarmhandForEachValue>()).IsValid
-            .Should().BeFalse("a predicate with neither a field nor an axis claims nothing");
+        new FarmhandForEachPredicate("kind", Array.Empty<FarmhandForEachValue>()).IsValid
+            .Should().BeFalse("an empty membership list claims no row");
+        new FarmhandForEachPredicate("kind", Enumerable.Range(0, FarmhandForEachPredicate.MaximumValues + 1).Select(index => FarmhandForEachValue.Of((double)index)).ToArray())
+            .IsValid.Should().BeFalse("a list past the bound is refused rather than read as eight and a shrug");
+        new FarmhandForEachPredicate(string.Empty, new[] { FarmhandForEachValue.Of("weed") }).IsValid
+            .Should().BeFalse("a predicate with no field names nothing to test");
+        Field("kind", "weed").IsValid.Should().BeTrue();
     }
 
-    /// <summary>An ordered comparison over a non-numeric field fails closed instead of ordering text.</summary>
+    /// <summary>A value of another type does not match: the membership test compares typed values, not their words.</summary>
     [Fact]
-    public void AnOrderedComparisonOverANonNumericFieldDoesNotMatch()
+    public void AMembershipTestDoesNotMatchAValueOfAnotherType()
     {
         var loop = new FarmhandForEachLoop(
             Rect(3, 4, 1, 1),
-            new[] { Number("health", FarmhandForEachComparison.Gt, 0) },
+            new[] { Number("health", 3) },
             new FarmhandForEachEffect(new FarmhandForEachStep("chop_tree")));
 
-        var fields = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
+        var numeric = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
         {
             ["kind"] = FarmhandForEachValue.Of("tree"),
-            ["health"] = FarmhandForEachValue.Of("healthy"),
+            ["health"] = FarmhandForEachValue.Of(3.0),
+        };
+        var textual = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
+        {
+            ["kind"] = FarmhandForEachValue.Of("tree"),
+            ["health"] = FarmhandForEachValue.Of("3"),
         };
 
-        FarmhandForEachRules.Decide(loop, 3, 4, 0, 0, fields).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
+        FarmhandForEachRules.Decide(loop, 3, 4, 0, 0, numeric).Outcome.Should().Be(FarmhandForEachRowOutcome.Dispatched);
+        FarmhandForEachRules.Decide(loop, 3, 4, 0, 0, textual).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
+    }
+
+    /// <summary>A row that does not carry the field at all is not matched, rather than matching on an absent value.</summary>
+    [Fact]
+    public void ARowWithoutTheFieldIsNotMatched()
+    {
+        var loop = new FarmhandForEachLoop(
+            Rect(3, 4, 1, 1),
+            new[] { Field("tillable", "true") },
+            new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
+
+        FarmhandForEachRules.Decide(loop, 3, 4, 0, 0, Row("ground")).Outcome.Should().Be(FarmhandForEachRowOutcome.NotMatched);
     }
 
     /// <summary>`by_kind` is a reference to the Mod's own table, never a second mapping the caller restates.</summary>

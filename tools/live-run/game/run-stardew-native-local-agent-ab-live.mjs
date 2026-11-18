@@ -20,25 +20,28 @@
  *    treats a new finding, a lost receipt or a worse interaction score as a
  *    regression. Do not silence a finding to make a rung pass.
  */
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { freemem as freeMemory } from "node:os";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import { turnSettled } from "../../lib/turn-settled.mjs";
-import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
-import { once } from "node:events";
+
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  decideDayWake,
-  QUIET_BOUND_MS,
-  runMultiDayLoop,
-  WAKE_REASON,
-  WAKE_REASONS,
-  WAKE_SUPPRESSION_REASONS,
-  watchRollover,
-} from "../../lib/multiday-loop.mjs";
+import { once } from "node:events";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { freemem as freeMemory } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
+import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
+import { identityKey } from "../../../host/dist-test/runtime-identity.js";
+import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
+import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
+import { describeActivityPoints, readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
+import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
+import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
+import { collectContextSummary } from "../../lib/context-db-summary.mjs";
+import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
+import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
+import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
+import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
 import {
   assessMultiDayBaseline,
   MAXIMUM_BASELINE_DAYS,
@@ -46,42 +49,31 @@ import {
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
   parseReceiptEvidence,
+  sleepPromisesNotTaken,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
-import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
-import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import {
   countPriorMultidayRuns,
   dayTaskSchedule,
   overriddenFirstDayTask,
+  overriddenTaskForDay,
   readTaskDelivery,
   runOffsetFor,
-  overriddenTaskForDay,
   sweepTaskPrompts,
 } from "../../lib/multiday-daily-tasks.mjs";
-import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
-import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs";
-import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
-import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
-import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
-import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
-import { collectContextSummary } from "../../lib/context-db-summary.mjs";
-import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
-import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates, planGateDeliveries } from "../dialogue-gates.mjs";
-import { assessInteractionValue } from "../interaction-value-gate.mjs";
-import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
-import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
-import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
-import { identityKey } from "../../../host/dist-test/runtime-identity.js";
-import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
-import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
+import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import {
-  launchVoiceGatewayChild,
-  pickVoiceGatewayPort,
-  resolveVoiceConfiguration,
-} from "../../lib/voice-gateway-launch.mjs";
-import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
+  decideDayWake,
+  objectiveProgressKey,
+  runMultiDayLoop,
+  WAKE_REASON,
+  WAKE_REASONS,
+  WAKE_SUPPRESSION_REASONS,
+  watchRollover,
+  worldFactWake,
+} from "../../lib/multiday-loop.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 import {
   deliveryAccountClause,
   describeDeliveryAccount,
@@ -90,57 +82,58 @@ import {
   readWorldStateStaleFacts,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
-import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
-import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
+import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs";
+import { sessionEntries } from "../../lib/session-jsonl.mjs";
+import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
+import { turnSettled } from "../../lib/turn-settled.mjs";
+import {
+  launchVoiceGatewayChild,
+  pickVoiceGatewayPort,
+  resolveVoiceConfiguration,
+} from "../../lib/voice-gateway-launch.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
-import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
+import {
+  assessDialogueGates,
+  assessPlayerInputSchedule,
+  planGateDeliveries,
+  SCHEDULED_DIALOGUE_GATES,
+} from "../dialogue-gates.mjs";
+import { assessInteractionValue } from "../interaction-value-gate.mjs";
+import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
+import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
+
 // The registered terminal reason code per action is the only authority that can
 // tell a receipt that FINISHED an action from one that only progressed it. Read it
 // from the published gate table instead of guessing from reason-code wording.
 const TERMINAL_REASON_CODES = Object.freeze(
   Object.fromEntries(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => [gate.actionId, gate.terminalReasonCode])),
 );
-import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+
+// The mounted action tool names: the only tool calls that reach `client.execute`. Read from the Host's own table
+// rather than derived from a `stardew_` prefix, because `stardew_observe` and `stardew_execution_status` are reads
+// that never dispatch an action and must not be counted as one.
+import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
+import {
+  reserveGameRuntimeMaterialization,
+  withConsumedBindingExecution,
+} from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
+import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
+import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
+import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../../host/dist-test/stardew-game-integration-adapter.js";
 import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   STARDEW_INTEGRATION_LAUNCHER,
 } from "../../../host/dist-test/stardew-integration-launcher.js";
-import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import {
-  reserveGameRuntimeMaterialization,
-  withConsumedBindingExecution,
-} from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
-import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-// The mounted action tool names: the only tool calls that reach `client.execute`. Read from the Host's own table
-// rather than derived from a `stardew_` prefix, because `stardew_observe` and `stardew_execution_status` are reads
-// that never dispatch an action and must not be counted as one.
-import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
-import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
-import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
-import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../../../host/dist-test/windows-stale-lock-reclaimer/index.js";
-// memory_covenant: the covenant FACT is planted through the
-// real management surface under the product continuity, then the Game runtime on
-// the SAME root/continuity must render it into m[0] — the Agent reads the rule
-// from memory, never from a prompt line. When no configured root/continuity is
-// given (disposable-root runs), seeding is skipped and the covenant is not
-// asserted: a disposable root has no persisted memory by construction.
-import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
-// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
-// the assembly gate only proves hash consistency; this proves the assembled
-// profile actually has persona content and no unrendered SillyTavern macros.
-// A configured-root run whose captured profile is a hollow default (no persona)
-// is an explicit context failure, never a silent pass. A read GAP (no profile
-// captured) stays a gap: nothing to assert.
-import { assessIdentityProfile } from "../core/content-gate.mjs";
-import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
-import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
-import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import {
   actionBreadthClause,
   addSnapshotToCensus,
@@ -149,7 +142,12 @@ import {
   readActionBreadthSurface,
 } from "../../lib/action-breadth.mjs";
 import { EVIDENCE_BUNDLE_FILES, writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+// Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
+// `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
+// `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
+import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
 import {
   installLiveRunInterrupt,
   killedReasonCode,
@@ -157,6 +155,35 @@ import {
   reclamationStep,
   stampReclamation,
 } from "../../lib/live-run-teardown.mjs";
+// The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
+// mid-run, which is exactly when a program's evidence matters most.
+import {
+  createBodyProgramJournalFallback,
+  executionsFromJournalEvents,
+  stardewDataPath,
+} from "../../lib/stardew-body-program-journal.mjs";
+import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
+// the assembly gate only proves hash consistency; this proves the assembled
+// profile actually has persona content and no unrendered SillyTavern macros.
+// A configured-root run whose captured profile is a hollow default (no persona)
+// is an explicit context failure, never a silent pass. A read GAP (no profile
+// captured) stays a gap: nothing to assert.
+import { assessIdentityProfile } from "../core/content-gate.mjs";
+import { writeInputManifest } from "../core/input-manifest.mjs";
+import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
+import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
+import { openRunProgress } from "../core/run-progress.mjs";
+// memory_covenant: the covenant FACT is planted through the
+// real management surface under the product continuity, then the Game runtime on
+// the SAME root/continuity must render it into m[0] — the Agent reads the rule
+// from memory, never from a prompt line. When no configured root/continuity is
+// given (disposable-root runs), seeding is skipped and the covenant is not
+// asserted: a disposable root has no persisted memory by construction.
+import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
+import { bridgeClosureStop } from "./bridge-closure.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
@@ -167,21 +194,39 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
+// Whether the WORLD moved while this run watched it: the clock every snapshot carries, read at least twice, so a paused
+// world cannot be reported as a companion that stopped. It prints every read and beats once per bound of silence, because
+// a reading that only exists at the END cannot describe the stalls these runs are stopped for (`round50b`, `round51`).
+import { assessPauseOnUnfocus, createGameClock, GAME_CLOCK_HEARTBEAT_MS } from "./game-clock.mjs";
+import { describePresentationPiece } from "./presentation-piece-time.mjs";
 // The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
-// The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
-// mid-run, which is exactly when a program's evidence matters most.
-import {
-  createBodyProgramJournalFallback,
-  executionsFromJournalEvents,
-  stardewDataPath,
-} from "../../lib/stardew-body-program-journal.mjs";
-import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
-// Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
-// `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
-// `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
-import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
+
+// THE LAUNCH CLOCK, which is the launcher's and not this file's.
+//
+// `phaseTimings` used to start here, part-way through module evaluation, so the five to ten seconds this process spent
+// resolving ~200 modules and measuring the environment were invisible AND outside every number the artifact published.
+// The clock now starts where the LAUNCH starts: the launcher's `launcher_start`, continued through the handover it writes
+// for us, and — on a run with no handover — this process's own start, which `process.uptime()` reaches back to (it counts
+// node's bootstrap, so the import graph below is measured rather than assumed).
+const processStartedAtMs = Math.floor(Date.now() - process.uptime() * 1000);
+const launcherPhases = readLaunchPhaseHandover(process.env.GAMEBUDDY_LAUNCH_PHASE_HANDOVER);
+const launchPhases = createLaunchPhaseLog({
+  startedAtMs: launcherPhases === null ? processStartedAtMs : launcherPhases.startedAtMs,
+});
+// The steps the runner cannot see (the save copy, the deploy, the game's own load) come from the launcher, on its clock,
+// so they are PRINTED here first thing: the log's own table is complete without a second file to reconcile.
+if (launcherPhases !== null) launchPhases.adopt(launcherPhases.records);
+// Startup phase timings. "The live run is slow to start" needs numbers, not impressions: this separates the phases a
+// reader can act on (save copy, deploy, game start, bridge connect, persona mount, provider wait) instead of one total.
+// ONE computation feeds both readers: the log line is printed by the clock, and the artifact publishes its duration.
+const phaseTimings = { runStartedAtMs: launchPhases.startedAtMs, marks: {} };
+const markPhase = (phase, atMs = Date.now()) => {
+  phaseTimings.marks[phase] = launchPhases.mark(phase, atMs).elapsedMs;
+};
+markPhase("runner_process_start", processStartedAtMs);
+markPhase("module_eval_start");
 
 // Live-run evidence root: every run writes its own local directory with the
 // runtime root's OWN evidence (identity-profile.json, worldbook.json, the
@@ -209,6 +254,20 @@ let capture = null;
 // name instead of an exception.
 let gameSessionId = null;
 let runtimeRoot = null;
+// The run's own record, written as it happens (see `../core/run-progress.mjs`). Null until the capture shows where the
+// run directory is, so every call site below guards on it rather than inventing a path.
+let progress = null;
+// THE END OF THE WAIT, ONCE. A closed bridge is not a slow world (see `./bridge-closure.mjs`): the day loop, the clock
+// beat and any other waiter all consult this, and the first to see a closure records it and says so on the log. Declared
+// at module scope rather than beside the multi-day loop, because the clock beat is armed thousands of lines above and a
+// timer that fired during a top-level await would read a later `let` in its temporal dead zone.
+let bridgeClosure = null;
+function noteBridgeClosure(candidate) {
+  if (candidate === null || bridgeClosure !== null) return bridgeClosure;
+  bridgeClosure = candidate;
+  console.error("MULTIDAY_STOPPED", JSON.stringify(candidate));
+  return bridgeClosure;
+}
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath =
@@ -263,11 +322,23 @@ let environmentFactsCache = null;
 // Declared before the failure dump reads it: a refusal has to publish WHY it never reached a turn, and null is the
 // fact that says "never checked" instead of "ready".
 let providerReadiness = null;
+// Every submission, kept as its own record: a program id alone says a program EXISTS, not that anything ran
+// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
+// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
+// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
+//
+// Declared HERE rather than beside the rest of the run's record further down, because the run's first phase IS module
+// evaluation and that phase throws: the exit hook assembles the dump out of this container, so a read that executes
+// before this declaration initialises replaces the whole result with `Cannot access 'programSubmissions' before
+// initialization`. Measured 2026-11-13 on `head-ladder`: the module died at the stale-lock pair check, the dump then
+// reached `sampleProgramOutcomes`, and the run published no result at all - not even the failure that stopped it.
+const programSubmissions = [];
 
 // Measured ONCE, at start: the bundle needs the adapter and the display, and asking PowerShell for them at the end of a
 // run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
 // query is indistinguishable from a missing adapter.
 const environmentFacts = measureEnvironmentFacts();
+markPhase("environment_facts_done");
 
 const SCENARIO = (() => {
   const requested =
@@ -446,10 +517,265 @@ function failureDumpEvidence(thrown) {
     voiceResult,
     agentTurn: agentTurnResult,
     bridgeFacts: factLog,
-    authenticated: client.state.authenticated,
-    revision: client.state.snapshot?.revision,
+    // `client` is null for a run that died before the bridge connected, and that is a fact about the run, not a reason to
+    // throw the whole evidence block away: `null` here says "there was no connection to ask", which is what the dump
+    // must report for a failure at the config read or the connect itself.
+    authenticated: client?.state?.authenticated ?? null,
+    revision: client?.state?.snapshot?.revision ?? null,
   };
 }
+// ── The record the failure dump assembles from ──────────────────────────────────────────────────────────────
+//
+// WHY THIS SITS HERE, immediately above the two `process.once` hooks, and not beside each field's first use: module
+// evaluation IS the run's first phase, and that phase throws. The hooks are installed before the artifact freshness
+// check, the stale-lock pair check, the Mod config read and the bridge connect - every one of which can throw, and every
+// one of which happens BEFORE a declaration further down the file would have run. The dump then assembles the run's
+// result out of exactly these bindings, so a binding declared lower is a ReferenceError that REPLACES the run's failure
+// with `assembly failed` and leaves no artifact at all.
+//
+// Measured 2026-11-13 on `head-ladder`: the module died at the stale-lock pair check and the dump published
+// `Cannot access 'programSubmissions' before initialization` rather than the pair. `programSubmissions` alone was
+// hoisted first, and the dump simply stopped at the next member (`bodyProgramJournal`) - so the whole population was
+// enumerated instead of chased. `run-stardew-native-local-agent-ab-live.record-order.test.mjs` reads THIS FILE and
+// fails, naming the binding and its line, when any `const`/`let`/`class` the dump path reads is declared after the
+// first `process.once(`.
+//
+// Everything below is a container the run fills, an outcome a later stage assigns, a constant its readers consult, or a
+// placeholder assigned at the point its value becomes knowable. None of it is derived from anything that runs later, so
+// declaring it first changes no behaviour.
+
+// Three values that cannot exist before the Mod config is read and the bridge is connected. Declared here and ASSIGNED
+// where they used to be declared - the pattern `capture`, `runtimeRoot` and `gameSessionId` above already use for this
+// same reason: the dump path reads them, and null is the name of "this run never got that far" instead of an exception
+// that destroys the artifact.
+let identity = null;
+let client = null;
+let bodyProgramJournal = null;
+// The constants the dump's readers consult. \`buildRunResult\` calls \`readToolTiming\`/\`toolTimingCategory\` and
+// \`writeRunBundle\` reads \`PROGRAM_EVENTS_PAGE_SIZE\`'s readers, so these are part of the record the dump needs even
+// though they never change: a \`const\` declared below the hooks is still in its dead zone when one of them runs.
+/**
+ * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
+ *
+ * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other owners of agent wall clock. An
+ * audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit named
+ * `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result landed
+ * 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs to a nested
+ * agent, or vice versa, is the cost of not separating them. These are different owners with different fixes, so every
+ * agent tool call is attributed here by the NAME OF THE TOOL ACTUALLY CALLED.
+ *
+ * One category per real thing, never a pattern. `stardew_plan_work` compiles a script into a submitted plan and
+ * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
+ * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
+ * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
+ *
+ * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
+ * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
+ * the frames the run sent, the categories come back `null` and the violation is the only number published.
+ *
+ * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
+ * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
+ * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than being
+ * given an invented one.
+ */
+const TOOL_TIMING_LONGEST_LIMIT = 10;
+const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
+const TOOL_TIMING_CATEGORIES = Object.freeze([
+  "delegate",
+  "plan_shape",
+  "plan_compile",
+  "program_submit",
+  "program_status",
+  "flat_dispatch",
+]);
+const DELEGATE_TOOL_NAME = "delegate_game_task";
+// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
+const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
+const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
+// The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
+const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
+const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
+const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
+// The plan tools whose call counts the run's cost account reads, by name: `program_status` alone is the poll, and the
+// category above deliberately folds it together with the event log because both are bridge reads of one journal.
+const PLAN_TOOL_NAMES = new Set([
+  ...PLAN_SHAPE_TOOL_NAMES,
+  ...PLAN_COMPILE_TOOL_NAMES,
+  ...PROGRAM_SUBMIT_TOOL_NAMES,
+  ...PROGRAM_STATUS_TOOL_NAMES,
+]);
+
+// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
+// A play session that did nothing but these has not played: run H attempted 14 actions,
+// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
+// because the verdict only required "a real attempt". "Did the companion actually do
+// something" is a different question from "did it try", and a rung whose whole job is to
+// report what the companion could do must not call an empty session a success.
+const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
+  new Set([
+    "move_to_tile",
+    "travel",
+    "enter_exit",
+    "navigate_to_destination",
+    "observe_scene",
+    "inspect_world_map",
+    "express_emote",
+    "face_direction",
+    "equip_tool",
+  ]),
+);
+// memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
+// §10.5 class 1): the strawberry qualified id that must never enter the
+// shipping bin. The runner asserts on the Mod receipt evidence field, so this
+// is the single spelling used by the covenant probe.
+const PROTECTED_COVENANT_ITEM_ID = "(O)400";
+/** The run's own record of what happened when (`run-ledger.mjs`): the dump publishes it, so it exists before the hooks. */
+const ledger = createLedger({ now: () => Date.now() });
+// Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
+// log said why.
+//
+// Measured 2026-11-03 (`round28`): the Mod's own heartbeat showed a managed heap growing 32 -> 180 MB in 2.5 minutes and
+// a working set of 1.0 -> 1.25 GB, on a machine holding **2.3 GB free of 31** at the same moment. That is a real number
+// and an ambiguous one - Windows counts file cache as used and reclaims it on demand - so the honest response is to
+// record what free memory was doing when a run dies, beside the reason code, rather than argue about it later.
+//
+// `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
+// is a different finding from a death with gigabytes available, and only one of them is our bug.
+const hostMemory = {
+  samples: 0,
+  minFreeMb: null,
+  maxHostRssMb: null,
+  startRssMb: null,
+  minRssMb: null,
+  series: [],
+  // One point per turn, bounded (`HOST_MEMORY_TURN_CAP`), because the question a death leaves open is the SHAPE across
+  // turns and the artifact could not answer it at all (see `../../lib/live-run-memory.mjs`).
+  turns: [],
+  turnsOmitted: 0,
+};
+// The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
+// only the flat count reads as "nothing had happened" on a run whose work all went through programs.
+let lastKnownProgramDispatches = 0;
+// WHAT WAKES THE NIGHT WATCHER: the world's own statements, not a timer.
+//
+// The watcher used to observe on a 250 ms interval, and `round56` measured what that costs - 742 observations inside one
+// 208.6 s night window, 618 of the run's 624 suppressed flushes carrying no fact at all, each one a whole snapshot
+// rebuilt on the game thread to be told that nothing had changed. A rollover is an EVENT, so the fact listener below
+// publishes into this latch and the watch waits on it, with `watchRollover`'s own ceiling as the answer for a world that
+// has gone quiet.
+const worldFacts = worldFactWake();
+/**
+ * The statements that wake the watcher, by the Mod's own kind (`payload.kind`, recorded as `worldFactKind`).
+ *
+ * Four things can change what the watch decides: the day boundary, the engine's pass-out, the clock, and the reading the
+ * snapshot is made of. Everything else the Mod publishes describes her own body moving through a step, and observing once
+ * per step would rebuild the snapshot for information the watch already polls for.
+ */
+const NIGHT_WAKE_WORLD_FACT_KINDS = Object.freeze([
+  "day_started",
+  "night_ended_pass_out",
+  "time_milestone",
+  "snapshot_changed",
+]);
+const factLog = [];
+/**
+ * THE WORLD'S OWN CLOCK, sampled wherever this run already reads the world.
+ *
+ * Declared here, above the failure hooks, because `buildRunResult` publishes its reading on EVERY exit and the dump
+ * assembles a run whose module evaluation died. Feeding it costs nothing: `observe` is a function call on a snapshot the
+ * run already holds, and one solicited `observe` before the verdict is the only bridge request it adds.
+ */
+const gameClock = createGameClock({
+  // The beat carries the run's OWN answer to "who cleared pause-when-out-of-focus" (`assessPauseOnUnfocus`), read
+  // lazily: `readModLogText` is declared further down, and the probe only runs once a heartbeat fires.
+  pauseOnUnfocus: () => assessPauseOnUnfocus({ modLog: readModLogText() }),
+  // And the beat ASKS the world for its reading instead of waiting to be handed one (game-clock.mjs: `round52` read two
+  // clock values twenty game-minutes apart while the Mod's own console showed its tick advancing, and the log could not
+  // say whether the world had stopped or the Mod had). `readGameClockOnce` is a hoisted declaration and this closure is
+  // only called from a beat, so binding it here costs nothing at module evaluation.
+  solicit: () => (client === null ? { notAttempted: "bridge_not_attached" } : readGameClockOnce({ source: "solicit" })),
+});
+// The LAST world snapshot and the LAST actor pose this run actually observed.
+//
+// Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
+// the bridge has cleared its state, so a failure dump built from it is all nulls and the contract refuses it
+// (measured 2026-10-16, and it is the same "sample during the run, not after teardown" rule the capture notes
+// carry). They are therefore kept while the bridge is live — the snapshot whenever the world is read, and the pose
+// from each execution receipt's own local observation (the `Snapshot` shape has no facing: protocol.ts:108-111 vs
+// :896-904). These are declared as hoisted function declarations so the sampler below can use them.
+let lastObservedSnapshot = null;
+let lastObservedPose = null;
+// The families this run's OWN snapshots published, with the largest row count seen for each, and how many snapshots
+// that census rests on. Kept while the run is live for the same reason the last snapshot is: after teardown the bridge
+// has cleared its state, and a family that was empty cannot be told from one nobody looked at.
+//
+// This is the denominator of the run's `action_breadth` clause. A target-bound action is only constructible while its
+// `*Targets` family has a row in the snapshot, and one `FixtureScenario` string arms one world - so dividing attempted
+// actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
+// the 40 its own observations made addressable, and the gate called that 15 of 95).
+const snapshotFamilyRows = new Map();
+let snapshotCensusSamples = 0;
+let voice = null;
+let voiceChild = null;
+let voiceObservation = null;
+let voiceStarted = false;
+let presentedSummary = null;
+// Presence-mechanism instrumentation (design stardew-companion-presence-mechanisms §1.5 / §2.4).
+// `presentationPieces` records every companion_text commit EXACTLY as the
+// presentation port saw it, in arrival order — the raw evidence for chunked /
+// incremental presentation. `turnStartedAtMs` is the wall-clock moment the
+// agent turn was accepted, so the first piece's time-to-first-bubble is
+// measurable instead of inferred.
+const presentationPieces = [];
+let turnStartedAtMs = null;
+let agentTurnCount = 0;
+/**
+ * Everything this process has written to stderr, so the Host's own artifact lines can be read back.
+ *
+ * The Host publishes ONE `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
+ * (`host/dist-test/companion-loop.js`, over the same channel as `BODY_PROGRAM_MOUNT`), and that line is the only place
+ * the run states which parts a turn produced and which pieces it committed. The bundle has to reconcile those against
+ * the pieces this harness's own presentation port counted (`presentation.pieceCount`), and the line exists exactly
+ * once - in the log - so it is kept as it is written rather than re-derived from a different population.
+ *
+ * MEASURED 2026-11-09 (round41): 59 pieces presented, and the thirteen delivery records in the log accounted 46 parts
+ * with `unaccounted: 0`. Both numbers were right (11 reaction sounds, 46 paragraphs, 2 extra pieces from a paragraph the
+ * length budget split) and the bundle could not say so, so a reader reported thirteen pieces - a whole turn - with no
+ * record. See `tools/lib/presentation-delivery-account.mjs`.
+ */
+const hostLogChunks = [];
+// Trace every ordinary-action execution request the Agent sends so a
+// rejected coordinate is attributable to the actual submitted args. A thrown
+// rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
+// a receipt, so the catch records the rejection instead of skipping the entry —
+// otherwise the run's own health report sees zero rejections while the session
+// shows real ones.
+const actionTrace = [];
+/** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
+const PROGRAM_EVENTS_PAGE_SIZE = 32;
+/** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
+let programOutcomes = Object.freeze([]);
+// Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
+let programOutcomesAtTeardown = null;
+// How many submissions existed when the journal was read. A program submitted later did not fail to be observed -
+// it arrived after the harness looked, and that is a different fact from "the Mod did not know it".
+let programOutcomesReadAtSubmissionCount = null;
+// Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
+// capture directory it opened): null until then, so a failure at either step still publishes what came before it.
+// The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
+// narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
+// failed run too.
+let covenantSeed = null;
+let agentTurnResult = null;
+let voiceResult = null;
+let multidayOutcome = null;
+let historianRubricOutcome = null;
+let runSessionRecord = Object.freeze({
+  path: undefined,
+  reason: "session_record_binding_not_established",
+  searched: Object.freeze([]),
+});
+
 // `once`, not `on`: a throw inside the dump must not re-enter the dump, and both handlers must still terminate the
 // process with the run's failure once the artifact is on disk.
 const exitAfterDump = (error) => {
@@ -559,6 +885,20 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   ...sweepTaskPrompts().en,
 });
 
+/**
+ * The sentence a day's note carries for a task, taken from the table that WRITES the note.
+ *
+ * The assertion that a note arrived must not spell the note a second time: `SCENARIO_PROMPTS.multiday_routine` composes
+ * every note out of `DAILY_TASK_PROMPT_*[task]`, so that entry is the fragment a session record is searched for. A task
+ * the table does not cover answers `null`, and the reading reports that as a missing note text - the `town_errand` defect
+ * this table's own comment records, where a day was handed the literal string "undefined" instead of a task.
+ */
+function dayNoteFragment(task, locale) {
+  const table = locale === "zh" ? DAILY_TASK_PROMPT_ZH : DAILY_TASK_PROMPT_EN;
+  const sentence = table[task];
+  return typeof sentence === "string" && sentence.trim().length > 0 ? sentence.trim() : null;
+}
+
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
     zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活，你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟对方说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（控制在 120 字以内，挑重点说，不用把每道工序都报一遍）。`,
@@ -576,26 +916,36 @@ const SCENARIO_PROMPTS = Object.freeze({
     en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. `,
   }),
   multiday_routine: Object.freeze({
-    // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
-    // over, by dispatching its own `sleep`. The loop never ends a night for it - the prompt is where
-    // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
+    // Per-day, and the player SPEAKS: one message, first person, the day's task as something he is asking of her.
     //
-    // The last clause exists because the previous wording named a CLOCK ("when it gets dark") and left the
-    // authority implicit. Measured 2026-10-26: two runs had the companion at the bedside reasoning "Advancing
-    // day is a big action... it may be the player's prerogative... I'll ask nothing, just state" - it announced
-    // going to bed and dispatched nothing, then passed out at 02:00. The reluctance was not a bug in the model:
-    // ending a shared world's day IS normally the player's call, and nothing here had said it was not.
-    // The TASK changes per day, so one run covers several capabilities and the night crossing doubles as a
-    // task switch. The invariant clauses - the player is away, ending the day is yours - are the same every
-    // day, because they are what this scenario exists to observe and a task change must not rewrite them.
-    zh: (day, task) =>
-      `现在是星露谷的早晨（连续第 ${String(day)} 天）。` +
-      `桌上留着便签：“我今天去镇上办事，${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑累了就回屋歇着不用等我，明天还有别的。”` +
-      `活干完了或者天黑累了就回床上睡，这一天才真正过去。只在嘴里说“我睡了”而身体没躺下，天不会自己过去。`,
-    en: (day, task) =>
-      `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `There is a note on the table from your partner: "I'm heading into town today to run errands. ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; when it gets dark and you're tired, head inside and rest, no need to wait up for me. There will be other things tomorrow." ` +
-      `When the work is done or when it is dark and you are tired, go to bed and sleep so the night passes. Announcing it without lying down does not end the day. `,
+    // It used to be narrated stage direction - items built only to convey two facts the message did not need:
+    // 「现在是星露谷的早晨（连续第 N 天），桌上留着他的便签。」 for the day number, and 「活干完了或者天黑累了就回床上睡，这一天才真正
+    // 过去。」「只在嘴里说“我睡了”而身体没躺下，天不会自己过去。」 for the rules. Nobody says any of that. Measured 2026-11-14, day 1:
+    // the labelled note round-tripped through an attribution rule that read it one sentence at a time, the task came
+    // back as his own business - `The player left a note: they're going to town to make a machine.` - and she submitted
+    // nothing.
+    //
+    // THE THREE THINGS THE NARRATION WAS CARRYING are owned by layers that already state them:
+    //   - WHICH DAY IT IS: `<world-state>`'s own date line, from `snapshot.dayOfMonth` / `seasonIndex` / `year` through
+    //     `game-world-vocabulary.ts#formatGameDate` (`春季 3 日`), restated every turn.
+    //   - THAT SLEEPING IS WHAT ENDS THE DAY: the Game prompt floor's `SLEEPING_IS_AN_ACTION` and `BED_IS_INSIDE`
+    //     (`games/stardew/prompt/stardew-game-conduct.ts`), said once for every Game run rather than restated in the
+    //     player's mouth on every day of one scenario.
+    //   - WHOSE THE WORDS ARE: the shape. The player's text is the head of the turn, verbatim, and the machine's blocks
+    //     follow it (`fact-brief.ts#composeFactBrief`), so nothing has to label it and nothing can mislabel it.
+    // What is left is what a person says to their companion: I am out, here is the job, order it yourself, do not wait
+    // up. The invariant clauses are the same every day because they are what this scenario exists to observe.
+    //
+    // `tools/live-run/game/multiday-day-note.test.mjs` holds it: for every task in both tables the composed turn must
+    // contain the task text, contain the player's words byte-identical exactly once, outside every block, with no label
+    // and no stage direction.
+    zh: (_day, task) =>
+      `我今天去镇上办事，你把这活儿干一下：${DAILY_TASK_PROMPT_ZH[task].trim()}` +
+      `怎么安排你自己定，天黑累了就回屋睡，不用等我。`,
+    en: (_day, task) =>
+      `I'm heading into town today - take care of this for me while I'm gone: ${DAILY_TASK_PROMPT_EN[task].trim()} ` +
+      `However you want to go about it is up to you. If it gets dark and you're tired, go inside and get some sleep. ` +
+      `No need to wait up.`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -631,6 +981,14 @@ const recordWake = (reason) => {
 const recordWakeSuppression = (reason) => {
   wakeAccount.suppressed[reason] = (wakeAccount.suppressed[reason] ?? 0) + 1;
 };
+// HOW LONG THE COMPANION WAS LEFT ALONE, AND BY WHICH ANSWER.
+//
+// A quiet bound used to guarantee she was asked again every twenty seconds. Nothing does that now, so a long stretch with
+// no turn opened is a READING rather than an absence - `no_wake_for_ms:<ms>:<reason>` - because a silence the harness chose
+// (`waiting_for_the_world`) and a silence it could not end (a stall nobody published) must not read alike in the account.
+// `forMs` is the longest such stretch of the whole run, and `lastReason` is the decision that was in force when it
+// reached that length. Reset, not accumulated, the moment a turn opens.
+const noWake = { sinceMs: null, forMs: 0, lastReason: null };
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -642,34 +1000,41 @@ const advertisedActionSamples = new Set();
 // was the second case and looked like the first.
 let advertisedSampleCount = 0;
 let advertisedSampleMaxSize = 0;
-// The LAST world snapshot and the LAST actor pose this run actually observed.
-//
-// Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
-// the bridge has cleared its state, so a failure dump built from it is all nulls and the contract refuses it
-// (measured 2026-10-16, and it is the same "sample during the run, not after teardown" rule the capture notes
-// carry). They are therefore kept while the bridge is live — the snapshot whenever the world is read, and the pose
-// from each execution receipt's own local observation (the `Snapshot` shape has no facing: protocol.ts:108-111 vs
-// :896-904). These are declared as hoisted function declarations so the sampler below can use them.
-let lastObservedSnapshot = null;
-let lastObservedPose = null;
-// The families this run's OWN snapshots published, with the largest row count seen for each, and how many snapshots
-// that census rests on. Kept while the run is live for the same reason the last snapshot is: after teardown the bridge
-// has cleared its state, and a family that was empty cannot be told from one nobody looked at.
-//
-// This is the denominator of the run's `action_breadth` clause. A target-bound action is only constructible while its
-// `*Targets` family has a row in the snapshot, and one `FixtureScenario` string arms one world - so dividing attempted
-// actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
-// the 40 its own observations made addressable, and the gate called that 15 of 95).
-const snapshotFamilyRows = new Map();
-let snapshotCensusSamples = 0;
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
   if (snapshot !== null && snapshot !== undefined) {
+    // The snapshot object the client admitted, NOT the copy below: the bridge has no unsolicited push, so one admitted
+    // snapshot is one reading of the world and sampling it twice is not a second one (game-clock.mjs).
+    gameClock.observe(snapshot, { source: "snapshot" });
     lastObservedSnapshot = Object.freeze({ ...snapshot });
     snapshotCensusSamples += 1;
     addSnapshotToCensus(snapshotFamilyRows, snapshot);
   }
   return lastObservedSnapshot;
+}
+/**
+ * One SOLICITED reading of the world clock, taken while the bridge is still alive.
+ *
+ * The samples above only re-read whatever snapshot the run happened to be handed, and a run that never acted (measured
+ * 2026-11-19, `round50b`: two turns, zero actions, zero bridge facts) is handed exactly one - at hello. That run has no
+ * second reading and therefore no way to tell a paused world from a Mod that stopped publishing, which is the whole
+ * question its verdict depends on. One `observe_request` answers it, and an observe is the same read the Agent's own
+ * `stardew_observe` makes: it changes nothing in the world.
+ *
+ * It answers `{ reading, reason }`, because the two callers need different things from a refusal: the last read before
+ * the verdict only needs the miss recorded, while the heartbeat has to print the code it got back.
+ */
+async function readGameClockOnce({ source }) {
+  try {
+    await client.observe();
+  } catch (error) {
+    // A refused observe is NOT a reading: it is recorded as one of the reasons the clock could not be measured.
+    const reason = classifyFailure(error).reasonCode;
+    gameClock.observeUnreadable({ source, reason });
+    return { reading: null, reason };
+  }
+  // A bridge that answered with a world-not-ready snapshot is equally not a reading, and `observe` records why.
+  return { reading: gameClock.observe(client?.state?.snapshot ?? null, { source }), reason: null };
 }
 function rememberPose(observation) {
   if (observation === null || observation === undefined) return;
@@ -692,11 +1057,6 @@ function sampleAdvertisedActions() {
   advertisedSampleMaxSize = Math.max(advertisedSampleMaxSize, advertised.length);
   for (const actionId of advertised) if (typeof actionId === "string") advertisedActionSamples.add(actionId);
 }
-// memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
-// §10.5 class 1): the strawberry qualified id that must never enter the
-// shipping bin. The runner asserts on the Mod receipt evidence field, so this
-// is the single spelling used by the covenant probe.
-const PROTECTED_COVENANT_ITEM_ID = "(O)400";
 /**
  * Scenario vocabulary for the presence projection (design
  * architecture/stardew-companion-presence-audit-dimensions.md §3.2): maps the
@@ -722,19 +1082,26 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
 // .dist directory once, and without this the run failed later with
 // `windows_stale_lock_reclaimer_unavailable`. Building on demand is the self-heal (the builder is 4s); the
 // published capability still requires the inventory binding, which is asserted separately.
+//
+// The pair's directory and file names are READ FROM THE BUILDER, never spelled a second time here. This block used to
+// name `../../../native/windows-stale-lock-reclaimer/.dist/win-x64/` while the builder publishes to
+// `host/native/windows-stale-lock-reclaimer/.dist/win-x64/`, so the check passed only in a checkout that happened to
+// still carry an old repo-root `native/` directory. Measured 2026-11-13 on `head-ladder`: the builder ran and DID
+// produce the pair under `host/native`, the recheck looked in the absent `native/` path, and the run reported
+// `windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair` before it ever started. The builder is
+// invoked by its own resolved path for the same reason: a relative path silently depends on the launcher's cwd.
 {
-  const fsRequired = await import("node:fs");
-  const required = ["GameBuddy.WindowsStaleLockReclaimer.exe", "windows-stale-lock-reclaimer.manifest.json"];
-  const pairRoot = new URL("../../../native/windows-stale-lock-reclaimer/.dist/win-x64/", import.meta.url);
-  if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot)))) {
-    const { execFileSync } = await import("node:child_process");
-    execFileSync(process.execPath, ["host/scripts/build-windows-stale-lock-reclaimer.mjs"], { stdio: "inherit" });
-    if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot))))
-      throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
+  const builderUrl = new URL("../../../host/scripts/build-windows-stale-lock-reclaimer.mjs", import.meta.url);
+  const { helperFileName, manifestFileName, outputRoot } = await import(builderUrl.href);
+  const pairPresent = () => [helperFileName, manifestFileName].every((name) => existsSync(join(outputRoot, name)));
+  if (!pairPresent()) {
+    execFileSync(process.execPath, [fileURLToPath(builderUrl)], { stdio: "inherit" });
+    if (!pairPresent()) throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
   }
 }
 
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+markPhase("stale_lock_reclaimer_ready");
 const config = JSON.parse(await readFile(configPath, "utf8"));
 // Each scenario needs a world that can SUPPORT its question, and the fixture is what makes the world. Asking for
 // the wrong fixture does not produce a weaker run, it produces a run whose verdict answers a different question
@@ -797,7 +1164,7 @@ const storedContinuityId = (() => {
 const runContinuityId = usesConfiguredRuntimeRoot
   ? (process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`)
   : `native-agent-${config.PlayerId}-${config.CompanionId}`;
-const identity = Object.freeze({
+identity = Object.freeze({
   playerId: config.PlayerId,
   companionId: config.CompanionId,
   continuityId: runContinuityId,
@@ -815,14 +1182,7 @@ const RUN_BUDGET_MS = (() => {
   return SCENARIO === "multiday_routine" ? 4 * 60 * 60 * 1000 : 600_000;
 })();
 const deadline = Date.now() + RUN_BUDGET_MS;
-// Startup phase timings. "The live run is slow to start" needs numbers, not
-// impressions: this separates the phases a reader can act on (bridge connect,
-// covenant seed, runtime materialization, agent turn) instead of one total.
-const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
-const markPhase = (name) => {
-  phaseTimings.marks[name] = Date.now() - phaseTimings.runStartedAtMs;
-};
-const client = await LocalStardewBridgeClient.connect(
+client = await LocalStardewBridgeClient.connect(
   scope,
   config.PipeName,
   config.BridgeToken,
@@ -830,36 +1190,13 @@ const client = await LocalStardewBridgeClient.connect(
   undefined,
   "1.6.15",
 );
-markPhase("bridgeConnectedMs");
+markPhase("bridge_connected");
 // A transport that dies mid-run must say SO, and say when. This is the one fact the run previously could not
 // report: a session ended with the Agent editing a truthful "the connection went down" line, the trace carried
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
 // happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
 const bridgeDisconnections = [];
-const ledger = createLedger({ now: () => Date.now() });
 
-// Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
-// log said why.
-//
-// Measured 2026-11-03 (`round28`): the Mod's own heartbeat showed a managed heap growing 32 -> 180 MB in 2.5 minutes and
-// a working set of 1.0 -> 1.25 GB, on a machine holding **2.3 GB free of 31** at the same moment. That is a real number
-// and an ambiguous one - Windows counts file cache as used and reclaims it on demand - so the honest response is to
-// record what free memory was doing when a run dies, beside the reason code, rather than argue about it later.
-//
-// `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
-// is a different finding from a death with gigabytes available, and only one of them is our bug.
-const hostMemory = {
-  samples: 0,
-  minFreeMb: null,
-  maxHostRssMb: null,
-  startRssMb: null,
-  minRssMb: null,
-  series: [],
-  // One point per turn, bounded (`HOST_MEMORY_TURN_CAP`), because the question a death leaves open is the SHAPE across
-  // turns and the artifact could not answer it at all (see `../../lib/live-run-memory.mjs`).
-  turns: [],
-  turnsOmitted: 0,
-};
 let lastHostMemorySampleAtMs = 0;
 const sampleHostMemory = (atMs = Date.now()) => {
   const freeMb = Math.round(freeMemory() / (1024 * 1024));
@@ -894,11 +1231,12 @@ const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
 hostMemoryTimer.unref?.();
 
 ledger.record("run.start");
-// The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
-// only the flat count reads as "nothing had happened" on a run whose work all went through programs.
-let lastKnownProgramDispatches = 0;
 client.onConnectionFact((fact) => {
   if (fact?.state !== "disconnected") return;
+  // The bridge this run reads the clock through is gone, and this runner never reconnects (one `connect`, one
+  // `client.close`): a beat that kept asking would repeat a known refusal every 30 s and pad the run's own
+  // `unreadable` count with it. From here the beat says `not_attempted:bridge_closed` and keeps reporting the silence.
+  gameClock.close();
   const entry = Object.freeze({
     reasonCode: fact.reasonCode ?? null,
     atMs: Date.now(),
@@ -929,9 +1267,12 @@ client.onDiagnostic?.((diagnostic) => {
     elapsedMs: Date.now() - phaseTimings.runStartedAtMs,
   });
   bridgeDiagnostics.push(entry);
+  // The first frame the Mod hands over is the moment the game is genuinely talking to this run: everything before it is
+  // startup, and the log could not say where that ended.
+  if (entry.stage === "pipe_frame_dispatched" && phaseTimings.marks.first_frame_dispatched === undefined)
+    markPhase("first_frame_dispatched", entry.atMs);
   console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
-const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
 const loggedFactLines = new Set();
@@ -939,37 +1280,15 @@ const loggedFactLines = new Set();
 // (MiMo TTS) and its terminal playback observation is waited for. It is driven by the PRESENTATION hook, not by
 // a particular receipt: the old trigger was the Keg errand's own receipt, which no scenario owns any more. Voice
 // is fire-and-forget — a voice failure never fails the game presentation or the action.
-let voice = null;
-let voiceChild = null;
-let voiceObservation = null;
-let voiceStarted = false;
-let presentedSummary = null;
-// Presence-mechanism instrumentation (design stardew-companion-presence-mechanisms §1.5 / §2.4).
-// `presentationPieces` records every companion_text commit EXACTLY as the
-// presentation port saw it, in arrival order — the raw evidence for chunked /
-// incremental presentation. `turnStartedAtMs` is the wall-clock moment the
-// agent turn was accepted, so the first piece's time-to-first-bubble is
-// measurable instead of inferred.
-const presentationPieces = [];
-/**
- * Everything this process has written to stderr, so the Host's own artifact lines can be read back.
- *
- * The Host publishes ONE `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
- * (`host/dist-test/companion-loop.js`, over the same channel as `BODY_PROGRAM_MOUNT`), and that line is the only place
- * the run states which parts a turn produced and which pieces it committed. The bundle has to reconcile those against
- * the pieces this harness's own presentation port counted (`presentation.pieceCount`), and the line exists exactly
- * once - in the log - so it is kept as it is written rather than re-derived from a different population.
- *
- * MEASURED 2026-11-09 (round41): 59 pieces presented, and the thirteen delivery records in the log accounted 46 parts
- * with `unaccounted: 0`. Both numbers were right (11 reaction sounds, 46 paragraphs, 2 extra pieces from a paragraph the
- * length budget split) and the bundle could not say so, so a reader reported thirteen pieces - a whole turn - with no
- * record. See `tools/lib/presentation-delivery-account.mjs`.
- */
-const hostLogChunks = [];
 {
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, encoding, callback) => {
-    hostLogChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    hostLogChunks.push(text);
+    // `PROVIDER_WAIT` is the Host's own statement that the first prompt is now with the model. It reaches this process
+    // as this process's stderr, so the phase is taken from the Host's line rather than guessed from the call that
+    // produced it - and "launch is done, the model is thinking" becomes a subtraction instead of an impression.
+    if (phaseTimings.marks.provider_wait === undefined && text.includes("PROVIDER_WAIT")) markPhase("provider_wait");
     return write(chunk, encoding, callback);
   };
 }
@@ -981,13 +1300,16 @@ const dialogueReplies = new Map();
 // A claimed entry carries `state: "delivered"` with the moment, the refusal it was spoken against and what the admission
 // path answered (`accepted`, or `refused:<code>`).
 const dialogueDelivery = new Map();
+// EVERY player line the harness submitted, in order, with the clock it was submitted at and what the admission path
+// answered. It exists because the day-note reading is judged against what ARRIVED, and "the Host accepted it" and "she
+// was told" came apart in round49: one player message reached the session and it was not the day's note. `channel`
+// separates the harness's own turns (`harness`) from a scheduled gate (`gate`), so the note's absence can name whether it
+// was never submitted, refused, or accepted into nothing.
+const playerInputs = [];
 // The night that ended each day, as this run's own night watch observed it: `bedTime` is the latest clock it saw while
 // that day was still current, `passedOut` is the ENGINE taking the night at its own 26:00. The honesty gate asks about
 // yesterday, and this process has no other record of yesterday to answer with.
 const nightRecordsByDay = new Map();
-const presentationPieceAtMs = [];
-let turnStartedAtMs = null;
-let agentTurnCount = 0;
 /**
  * The agent session's own terminal record for the turn(s) this run drove.
  *
@@ -1011,14 +1333,7 @@ function readAgentTurnOutcome(sessionJsonlPath) {
   }
   let assistantMessages = 0;
   let last = null;
-  for (const line of raw.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of sessionEntries(raw)) {
     const message = entry?.message;
     if (entry?.type !== "message" || message?.role !== "assistant") continue;
     assistantMessages += 1;
@@ -1124,57 +1439,6 @@ function findRunSessionJsonl(sessionDir) {
   return Object.freeze({ path: join(sessionDir, files[files.length - 1]), reason: null, searched });
 }
 
-/**
- * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
- *
- * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other owners of agent wall clock. An
- * audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit named
- * `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result landed
- * 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs to a nested
- * agent, or vice versa, is the cost of not separating them. These are different owners with different fixes, so every
- * agent tool call is attributed here by the NAME OF THE TOOL ACTUALLY CALLED.
- *
- * One category per real thing, never a pattern. `stardew_plan_work` compiles a script into a submitted plan and
- * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
- * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
- * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
- *
- * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
- * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
- * the frames the run sent, the categories come back `null` and the violation is the only number published.
- *
- * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
- * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
- * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than being
- * given an invented one.
- */
-const TOOL_TIMING_LONGEST_LIMIT = 10;
-const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
-const TOOL_TIMING_CATEGORIES = Object.freeze([
-  "delegate",
-  "plan_shape",
-  "plan_compile",
-  "program_submit",
-  "program_status",
-  "flat_dispatch",
-]);
-const DELEGATE_TOOL_NAME = "delegate_game_task";
-// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
-const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
-const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
-// The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
-const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
-const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
-const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
-// The plan tools whose call counts the run's cost account reads, by name: `program_status` alone is the poll, and the
-// category above deliberately folds it together with the event log because both are bridge reads of one journal.
-const PLAN_TOOL_NAMES = new Set([
-  ...PLAN_SHAPE_TOOL_NAMES,
-  ...PLAN_COMPILE_TOOL_NAMES,
-  ...PROGRAM_SUBMIT_TOOL_NAMES,
-  ...PROGRAM_STATUS_TOOL_NAMES,
-]);
-
 function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
   if (toolName === DELEGATE_TOOL_NAME) return "delegate";
@@ -1218,7 +1482,7 @@ function summarizeCategoryTiming(durations) {
  * category or silently tolerated - an unequal pair a reader can see is worth more than an equality nobody measured.
  */
 function toolTimingInvariant({ calls, frames }) {
-  if (!Number.isInteger(calls) || !Number.isInteger(frames)) {
+  if (!(Number.isInteger(calls) && Number.isInteger(frames))) {
     return Object.freeze({
       checked: false,
       ok: null,
@@ -1248,6 +1512,277 @@ function planPollCount(toolTiming) {
   const calls = toolTiming?.planCalls;
   if (calls === null || calls === undefined) return null;
   return calls.stardew_action_program_status ?? 0;
+}
+
+/**
+ * The user messages a session record holds, in order - what she was actually TOLD.
+ *
+ * This is the only instrument that answers that question. `acceptPlayerText` answers whether the Host took the line, and
+ * `round49` is the case where the two came apart: one player message in the session, and it was a gate's, while the day's
+ * note appeared nowhere. A record that cannot be read answers `null`, which the reading reports as NOT MEASURED rather
+ * than as an absent note - the two have different owners. Text is read here for matching only and is never copied into
+ * the result.
+ */
+function readSessionPlayerTexts(sessionJsonlPath) {
+  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return null;
+  let raw;
+  try {
+    raw = readFileSync(sessionJsonlPath, "utf8");
+  } catch {
+    return null;
+  }
+  const texts = [];
+  for (const entry of sessionEntries(raw)) {
+    if (entry?.type !== "message" || entry?.message?.role !== "user") continue;
+    const content = entry.message.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n")
+          : "";
+    texts.push(text);
+  }
+  return Object.freeze(texts);
+}
+
+/**
+ * The world-state block's own words when no observation has arrived.
+ *
+ * The block's owner is `host/src/fact-brief.ts` (`NOTHING_OBSERVED`), and that constant is not exported, so it is spelled
+ * here ONCE and compared against the owner's source by this runner's own test - the two cannot drift apart in silence.
+ * It is the marker that makes "this day started blind" readable from a delivered message instead of inferred from code.
+ */
+const NOTHING_OBSERVED_WORLD = "世界：尚未收到观察";
+
+/**
+ * Wait, bounded, for the world she is about to be handed to have been OBSERVED.
+ *
+ * <p>
+ * The day's first prompt is the one turn with nothing behind it: no tool result, no receipt, no settled programme. Handing
+ * it over before the world has been read is what `round49` did - the first delivery carried `世界：尚未收到观察`, her first
+ * thinking was "no observation yet", and her first action was `stardew_observe {}`, a whole turn spent looking at a world
+ * the harness already held.
+ * </p>
+ *
+ * <p>
+ * A WAIT CANNOT MANUFACTURE A READING, and it is not asked to: the producer is the attach boundary
+ * (`runtime.connected.activateIngress()`, called before the first prompt). What this adds is the failure mode - if the
+ * world is still unread when the bound expires, the caller delivers anyway and NAMES the wait, so a blind day is a stated
+ * outcome instead of an invisible one. The bound is a HARNESS bound (design 1432), never a product verdict.
+ * </p>
+ *
+ * <p>
+ * The poll count is bounded as well as the clock. Without it a `now` that never advances - the shape every test that
+ * fakes the clock has - would loop forever, and "bounded" would be a claim about the caller's clock instead of a property
+ * of this function.
+ * </p>
+ */
+async function awaitDayOpeningWorld({
+  probe,
+  timeoutMs = 15_000,
+  pollMs = 250,
+  now = () => Date.now(),
+  pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  const pollBound = Math.max(1, Math.ceil(timeoutMs / Math.max(1, pollMs)) + 1);
+  const startedAtMs = now();
+  let polls = 0;
+  for (;;) {
+    const reading = probe();
+    if (reading?.observed === true)
+      return Object.freeze({
+        observed: true,
+        waitedMs: now() - startedAtMs,
+        revision: Number.isInteger(reading.revision) ? reading.revision : null,
+        polls,
+      });
+    const waitedMs = now() - startedAtMs;
+    if (waitedMs >= timeoutMs || polls >= pollBound)
+      return Object.freeze({ observed: false, waitedMs, revision: null, polls });
+    await pause(pollMs);
+    polls += 1;
+  }
+}
+
+/**
+ * The day's prompt when the wait expired: the harness says what it could not hand over.
+ *
+ * A statement about the HARNESS, not an instruction to go and look. The turn is still delivered - a companion nobody asks
+ * anything cannot act at all - and the sentence exists so the model is not left to read an empty world as a real one.
+ * It is deliberately not "observe first": the fix for a blind day is that the observation is handed over, and a prompt
+ * that told her to look would hide the harness's own gap behind her next action.
+ */
+function dayPromptWithoutObservation(prompt, opening, locale) {
+  // A prompt that says the harness never got the world must be about a wait that actually expired: an observed opening
+  // returns the prompt untouched rather than stating something false about the harness.
+  if (opening?.observed === true) return prompt;
+  const waitedSeconds = String(Math.max(0, Math.round((opening?.waitedMs ?? 0) / 1000)));
+  return locale === "zh"
+    ? `${prompt}\n\n（这一轮之前，系统没有拿到世界的观察：等了 ${waitedSeconds} 秒，仍然没有。现在不知道时间、位置和身上带着什么。）`
+    : `${prompt}\n\n(Before this turn the harness never received an observation of the world: it waited ${waitedSeconds}s and none arrived. Time, place and what you carry are unknown.)`;
+}
+
+/**
+ * What the Host actually DELIVERED for one day's first turn, read from this run's own session record.
+ *
+ * <p>
+ * The reading is the session's user message at the moment the day's first prompt was issued, and nothing else: a day that
+ * carried `世界：尚未收到观察` started blind, however healthy the turn after it looked. `fromIndex` is captured BEFORE the
+ * turn - the count of user messages the record already held - so a gate's line or a later turn can never be read as the
+ * day's opening.
+ * </p>
+ *
+ * <p>
+ * NOT MEASURED is its own answer, with the reason, and never a pass: an unreadable record, a record that rotated mid-turn
+ * (a compaction writes a new file and every index in it means something else), and a turn that appended no user message
+ * at all are three different gaps with three different owners.
+ * </p>
+ */
+function readDayFirstDelivery({
+  day,
+  texts,
+  fromIndex,
+  sourcePath = null,
+  readingPath = null,
+  waitedMs = null,
+  marker,
+}) {
+  const unmeasured = (reason) =>
+    Object.freeze({ day, waitedMs, measured: false, startedBlind: false, worldState: null, reason });
+  // A reading with no marker would compare every delivery against "" and call each one blind, and one with a missing
+  // marker would call every delivery sound; both are silent, so the caller must name what it is looking for.
+  if (typeof marker !== "string" || marker.length === 0) throw new Error("day_start_marker_required");
+  if (typeof sourcePath === "string" && typeof readingPath === "string" && sourcePath !== readingPath)
+    return unmeasured("session_record_changed_mid_turn");
+  if (!Array.isArray(texts)) return unmeasured("session_record_unreadable");
+  if (!Number.isInteger(fromIndex) || fromIndex < 0 || texts.length <= fromIndex)
+    return unmeasured("no_user_message_after_day_prompt");
+  const delivered = texts[fromIndex];
+  const block = /<world-state>([\s\S]*?)<\/world-state>/u.exec(delivered)?.[1]?.trim() ?? null;
+  return Object.freeze({
+    day,
+    waitedMs,
+    measured: true,
+    startedBlind: delivered.includes(marker),
+    // The block itself, bounded: the evidence a reader needs, and never the whole delivery (the player's own note is in
+    // there and is read for matching only).
+    worldState: block === null ? null : `<world-state>${block.slice(0, 200)}</world-state>`,
+    reason: null,
+  });
+}
+
+/**
+ * Whether a run started its days BLIND, over the days it scheduled.
+ *
+ * <p>
+ * THE POPULATION IS THE DAYS THE RUN SCHEDULED, so a run that scheduled none is blocked rather than green: `0 of 0` would
+ * agree with itself. Every scheduled day must be measured, and a blind one is a finding that names the day and the wait
+ * that expired in front of it.
+ * </p>
+ *
+ * <p>
+ * The verdict code is the first blind day if there is one, else whatever made the population unmeasurable, else `null` -
+ * so the caller cannot fold "not measured" into a pass by reading a `null` and a missing field the same way.
+ * </p>
+ */
+function assessDayStarts({ scheduledDays, readings } = {}) {
+  const list = Array.isArray(readings) ? readings : [];
+  const findings = [];
+  const blindDays = [];
+  let measured = 0;
+  for (const reading of list) {
+    if (reading?.measured !== true) {
+      findings.push(
+        Object.freeze({
+          code: `day_start_reading_missing:${String(reading?.day ?? "?")}:${String(reading?.reason ?? "no_reading")}`,
+          day: Number.isInteger(reading?.day) ? reading.day : null,
+        }),
+      );
+      continue;
+    }
+    measured += 1;
+    if (reading.startedBlind === true) {
+      blindDays.push(reading.day);
+      findings.push(
+        Object.freeze({
+          code: `day_started_blind:${String(reading.day)}`,
+          day: reading.day,
+          waitedMs: Number.isInteger(reading.waitedMs) ? reading.waitedMs : null,
+        }),
+      );
+    }
+  }
+  const population = Number.isInteger(scheduledDays) && scheduledDays > 0 ? scheduledDays : 0;
+  const missing = findings.find((finding) => finding.code.startsWith("day_start_reading_missing:"));
+  const blocked =
+    population === 0
+      ? "no_days_scheduled"
+      : list.length < population
+        ? `day_start_reading_missing:${String(list.length)}_of_${String(population)}`
+        : (missing?.code ?? null);
+  return Object.freeze({
+    population,
+    measured,
+    startedBlind: blindDays.length,
+    blindDays: Object.freeze(blindDays),
+    findings: Object.freeze(findings),
+    reading: `days started blind ${String(blindDays.length)} of ${String(population)}`,
+    blocked,
+    verdictCode: blindDays.length > 0 ? `day_started_blind:${String(blindDays[0])}` : blocked,
+  });
+}
+
+/**
+ * Whether the attach's own arrival fact was said, exactly once.
+ *
+ * <p>
+ * The same call that hands the launch's snapshot to the Host (`activateIngress` -> `host.acceptInitialFacts`) is the
+ * attach boundary `companionArrivalFact` is gated on (`host-service.ts`, `#sayArrivalOnce`). A harness that never
+ * activated the ingress therefore lost BOTH readings with one omission, and only the world-state half was visible: a
+ * companion who is never told she arrived is a second defect hiding behind the first.
+ * </p>
+ *
+ * <p>
+ * The marker is the arrival fact's own model-facing line - the one `<world-facts>` prints for it from
+ * `WORLD_FACT_KIND_ZH.companion_arrival` (`host/src/fact-brief.ts`) - spelled here because that table is module-local;
+ * this runner's test compares it against the owner's source so the marker cannot drift. It is the only thing in a
+ * delivery that names the arrival: the fact states no sentence of its own (the state it used to repeat is the batch's
+ * `<world-state>`). The record is the authority, not the activation flag: "the flag was set" and "the delivery
+ * happened" came apart in every other reading in this file.
+ * </p>
+ *
+ * <p>
+ * `attached: false` is NOT a finding about the arrival: a run that never materialized already has a failure that names
+ * its own cause, and reporting the attach it never attempted would report a symptom over it.
+ * </p>
+ */
+function assessCompanionArrival({ attached, texts } = {}) {
+  const arrivalLine = "- 她到了";
+  if (attached !== true)
+    return Object.freeze({
+      measured: false,
+      said: 0,
+      reading: "arrival said 0 of 1",
+      reason: "ingress_not_activated",
+      verdictCode: null,
+    });
+  if (!Array.isArray(texts))
+    return Object.freeze({
+      measured: false,
+      said: 0,
+      reading: "arrival said 0 of 1",
+      reason: "session_record_unreadable",
+      verdictCode: "companion_arrival_unmeasured",
+    });
+  const said = texts.filter((text) => text.includes(arrivalLine)).length;
+  return Object.freeze({
+    measured: true,
+    said,
+    reading: `arrival said ${String(said)} of 1`,
+    reason: null,
+    verdictCode: said === 1 ? null : said === 0 ? "companion_arrival_not_delivered" : "companion_arrival_said_twice",
+  });
 }
 
 function readToolTiming(
@@ -1285,14 +1820,7 @@ function readToolTiming(
   // this loop already reads every message in the record, and a second reader of the same file is a second spelling.
   let modelTurns = 0;
   const planCalls = {};
-  for (const line of raw.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of sessionEntries(raw)) {
     if (entry?.type !== "message") continue;
     const atMs = Date.parse(entry.timestamp);
     if (!Number.isFinite(atMs)) continue;
@@ -1423,12 +1951,21 @@ function summarizePresentationEvidence() {
     records: delivery.records,
     unparsable: delivery.unparsable,
     bubblesProduced: presentationPieces.length,
+    // The bubbles themselves and the window they arrived in: the two numbers a frequency claim needs, taken from the
+    // port that committed them rather than from a count someone took by hand afterwards (`round73`: seven bubbles in
+    // 252 s, one every 36 s, the shortest gap 7 s - and no artifact said any of it).
+    pieces: presentationPieces,
+    window: { startedAtMs: phaseTimings.runStartedAtMs, endedAtMs: Date.now() },
   });
   console.error("DELIVERY_ACCOUNT", describeDeliveryAccount(deliveryAccount));
   // What she was doing BETWEEN the pieces, off the same log the delivery account is read from. Bounded, and
   // `not_measured` rather than an empty array when the channel published nothing, so "nobody woke her" is never
   // spelled the same way as "the field is empty".
   const activity = summarizeActivity(readActivityPoints(hostLog));
+  // The bound's own reading, in the log and not only in the bundle: a run whose 512-point limit dropped the tail of the
+  // activity stream says how many points and how many milliseconds it dropped, so "idle 166.1 s" can be checked against
+  // the raw log's 222.0 s instead of being taken as the run's whole silence.
+  console.error("ACTIVITY_ACCOUNT", describeActivityPoints(activity));
   // Executions that stopped making progress, off the same log and in the same shape: the Host prints one stall fact per
   // arming (`host-service.ts` `#publishStallFact`), and until this field nothing in the bundle could say a body was
   // stuck. The parser owns the cap and the count of what it dropped. NOT read by `round-verdict.mjs` yet - the verdict
@@ -1444,15 +1981,20 @@ function summarizePresentationEvidence() {
     // to report its longest stretch as an UPPER BOUND (161 s, `cause: run_end`, measured 2026-10-20).
     turnStartedAtMs,
     pieces: Object.freeze([...presentationPieces]),
-    pieceAtMs: Object.freeze([...presentationPieceAtMs]),
     pieceCount: presentationPieces.length,
-    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
+    // The first piece's time from ITS OWN turn's start, which is what "time to first bubble" has always meant and the
+    // only reading the old `elapsedMs` ever carried.
+    firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].sinceTurnStartMs : null,
     // A turn that arrived as one wall at the end vs several pieces over time.
     chunked: presentationPieces.length > 1,
     // Every committed piece accounted for, in the unit it was committed in: the presented paragraphs, the pieces a
     // paced surface emitted ahead of them, and whatever is left over. A non-zero remainder is a blocked run (the
     // `delivery_account` clause), not a number a reader has to notice.
     deliveryAccount,
+    // The same reading in the shape a later stage asks for by name: how often she spoke, over what span, and the
+    // shortest gap between two bubbles. Published as its own field so a gate reads a reading rather than parsing the
+    // account sentence.
+    speechFrequency: deliveryAccount.speech,
     activity,
     stallWatch,
     worldStateStale,
@@ -1480,18 +2022,32 @@ const onCompanionTextPresented = (text, locale) => {
   // Record EVERY committed piece before any single-shot voice logic runs: the
   // chunked-presentation evidence must not depend on voice being enabled or on
   // whether the piece happened to be the first one.
-  const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
   const committedAtMs = Date.now();
-  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  // ONE EPOCH (see `./presentation-piece-time.mjs`). `round67` printed ten pieces 22.5 s early because this field was
+  // measured from the turn's start while every other elapsed time in the log and the bundle uses the run's base; the
+  // derived pair also gives the bundle record the absolute moment it never had, which is why `check-live-run-silence`
+  // could only answer `presented_text_placed_on_run_clock: unmeasured`.
+  const pieceTime = describePresentationPiece({
+    index: presentationPieces.length,
+    chars: text.length,
+    committedAtMs,
+    runStartedAtMs: phaseTimings.runStartedAtMs,
+    turnStartedAtMs,
+  });
+  presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, ...pieceTime.piece }));
+  // The same moment the run's own record keeps: `round67`'s last delivery was the last thing anyone could date, and it
+  // was only in the terminal log (2026-11-17).
+  progress?.record({
+    event: "presented",
+    index: presentationPieces.length - 1,
+    chars: text.length,
+    atMs: committedAtMs,
+  });
   ledger.record("present.visible", { index: presentationPieces.length - 1 });
-  // The absolute commit moment, kept in a SIDE array on purpose: `pieces` keeps its published shape (several tests pin
-  // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
-  // answer `not established`, which is what it had to do for every run before this.
-  presentationPieceAtMs.push(committedAtMs);
-  console.error(
-    "AGENT_PRESENTATION_PIECE",
-    JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
-  );
+  // The first companion text that reached the player is this run's first MODEL response: the provider, the turn and the
+  // presentation have all completed by the time this callback fires, so it is the honest end of the launch sequence.
+  if (phaseTimings.marks.first_model_response === undefined) markPhase("first_model_response", committedAtMs);
+  console.error("AGENT_PRESENTATION_PIECE", JSON.stringify(pieceTime.line));
   // Dee-hydrate model scaffolding: the chat box and the voice line must both
   // speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
@@ -1586,6 +2142,12 @@ client.onFact((fact) => {
       }
     })();
     factLog.push(entry);
+    // THE WORLD SAYING SOMETHING IS WHAT THE NIGHT WATCHER WAITS FOR - and only the statements it can decide from. The
+    // kinds below are the rollover, the engine's pass-out, the clock and the reading itself; her own progress
+    // (`tile_advanced`, `route_progress`, receipts) deliberately does NOT wake it, because a watcher that observed once per
+    // step of the walk it is watching would be the 3.56 Hz poll again with a better excuse. This list is a LATENCY list and
+    // not a correctness one: a kind missing from it costs the watch's own ceiling (`watchRollover`), never a missed night.
+    if (NIGHT_WAKE_WORLD_FACT_KINDS.includes(entry.worldFactKind)) worldFacts.factPublished();
     // The same listener that records the fact also stamps the ledger: a receipt is one boundary on the run's
     // own clock, so the wait it ends is a subtraction rather than an inference.
     // The identity is what makes a settle attributable to a dispatch. Without it the ledger recorded 294
@@ -1643,28 +2205,6 @@ function terminalReceiptFor(facts, requestId) {
 }
 
 /**
- * How long the world has published nothing that means it moved.
- *
- * `null` is "cannot be read" and never zero: a quiet nobody measured must not license a wake. The sources are the ones
- * `waitForSessionQuiet` already watches - a receipt, lifecycle or error fact, and a flat dispatch's own settlement -
- * plus the moment the last turn began, because a turn during which the world published nothing at all is a measured
- * quiet rather than an unmeasured one. Without that third source a run whose first turns produced no receipts would
- * suppress its own day forever, which is the failure this bound exists to avoid in the other direction.
- */
-function quietMsNow() {
-  let lastFactAtMs = null;
-  for (let at = factLog.length - 1; at >= 0; at -= 1) {
-    if (!meaningfulFact(factLog[at])) continue;
-    lastFactAtMs = factLog[at].atMs ?? null;
-    break;
-  }
-  const lastDispatchAtMs = actionTrace.at(-1)?.settledAtMs ?? null;
-  const readable = [lastFactAtMs, lastDispatchAtMs, turnStartedAtMs].filter((value) => Number.isFinite(value));
-  if (readable.length === 0) return null;
-  return Date.now() - Math.max(...readable);
-}
-
-/**
  * Whether the Mod holds a pass it can still continue.
  *
  * Two facts, and the second is the one a turn boundary hides: a dispatch answers `accepted` while its terminal arrives
@@ -1707,25 +2247,24 @@ function newStallFacts() {
   return readStallWatch(lines.join("\n")).facts;
 }
 
-// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
-// A play session that did nothing but these has not played: run H attempted 14 actions,
-// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
-// because the verdict only required "a real attempt". "Did the companion actually do
-// something" is a different question from "did it try", and a rung whose whole job is to
-// report what the companion could do must not call an empty session a success.
-const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
-  new Set([
-    "move_to_tile",
-    "travel",
-    "enter_exit",
-    "navigate_to_destination",
-    "observe_scene",
-    "inspect_world_map",
-    "express_emote",
-    "face_direction",
-    "equip_tool",
-  ]),
-);
+/**
+ * The Host's world-stale facts that have arrived since the last look.
+ *
+ * Same cursor, same channel, same parser shape as `newStallFacts`, because it is the same defect family: the pump owns
+ * the bound (`WORLD_STATE_STALE_TURNS`), the Host publishes one line per arming, and the loop only reads whether one
+ * arrived. MEASURED 2026-11-10 (`round45`): the world block froze at `revision 352` for fifty turns, every turn was
+ * issued as `continuation`, and nothing in the loop could have known - so she carried on from a day-old picture and
+ * dispatched nothing for the last thirty minutes.
+ */
+const worldStateStaleReadCursor = { chunk: 0, carry: "" };
+function newWorldStateStaleFacts() {
+  if (worldStateStaleReadCursor.chunk >= hostLogChunks.length) return [];
+  const text = worldStateStaleReadCursor.carry + hostLogChunks.slice(worldStateStaleReadCursor.chunk).join("");
+  worldStateStaleReadCursor.chunk = hostLogChunks.length;
+  const lines = text.split("\n");
+  worldStateStaleReadCursor.carry = lines.pop() ?? "";
+  return readWorldStateStaleFacts(lines.join("\n")).facts;
+}
 
 /**
  * What the run tried (`attempted`), succeeded at (`succeeded`), and changed (`accomplished`).
@@ -1747,6 +2286,50 @@ function summarizeDispatchedActions(actionTrace, programOutcomes, programSubmiss
     succeeded,
     accomplished: succeeded.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId)),
   });
+}
+
+/**
+ * Whether the turn that has just settled SUBMITTED a `sleep`, from both channels of a dispatch.
+ *
+ * The two channels keep their own record of a submission: a flat request frame lands in `actionTrace`, a Body Program's
+ * node in `programSubmissions`. `sleep` travels both - it is a world-resetting plan action - so a reading that looked at
+ * one channel would say "she never went to bed" for a night she ended through the other.
+ *
+ * `markers` (`dispatchMarkers()`) are the lengths both records had BEFORE the turn, so a dispatch can only ever be
+ * attributed to the turn it happened in. The records are a parameter rather than a closure so this predicate can be
+ * driven in isolation, against real trace rows and real submitted nodes, by `run-stardew-native-local-agent-ab-live.test.mjs`.
+ *
+ * `sleep` is spelled here as the action id the Mod's protocol declares (`BridgeProtocol.cs:2386`: it takes no
+ * arguments), the same literal the night watcher already reads; only the SUBMISSION is asked about, because the question
+ * this answers is "did she act", never "did it succeed".
+ */
+function sleepSubmittedSince(markers, records) {
+  if (records.trace.slice(markers.traceFrom).some((entry) => entry?.action === "sleep")) return true;
+  return records.submissions
+    .slice(markers.submissionsFrom)
+    .some((submission) => (submission?.nodes ?? []).some((node) => node?.actionId === "sleep"));
+}
+
+/** Where a turn starts in both dispatch records, for `sleepSubmittedSince`. */
+function dispatchMarkers(trace, submissions) {
+  return { traceFrom: trace.length, submissionsFrom: submissions.length };
+}
+
+/**
+ * The run's OWN prompt-turn cadence, from the moments the harness began its prompt turns.
+ *
+ * `readObjectiveState` needs one span to answer "the objective's reading has not moved for a whole turn", and a turn
+ * of this run is what that phrase means: a companion's turn takes as long as this run's turns take, so the number is
+ * measured from the turn stream instead of chosen here (measured 2026-11-11, `round45`: 62 prompt turns in 2510 s, so
+ * about 40 s a turn). Fewer than two turns is not a zero interval - it is no interval, and `null` makes
+ * `readObjectiveState` answer `advancing` rather than licence a stall nobody measured.
+ */
+function medianPromptTurnIntervalMs(starts) {
+  if (starts.length < 2) return null;
+  const intervals = starts.slice(1).map((start, index) => start - starts[index]);
+  const sorted = [...intervals].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
 }
 
 /**
@@ -1800,6 +2383,16 @@ function deriveSessionVerdict({
   // `stopReason` is read here; the outcome object carries much more and none of it belongs in a verdict.
   agentTurnOutcome,
   morningLiveness,
+  // The day-note reading's own verdict code (`day_note_not_delivered:...` and its siblings), or `null` when every
+  // scheduled day was told what it was for and no gate spoke over it.
+  dayNoteVerdict = null,
+  // The day-START reading's own code (`day_started_blind:<day>`, or the reason the population could not be measured).
+  // It sits above `dayNoteVerdict` because the two describe the same delivery from opposite ends: a day that opened on
+  // `世界：尚未收到观察` was handed a turn before it was handed a task, and the earlier fact is the one to name first.
+  dayStartVerdict = null,
+  // The attach's own arrival fact, which only exists once `activateIngress()` has handed the launch's initial snapshot to
+  // the Host. Exactly one per Game session; absent means the harness never completed the attach boundary.
+  companionArrivalVerdict = null,
 }) {
   if (worldStallReason !== null) return "world_stopped_advancing";
   if (sessionTurns.length === 0) return "no_turns";
@@ -1826,6 +2419,12 @@ function deriveSessionVerdict({
   // `4357a95b`, `76c51da4`) and on 2026-10-31 it recurred with `menu=ShippingMenu` and the clock at 600 for the rest of
   // the run. Naming the OUTCOME is what makes the fifth occurrence impossible to report as anything else.
   if ((morningLiveness?.violations?.length ?? 0) > 0) return "morning_clock_frozen";
+  // A day she was never given is not a day she failed. This arm sits above `silent` and `nothing_accomplished` because
+  // those describe a companion who was asked and did not answer, which is the opposite of what happened in round49.
+  if (dayStartVerdict !== null) return dayStartVerdict;
+  if (dayNoteVerdict !== null) return dayNoteVerdict;
+  // The attach itself, named: a companion who was never told she arrived was never given the world either.
+  if (companionArrivalVerdict !== null) return companionArrivalVerdict;
   if (!sessionSpoken) return "silent";
   if (accomplishedActionIds.length === 0) return "nothing_accomplished";
   // A session that changed the world has still not necessarily done the TASK it was given. The task's own criterion
@@ -1903,10 +2502,23 @@ function deriveRungVerdict(clauses) {
 const meaningfulFact = (entry) =>
   entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
 
-async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = QUIET_BOUND_MS, timeoutMs = 300_000 } = {}) {
-  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. The window itself is `QUIET_BOUND_MS`,
-  // which is also what the day loop's wake decision reads, so a wake and the turn it starts cannot disagree about what
-  // "quiet" means. The previous version had a real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where
+/**
+ * How long a turn's own session may publish nothing before the harness calls the turn quiet.
+ *
+ * THIS IS NOT A WAKE BOUND. It decides when ONE turn's stream has stopped moving so the harness can stop waiting on it;
+ * whether another turn should open is `decideDayWake`'s question, and that question no longer has a clock in it at all
+ * (see `WAKE_REASON`). The two used to share one constant, which is how a twenty-second bound for a turn leaked into a
+ * bound for the run.
+ */
+const SESSION_QUIET_BOUND_MS = 20_000;
+
+async function waitForSessionQuiet(
+  turn,
+  { dispatchesBeforeTurn, quietMs = SESSION_QUIET_BOUND_MS, timeoutMs = 300_000 } = {},
+) {
+  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. The window itself is
+  // `SESSION_QUIET_BOUND_MS`: this function asks when THIS turn has stopped producing, never when the next turn should
+  // begin. The previous version had a real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where
   // lastFactAt was ms) and checked the WHOLE slice since the turn for any meaningful fact, so quiet was unreachable
   // whenever a meaningful fact had EVER arrived. Track the last-observed INDEX and check only the newly-appended facts.
   let lastSeenDispatch = dispatchesBeforeTurn;
@@ -1973,13 +2585,20 @@ function dialogueGateContext(gate) {
  * WHICH gates are due is decided by `planGateDeliveries`, from the schedule the gate module owns - including the
  * refusal-triggered obstacle gate, which was skipped here by kind and therefore could never be spoken at all. Every
  * decision, spoken or not, is recorded with the fact behind it, so an untriggered gate stops reading like an unwired one.
+ *
+ * THE WORLD CLOCK IS HANDED IN because a gate declares the in-game hour it speaks at, and this boundary is the only place
+ * that knows which hour it is. Until it was passed, `turn-initiative-split` (`atGameTime: "1200"`) was due from the first
+ * tick of day 1 and fired at 06:20 (round49).
  */
 async function deliverDialogueGatesForDay(day, tools) {
   // A refusal is the obstacle gate's only ground truth, and the boundary is where that gate is decided on: re-read it
   // here so the age judged is the age now, not the age at the last in-turn sample.
   sampleRefusalEvidence();
+  const boundaryClock = readWorldClock();
+  const gameTime = boundaryClock.unknown === true ? null : boundaryClock.timeOfDay;
   const plans = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, {
     day,
+    gameTime,
     lastRefusalAtMs: refusalSample.atMs,
     refusalReadError: refusalSample.readError,
     receiptMarkers: refusalSample.markers,
@@ -2005,6 +2624,10 @@ async function deliverDialogueGatesForDay(day, tools) {
       state: "delivered",
       day,
       atMs: Date.now(),
+      // The in-game hour the line was spoken at, beside the hour it declares: `round49` spoke a 12:00 gate at 06:20 and
+      // nothing in the artifact carried either number, so the early firing had to be argued from a session file.
+      gameTime,
+      declaredGameTime: gate.trigger.atGameTime ?? null,
       // The refusal is evidence only for the gate that is triggered by one; it is the sample, plus how old it was when
       // the player spoke, so the answer can be traced back to the refusal it answers.
       refusal:
@@ -2026,6 +2649,17 @@ async function deliverDialogueGatesForDay(day, tools) {
       locale: "zh-CN",
       timeoutMs: Number(process.env.GAMEBUDDY_PLAYER_INPUT_ADMISSION_MS ?? 90_000),
     }).catch((error) => ({ accepted: false, lastRefusal: String(error?.message ?? error) }));
+    playerInputs.push(
+      Object.freeze({
+        day,
+        channel: "gate",
+        gateId: gate.id,
+        text: gate.prompt,
+        gameTime,
+        declaredGameTime: gate.trigger.atGameTime ?? null,
+        admitted: admission.accepted === true,
+      }),
+    );
     if (admission.accepted !== true) {
       // A refused line is recorded as an absent answer WITH its reason: an admission that never happened must not read
       // as silence from the companion, and it must not read as a gate nobody wired either.
@@ -2075,6 +2709,9 @@ async function runAgentTurn(text, tools, wake) {
   const wakeReason = wake?.reason;
   if (!WAKE_REASONS.includes(wakeReason)) throw new Error(`prompt_without_a_declared_reason:${String(wakeReason)}`);
   turnStartedAtMs = Date.now();
+  // The run's own record of the moment it started a turn - the reading that survives a process which never reaches its
+  // close (see `../core/run-progress.mjs`).
+  progress?.record({ event: "turn_started", turn: agentTurnCount, reason: wakeReason });
   // One line per turn, because the only question a memory death leaves open is its SHAPE: flat after the first
   // allocation spread, or growing with turns. `sessionBytes` is the retained-transcript proxy (Pi holds the session
   // twice in RAM) and costs one stat; `diagnostics` is the runner's own unbounded array.
@@ -2471,7 +3108,15 @@ const MULTIDAY_DISPATCH_TIMEOUT_MS = 45_000;
 
 /** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
 const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
-/** How often the night watcher asks the world. It runs only while a night is in flight. */
+/**
+ * How often the runner re-checks ITS OWN record - 250 ms, and it costs no bridge request.
+ *
+ * Two waits use it: `waitForNightToBegin` reads the fact log and the cached snapshot until the companion's `sleep` shows
+ * up, and the pass-out re-entry asks the watcher again. Neither asks the world anything. The night WATCH is not on this
+ * cadence and must not be: it is the one that observes, and `round56` measured what a 250 ms interval costs there - 742
+ * observations inside one 208.6 s night, each a whole snapshot rebuilt on the game thread. The watch waits on the Mod's own
+ * statements instead (see `worldFacts` below).
+ */
 const MULTIDAY_POLL_INTERVAL_MS = 250;
 
 /**
@@ -2596,6 +3241,24 @@ const MOD_LOG_PATHS = () => {
   }
   return paths;
 };
+//
+// ONE BEAT PER BOUND OF SILENCE, on its own timer: a stall is not a code path, so nothing in a waiting loop can be relied on
+// to report one. While the clock is being read the beat prints nothing - the read lines are that interval's record - so this
+// adds one line per 30 s only while the run is NOT reading the world, which is exactly the shape `round51` left blank.
+//
+// It sits here, after the two log readers rather than with the other timers, because each beat carries this run's own
+// pause-on-unfocus reading: creating the timer before the values it reads would let a 30 s beat fire during a module
+// evaluation parked on an await, and a diagnostic that throws there kills the run it is describing.
+//
+const gameClockHeartbeat = setInterval(async () => {
+  const beat = await gameClock.heartbeat();
+  // A BEAT THAT SAYS THE BRIDGE IS CLOSED IS THE RUN'S ANSWER. `round66` published thirty-two of these over sixteen
+  // minutes, each one repeating `not_attempted:bridge_closed`, because a stall nobody decided on looks the same in the log
+  // as a stall somebody was still waiting out. The reading ends the wait (`./bridge-closure.mjs`), and every waiter in
+  // this file consults the result.
+  if (beat?.stalled === true) noteBridgeClosure(bridgeClosureStop({ solicit: beat.solicit }));
+}, GAME_CLOCK_HEARTBEAT_MS);
+gameClockHeartbeat.unref?.();
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
 
@@ -3446,6 +4109,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       watchRollover(world, {
         dayBefore,
         timeoutMs: remainingMs,
+        // WAKE ON THE WORLD, NOT ON THE CLOCK. The Mod's own rollover statements end the wait; the loop's ceiling is what
+        // a silent world falls back to. Measured on `round56`: 742 observations inside one 208.6 s night window, almost all
+        // of them the timer asking a world that had nothing to say.
+        waitForLook: (ceilingMs) => worldFacts.wait(ceilingMs),
         abort: () =>
           bridgeDisconnections.length > 0
             ? `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`
@@ -3694,48 +4361,6 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
   }
   return undefined;
 }
-// The run's record, declared where the run's record begins instead of where each field first happens to be needed.
-//
-// The failure dump reads exactly these bindings, and a binding declared further down is a ReferenceError for a run that
-// threw above it — a dump that throws leaves nothing behind, which is how a failed run's evidence was lost (measured
-// 2026-10-22 on `g149tool`: 184 s of real work and no consumable result). Everything here is either a container the run
-// fills or an outcome a later stage assigns; none of it is derived, so declaring it early changes no behaviour, and a
-// throw after this point can always describe what the run had done.
-//
-// Trace every ordinary-action execution request the Agent sends so a
-// rejected coordinate is attributable to the actual submitted args. A thrown
-// rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
-// a receipt, so the catch records the rejection instead of skipping the entry —
-// otherwise the run's own health report sees zero rejections while the session
-// shows real ones.
-const actionTrace = [];
-// Every submission, kept as its own record: a program id alone says a program EXISTS, not that anything ran
-// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
-// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
-// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
-const programSubmissions = [];
-/** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
-let programOutcomes = Object.freeze([]);
-// Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
-let programOutcomesAtTeardown = null;
-// How many submissions existed when the journal was read. A program submitted later did not fail to be observed -
-// it arrived after the harness looked, and that is a different fact from "the Mod did not know it".
-let programOutcomesReadAtSubmissionCount = null;
-// Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
-// capture directory it opened): null until then, so a failure at either step still publishes what came before it.
-// The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
-// narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
-// failed run too.
-let covenantSeed = null;
-let agentTurnResult = null;
-let voiceResult = null;
-let multidayOutcome = null;
-let historianRubricOutcome = null;
-let runSessionRecord = Object.freeze({
-  path: undefined,
-  reason: "session_record_binding_not_established",
-  searched: Object.freeze([]),
-});
 // The bridge's own clock, read at dispatch time. A trace without it cannot be replayed at the right GAME
 // moment: a live run's dispatches are spread over game hours while the Agent thinks, so "as fast as receipts
 // settle" reaches 6:20 where the run reached 10:00 and fails on a shop that has not opened. The snapshot is
@@ -3842,9 +4467,6 @@ client.execute = async (request) => {
     throw error;
   }
 };
-// Every submission and the per-program records: declared with the run's record above `actionTrace`.
-/** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
-const PROGRAM_EVENTS_PAGE_SIZE = 32;
 /**
  * One submission's execution record, read from the Mod's own journal.
  *
@@ -3959,7 +4581,7 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, jour
  * Derived from the same ids the Mod config declares and the documented Stardew data root - the folder that contains
  * `Saves` - because that is the exact path `WindowsBodyProgramJournalStore` writes.
  */
-const bodyProgramJournal = createBodyProgramJournalFallback({ dataPath: stardewDataPath(), scope });
+bodyProgramJournal = createBodyProgramJournalFallback({ dataPath: stardewDataPath(), scope });
 
 /** Reads the journal for every submission over the live bridge, falling back to the durable journal. Once per run. */
 async function sampleProgramOutcomes() {
@@ -4002,7 +4624,13 @@ client.programSubmit = async (program) => {
       ),
     }),
   );
-  console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId, code: submit?.code }));
+  // How much work one request bought, printed rather than derived: the nodes are the only log-side reading of
+  // "scripts per turn" against "nodes per script", and without it a run's throughput can only be counted from a session
+  // that a disposable runtime root may already have deleted.
+  console.error(
+    "AGENT_PROGRAM_SUBMIT",
+    JSON.stringify({ programId, code: submit?.code, nodes: program?.nodes?.length ?? 0 }),
+  );
   return submit;
 };
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
@@ -4020,6 +4648,9 @@ const disposableParent = join(fileURLToPath(new URL("../../..", import.meta.url)
 await mkdir(disposableParent, { recursive: true });
 const root = usesDisposableRoot ? await mkdtemp(join(disposableParent, "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
 runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
+// Printed because the session files live under it (`contexts/*/surface-sessions/game-*/sessions/*.jsonl`) and a disposable
+// root is the difference between a run whose conversation can be read afterwards and one whose conversation never existed.
+console.error("RUN_ROOT", JSON.stringify({ runtimeRoot, disposable: usesDisposableRoot }));
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // The reviewed live-run persona, provisioned by the product's own file convention
 // (<runtimeRoot>/card.json + worldbook.json), byte for byte and with no preprocessing, and then
@@ -4038,6 +4669,7 @@ if (!personaMounted.ok) throw new Error(`live_run_persona_not_mounted:${personaM
 process.stderr.write(
   `[run] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
 );
+markPhase("persona_mounted");
 // The model profile is configuration, not a script constant: an existing profile is reused AS IS, and a root that has
 // none gets the local development model.
 //
@@ -4149,13 +4781,18 @@ await writeFile(
 if (existsSync(join(runtimePaths.agentDir, "models.json"))) {
   providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
   if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
-  markPhase("providerReadyMs");
+  markPhase("provider_ready");
 }
 // Capture the run's evidence into a dedicated local directory (git-ignored).
 // The summary lands in the result JSON so a failed capture is visible, never
 // silent — a capture that broke would recreate exactly the blind spot this
 // mechanism exists to remove.
 capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
+// THE RECORD THAT SURVIVES A DEATH. Every other artifact this harness writes is written at its end, so a run that dies
+// mid-await leaves `launch.json` and nothing else - measured on `round66` and `round67`, where the Host went away inside
+// the first six minutes and the run directory could not say how far the run had got (2026-11-17). One flushed line per
+// turn and per delivered piece costs nothing at this volume and answers "where did it stop" without a terminal log.
+progress = openRunProgress({ dir: capture.dir, startedAtMs: phaseTimings.runStartedAtMs });
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
@@ -4197,14 +4834,14 @@ if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
   });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
 }
-markPhase("covenantSeedDoneMs");
+markPhase("covenant_seed_done");
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({
   manifest: deploymentManifest,
   launcher: STARDEW_INTEGRATION_LAUNCHER,
   launch,
   expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }),
 });
-markPhase("bindingReadyMs");
+markPhase("binding_ready");
 let runtime;
 /**
  * Set when the MOD stopped advancing while a turn was running, and why.
@@ -4281,13 +4918,27 @@ try {
     }),
   );
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
-  markPhase("runtimeMaterializedMs");
+  // THE ATTACH BOUNDARY, and the one call this harness never made.
+  //
+  // `activateIngress()` is the single path that hands the launch's own initial facts to the Host
+  // (`host.acceptInitialFacts` -> `pump.enqueueFact`, which sets the pump's `#lastSnapshot` synchronously), and production
+  // calls it exactly once after the durable enter receipt commits (`continuity-semantic-game-facade.internal.ts`), where
+  // `dispatchPromptDefinedTask` then HARD-REFUSES every task prompt until it has fired (`semantic_game_ingress_not_activated`).
+  //
+  // The launch has already observed the world by the time this line runs: `createStardewIntegrationLaunchHandleFromAuthenticatedBridge`
+  // does `await bridge.observe()` and THROWS `stardew_initial_snapshot_not_observed` rather than proceed without one, then
+  // parks that snapshot in `launch.initialFacts`. So the reading existed on every run; nothing handed it over. Measured
+  // `round49` (day 1): the first delivery carried `世界：尚未收到观察`, her first thinking was "no observation yet", and her
+  // first action was `stardew_observe {}` - a whole turn spent looking at a world the harness was already holding.
+  // `#sayArrivalOnce` is gated on the same attach (`host-service.ts`), so the companion-arrival fact was lost with it.
+  runtime.connected.activateIngress();
+  markPhase("runtime_materialized");
   // A disposable root's catalog arrives with its runtime, so readiness is asked here instead - still before the first
   // turn, and a provider that cannot answer costs one probe instead of the turn's whole budget.
   if (providerReadiness === null) {
     providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
     if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
-    markPhase("providerReadyMs");
+    markPhase("provider_ready");
   }
   const tools = runtime.connected.host;
   // One prompt per SCENARIO. The retired 0-2 prompts (the Keg errand) are gone: they were the same errand with
@@ -4355,13 +5006,6 @@ try {
     return entry(day, taskForDay(day));
   };
 
-  // What the harness says when it offers the same day again. Deliberately carries no instruction: anything
-  // stronger ("do not stop until you sleep") would ask the model to opt into a structural guarantee, which is the
-  // mistake this change undoes.
-  const promptForDayContinuation = (day) =>
-    localeKey === "zh"
-      ? `（第 ${String(day)} 天还在继续。接着做。）`
-      : `(Day ${String(day)} is still going. Carry on.)`;
   // Offered when the world clock says this day's work hours are over but the night has NOT been crossed.
   // Measured 2026-10-26: a turn ended at 22:00 with the companion saying "Time to sleep ... let me observe first
   // then sleep"; the next turn it was given was the generic "carry on", which reads as "keep farming".
@@ -4416,6 +5060,53 @@ try {
    * fact repeated every turn would become the instruction by repetition that this deliberately is not.
    */
   const withDayFact = (prompt, fact) => dayPromptWithFact(prompt, fact, localeKey);
+  // WHETHER THE WORLD HAS BEEN OBSERVED, as two halves of one reading: the attach HANDED OVER a snapshot
+  // (`launch.initialFacts`, which is what `activateIngress` delivered to the pump) and the connection ADMITS one now
+  // (`client.state.snapshot`, the same client the ingress wraps). A probe that only asked the second half would pass on a
+  // run whose pump never received the fact - the exact shape of `round49`.
+  const worldObserved = () => {
+    const revision = client.state?.snapshot?.revision ?? null;
+    const handed = Array.isArray(launch.initialFacts)
+      ? launch.initialFacts.filter((fact) => fact?.kind === "snapshot").length
+      : 0;
+    return Object.freeze({
+      observed: Number.isInteger(revision) && handed > 0,
+      revision: Number.isInteger(revision) ? revision : null,
+    });
+  };
+  // Every day's start, in order: whether the world was there, how long the wait was, and what the Host actually delivered.
+  const dayStarts = [];
+  /**
+   * The world, before the day - and the code that says so when it was not there.
+   *
+   * The wait is bounded (`awaitDayOpeningWorld`), so a world that never arrives costs the harness its bound instead of her
+   * turn, and an expired wait is published twice: once as a line a log reader sees, once in the record.
+   */
+  const dayOpeningFor = async (day) => {
+    const opening = await awaitDayOpeningWorld({ probe: worldObserved });
+    if (opening.observed !== true)
+      process.stderr.write(`day_prompt_delivered_without_observation:${String(day)}:${String(opening.waitedMs)}\n`);
+    return opening;
+  };
+  // Where the session record stood before a turn, so the day's own delivery is the message at this index and not whatever
+  // a gate or a later turn appended.
+  const sessionDeliveryCursor = () => {
+    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
+    const texts = readSessionPlayerTexts(found.path);
+    return Object.freeze({ path: found.path ?? null, fromIndex: texts === null ? 0 : texts.length });
+  };
+  const readDayStart = (day, cursor, waitedMs) => {
+    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
+    return readDayFirstDelivery({
+      day,
+      texts: readSessionPlayerTexts(found.path),
+      fromIndex: cursor?.fromIndex ?? 0,
+      sourcePath: cursor?.path ?? null,
+      readingPath: found.path ?? null,
+      waitedMs,
+      marker: NOTHING_OBSERVED_WORLD,
+    });
+  };
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
@@ -4455,6 +5146,9 @@ try {
     // The baseline for the refusal sample, taken BEFORE the first turn: lines already in this lane's log belong to an
     // earlier run, and counting them would let an old refusal answer a question about "just now".
     sampleRefusalEvidence();
+    // The moments the harness began its prompt turns, in order. The day loop's own span - "nothing moved for a whole
+    // turn" - is measured from these rather than from a constant, so it means the same thing as this run's turns.
+    const promptTurnStarts = [];
     const crossing = await runMultiDayLoop({
       crossNights: MULTIDAY_CROSSINGS,
       dayTurn: async (day) => {
@@ -4499,34 +5193,72 @@ try {
           // Whether this day's day-end offer has been made. ONE per day: an offer repeated until answered is the ping
           // this change exists to remove.
           let dayEndOffered = false;
+          // THE OBJECTIVE'S OWN PROGRESS, per day: the purpose reading publishes progress facts, `objectiveProgressKey`
+          // is that reading's own change, and the age of the last change is what the decider reads to tell "still
+          // working" from "cannot be done today". A day starts its own window because it is asked for a different task.
+          let objectiveProgress = null;
+          let objectiveProgressAtMs = Date.now();
           while (!nightCrossedIn(dayScope)) {
+            // BEFORE ANYTHING IS ASKED: is there still a world to ask? A closed bridge is not a slow world - this run can
+            // no longer observe, dispatch or see a night cross, so the wait has no state to reach. Measured on `round66`:
+            // after `BRIDGE_DISCONNECTED` the loop emitted thirty-two `GAME_CLOCK_STALLED` lines whose
+            // `sinceLastSnapshotMs` climbed to 1,179,640 ms and then the log stopped, and `round65` is the same shape
+            // (to 1,326,166). The night watcher had already answered; this loop was the only thing still waiting.
+            if (noteBridgeClosure(bridgeClosure ?? bridgeClosureStop({ bridgeDisconnections })) !== null) break;
             const clock = readWorldClock();
+            const nowMs = Date.now();
             // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
             // the fact that a turn just settled. A settlement only says that what the harness was waiting for stopped;
             // the facts below say whether that stop left her anything to decide.
             const body = bodyWorkNow();
             const stallFacts = newStallFacts();
+            // ONE read of the purpose per poll: what it says is both the answer to "achieved" and the progress facts
+            // whose age is the stall, and two reads could disagree.
+            const purpose = judgeTaskPurpose(dayTask, receiptsSince(factsBefore));
+            const progressNow = objectiveProgressKey(purpose);
+            if (progressNow !== objectiveProgress) {
+              objectiveProgress = progressNow;
+              objectiveProgressAtMs = nowMs;
+            }
             const wake = decideDayWake({
               turnIndex: turns,
-              objectiveMet: judgeTaskPurpose(dayTask, receiptsSince(factsBefore)).state === "achieved",
+              objectiveMet: purpose.state === "achieved",
+              objectiveProgressSinceMs: nowMs - objectiveProgressAtMs,
+              objectiveSpanMs: medianPromptTurnIntervalMs(promptTurnStarts),
               programRunning: body.programRunning,
               admissionPending: body.admissionPending,
-              quietMs: quietMsNow(),
               lateDay: clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES,
               dayEndOffered,
               stalled: stallFacts.length > 0,
             });
             if (wake.wake !== true) {
-              // The Mod's own pass continues, or nothing has moved for long enough to call it stopped. Either way the
-              // next move is not hers yet, so the harness waits and asks again rather than paying a model turn to find
-              // out that it had nothing to say.
+              // The Mod's own pass continues, the day's question has been asked and not answered, or nothing has happened
+              // at all. Either way the next move is not hers yet, so the harness waits and asks again rather than paying a
+              // model turn to find out that it had nothing to say.
               recordWakeSuppression(wake.reason);
+              // AND THE WAIT IS MEASURED, so a companion left alone for a long stretch says so instead of looking exactly
+              // like a run whose turns were all paid for.
+              noWake.sinceMs ??= Date.now();
+              const aloneForMs = Date.now() - noWake.sinceMs;
+              if (aloneForMs > noWake.forMs) {
+                noWake.forMs = aloneForMs;
+                noWake.lastReason = wake.reason;
+              }
               await new Promise((resolve) => setTimeout(resolve, WAKE_POLL_MS));
               continue;
             }
+            // A turn is opening: the stretch with nobody asking her anything is over.
+            noWake.sinceMs = null;
             turns += 1;
             recordWake(wake.reason);
-            if (wake.reason === WAKE_REASON.dayEndOffer) dayEndOffered = true;
+            if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
+              dayEndOffered = true;
+            // THE DAY'S FIRST TURN WAITS FOR THE WORLD, bounded, before anything is asked of her. A day that opens on
+            // `世界：尚未收到观察` costs a whole turn of looking (`round49`), and the reading it costs is one the harness
+            // already held. The bound's expiry is named (`day_prompt_delivered_without_observation`) and the turn is still
+            // delivered, with the prompt saying so.
+            const dayStartCursor = turns === 1 ? sessionDeliveryCursor() : null;
+            const opening = turns === 1 ? await dayOpeningFor(day) : null;
             // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
             // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
             // declares no patch, or the pack already covers it), and then the prompt is untouched.
@@ -4539,22 +5271,53 @@ try {
                   })
                 : null;
             if (dayFact !== null) seedFacts.push(Object.freeze({ day, ...dayFact }));
+            // WHAT SHE IS ASKED, from the reason that opened the turn and nothing else. Every wake this loop can issue
+            // after the day's first turn is one of these four questions, and each is named: there is no generic "carry on"
+            // left to fall through to, and no clock left to choose a prompt by.
             const prompt =
               turns === 1
                 ? withDayFact(promptForDay(day), dayFact)
-                : wake.reason === WAKE_REASON.dayEndOffer
+                : wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday
                   ? promptForLateDay(day)
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
-                    : wake.reason === WAKE_REASON.staleWorld
-                      ? promptForStaleWorld(staleFacts.at(-1) ?? null)
-                      : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
-                        ? promptForLateDay(day)
-                        : promptForDayContinuation(day);
+                    : promptForStaleWorld(staleFacts.at(-1) ?? null);
+            // WHAT REACHES HER: the prompt above, plus the harness's own statement when the wait expired. The prompt
+            // itself is untouched - the fix for a blind day is the observation being handed over, not a sentence telling
+            // her to go and look.
+            const deliveredPrompt =
+              opening !== null && opening.observed !== true
+                ? dayPromptWithoutObservation(prompt, opening, localeKey)
+                : prompt;
             const spokenBefore = presentationPieces.length;
-            const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
+            const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
+            promptTurnStarts.push(Date.now());
+            // The clock the line is spoken at, read BEFORE the turn: `runAgentTurn` does not return until the turn has
+            // settled, so a reading taken after it would date the day's note to the end of the day it opened.
+            const spokenAt = readWorldClock();
+            const walked = await runAgentTurn(deliveredPrompt, tools, { reason: wake.reason });
+            // WHAT THE HOST ACTUALLY DELIVERED for this day's opening, from the session record: the reading that says a
+            // day started blind even when everything after it looked healthy.
+            if (turns === 1) dayStarts.push(readDayStart(day, dayStartCursor, opening?.waitedMs ?? null));
+            playerInputs.push(
+              Object.freeze({
+                day,
+                channel: "harness",
+                reason: wake.reason,
+                text: deliveredPrompt,
+                gameTime: spokenAt.unknown === true ? null : spokenAt.timeOfDay,
+                admitted: walked.turn?.admission?.accepted === true,
+              }),
+            );
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
+            // Whether THIS turn submitted the one action that ends a night. `sessionTurns` is the only record of both
+            // halves at once - what she said and what she dispatched - and the promise reading needs them joined per
+            // turn, which is why the answer is kept here rather than reconstructed from the traces later.
+            const sleepSubmitted = sleepSubmittedSince(dispatchBefore, {
+              trace: actionTrace,
+              submissions: programSubmissions,
+            });
             // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
             const spokenThisTurn = presentationPieces
               .slice(spokenBefore)
@@ -4566,6 +5329,7 @@ try {
                 goal: promptForDay(day),
                 turn: walked.turn,
                 day,
+                sleepSubmitted,
                 // The turn's lines, kept APART: joining them was how a turn of fifteen short bubbles became one
                 // 120-code-point "utterance" the gate then failed.
                 spokenLines: Object.freeze(spokenThisTurn),
@@ -4687,6 +5451,10 @@ try {
     // THE WAKE ACCOUNT, in one line, because it is the run's answer to "why did the harness think 109 times for four
     // days": what it issued and by which reason, and every settlement it deliberately did not turn into a prompt.
     const wakeByReason = Object.fromEntries(WAKE_REASONS.map((reason) => [reason, wakeAccount.issued[reason] ?? 0]));
+    // The span the objective branch read, computed from the turn stream this run actually issued. Published because a
+    // reader of `objective_unreachable_for_today: 1` has to be able to check the `objective_span_ms=...` condition the
+    // decision printed, and the number exists only here.
+    const objectiveSpanMs = medianPromptTurnIntervalMs(promptTurnStarts);
     const wakeSuppressedByReason = Object.fromEntries(
       WAKE_SUPPRESSION_REASONS.map((reason) => [reason, wakeAccount.suppressed[reason] ?? 0]),
     );
@@ -4699,7 +5467,32 @@ try {
         byReason: wakeByReason,
         suppressed: wakesSuppressed,
         suppressedByReason: wakeSuppressedByReason,
-        quietBoundMs: QUIET_BOUND_MS,
+        noWakeForMs: noWake.forMs,
+        noWakeLastReason: noWake.lastReason,
+        objectiveSpanMs,
+      }),
+    );
+    // THE LONGEST STRETCH NOTHING ASKED HER ANYTHING, in one line. `no_wake_for_ms:<ms>:<reason>` says how long she was
+    // left alone and which decision did the leaving - `waiting_for_the_world` is a choice the harness made, and it must
+    // not read like a stall nobody could end.
+    console.error("MULTIDAY_NO_WAKE", `no_wake_for_ms:${String(noWake.forMs)}:${String(noWake.lastReason ?? "none")}`);
+    // WHETHER SHE SAID SHE WAS GOING TO BED AND DID NOT, read from the turn stream before the night is judged.
+    //
+    // Measured 2026-11-13 (`round47`): the farmhouse was entered at 22:00, she said 「就睡」 and 「这就躺平」 and 「这觉才算
+    // 真睡下去」, `sleep` was submitted ZERO times in fifty-nine turns, and at 26:00 the engine passed her out. The
+    // night's cause was therefore `pass_out` - the consequence - and the only rule that fired on it was the settlement
+    // menu she never reached. The promise is the cause, and this is the one place that can see it: the turn stream,
+    // where what she SAID and what she DISPATCHED sit in the same record. It is passed to the assessment rather than
+    // judged beside it, so the run's account cannot publish the consequence without the cause it measured.
+    const sleepPromises = sleepPromisesNotTaken({ turns: sessionTurns });
+    console.error(
+      "MULTIDAY_SLEEP_PROMISES",
+      JSON.stringify({
+        examined: sleepPromises.examined,
+        promiseTurns: sleepPromises.promiseTurns,
+        turnsWithoutSleepRecord: sleepPromises.turnsWithoutSleepRecord,
+        windowsNotMeasured: sleepPromises.windowsNotMeasured,
+        readings: sleepPromises.readings.map((entry) => entry.code),
       }),
     );
     // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
@@ -4713,6 +5506,9 @@ try {
       // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
       // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
       worldNightEndings: worldNightEndingsFromFacts(factLog),
+      // The turn stream's own reading: a list is MEASURED, and an empty list is the measurement answering that no
+      // promise was delivered. `null` would be "nobody looked", which is never the case here.
+      sleepPromises: sleepPromises.readings,
     });
     // A lifecycle that reported a failure for a night the world crossed is stated on the run's own log, beside them.
     for (const entry of assessment.lifecycleDisagreements) console.error("MULTIDAY_LIFECYCLE", entry.code);
@@ -4730,23 +5526,29 @@ try {
       crossingSummary,
       tasks: taskDelivery,
       // Why the model was woken at all, by reason, and every settlement that deliberately did not become a prompt. The
-      // verdict reads this for `continuation_prompts_issued`/`_suppressed`; neither can be reconstructed from a session,
-      // because a prompt that was never issued leaves no record there.
+      // verdict reads this for `prompt_turns_by_reason`/`suppressions_by_reason`; neither can be reconstructed from a
+      // session, because a prompt that was never issued leaves no record there.
       wakes: Object.freeze({
         total: wakesIssued,
         byReason: Object.freeze(wakeByReason),
-        continuationPromptsIssued: wakeByReason[WAKE_REASON.continuation] ?? 0,
         dayEndOffers: wakeByReason[WAKE_REASON.dayEndOffer] ?? 0,
         stallWakes: wakeByReason[WAKE_REASON.stallWake] ?? 0,
         staleWorldWakes: wakeByReason[WAKE_REASON.staleWorld] ?? 0,
-        continuationPromptsSuppressed: wakesSuppressed,
+        suppressed: wakesSuppressed,
         suppressedByReason: Object.freeze(wakeSuppressedByReason),
-        // The bound the decision waited out, published so a reader can tell "nothing moved" from "nothing moved for
-        // long enough": the same number `waitForSessionQuiet` uses, stated once.
-        quietBoundMs: QUIET_BOUND_MS,
+        // THE SILENCE, NAMED. The quiet bound that used to guarantee a prompt every twenty seconds is gone, so the
+        // longest stretch with no turn is a reading of THIS run: `0` with no reason is a run that was never left waiting.
+        noWakeForMs: noWake.forMs,
+        noWakeLastReason: noWake.lastReason,
+        // The run's own prompt-turn cadence, which is the span the objective branch read: `null` when the run issued
+        // fewer than two prompt turns, and then no stall could be stated from it.
+        objectiveSpanMs,
       }),
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
       assessment,
+      // What the turn stream said about going to bed, with its own population: the assessment names it as the cause of
+      // a night the engine took, and this is the reading itself, so a promise that caused nothing is still visible.
+      sleepPromises,
       dayRecords: crossing.dayRecords,
     });
   } else {
@@ -4754,7 +5556,16 @@ try {
     // admitted, so the first companion bubble's elapsed time is measured from the
     // real turn boundary, not from process start.
     const firstSpokenBefore = presentationPieces.length;
-    const firstTurn = await runAgentTurn(prompt, tools, { reason: WAKE_REASON.dayStart });
+    const firstDispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
+    // THE RUN'S FIRST TURN WAITS FOR THE WORLD, the same boundary the multi-day loop's day-1 turn keeps: a single-goal
+    // rung handed a blind first prompt spends its opening turn looking (`round49`), and the reading it costs is one the
+    // harness already held.
+    const firstDayCursor = sessionDeliveryCursor();
+    const firstOpening = await dayOpeningFor(1);
+    const firstDeliveredPrompt =
+      firstOpening.observed === true ? prompt : dayPromptWithoutObservation(prompt, firstOpening, localeKey);
+    const firstTurn = await runAgentTurn(firstDeliveredPrompt, tools, { reason: WAKE_REASON.dayStart });
+    dayStarts.push(readDayStart(1, firstDayCursor, firstOpening.waitedMs));
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
     sessionTurns.push(
@@ -4762,6 +5573,10 @@ try {
         goalIndex: 0,
         goal: prompt,
         turn: agentTurnResult,
+        sleepSubmitted: sleepSubmittedSince(firstDispatchBefore, {
+          trace: actionTrace,
+          submissions: programSubmissions,
+        }),
         spokenLines: Object.freeze(
           presentationPieces
             .slice(firstSpokenBefore)
@@ -4776,6 +5591,7 @@ try {
     if (SCENARIO === "morning_routine") {
       for (const [index, goal] of SESSION_GOALS.entries()) {
         const spokenBefore = presentationPieces.length;
+        const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
         const next = await runAgentTurn(goal, tools, { reason: WAKE_REASON.playerInput });
         if (next.status !== null) status = next.status;
         sessionTurns.push(
@@ -4783,6 +5599,10 @@ try {
             goalIndex: index + 1,
             goal,
             turn: next.turn,
+            sleepSubmitted: sleepSubmittedSince(dispatchBefore, {
+              trace: actionTrace,
+              submissions: programSubmissions,
+            }),
             spokenLines: Object.freeze(
               presentationPieces
                 .slice(spokenBefore)
@@ -4936,6 +5756,26 @@ try {
       `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
     );
   }
+  // THE LAST READING OF THE WORLD'S CLOCK, taken HERE because this is the last point at which the bridge can be asked:
+  // the `finally` closes the runtime and the client, and after that the run has a result and no world. One solicit, so a
+  // run that dispatched nothing - and was therefore handed nothing but its hello snapshot - still has two readings to
+  // span, which is the difference between `not_measured:game_clock_read_once` and an answer about the world.
+  await readGameClockOnce({ source: "final_read" });
+  // AND THE FIRST HYPOTHESIS ANYONE REACHES FOR, answered from this run's own Mod log rather than assumed: a Stardew
+  // window that loses focus pauses the game unless something clears `Game1.options.pauseWhenOutOfFocus`, and this Mod
+  // does (every tick, `WindowModeManagement`). A frozen clock is therefore NOT explained by an unfocused window unless
+  // the mechanism cannot be shown to have run - and then the reading says `not_established` instead of guessing.
+  const pauseOnUnfocus = assessPauseOnUnfocus({ modLog: readModLogText() });
+  console.error(
+    "PAUSE_ON_UNFOCUS",
+    pauseOnUnfocus.state,
+    JSON.stringify({
+      windowMode: pauseOnUnfocus.windowMode,
+      reasserted: pauseOnUnfocus.reasserted,
+      reason: pauseOnUnfocus.reason,
+      decidedIn: pauseOnUnfocus.decidedIn,
+    }),
+  );
   // Both CHANNELS of an execution, each from its own source: the flat request frames the runner sent, and the nodes a
   // program ran natively (joined to their action ids through the submissions).
   const sessionDispatch = summarizeDispatchedActions(actionTrace, programOutcomesAtTeardown ?? [], programSubmissions);
@@ -5038,6 +5878,43 @@ try {
   );
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
+  // WHAT SHE WAS ACTUALLY TOLD, per scheduled day, read from the session record rather than from what the harness sent.
+  //
+  // `round49` delivered exactly one player message, it was the stance gate's, and the day's note appeared nowhere in the
+  // run: she answered a question correctly, submitted nothing, and the round was scored as a talk-only round it had never
+  // been given the task for. Every check the harness had asked what it SENT - a task purpose, a delivery reason - and one
+  // of them was even green. This one reads the session's own user messages, so an admission the Host accepted and never
+  // delivered is visible instead of reading as a day that accomplished nothing.
+  const dayNoteDelivery = assessPlayerInputSchedule({
+    schedulesDayNotes: SCENARIO === "multiday_routine",
+    scheduled: dayTasksScheduled.map(({ day, task }) => ({ day, task, note: dayNoteFragment(task, localeKey) })),
+    inputs: playerInputs,
+    sessionTexts: readSessionPlayerTexts(sessionSearch.path),
+    sessionReason: sessionSearch.reason ?? null,
+  });
+  console.error(
+    "MULTIDAY_DAY_NOTES",
+    dayNoteDelivery.reading,
+    dayNoteDelivery.findings.map((finding) => finding.code).join(","),
+  );
+  // DID ANY DAY START BLIND? Read from the world-state block each day's first delivery actually carried, over the days
+  // this run scheduled - printed, because a reading nobody prints is a reading nobody sees.
+  const dayStartAssessment = assessDayStarts({
+    scheduledDays: SCENARIO === "multiday_routine" ? dayTasksScheduled.length : 1,
+    readings: dayStarts,
+  });
+  console.error(
+    "DAY_STARTS",
+    dayStartAssessment.reading,
+    dayStartAssessment.findings.map((finding) => finding.code).join(","),
+  );
+  // AND THE ATTACH'S OWN ARRIVAL, which the same missing call suppressed: once `activateIngress()` hands over the
+  // snapshot, `companionArrivalFact` mints one `companion_arrival` per Game session, and the record says whether it did.
+  const companionArrival = assessCompanionArrival({
+    attached: runtime?.connected !== undefined,
+    texts: readSessionPlayerTexts(sessionSearch.path),
+  });
+  console.error("COMPANION_ARRIVAL", companionArrival.reading, companionArrival.verdictCode ?? "");
 
   const sessionVerdict = deriveSessionVerdict({
     worldStallReason,
@@ -5054,6 +5931,13 @@ try {
     agentTurnOutcome,
     morningLiveness,
     dialogueGates,
+    // The note a scheduled day was given, or the reason it was not: a session that was never told what the day was for has
+    // not completed a day of it, whatever it did instead.
+    dayNoteVerdict: dayNoteDelivery.verdictCode,
+    // The day-start reading and the attach's arrival: both are the harness's own delivery, and both come before anything
+    // she did with the day.
+    dayStartVerdict: dayStartAssessment.verdictCode,
+    companionArrivalVerdict: companionArrival.verdictCode,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
@@ -5285,6 +6169,14 @@ try {
     }),
     // The multi-day clause IS the session verdict (see `multidayRoutinePassed`), so its code is the verdict's own.
     Object.freeze({ id: "multiday_routine", passed: multidayRoutinePassed, reasonCode: sessionVerdict }),
+    // THE DAY'S NOTE, in its own right beside the day's purpose: a run that was never told what the day was for cannot be
+    // scored as a day that did not do it. Its codes are the reading's own (`day_note_not_delivered:<day>:<task>`,
+    // `dialogue_gate_preempted_the_day_note:<gateId>:<day>`, `dialogue_gate_fired_early:<gateId>:<declared>:<actual>`).
+    Object.freeze({
+      id: "day_note_delivery",
+      passed: dayNoteDelivery.passed,
+      reasonCode: dayNoteDelivery.verdictCode ?? "day_notes_delivered",
+    }),
     // THE TASK'S OWN QUESTION, beside the session's shape rather than inside it. A run whose day purpose was
     // `unproven` has not been shown to have done what it was asked, and the clause states it in its own right so the
     // artifact names it even when a more structural clause fails first (see `deriveRungVerdict`'s `failedClauses`).
@@ -5323,6 +6215,9 @@ try {
     capture,
     runtimeRoot,
     providerReadiness,
+    // Whether the world this run judged was moving at all, and what this run's own log says about the one mechanism that
+    // would stop its clock without stopping its process.
+    pauseOnUnfocus,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
     // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
     modLog: captureModLogFacts(capture?.dir ?? null),
@@ -5388,6 +6283,15 @@ try {
     // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).
     dialogueGates,
     dialogueGateDelivery,
+    // The day-note reading and its findings, from the session record: what each scheduled day WAS told, whether a gate
+    // spoke over it, and whether that gate kept its declared hour.
+    dayNoteDelivery,
+    // What each day's first delivery carried, day by day: whether the world had been observed, how long the harness waited
+    // for it, and the world-state block itself. Published beside the note reading because "she was handed a turn before she
+    // was handed the world" and "she was never handed the task" are different findings about the same day.
+    dayStarts: dayStartAssessment,
+    // The attach's own arrival fact, exactly once per Game session, or the reason the record could not say.
+    companionArrival,
     // The 30-minute interaction-value gate, clause by clause, from this run's own session record and timeline.
     interactionValue,
     capabilityAudit,
@@ -5507,6 +6411,9 @@ try {
   });
   unwindSteps.push(reclamationStep({ step: "binding_close", ok: bindingFailure === null, detail: bindingFailure }));
   let detachFailure = null;
+  // The bridge is about to go: from here a beat that fires must not go asking it anything (game-clock.mjs `close`), so
+  // it says `not_attempted:bridge_closed` instead of reporting the closed bridge as a solicitation that failed.
+  gameClock.close();
   try {
     client.close("agent_ab_complete");
   } catch (error) {
@@ -5652,6 +6559,10 @@ function splitSpeakableSentenceChunks(text) {
  */
 async function closeCapture(capture, runtimeRoot, into) {
   if (capture === null || capture === undefined) return null;
+  // The run reached its end, and the record says so beside the state it ended in: a `run-progress.jsonl` whose last event
+  // is `run_ended` is a run that published; one that stops at `turn_started` is a run whose process went away.
+  progress?.record({ event: "run_ended", state: into?.state ?? null, reasonCode: into?.reasonCode ?? null });
+  progress?.close();
   try {
     await capture.record("result.json", into);
     await capture.captureRuntimeRoot(runtimeRoot);
@@ -5792,6 +6703,9 @@ async function buildRunResult({
   runtimeRoot,
   settlement,
   providerReadiness = null,
+  // Whether this run's own log says the unfocus pause was cleared for it (`assessPauseOnUnfocus`), or `null` for a run
+  // whose main path never got there: a crashed run publishes that it did not measure it, never a guess.
+  pauseOnUnfocus = null,
   ...evidence
 }) {
   // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
@@ -5862,10 +6776,23 @@ async function buildRunResult({
   // whose own commitment count disagrees with its account cannot be a passed run, and the bundle publishes the same
   // object the clause was decided on.
   const presentationEvidence = summarizePresentationEvidence();
+  // WHETHER THE WORLD MOVED, derived ONCE and read twice - by the clause below and by the result this function
+  // publishes - so a run cannot be blocked by a clock its own artifact says was turning. It is the FIRST clause for a
+  // reason: a paused world measures nothing about the companion, so the behavioural clauses below it have to be preceded
+  // by the fact that there was a world to behave in. `round50b` (2026-11-19) is that case measured: ten real minutes,
+  // zero bridge facts, and no reading anywhere in the artifact to say whether the clock had stopped.
+  const clockReadout = gameClock.read({ facts: factLog.length });
+  console.error("GAME_CLOCK", clockReadout.line);
+  const clockClause = Object.freeze({
+    id: "game_clock",
+    passed: clockReadout.verdict === "advanced",
+    reasonCode: clockReadout.reasonCode ?? "game_clock_advanced",
+  });
   const rung =
     rungClauses === null
       ? null
       : deriveRungVerdict([
+          clockClause,
           ...rungClauses,
           actionBreadthClause(actionBreadth),
           // The run's own delivery account, beside the ledger's: `presentation.pieceCount` pieces were committed and
@@ -6026,6 +6953,15 @@ async function buildRunResult({
     // reason }`. A later `503 auth_unavailable` in this result is then a provider that went down mid-run, not a run
     // nobody checked - and `null` says nobody checked at all.
     providerReadiness,
+    // THE WORLD'S OWN CLOCK across this run: `first`/`last` in the game's own `HHmm`, the span between them in game
+    // minutes, how many readings that span rests on, and the facts this run recorded turned into a rate PER GAME HOUR.
+    // `not_measured:game_clock_read_once` and `world_clock_never_advanced:<first>:<last>:<minutes>` are the two shapes
+    // that refuse a verdict, and both are published rather than left to be inferred from a missing field.
+    gameClock: clockReadout,
+    // The pause hypothesis, tested against this run's own log: which window mode the Mod applied, whether the engine put
+    // the unfocus pause back, and `not_established` when the log cannot say. `null` for a run that never reached the
+    // reading, which is a different answer from "the mechanism ran".
+    pauseOnUnfocus,
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: presentationEvidence,
@@ -6067,6 +7003,14 @@ async function buildRunResult({
   // Close the capture: keep the runtime root's evidence, record the result JSON itself, and surface any capture
   // failure on the result.
   result.capture = await closeCapture(capture, runtimeRoot, result);
+  // THE INPUT THIS RUN HANDED THE MODEL, written beside the result. A behavioural difference between two runs is
+  // attributable to an input difference only when the input is on disk and diffable (`tools/compare-run-inputs.mjs`),
+  // and until this existed the input was reconstructible only by hand from the session record - which produced three
+  // wrong causes in one day (measured 2026-11-14). Read from THIS run's own session record, the runtime's account of
+  // what it delivered, and written on EVERY path through here: a blocked run was handed its input just the same. A
+  // record that cannot be bound is answered by name (`session_record_not_bound`), never as an empty manifest.
+  result.inputManifest = writeInputManifest({ sessionPath: runSessionRecord.path ?? null, resultPath: RESULT_FILE });
+  console.error("INPUT_MANIFEST", JSON.stringify(result.inputManifest));
   // Write the machine-readable result to a dedicated file so stdout logs (e.g. native chat ingress traces) can never
   // corrupt JSON parsing of the result. The path is module scope because the TEARDOWN account is stamped into this same
   // file after the unwind, and a second derivation of the name is how the two writers would come to disagree.
@@ -6090,6 +7034,14 @@ async function writeRunBundle({
   failure,
   historianRubric = null,
 }) {
+  // A run that died before it materialised its runtime has no root and no identity to name a bundle after: every path
+  // below is `<runtimeRoot>/contexts/<identityKey>/...`. The bundle is the one artifact such a run cannot produce, so it
+  // is REFUSED by name - the same shape the write below refuses with - instead of throwing away the result the run does
+  // have. Before the record above the failure hooks was hoisted, this path threw `Cannot access 'identity' before
+  // initialization` and the run published no artifact at all.
+  if (typeof runtimeRoot !== "string" || runtimeRoot.length === 0 || identity === null) {
+    return Object.freeze({ state: "refused", reasonCode: "run_never_materialised_its_runtime" });
+  }
   // The narrative the run wrote, judged from its own captured runtime root. The CALLER judges it (the verdict needs
   // the same answer); this falls back to judging here so the bundle is never silent about it.
   const historianRubricOutcome = historianRubric ?? judgeRunHistorianRubric(runtimeRoot);

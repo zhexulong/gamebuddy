@@ -29,15 +29,10 @@ internal sealed partial class ExecutionManager
         LocalPedestalTakingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId,
             item!.QualifiedItemId, item.Stack, inventoryBefore, this.tick, deadlineMs);
         this.slots.PedestalTaking.Assign(specification);
-        // Published BEFORE the native take, and the receipt the caller receives is the one that was published:
-        // the funnel below annotates a held-body wait and can bump the revision, so the minted copy is not what the
-        // world saw. The native call then runs in order, and its own branches settle through the same funnel.
         LocalExecutionReceipt accepted = this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};phase=pending_native_mutex");
         try
         {
-            // Mirror the native checkForAction gate, then perform the native
-            // terminal move directly (locked pedestals refuse exactly as in game).
             if (pedestal!.locked.Value)
             {
                 this.slots.PedestalTaking.Clear();
@@ -124,8 +119,7 @@ internal sealed partial class ExecutionManager
         int after = fence.gatePosition.Value;
         bool succeeded = (before == 0 && after == 88) || (before == 88 && after == 0);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};gate_position_before={before};gate_position_after={after};is_open={(after == 88).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "fence_gate_toggled" : "fence_gate_postcondition_unavailable", evidence);
+        return this.SettlePostcondition(requestId, executionId, succeeded, "fence_gate_toggled", "fence_gate_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetFenceGate(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.Fence? fence)

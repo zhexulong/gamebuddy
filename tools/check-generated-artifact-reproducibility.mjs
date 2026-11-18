@@ -72,6 +72,14 @@
  * red-proof: inject   an empty file at a `generated/` path in the same copy -> `generated_artifact_without_producer:<that path>`, exit 1
  * red-proof: inject   the assembly resolution pinned back to a Debug build (the pre-fix file replayed on a tree whose export project carries only a Release build) -> `generated_artifact_producer_unavailable:<each surface artefact>:missing_input`, `reproduced 2`, exit 2; this file reads `reproduced 5 · declared_by_test 1`, exit 0 (measured 2026-11-12)
  */
+
+export const gateDeclaration = {
+  id: "check-generated-artifact-reproducibility",
+  domain: "data",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";

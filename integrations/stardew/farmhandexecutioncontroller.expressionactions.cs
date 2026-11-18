@@ -56,9 +56,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            // A failed native dispatch must still produce the one durable
-            // terminal receipt for this exact execution; it must never escape
-            // while a durable admission is pending.
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,

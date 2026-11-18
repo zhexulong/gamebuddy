@@ -212,6 +212,9 @@ public sealed partial class ModEntry
         NativeLocalFixtureScenarioRow.ActorPrepared("native_enter_mine_v1", static (mod, player, _, _) => mod.InitializeNativeLocalEnterMineFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_mine_elevator_v1", static (mod, player, farm, _) => mod.InstallNativeLocalMineElevatorFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_shop_purchase_v1", static (mod, player, farm, _) => mod.InstallNativeLocalShopPurchaseFixture(player)),
+        // The SAME action's second Given: the blacksmith's counter, one copper hoe to upgrade, and the material the
+        // engine's own upgrade entry charges. Its own scenario because a world cannot be in two shops at once.
+        NativeLocalFixtureScenarioRow.ActorPrepared("native_shop_tool_upgrade_v1", static (mod, player, farm, _) => mod.InstallNativeLocalShopToolUpgradeFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_open_geode_v1", static (mod, player, farm, _) => mod.InstallNativeLocalOpenGeodeFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_ride_bus_v1", static (mod, player, farm, _) => mod.InstallNativeLocalRideBusFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_ride_minecart_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalRideMinecartFixture(player, farm)),

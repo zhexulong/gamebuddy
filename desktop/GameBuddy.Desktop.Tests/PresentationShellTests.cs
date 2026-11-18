@@ -112,7 +112,7 @@ public sealed class PresentationShellTests
         // A secondary process may not turn this one-shot channel into an option channel: a valid
         // frame with one more field is refused, not accepted with the field ignored.
         await AssertFrameRefusedAsync(
-            $"{{\"schema\":\"{DesktopPresentationHandoff.FrameSchema}\",\"protocolVersion\":1,\"bootstrapId\":\"{BootstrapId}\",\"launchUrl\":\"{Entry}\",\"root\":\"C:\\\\data\"}}");
+            $$"""{"schema":"{{DesktopPresentationHandoff.FrameSchema}}","protocolVersion":1,"bootstrapId":"{{BootstrapId}}","launchUrl":"{{Entry}}","root":"C:\\data"}""");
     }
 
     [Fact]

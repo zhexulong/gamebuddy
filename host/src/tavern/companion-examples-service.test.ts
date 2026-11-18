@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
+import { buildChatCompanionSystemPrompt } from "../companion-prompt-assembly.js";
 import {
-  buildChatCompanionSystemPrompt,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   type IdentityProfile,

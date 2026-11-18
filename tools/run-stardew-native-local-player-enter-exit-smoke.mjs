@@ -24,6 +24,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
 
@@ -53,7 +54,7 @@ export async function runEnterExitSmoke(
   if (!MODES.has(mode)) throw new Error(`native_local_enter_exit_mode_invalid:${mode}`);
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "enter_exit" });
   try {
     if (mode === "warp")
       return await runWarpSourceSlice(client, receipts, trace, startedAt, { moveTimeoutMs, enterExitTimeoutMs });
@@ -618,17 +619,6 @@ function adjacent(left, right) {
     Math.abs(left.x - right.x) <= 1 &&
     Math.abs(left.y - right.y) <= 1
   );
-}
-
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
 }
 
 function enterExitSummary(snapshot) {

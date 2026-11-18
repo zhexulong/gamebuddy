@@ -28,6 +28,13 @@
  *   `stardew_admission_fork_delta_skipped: stardew_source_root_missing:...` and exit 2
  */
 
+export const gateDeclaration = {
+  id: "audit-stardew-admission-fork-delta",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 

@@ -15,6 +15,7 @@ import {
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import { composeWorldState, unchangedWorldAnswer } from "./fact-brief.js";
+import { MODEL_STOP_REASON_CODE } from "./event-pump.js";
 import {
   LOOKUP_SUBJECTS,
   type AffordanceAction,
@@ -26,7 +27,29 @@ import {
   noSnapshot,
 } from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
-import { boundObservedSnapshot } from "./stardew-observation-budget.js";
+import { isOpaqueId, isTileCoordinate, isToolSlot } from "./protocol-target-facts.js";
+import {
+  type ObservationSelection,
+  type SelectionAnswer,
+  type SelectionAxis,
+  type SelectionPredicate,
+  type SelectionRectangle,
+  MAX_TARGET_TILES_SHOWN,
+  OBSERVATION_ENUMERATED_TILE_LIMIT,
+  OBSERVATION_SELECTION_RANGE_LIMIT,
+  OBSERVATION_SELECTION_ROWS_LIMIT_MAX,
+  OBSERVATION_SELECTION_TILE_LIMIT,
+  TARGET_FAMILY_LABELS,
+  axisTileCount,
+  selectObservedRows,
+  selectTileAreaRows,
+  selectionDisagreements,
+  selectionGateReport,
+  selectionRectangle,
+  tileSelectionDisagreements,
+  withoutRowFamilies,
+} from "./game-world-vocabulary.js";
+import { type ObservationBudget, boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace.js";
 import {
@@ -168,6 +191,641 @@ type TileAreaReadIntegration = {
   tileArea(request: TileAreaRequest): Promise<TileAreaResult>;
 };
 
+/**
+ * One rectangle read's outcome: the Mod's answer, or the refusal the model is given instead.
+ *
+ * `detail` is the Mod's own words when it refused. It is kept for `details` and never for the model: the Mod spells its
+ * refusal with the name of the tool this read used to be mounted as, and a caller taught that name would ask for a tool
+ * that does not exist - the Host's own sentence carries the same limit and the same size without it.
+ */
+type RectangleRead =
+  | Readonly<{ ok: true; result: TileAreaResult }>
+  | Readonly<{ ok: false; code: string; hint: string; detail: string | null }>;
+
+/** The wire's own bound on one selection coordinate, matching the rectangle arithmetic the tile reader accepts. */
+const SELECTION_COORDINATE_LIMIT = 1000;
+/** Families one condition may name; past this the caller wants a narrower question, not a longer list. */
+const SELECTION_KINDS_LIMIT = 12;
+
+const selectionAxisSchema = Type.Object(
+  {
+    from: Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+    to: Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+    step: Type.Optional(Type.Integer({ minimum: 1, maximum: SELECTION_COORDINATE_LIMIT })),
+  },
+  { additionalProperties: false },
+);
+
+/** The largest whole number `accepts` takes, by doubling to the first refusal and bisecting back to the last acceptance. */
+function largestAcceptedWholeNumber(accepts: (value: number) => boolean): number {
+  let refused = 1;
+  while (accepts(refused)) {
+    if (refused > Number.MAX_SAFE_INTEGER / 2)
+      throw new Error("largest_accepted_whole_number: the predicate accepts every whole number, so it states no bound");
+    refused *= 2;
+  }
+  let accepted = 0;
+  while (refused - accepted > 1) {
+    const middle = Math.floor((accepted + refused) / 2);
+    if (accepts(middle)) accepted = middle;
+    else refused = middle;
+  }
+  return accepted;
+}
+
+/** The closed whole-number interval from 0 that a wire predicate accepts, read from the predicate itself. */
+function intervalAcceptedBy(accepts: (value: number) => boolean): Readonly<{ minimum: number; maximum: number }> {
+  if (!accepts(0) || accepts(-1))
+    throw new Error("interval_accepted_by: the predicate is not an interval of whole numbers starting at 0");
+  return Object.freeze({ minimum: 0, maximum: largestAcceptedWholeNumber(accepts) });
+}
+
+/** `isOpaqueId`'s shape as a schema: it refuses the empty string, and accepts at most its ceiling of that length. */
+function opaqueIdShape(): Readonly<{ minLength: number; maxLength: number }> {
+  if (isOpaqueId("")) throw new Error("opaque_id_shape: the wire's isOpaqueId now accepts the empty string");
+  return Object.freeze({
+    minLength: 1,
+    maxLength: largestAcceptedWholeNumber((length) => isOpaqueId("a".repeat(length))),
+  });
+}
+
+/**
+ * The argument domains every Game Action schema shares, each one READ FROM THE WIRE'S OWN DECLARATION.
+ *
+ * Measured 2026-11-16: the hand-written schemas in this file carried 327 members, and only sixteen (name, expression)
+ * pairs between them; 314 of those members wrote out one of five bounds that one place should own. A bound copied fifty
+ * times is not a statement, it is a coincidence waiting to drift - and it had already drifted: the descriptor-derived
+ * mounts declared `x`/`y` up to 100000 while `tileRow` refused a value above 1000, so a schema-conformant call was
+ * refused before it reached the bridge. `tools/check-hand-written-schema-constants.mjs` is the gate that keeps each
+ * bound declared exactly once.
+ *
+ * Where each bound comes from - the wire's validator, never this file's opinion:
+ *
+ *   `TILE_COORDINATE_SCHEMA`  `isTileCoordinate`, the predicate `tileRow` enforces for `args.x`/`args.y`.
+ *   `TOOL_SLOT_SCHEMA`        `isToolSlot`, the predicate `slotRow` enforces for `args.slot`.
+ *   `OPAQUE_ID_SCHEMA`        `isOpaqueId`: the wire's own rule for `args.expectedTargetId` (`targetRow`), for
+ *                             `args.chestId` (`opaqueArgRow("chestId", ...)`) and for `requestId`/`idempotencyKey`
+ *                             (the request validator). One predicate over four members, so one constant rather than four
+ *                             spellings of one fact.
+ *   `CALLER_REQUEST_SCHEMA`   that same domain, optional: a request MAY carry the identity pair, and none must.
+ *   `ITEM_ID_SCHEMA`          the item's own wire identity. The wire enforces its 1..128 ceiling through
+ *                             `boundedItemRow(refusal, 128)` at each row that carries an item rather than through an
+ *                             exported predicate, so the ceiling is stated here once - this paragraph is its reason and
+ *                             this line is where it moves.
+ *
+ * A predicate is a function, so its bound is READ by probing it instead of imported as a number: that is the only
+ * reading that cannot disagree with the code deciding whether a request may leave the Host. Doubling and bisection cost
+ * two logarithms of the ceiling, once, at module load.
+ *
+ * Eight members stay literal because they are their own action's and no other's: `respond_level_up`'s published
+ * `choice`/`expectedSkill`/`expectedLevel`, `navigate_to_destination`'s typed `destination`, `equip_tool`'s tool
+ * vocabulary, `till_soil`/`water_crop`'s `charge` (read from the wire's own row by `declaredIntegerArgument`), the
+ * three pinned item ids a fence, a crab pot and a bait pot place, and `machine_load`'s accepted-input pattern. Each is
+ * named with its reason in the gate's `ACTION_LOCAL` declaration, which expires the entry the moment the member stops
+ * being written.
+ */
+const TILE_COORDINATE_SCHEMA = Type.Integer(intervalAcceptedBy(isTileCoordinate));
+const TOOL_SLOT_SCHEMA = Type.Integer(intervalAcceptedBy(isToolSlot));
+const OPAQUE_ID_SCHEMA = Type.String(opaqueIdShape());
+const CALLER_REQUEST_SCHEMA = Type.Optional(OPAQUE_ID_SCHEMA);
+const ITEM_ID_SCHEMA = Type.String({ minLength: 1, maxLength: 128 });
+
+type Parsed<Value> = Readonly<{ ok: true; value: Value }> | Readonly<{ ok: false; code: string; hint: string }>;
+
+type SelectionRead =
+  | Readonly<{ ok: true; selection: ObservationSelection | null; limit: number }>
+  | Readonly<{ ok: false; code: string; hint: string }>;
+
+/** One observation answer's operator evidence, on every path: refused, unavailable, stale or answered. */
+type ObservationDetails = Readonly<{
+  available: boolean;
+  refresh: "fresh" | "cached";
+  refreshError: string | null;
+  reasonCode: string | undefined;
+  observationBudget: ObservationBudget | null;
+  selection: SelectionAnswer | null;
+  selectionGate: string | null;
+  snapshotJson: string | null;
+  /**
+   * The Mod's own words when it refused the rectangle, kept for an operator and never handed to the model.
+   *
+   * The Mod spells its refusal with the name of the tool this read used to be mounted as, and a model told that name
+   * would call a tool that no longer exists; the model gets the Host's sentence, which carries the same limit and the
+   * same size.
+   */
+  selectionRefusal: string | null;
+}>;
+
+const refused = (code: string, hint: string): Readonly<{ ok: false; code: string; hint: string }> => ({
+  ok: false,
+  code,
+  hint,
+});
+
+const readSmallInteger = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && Math.abs(value) <= SELECTION_COORDINATE_LIMIT
+    ? value
+    : undefined;
+
+function readSelectionAxis(raw: unknown, axis: "x" | "y"): Parsed<SelectionAxis> {
+  const hint = `\`${axis}\` 是一个区间：{ from, to, step? }，坐标在 ±${String(
+    SELECTION_COORDINATE_LIMIT,
+  )} 之内，from ≤ to。`;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return refused(`observation_selection_axis_invalid:${axis}`, hint);
+  const record = raw as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(record))
+    if (key !== "from" && key !== "to" && key !== "step")
+      return refused(
+        `observation_selection_unknown_key:${axis}.${key}`,
+        "区间只认 from / to / step：step 是步长，`step: 2` 就是每隔一格取一格。",
+      );
+  const from = readSmallInteger(record.from);
+  const to = readSmallInteger(record.to);
+  if (from === undefined || to === undefined || from > to)
+    return refused(`observation_selection_axis_invalid:${axis}`, hint);
+  if (record.step !== undefined) {
+    const step = readSmallInteger(record.step);
+    if (step === undefined || step < 1) return refused(`observation_selection_axis_invalid:${axis}`, hint);
+    return { ok: true, value: { from, to, step } };
+  }
+  return { ok: true, value: { from, to } };
+}
+
+/**
+ * The top-level shape of one request: a record of exactly `select`, `tiles` and `limit`.
+ *
+ * Every field the rows already carry is accepted - `x`, `y` and the family a row came from - and nothing else is: an
+ * ignored key is a silent default, so `occupant` or `radius` comes back as `observation_selection_unknown_key:<key>`
+ * with the vocabulary that does exist.
+ */
+function readSelectionFields(params: unknown): Parsed<Readonly<Record<string, unknown>>> {
+  if (typeof params !== "object" || params === null || Array.isArray(params))
+    return refused(
+      "invalid_tool_parameters",
+      "stardew_observe 不带参数就是整块世界；要看一块，就带 `select`（矩形 / 步长 / kind）或 `tiles`（枚举格子），`limit` 控制每种列出几行。",
+    );
+  const record = params as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(record))
+    if (key !== "select" && key !== "tiles" && key !== "limit")
+      return refused(
+        `observation_selection_unknown_key:${key}`,
+        "已发布的每一行只带 x、y 和它所属的 kind，所以选择也只认 x / y / kinds；顶层只认 select、tiles、limit。",
+      );
+  return { ok: true, value: record };
+}
+
+/** `limit`: how many rows of each kind are listed. The rest are counted, never dropped. */
+function readSelectionLimit(raw: unknown): Parsed<number> {
+  if (raw === undefined) return { ok: true, value: MAX_TARGET_TILES_SHOWN };
+  const asked = readSmallInteger(raw);
+  if (asked === undefined || asked < 1 || asked > OBSERVATION_SELECTION_ROWS_LIMIT_MAX)
+    return refused(
+      `observation_selection_limit_invalid:${String(raw)}`,
+      `\`limit\` 是每种列出的行数，取 1～${String(OBSERVATION_SELECTION_ROWS_LIMIT_MAX)}；其余的行只会计数，不会消失。`,
+    );
+  return { ok: true, value: asked };
+}
+
+/** The families one condition names, each one a kind this observation publishes a row under. */
+function readSelectionKinds(raw: unknown): Parsed<readonly string[]> {
+  if (!Array.isArray(raw) || raw.length === 0)
+    return refused("observation_selection_axis_invalid:kinds", "`kinds` 至少给一个族名。");
+  if (raw.length > SELECTION_KINDS_LIMIT)
+    return refused(
+      `observation_selection_too_many_kinds:${String(raw.length)}:${String(SELECTION_KINDS_LIMIT)}`,
+      `一个条件最多 ${String(SELECTION_KINDS_LIMIT)} 个族名；更多就用多个条件。`,
+    );
+  const kinds: string[] = [];
+  for (const kind of raw) {
+    if (typeof kind !== "string" || !Object.hasOwn(TARGET_FAMILY_LABELS, kind))
+      return refused(
+        `observation_selection_unknown_kind:${String(kind)}`,
+        `\`kinds\` 里是该行所属的族名（观察里按 kind 发布），例如 ${Object.keys(TARGET_FAMILY_LABELS)
+          .slice(0, 8)
+          .join(" / ")}。`,
+      );
+    kinds.push(kind);
+  }
+  return { ok: true, value: Object.freeze(kinds) };
+}
+
+/** The rectangle half of a condition: the axes it names, each refused by its own name. */
+function readSelectionAxes(
+  condition: Readonly<Record<string, unknown>>,
+): Parsed<Readonly<{ x?: SelectionAxis; y?: SelectionAxis }>> {
+  const axes: { x?: SelectionAxis; y?: SelectionAxis } = {};
+  for (const axis of ["x", "y"] as const) {
+    if (condition[axis] === undefined) continue;
+    const read = readSelectionAxis(condition[axis], axis);
+    if (!read.ok) return read;
+    axes[axis] = read.value;
+  }
+  return { ok: true, value: Object.freeze(axes) };
+}
+
+/**
+ * One condition: a RECTANGLE (`x` and `y` together), a stride inside it, or a KIND FILTER (`kinds` alone).
+ *
+ * Half a rectangle is refused rather than read as the whole column it would otherwise mean.
+ */
+function readSelectionCondition(raw: unknown): Parsed<SelectionPredicate> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return refused("observation_selection_axis_invalid:select", "`select` 的每一项是 { x?, y?, kinds? }。");
+  const condition = raw as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(condition))
+    if (key !== "x" && key !== "y" && key !== "kinds")
+      return refused(
+        `observation_selection_unknown_key:select.${key}`,
+        "一个条件只认 x（区间）、y（区间）和 kinds（族名）：形状是这三样，别的都不是行里有的东西。",
+      );
+  if ((condition.x === undefined) !== (condition.y === undefined))
+    return refused(
+      `observation_selection_axis_partial:${condition.x === undefined ? "x" : "y"}`,
+      "矩形需要 x 和 y 一起给；只按位置以外的东西找，就只给 `kinds`。",
+    );
+  const axes = readSelectionAxes(condition);
+  if (!axes.ok) return axes;
+  if (condition.kinds === undefined) return { ok: true, value: axes.value };
+  const kinds = readSelectionKinds(condition.kinds);
+  if (!kinds.ok) return kinds;
+  return { ok: true, value: Object.freeze({ ...axes.value, kinds: kinds.value }) };
+}
+
+/** `select`: the union of the conditions a request names, or none when it names no `select` at all. */
+function readSelectionPredicates(raw: unknown): Parsed<readonly SelectionPredicate[]> {
+  if (raw === undefined) return { ok: true, value: Object.freeze([]) };
+  if (!Array.isArray(raw) || raw.length === 0)
+    return refused(
+      "observation_selection_empty",
+      "`select` 是条件的并集：一个空数组什么也不选。要么给它至少一个条件，要么不带 `select`。",
+    );
+  if (raw.length > OBSERVATION_SELECTION_RANGE_LIMIT)
+    return refused(
+      `observation_selection_too_many_ranges:${String(raw.length)}:${String(OBSERVATION_SELECTION_RANGE_LIMIT)}`,
+      `一次最多 ${String(OBSERVATION_SELECTION_RANGE_LIMIT)} 个范围；更多形状请直接枚举格子（\`tiles\`）。`,
+    );
+  const predicates: SelectionPredicate[] = [];
+  for (const condition of raw) {
+    const read = readSelectionCondition(condition);
+    if (!read.ok) return read;
+    predicates.push(read.value);
+  }
+  return { ok: true, value: Object.freeze(predicates) };
+}
+
+/** One enumerated tile: a pair of integers inside the coordinate limit, refused by the shape it was given. */
+function readSelectionTile(raw: unknown): Parsed<readonly [number, number]> {
+  const pair = Array.isArray(raw) && raw.length === 2 ? raw : undefined;
+  const x = pair === undefined ? undefined : readSmallInteger(pair[0]);
+  const y = pair === undefined ? undefined : readSmallInteger(pair[1]);
+  if (x === undefined || y === undefined)
+    return refused(
+      `observation_selection_tile_invalid:${JSON.stringify(raw)}`,
+      `一个格子写成 [x, y]，坐标在 ±${String(SELECTION_COORDINATE_LIMIT)} 之内。`,
+    );
+  return { ok: true, value: Object.freeze([x, y] as const) };
+}
+
+/** `tiles`: the tiles a request enumerates, each an `[x, y]` inside the coordinate limit. */
+function readSelectionTiles(raw: unknown): Parsed<readonly (readonly [number, number])[]> {
+  if (raw === undefined) return { ok: true, value: Object.freeze([]) };
+  if (!Array.isArray(raw) || raw.length === 0)
+    return refused("observation_selection_empty", "`tiles` 是一串 [x, y] 格子：空数组什么也不选。");
+  if (raw.length > OBSERVATION_ENUMERATED_TILE_LIMIT)
+    return refused(
+      `observation_selection_too_many_tiles:${String(raw.length)}:${String(OBSERVATION_ENUMERATED_TILE_LIMIT)}`,
+      `最多枚举 ${String(OBSERVATION_ENUMERATED_TILE_LIMIT)} 格；更大的形状请用 \`select\` 里的 x/y 范围。`,
+    );
+  const tiles: (readonly [number, number])[] = [];
+  for (const rawTile of raw) {
+    const tile = readSelectionTile(rawTile);
+    if (!tile.ok) return tile;
+    tiles.push(tile.value);
+  }
+  return { ok: true, value: Object.freeze(tiles) };
+}
+
+/**
+ * The tiles a selection covers, counted BEFORE any of them is enumerated.
+ *
+ * An oversized rectangle is refused by name instead of spending the process enumerating a million tiles nobody can
+ * read, which is why this number is taken from the predicates rather than from the rows that came back.
+ */
+function countCoveredTiles(predicates: readonly SelectionPredicate[], tiles: readonly unknown[]): number {
+  return predicates.reduce(
+    (total, predicate) =>
+      total +
+      (predicate.x === undefined || predicate.y === undefined
+        ? 0
+        : axisTileCount(predicate.x) * axisTileCount(predicate.y)),
+    tiles.length,
+  );
+}
+
+/**
+ * One request's selection, read and refused BY NAME.
+ *
+ * Read in the order the refusals are ordered: the top-level vocabulary, then `limit`, then the conditions, then the
+ * enumerated tiles, and only then the size the two halves together cover. A caller that gets a code back is told
+ * exactly which field it was, so a malformed selection never reaches the bridge.
+ */
+function readObservationSelection(params: unknown): SelectionRead {
+  const fields = readSelectionFields(params);
+  if (!fields.ok) return fields;
+  const limit = readSelectionLimit(fields.value.limit);
+  if (!limit.ok) return limit;
+  const predicates = readSelectionPredicates(fields.value.select);
+  if (!predicates.ok) return predicates;
+  const tiles = readSelectionTiles(fields.value.tiles);
+  if (!tiles.ok) return tiles;
+  if (predicates.value.length === 0 && tiles.value.length === 0)
+    return { ok: true, selection: null, limit: limit.value };
+  const covered = countCoveredTiles(predicates.value, tiles.value);
+  if (covered > OBSERVATION_SELECTION_TILE_LIMIT)
+    return refused(
+      `observation_selection_too_many_tiles:${String(covered)}:${String(OBSERVATION_SELECTION_TILE_LIMIT)}`,
+      `这个选择覆盖 ${String(covered)} 格，超过 ${String(
+        OBSERVATION_SELECTION_TILE_LIMIT,
+      )} 格；枚举最多 ${String(OBSERVATION_ENUMERATED_TILE_LIMIT)} 格，更大的范围请缩窄 x/y 或用 step 跳格。`,
+    );
+  return {
+    ok: true,
+    selection: Object.freeze({ predicates: predicates.value, tiles: tiles.value }),
+    limit: limit.value,
+  };
+}
+
+/** One bounded observation: the snapshot the model is handed, and what bounding it cost. */
+type BoundedObservation = ReturnType<typeof boundObservedSnapshot>;
+
+/** One refresh attempt's outcome: whether the world was re-read, and the failure's own words when it was not. */
+type ObservationRefresh = Readonly<{ kind: "fresh" | "cached"; error: string | null }>;
+
+/**
+ * Ask the Mod for a fresh observation, once.
+ *
+ * A fresh solicited observe is the only way the Agent can see the world after its own navigate/execute advanced the Mod
+ * revision; the Host cache alone would still describe the pre-action location. The observed snapshot is admitted into
+ * the connection state by the receive path, so the caller re-reads the cache afterwards (works for both the
+ * Promise-returning production client and the synchronous test client).
+ */
+async function refreshObservation(
+  integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
+): Promise<ObservationRefresh> {
+  if (typeof integration.observe !== "function") return { kind: "cached", error: null };
+  try {
+    await integration.observe();
+    return { kind: "fresh", error: null };
+  } catch (error) {
+    return { kind: "cached", error: String(error instanceof Error ? error.message : String(error)) };
+  }
+}
+
+/**
+ * What an observation with no world in it says to the model, and the reason code beside it.
+ *
+ * The text carries the actionable cause, not one opaque sentence. A trace shows the Agent polling this tool 32 times
+ * with the same uninformative reply after the bridge had gone away, because the reason code was present but only in
+ * `details`.
+ *
+ * A FAILED refresh is not the same as "no refresh", and serving the cached snapshot as if it were current hides a
+ * deadlock: the connection is still up, the request timed out, and the world may have stopped advancing. Measured
+ * 2026-10-18 (run g43cross): between three 60-second action timeouts the Agent called this tool, the refresh failed, and
+ * it received a perfectly ordinary-looking snapshot from revision 383 - so it kept acting on stale coordinates and
+ * amplified the cascade, with the failure visible only in `details.refreshError`.
+ */
+function describeObservationAbsence(
+  state: StardewBridgeConnection["state"],
+  refreshError: string | null,
+): Readonly<{ reason: string; text: string }> {
+  const reason = state.latestReasonCode ?? "integration_not_ready";
+  if (!state.connected)
+    return {
+      reason,
+      text: `No live Stardew connection: ${reason}. The bridge is not attached, so the world cannot be observed and actions cannot be issued — do not keep retrying; report the state to the player instead.`,
+    };
+  return {
+    reason,
+    text: `No authoritative Stardew snapshot is available: ${reason}. The connection is up but the world is not observable yet${refreshError === null ? "" : ` (last refresh failed: ${refreshError})`}; retry only after the world state changes, not in a tight loop.`,
+  };
+}
+
+/** The code one answer is labelled with: fresh, cached, cached-after-a-failed-refresh, or the absence's own name. */
+function observationReasonCode(
+  available: boolean,
+  refresh: "fresh" | "cached",
+  staleAfterFailedRefresh: boolean,
+  unavailableReason: string,
+): string {
+  if (!available) return unavailableReason;
+  if (refresh === "fresh") return "available_fresh";
+  return staleAfterFailedRefresh ? "available_cached_after_failed_refresh" : "available_cached";
+}
+
+/**
+ * Whether one answer is the world it already stated, or a new reading of it.
+ *
+ * A SELECTION is always new: the model asked a NEW question about the same revision, and "the world has not changed"
+ * would leave that question unanswered.
+ */
+function observationNovelty(
+  parts: Readonly<{
+    bounded: BoundedObservation | null;
+    revision: number | undefined;
+    observedRevisionShown: number | undefined;
+    selectionAnswer: SelectionAnswer | null;
+  }>,
+): Readonly<{ unchanged: boolean; fresh: boolean }> {
+  if (parts.selectionAnswer !== null || parts.bounded === null || parts.revision === undefined)
+    return { unchanged: false, fresh: false };
+  const unchanged = parts.revision === parts.observedRevisionShown;
+  return { unchanged, fresh: !unchanged };
+}
+
+/**
+ * The snapshot the world block describes: the bounded one, without its row families when a selection prints those rows
+ * itself, so a row is rendered once and never twice.
+ */
+function worldSnapshotOf(
+  bounded: BoundedObservation | null,
+  selectionAnswer: SelectionAnswer | null,
+): Readonly<Record<string, unknown>> | undefined {
+  if (bounded === null) return undefined;
+  return selectionAnswer === null ? bounded.snapshot : withoutRowFamilies(bounded.snapshot);
+}
+
+/**
+ * The world block one answer hands the model, and the selection block in front of it.
+ *
+ * The answer is the SAME block the per-turn delivery composes (`fact-brief.ts`), from the snapshot the Mod just
+ * published - not a second rendering of the world with its own wording. Measured `round44`: the JSON dump this replaces
+ * was a median 20,980 characters per call, 648,059 over 31 calls, 81.1% of every tool-result byte.
+ */
+function composeObservationBody(
+  parts: Readonly<{
+    bounded: BoundedObservation | null;
+    revision: number | undefined;
+    unchanged: boolean;
+    selectionAnswer: SelectionAnswer | null;
+  }>,
+): string {
+  const worldSnapshot = worldSnapshotOf(parts.bounded, parts.selectionAnswer);
+  if (parts.bounded === null || parts.revision === undefined || worldSnapshot === undefined)
+    return parts.selectionAnswer === null ? "" : parts.selectionAnswer.text;
+  const worldText = parts.unchanged
+    ? unchangedWorldAnswer(parts.revision)
+    : composeWorldState({
+        snapshot: worldSnapshot as unknown as Snapshot,
+        revision: parts.revision,
+        ageTurns: 0,
+        // This answer IS the observation the block describes, so its age is zero on both measures.
+        ageMs: 0,
+        contentAgeMs: 0,
+      });
+  if (parts.selectionAnswer === null) return worldText;
+  return worldText === "" ? parts.selectionAnswer.text : `${parts.selectionAnswer.text}\n${worldText}`;
+}
+
+/** The model-facing text of one answer: the stale warning first, then the world; or the absence, in its own words. */
+function observationContent(
+  parts: Readonly<{
+    available: boolean;
+    staleAfterFailedRefresh: boolean;
+    refreshError: string | null;
+    body: string;
+    unavailable: string;
+  }>,
+): string {
+  if (!parts.available) return parts.unavailable;
+  if (!parts.staleAfterFailedRefresh) return parts.body;
+  // A refresh the Mod refused still has a world to state - the last one it published - and the failure is said FIRST,
+  // because a block that reads as current after a failed refresh is the deadlock this sentence exists for.
+  return `STALE SNAPSHOT: the fresh observation FAILED (${String(
+    parts.refreshError,
+  )}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them.\n${parts.body}`;
+}
+
+/**
+ * One selection answer's outcome: the answer and the gate's own line, or the refusal the model is given instead.
+ *
+ * `text` is the whole model-facing sentence rather than a code the caller re-joins with a hint, because the
+ * disagreement refusal names EVERY disagreeing group at once: a caller that reassembled `${code}。${hint}` would drop
+ * the groups after the first and ship the model a shorter complaint than the gate made.
+ */
+type SelectionAttempt =
+  | Readonly<{ ok: true; answer: SelectionAnswer; gate: string }>
+  | Readonly<{
+      ok: false;
+      reasonCode: string | undefined;
+      text: string;
+      selection: SelectionAnswer | null;
+      gate: string | null;
+      refusal: string | null;
+    }>;
+
+/**
+ * One rectangle read, through the Mod, in one round trip.
+ *
+ * THE BOUND IS THE MOD'S (`TileAreaQuery.AreaLimit`), which is why this request carries no area check: a refusal the Mod
+ * answers is the one that names that limit beside the size that was asked for, and a Host-side copy of the number would
+ * be a second opinion the model could be told instead of the truth.
+ */
+async function readRectangle(
+  integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
+  rectangle: SelectionRectangle,
+): Promise<RectangleRead> {
+  const reader = (integration as Partial<TileAreaReadIntegration>).tileArea;
+  if (typeof reader !== "function")
+    return {
+      ok: false,
+      code: "tile_area_query_unavailable",
+      hint: "这次会话没有矩形读取通道，这块格子读不到；用不带参数的 observe 看整块世界，或用 `tiles` 逐格问已发布的行。",
+      detail: null,
+    };
+  let result: TileAreaResult;
+  try {
+    result = await (integration as TileAreaReadIntegration).tileArea({
+      x: rectangle.x,
+      y: rectangle.y,
+      w: rectangle.w,
+      h: rectangle.h,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      code: "tile_area_query_failed",
+      hint: `矩形读取失败了（${message}）：世界可能没在推进，先重新 observe 一次再问，别在这个循环里重试。`,
+      detail: message,
+    };
+  }
+  if (result.status === "answered") return { ok: true, result };
+  const size = result.w * result.h;
+  return {
+    ok: false,
+    code: `observation_rectangle_refused:${result.status}:${String(size)}:${String(result.areaLimit)}`,
+    hint:
+      result.status === "area_too_large"
+        ? `${String(result.w)}×${String(result.h)} 共 ${String(size)} 格，超过一次能读的 ${String(
+            result.areaLimit,
+          )} 格：把 x 或 y 收窄成更短的条，或分几次问。`
+        : `Mod 拒绝了这个 ${String(result.w)}×${String(result.h)} 的矩形（${result.status}）：换一个落在这张地图上、有世界状态的矩形再问。`,
+    detail: result.detail,
+  };
+}
+
+/**
+ * THE SELECTION IS ANSWERED FROM WHERE THE QUESTION LIVES, in one place.
+ *
+ * A rectangle names TILES, and a tile no family published is one only the Mod can read, so that is a single `tile_area`
+ * round trip; a kind filter or an enumerated tile names published ROWS and is filtered out of the snapshot the answer
+ * just admitted. Either way the answer's shape, its gate and the three zeroes are the same, and nothing reaches the
+ * model before the gate has run.
+ */
+async function answerSelection(
+  integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
+  selection: ObservationSelection,
+  observed: Snapshot,
+  limit: number,
+): Promise<SelectionAttempt> {
+  const rectangle = selectionRectangle(selection);
+  const read = rectangle === null ? null : await readRectangle(integration, rectangle);
+  if (read !== null && !read.ok)
+    return {
+      ok: false,
+      reasonCode: read.code,
+      text: `${read.code}。${read.hint}`,
+      selection: null,
+      gate: null,
+      refusal: read.detail,
+    };
+  let answer: SelectionAnswer;
+  let disagreements: readonly string[];
+  if (read === null) {
+    const fromRows = selectObservedRows(observed, selection, limit);
+    answer = fromRows;
+    disagreements = selectionDisagreements(observed, selection, fromRows);
+  } else {
+    const fromTiles = selectTileAreaRows(read.result, selection, limit, observed.tile);
+    answer = fromTiles;
+    disagreements = tileSelectionDisagreements(read.result, fromTiles);
+  }
+  const gate = selectionGateReport();
+  // A summary that does not add up is refused, not shipped: the model would have no way to tell which of the two numbers
+  // is the wrong one.
+  if (disagreements.length > 0)
+    return {
+      ok: false,
+      reasonCode: disagreements[0],
+      text: `${disagreements.join("；")}。这张回答的分组和它自己带的行对不上，所以不交给你；重新 observe 一次再看。`,
+      selection: answer,
+      gate,
+      refusal: null,
+    };
+  return { ok: true, answer, gate };
+}
+
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
 export function createStardewObservationTools(
   integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
@@ -183,97 +841,142 @@ export function createStardewObservationTools(
     name: "stardew_observe",
     label: "Observe Stardew",
     description:
-      "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left.",
-    parameters: Type.Object({}),
-    execute: async () => {
+      "Read the latest authoritative Stardew Farmhand snapshot by asking the Mod for a fresh observation. This never changes the game. Always call this again after any action that changes location or world state; the previous result may describe a location you have already left. " +
+      "With NO argument you get the whole bounded world. To ask about a SHAPE instead - 'the 3-wide, 20-long strip', 'the row along the fence', 'what is on these three tiles' - pass a SELECTION and the answer is about that shape: " +
+      "`select` is a union of conditions, each { x?: {from,to,step?}, y?: {from,to,step?}, kinds?: [family,...] } - a rectangle, a stride (`step: 2` is every other tile), or kinds alone (every published row of those families wherever it stands); `tiles` is a union of explicit [x,y] tiles for any shape a rectangle cannot say. Both are unioned when both are given. " +
+      "ONE RECTANGLE - `x` and `y` together and no `kinds` - is answered PER TILE in ONE round trip: the Mod reads every tile of it, and each row carries tillable (would the Hoe admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), occupantKind (what stands there in the very words a for_each `where: [{ occupant: ... }]` filter takes, so a row can be filtered with the same word a loop is written in), hoed / watered / crop (the soil's state), and passable (would the pathfinder step onto it now). Ask for the rectangle whenever the task has a shape instead of observing again and guessing the tiles in between: the observation's own families are only a square window around you, so a long strip is not in them. A rectangle has a SIZE limit, and a bigger one is REFUSED by name with the limit and the size you asked for. " +
+      "`kinds` are the family names the observation already publishes (weedTargets, treeStumpTargets, soilTiles, debrisTargets, ...), and a condition that names them is filtered over the rows this snapshot ALREADY published - a family row says where something stands and nothing about the tiles between them, so name `kinds` only when that is the question. An unknown one is refused by name. " +
+      "`limit` (1-" +
+      String(OBSERVATION_SELECTION_ROWS_LIMIT_MAX) +
+      ", default " +
+      String(MAX_TARGET_TILES_SHOWN) +
+      ") is how many rows of each kind are listed; the rest are COUNTED, never dropped. " +
+      "The answer always has one shape: how many tiles the selection named (with rows / measured-empty / unreadable), then per kind its count, then the nearest rows. The three zeroes stay apart: a tile that was read and has nothing on it is EMPTY, a tile the answer carries no row for is named UNREADABLE, and a kind this observation never published is NOT MEASURED.",
+    parameters: Type.Object(
+      {
+        select: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                x: Type.Optional(selectionAxisSchema),
+                y: Type.Optional(selectionAxisSchema),
+                kinds: Type.Optional(
+                  Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+                    minItems: 1,
+                    maxItems: SELECTION_KINDS_LIMIT,
+                  }),
+                ),
+              },
+              { additionalProperties: false },
+            ),
+            { minItems: 1, maxItems: OBSERVATION_SELECTION_RANGE_LIMIT },
+          ),
+        ),
+        tiles: Type.Optional(
+          Type.Array(
+            Type.Tuple([
+              Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+              Type.Integer({ minimum: -SELECTION_COORDINATE_LIMIT, maximum: SELECTION_COORDINATE_LIMIT }),
+            ]),
+            { minItems: 1, maxItems: OBSERVATION_ENUMERATED_TILE_LIMIT },
+          ),
+        ),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: OBSERVATION_SELECTION_ROWS_LIMIT_MAX })),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (
+      _toolCallId,
+      params,
+    ): Promise<{ content: { type: "text"; text: string }[]; details: ObservationDetails }> => {
+      const asked = readObservationSelection(params);
       const state = integration.state;
-      // A fresh solicited observe is the only way the Agent can see the world
-      // after its own navigate/execute advanced the Mod revision; the Host
-      // cache alone would still describe the pre-action location. The observed
-      // snapshot is admitted into the connection state by the receive path, so
-      // re-read the cache afterwards (works for both the Promise-returning
-      // production client and the synchronous test client).
-      let refresh: "fresh" | "cached" = "cached";
-      let refreshError: string | null = null;
-      if (typeof integration.observe === "function") {
-        try {
-          await integration.observe();
-          refresh = "fresh";
-        } catch (error) {
-          refreshError = String(error instanceof Error ? error.message : String(error));
-        }
-      }
+      // A malformed selection is refused BEFORE the bridge is asked anything: the request names a vocabulary this
+      // tool does not have, and a round trip would only spend the answer on the same refusal.
+      if (!asked.ok)
+        return {
+          content: [{ type: "text" as const, text: `${asked.code}。${asked.hint}` }],
+          details: {
+            available: state.connected && state.snapshot !== null,
+            refresh: "cached" as const,
+            refreshError: null,
+            reasonCode: asked.code,
+            observationBudget: null,
+            selection: null as SelectionAnswer | null,
+            selectionGate: null as string | null,
+            snapshotJson: null,
+            selectionRefusal: null,
+          },
+        };
+      const refreshed = await refreshObservation(integration);
       const observed = integration.state.snapshot;
       const available = state.connected && observed !== null;
-      // The admitted snapshot is the whole published world. What the model is HANDED is bounded to
-      // the facts an action is dispatched with (see `boundObservedSnapshot`); the bridge, the
-      // connection state and the plan tool all keep reading the untouched snapshot.
+      // The admitted snapshot is the whole published world. What the model is HANDED is bounded to the facts an action
+      // is dispatched with (see `boundObservedSnapshot`); the bridge, the connection state and the plan tool all keep
+      // reading the untouched snapshot.
       const bounded = available ? boundObservedSnapshot(observed, surfaceRevisionShown) : null;
-      // The action surface is described ONCE per catalog revision; every later observation says only that it has
-      // not changed. Recorded only when the observation succeeded, so a failed refresh cannot consume the one
-      // description the model was owed.
+      // The action surface is described ONCE per catalog revision; every later observation says only that it has not
+      // changed. Recorded only when the observation succeeded, so a failed refresh cannot consume the one description
+      // the model was owed.
       if (bounded !== null && observed !== null) surfaceRevisionShown = observed.catalogRevision;
-      const snapshot = bounded === null ? null : bounded.snapshot;
-      // The model-facing text carries the actionable cause, not one opaque
-      // sentence. A trace shows the Agent polling this tool 32 times with the
-      // same uninformative reply after the bridge had gone away, because the
-      // reason code was present but only in `details`.
-      const unavailableReason = state.latestReasonCode ?? "integration_not_ready";
-      const disconnected = !state.connected;
-      const unavailableText = disconnected
-        ? `No live Stardew connection: ${unavailableReason}. The bridge is not attached, so the world cannot be observed and actions cannot be issued — do not keep retrying; report the state to the player instead.`
-        : `No authoritative Stardew snapshot is available: ${unavailableReason}. The connection is up but the world is not observable yet${refreshError === null ? "" : ` (last refresh failed: ${refreshError})`}; retry only after the world state changes, not in a tight loop.`;
-      // A FAILED refresh is not the same as "no refresh", and serving the cached snapshot as if it were current hides a
-      // deadlock: the connection is still up, the request timed out, and the world may have stopped advancing.
-      // Measured 2026-10-18 (run g43cross): between three 60-second action timeouts the Agent called this tool, the
-      // refresh failed, and it received a perfectly ordinary-looking snapshot from revision 383 - so it kept acting on
-      // stale coordinates and amplified the cascade, with the failure visible only in `details.refreshError`. The
-      // content now names it, and the reasonCode does too.
-      const staleAfterFailedRefresh = available && refresh === "cached" && refreshError !== null;
+      // Operator evidence and the payload both read these two, so they are taken once: a second spelling is how a
+      // refusal's `details` drifts from the answer it belongs to.
+      const budget = bounded === null ? null : bounded.budget;
+      const snapshotJson = bounded === null ? null : JSON.stringify(bounded.snapshot);
+      const absence = describeObservationAbsence(state, refreshed.error);
+      const staleAfterFailedRefresh = available && refreshed.kind === "cached" && refreshed.error !== null;
       const revision = observed === null ? undefined : observed.revision;
-      // The answer is the SAME block the per-turn delivery composes (`fact-brief.ts`), from the snapshot the Mod just
-      // published - not a second rendering of the world with its own wording. Measured `round44`: the JSON dump this
-      // replaces was a median 20,980 characters per call, 648,059 over 31 calls, 81.1% of every tool-result byte.
-      const unchanged = bounded !== null && revision !== undefined && revision === observedRevisionShown;
-      const fresh = bounded !== null && revision !== undefined && !unchanged;
-      const worldText =
-        bounded === null || revision === undefined
-          ? ""
-          : unchanged
-            ? unchangedWorldAnswer(revision)
-            : composeWorldState({
-                snapshot: bounded.snapshot as unknown as Snapshot,
-                revision,
-                ageTurns: 0,
-                // This answer IS the observation the block describes, so its age is zero on both measures.
-                ageMs: 0,
-              });
-      if (fresh) observedRevisionShown = revision;
-      // A refresh the Mod refused still has a world to state - the last one it published - and the failure is said
-      // FIRST, because a block that reads as current after a failed refresh is the deadlock this sentence exists for.
-      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them.\n${worldText}`;
+      let selectionAnswer: SelectionAnswer | null = null;
+      let selectionGate: string | null = null;
+      if (asked.selection !== null && observed !== null) {
+        const attempt = await answerSelection(integration, asked.selection, observed, asked.limit);
+        if (!attempt.ok)
+          return {
+            content: [{ type: "text" as const, text: attempt.text }],
+            details: {
+              available,
+              refresh: refreshed.kind,
+              refreshError: refreshed.error,
+              reasonCode: attempt.reasonCode,
+              observationBudget: budget,
+              selection: attempt.selection,
+              selectionGate: attempt.gate,
+              snapshotJson,
+              selectionRefusal: attempt.refusal,
+            },
+          };
+        selectionAnswer = attempt.answer;
+        selectionGate = attempt.gate;
+      }
+      const novelty = observationNovelty({ bounded, revision, observedRevisionShown, selectionAnswer });
+      const body = composeObservationBody({ bounded, revision, unchanged: novelty.unchanged, selectionAnswer });
+      if (novelty.fresh) observedRevisionShown = revision;
       return {
         content: [
           {
             type: "text" as const,
-            text: available ? (staleAfterFailedRefresh ? staleText : worldText) : unavailableText,
+            text: observationContent({
+              available,
+              staleAfterFailedRefresh,
+              refreshError: refreshed.error,
+              body,
+              unavailable: absence.text,
+            }),
           },
         ],
         details: {
           available,
-          refresh,
-          refreshError,
-          reasonCode: available
-            ? refresh === "fresh"
-              ? "available_fresh"
-              : staleAfterFailedRefresh
-                ? "available_cached_after_failed_refresh"
-                : "available_cached"
-            : unavailableReason,
-          // Operator evidence that the bound ran and what it cost. Deliberately NOT in the payload: the
-          // provider sends text blocks only, so a byte count there would never reach the model.
-          observationBudget: bounded === null ? null : bounded.budget,
-          snapshotJson: available ? JSON.stringify(snapshot) : null,
+          refresh: refreshed.kind,
+          refreshError: refreshed.error,
+          reasonCode: observationReasonCode(available, refreshed.kind, staleAfterFailedRefresh, absence.reason),
+          // Operator evidence that the bound ran and what it cost. Deliberately NOT in the payload: the provider sends
+          // text blocks only, so a byte count there would never reach the model.
+          observationBudget: budget,
+          selection: selectionAnswer,
+          // `observations examined N · kinds K · disagreeing 0`: the gate's own population and verdict.
+          selectionGate,
+          snapshotJson,
+          selectionRefusal: null,
         },
       };
     },
@@ -409,69 +1112,6 @@ export function createStardewObservationTools(
               affordanceSurface(),
             );
       return lookupResult(answer, snapshot !== null);
-    },
-  });
-  /**
-   * One rectangle of the live world, in one round trip.
-   *
-   * The published soil family is a square window around the actor with a cap, so a task with a SHAPE - a 3x20 strip, a
-   * row along a fence - could only be planned from what happened to be in view: measured round42, a 3x20 request
-   * produced a 7x8 blob at 55% density while the companion re-observed every three or four tiles and inferred her own
-   * work from the list's silence. This is a question, not an action: no receipt, no postcondition and no program node,
-   * so a plan may ask it inside a planning turn, and it is mounted in the OBSERVATION class beside `stardew_look_up`
-   * for the same reason that one is - the answer is a reading of the world, never a way to change it.
-   */
-  const inspectTiles = defineTool({
-    name: "stardew_inspect_tiles",
-    label: "Inspect Stardew Tiles",
-    description:
-      "Read any RECTANGLE of the current location in one call, and ask this whenever the task has a shape - 'a 3-wide, " +
-      "20-long strip', 'the row along the fence', 'the 5x5 around the shed' - instead of observing again and guessing the " +
-      "tiles in between: the observation's soil family is only a square window around you, so a long strip is not in it. " +
-      "x,y is the rectangle's north-west tile and w,h its width and height in tiles; w*h is at most 100, and a bigger " +
-      "rectangle is REFUSED by name with the limit and the size you asked for. Every row carries tillable (would the Hoe " +
-      "admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), hoed / " +
-      "watered / crop (the soil's state), and passable (would the pathfinder step onto it now). The header names the " +
-      "location and the snapshot revision the answer describes. It changes nothing.",
-    parameters: Type.Object(
-      {
-        x: Type.Integer({ minimum: -1000, maximum: 1000 }),
-        y: Type.Integer({ minimum: -1000, maximum: 1000 }),
-        w: Type.Integer({ minimum: 1, maximum: 1000 }),
-        h: Type.Integer({ minimum: 1, maximum: 1000 }),
-      },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallId, params) => {
-      const args = requireStrictObject(params);
-      const keys = Object.keys(args);
-      if (
-        keys.length !== 4 ||
-        !["x", "y", "w", "h"].every((key) => keys.includes(key)) ||
-        !Number.isSafeInteger(args.x) ||
-        (args.x as number) < -1000 ||
-        (args.x as number) > 1000 ||
-        !Number.isSafeInteger(args.y) ||
-        (args.y as number) < -1000 ||
-        (args.y as number) > 1000 ||
-        !Number.isSafeInteger(args.w) ||
-        (args.w as number) < 1 ||
-        (args.w as number) > 1000 ||
-        !Number.isSafeInteger(args.h) ||
-        (args.h as number) < 1 ||
-        (args.h as number) > 1000
-      )
-        throw new Error("invalid_tool_parameters");
-      const reader = (integration as Partial<TileAreaReadIntegration>).tileArea;
-      if (typeof reader !== "function") throw new Error("tile_area_query_unavailable");
-      return navigationResult(
-        await (integration as TileAreaReadIntegration).tileArea({
-          x: args.x as number,
-          y: args.y as number,
-          w: args.w as number,
-          h: args.h as number,
-        }),
-      );
     },
   });
   const execution = defineTool({
@@ -630,7 +1270,7 @@ export function createStardewObservationTools(
     );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search, inspectTiles];
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search];
   {
     // constant mount; readiness re-checked at execution
     tools.push(
@@ -803,11 +1443,11 @@ export function buildCandidateToolSchema(
     // most recent observation and are never synthesized by the tool.
     return Type.Object(
       {
-        slot: Type.Integer({ minimum: 0, maximum: 36 }),
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedQualifiedItemId: Type.String({ minLength: 1, maxLength: 128 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        slot: TOOL_SLOT_SCHEMA,
+        x: TILE_COORDINATE_SCHEMA,
+        y: TILE_COORDINATE_SCHEMA,
+        expectedQualifiedItemId: ITEM_ID_SCHEMA,
+        expectedTargetId: OPAQUE_ID_SCHEMA,
       },
       { additionalProperties: false },
     );
@@ -819,9 +1459,9 @@ export function buildCandidateToolSchema(
     // never synthesized by the tool.
     return Type.Object(
       {
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        x: TILE_COORDINATE_SCHEMA,
+        y: TILE_COORDINATE_SCHEMA,
+        expectedTargetId: OPAQUE_ID_SCHEMA,
       },
       { additionalProperties: false },
     );
@@ -832,9 +1472,9 @@ export function buildCandidateToolSchema(
     // the most recent observation, while x/y are the observed geometry.
     return Type.Object(
       {
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        x: TILE_COORDINATE_SCHEMA,
+        y: TILE_COORDINATE_SCHEMA,
+        expectedTargetId: OPAQUE_ID_SCHEMA,
       },
       { additionalProperties: false },
     );
@@ -857,9 +1497,9 @@ export function buildCandidateToolSchema(
     // the minecartTargets entries of the most recent observation.
     return Type.Object(
       {
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        x: TILE_COORDINATE_SCHEMA,
+        y: TILE_COORDINATE_SCHEMA,
+        expectedTargetId: OPAQUE_ID_SCHEMA,
       },
       { additionalProperties: false },
     );
@@ -870,9 +1510,9 @@ export function buildCandidateToolSchema(
     // recent observation, both copied verbatim.
     return Type.Object(
       {
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        x: TILE_COORDINATE_SCHEMA,
+        y: TILE_COORDINATE_SCHEMA,
+        expectedTargetId: OPAQUE_ID_SCHEMA,
       },
       { additionalProperties: false },
     );
@@ -961,14 +1601,20 @@ function literalUnionSchema(literals: readonly TSchema[]): TSchema {
  * cannot widen what an action accepts - it can only make the Host's description of the argument less exact.
  */
 function candidateArgumentSchema(name: string, declaredType?: string): TSchema {
-  // The Mod's own declaration wins: a name-convention guess can contradict the wire validator, which is how a
-  // mounted tool came to describe integers as strings. `expectedTargetId` keeps its tighter string bound, and the
-  // name refinements below only apply where the declared type is absent.
+  // The tile and the backpack slot are the two arguments whose domain the WIRE declares as a predicate
+  // (`isTileCoordinate`, `isToolSlot`) and whose numbers every mounted tool states again. Read first, ahead of the
+  // declared type, because the type branch's ceiling described a value the validator refuses: measured 2026-11-16,
+  // 17 descriptor-derived mounts offered `x`/`y` up to 100000 and `slot` up to 100000 while `tileRow`/`slotRow`
+  // answered `invalid_*_tile`/`invalid_*_slot` above 1000 and 36 - the `charge` defect one layer down, where the
+  // schema and the validator disagree about the RANGE instead of about the argument set.
+  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
+  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
+  // The Mod's own declaration wins over the remaining name conventions: a name-convention guess can contradict the
+  // wire validator, which is how a mounted tool came to describe integers as strings. `expectedTargetId` keeps its
+  // tighter string bound, and the name refinements below only apply where the declared type is absent.
   if (declaredType === "integer" || declaredType === "number")
     return Type.Integer({ minimum: name === "quantity" ? 1 : 0, maximum: 100000 });
   if (declaredType === "string" && name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
-  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
-  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
   if (name === "quantity") return Type.Integer({ minimum: 1, maximum: 9999 });
   if (name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
   if (declaredType === "boolean") return Type.Boolean();
@@ -1044,8 +1690,8 @@ export function createStardewActionTools(
                 { additionalProperties: false },
               ),
             ]),
-            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            requestId: CALLER_REQUEST_SCHEMA,
+            idempotencyKey: CALLER_REQUEST_SCHEMA,
           },
           { additionalProperties: false },
         ),
@@ -1066,10 +1712,10 @@ export function createStardewActionTools(
           "If the actor is already at the destination (or already within the approach ring of a substituted one), the receipt reports target_reached with already_at_target=true — nothing moved because nothing needed to. " +
           "A refusal (no_native_path) names the cause: blocked_by=<item>@x,y, target_standable, and probe_says_reachable.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "move_to_tile",
         toArgs: (params) => ({ x: params.x, y: params.y }),
@@ -1085,10 +1731,10 @@ export function createStardewActionTools(
         description:
           "Use a live native warp at the source tile x, y. The Mod resolves the destination and only a Warped postcondition can report success; a named minecart ride is the separate stardew_ride_minecart action.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "travel",
         toArgs: (params) => ({ x: params.x, y: params.y }),
@@ -1104,10 +1750,10 @@ export function createStardewActionTools(
         description:
           "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; only the Warped postcondition can report success.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "enter_exit",
         toArgs: (params) => ({ x: params.x, y: params.y }),
@@ -1123,11 +1769,11 @@ export function createStardewActionTools(
         description:
           "Use a live native Hoe on a soil tile. charge is the tool charge ONE native use covers: 0 tills the named tile alone, and a wider charge tills the box the held hoe's own level reaches - a charge the held tool cannot reach is refused by name, never clamped. Only a Mod receipt with soil_tilled evidence reports completion.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
           charge: declaredIntegerArgument("till_soil", "charge"),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "till_soil",
         toArgs: (params) => ({ x: params.x, y: params.y, charge: params.charge }),
@@ -1143,15 +1789,12 @@ export function createStardewActionTools(
         description:
           "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "pickup_forage",
         toArgs: (params) => ({
@@ -1172,15 +1815,12 @@ export function createStardewActionTools(
         description:
           "Approach a live native Debris target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the itemTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native magnetic-collection receipt and exact inventory evidence can report completion.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "pickup_item",
         toArgs: (params) => ({
@@ -1201,12 +1841,12 @@ export function createStardewActionTools(
         description:
           "Refill one selected, partially filled Watering Can from a live adjacent native water source. slot, x, y and expectedTargetId must be copied exactly from the refillWateringCanTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates).",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "refill_watering_can",
         toArgs: (params) => ({
@@ -1227,12 +1867,12 @@ export function createStardewActionTools(
         description:
           "Water a live unwatered crop target. x, y and expectedTargetId must be copied exactly from the cropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). charge is the watering can's charge for ONE native use: 0 waters the named tile alone, and a wider charge waters the box the can's own level reaches - a charge the held can cannot reach is refused by name, never clamped. Only the authoritative native receipt can report completion.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
           charge: declaredIntegerArgument("water_crop", "charge"),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "water_crop",
         toArgs: (params) => ({
@@ -1253,16 +1893,13 @@ export function createStardewActionTools(
         description:
           "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native crop creation and the authoritative receipt determine completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "plant_seed",
         toArgs: (params) => ({
@@ -1284,13 +1921,13 @@ export function createStardewActionTools(
         description:
           "Place only a qualified (O)322 Wood Fence on a fresh empty Farm tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the woodFenceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native Fence evidence determines completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
           expectedQualifiedItemId: Type.Literal("(O)322"),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "place_wood_fence",
         toArgs: (params) => ({
@@ -1312,13 +1949,13 @@ export function createStardewActionTools(
         description:
           "Place only a qualified (O)710 Crab Pot on a fresh valid Farm water tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the crabPotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native Crab Pot evidence determines completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
           expectedQualifiedItemId: Type.Literal("(O)710"),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "place_crab_pot",
         toArgs: (params) => ({
@@ -1340,13 +1977,13 @@ export function createStardewActionTools(
         description:
           "Attach exactly one live owned (O)685 Bait to a fresh adjacent unbaited current-player-owned (O)710 Crab Pot. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the baitCrabPotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native interaction and authoritative receipt determine completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
           expectedQualifiedItemId: Type.Literal("(O)685"),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "bait_crab_pot",
         toArgs: (params) => ({
@@ -1368,11 +2005,11 @@ export function createStardewActionTools(
         description:
           "Harvest a live in-bloom berry bush using its native interaction. x, y and expectedTargetId must come from the bushTargets entries of the most recent observe result for the current location.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "harvest_bush",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -1388,11 +2025,11 @@ export function createStardewActionTools(
         description:
           "Cast a fishing rod at one water tile the game itself says a rod may be cast at, wait for the game's own bite, and let the game's own win path credit the catch. x, y and expectedTargetId must be copied exactly from the waterTargets entries of the MOST RECENT observe result for the current location - never invent or guess coordinates. The row names a tile the engine's own canFishHere/isTileFishable pair admitted, not a particular fish: which fish swims there is decided inside the engine at the bite. There is no slot to name: the handler selects the rod the action's own tool claim requires and restores the previous selection on every exit. Every refusal happens before the cast - no rod in the pack, no bait that rod needs, water the engine refuses, too little stamina, or a target id that no longer names this tile - and success is the catch the engine itself credited.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "fish_here",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -1430,11 +2067,11 @@ export function createStardewActionTools(
         label: labels[0],
         description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.`,
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action,
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -1450,16 +2087,13 @@ export function createStardewActionTools(
         description:
           "Apply one live owned fertilizer item to a live eligible ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the fertilizerTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native placement and the authoritative receipt determine completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "fertilize_tile",
         toArgs: (params) => ({
@@ -1481,11 +2115,11 @@ export function createStardewActionTools(
         description:
           "Read a live native machine state without opening a menu or changing the machine. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates, never reuse coordinates observed in a different location). requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "machine_inspect",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -1501,9 +2135,9 @@ export function createStardewActionTools(
         description:
           "Load a carried item into a live idle machine through the normal native machine interaction. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the machineTargets entry of the MOST RECENT observe result for the current location (use that row's loadInputSlot/loadInputQualifiedItemId, never invent or guess coordinates, never reuse coordinates observed in a different location). Which inputs a machine takes, and how many it consumes, is that machine's own game data: the row only publishes a load when the machine accepts the stack the actor carries. A receipt proves native input consumption and the processing window the machine's data declares. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
           expectedQualifiedItemId: Type.String({
             pattern: "^\\([^()\\s]+\\)[^()\\s]+$",
             minLength: 1,
@@ -1511,9 +2145,9 @@ export function createStardewActionTools(
             description:
               "The machine's own accepted input, copied from loadInputQualifiedItemId on the same machineTargets row.",
           }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "machine_load",
         toArgs: (params) => ({
@@ -1535,11 +2169,11 @@ export function createStardewActionTools(
         description:
           "Collect the ready output of a live machine through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery, the held item and the stack that moved, and a cleared ready state.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "machine_collect_output",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -1555,12 +2189,12 @@ export function createStardewActionTools(
         description:
           "Use the live compatible Farmhand-owned tool on a live ready animal-product target. slot, x, y and expectedTargetId must be copied exactly from the animalProductTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native animation and receipt determine completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "collect_animal_product",
         toArgs: (params) => ({
@@ -1581,12 +2215,12 @@ export function createStardewActionTools(
         description:
           "Place one live owned Hay item in a live empty AnimalHouse trough. slot, x, y and expectedTargetId must be copied exactly from the feedTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This does not claim an animal has eaten.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "feed_animal",
         toArgs: (params) => ({
@@ -1607,13 +2241,10 @@ export function createStardewActionTools(
         description:
           "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use stardew_clear_debris, stardew_chop_tree, stardew_break_rock, stardew_clear_hoedirt, stardew_refill_watering_can, stardew_scythe_crop, stardew_cut_weeds, stardew_cut_grass or stardew_till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "use_item",
         toArgs: (params) => ({
@@ -1632,15 +2263,12 @@ export function createStardewActionTools(
         description:
           "Harvest a live ready ordinary crop. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the harvestTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the native harvest receipt and inventory/regrow postcondition determine completion.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "harvest_crop",
         toArgs: (params) => ({
@@ -1661,12 +2289,12 @@ export function createStardewActionTools(
         description:
           "Chop one live ordinary mature tree. The Mod keeps swinging the equipped Axe until the tree is felled and reports how many swings it took, so one call completes the chop. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the felled tree in the authoritative receipt determines completion.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "chop_tree",
         toArgs: (params) => ({
@@ -1687,12 +2315,12 @@ export function createStardewActionTools(
         description:
           "Use one equipped Basic Hoe on a live adjacent diggable artifact spot. slot, x, y and expectedTargetId must be copied exactly from the artifactSpotTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Source removal and native HoeDirt creation are required; rewards are excluded.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "dig_artifact_spot",
         toArgs: (params) => ({
@@ -1713,12 +2341,12 @@ export function createStardewActionTools(
         description:
           "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. slot, x, y and expectedTargetId must be copied exactly from the clearHoeDirtTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Crops, IndoorPots, drops, and pickup are excluded.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "clear_hoedirt",
         toArgs: (params) => ({
@@ -1739,12 +2367,12 @@ export function createStardewActionTools(
         description:
           "Use one equipped basic Pickaxe swing on a live ordinary breakable stone. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "break_rock",
         toArgs: (params) => ({
@@ -1765,8 +2393,8 @@ export function createStardewActionTools(
         description: `Select a Tool already owned by the AI Farmhand by semantic category (${[...TOOL_SELECTOR_VALUES].join(", ")}). The Mod receipt reports the authoritative before/after CurrentTool state.`,
         parameters: Type.Object({
           tool: Type.Union([...TOOL_SELECTOR_VALUES].map((selector) => Type.Literal(selector))),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "equip_tool",
         toArgs: (params) => ({ tool: params.tool }),
@@ -2358,12 +2986,12 @@ export function createStardewActionTools(
         description:
           "Clear one live ResourceClump with the equipped Axe or Pickaxe, walking to it first when it is out of reach. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). One call swings until the clump is gone and returns succeeded/debris_cleared, or uncertain/debris_not_cleared when the bounded swing cap could not finish it; drops and pickup are separate actions.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "clear_debris",
         toArgs: (params) => ({
@@ -2384,11 +3012,11 @@ export function createStardewActionTools(
         description:
           "Read the live relationship facts of one adjacent villager. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). This never changes friendship, gifts or dialogue; it returns npc_relationship_inspected.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "npc_relationship",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -2404,11 +3032,11 @@ export function createStardewActionTools(
         description:
           "Water the current location's completed, unwatered native Pet Bowl with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the petBowlTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Returns pet_bowl_watered with the exact water and stamina delta.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "water_pet_bowl",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -2424,11 +3052,11 @@ export function createStardewActionTools(
         description:
           "Water one unwatered trough tile inside the current Slime Hutch with the equipped Watering Can. x, y and expectedTargetId must be copied exactly from the slimeHutchTroughTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Farmhand must already be inside the hutch. Returns slime_hutch_trough_watered.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "water_slime_hutch_trough",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -2444,13 +3072,10 @@ export function createStardewActionTools(
         description:
           "Move one carried inventory stack into a reachable chest. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of the carried stack you mean. There is no x, y, expectedTargetId or slot to send - the container is the whole address, and the body takes the first stack of that item in the backpack and names the slot it moved in the receipt. No ItemGrabMenu is opened. Refused chest_target_changed when no live container answers to chestId, and item_not_owned_in_slot when the backpack holds none of that item by then. Returns chest_stored with the exact stack conservation evidence.",
         parameters: Type.Object({
-          chestId: Type.String({ minLength: 1, maxLength: 128 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          chestId: OPAQUE_ID_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "chest_store",
         toArgs: (params) => ({
@@ -2469,13 +3094,10 @@ export function createStardewActionTools(
         description:
           "Move one item out of a reachable chest into the Farmhand inventory. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of one item in that entry's `items` list, which carries every item the container holds. There is no x, y, expectedTargetId or slot to send - the container and the item are the whole address, so nothing is picked by position. The item id pins the observed item, so one that is gone by then is refused chest_empty rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
         parameters: Type.Object({
-          chestId: Type.String({ minLength: 1, maxLength: 128 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          chestId: OPAQUE_ID_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "chest_retrieve",
         toArgs: (params) => ({
@@ -2494,12 +3116,12 @@ export function createStardewActionTools(
         description:
           "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is stardew_chop_tree, not this action.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "chop_stump",
         toArgs: (params) => ({
@@ -2520,16 +3142,13 @@ export function createStardewActionTools(
         description:
           "Plant one observed tree sapling on a live lawful tile through the native wild-tree-seed placement path. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the treeSaplingTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Returns sapling_planted with the seed consumed exactly once.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "plant_sapling",
         toArgs: (params) => ({
@@ -2551,12 +3170,12 @@ export function createStardewActionTools(
         description:
           "Cut one live adjacent Weed with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the weedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the weed is removed; the family is free, so the stamina cost is an explicit zero. Returns weeds_cut. Standing crops are stardew_scythe_crop, not this action.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "cut_weeds",
         toArgs: (params) => ({
@@ -2577,12 +3196,12 @@ export function createStardewActionTools(
         description:
           "Cut one live adjacent Grass tuft (a TerrainFeature, distinct from weeds) with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the grassTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the tuft is removed; grassType 1/7 feeds Hay into a silo (hay_unstored 0 = all stored) and grassType 6 drops rare items. Returns grass_cut.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "cut_grass",
         toArgs: (params) => ({
@@ -2603,12 +3222,12 @@ export function createStardewActionTools(
         description:
           "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "clear_cask",
         toArgs: (params) => ({
@@ -2631,12 +3250,12 @@ export function createStardewActionTools(
         label,
         description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.`,
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action,
         toArgs: (params) => ({
@@ -2656,11 +3275,11 @@ export function createStardewActionTools(
         description:
           "Toggle the Lantern light; the action takes the lantern its own `tool:lantern` claim declares out of the pack and puts the actor's previous selection back, so slot is the number from lanternSlots in the most recent observe result and need not be the held one. The light toggles on the tool itself, not on a world object.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "toggle_tool_light",
         toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
@@ -2676,12 +3295,12 @@ export function createStardewActionTools(
         description:
           "Scythe one live ready Scythe-method crop. slot, x, y and expectedTargetId must be copied exactly from the scytheCropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The native scythe harvest removes the crop and leaves the produce on the ground; the produce is not added to the inventory by this action, so expect ground debris rather than an inventory increase. Returns scythe_crops_harvested.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          slot: TOOL_SLOT_SCHEMA,
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "scythe_crop",
         toArgs: (params) => ({
@@ -2720,9 +3339,9 @@ export function createStardewActionTools(
         description:
           "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the craftingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
         parameters: Type.Object({
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "craft_item",
         toArgs: (params) => ({
@@ -2740,9 +3359,9 @@ export function createStardewActionTools(
         description:
           "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the cookingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
         parameters: Type.Object({
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "cook_recipe",
         toArgs: (params) => ({
@@ -2760,11 +3379,11 @@ export function createStardewActionTools(
         description:
           "Collect the ready output of one live adjacent baited Crab Pot. x, y and expectedTargetId must be copied exactly from the crabPotCollectTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod re-checks that the pot is really harvest-ready and visually ready before calling the native interaction, so an immature or unbaited pot is rejected rather than torn down. Returns crab_pot_output_collected.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "collect_crab_pot_output",
         toArgs: (params) => forwardDeclaredArguments(TILE_TARGET_ARGUMENTS, params),
@@ -2780,15 +3399,12 @@ export function createStardewActionTools(
         description:
           "Move the Farmhand's carried stack of one item into their own live shipping bin. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). There is no slot argument: walking to a bin takes many ticks and the pack shifts on the way, so the Mod resolves the FIRST carried stack of that item id when it arrives and the receipt names which slot actually shipped. Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
         parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          x: TILE_COORDINATE_SCHEMA,
+          y: TILE_COORDINATE_SCHEMA,
+          expectedQualifiedItemId: ITEM_ID_SCHEMA,
+          expectedTargetId: OPAQUE_ID_SCHEMA,
+          requestId: CALLER_REQUEST_SCHEMA,
+          idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
         action: "ship_item",
         toArgs: (params) => ({
@@ -2810,11 +3426,11 @@ export function createStardewActionTools(
           "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
         parameters: Type.Object(
           {
-            x: Type.Integer({ minimum: 0, maximum: 1000 }),
-            y: Type.Integer({ minimum: 0, maximum: 1000 }),
-            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            x: TILE_COORDINATE_SCHEMA,
+            y: TILE_COORDINATE_SCHEMA,
+            expectedTargetId: OPAQUE_ID_SCHEMA,
+            requestId: CALLER_REQUEST_SCHEMA,
+            idempotencyKey: CALLER_REQUEST_SCHEMA,
           },
           { additionalProperties: false },
         ),
@@ -2830,11 +3446,11 @@ export function createStardewActionTools(
           "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use stardew_select_mine_elevator_floor.",
         parameters: Type.Object(
           {
-            x: Type.Integer({ minimum: 0, maximum: 1000 }),
-            y: Type.Integer({ minimum: 0, maximum: 1000 }),
-            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            x: TILE_COORDINATE_SCHEMA,
+            y: TILE_COORDINATE_SCHEMA,
+            expectedTargetId: OPAQUE_ID_SCHEMA,
+            requestId: CALLER_REQUEST_SCHEMA,
+            idempotencyKey: CALLER_REQUEST_SCHEMA,
           },
           { additionalProperties: false },
         ),
@@ -2850,11 +3466,11 @@ export function createStardewActionTools(
           "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
         parameters: Type.Object(
           {
-            slot: Type.Integer({ minimum: 0, maximum: 36 }),
-            x: Type.Integer({ minimum: 0, maximum: 1000 }),
-            y: Type.Integer({ minimum: 0, maximum: 1000 }),
-            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            slot: TOOL_SLOT_SCHEMA,
+            x: TILE_COORDINATE_SCHEMA,
+            y: TILE_COORDINATE_SCHEMA,
+            requestId: CALLER_REQUEST_SCHEMA,
+            idempotencyKey: CALLER_REQUEST_SCHEMA,
           },
           { additionalProperties: false },
         ),
@@ -3287,7 +3903,7 @@ export function createStardewActionTools(
           // The Mod's own gate keys on this reason code, so the player STOP and the worker's teardown keep their
           // semantics while a MODEL stop can be refused.
           return receiptResult(
-            await integration.cancel(active.requestId, active.executionId, "model_stop_requested"),
+            await integration.cancel(active.requestId, active.executionId, MODEL_STOP_REASON_CODE),
             null,
           );
         } catch (error) {

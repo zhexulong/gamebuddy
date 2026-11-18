@@ -6,8 +6,10 @@ using System.Reflection;
 using GameBuddy.Stardew.Core;
 using Microsoft.Xna.Framework;
 using StardewValley;
+using StardewValley.Buildings;
 using StardewValley.GameData;
 using StardewValley.GameData.Locations;
+using StardewValley.ItemTypeDefinitions;
 using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
@@ -41,7 +43,23 @@ namespace GameBuddy.Stardew;
 /// WHY SOME LOCATIONS ARE NOT MEASURED. Five location classes override `getFish` (`MineShaft`, `Railroad`, `Farm`,
 /// `IslandSouthEast`, `IslandLocation`), and each can produce a fish the location's table does not name - the mine's own
 /// depth table, the railroad's one flagged fish. On such a location the table is not the authority for "what may bite",
-/// so the answer is <c>not measured</c> rather than a table reading wearing the authority's clothes.
+/// so the answer is <c>not measured</c> rather than a table reading wearing the authority's clothes. A class that INHERITS
+/// an override (the engine's `Caldera` inherits `IslandLocation`'s) ends at that override too, so the answer is decided by
+/// the type that declares the sampler rather than by the concrete class's own source.
+/// </para>
+///
+/// <para>
+/// THE ONE OVERRIDE THAT CAN BE DECIDED FROM DATA IS THE WORLD THIS ACTION RUNS IN. `Farm`'s sampler has no extra source
+/// of its own: its only exit is the `FarmFishLocationOverride` map property, and with no such property it delegates
+/// straight to the table path (`Farm.cs:1109-1133`). So on a farm whose map declares no redirect the two tables ARE the
+/// whole answer, and refusing there cost the parity claim its only fixture - see <see cref="SamplerExitOutsideTheTables"/>.
+/// </para>
+///
+/// <para>
+/// THE FIFTH ARGUMENT IS A ROW, NOT A FLAG. `GetChance`'s last parameter is the engine's answer to "is THIS row the
+/// species the specific bait names" (`spawn.ItemId == text`, `:13969`), and it multiplies THAT row's own chance
+/// (`SpawnFishData.GetChance`). It is derived from the row's own id inside the projection; a value computed once for the
+/// table would be a false statement about every row at once, and would boost all of them when no bait names any.
 /// </para>
 /// </summary>
 internal static class FishingCatchableQuery
@@ -98,7 +116,8 @@ internal static class FishingCatchableQuery
             ? here
             : Game1.getLocationFromName(name);
         if (location is null) return Unmeasured($"location_not_loaded:{name}");
-        if (OverridesGetFish(location)) return Unmeasured($"location_overrides_get_fish:{location.GetType().Name}");
+        FishingTile? bobberTile = bobberX is { } bx && bobberY is { } by ? new FishingTile(bx, by) : null;
+        if (SamplerExitOutsideTheTables(location, bobberTile) is { } outside) return Unmeasured(outside);
 
         // The two tables, read through the engine's own loaders. `Game1.locationData` is the parsed `Data/Locations`; a
         // location's own row may be absent (`GetData()` answers null) and its `Default` row is the shared half the engine
@@ -111,11 +130,13 @@ internal static class FishingCatchableQuery
         if (locationData?.Fish is { } locationFish) rows.AddRange(locationFish);
         Dictionary<string, string> fishRows = DataLoader.Fish(Game1.content);
 
-        FishingTile? bobberTile = bobberX is { } bx && bobberY is { } by ? new FishingTile(bx, by) : null;
         int? depth = bobberTile is { } tile ? FishingRod.distanceToLand(tile.X, tile.Y, location) : null;
         bool magicBait = player.CurrentTool is FishingRod rod && rod.HasMagicBait();
         bool curiosityLure = player.CurrentTool is FishingRod lureRod && lureRod.HasCuriosityLure();
-        bool targetBait = magicBait == false && string.Equals(TargetBaitSpecies(player), string.Empty, StringComparison.Ordinal);
+        // The species the equipped bait names, or null when it names none. It is carried INTO the projection because the
+        // engine compares it against each row's own id (`spawn.ItemId == text`, GameLocation.cs:13969): a value computed
+        // here, once for the whole table, is a different question from the one the engine asks.
+        string? targetedSpecies = TargetBaitSpecies(player);
         FishingMoment moment = new(
             location.NameOrUniqueName,
             Game1.GetSeasonForLocation(location).ToString(),
@@ -135,7 +156,7 @@ internal static class FishingCatchableQuery
 
         List<FishingSpawn> spawns = new(rows.Count);
         foreach (SpawnFishData row in rows)
-            spawns.Add(Project(row, player, location, fishRows, curiosityLure, targetBait));
+            spawns.Add(Project(row, player, location, fishRows, curiosityLure, targetedSpecies));
 
         return new FishingCatchAnswer(
             FishingCatchable.CatchableNow(moment, spawns, MayProduceChance),
@@ -148,19 +169,22 @@ internal static class FishingCatchableQuery
         GameLocation location,
         Dictionary<string, string> fishRows,
         bool curiosityLure,
-        bool usingTargetBait)
+        string? targetedSpecies)
     {
+        // THE ENGINE DECIDES WHAT THE ROW NAMES. `SpawnFishData.ItemId` is "either a qualified item ID, or an item query
+        // like ALL_ITEMS" (`StardewValley.GameData.xml:1863-1865`), and `ItemRegistry.GetData` is the reader for both id
+        // forms and for every item type (`ItemRegistry.cs:316-323`): it answers the row's one item, or null when the value
+        // names nothing - an item query, or an id this save does not have. The retired test was `int.TryParse(itemId)`,
+        // which is FALSE for `(O)128` by construction, so every qualified row was called a query and lost its species, its
+        // name and its `Data/Fish` row.
         string itemId = row.ItemId ?? string.Empty;
-        bool isItemQuery = !int.TryParse(itemId, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
-        string? species = isItemQuery ? null : ItemRegistry.QualifyItemId(itemId);
-        string? displayName = null;
-        string? fishRow = null;
-        if (species is not null)
-        {
-            var metadata = ItemRegistry.GetDataOrErrorItem(species);
-            displayName = metadata.IsErrorItem ? null : metadata.DisplayName;
-            if (fishRows.TryGetValue(itemId, out string? raw)) fishRow = raw;
-        }
+        ParsedItemData? speciesData = ItemRegistry.GetData(itemId);
+        string? species = speciesData?.QualifiedItemId;
+        bool isItemQuery = speciesData is null;
+        string displayName = ItemDisplayName.Resolve(itemId, speciesData?.DisplayName);
+        // The species row is joined on the RESOLVED item's unqualified id, which is the key the engine itself joins on
+        // (`fish.ItemId`, GameLocation.cs:14044) - the row's raw value carries a type tag and misses every entry.
+        string? fishRow = speciesData is { } resolved && fishRows.TryGetValue(resolved.ItemId, out string? raw) ? raw : null;
 
         return new FishingSpawn(
             itemId,
@@ -178,29 +202,61 @@ internal static class FishingCatchableQuery
             isItemQuery,
             fishRow,
             // The engine's own chance arithmetic, asked for a number; whether a number may produce is the answer's call.
+            // The fifth argument is the engine's own per-row question - "is THIS row the species the specific bait
+            // names" (`spawn.ItemId == text`, GameLocation.cs:13969) - and `GetChance` spends it on this row's chance
+            // alone (`num * SpecificBaitMultiplier + SpecificBaitBuff`). `row.RequireMagicBait` is the separate magic-bait
+            // condition; the engine's fifth argument has no magic-bait term at all.
             DeclaredChance: row.GetChance(
                 curiosityLure,
                 player.DailyLuck,
                 player.LuckLevel,
                 (float value, IList<QuantityModifier> modifiers, QuantityModifier.QuantityModifierMode mode) =>
                     Utility.ApplyQuantityModifiers(value, modifiers, mode, location),
-                usingTargetBait),
+                string.Equals(row.ItemId, targetedSpecies, StringComparison.Ordinal)),
             CanUseTrainingRod: row.CanUseTrainingRod,
             PlayerPosition: ToRectangle(row.PlayerPosition),
             BobberPosition: ToRectangle(row.BobberPosition));
     }
 
-    /// <summary>The species a target bait names, or the empty string: `(O)SpecificBait` carries it in `preservedParentSheetIndex` (<c>GameLocation.cs:13925-13928</c>).</summary>
-    private static string TargetBaitSpecies(Farmer player) =>
+    /// <summary>
+    /// The species a target bait names, or null when the rod's bait names none: `(O)SpecificBait` carries it in
+    /// `preservedParentSheetIndex`, and the engine builds the string it compares against each row's id from it
+    /// (<c>GameLocation.cs:13920-13931</c>, <c>:13969</c>). Null and not the empty string, because the engine's own
+    /// `text` is null when no bait names a species - the empty string is what made an inverted comparison look right.
+    /// </summary>
+    private static string? TargetBaitSpecies(Farmer player) =>
         player.CurrentTool is FishingRod rod
         && rod.GetBait() is { } bait
         && string.Equals(bait.QualifiedItemId, "(O)SpecificBait", StringComparison.Ordinal)
         && bait.preservedParentSheetIndex.Value is { } preserved
             ? ItemRegistry.QualifyItemId(preserved)
-            : string.Empty;
+            : null;
 
     private static FishingRectangle? ToRectangle(Rectangle? source) =>
         source is { } rectangle ? new FishingRectangle(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height) : null;
+
+    /// <summary>
+    /// The engine's sampler signature, spelled as metadata: <c>(float, string, int, Farmer, double, Vector2, string)</c>,
+    /// the last being <c>locationName</c> (<c>GameLocation.cs:13849</c>). The parameter list is what makes this a question
+    /// about the engine's own method rather than about a name a mod might reuse.
+    /// </summary>
+    private static readonly Type[] SamplerSignature =
+    {
+        typeof(float),
+        typeof(string),
+        typeof(int),
+        typeof(Farmer),
+        typeof(double),
+        typeof(Vector2),
+        typeof(string),
+    };
+
+    /// <summary>The map property `Farm.getFish` reads before it delegates (<c>Farm.cs:1114</c>).</summary>
+    private const string FarmFishRedirectProperty = "FarmFishLocationOverride";
+
+    /// <summary>Which type's <c>getFish</c> an instance of this type ends at, or null if the engine has no such method.</summary>
+    internal static Type? OwnFishSamplerDeclaredBy(Type locationType) =>
+        locationType.GetMethod("getFish", SamplerSignature)?.DeclaringType;
 
     /// <summary>
     /// Whether this location's class answers <c>getFish</c> itself, in which case the fish table is not the whole answer.
@@ -208,12 +264,82 @@ internal static class FishingCatchableQuery
     /// The five overrides are found through the ENGINE's own virtual method rather than by a list of type names here, so a
     /// mod or a game update that overrides it is treated the same way as the five that ship.
     /// </summary>
-    private static bool OverridesGetFish(GameLocation location)
+    internal static bool DeclaresOwnFishSampler(Type locationType) =>
+        OwnFishSamplerDeclaredBy(locationType) is not { } declaring || declaring != typeof(GameLocation);
+
+    /// <summary>
+    /// Why the two fish tables are NOT the whole answer for this location and this cast, or null when they are.
+    ///
+    /// THE ENGINE HAS FOUR EXITS BEFORE THE TABLE, and every one of them can return a species <c>Data/Locations</c> and
+    /// <c>Data/Fish</c> do not name, so a set read from those two tables would be a claim the engine can falsify:
+    ///
+    /// <list type="number">
+    /// <item><description>a location-name redirect (<c>GameLocation.cs:13851-13858</c>), which delegates to the named
+    /// location's own sampler;</description></item>
+    /// <item><description>a fish pond under the bobber (<c>:13859-13868</c>), whose own population answers instead of the
+    /// table;</description></item>
+    /// <item><description>an active fish frenzy at the bobber (<c>:13869-13872</c>), whose fish is created directly;
+    /// </description></item>
+    /// <item><description>one of the five location classes that answer <c>getFish</c> themselves.</description></item>
+    /// </list>
+    ///
+    /// <para>
+    /// THE FARM IS THE ONE OVERRIDER THAT CAN BE DECIDED FROM DATA, and it is the world this action is driven in. Its
+    /// override's only extra source is a map property: with no <c>FarmFishLocationOverride</c> its chance is zero and it
+    /// delegates to <c>GameLocation.getFish</c> with a null location name - the table path (<c>Farm.cs:1109-1133</c>). The
+    /// other four gate their extra species on player state this reader does not model (a secret note, a walnut drop
+    /// count, the mine's own depth table), so on those the table stays the smaller half and the answer stays unmeasured.
+    /// The check is on the type that DECLARES the sampler, so a mod farm type that inherits the engine's override is
+    /// decided the same way and one that replaces it is not.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IS STILL NOT MODELLED: the first catch's `(O)145` fallback (`:14024-14028`) and the tutorial flag's effect on
+    /// which rows are eligible are the module's business, not this reader's; a cast with no bobber tile cannot rule out a
+    /// frenzy, and says so rather than guessing.
+    /// </para>
+    /// </summary>
+    private static string? SamplerExitOutsideTheTables(GameLocation location, FishingTile? bobberTile)
     {
-        MethodInfo? method = location.GetType().GetMethod(
-            "getFish",
-            new[] { typeof(float), typeof(string), typeof(int), typeof(Farmer), typeof(double), typeof(Vector2), typeof(string) });
-        return method?.DeclaringType is not { } declaring || declaring != typeof(GameLocation);
+        Type? declaredBy = OwnFishSamplerDeclaredBy(location.GetType());
+        if (declaredBy is { } owner && owner != typeof(GameLocation))
+        {
+            if (owner != typeof(Farm)) return $"location_overrides_get_fish:{location.GetType().Name}";
+            if (location is Farm farm && FarmFishRedirect(farm) is { } redirect) return $"farm_fish_redirect:{redirect}";
+        }
+        // A frenzy is the base sampler's own exit and applies on every location: it answers with its fish before the
+        // table is consulted. Without a bobber tile its radius cannot be applied, so the answer says which half is missing.
+        if (!string.IsNullOrEmpty(location.fishFrenzyFish.Value))
+        {
+            if (bobberTile is not { } frenzyTile) return "fish_frenzy_active:bobber_tile_unknown";
+            Vector2 splash = Utility.PointToVector2(location.fishSplashPoint.Value);
+            if (Vector2.Distance(new Vector2(frenzyTile.X, frenzyTile.Y), splash) <= 2f)
+                return $"fish_frenzy_at_bobber:{location.fishFrenzyFish.Value}";
+        }
+        if (bobberTile is { } pondTile)
+        {
+            Vector2 tile = new(pondTile.X, pondTile.Y);
+            foreach (Building building in location.buildings)
+                if (building is FishPond pond && pond.isTileFishable(tile))
+                    return $"fish_pond_under_bobber:{pondTile.X},{pondTile.Y}";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The redirect this farm's own map declares, or null when it declares none. The parse is the engine's own
+    /// (<c>Farm.cs:1114-1126</c>): a property with an unreadable pair is logged and ignored there, so it is ignored here
+    /// too, and only a positive chance can take the branch that leaves the table.
+    /// </summary>
+    private static string? FarmFishRedirect(Farm farm)
+    {
+        if (farm.map is null) return "map_unreadable";
+        string[] parts = farm.GetMapPropertySplitBySpaces(FarmFishRedirectProperty);
+        if (parts.Length == 0) return null;
+        if (!ArgUtility.TryGet(parts, 0, out string target, out string _)
+            || !ArgUtility.TryGetFloat(parts, 1, out float chance, out string _))
+            return null;
+        return chance > 0f ? $"{target}:{chance.ToString(CultureInfo.InvariantCulture)}" : null;
     }
 
     private static FishingCatchAnswer Unmeasured(string reason) =>

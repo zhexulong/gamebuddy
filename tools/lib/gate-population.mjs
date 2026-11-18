@@ -1,7 +1,7 @@
 /**
  * The ONE gate population this repository has, derived once and read by both gate-meta tools:
  *
- *   - `tools/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
+ *   - `gates/meta/audit-gate-red-proofs.mjs` asks "has this gate been seen red?"
  *   - `tools/lib/harness-conformance.mjs` asks "does this gate's default run print a self-verification report, and
  *     if not, has someone said why?"
  *
@@ -14,25 +14,24 @@
  * THE DERIVATION is a union of two halves, neither of them a hand-written list:
  *
  *   A. every `package.json` script in the gate namespace (`audit:` / `check:` / `test:`), with the files its command
- *      runs as that gate's entry points. This is the population CI actually runs: `tools/check-ci-coverage.mjs`
+ *      runs as that gate's entry points. This is the population CI actually runs: `gates/meta/check-ci-coverage.mjs`
  *      derives the `gates` job from the same namespace, so a script is a gate by being named like one.
- *   B. every `tools/check-*.mjs` / `tools/audit-*.mjs` file no script names - a gate that exists on disk and that nobody
- *      types. This is the half a script list cannot see, and it is mandatory: a gate nothing runs is the one that stops
- *      working without a symptom.
+ *   B. every gate FILE no script names - a gate that exists on disk and that nobody types. This is the half a script
+ *      list cannot see, and it is mandatory: a gate nothing runs is the one that stops working without a symptom.
  *
- * AND WHAT NEITHER HALF TAKES IS NAMED, NOT DROPPED. The derivation reads two further kinds of member - a `suite:` script
- * and a gate-shaped file under a `tools/` subdirectory - and puts each in `dropped` with the rule that left it out, beside
- * `examined`, the raw size it read. A prefix that removes a member and prints nothing is how a corpus announced `untaken 0`
- * while discarding 42 scripts (measured 2026-11-13 in `tools/run-tool-test-corpus.mjs`); the census publishes the
- * complement so `gates + dropped = examined` is a line an operator can check.
+ * Half B is not derived here. `gates/registry.mjs` owns the gate-file population - which directories a gate may
+ * live in and which names make one - because a file-name rule restated beside the file it reads stops matching the day
+ * the directory moves. Measured 2026-11-14: `tools/lib/gate-population.mjs` and `tools/check-prelive-gate-registry.mjs`
+ * each spelled `^(?:check|audit)-.*\.mjs$`, so `tools/` could not be reorganised without one of them silently narrowing.
  *
  * The halves are merged on the entry file, so a gate both a script and a file name is ONE record, whose id is the
  * script - what an operator types and what CI's derived job step names.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../check-ci-coverage.mjs";
+import { GATE_NAME as CI_COVERAGE_NAMESPACE } from "../../gates/meta/check-ci-coverage.mjs";
+import { gateFiles, isGateFile } from "../../gates/registry.mjs";
 
 /**
  * A `package.json` script named like a gate: the union of the two namespaces that name gates.
@@ -50,17 +49,6 @@ const GATE_SCRIPT = CI_COVERAGE_NAMESPACE;
  * beside the two: only `test:` carries the meta-gate's obligation to state a falsifier.
  */
 const TEST_SCRIPT = /^test:/u;
-/**
- * A script that names a library's own suites. The census reads it and leaves it out - and says so, by name, in `dropped`,
- * because a prefix that removes a member without a word is how the census stopped being able to state its own size.
- */
-const SUITE_SCRIPT = /^suite:/u;
-/** A gate file: `tools/check-*.mjs` or `tools/audit-*.mjs`, minus its own falsifiers, which are not gates. */
-const GATE_FILE = /^(?:check|audit)-.*\.mjs$/u;
-/** A falsifier that lives beside its gate: the project rule is "the falsifier is part of the gate's own test". */
-const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
-/** The directory a gate lives in. A gate-shaped file under one of its subdirectories is named in `dropped`, not judged. */
-const GATE_DIRECTORY = "tools";
 /** A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`. */
 const COMMAND_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|tsx|ts|cjs|js|ps1|py)/gu;
 /** A command may change directory first; its paths then resolve from there, not from the repository root. */
@@ -73,40 +61,6 @@ const read = (path) => {
     return null;
   }
 };
-
-/** Why a `suite:` script is read and left out: the prefix names a library's own suites, and this judges gates. */
-const SUITE_REASON =
-  "a `suite:` script names a library's own suites rather than a gate, and `tools/run-tool-test-corpus.mjs` runs it";
-/** Why a gate-shaped file under a `tools/` subdirectory is read and left out: the gate directory is `tools/` itself. */
-const NESTED_FILE_REASON =
-  "gate-shaped but outside the gate directory `tools/` - a subdirectory holds run-harness helpers and modules - and no " +
-  "`package.json` script names it";
-
-/**
- * What each gate-shaped file outside the gate directory IS, because "no script names it" states the rule and not the
- * verdict: a reader still has to open the file to learn whether it is an unwired gate or not a gate at all.
- *
- * These are the tree's own three members of that shape (measured 2026-11-13). The entries are not a population - they
- * cannot add a member - and each one EXPIRES: `deriveGatePopulation` throws `dropped_verdict_stale` for a path that is no
- * longer a dropped member, so a file that joins a script or leaves the tree takes its verdict with it.
- */
-const DROPPED_FILE_VERDICTS = new Map([
-  [
-    "tools/live-run/chat/audit-trace.mjs",
-    "not a gate: the audit recorder, validator and writer the chat live-run harness imports; its `audit-` name is a " +
-      "coincidence of the glob",
-  ],
-  [
-    "tools/live-run/chat/check-post-history-instructions-live.mjs",
-    "a live probe rather than a tree gate: it needs a real runtime root and a served provider endpoint, so the run " +
-      "harness owns when it runs and the census has no tree state to judge",
-  ],
-  [
-    "tools/scripts/check-lockfile-freeze.mjs",
-    "not a tree gate: it fires from the commit hook when THIS commit changes a lockfile and runs `check:dependency-risk`, " +
-      "so its subject is the staged set rather than the tree",
-  ],
-]);
 
 /** Half A: every declared gate script, with the paths its command runs. */
 function declaredGateScripts(root) {
@@ -128,113 +82,41 @@ function declaredGateScripts(root) {
     });
 }
 
-/** The `suite:` scripts the derivation reads and leaves out, so the exclusion is a line of output rather than a prefix. */
-function droppedSuiteScripts(root) {
-  const parsed = read(join(root, "package.json"));
-  if (parsed === null) return [];
-  return Object.keys(JSON.parse(parsed).scripts ?? {})
-    .filter((name) => SUITE_SCRIPT.test(name))
-    .sort()
-    .map((name) => ({ member: name, reason: SUITE_REASON }));
-}
-
-/** Half B: the gate-shaped files directly in the gate directory, minus its own falsifiers, which are not gates. */
-function gateFilesInGateDirectory({ shaped, claimed }) {
-  return shaped
-    .filter((file) => !file.slice(`${GATE_DIRECTORY}/`.length).includes("/"))
-    .map((file) => ({ id: file, kind: "gate-file", command: `node ${file}`, entryFiles: [file] }));
+/** Half B: every gate FILE the registry finds, minus its own falsifiers, which the registry's rule already excludes. */
+function unwiredGateFiles(root) {
+  return gateFiles({ root }).map((file) => ({
+    id: file,
+    kind: "gate-file",
+    command: `node ${file}`,
+    entryFiles: [file],
+  }));
 }
 
 /**
- * Every gate-shaped file under the gate directory, at any depth: the scan half B and `dropped` divide up between them.
+ * The one rule for "this path is a gate, not a falsifier", re-exported from the registry that owns it.
  *
- * It walks rather than listing one directory, because a gate-shaped file one level down is a member this derivation
- * reads and then has to say something about. Measured 2026-11-13: `tools/scripts/check-lockfile-freeze.mjs` and the two
- * `tools/live-run/chat/` files were in no population and on no line of output, so "every gate" excluded them silently.
+ * Callers keep importing it from here because this is the module that has always answered; there is one definition,
+ * in `gates/registry.mjs`, so the conformance suite and the census cannot learn different suffixes.
  */
-function gateShapedFiles(root) {
-  const found = [];
-  const walk = (directory) => {
-    let entries;
-    try {
-      entries = readdirSync(join(root, directory), { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const path = `${directory}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (entry.name !== "node_modules") walk(path);
-      } else if (isGateName(entry.name)) found.push(path);
-    }
-  };
-  walk(GATE_DIRECTORY);
-  return found.sort();
-}
+export { isGateFile };
 
 /**
- * The one rule for "this path is a gate, not a falsifier": `tools/check-*.mjs` minus `.test.mjs` / `.mutation.mjs`.
- *
- * Exported because the conformance suite asks the same question of a record's entry file when it decides what it can
- * run, and two spellings of this rule disagree the first time one of them learns about a new suffix.
+ * The population: `{ gates, scripts, gateFiles, unclaimedByScript }`, where `gates` is the merged union sorted by id
+ * and `unclaimedByScript` is the gate files no script names - the size the census reports, because it is the number
+ * of gates only a directory scan can see.
  */
-export function isGateFile(path) {
-  return isGateName(path.replace(/^tools\//u, ""));
-}
-
-/** The name rule `isGateFile` applies to a `tools/`-relative path, applied to a bare file name instead. */
-function isGateName(name) {
-  return GATE_FILE.test(name) && !SIBLING_FALSIFIER.test(name);
-}
-
-/**
- * The population: `{ gates, scripts, gateFiles, unclaimedByScript, examined, dropped }`, where `gates` is the merged
- * union sorted by id, `unclaimedByScript` is the gate files no script names - the number of gates only a directory scan
- * can see - and `examined` is the raw size of what the derivation read.
- *
- * THE COMPLEMENT IS PUBLISHED, NOT IMPLIED. `examined - gates = dropped`, and every member of `dropped` is named with the
- * rule that left it out: a `suite:` script (a library's suites, not a gate) or a gate-shaped file under a `tools/`
- * subdirectory (a run-harness helper or a module, which no script names as a gate). A prefix that removes a member and
- * prints nothing is how a corpus reports `untaken 0` while discarding 42 scripts, which is the defect this field exists
- * for: an operator can only audit an exclusion they can see.
- */
-export function deriveGatePopulation({ root, verdicts = DROPPED_FILE_VERDICTS }) {
+export function deriveGatePopulation({ root }) {
   const scripts = declaredGateScripts(root);
-  const suites = droppedSuiteScripts(root);
+  const gateFiles = unwiredGateFiles(root);
   const claimed = new Set(scripts.flatMap((gate) => gate.entryFiles));
-  const shaped = gateShapedFiles(root);
-  // A file no script names is the only half a directory scan can add; a claimed file is already one of `scripts`.
-  const orphanFiles = shaped.filter((file) => !claimed.has(file));
-  const gateFiles = gateFilesInGateDirectory({ shaped, claimed });
   const unclaimed = gateFiles.filter((file) => !claimed.has(file.entryFiles[0]));
   const gates = [...scripts, ...unclaimed].sort((left, right) => left.id.localeCompare(right.id));
-  const dropped = [
-    ...suites,
-    ...orphanFiles
-      .filter((file) => file.slice(`${GATE_DIRECTORY}/`.length).includes("/"))
-      .map((file) => ({ member: file, reason: verdicts.get(file) ?? NESTED_FILE_REASON })),
-  ];
-  // A verdict that outlives its reason is the same defect as a filter that drops in silence: if the file is on disk and
-  // is no longer dropped - a script now claims it, or it moved into the gate directory - the entry has to go.
-  const names = new Set(dropped.map((entry) => entry.member));
-  const shapedSet = new Set(shaped);
-  for (const path of verdicts.keys())
-    if (shapedSet.has(path) && !names.has(path)) throw new Error(`dropped_verdict_stale:${path}`);
-  return {
-    gates,
-    scripts,
-    gateFiles,
-    unclaimedByScript: unclaimed.length,
-    // Every raw member the derivation read: the namespace's scripts, plus the gate-shaped files no script names. So
-    // `gates + dropped = examined` holds, and a member that is in neither list is a reading that cannot reconcile.
-    examined: scripts.length + suites.length + orphanFiles.length,
-    dropped,
-  };
+  return { gates, scripts, gateFiles, unclaimedByScript: unclaimed.length };
 }
 
-/** The `tools/check-*.mjs` file names in the population: the unit the conformance registry declares by. */
+/** The gate files in the population, as paths from the repository root: the unit the conformance registry declares by. */
 export function gateFileNames(population) {
-  return population.gateFiles.map((file) => file.entryFiles[0].replace(/^tools\//u, ""));
+  return population.gateFiles.map((file) => file.entryFiles[0]);
 }
 
 /**
@@ -242,17 +124,5 @@ export function gateFileNames(population) {
  * `tools/check-a.mjs`) and the base name of each file it owns (`check-a.mjs`).
  */
 export function gateMemberNames(gate) {
-  return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^tools\//u, "").replace(/^.*\//u, ""))];
-}
-
-/**
- * The zero-population verdict, said once.
- *
- * Four gates hand-wrote this line and the duplication gate counted them as one 65-token group: the fact is the same - a
- * gate that measured nothing has not passed - and only the reason belongs to the gate. The wrapper is shared so the
- * wording cannot drift into five spellings, and each gate keeps its own reason and its own exit code.
- */
-export function blockedOnEmptyPopulation(gateName, reason) {
-  console.error(`[${gateName}] blocked: ${reason}`);
-  return 1;
+  return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^.*\//u, ""))];
 }

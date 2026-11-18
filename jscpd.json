@@ -5,6 +5,7 @@
     "dialogue-web/src",
     "packages",
     "tools",
+    "gates",
     "integrations/stardew",
     "desktop"
   ],

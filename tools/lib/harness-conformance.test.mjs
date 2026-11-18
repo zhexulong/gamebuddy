@@ -7,8 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { auditGateRedProofs, describeGateCensus } from "../audit-gate-red-proofs.mjs";
-import { indexedGatePopulation } from "./indexed-sources.mjs";
+import { auditGateRedProofs, describeGateCensus } from "../../gates/meta/audit-gate-red-proofs.mjs";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
@@ -16,12 +15,14 @@ import {
   checkLiveRunPreflight,
   checkRunnerResolution,
   checkScenarioAcceptance,
+  declarationKeyCollisions,
   describeGateFalsifierCensus,
   gateFalsifierCensus,
   gateRedProofLedger,
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
+import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { preflightLiveRun } from "./live-run-preflight.mjs";
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -167,14 +168,96 @@ test("experimental runner check reports a descriptor runner that is not on disk"
   assert.deepEqual(checkExperimentalRunners({ toolsDir }), []);
 });
 
+test("gate check judges a gate by its NAME, so filing a domain in a directory does not read as undeclared", () => {
+  // A gate keeps its name when its domain files it in `gates/<domain>/`; only its path grows a prefix. Reading
+  // the path against the ledger read all 14 `meta` gates as `gate_without_falsifier` at once, while the ledger held
+  // all 14 entries - a whole domain going silently undeclared on the day it was sorted.
+  assert.deepEqual(
+    checkGateFalsifiers({
+      gateNames: ["gates/meta/check-a-sorted-gate.mjs"],
+      withFalsifier: [],
+      withoutFalsifier: [{ gate: "check-a-sorted-gate.mjs", reason: "a report, not a gate" }],
+      toolsDir,
+      run: () => ({ status: 0, stdout: "" }),
+    }),
+    [],
+  );
+  // The name is what is compared, so a genuinely unclassified gate is still named - and it is named by its PATH, which
+  // is where a reader has to go, beside the row that would classify it: "in neither table" is only actionable when the
+  // message says which table answers which shape.
+  const [unclassified] = checkGateFalsifiers({
+    gateNames: ["gates/meta/check-a-gate-nobody-classified.mjs"],
+    withFalsifier: [],
+    withoutFalsifier: [],
+    toolsDir,
+    run: () => ({ status: 0, stdout: "" }),
+  });
+  assert.equal(unclassified.code, "gate_without_falsifier");
+  assert.match(unclassified.detail, /^gates\/meta\/check-a-gate-nobody-classified\.mjs: /u, "the path leads");
+  assert.match(
+    unclassified.detail,
+    /`GATES_WITH_FALSIFIER`[\s\S]*`GATES_WITHOUT_FALSIFIER`/u,
+    "the message names both rows a gate could be added to, in the order of the question they answer",
+  );
+});
+
+// The other half of the same key: it is derived from the path, and the registry is what keeps it equal to the
+// declaration's `id`. A key two files share is therefore a relation rather than an identity - the shape a half-finished
+// domain move leaves behind, where the copy lands before the original is deleted - and the pre-fix suite judged both
+// files by one ledger row without naming either of them.
+test("two files deriving one classification key are named, not judged by one ledger row", () => {
+  const paths = ["check-a-gate.mjs", "gates/meta/check-a-gate.mjs"];
+  assert.deepEqual(declarationKeyCollisions(paths), [["check-a-gate.mjs", paths]]);
+  assert.deepEqual(
+    checkGateFalsifiers({
+      gateNames: paths,
+      withFalsifier: [],
+      withoutFalsifier: [{ gate: "check-a-gate.mjs", reason: "a report, not a gate" }],
+      toolsDir,
+      run: () => ({ status: 0, stdout: "" }),
+    }).map((entry) => [entry.code, entry.detail]),
+    [
+      [
+        "gate_key_collision",
+        "check-a-gate.mjs: check-a-gate.mjs and gates/meta/check-a-gate.mjs derive one classification key, so one " +
+          "ledger row judges both and neither is named",
+      ],
+    ],
+  );
+  // The control: two files, two keys is the ordinary population, so the case above is about the shared key and not
+  // about a gate living in a directory.
+  assert.deepEqual(declarationKeyCollisions(["check-a.mjs", "gates/meta/check-b.mjs"]), []);
+  assert.deepEqual(declarationKeyCollisions(harnessGateNames(repoRoot)), [], "the real tree derives 149 distinct keys");
+});
+
+// The moved domain, read as a population rather than as one gate at a time. This is the reading that was 14 + 14: with
+// the path compared against the ledger, every `gates/<domain>/` gate was `gate_without_falsifier` AND every ledger
+// row for one was `falsifier_entry_stale`. Two of the fourteen were in neither table at all, so the classification was
+// only half the fix - the rows for them are the other half.
+test("every gate filed under a domain directory is classified, and no row for them is stale", () => {
+  const names = harnessGateNames(repoRoot);
+  const moved = names.filter((name) => name.startsWith("gates/"));
+  assert.ok(
+    moved.length > 0,
+    "a domain directory with no gate would make the finding below vacuous: it is empty, so this test proved nothing",
+  );
+  const report = '{"gate":"stub","status":"passed","examined":1,"checks":[{"id":"a","status":"passed"}]}';
+  assert.deepEqual(
+    checkGateFalsifiers({ gateNames: moved, root: repoRoot, run: () => ({ status: 0, stdout: report }) }),
+    [],
+    "every moved gate is in exactly one table, so none of the fourteen is gate_without_falsifier",
+  );
+  assert.deepEqual(checkGateRegistry({ gateNames: names }), [], "and no ledger row names a gate that is not there");
+});
+
 test("gate check reports a gate that neither self-reports nor is declared", () => {
-  const findings = checkGateFalsifiers({ gateNames: ["check-a-gate-nobody-classified.mjs"], toolsDir });
+  const findings = checkGateFalsifiers({ gateNames: ["check-a-gate-nobody-classified.mjs"], root: repoRoot });
   assert.deepEqual(
     findings.map((entry) => entry.code),
     ["gate_without_falsifier"],
   );
 
-  assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }), []);
+  assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(repoRoot), root: repoRoot }), []);
 });
 
 // Three findings are about the population rather than one gate's own run, and each NAMES its member: a gate no ledger
@@ -183,7 +266,7 @@ test("gates no ledger covers, and reports that cannot show what they measured, a
   const declared = {
     gateNames: ["check-declared.mjs"],
     withoutFalsifier: [{ gate: "check-declared.mjs", reason: "its falsifier is its own test" }],
-    toolsDir,
+    root: repoRoot,
   };
   assert.deepEqual(
     checkGateFalsifiers(declared),
@@ -228,12 +311,12 @@ test("gates no ledger covers, and reports that cannot show what they measured, a
 
 // A check whose population is empty agrees with itself: no gate enumerated must be a finding, not a silent pass.
 test("gate check blocks on an empty population instead of agreeing with itself", () => {
-  const findings = checkGateFalsifiers({ gateNames: [], toolsDir });
+  const findings = checkGateFalsifiers({ gateNames: [], root: repoRoot });
   assert.deepEqual(
     findings.map((entry) => entry.code),
     ["gate_population_empty"],
   );
-  assert.match(findings[0].detail, /no tools\/check-\*\.mjs gate was enumerated/u);
+  assert.match(findings[0].detail, /no gate file was enumerated/u);
 });
 
 // The population is ONE derivation (`tools/lib/gate-population.mjs`), read by this suite and by the red-proof audit. The
@@ -299,7 +382,7 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · unreadable 1 · undeclared 1 · " +
       "zero-population-pass 1 · unlisted 2 (tools/check-c.mjs, check:d)",
     "judged here 4 (with a self-report 1 · declared without a report 1) · excluded 2 (a package.json gate script " +
-      "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven, external " +
+      "whose entry is not a gate file, so this suite has no default run to read): 1 proven, external " +
       "or recorded in the red-proof ledger, 1 undeclared and named below",
     "external 1 (rule lives in another program; run the command to watch it fail): test:a = `pnpm --dir pkg run test`",
   ]);
@@ -391,10 +474,10 @@ test("the census judges the index: an untracked gate is published, and the same 
         untrackedNotCounted: population.untrackedNotCounted,
       }),
       findings: checkGateFalsifiers({
-        gateNames: harnessGateNames(join(root, "tools")),
+        gateNames: harnessGateNames(root),
         withFalsifier: [],
         withoutFalsifier: declared,
-        toolsDir: join(root, "tools"),
+        root,
       }),
     };
   };
@@ -440,12 +523,12 @@ test("a declaration naming a gate that is not in tools/ is stale", () => {
   assert.deepEqual(
     findings.map((entry) => entry.detail),
     [
-      "check-deleted.mjs: declared to print a report, but no such gate is in tools/",
-      "check-moved.mjs: declared without a report, but no such gate is in tools/",
+      "check-deleted.mjs: declared to print a report, but no such gate file is in the tree",
+      "check-moved.mjs: declared without a report, but no such gate file is in the tree",
     ],
   );
   assert.deepEqual(
-    checkGateRegistry({ gateNames: harnessGateNames(toolsDir) }),
+    checkGateRegistry({ gateNames: harnessGateNames(repoRoot) }),
     [],
     "every entry in the real registry names a gate the harness enumerates",
   );
@@ -464,7 +547,7 @@ test("gate check reads the report a gate prints, not the words in its source", (
       join(stubTools, stub),
       '// this gate prints checks and mode: in a comment, and a human line on stdout\nprocess.stdout.write("all good\\n");\n',
     );
-    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools });
+    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools });
     assert.deepEqual(
       findings.map((entry) => entry.code),
       ["falsifier_signature_missing"],
@@ -476,7 +559,7 @@ test("gate check reads the report a gate prints, not the words in its source", (
       join(stubTools, stub),
       'const checks = [{ id: "one_rule", status: "passed" }];\nprocess.stdout.write(`${JSON.stringify({ gate: "stub/v1", status: "passed", checks })}\\n`);\n',
     );
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -499,7 +582,7 @@ test("a gate's report that examined nothing is blocked, and one that says why is
       `process.stdout.write(\`\${JSON.stringify({ gate: "stub/vacuous", status: "passed", checks, ${fields} })}\\n\`);\n`;
 
     writeFileSync(join(stubTools, stub), printing("population: 0"));
-    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools });
+    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools });
     assert.deepEqual(
       findings.map((entry) => entry.code),
       ["gate_measured_nothing"],
@@ -508,7 +591,7 @@ test("a gate's report that examined nothing is blocked, and one that says why is
 
     // The control: the same report with objects in it is a measurement, so the finding above is about the population.
     writeFileSync(join(stubTools, stub), printing("population: 3"));
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
 
     // A zero whose reason the gate states is `not_measured`, never `passed` and never a finding of this kind: the gate
     // already handles its own empty population, and the suite does not overrule the reason.
@@ -516,7 +599,7 @@ test("a gate's report that examined nothing is blocked, and one that says why is
       join(stubTools, stub),
       printing('population: 0, allowEmpty: "this gate judges a diff, and the diff is empty"'),
     );
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

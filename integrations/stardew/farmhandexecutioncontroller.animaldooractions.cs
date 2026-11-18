@@ -106,9 +106,6 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        // General, not Physical: this seam drives no tool lifecycle and starts no tool
-        // swing — it is the same instantaneous non-tool object toggle `toggle_fence_gate`
-        // admits against `Fence.toggleGate`.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -134,11 +131,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteToggleAnimalDoor(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one execution body, reached both in range and on arrival from the approach
-    /// leg. It re-validates the target identity, the native preconditions and the
-    /// geometry, because the walk can take several ticks.
-    /// </summary>
     private LocalExecutionReceipt ExecuteToggleAnimalDoor(string executionId, string requestId, int x, int y, string targetId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -182,9 +174,6 @@ internal sealed partial class ExecutionManager
                 $"{identity};animal_door_open_before={openBefore.ToString().ToLowerInvariant()};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // Re-read the world AFTER the call. `animalDoorOpen` is the immediate state the
-        // seam flips; `animalDoorOpenAmount` is the separate asynchronous geometry and is
-        // reported, not decided on.
         bool openAfter = building.animalDoorOpen.Value;
         float amountAfter = building.animalDoorOpenAmount.Value;
         bool changed = openAfter != openBefore;
@@ -235,10 +224,6 @@ internal sealed partial class ExecutionManager
         return $"animal_door_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// One resolved animal door, or the named reason the published target no longer
-    /// matches the live world.
-    /// </summary>
     private sealed record AnimalDoorTargetResolution(
         bool Accepted,
         string ReasonCode,
@@ -250,14 +235,8 @@ internal sealed partial class ExecutionManager
             new(false, reasonCode, evidence, null, false);
     }
 
-    /// <summary>
-    /// Re-derives the named animal door on the game thread. A mismatch is a named
-    /// refusal, never a silent re-target.
-    /// </summary>
     private static AnimalDoorTargetResolution ResolveAnimalDoorTarget(GameLocation location, int x, int y, string expectedTargetId)
     {
-        // The published `x,y` is the building's human door tile, exactly as the silo
-        // actions resolve theirs (`TryResolveSilo`).
         Building? building = location.buildings.FirstOrDefault(
             candidate => candidate is not null && candidate.getPointForHumanDoor() == new Point(x, y));
         if (building is null)
@@ -271,8 +250,6 @@ internal sealed partial class ExecutionManager
 
         string identity = $"tile={x},{y};location={location.NameOrUniqueName};building_type={building.buildingType.Value};building_origin={building.tileX.Value},{building.tileY.Value}";
 
-        // The building type's own question first: a building that declares no animal door
-        // is not this action's subject at all, whatever its instance state says.
         if (!TryDescribeAnimalDoor(building, out _, out bool liveOpen))
         {
             Rectangle door = building.GetData()?.AnimalDoor ?? Rectangle.Empty;
@@ -281,7 +258,6 @@ internal sealed partial class ExecutionManager
                 $"{identity};animal_door_rect={door.X},{door.Y},{door.Width},{door.Height}");
         }
 
-        // The instance question, in the native branch's own terms (`daysOfConstructionLeft <= 0`).
         if (building.daysOfConstructionLeft.Value > 0)
             return AnimalDoorTargetResolution.Reject(
                 "animal_door_under_construction",
@@ -296,12 +272,6 @@ internal sealed partial class ExecutionManager
         return new AnimalDoorTargetResolution(true, "accepted", string.Empty, building, liveOpen);
     }
 
-    /// <summary>
-    /// The animal doors the actor can name right now, projected read-only from live
-    /// state: every finished building in the current location whose data declares an
-    /// animal door. Nothing is synthesized — a coop that is not there, or whose door
-    /// does not exist, is not advertised.
-    /// </summary>
     private static IReadOnlyList<BridgeAnimalDoorTarget> DiscoverAnimalDoorTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;

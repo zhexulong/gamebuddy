@@ -38,6 +38,14 @@
  *                    `crash_report_carries_a_secret:report.1.json:API_KEY`, exit 1, and the planted value never
  *                    printed (tools/check-crash-report-containment.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-crash-report-containment",
+  domain: "data",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";

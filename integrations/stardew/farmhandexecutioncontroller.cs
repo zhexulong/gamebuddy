@@ -24,48 +24,44 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger, IActiveBodyOwnership, IAdmissionCommit
 {
     private const int DefaultDeadlineTicks = 60 * 20;
-    // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
-    // discovery-only radius lets the snapshot expose planning targets before the
-    // Agent walks there, matching Item/NPC/Chest discovery. Execution
-    // preconditions never read this constant.
     internal const int TargetDiscoveryRadius = 6;
     // Animal-product discovery is the one place where the ACTING range is wider
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
     private const int AnimalProductActionRadius = 1;
-    // A freshly warped player may report CanMove=false for a few transition
-    // frames. The deferred warp replan waits this many ticks for the player to
-    // become actionable again before failing closed as a locked destination.
     private const int NavigationWarpReplanGraceTicks = 60 * 3;
     private readonly IMonitor monitor;
-    // The one writer of every receipt, request-bound identity and idle transition this Mod holds.
     private readonly ExecutionReceiptStore ledger;
-    /// <summary>
-    /// The stored receipts as this class reads them - the ledger is their only writer. The request prologues read a
-    /// request's receipt here directly; moving those reads onto <see cref="IExecutionLedger.TryGetExistingReceipt"/> is
-    /// the admission seam's work, not this store's, and the read spelling is what
-    /// <c>tools/audit-stardew-action-admission-ledger.mjs</c> counts.
-    /// </summary>
     private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
-    private readonly List<ExecutionTrace> trace = new();
-    // What the Mod published about each ground chunk, with the actor's own count of that item as of the last
-    // publication that still saw the chunk on the ground. The magnet can deliver a drop before the request for it
-    // arrives, and this is the only baseline that can prove the delivery was the actor's own (GroundItemPickups.cs).
     private readonly GroundItemPickupLedger groundItemTargets = new();
     private readonly StardewBodyController controller;
-    // The body state, and the only writer of it: the slots, the modal lease and the deferred warp replan.
     private readonly ActiveBodySlots slots;
-    // The shared admission: the bound actor, the mechanical gate every executing action runs and the bounded wait a
-    // request is parked in. It reads the slots and the receipts above and commits its rulings through this class.
     private readonly ExecutionAdmission admission;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
-    private readonly Action<ExecutionTrace>? tracePublished;
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
-    // The actor's in-flight body state lives in one type (ActiveBodySlots), which is also the only writer of it. These
-    // are read-only projections under the names every family already reads: a write has no setter, so it cannot be
-    // forgotten - it does not compile.
+
+    /// <summary>
+    /// How many body-trace steps one settled receipt carries.
+    ///
+    /// Bounded because a receipt is ONE frame and a frame over <see cref="BridgeProtocol.MaximumMessageBytes"/> is
+    /// dropped, so an unbounded fold would lose the settlement it was folded into. What does not fit is COUNTED
+    /// (<c>steps_omitted</c>), never dropped in silence.
+    /// </summary>
+    internal const int MaximumFoldedTraceSteps = 8;
+
+    /// <summary>How many characters the folded field may spend, for the same reason as <see cref="MaximumFoldedTraceSteps"/>.</summary>
+    internal const int MaximumFoldedTraceChars = 1024;
+
+    /// <summary>
+    /// The body-trace transitions each live execution has produced, waiting for the receipt that settles it.
+    ///
+    /// Drained by <see cref="CarryTraceSteps"/> on the execution's terminal and by eviction on the store's own bound, because
+    /// an execution that never settles (a request whose dispatch was abandoned) must not accumulate forever.
+    /// </summary>
+    private readonly Dictionary<string, FoldedTraceSteps> traceStepsByExecutionId = new(StringComparer.Ordinal);
+    private readonly Queue<string> traceStepOrder = new();
     private LocalMoveSpec? active => this.slots.Active.Peek();
     private LocalTravelSpec? activeTravel => this.slots.Travel.Peek();
     private LocalPettingSpec? activePet => this.slots.Pet.Peek();
@@ -107,11 +103,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private Func<bool>? navigationPlayerActionableProbe;
     private long lastNavigationDiagnosticUnixMs;
     private long lastWarpDiagnosticUnixMs;
-    // True between a native warp's postcondition pass and the next tick where the
-    // player is actionable again. A freshly warped player may briefly report
-    // CanMove=false during the warp transition; treating that instant as a locked
-    // destination would fail a healthy multi-hop navigation. The deferred replan
-    // is bounded by the grace window and the navigation deadline pass in Update().
     private bool navigationWarpReplanDeferred => this.slots.WarpReplanDeferred;
     private int navigationWarpDeferredAtTick => this.slots.WarpReplanDeferredAtTick;
 
@@ -127,7 +118,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationPlayerActionableProbe = probe;
     }
 
-    /// <summary>Production truth for whether the local player may act this frame.</summary>
     private bool IsPlayerActionableNow()
     {
         if (this.navigationPlayerActionableProbe is not null)
@@ -137,11 +127,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             && !Game1.eventUp;
     }
 
-    /// <summary>
-    /// Bounded live diagnostic for the Navigation state machine. It logs at most
-    /// once per 2.5s when a Navigation execution is active, is content-safe, and
-    /// never changes authority or receipt/evidence semantics.
-    /// </summary>
     private void LogNavigationDiagnostic(string phase, string detail)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -151,7 +136,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.EmitNavigationDiagnostic(phase, detail);
     }
 
-    /// <summary>Warp/settle transitions log on a fast 500ms throttle so they are never swallowed by the tick throttle.</summary>
     private void LogNavigationWarpDiagnostic(string phase, string detail)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -186,11 +170,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationPiggybackedSceneProvider = provider;
     }
 
-    /// <summary>
-    /// Best-effort destination scene attachment for a succeeded Navigation
-    /// terminal. Returns null when the producer is absent, fails, or returns an
-    /// invalid payload; the already-settled navigation keeps its success.
-    /// </summary>
     private ObserveSceneResultPayload? TryCreatePiggybackedScene()
     {
         if (this.navigationPiggybackedSceneProvider is null)
@@ -218,18 +197,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         this.navigationShopPreflight = preflight;
     }
 
-    /// <summary>Production shop-opening pre-flight; null when the destination may proceed.</summary>
     private string? RunNavigationShopPreflight(string? canonicalDestinationIdentity)
     {
         if (this.navigationShopPreflight is not null)
             return this.navigationShopPreflight(canonicalDestinationIdentity);
         try
         {
-            // Festival days are authoritative asset files named Data/Festivals/
-            // {season}{day} (e.g. spring13, summer11). Checking asset existence
-            // avoids any hard-coded shop schedule and works on the target
-            // version without depending on a method that may not exist. Data
-            // failure passes through to the native execution guard.
             string? season = Game1.currentSeason;
             if (season is not null && Game1.dayOfMonth >= 1 && Game1.dayOfMonth <= 28)
             {
@@ -241,8 +214,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         catch
         {
-            // Pre-flight is advisory: any data failure passes through so the
-            // native execution guard remains the authority.
             return null;
         }
     }
@@ -276,45 +247,24 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.navigationLifecycleTestAuthorization = authorization;
     }
 
-    /// <summary>
-    /// Reads the one game-thread-owned current capability publication at each
-    /// admission/observation boundary. The provider cannot create membership;
-    /// it only projects a publication composed by the Mod.
-    /// </summary>
     public ExecutionManager(
         IMonitor monitor,
         Func<FarmhandCapabilityPublication> capabilityPublicationProvider,
         Action<LocalExecutionReceipt>? receiptPublished = null,
-        Action<ExecutionTrace>? tracePublished = null,
         FarmhandExecutionJournal? executionJournal = null,
         BridgeScope? executionScope = null)
     {
         this.monitor = monitor;
         this.capabilityPublicationProvider = capabilityPublicationProvider ?? throw new ArgumentNullException(nameof(capabilityPublicationProvider));
         this.receiptPublished = receiptPublished;
-        this.tracePublished = tracePublished;
         if ((executionJournal is null) != (executionScope is null))
             throw new ArgumentException("Durable execution journal and scope must be supplied together.");
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
         this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         this.slots = new ActiveBodySlots(this.controller);
-        // The idle transition is the one ledger publication this class still writes: it carries this class's tick and
-        // revision and lands in the same bounded trace, so the store calls out for it instead of owning a second one.
-        // The store asks the slots who still owns the body and releases the modal lease there, so this class is not
-        // between the two facts any more.
-        this.ledger = new ExecutionReceiptStore(
-            this.slots,
-            publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
+        this.ledger = new ExecutionReceiptStore(this.slots);
         this.admission = new ExecutionAdmission(this.slots, this.controller, this.ledger, this, this.executionJournal, this.executionScope);
-        // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
-        // "is the current modal the current action's own modal" is answered by
-        // THIS ledger's single-field lease. Production is single-ExecutionManager
-        // on the game thread; tests that fork several managers must reset their
-        // own lease through RegisterModalOwner/ReleaseModalOwner, and a null
-        // lease (no action ever registered) stays worldOwned — the safe default.
-        // The lease alone is not enough: it names an execution, and the modal is that execution's own only while the
-        // execution is still active (see WorldModel.OwnsCurrentModal).
         WorldModel.ModalActionOwnedCheck = () =>
             WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.admission.IsExecutionActive);
     }
@@ -347,7 +297,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public long CurrentRevision => this.revision;
     public bool IsBodyBusy => !this.IsBodySettled;
-    public IReadOnlyList<ExecutionTrace> Trace => this.trace;
 
     /// <summary>The journal admission of a navigation request, which is the only one with a destination lineage.</summary>
     internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode) =>
@@ -358,26 +307,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.admission.TryAdmitCandidate(request, executionId, out reasonCode);
 
 
-    /// <summary>
-    /// The per-tick world/body projection (WIA §1.2.1). Refreshed once at the
-    /// top of <see cref="Update"/>; consumers read this field, never a fresh
-    /// computation, so every ruling in one tick agrees on the same world.
-    /// </summary>
     private ActorDisposition disposition = ActorDisposition.Idle;
 
     internal void SetTestActorResolver(Func<Farmer?>? resolver) => this.admission.SetTestActorResolver(resolver);
 
-    /// <summary>
-    /// The one actor an admission may bind to: the local player, or a probe supplied by a suite, and only while it is
-    /// the player the execution scope names. <see cref="ExecutionAdmission.TryGetBoundActor"/> is its only describer.
-    /// </summary>
     internal bool TryGetBoundActor(out Farmer? actor, out string reasonCode) =>
         this.admission.TryGetBoundActor(out actor, out reasonCode);
 
-    /// <summary>
-    /// The envelope a dispatch request arrives with: the receipt that already answers it, or the execution identity its
-    /// body runs under. <see cref="ExecutionAdmission.OpenDispatchEnvelope"/> is its only resolver.
-    /// </summary>
     private DispatchEnvelope OpenDispatchEnvelope(
         BridgeExecutionRequest request,
         IExecutionLedger ledger,
@@ -391,36 +327,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal enum AdmissionActionabilityProfile
     {
-        /// <summary>
-        /// The profile for actions that drive a tool or a native object interaction.
-        ///
-        /// It used to ADD a tool-swing check (`UsingTool` / nonzero `toolPower`) on top of menu / event /
-        /// unmovable. It no longer does, and deliberately: since the WorldModel swap an in-progress swing and
-        /// an eating actor are `Transient` DISPOSITIONS, and every non-Modal profile refuses those. So
-        /// `Physical` and `General` are BEHAVIOURALLY IDENTICAL today (see `ExecutionAdmission.Admit`, which
-        /// branches on `Modal` alone). The label says which family the action belongs to; it does not add a check.
-        /// </summary>
         Physical,
 
-        /// <summary>
-        /// Menu / event / unmovable only — the pre-convergence general profile
-        /// kept for actions that are not tool-driven.
-        /// </summary>
         General,
 
-        /// <summary>
-        /// The modal-handling family profile (actions in
-    /// <see cref="ModalActionFamily"/>: answer_dialogue / dismiss_modal / respond_level_up).
-        /// An open modal (DialogueBox / LetterViewer / ReadyCheck / GameMenu)
-        /// is this profile's WORKING PRECONDITION, not an obstacle — unlike the
-        /// body-owning profiles it must not be refused while a menu is up, or
-        /// the modal-interrupted flow deadlocks (WIA §4.2 closes the §3.2
-        /// admission lock). A modal handling call is an instantaneous native
-        /// invocation (GameLocation.answerDialogue / closeDialogue) that takes
-        /// no body lease and moves no one, so the body_owned check is exempt;
-        /// deadline and identity/scope/revision checks stay exactly as for the
-        /// other profiles.
-        /// </summary>
         Modal,
 
         /// <summary>
@@ -469,19 +379,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         .OrderBy(actionId => actionId, StringComparer.Ordinal)
         .ToArray();
 
-    /// <summary>
-    /// WIA disposition projection for admission (§4.2). Local stand-in for Lane
-    /// A's <see cref="WorldModel.ComputeDisposition"/>: it applies the same
-    /// precedence as the landed WorldModel — PassOut &gt; Event &gt; Modal &gt;
-    /// Transient &gt; Idle — so admission, the body loop and the WorldModel share
-    /// one consistent per-tick classification once the swap completes (WIA
-    /// acceptance §6-6).
-    /// TODO(WIA): WorldModel.cs 已落地但 ComputeDisposition 无条件读取
-    /// player.Stamina/UsingTool（netStamina/usingTool NetFields 在现有 probe
-    /// farmer 上为 null），直接换用会让既有准入测试 NRE；待 Lane A 的
-    /// WorldModel 对 probe farmer 安全后，删除本投影与本判定，AdmitExecution
-    /// 单读 WorldModel.ComputeDisposition(actor).Kind。
-    /// </summary>
     internal enum LocalDispositionKind
     {
         Idle,
@@ -494,21 +391,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <summary>
     /// The internal reason code of a parked request's acceptance. It never reaches the Agent: the bridge
     /// reads it as "the Mod is holding this request", answers nothing, and lets the tick pump answer when the
-    /// park resolves (with the dispatch's own receipt, or with the named refusal once the window passes).
+    /// park resolves (with the dispatch's own receipt, or with the hold's refusal once the window passes).
     /// </summary>
     internal const string HeldRequestMarker = "held_awaiting_actionability";
-
-    /// <summary>
-    /// The reason prefix for a park whose bounded wait ended with no bridge left to take the answer. Only that one
-    /// branch mints it: a park that a bridge can still answer keeps the admission's own hold code, byte for byte.
-    /// </summary>
-    internal const string HeldRequestNeverAnsweredPrefix = "held_request_never_answered:";
 
     /// <summary>
     /// The resolver the bridge registers so a parked request is answered on the path it arrived on. The wait itself is
     /// <see cref="ExecutionAdmission.PumpHeld"/>; this class only forwards the registration.
     /// </summary>
     internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.admission.SetHeldRequestResolver(resolver);
+
+    internal static BodyHoldWait? HoldWait(LocalDispositionKind kind) => kind switch
+    {
+        LocalDispositionKind.Transient => BodyHoldWait.RetryWindow,
+        LocalDispositionKind.Event => BodyHoldWait.RequestDeadline,
+        LocalDispositionKind.Idle => null,
+        LocalDispositionKind.Modal => null,
+        LocalDispositionKind.PassOut => null,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "no wait is declared for this disposition"),
+    };
 
     /// <summary>
     /// The admission projection of a disposition: the closed kind, plus the <c>!CanMove</c> tail that keeps
@@ -534,16 +435,27 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return projected;
     }
 
-    // The frozen body-owner vocabulary. ONE definition per code so the refusal vocabulary and the snapshot's
-    // occupant projection cannot drift; the table below (slot -> code + interruptible) is the single judgement.
-    // `body_owned` is the unnameable hold: the code the describer falls back to when no row can name its owner.
     internal const string BodyOwned = "body_owned";
     internal const string BodyOwnedByNavigation = "body_owned_by_navigation";
     internal const string BodyOwnedByTravel = "body_owned_by_travel";
     internal const string BodyOwnedByMovement = "body_owned_by_movement";
     internal const string BodyOwnedByApproach = "body_owned_by_approach";
     internal const string BodyOwnedByRide = "body_owned_by_ride";
-    internal const string BodyOwnedByDayAdvance = "body_owned_by_day_advance";
+
+    /// <summary>
+    /// The kind `body_owned_by_night`: the cross-day lifecycle owns the actor's body once its night can begin.
+    ///
+    /// <para>
+    /// A KIND, not an action id, and that is what the spelling has to say. It was <c>body_owned_by_day_advance</c> - the
+    /// word-order twin of `advance_day`, an action id this catalog does not have (the action that crosses a night is
+    /// `sleep`, and its id is published in the same receipt as <c>owner_action=sleep</c>). A hold code that reads as an
+    /// action name sends the next reader looking for a request that cannot be made, which is the defect
+    /// <c>tools/check-refusal-action-names.mjs</c> refuses by name. This family's kinds are one word each (navigation,
+    /// travel, movement, approach, ride, activity), so this one is too.
+    /// </para>
+    /// </summary>
+    internal const string BodyOwnedByNight = "body_owned_by_night";
+
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
@@ -552,7 +464,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     ///
     /// <para>
     /// It exists because the alternative was silence. Measured 2026-11-10 (<c>round43</c>, 22:10, FarmHouse): a first
-    /// <c>sleep</c> was accepted and waited, the retry was refused <c>body_owned_by_day_advance</c> against it, and the
+    /// <c>sleep</c> was accepted and waited, the retry was refused <c>body_owned_by_night</c> against it, and the
     /// first one then sat <c>running</c> with no terminal receipt and no fact for over three minutes. A request that is
     /// replaced has to end as something a reader can name, or "still running" is the only thing the run can say about
     /// it forever.
@@ -585,11 +497,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string ActionPastCancelPoint = "action_past_cancel_point";
 
-    /// <summary>
-    /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
-    /// each action's own guard) mints its receipt through <see cref="ExecutionAdmission.RejectBodyOwned"/>, and the
-    /// snapshot's occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
-    /// </summary>
     private BodyOwner DescribeBodyOwner() => this.admission.Describe();
 
     /// <summary>
@@ -604,57 +511,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string WaitingForBodyPrefix = "waiting_for_body:";
 
-    /// <summary>
-    /// The named refusal for the ONE ownership the body controller itself can hold: an in-flight local move, which
-    /// a newer movement directive may supersede. Shared with <see cref="StardewBodyController"/> so the code, the
-    /// action and the interruptible verdict keep the single definition the owner table gives them.
-    /// </summary>
     internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
         ExecutionAdmission.LocalMoveOwner(executionId);
 
-    /// <summary>
-    /// The named body-exclusivity refusal, for the actions that hold their own slot guard instead of going through the
-    /// shared chain: the admission decides it, and this projects the answer onto the receipt those call sites return.
-    /// </summary>
     private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId) =>
         this.admission.RejectBodyOwned(requestId, executionId).Withholding!;
 
-    /// <summary>
-    /// Whether the accepted night has not begun: it has dispatched nothing native - no walk, no answer, no save - and
-    /// is waiting for the actor to satisfy its eligibility gate.
-    ///
-    /// <para>
-    /// A night in this state reserves NOTHING. It is not an owner in the table above and it does not refuse anything in
-    /// the admission, which is what makes the two requests that had to get through able to get through: a WALK-UP (the
-    /// <c>enter_exit</c> that brings the actor home so the night can start) and the night's own re-dispatch. The slot is
-    /// still "work in flight" for <see cref="IsBodySettled"/>, so a STOP never publishes the actor as idle during an
-    /// accepted night - that is the one place the two readings differ, and they differ because they answer different
-    /// questions: "may a request start?" and "is any work pending?".
-    /// </para>
-    /// <para>
-    /// A slot whose lifecycle is unavailable reads as COMMITTED: on an uninitialised or null handle there is no evidence
-    /// that nothing was dispatched, and releasing the body on a guess is the one thing this must never do.
-    /// </para>
-    /// </summary>
     private bool NightAcceptedButNotBegun => this.slots.NightAcceptedButNotBegun;
 
-    /// <summary>
-    /// Retires the accepted night that has not begun, so the request taking over the slot is the only owner of it.
-    ///
-    /// <para>
-    /// ONE OWNER. Two <c>sleep</c> requests must not become two nights: <see cref="RequestLocalAdvanceDay"/> holds one
-    /// slot, so a second acceptance would overwrite the first handle and leave its request accepted forever - the
-    /// "running with no terminal receipt" the 2026-11-10 measurement recorded. The night being replaced is therefore
-    /// settled FIRST, with its own named code, and only then is the slot free for the request that superseded it. Nothing
-    /// native had been dispatched from the old lifecycle (that is what this state means), so there is nothing to undo:
-    /// it never walked, never answered the prompt and never touched the calendar.
-    /// </para>
-    /// <para>
-    /// This is the executable half of <c>interruptible</c>: a night that has not begun can be taken over by the same
-    /// action that asked for it, exactly as a newer movement directive supersedes a walk in progress. A night that HAS
-    /// begun is not touched here - the table keeps it committed and the refusal keeps its name.
-    /// </para>
-    /// </summary>
     private void SupersedeNightThatHasNotBegun(string incomingExecutionId)
     {
         if (this.activeDayAdvance is not { } pending || !this.NightAcceptedButNotBegun)
@@ -669,24 +533,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             $"owner_action=sleep;phase=approaching;superseded_by_execution_id={ActiveBodySlots.OwnerToken(incomingExecutionId)}");
     }
 
-    /// <summary>
-    /// <summary>
-    /// The identity half of an executing action: the replay lookup, the revision advance, the execution identity and the
-    /// admission clock, in that order.
-    ///
-    /// <para>
-    /// The receipt this answers is the one the ledger already holds for the request. A retry gets its first answer back
-    /// byte-identical, which is why the lookup precedes the revision advance; on that path <paramref name="executionId"/>
-    /// and <paramref name="nowMs"/> are never read, because the caller has already been answered.
-    /// </para>
-    ///
-    /// <para>
-    /// The identity is the STORE's answer, never one this method invents: a request a dispatch already bound to an
-    /// execution (every body-program node routes with the node's own id) runs under that id, and an unbound request is
-    /// given a fresh one. Minting here instead made a program node and its own receipt two different identities, which
-    /// the executor's terminal then published as the node's execution.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? BeginLocalExecution(string requestId, out string executionId, out long nowMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -701,12 +547,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    /// <summary>
-    /// <see cref="BeginLocalExecution"/> followed by <see cref="AdmitExecution"/>: the whole identity-and-admission
-    /// preamble for an action whose own checks come after admission. An action that must refuse a non-scope-bound caller
-    /// before it reads the world calls <see cref="BeginLocalExecution"/> and then <see cref="AdmitExecution"/> itself, in
-    /// that order, because those refusals are named for the reason the caller can act on.
-    /// </summary>
     private LocalExecutionReceipt? AdmitLocalExecution(
         string requestId,
         long requestedDeadlineMs,
@@ -716,59 +556,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt existing
             ? existing
             : this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile);
-    /// <summary>
-    /// The shared admission, projected onto the shape every action body reads: the receipt the dispatch must answer
-    /// with instead of doing its work, or <see langword="null"/> when the request is admitted.
-    ///
-    /// <para>
-    /// <see cref="ExecutionAdmission.Admit"/> is the authority, and it answers an <see cref="AdmissionOutcome"/> because a
-    /// refusal and a park are different things. This projects that answer onto the one form the action bodies already
-    /// branch on. It stays private, and stays here: the pre-WIA source pin (<c>ToolApproachContractTests</c>) requires the
-    /// gate's entry point to be this member.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt? AdmitExecution(
         string requestId,
         string executionId,
         long requestedDeadlineMs,
         long nowMs,
         AdmissionActionabilityProfile profile,
-        // The deadline ceiling the caller's action family declares. One minute for an ordinary action; the
-        // lifecycle passes its own ten-minute watchdog rather than forking this gate to get one.
         long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs) =>
         this.admission.Admit(requestId, executionId, requestedDeadlineMs, nowMs, profile, maxDurationMs).Withholding;
 
-    /// <summary>
-    /// Re-attempts every parked request, once per game tick: the tick's single call into the wait, whose window, hold
-    /// and named refusal live in <see cref="ExecutionAdmission.PumpHeld"/>.
-    /// </summary>
     internal void PumpHeldRequests() => this.admission.PumpHeld();
-
-    /// <summary>
-    /// The named refusal for a request whose bounded wait passed without the actor becoming actionable. The
-    /// shape is the admission's own on arrival - <see cref="ExecutionState.Rejected"/> carrying the hold's
-    /// code and evidence - so an Agent that waited reads what it would have read had the hold been refused
-    /// immediately. The one exception is the wait no bridge was left to take, which names itself through
-    /// <paramref name="reasonCode"/>: its caller passes <see cref="HeldRequestNeverAnsweredPrefix"/> and the hold
-    /// it waited on. The action identity travels on the receipt because no dispatch lineage exists to resolve
-    /// it from: the handler that would have bound it never ran.
-    ///
-    /// <para>
-    /// The DECISION moved to <see cref="ExecutionAdmission"/>, which says which refusal a wait ended in; this member
-    /// writes it. It stays on the class that owns the delivery funnel because it is a store-and-publish pair that cannot
-    /// become <see cref="RememberTerminal"/> without a behaviour change: a request refused while it was still held was
-    /// never dispatched, so it owns no body to release and publishes no <c>body_idle</c>. That debt is recorded against
-    /// this member by <c>tools/terminal-commit-seam-exemptions.json</c>, and a second copy of the pair in the admission
-    /// would be exactly the bypass the seam gate exists to find.
-    /// </para>
-    /// </summary>
-    private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
-    {
-        LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, reasonCode, this.revision, holdEvidence, ActionId: held.ActionId);
-        this.ledger.Remember(receipt);
-        LocalExecutionReceipt published = this.AddTrace(receipt);
-        return published;
-    }
 
     /// <summary>
     /// Records how long a request waited for the actor to become actionable, so the first receipt its
@@ -813,11 +610,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (int)this.revision);
     }
 
-    /// <summary>
-    /// Observation is optional terminal metadata. A native actor whose display
-    /// surfaces are momentarily unready must never turn a candidate terminal
-    /// into an escaped exception, so a failed observation probe degrades to null.
-    /// </summary>
     private BridgeLocalObservation? TryCreateLocalObservation(Farmer actor)
     {
         try
@@ -886,8 +678,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     bool IDispatchExecutionLedger.TryGetBoundExecutionId(string requestId, out string executionId) =>
         this.ledger.TryGetBoundExecutionId(requestId, out executionId);
 
-    // The stored instance is the published one: the funnel publishes what this hands back, so a copy taken here would
-    // differ from the stored record by construction.
     LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt) => this.ledger.Remember(receipt);
 
     LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation) =>
@@ -902,8 +692,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     LocalExecutionReceipt IAdmissionCommit.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) =>
         this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
 
-    LocalExecutionReceipt IAdmissionCommit.RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence) =>
-        this.RefuseHeldRequest(requestId, held, reasonCode, holdEvidence);
+    /// <summary>
+    /// A wait that ended with nobody left to answer it. Nothing is minted: the request was never dispatched, so it owes
+    /// no receipt, and the park's drain is the only fact here. It is reported at trace level under one marker so a
+    /// reader can tell "the wait ended with the bridge gone" from "the park was never pumped".
+    /// </summary>
+    void IAdmissionCommit.NoteUndeliveredHeldRequest(string requestId, HeldRequest held, string because) =>
+        this.monitor.Log(
+            $"[held-request-dropped] request={requestId};action={held.ActionId};execution={held.ExecutionId};hold={held.HoldCode};because={because}",
+            LogLevel.Trace);
 
     void IAdmissionCommit.SupersedeNightThatHasNotBegun(string incomingExecutionId) =>
         this.SupersedeNightThatHasNotBegun(incomingExecutionId);
@@ -946,10 +743,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
 
-        // A MODEL-initiated stop is a REQUEST, and it is refused BY NAME when the holder is past its cancel point -
-        // no vague failure, and the evidence says which phase made it unsafe. The player's STOP and the worker's own
-        // teardown do NOT come through here as this reason code; their semantics are untouched on purpose, because an
-        // interruption after a native side effect has to stay `Uncertain` rather than become a refusal.
         if (string.Equals(reasonCode, ModelStopReasonCode, StringComparison.Ordinal))
         {
             BodyOwner holder = this.DescribeBodyOwner();
@@ -968,15 +761,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalNavigateSpec navigateSpec = this.activeNavigate;            if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
             {
                 this.slots.ClearWarpReplan();
-                // A cancellation/deadline/unexpected lifecycle after the native warp
-                // has already been signalled is only ever an uncertain terminal: the
-                // destination may have been reached or a delivery left open. It is
-                // never retried and late callbacks cannot overwrite it.
                 this.slots.Navigate.Clear();
                 if (this.active is not null)
                     this.slots.Active.Clear();
                 this.revision++;
-                LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
+                LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", NavigationNextStep.Describe("navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true"));
                 return cancelledAfterWarpReceipt;
             }
 
@@ -1029,10 +818,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach that has not yet executed anything native:
-            // walk is abandoned and the action reports the cancellation with the
-            // target it was walking toward, so the caller knows nothing changed in
-            // the world.
             LocalApproachSpec toolApproachSpec = this.activeToolApproach;
             this.slots.ToolApproach.Clear();
             if (this.active is not null)
@@ -1054,8 +839,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalItemPickupSpec itemPickupSpec = this.activeItemPickup;
             if (this.active is not null || this.controller.HasActiveExecution)
             {
-                // Preserve the pickup spec until the controller's synchronous
-                // callback records the one authoritative cancellation receipt.
                 this.controller.Cancel(reasonCode);
                 return this.receiptsByRequestId.TryGetValue(itemPickupSpec.RequestId, out LocalExecutionReceipt? controllerReceipt)
                     ? controllerReceipt
@@ -1083,8 +866,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeFishing is not null)
         {
-            // A cast stopped before the engine's win path consumes nothing beyond the cast itself, so its terminal is an
-            // honest Cancelled; once the win has been declared the catch may already be in flight, which is Uncertain.
             LocalFishingCastSpec fishingSpec = this.activeFishing;
             ExecutionState cancelledState = fishingSpec.Phase == LocalFishingPhase.AwaitingCredit ? ExecutionState.Uncertain : ExecutionState.Cancelled;
             this.SettleFishingCast(fishingSpec, cancelledState, reasonCode,
@@ -1131,490 +912,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.active is null)
             return new(string.Empty, string.Empty, ExecutionState.Cancelled, "no_active_execution", this.revision, null);
         return this.Cancel(this.active.RequestId, this.active.ExecutionId, reasonCode);
-    }
-
-    public void Update()
-    {
-        this.tick++;
-        // WIA §1.2.1: the single per-tick world/body projection. Computed once
-        // here, on the game thread, BEFORE anything consumes it this tick — the
-        // world-change arbitration below, the body loop's own rulings, and
-        // admission (which reads the same authority through
-        // WorldModel.Classify). Consumers never re-derive CanMove / menu / event.
-        this.disposition = WorldModel.ComputeDisposition(Game1.player);
-        // The owned cross-day night advances first: it is the only execution whose
-        // work is driven by the native day pipeline rather than by the body
-        // controller, and it must observe its terminal on the same game thread
-        // that produced the save/day facts.
-        this.UpdateActiveDayAdvance();
-        // The bus owns no body and no movement: it drives the native ticket
-        // interaction and then observes the arrival the game's own cutscene
-        // produces, so it is pumped here next to the cross-day advance.
-        this.UpdateBusRide();
-        // The parked requests are re-attempted here, on the tick that owns the body: the moment the actor is
-        // actionable the request goes back to the bridge, which dispatches it through the path it arrived on.
-        this.PumpHeldRequests();
-        if (this.activeNavigate is not null)
-            this.LogNavigationDiagnostic("tick", $"destination={this.activeNavigate.CanonicalDestinationIdentity}");
-        // Deferred Navigation approach commit. The body controller marks an
-        // approach Succeeded while it still reports HasActiveExecution and only
-        // releases after its callback returns. Native-committing inside that
-        // callback would run while the body is still owned. This pass runs
-        // before the controller tick of the next Update, so a Succeeded callback
-        // observed on tick N can only commit here on tick N+1 after the body is
-        // confirmed free. If the body never released, fail closed exactly once.
-        if (this.activeNavigate is { Phase: LocalNavigatePhase.ApproachReleased } releasedNavigation)
-        {
-            if (this.controller.HasActiveExecution || this.active is not null)
-            {
-                this.LogNavigationWarpDiagnostic("approach_release_commit_blocked", $"controller_owned={this.controller.HasActiveExecution};move_owned={this.active is not null}");
-                this.SettleNavigationTerminal(releasedNavigation, ExecutionState.Uncertain, "navigation_commit_body_still_owned",
-                    $"controller_owned={this.controller.HasActiveExecution.ToString().ToLowerInvariant()};move_owned={(this.active is not null).ToString().ToLowerInvariant()};never_retry=true");
-            }
-            else
-            {
-                this.LogNavigationWarpDiagnostic("approach_release_commit", "proceeding");
-                this.CommitNavigationApproach(releasedNavigation);
-            }
-        }
-        this.controller.Update(this.tick);
-        // Deferred Navigation warp replan. A freshly warped player may report
-        // CanMove=false for one transition frame; the synchronous warp callback
-        // therefore re-frames the postcondition pass and leaves the next-route
-        // decision here, on a tick where the player is actionable again. It never
-        // arms twice, and a player who never becomes actionable within the grace
-        // window settles fail-closed as locked exactly once.
-        if (this.navigationWarpReplanDeferred
-            && this.activeNavigate is { Phase: LocalNavigatePhase.AwaitingWarp } deferredNavigation)
-        {
-            bool graceExpired = this.tick - this.navigationWarpDeferredAtTick > NavigationWarpReplanGraceTicks;
-            if (!this.controller.HasActiveExecution
-                && this.active is null
-                && this.IsPlayerActionableNow()
-                && !graceExpired)
-            {
-                this.slots.ClearWarpReplan();
-                // Log through a local so this diagnostic cannot seed method-level
-                // Game1.player null-state for the later native postconditions.
-                Farmer? diagnosticPlayer = Game1.player;
-        this.LogNavigationWarpDiagnostic("warp_replan_retry", $"location={diagnosticPlayer?.currentLocation?.NameOrUniqueName ?? "none"};tile={diagnosticPlayer?.TilePoint.X ?? -1},{diagnosticPlayer?.TilePoint.Y ?? -1}");
-        bool preTry = this.activeNavigate is not null && this.activeNavigate.Phase == LocalNavigatePhase.AwaitingWarp;
-        this.monitor.Log($"[nav-retry-marker] request={deferredNavigation.RequestId};phase={deferredNavigation.Phase};pre_coordinator={this.activeNavigationCoordinator is not null};pre_try={preTry}", LogLevel.Trace);
-        this.TryContinueNavigationAfterWarp(deferredNavigation);
-        bool postActive = this.activeNavigate is not null;
-        string postPhase = this.activeNavigate?.Phase.ToString() ?? "none";
-        this.monitor.Log($"[nav-retry-marker] post_active={postActive};post_phase={postPhase}", LogLevel.Trace);
-            }
-            else if (graceExpired && !this.IsPlayerActionableNow())
-            {
-                this.slots.ClearWarpReplan();
-                this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity}");
-                this.SettleNavigationTerminal(deferredNavigation, ExecutionState.Rejected, "destination_locked",
-                    $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;never_retry=true");
-            }
-        }
-        if (this.activeTravel is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeTravel.DeadlineMs)
-        {
-            LocalTravelSpec specification = this.activeTravel;
-            this.slots.Travel.Clear();
-            this.revision++;
-            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Expired, "travel_deadline_expired", null);
-        }
-        if (this.activeNavigate is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeNavigate.DeadlineMs)
-        {
-            LocalNavigateSpec specification = this.activeNavigate;
-            this.slots.ClearWarpReplan();
-            this.LogNavigationWarpDiagnostic("deadline_reached", $"phase={specification.Phase};destination={specification.CanonicalDestinationIdentity}");
-            this.slots.Navigate.Clear();
-            if (this.active is not null)
-                this.slots.Active.Clear();
-            this.revision++;
-            ExecutionState deadlineState = specification.Phase == LocalNavigatePhase.AwaitingWarp ? ExecutionState.Uncertain : ExecutionState.Expired;
-            string reasonCode = specification.Phase == LocalNavigatePhase.AwaitingWarp ? "navigation_deadline_expired_after_warp" : "navigation_deadline_expired";
-            this.RememberTerminal(specification.RequestId, specification.ExecutionId, deadlineState, reasonCode, $"destination={specification.CanonicalDestinationIdentity};phase={specification.Phase}");
-        }
-        if (this.activeToolApproach is { } settledToolApproach)
-        {
-            // Phase two of a tool-family action. The body controller has released
-            // ownership (checked here, not in the transition callback, so the native
-            // tool call never runs while the body is still owned). The world may have
-            // changed during the walk, which is why CompleteToolApproach re-validates
-            // the location, the range and the target identity before executing.
-            if (this.active is null && !this.controller.HasActiveExecution)
-            {
-                long approachNowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                if (approachNowMs > settledToolApproach.DeadlineMs)
-                {
-                    this.slots.ToolApproach.Clear();
-                    this.revision++;
-                    this.RememberTerminal(settledToolApproach.RequestId, settledToolApproach.ExecutionId, ExecutionState.Expired, "tool_approach_deadline_expired",
-                        $"target={settledToolApproach.ExpectedTargetId};tile={settledToolApproach.TargetX},{settledToolApproach.TargetY};approach=adjacent");
-                }
-                else
-                {
-                    this.CompleteToolApproach(settledToolApproach);
-                }
-            }
-        }
-        // The cast's own tick: the engine's rod state machine is driven by `Farmer`'s tool tick, so this pass only reacts
-        // to the states it reports (a bite, the catch window it opens, the fish in hand).
-        this.UpdateFishingCast();
-        if (this.activePedestalTaking is not null)
-        {
-            LocalPedestalTakingSpec specification = this.activePedestalTaking;
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            GameLocation? location = Game1.player.currentLocation;
-            bool sameLocation = location is not null && string.Equals(location.NameOrUniqueName, specification.Location, StringComparison.Ordinal);
-            bool pedestalEmpty = sameLocation && location!.objects.TryGetValue(new Vector2(specification.TargetX, specification.TargetY), out StardewValley.Object? pedestalObject)
-                && pedestalObject is StardewValley.Objects.ItemPedestal pedestal && pedestal.heldObject.Value is null;
-            int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
-            bool laterTick = this.tick > specification.StartedTick;
-            // The native ItemPedestal hands the object over through
-            // itemModifyMutex, whose callback is polled by the location update
-            // loop; the execution update may run one tick before that poll. Give
-            // the native mutex a bounded window (30 ticks ~ 0.5 s) before
-            // settling Uncertain, instead of racing it.
-            bool mutexWindowExhausted = this.tick > specification.StartedTick + 30;
-            if (laterTick && pedestalEmpty && inventoryAfter >= specification.InventoryBefore + specification.StackBefore)
-            {
-                this.slots.PedestalTaking.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pedestal_item_taken",
-                    $"location={specification.Location};target={specification.TargetId};item={specification.QualifiedItemId};stack={specification.StackBefore};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};held_object_empty=true");
-            }
-            else if (mutexWindowExhausted)
-            {
-                this.slots.PedestalTaking.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pedestal_take_postcondition_unavailable",
-                    $"location={specification.Location};target={specification.TargetId};held_object_empty={pedestalEmpty.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
-            }
-        }
-        if (this.activeItemPickup is not null)
-        {
-            LocalItemPickupSpec specification = this.activeItemPickup;
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            StardewValley.GameLocation? location = Game1.player.currentLocation;
-            bool sameLocation = location is not null && string.Equals(location.NameOrUniqueName, specification.Location, StringComparison.Ordinal);
-            // Do not terminally inspect a pickup while the approach is still
-            // owned by the body controller. Debris may collect once the body is
-            // inside the magnet, but the native route must first settle; then
-            // this postcondition verifies the exact opaque chunk and inventory.
-            bool approachSettled = this.active is null && !this.controller.HasActiveExecution;
-            // Asked of the WHOLE location, because that is what `chunk_removed` claims: no chunk of this identity is left
-            // anywhere. A bounded search could call a chunk nine tiles away removed while the receipt said so.
-            (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target = sameLocation && location is not null
-                ? FindItemTarget(location, specification.TargetId, specification.QualifiedItemId)
-                : null;
-            int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
-            bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.Stack;
-            bool targetGone = target is null;
-            // The whole-location answer above IS `chunk_removed`, so the field carries it instead of a literal. It was
-            // `chunk_removed=true`, and the branch below - reached only when a chunk of this identity is still on the
-            // ground - therefore shipped a removal the same pass had just disproved. A removal needs no excuse; a
-            // chunk that survived names itself, which is the one shape the Host admits beside `chunk_removed=false`.
-            string chunkRemoved = targetGone ? "true" : "false";
-            string chunkReason = targetGone ? "" : ";reason=chunk_still_present";
-            // ONE evidence shape, and it is the Host's: `hasPickupItemCompletionEvidence`
-            // (host/src/stardew-game-integration-adapter.ts) requires exactly these nine keys, plus `reason` when the chunk
-            // is still there. A second shape - which is what my earlier fix wrote - let the Mod mint
-            // `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
-            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
-            // The engine's own answer to WHERE this body is, which every settlement below that found no delivery has to
-            // carry. Empty when no chunk of this identity is left to measure against - `target_gone` is that fact, and
-            // it does not get a second spelling.
-            string pickupReach = target is null
-                ? string.Empty
-                : $"{DescribeItemPickupReach(Game1.player, GetChunkTile(target.Value.Chunk), MagneticPickupReach.Subject(target.Value.Debris))};";
-            // The magnet phase begins when the walk hands the body back.
-            int magnetTicks = approachSettled ? this.ItemPickupMagnetTicks(specification.ExecutionId) : 0;
-            if (approachSettled && targetGone && inventoryGained)
-            {
-                this.slots.ItemPickup.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
-            }
-            else if (approachSettled && !inventoryGained && target is not null
-                && BrokenItemPickupPrecondition(Game1.player, target.Value.Debris) is { } brokenPrecondition)
-            {
-                // A precondition the engine re-asks on every update, re-asked here. Waiting out the request's deadline
-                // for a chunk the engine has already refused to take is the 60 s silence, and it is a lie about the
-                // reason: nothing is pending, the condition stopped holding.
-                this.slots.ItemPickup.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain,
-                    $"pickup_precondition_broken:{brokenPrecondition}",
-                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};precondition={brokenPrecondition};{pickupReach}inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
-            }
-            else if (approachSettled && sameLocation && magnetTicks >= ItemPickupMagnetWindowTicks)
-            {
-                // The magnet has had the time its own path needs. The backpack is the authority on whether it delivered:
-                // a count that rose by the stack IS this action's success, and one that did not is settled here instead
-                // of at the request's deadline, which is where the 60 s silences came from.
-                this.slots.ItemPickup.Clear();
-                this.revision++;
-                if (inventoryGained)
-                {
-                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
-                }
-                else
-                {
-                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain,
-                        "item_pickup_magnet_window_expired",
-                        $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};target_gone={targetGone.ToString().ToLowerInvariant()};{pickupReach}inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};magnet_ticks={magnetTicks};magnet_window_ticks={ItemPickupMagnetWindowTicks}");
-                }
-            }
-            else if ((!sameLocation || nowMs > specification.DeadlineMs) && approachSettled)
-            {
-                this.slots.ItemPickup.Clear();
-                this.revision++;
-                // An inventory that grew IS the pickup, whatever the ground still shows.
-                //
-                // Measured 2026-10-25: `item_pickup_postcondition_unavailable` with `target_gone=false;
-                // inventory_before=8; inventory_after=9; inventory_gained=true`. The item had been collected - the engine
-                // had even reported `native_auto_collect=true` - but `FindItemTarget` still found debris on the tile, so the
-                // conjunction (targetGone && inventoryGained) could not hold and the execution became Uncertain. The
-                // companion then said, accurately, "我人还在东头地里杵着，走不动", and the night never started.
-                //
-                // The count is the authoritative fact: it is the player's actual inventory, read after the native pickup ran.
-                // `targetGone` is a hypothesis about how the engine cleans up, and on a deferred-cleanup or shared-debris tile
-                // it is simply false while the pickup was real. Requiring both made a successful pickup look unresolved.
-                if (inventoryGained)
-                {
-                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
-                    return;
-                }
-                string reasonCode = !sameLocation ? "item_pickup_location_changed" : "item_pickup_postcondition_unavailable";
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, reasonCode,
-                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};target_gone={targetGone.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()}");
-            }
-        }
-        if (this.activeItemUse is not null)
-        {
-            LocalItemUseSpec specification = this.activeItemUse;
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            StardewValley.Object? remaining = specification.Slot < Game1.player.Items.Count ? Game1.player.Items[specification.Slot] as StardewValley.Object : null;
-            bool consumed = remaining is null || (string.Equals(remaining.QualifiedItemId, specification.QualifiedItemId, StringComparison.Ordinal) && remaining.Stack == specification.StackBefore - 1);
-            bool animationComplete = !Game1.player.isEating;
-            if (specification.DeferredTerminalState is not null)
-        {
-            // The terminal receipt was already minted when the interruption was
-            // arbitrated; this branch only has to hand the slot back. A native
-            // animation that a modal cut short may never report completion (the
-            // actor is held by the modal, so isEating stops advancing), and
-            // without a bounded fallback the slot would stay owned forever and
-            // every later action would be refused as body-owned.
-            if (animationComplete || nowMs > specification.DeadlineMs)
-            {
-                this.slots.ItemUse.Clear();
-                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-            }
-        }
-            else if (animationComplete && consumed)
-            {
-                this.slots.ItemUse.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_used",
-                    $"slot={specification.Slot};item={specification.QualifiedItemId};stack_before={specification.StackBefore};stack_after={remaining?.Stack ?? 0};edibility={specification.Edibility};drink={specification.IsDrink.ToString().ToLowerInvariant()};stamina_before={specification.StaminaBefore.ToString("0.##", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.##", CultureInfo.InvariantCulture)};health_before={specification.HealthBefore};health_after={Game1.player.health};animation_complete=true");
-            }
-            else if (nowMs > specification.DeadlineMs)
-            {
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "item_use_postcondition_unavailable",
-                    $"slot={specification.Slot};item={specification.QualifiedItemId};consumed={consumed.ToString().ToLowerInvariant()};animation_complete={animationComplete.ToString().ToLowerInvariant()}");
-                if (animationComplete)
-                {
-                    this.slots.ItemUse.Clear();
-                    this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-                }
-                else
-                    this.slots.ItemUse.Assign(specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_postcondition_unavailable" });
-            }
-        }
-        if (this.activeAnimalProduct is not null)
-        {
-            LocalAnimalProductCollectionSpec specification = this.activeAnimalProduct;
-            FarmAnimal? animal = Game1.player.currentLocation?.animals.TryGetValue(specification.AnimalId, out FarmAnimal? candidate) == true ? candidate : null;
-            bool animationComplete = !Game1.player.UsingTool;
-            bool produceCleared = animal is not null && animal.currentProduce.Value is null;
-            int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedProduceItemId);
-            bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.ProduceStack;
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (specification.DeferredTerminalState is not null)
-        {
-            // Same bounded release as the item-use slot: the interruption's
-            // receipt is already durable, and a modal-interrupted tool animation
-            // can leave UsingTool stuck true forever (measured live 2026-10-05:
-            // the animal-product slot never released, so the post-dismiss snapshot
-            // never became actionable). Without this fallback one interruption
-            // would lock every subsequent action out of the body.
-            if (animationComplete || nowMs > specification.DeadlineMs)
-            {
-                Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                this.slots.AnimalProduct.Clear();
-                this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-            }
-        }
-            else if (animationComplete && produceCleared && inventoryGained)
-            {
-                Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                this.slots.AnimalProduct.Clear();
-                this.revision++;
-                float staminaAfter = Game1.player.Stamina;
-                float staminaDelta = staminaAfter - specification.StaminaBefore;
-                // MilkPail/Shears each deduct a flat 4f inside their DoFunction;
-                // the animation runs the native tool use exactly on the bound animal.
-                float expectedStaminaCost = 4f;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "animal_product_collected",
-                    $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce={specification.QualifiedProduceItemId};produce_stack={specification.ProduceStack};produce_cleared=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained=true;animation_complete=true;stamina_before={specification.StaminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
-            }
-            else if (nowMs > specification.DeadlineMs)
-            {
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "animal_product_postcondition_unavailable",
-                    $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce_cleared={produceCleared.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};animation_complete={animationComplete.ToString().ToLowerInvariant()}");
-                if (animationComplete)
-                {
-                    Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                    this.slots.AnimalProduct.Clear();
-                    this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-                }
-                else
-                    this.slots.AnimalProduct.Assign(specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_postcondition_unavailable" });
-            }
-        }
-        if (this.activeMountTransport is not null)
-        {
-            LocalMountTransportSpec specification = this.activeMountTransport;
-            // The native mount completes by removing the horse from the location's
-            // characters list and assigning Farmer.mount, so the settle must read
-            // the rider's mount rather than search characters (which no longer
-            // contains it at that point).
-            Horse? horse = Game1.player.mount as Horse;
-            if (horse is not null && horse.HorseId == specification.HorseId && !horse.mounting.Value)
-            {
-                this.slots.MountTransport.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "horse_mounted", $"target={specification.TargetId};horse_id={specification.HorseId};mounted=true;mounting=false");
-            }
-            else if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > specification.DeadlineMs)
-            {
-                this.slots.MountTransport.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "horse_mount_postcondition_unavailable", $"target={specification.TargetId};mounted={(Game1.player.mount is not null).ToString().ToLowerInvariant()};mounting={horse?.mounting.Value.ToString().ToLowerInvariant() ?? "unknown"}");
-            }
-        }
-        if (this.activePet is not null)
-        {
-            LocalPettingSpec specification = this.activePet;
-            Pet? pet = Game1.player.currentLocation?.characters.OfType<Pet>().FirstOrDefault(candidate => candidate.petId.Value.ToString("N") == specification.PetIdentity);
-            bool dayRecorded = pet is not null && pet.lastPetDay.TryGetValue(Game1.player.UniqueMultiplayerID, out int lastDay) && lastDay == specification.PetDay;
-            bool friendshipApplied = pet is not null && pet.friendshipTowardFarmer.Value >= specification.ExpectedFriendshipAfter && pet.grantedFriendshipForPet.Value;
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (dayRecorded && friendshipApplied)
-            {
-                this.slots.Pet.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pet_completed",
-                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};pet_day={specification.PetDay};friendship_before={specification.FriendshipBefore};friendship_after={pet!.friendshipTowardFarmer.Value};day_recorded=true;friendship_callback=true");
-            }
-            else if (nowMs > specification.DeadlineMs)
-            {
-                this.slots.Pet.Clear();
-                this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pet_postcondition_unavailable",
-                    $"location={specification.Location};target={specification.TargetId};day_recorded={dayRecorded.ToString().ToLowerInvariant()};friendship_applied={friendshipApplied.ToString().ToLowerInvariant()}");
-            }
-        }
-        // Controller success releases its native ownership only after its
-        // transition callback returns; drain pending idle after that boundary.
-        this.ledger.DrainPendingIdleAfterRelease();
-
-        // WIA §4.1 top-level arbitration (review #2, 2026-10-02): movement
-        // world-change interruptions are already arbitrated inside
-        // StardewBodyController.Update, but NON-movement executions
-        // (travel / pet / tool approach / item pickup / item use / animal
-        // product) never reach the body controller — they must be interrupted
-        // here, on the same game thread, through the same InvalidateForLifecycle
-        // funnel the lifecycle boundaries already use.
-        this.ArbitrateWorldChangeInterruptions();
-    }
-
-    /// <summary>
-    /// Whether the actor is no longer in the location the pending travel started from - the one fact that says the
-    /// engine has already performed this travel's warp, whatever the travel is still waiting for.
-    /// </summary>
-    private bool TravelOriginHasBeenLeft(LocalTravelSpec travel)
-    {
-        StardewValley.GameLocation? location = Game1.player?.currentLocation;
-        return location is not null
-            && !string.Equals(location.NameOrUniqueName, travel.SourceLocation, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// WIA §4.1/§4.3: terminates non-movement executions the moment the world
-    /// holds an interruptible state that requires the body (a modal, an event
-    /// cutscene, or an imminent pass-out). World-change classification follows
-    /// the WorldModel precedence (Event &gt; Modal &gt; PassOut &gt; Transient);
-    /// Transient is intentionally NOT arbitrated here — it is the body
-    /// controller's self-healing window and is reported through its own
-    /// mechanism. The movement execution is likewise excluded: it has its own
-    /// intention-breakpoint evidence inside StardewBodyController.Update.
-    /// </summary>
-    private void ArbitrateWorldChangeInterruptions()
-    {
-        // The bus is deliberately NOT arbitrated here. Its own ticket interaction
-        // raises a question dialogue, so a Modal disposition during the departure is
-        // the ride's normal flow, not a world interruption; invalidating it would
-        // kill every ride at the first frame. Its terminal is owned by UpdateBusRide
-        // (arrival or deadline), and InvalidateForLifecycle still reaches
-        // InvalidateBusRide for the real lifecycle events (day start, save, bridge
-        // loss) — where the cutscene may already have committed. Measured live
-        // 2026-10-05: arbitrating it produced
-        // uncertain/bus_departure_invalidated 302ms after acceptance.
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null
-            || this.activeAnimalProduct is not null || this.activeItemUse is not null
-            || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
-        {
-            // A travel the ENGINE has already warped owns its terminal from the live world, even when a world-change
-            // disposition is present: an event or a faint that begins AFTER the actor left the origin is what happened
-            // next, not an interruption of the arrival. Measured 2026-11-04: `use_mine_ladder` answered the game's own
-            // `ExitMine` question, the engine moved the actor to `Mine:23,8`, and the mine entrance's first-visit
-            // cutscene set `eventUp` one tick before SMAPI's Warped event reached this class - so a completed departure
-            // was reported `invalidated/event_started` with no evidence at all. The terminal comes from the funnel that
-            // owns every warp arrival, which decides success from the destination postcondition and reports a mismatch
-            // as uncertain instead of inventing either.
-            if (this.disposition.Kind is ActorDispositionKind.Event or ActorDispositionKind.PassOut or ActorDispositionKind.Modal
-                && this.activeTravel is { } departedTravel
-                && this.TravelOriginHasBeenLeft(departedTravel))
-            {
-                this.CompleteTravelAfterWarp();
-                return;
-            }
-
-            switch (this.disposition.Kind)
-            {
-                case ActorDispositionKind.Event:
-                    this.InvalidateForLifecycle("event_started");
-                    break;
-                case ActorDispositionKind.Modal when !this.disposition.ModalActionOwned:
-                    this.InvalidateForLifecycle("modal_interrupted");
-                    break;
-                case ActorDispositionKind.Modal:
-                    // WIA §4.2 actionOwned: the modal on screen is the one THIS execution deliberately opened, and it is
-                    // closing it. Interrupting the execution would interrupt the flow that asked the question - measured
-                    // 2026-11-04: `use_mine_ladder` answered the game's own `ExitMine` question, went `accepted /
-                    // mine_exit_pending`, and was invalidated `modal_interrupted` one tick later while the queued exit
-                    // warp was still fading and the answered box was still the active menu.
-                    break;
-                case ActorDispositionKind.PassOut:
-                    this.InvalidateForLifecycle("pass_out");
-                    break;
-                case ActorDispositionKind.Transient:
-                case ActorDispositionKind.Idle:
-                    break;
-            }
-        }
     }
 
     /// <summary>
@@ -1680,10 +977,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.slots.Active.Clear();
             if (specification.Phase == LocalNavigatePhase.AwaitingWarp)
             {
-                // The warp was already committed natively; an unexpected lifecycle
-                // boundary after that point is only ever an uncertain terminal.
                 this.revision++;
-                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", NavigationNextStep.Describe("navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true"));
             }
             else
             {
@@ -1698,22 +993,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
-                // WIA: a world-change interruption releases the body NOW. The native animation
-                // a modal cut short may never report completion (measured live 2026-10-05: the
-                // actor stayed non-actionable and every later action was refused as body-owned),
-                // so deferring the release to the animation would hold the body until the request
-                // deadline. Restoring the held slot is safe here — the running animation already
-                // captured its own tool reference.
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
                 this.slots.AnimalProduct.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
-        // A second `activeMountTransport` settle stood here and published the same
-        // `Uncertain/horse_mount_invalidated_after_native_start` as the block at the top of this member - which nulls
-        // the field - so its guard could never be true and nothing ever read what it published. It is deleted rather
-        // than converted: the live settle reaches the seam above now, and converting this one would add a second call
-        // that can only mint the same terminal for an execution already settled.
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
@@ -1721,13 +1005,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
-        // The bus may already have committed its native cutscene, so its terminal is
-        // always Uncertain (see InvalidateBusRide).
         this.InvalidateBusRide(reasonCode);
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach invalidated before executing anything native:
-            // no world mutation happened, so this is an honest Invalidated terminal.
             LocalApproachSpec specification = this.activeToolApproach;
             this.slots.ToolApproach.Clear();
             if (this.active is not null)
@@ -1745,9 +1025,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_auto_collect_pending=true");
         }
-        // The world moved out from under a cast: a modal, an event or a warp. Everything before the engine's win path has
-        // consumed nothing beyond the cast itself, so the terminal is Invalidated and the rod is reeled in through the
-        // engine's own stop. From the win path onwards the catch may already be in flight, so it is Uncertain instead.
         if (this.activeFishing is not null)
         {
             LocalFishingCastSpec specification = this.activeFishing;
@@ -1762,8 +1039,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
-                // Same immediate release as the animal-product slot: the interrupted eating
-                // animation is not a reason to keep owning the body.
                 this.slots.ItemUse.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
@@ -1784,11 +1059,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             location = player?.currentLocation?.NameOrUniqueName,
             tile = new { x = player?.Tile.X ?? 0f, y = player?.Tile.Y ?? 0f },
             stamina = player?.Stamina ?? 0f,
-            // The persistent exhaustion flag. It is what makes fatigue more than a
-            // one-day resource: while it is set, Farmer's day-update restores only
-            // half of MaxStamina next morning. The companion must be able to see the
-            // state it now accrues by exhausting itself, or being tired is invisible
-            // to it and it cannot choose to rest, eat, or tell the player.
             exhausted = player?.exhausted.Value ?? false,
             health = player?.health ?? 0,
             current_tool = DescribeTool(player?.CurrentTool),
@@ -1833,17 +1103,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         };
     }
 
-    /// <summary>
-    /// The capabilities whose discovery reports what it withheld, each with the wire family it publishes into.
-    ///
-    /// <para>
-    /// It exists to answer ONE question the recorder cannot: "was any exclusion-reporting family measured at all".
-    /// Without it a snapshot whose `chop_tree` is not advertised would publish `discoveryExclusions: []`, which reads
-    /// as "nothing was withheld" when the truth is "nothing was looked at" - the same distinction `soilTiles` null
-    /// draws against `soilTiles: []`. The families here are the ones whose <c>Discover*</c> takes the recorder;
-    /// <c>tools/check-stardew-discovery-exclusions.mjs</c> is what keeps this table and those call sites agreeing.
-    /// </para>
-    /// </summary>
     private static readonly (string Capability, string Family)[] ExclusionReportingCapabilities =
     {
         ("chop_tree", "treeChopSourceTargets"),
@@ -1854,8 +1113,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ("water_pet_bowl", "petBowlTargets"),
         ("water_slime_hutch_trough", "slimeHutchTroughTargets"),
         ("bait_crab_pot", "baitCrabPotTargets"),
-        // The whole-map counts. They are published whether or not their action is advertised (a count is not a slice of
-        // one action), so the capability here only answers "was this family measured at all".
         ("harvest_crop", "harvestWhereabouts"),
         ("water_crop", "wateringWhereabouts"),
         // The four building families: an under-construction building answers `Building.doAction` with the
@@ -1884,56 +1141,31 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (player is null)
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
         BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
-        // What discovery WITHHELD this snapshot, and why. Created before the first radar runs because the recording
-        // families write into it as they walk the world; published at the end, once every family has had its say.
         DiscoveryExclusionRecorder discoveryExclusions = new();
-        // The container family's SENSED-ENTITY projection: one row per container, whole contents. Published while
-        // EITHER container action is advertised, because both name the same containers, and never derived from the
-        // action arguments - perception is a fact about the world, execution is the slice a handler re-derives.
         bool containerActionsAdvertised = advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal);
         IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? DiscoverChestStates(player) : null;
-        // The one-row summary beside it, under the same gate: it describes the same containers, so a snapshot that
-        // publishes one and not the other would answer "what is in my chests" in one field and not the other.
         BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
-        // The soil family, with the count its cap left out: a list that stops at the bound without saying so reads as
-        // a complete patch, and the actor plans the rest of its tilling from what it believes is the whole set.
         int soilTilesOmitted = 0;
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
             ? DiscoverSoilTiles(player, out soilTilesOmitted)
             : null;
-        // The farm-building family, with the count its cap left out. Declared here rather than at the initializer
-        // because an `out` variable defined inside a ternary is only assigned on the branch that runs.
         int farmBuildingTargetsOmitted = 0;
         IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =
             advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal)
                 ? DiscoverBuildFarmBuildingTargets(player, out farmBuildingTargetsOmitted)
                 : null;
-        // Whether any family that reports exclusions was measured at all. Null means NOT MEASURED (no such family was
-        // advertised); an empty array means measured and nothing withheld. A world with one tapped tree and a world
-        // with no tree must not answer the same thing, and neither must "not measured" and "nothing withheld".
         bool exclusionFamilyAdvertised = ExclusionReportingCapabilities
             .Any(entry => advertisedCapabilities.Contains(entry.Capability, StringComparer.Ordinal));
-        // The stack rows the inventory families publish. Hoisted because TWO readers need the same rows: the positional
-        // argument below, and the seed-supply fact's `heldCount` - which sums THESE rows rather than counting the pack a
-        // second time, so the two cannot disagree about how many seeds she holds. Null when no such capability is
-        // advertised, and the supply row then says the count is unknown instead of zero.
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts =
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)
                 ? DiscoverInventoryItemFacts(player)
                 : null;
-        // ONE shop-target list per snapshot, shared. `shopTargets` publishes it, and the seed-supply row's destination
-        // is SELECTED out of it rather than derived a second time: a second walk of `Data/Shops` could disagree with
-        // the first about what this room sells, and the seed row would then name a counter `shop_purchase` refuses.
-        // Gated on EITHER action, because a shortage fact published for `plant_seed` names a counter too.
         IReadOnlyList<BridgeShopTarget>? shopTargetsHere =
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal)
                 ? this.DiscoverShopTargets(player, discoveryExclusions)
                 : null;
-        // The shortage fact's SUPPLY half, published only while the action whose day it belongs to is advertised: a
-        // companion that cannot sow a tile has no shortage, and a family published for an unadvertised action would be a
-        // fact about a world it cannot act in.
         IReadOnlyList<BridgeSeedSupplyTarget>? seedSupplyTargets = null;
         int seedSupplyTargetsOmitted = 0;
         if (advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal))
@@ -1955,17 +1187,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             player.currentLocation?.warps
                 .Where(warp => !warp.npcOnly.Value
                     && !string.IsNullOrWhiteSpace(warp.TargetName)
-                    // The SOURCE may be `-1` on one axis: that is how a map declares an edge exit (walking off the west
-                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares three of its exits
-                    // that way. The range is the ONE declaration of that fact (`FarmhandWarpCoordinateRange`), shared
-                    // with the navigation topology and with execution acceptance, so a warp published here is a warp
-                    // `travel`/`enter_exit` will admit.
                     && FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
                     && FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
-                // The leg's accessibility, from the SAME authority the navigation topology filters its edges with
-                // (`Game1NavigationWorldSource.IsLocationAccessible`, fail-closed), so an agent can tell a usable exit
-                // from a locked door instead of probing. `null` is never produced: an unmeasurable leg fails closed to
-                // the same `false` the topology would have used to drop it.
                 .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY,
                     Game1NavigationWorldSource.IsLocationAccessible(warp.TargetName)))
                 .ToArray(),
@@ -1990,8 +1213,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
             (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player, discoveryExclusions) : null,
-            // `break_rock`, not `break_rock_source`: the capability word is the ACTION ID, and the old spelling meant this
-            // discovery never ran, so the family it publishes was empty in every snapshot.
             advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
             advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? DiscoverClearHoeDirtTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? DiscoverArtifactSpotTargets(player) : null,
@@ -2020,8 +1241,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
             chestsSummary,
-            // `put_item_in_fish_tank` and `place_item_on_pedestal` name the PACK SLOT their item is taken from, and this row is where that number and the
-            // item identity beside it are published - the tank's own `worldObjectTargets` row carries the tile, never the slot.
             inventoryItemFacts,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
@@ -2029,15 +1248,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
             advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
-            // The floor set is re-derived from the live lowestLevelReached on this
-            // game-thread read; the client's expectedTargetId is only matched against
-            // it later, never trusted as a level.
             advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? DiscoverMineElevatorFloors() : null,
-            // Shops whose owner is eligible AND standing in the actor's current location.
-            // Discovery walks Data/Shops and asks the game which owner entries are currently
-            // eligible (ShopBuilder.GetCurrentOwners evaluates ShopOwnerData.Condition), rather
-            // than scanning map tiles for "shop tiles" — the game hardcodes which tile opens
-            // which shop per location, so a tile scan cannot generalise.
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? shopTargetsHere : null,
             advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
             advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
@@ -2056,37 +1267,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             PresentationLocale: string.Empty,
             RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
             HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            // Two actions address this one family: `enter_mine` reads the entrance tile and the descent ladder,
-            // `use_mine_ladder` reads the exit ladder. Publishing it for only one of them would withhold the rows the
-            // other action serves, so the gate is the OR of the two.
             MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
-            // Last parameter, defaulted, so it can be named here without disturbing the
-            // positional arguments above it (CS1744 if the declaration moves earlier).
             ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player, discoveryExclusions) : null,
                     AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player, discoveryExclusions) : null,
         FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player, discoveryExclusions) : null,
     TailoringTargets: advertisedCapabilities.Contains("tailor_clothing", StringComparer.Ordinal) || advertisedCapabilities.Contains("dye_clothing_with_item", StringComparer.Ordinal) ? DiscoverTailoringTargets(player) : null,
-            // Item/tile lane projections, each published only while its own action is advertised.
             WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
             PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? DiscoverPanSites(player) : null,
             MailboxTargets: advertisedCapabilities.Contains("claim_mail_attachment", StringComparer.Ordinal) ? DiscoverMailboxTargets(player) : null,
 
-            // The actor's OWN wearable body slots. Published when EITHER wearable action is
-            // advertised, because both name the same body-slot targets.
             WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
-            // The farm-building commission sites and the buildings already standing, only while the
-            // action is itself advertised. The `out` count is hoisted above the initializer because a ternary that
-            // DEFINES the variable only assigns it on the branch that runs.
             FarmBuildingTargets: farmBuildingTargets,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
-            // The world-object lane's single shared projection: placement candidates, removable and
-            // non-removable objects, breakable containers, placed furniture and empty pedestals,
-            // published while ANY action that names a target from this one array is advertised -
-            // including the furniture and pedestal actions, which are the only ways to act on the
-            // pieces this array is the sole publication of.
             WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
-            // The disposition this tick, read from the value Update() already computed: publishing a
-            // second computation would be a second authority.
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
@@ -2098,30 +1291,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
             ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
             MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
-            // The chest-repaint lane: the chests this actor can name right now, each with the colour it
-            // already carries, published only while the action is itself advertised.
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
-            // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
             CurrentToolSlot: player.CurrentToolIndex,
             CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
-            // The map's own fixed interaction points: whole-map, no entities, no reachability. Published
-            // unconditionally for the same reason `warps` is - a location's topology is not a slice of one
-            // action, and a companion without `enter_mine` still has to name the way out of a mine. The
-            // count of what the cap left out rides beside the list, so truncation is stated.
             FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
             FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
             SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted,
-            // The cap on `farmBuildingTargets` is 8 `built` rows; the count of what it left out rides beside the
-            // family for the same reason `soilTilesOmitted` does. A farm with more buildings than the bound answered
-            // "eight" whether it had eight or eighty.
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
-            // `fish_here`'s discovery projection: only while the action itself is advertised, like every sibling family.
-            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null
+            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null,
+            // The same `HomeOf` the night's own eligibility refuses `not_home` from, so the projection's Sleep line can
+            // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
+            // it is one type test, and a line that needed the `sleep` capability to be advertised would be silent on
+            // exactly the surface that most needs to say "go home first".
+            SleepAdmitsHere: SleepAndAdvanceDayLifecycle.HomeOf(player.currentLocation) is not null
         );
-        // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
-        // is one publication of one measurement rather than a second pass over the map.
         if (!exclusionFamilyAdvertised) return snapshot;
         return snapshot with
         {
@@ -2137,10 +1322,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <para>
     /// It exists because the event path obtained this single field by calling CreateBridgeSnapshot(), which is
     /// the whole world: roughly seventy Discover* radar sources, each walking map objects and minting SHA-256
-    /// target ids, plus warps, capabilities and dispositions - on the game thread, once per observation, and
-    /// route_progress is published per tile. The active execution needs none of that: one spec field, one
-    /// receipt lookup and the body-owner describer. The snapshot and the events both read THIS, so they cannot
-    /// describe the occupant differently.
+    /// target ids, plus warps, capabilities and dispositions - on the game thread, once per observation. It was paid
+    /// once per tile while a progress trace was published for every step of a walk; that channel is gone, and the
+    /// projection is still what the snapshot reads for the occupant. The active execution needs none of the world: one
+    /// spec field, one receipt lookup and the body-owner describer. The snapshot and the events both read THIS, so they
+    /// cannot describe the occupant differently.
     /// </para>
     ///
     /// <para>Null when there is no world to describe, which is what a snapshot already reported through
@@ -2168,8 +1354,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
         else if (this.activePedestalTaking is not null)
             this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
-        // The phase and its cancel safety come from the SAME describer that names the holder, so an Agent that
-        // sees `cancelSafe=false` cannot be told by a refusal that the hold was releasable, or the reverse.
         BodyOwner activeOwner = this.DescribeBodyOwner();
         BridgeActiveExecution? activeExecution = this.activeNavigate is not null
             ? new(
@@ -2248,8 +1432,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                   : null;
         if (activeExecution is not null)
         {
-            // The occupant projection is derived from the SAME owner table that names every body-exclusivity
-            // refusal, so a refusal's named code and the snapshot's owner kind cannot disagree.
             BodyOwner owner = this.DescribeBodyOwner();
             activeExecution = activeExecution with { OwnerKind = owner.ReasonCode, Interruptible = owner.Interruptible };
         }
@@ -2317,11 +1499,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return choices.Count == 0 ? Array.Empty<BridgeLevelUpChoice>() : choices.Take(8).ToArray();
     }
 
-    /// <summary>
-    /// The actor's own profession ids, bounded. Published so a caller can read the growth state a `respond_level_up`
-    /// milestone branch just changed from a fresh observation - the chosen id present and the other card absent -
-    /// and can see the level-5 choice a level-10 pair continues from.
-    /// </summary>
     private static IReadOnlyList<int> DescribeProfessions(Farmer player)
     {
         List<int> ids = new();
@@ -2348,27 +1525,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null, FarmAnimalPetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, ChestsSummary: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
-        // Unspecified while the world is not ready: the world snapshot already
-        // reports Location "unknown" and zeroed stamina/health, and every action
-        // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
         PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null, PendingLevelUpChoices: null, Professions: null);
     }
 
-    /// <summary>
-    /// The location's own warp list, for a source tile that is NOT a door.
-    ///
-    /// <para>
-    /// Edge exits live here and nowhere else: `Town` declares six of its nine exits as `X = -1` or `Y = -1`, and `Farm`
-    /// publishes `40..42,65 -> Forest`. The snapshot surfaces both tables through `warps` and `doorTargets`, but until
-    /// 2026-11-01 only `travel` consulted this one, so `enter_exit` refused a tile the snapshot had just published. That is
-    /// a consumer dictating which table a producer may use.
-    /// </para>
-    /// </summary>
-    /// <param name="location">The location the actor is standing in.</param>
-    /// <param name="sourceX">The source tile's column, as the caller named it.</param>
-    /// <param name="sourceY">The source tile's row, as the caller named it.</param>
     private static StardewValley.Warp? ResolveLocationWarp(StardewValley.GameLocation location, int sourceX, int sourceY)
     {
         foreach (StardewValley.Warp candidate in location.warps)
@@ -2397,67 +1558,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    /// <summary>
-    /// Every tile this location offers as a way out, asked of the two tables the ENGINE keeps, in the order the game
-    /// itself resolves them: the door table <c>updateDoors</c> builds, the human door of each building standing here, and
-    /// the location's own warp list.
-    ///
-    /// <para>
-    /// The third source is what this family was missing. <c>location.doors</c> only ever holds a Buildings-layer tile
-    /// whose <c>Action</c> property contains "Warp" (<c>GameLocation.updateDoors</c>, GameLocation.cs:17586-17641), and a
-    /// farm building's INTERIOR carries its exit in <c>warps</c> instead: <c>Building.updateInteriorWarps</c> rewrites the
-    /// interior warp whose target is the parent location (Building.cs:1799-1816), and the engine reads
-    /// <c>indoors.warps[0]</c> as the tile a building's entrance puts the player on (GameLocation.cs:2203). Switching on
-    /// <c>FarmHouse</c>/<c>Cabin</c> therefore published the farmhouse's own exit and NOTHING for a shed, barn, coop or
-    /// greenhouse: inside every one of those a companion was told <c>doorTargets: []</c> by a location whose warp list
-    /// held the way out one tile away.
-    /// </para>
-    ///
-    /// <para>
-    /// A row carries no source field - <c>BridgeDoor</c> is the five warp coordinates and the wire's <c>hasOnlyKeys</c>
-    /// would refuse a sixth - so the source is read off the tile: the door table names tiles the map declared with an
-    /// <c>Action</c>, the warps list names every tile the map's own <c>Warp</c> property declared, and the one tile of a
-    /// building that appears in NEITHER is its human door (the tile a player clicks). Dedup is by SOURCE TILE with the
-    /// earliest table owning the row, because one tile can be both a gated door and a plain warp and the gated one is the
-    /// tile the native click entry knows.
-    /// </para>
-    /// </summary>
-    internal static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeDoor>();
-        Dictionary<(int X, int Y), BridgeDoor> result = new();
-        foreach ((Microsoft.Xna.Framework.Point point, string target) in location.doors.Pairs)
-        {
-            if (DescribeDoor(point.X, point.Y, location.getWarpFromDoor(point, player)) is { } door)
-                result.TryAdd((door.SourceX, door.SourceY), door);
-        }
-        foreach (StardewValley.Buildings.Building building in location.buildings)
-        {
-            if (!building.HasIndoors()) continue;
-            Microsoft.Xna.Framework.Point point = building.getPointForHumanDoor();
-            if (DescribeDoor(point.X, point.Y, ResolveDoorWarp(location, point)) is { } door)
-                result.TryAdd((door.SourceX, door.SourceY), door);
-        }
-        // The location's own warp list, with the `warps` family's predicate: a transition that moves a PLAYER, with a
-        // publishable source and destination. An edge exit's source is -1 on one axis, which is the engine's own
-        // encoding and not a defect, so the range is the ONE declaration of it (`FarmhandWarpCoordinateRange`).
-        foreach (StardewValley.Warp warp in location.warps)
-        {
-            if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName)) continue;
-            if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
-                || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
-                continue;
-            result.TryAdd((warp.X, warp.Y), new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY));
-        }
-
-        return result.Values.Take(64).ToArray();
-    }
-
-    /// <summary>
-    /// One door row, or null when this tile cannot be published: the engine resolved no warp for it, the warp names no
-    /// target, or a coordinate lies outside <see cref="FarmhandWarpCoordinateRange"/>'s publishable range.
-    /// </summary>
     private static BridgeDoor? DescribeDoor(int sourceX, int sourceY, StardewValley.Warp? warp)
     {
         if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)) return null;
@@ -2468,73 +1568,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
 
-    /// <summary>
-    /// The villagers a plan can name on this map, each with the relationship the engine holds for them.
-    ///
-    /// <para>
-    /// A villager the player has never met has NO `friendshipData` entry, so a filter on that key published every
-    /// villager EXCEPT the ones an introduction is for - the game's own Introductions quest and any first meeting were
-    /// impossible, because the companion could not talk to anyone it did not already know. The native entry creates the
-    /// record on that first conversation (`NPC.checkAction`, `friendshipData.Add(name, new Friendship(0))`), so the
-    /// zeroed relationship below is the state the engine is about to write, not an invention. A MET villager's own
-    /// record is published untouched.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeNpcRelationshipTarget> DiscoverNpcRelationshipTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeNpcRelationshipTarget>();
-        return location.characters
-            .OfType<StardewValley.NPC>()
-            .Where(npc => npc.IsVillager
-                && !string.IsNullOrWhiteSpace(npc.Name)
-                // Read-only inspection targets may be published inside the same bounded
-                // local discovery envelope used by this native-local fixture.
-                // Execution still independently enforces its one-tile native
-                // interaction radius after a separately receipted move.
-                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius))
-            .Take(64)
-            .Select(npc =>
-            {
-                Friendship friendship = player.friendshipData.TryGetValue(npc.Name, out Friendship? record)
-                    ? record
-                    : new Friendship();
-                return new BridgeNpcRelationshipTarget(
-                    BuildNpcRelationshipTargetId(location, npc.Name),
-                    (int)npc.Tile.X,
-                    (int)npc.Tile.Y,
-                    npc.Name,
-                    friendship.Points,
-                    friendship.Status.ToString(),
-                    friendship.TalkedToToday,
-                    friendship.GiftsToday,
-                    friendship.GiftsThisWeek);
-            })
-            .ToArray();
-    }
-
-    // Identity must not contain a coordinate. Discovery builds this from the
-    // NPC's live tile while admission checks it against the coordinate captured
-    // at snapshot time, so a villager that walked between the two produced two
-    // different hashes for the same person and the request was refused as if the
-    // target had changed. A villager's identity is (location, name): the name is
-    // unique per location and is what friendshipData is keyed by anyway.
     private static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, string npcName)
     {
         string raw = $"{location.NameOrUniqueName}:npc:{npcName}";
         return $"npc_relationship_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The villager one request's <c>expectedTargetId</c> names, read from the actor's CURRENT location.
-    ///
-    /// <para>
-    /// The lookup behind every NPC action bound by relationship identity. A villager follows a daily schedule, so
-    /// admitting against the tile it occupied when the snapshot was taken refused requests the caller meant - the
-    /// identity is (location, name), and this is the one place that turns it back into a subject. Null means the person
-    /// the caller named is not here any more; each caller answers that with its own named refusal.
-    /// </para>
-    /// </summary>
     private static StardewValley.NPC? FindVillagerByTargetId(StardewValley.GameLocation location, string expectedTargetId)
     {
         return location.characters
@@ -2542,51 +1581,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .FirstOrDefault(candidate => candidate.IsVillager
                 && !string.IsNullOrWhiteSpace(candidate.Name)
                 && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// Where every instantiated villager currently is, across the loaded world.
-    ///
-    /// <para>
-    /// The `Discover*` helpers above only describe the player's current map, so
-    /// an Agent told to find a villager cannot learn that she is elsewhere -
-    /// one live run searched three maps by trial and never found her. This is
-    /// the missing fact, and the master process holds it: `Game1.addMinute`
-    /// drives `checkSchedule` for every entry in `Game1.locations`, and
-    /// `warpCharacter` keeps each character's `currentLocation` current. The
-    /// production topology is the single-player master, so this loop is the
-    /// authoritative in-process answer.
-    /// </para>
-    /// <para>
-    /// Read-only and bounded. Only instantiated, non-event villagers appear;
-    /// generated levels (mine/volcano) are outside `ForEachLocation`'s default
-    /// range, so such a villager is absent rather than guessed.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeVillagerWhereabouts> DiscoverVillagerWhereabouts()
-    {
-        List<BridgeVillagerWhereabouts> result = new();
-        Utility.ForEachVillager(villager =>
-        {
-            if (result.Count >= 64)
-                return false;
-            StardewValley.GameLocation? location = villager.currentLocation;
-            if (location is null || string.IsNullOrWhiteSpace(villager.Name))
-                return true;
-            result.Add(new BridgeVillagerWhereabouts(
-                BuildNpcRelationshipTargetId(location, villager.Name),
-                villager.Name,
-                string.IsNullOrWhiteSpace(villager.displayName) ? villager.Name : villager.displayName,
-                location.NameOrUniqueName,
-                (int)villager.Tile.X,
-                (int)villager.Tile.Y,
-                ReferenceEquals(location, Game1.currentLocation)));
-            return true;
-        });
-        return result
-            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
-            .ThenBy(entry => entry.NpcName, StringComparer.Ordinal)
-            .ToArray();
     }
 
     /// <summary>
@@ -2600,7 +1594,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private static string ProjectWeather()
     {
-        // Green rain is a rain SUBTYPE: checked first, or `isRaining` answers for it.
         if (Game1.IsGreenRainingHere()) return "green_rain";
         if (Game1.isLightning) return "lightning";
         if (Game1.isRaining) return "rain";
@@ -2630,192 +1623,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static bool CropNeedsWater(StardewValley.TerrainFeatures.HoeDirt dirt) =>
         dirt.crop is not null && dirt.needsWatering() && !dirt.isWatered();
 
-    /// <summary>
-    /// How many crops need water on each map, and the nearest one.
-    ///
-    /// <para>
-    /// Whole-map, unlike `DiscoverCropTargets`, which is bounded by `TargetDiscoveryRadius` because a target outside reach
-    /// is not actionable. A COUNT is a different question from a list of targets: the prompt asks "is anything thirsty", and
-    /// answering it from the radius-limited list produced a false zero (measured 2026-10-31).
-    /// </para>
-    /// <para>
-    /// "Needs water" is <see cref="CropNeedsWater"/> - the crop's own need predicate AND the tile's live watered state,
-    /// the same pair `DiscoverCropTargets` and `water_crop` read, so the count cannot advertise a tile the action refuses.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts(DiscoveryExclusionRecorder exclusions)
-    {
-        List<BridgeWateringWhereabouts> result = new();
-        Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
-        foreach (GameLocation location in Game1.locations)
-        {
-            if (result.Count >= 64) break;
-            int needsWaterCount = 0;
-            Vector2? nearest = null;
-            float nearestDistance = float.MaxValue;
-            bool sameMap = string.Equals(
-                location.NameOrUniqueName,
-                Game1.player?.currentLocation?.NameOrUniqueName,
-                StringComparison.Ordinal);
-            foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-            {
-                if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
-                    || dirt.crop is null)
-                    continue;
-                // A dead crop is a subject this COUNT can see and will never count as thirsty, so it says so rather than
-                // leaving the reader to read its absence as "no crop here".
-                if (dirt.crop.dead.Value)
-                {
-                    exclusions.Record("wateringWhereabouts", DiscoveryExclusionReasons.Dead);
-                    continue;
-                }
-                if (!CropNeedsWater(dirt))
-                    continue;
-                needsWaterCount++;
-                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
-                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
-                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
-                // address the companion can walk to, so only the player's own map computes one.
-                if (!sameMap) continue;
-                float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
-                if (distance < nearestDistance)
-                {
-                    nearestDistance = distance;
-                    nearest = pair.Key;
-                }
-            }
-            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
-            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
-            if (needsWaterCount > 0)
-            {
-                result.Add(new BridgeWateringWhereabouts(
-                    location.NameOrUniqueName,
-                    needsWaterCount,
-                    nearest is null ? null : (int)nearest.Value.X,
-                    nearest is null ? null : (int)nearest.Value.Y));
-            }
-        }
-        return result
-            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
-            .ToArray();
-    }
-
-    /// <summary>
-    /// Summarize every loaded location's ready-for-harvest crops.
-    ///
-    /// <para>
-    /// Per-location HarvestTargets are Chebyshev-bounded, so this is the only
-    /// planning fact that tells the companion a ripe crop exists elsewhere —
-    /// same role as VillagerWhereabouts. Countable crops only (the same predicate
-    /// the bounded discovery uses), nearest tile is the one closest to the
-    /// player's current tile, and the result is bounded like the other snapshot
-    /// lists (Host accepts up to 64).
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts(DiscoveryExclusionRecorder exclusions)
-    {
-        List<BridgeHarvestWhereabouts> result = new();
-        foreach (GameLocation location in Game1.locations)
-        {
-            if (result.Count >= 64) break;
-            int readyCount = 0;
-            Vector2? nearest = null;
-            float nearestDistance = float.MaxValue;
-            Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
-            bool sameMap = string.Equals(
-                location.NameOrUniqueName,
-                Game1.player?.currentLocation?.NameOrUniqueName,
-                StringComparison.Ordinal);
-            foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-            {
-                if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
-                    || dirt.crop is null
-                    || dirt.crop.forageCrop.Value)
-                    continue;
-                // The count is derived from the SAME pair of engine predicates the bounded `harvestTargets` list uses, so
-                // each one it drops is recorded here rather than leaving an empty list to answer two questions at once.
-                if (!dirt.readyForHarvest())
-                {
-                    exclusions.Record("harvestWhereabouts", DiscoveryExclusionReasons.NotReady);
-                    continue;
-                }
-                if (dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
-                {
-                    exclusions.Record("harvestWhereabouts", DiscoveryExclusionReasons.WrongHarvestMethod);
-                    continue;
-                }
-                readyCount++;
-                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
-                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
-                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
-                // address the companion can walk to, so only the player's own map computes one.
-                if (!sameMap) continue;
-                float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
-                if (distance < nearestDistance)
-                {
-                    nearestDistance = distance;
-                    nearest = pair.Key;
-                }
-            }
-            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
-            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
-            if (readyCount > 0)
-            {
-                result.Add(new BridgeHarvestWhereabouts(
-                    location.NameOrUniqueName,
-                    readyCount,
-                    nearest is null ? null : (int)nearest.Value.X,
-                    nearest is null ? null : (int)nearest.Value.Y));
-            }
-        }
-        return result
-            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
-            .ToArray();
-    }
-
     private static string BuildPetTargetId(StardewValley.GameLocation location, int x, int y, Pet pet)
     {
         string raw = $"{location.NameOrUniqueName}:pet:{pet.petId.Value:N}";
         return $"pet_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private static IReadOnlyList<BridgePetTarget> DiscoverPetTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgePetTarget>();
-        List<BridgePetTarget> result = new();
-        // The window is taken over the pets in RANGE and the day filter runs after it, which is the order this family
-        // has always published in; moving the cap after the filter would change which pets the list can hold.
-        foreach (Pet pet in location.characters.OfType<Pet>()
-            .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius, player))
-            .Take(16))
-        {
-            BridgePetTarget target = new(
-                BuildPetTargetId(location, (int)pet.Tile.X, (int)pet.Tile.Y, pet),
-                (int)pet.Tile.X,
-                (int)pet.Tile.Y,
-                pet.petType.Value,
-                pet.friendshipTowardFarmer.Value,
-                pet.lastPetDay.TryGetValue(player.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays,
-                // Project the native fact, do not invent a taxonomy. A Pet moves
-                // according to PetData.Behaviors, and the field that decides that
-                // is `WalkInDirection` (Data/Pets): Walk/Sprint/LeapJump set it,
-                // SitDown/SitSide/Flop do not. The game already answers "is this
-                // pet moving right now"; naming it `Stationary` and nothing more
-                // avoids collapsing several native behaviours into phases the Mod
-                // would then own and have to keep in sync.
-                Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false));
-            // The row states the day fact either way; the reason states why it is not a target. A pet petted today is
-            // excluded rather than published-and-refused because there is nothing left to do with it - the second pet
-            // opens `AnimalQueryMenu` instead (Pet.cs:641-643) - but an empty list must not be the only evidence.
-            if (target.PettedToday)
-            {
-                exclusions.Record("petTargets", DiscoveryExclusionReasons.PettedToday);
-                continue;
-            }
-            result.Add(target);
-        }
-        return result;
     }
 
     /// <summary>
@@ -2834,146 +1645,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"farm_animal_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// Farm animals the actor can still pet today, nearest first.
-    ///
-    /// <para>
-    /// The day filter is `wasPet`, the engine's own marker, NOT a re-derivation: `FarmAnimal.pet` sets it on the first
-    /// manual pet (FarmAnimal.cs:749) and the save clears it overnight, so an animal that is absent from this list has
-    /// already been petted by this farmer today. It is filtered rather than published-and-refused for the same reason
-    /// `petTargets` filters `PettedToday`: there is nothing left to do with it, and the second pet would open
-    /// `AnimalQueryMenu` instead of petting.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeFarmAnimalPetTarget>();
-        List<BridgeFarmAnimalPetTarget> result = new();
-        foreach (FarmAnimal animal in location.animals.Values
-            .Where(animal => IsTileWithinChebyshevRadius(player, (int)animal.Tile.X, (int)animal.Tile.Y, TargetDiscoveryRadius))
-            .OrderBy(animal => ChebyshevDistance(player, (int)animal.Tile.X, (int)animal.Tile.Y))
-            .ThenBy(animal => animal.Tile.X)
-            .ThenBy(animal => animal.Tile.Y))
-        {
-            if (result.Count >= 16) break;
-            // The day marker the engine itself sets on the first manual pet and clears overnight (FarmAnimal.cs:745-749,
-            // :976). Filtered rather than published-and-refused - there is nothing left to do with it - and now
-            // RECORDED, so the empty list says "already petted" instead of "no animals here".
-            if (animal.wasPet.Value)
-            {
-                exclusions.Record("farmAnimalPetTargets", DiscoveryExclusionReasons.PettedToday);
-                continue;
-            }
-            result.Add(new BridgeFarmAnimalPetTarget(
-                BuildFarmAnimalPetTargetId(location, animal),
-                (int)animal.Tile.X,
-                (int)animal.Tile.Y,
-                animal.type.Value,
-                animal.friendshipTowardFarmer.Value));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeMachineTarget>();
-        return location.objects.Pairs
-            .Where(pair => pair.Value.GetMachineData() is not null
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
-            .Take(64)
-            .Select(pair =>
-            {
-                StardewValley.Object machine = pair.Value;
-                string? held = machine.heldObject.Value?.QualifiedItemId;
-                string? input = machine.lastInputItem.Value?.QualifiedItemId;
-                BridgeMachineTarget target = new(
-                    BuildMachineTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, machine.QualifiedItemId),
-                    (int)pair.Key.X,
-                    (int)pair.Key.Y,
-                    machine.QualifiedItemId,
-                    RequireDisplayName(machine.QualifiedItemId),
-                    machine.readyForHarvest.Value,
-                    machine.MinutesUntilReady,
-                    held,
-                    input,
-                    null,
-                    null,
-                    null,
-                    // Ready means the machine's OWN lifecycle finished: `readyForHarvest` is set exactly when the window
-                    // reaches zero (Object.cs:2581-2585), so a ready machine that holds something is collectable whatever
-                    // it is - the state, not a Keg id, is what the collect action needs.
-                    machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null,
-                    machine.GetMachineData() is not null,
-                    // What THIS machine takes, from its own Data/Machines rows - the same derivation the load refusal
-                    // names. Every object with machine data used to be published as a load target with no statement of
-                    // its inputs, so a furnace reached the model looking like it took coffee beans (measured 2026-10-31).
-                    // null here means the machine's data could not answer, which is not the same fact as "takes nothing".
-                    Accepts: ReadMachineInputAcceptance(machine));
-                if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
-                {
-                    for (int slot = 0; slot < player.Items.Count; slot++)
-                    {
-                        // The row publishes the input the ACTION will accept: the machine's own admission decides whether
-                        // it takes this stack (Object.performObjectDropInAction, probe: true - the call GameLocation.checkAction
-                        // makes at GameLocation.cs:7768-7772), and the machine's own rows decide how many it consumes. Discovery
-                        // and the action therefore publish and enforce the same fact instead of two guesses at it.
-                        if (player.Items[slot] is not StardewValley.Object carried
-                            || !machine.performObjectDropInAction(carried, probe: true, player)
-                            || !TryReadMachineLoadRequirement(machine, carried, player, location, out MachineLoadRequirement requirement))
-                            continue;
-                        target = target with { LoadInputSlot = slot, LoadInputQualifiedItemId = carried.QualifiedItemId, LoadInputStack = requirement.ConsumedCount };
-                        break;
-                    }
-                }
-                return target;
-            })
-            .ToArray();
-    }
-
     private static string BuildMachineTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"machine_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
-            return Array.Empty<BridgeTreeChopSourceTarget>();
-
-        List<BridgeTreeChopSourceTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree
-                && pair.Key.X >= 0 && pair.Key.X <= 1000
-                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player))
-        {
-            if (result.Count >= 64) break;
-            StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
-            string? exclusion = TreeChopSourceExclusion(tree);
-            if (exclusion is not null)
-            {
-                exclusions.Record("treeChopSourceTargets", exclusion);
-                continue;
-            }
-            int x = (int)pair.Key.X;
-            int y = (int)pair.Key.Y;
-            result.Add(new BridgeTreeChopSourceTarget(
-                BuildTreeChopSourceTargetId(location, x, y, tree),
-                location.NameOrUniqueName,
-                x,
-                y,
-                tree.treeType.Value,
-                tree.growthStage.Value,
-                tree.health.Value,
-                tree.stump.Value,
-                tree.hasMoss.Value,
-                tree.tapped.Value));
-        }
-        return result;
     }
 
     /// <summary>
@@ -3037,102 +1712,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_chop_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeTreeChopResultTarget> DiscoverTreeChopResultTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
-            return Array.Empty<BridgeTreeChopResultTarget>();
-
-        return location.terrainFeatures.Pairs
-            // `health == 5f` IS THE READBACK of this action's own swing: `performTreeFall` sets `stump.Value = true;
-            // health.Value = 5f;` on the hit that fells the tree (Tree.cs:1495-1496). Neither `hasMoss` nor `tapped`
-            // is a second state to filter on: the same call clears the tap (`tapped.Value = false`, Tree.cs:1488) and
-            // moss only ever grows on a standing tree (`growthStage >= 14 && !stump.Value`, Tree.cs:991) and is cleared
-            // for a stump every day (Tree.cs:985-988) - a tapper cannot even be placed on one (Object.cs:6568). A felled
-            // subject is therefore never mossy or tapped, so a predicate for either would withhold nothing.
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
-                && tree.stump.Value && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
-                && tree.health.Value == 5f
-                && pair.Key.X >= 0 && pair.Key.X <= 1000 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
-            .Take(64)
-            .Select(pair =>
-            {
-                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
-                int x = (int)pair.Key.X;
-                int y = (int)pair.Key.Y;
-                return new BridgeTreeChopResultTarget(
-                    BuildTreeChopResultTargetId(location, x, y, tree), location.NameOrUniqueName, x, y, tree.treeType.Value,
-                    tree.health.Value, tree.stump.Value, tree.hasMoss.Value, tree.tapped.Value);
-            })
-            .ToArray();
-    }
-
-    private static IReadOnlyList<BridgeTreeStumpTarget> DiscoverTreeStumpTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
-            return Array.Empty<BridgeTreeStumpTarget>();
-
-        return NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
-                && tree.stump.Value
-                && pair.Key.X >= 0 && pair.Key.X <= 1000
-                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
-            .Take(16)
-            .Select(pair =>
-            {
-                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
-                int x = (int)pair.Key.X;
-                int y = (int)pair.Key.Y;
-                return new BridgeTreeStumpTarget(BuildTreeStumpTargetId(location, x, y, tree), location.NameOrUniqueName, x, y, tree.treeType.Value, tree.health.Value);
-            })
-            .ToArray();
-    }
-
-    private static IReadOnlyList<BridgeTreeSaplingTarget> DiscoverTreeSaplingTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeTreeSaplingTarget>();
-        int heldStacks = player.Items
-            .OfType<StardewValley.Object>()
-            .Count(item => StardewValley.Object.isWildTreeSeed(item.ItemId) && item.Stack >= 1);
-        int rowLimit = TargetRowBudget.PerKeyRowLimit(heldStacks, TargetRowBudget.PlanNodes);
-        List<BridgeTreeSaplingTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
-                continue;
-            // This stack's OWN window, and a stack's rows are its NEAREST: the scan below walks x then y from the far
-            // corner, so ordering happens before the window trims, which is what makes the window mean "nearest"
-            // rather than "whichever tiles the loops reached first".
-            List<BridgeTreeSaplingTarget> rowsForThisStack = new();
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
-            {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
-                        continue;
-                    rowsForThisStack.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
-                }
-            }
-            result.AddRange(TargetOrdering.NearestFirstByChebyshev(
-                rowsForThisStack,
-                player.TilePoint.X,
-                player.TilePoint.Y,
-                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
-        }
-        // A stack is independent of every other stack - a row in slot A can never address slot B's item - so ordering
-        // each stack's own window IS the whole list's order, and the stacks stay in inventory order. The reason the
-        // order matters at all: `TARGETS_NAMED_PER_PLAN` is 16, so one script uses at most sixteen rows, and Chebyshev is the
-        // metric the range gate will apply (a tile nearer by Manhattan can still be further from being in range).
-        // Measured 2026-10-29, `round7`: 7.2 KB of these rows per observation, in scan order, so the sixteen a script
-        // could reach soonest were scattered.
-        return result;
-    }
-
     private static bool CanPlantWildTreeSeedAt(StardewValley.GameLocation location, string qualifiedItemId, int x, int y)
     {
         Vector2 tile = new(x, y);
@@ -3170,8 +1749,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         "weedTargets" => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "grassTargets" => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "rockSourceTargets" => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        // A lookup answers "was this row in the frame", so it records nothing: the frame's own pass is the one that
-        // counts what it withheld, and a second recorder here would count the same clump twice.
         "debrisTargets" => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "scytheCropTargets" => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         _ => null,
@@ -3179,174 +1756,62 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
-    private static IReadOnlyList<BridgeWeedTarget> DiscoverWeedTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeWeedTarget>();
-        return NearestFirst(location.objects.Pairs
-            .Where(pair => pair.Value is not null
-                && pair.Value.IsWeeds()
-                && pair.Key.X >= 0 && pair.Key.X <= 1000
-                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
-            .Take(16)
-            .Select(pair => new BridgeWeedTarget(
-                BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
-                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.MinutesUntilReady, pair.Value.IsWeeds()))
-            .ToArray();
-    }
-
-    /// <summary>
-    /// Live grass tufts on the current map (the TerrainFeature `Grass`, not the
-    /// Object-layer weeds `cut_weeds` targets). Swinging a scythe at one deducts
-    /// its <c>numberOfWeeds</c> to zero and, when it dies, feeds Hay into a silo
-    /// (grassType 1/7) or drops rare items (grassType 6) via the native
-    /// <c>Grass.performToolAction</c> → <c>TryDropItemsOnCut</c> chain.
-    /// </summary>
-    private static IReadOnlyList<BridgeCaskTarget> DiscoverCaskTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeCaskTarget>();
-        List<BridgeCaskTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            if (pair.Value is not StardewValley.Objects.Cask cask
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
-                continue;
-            result.Add(new BridgeCaskTarget(BuildCaskTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, cask), location.NameOrUniqueName,
-                (int)pair.Key.X, (int)pair.Key.Y, cask.heldObject.Value is not null, cask.heldObject.Value?.QualifiedItemId));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
     private static string BuildCaskTargetId(GameLocation location, int x, int y, StardewValley.Objects.Cask cask)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:cask:{cask.QualifiedItemId}:{cask.heldObject.Value?.QualifiedItemId ?? "empty"}:{cask.MinutesUntilReady}";
         return $"cask_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeMannequinTarget> DiscoverMannequinTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Mannequin && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
-            .Select(pair => new BridgeMannequinTarget(BuildMannequinTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y)).ToArray() ?? Array.Empty<BridgeMannequinTarget>();
-    }
-
     private static string BuildMannequinTargetId(GameLocation location, int x, int y) => $"mannequin_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:mannequin"))).ToLowerInvariant()[..16]}";
-
-    private static IReadOnlyList<BridgeSignTarget> DiscoverSignTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Sign && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
-            .Select(pair => { StardewValley.Objects.Sign sign = (StardewValley.Objects.Sign)pair.Value; return new BridgeSignTarget(BuildSignTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, sign), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, sign.displayItem.Value is not null, sign.displayItem.Value?.QualifiedItemId); }).ToArray() ?? Array.Empty<BridgeSignTarget>();
-    }
 
     private static string BuildSignTargetId(GameLocation location, int x, int y, StardewValley.Objects.Sign sign) => $"sign_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:sign:{sign.displayItem.Value?.QualifiedItemId ?? "empty"}"))).ToLowerInvariant()[..16]}";
 
-    private static IReadOnlyList<BridgeSiloTarget> DiscoverSiloTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeSiloTarget>();
-        List<BridgeSiloTarget> result = new();
-        foreach (StardewValley.Buildings.Building building in location.buildings.Where(building => building.buildingType.Value == "Silo").Take(16))
-        {
-            Vector2 tile = new(building.tileX.Value, building.tileY.Value);
-            Point door = building.getPointForHumanDoor();
-            if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeSiloTarget(BuildSiloTargetId(location, building), location.NameOrUniqueName, door.X, door.Y, location.piecesOfHay.Value));
-        }
-        return result;
-    }
-
     private static string BuildSiloTargetId(GameLocation location, StardewValley.Buildings.Building building) => $"silo_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{building.tileX.Value},{building.tileY.Value}:silo"))).ToLowerInvariant()[..16]}";
 
-    private static IReadOnlyList<BridgeLanternSlot> DiscoverLanternSlots(Farmer player) => player.Items.Select((item, slot) => (item, slot)).Where(pair => pair.item is StardewValley.Tools.Lantern).Take(16)
-        .Select(pair => { StardewValley.Tools.Lantern lantern = (StardewValley.Tools.Lantern)pair.item!; return new BridgeLanternSlot(pair.slot, lantern.on, lantern.fuelLeft); }).ToArray();
-
-    private static IReadOnlyList<BridgeGrassTarget> DiscoverGrassTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeGrassTarget>();
-        List<BridgeGrassTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-        {
-            if (pair.Value is not StardewValley.TerrainFeatures.Grass grass
-                || grass.numberOfWeeds.Value <= 0
-                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000
-                || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
-                continue;
-            result.Add(new BridgeGrassTarget(
-                BuildGrassTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, grass),
-                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
-                grass.grassType.Value, grass.numberOfWeeds.Value));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
+    /// <summary>
+    /// The identity of one grass tuft. It names the TILE and the SPECIES, never the count.
+    /// </summary>
+    /// <remarks>
+    /// The count is deliberately absent. It used to be part of the hash, which made an approved target id expire the
+    /// moment the tuft was cut: `Grass.performToolAction` deducts 1 (basic scythe), 2 (`(W)53`) or 4 (`(W)66`) from
+    /// `numberOfWeeds` per swing and returns "cut" only when the count reaches zero (`Grass.cs:380-395`,
+    /// `numberOfWeeds.Value -= num` at `:393`; the death test is `numberOfWeeds.Value <= 0` at `:256`), so a thinned tuft
+    /// is the SAME tuft still standing. It also grows back to 4 by itself every morning (`Grass.cs:319-321`), which is a
+    /// second way an identity keyed on it moves without the target moving. The product records the same reading twice - the
+    /// swing loop in `ExecuteCutGrass` (`farmhandexecutioncontroller.resourcetoolactions.cs:1271-1276`) and
+    /// `MeleeSweepOccupancy.Changed` (`:6194-6199`), which calls a tuft that kept its word but lost a point `changed`.
+    ///
+    /// So a `cut_grass` carrying the id from the observation was refused `grass_target_changed` on the target a
+    /// `sweep_scythe` had just thinned - the identical defect `BuildRockSourceTargetId` (:3597-3602) and
+    /// `BuildTreeChopSourceTargetId` (:3022-3032) already record.
+    ///
+    /// The count moved to the two places it belongs: the row publishes it (`BridgeGrassTarget.NumberOfWeeds`, set from
+    /// this same field at :3283, exactly as `BridgeRockSourceTarget.Health` publishes a rock's durability), and the
+    /// precondition reads it - `ExecuteCutGrass` records `weeds_before`/`weeds_after` around each swing and keeps
+    /// swinging until the tuft is gone.
+    /// </remarks>
     internal static string BuildGrassTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Grass grass)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}:{grass.numberOfWeeds.Value}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}";
         return $"grass_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private static IReadOnlyList<BridgeScytheCropTarget> DiscoverScytheCropTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeScytheCropTarget>();
-        List<BridgeScytheCropTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-        {
-            if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is null
-                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
-                continue;
-            // ONE decision, shared with the execution admission below, so a published row can never be a row the
-            // action refuses - and a dead crop, which no readiness or water radar can see, is published here or it
-            // is lost. See ExecutionManager.ScytheCropTarget. Every input is read ONCE and published: the same four
-            // engine answers decide the row's admission and state the row's own facts.
-            bool forageCrop = dirt.crop.forageCrop.Value;
-            bool readyForHarvest = dirt.readyForHarvest();
-            StardewValley.GameData.Crops.HarvestMethod harvestMethod = dirt.crop.GetHarvestMethod();
-            bool dead = dirt.crop.dead.Value;
-            if (!ExecutionManager.ScytheCropTarget(
-                    hasCrop: true,
-                    forageCrop: forageCrop,
-                    readyForHarvest: readyForHarvest,
-                    harvestMethod: harvestMethod,
-                    dead: dead,
-                    out bool deadCrop))
-                continue;
-            string? harvestId = dirt.crop.indexOfHarvest.Value;
-            string cropSeedId = dirt.crop.netSeedIndex.Value ?? harvestId ?? "unknown";
-            // A dead crop's produce can never be harvested (Crop.harvest refuses it), so promising a
-            // `qualifiedHarvestItemId` for one would be a fact the action cannot deliver. The wire requires a
-            // non-empty string there, and "none" is the same word the receipt uses for the same absence.
-            string qualifiedHarvestItemId = deadCrop || harvestId is null
-                ? DeadCropHarvestItemId
-                : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
-            result.Add(new BridgeScytheCropTarget(
-                BuildScytheCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop),
-                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
-                cropSeedId,
-                qualifiedHarvestItemId,
-                RequireDisplayName(cropSeedId),
-                readyForHarvest,
-                dead,
-                forageCrop,
-                ExecutionManager.HarvestMethodName(harvestMethod)));
-            if (result.Count >= 16) break;
-        }
-        return result;
     }
 
     private static bool IsScytheTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
+    /// <summary>
+    /// The identity of one weed. It names the TILE and the ITEM, never the health.
+    /// </summary>
+    /// <remarks>
+    /// The health is deliberately absent, for the reason <see cref="BuildGrassTargetId"/> gives at length:
+    /// `Object.performToolAction`'s weeds branch subtracts 1 from `minutesUntilReady` per swing and cuts the weed only
+    /// when the result reaches zero (`Object.cs:1150-1162`, `minutesUntilReady.Value -= num2` at `:1159`, the cut test at
+    /// `:1161`), so a common weed (`(O)313`) at 1 health is the weed the caller named at 2 - and hashing it refused the
+    /// second swing with `weed_target_changed`. The health moved to the row (`BridgeWeedTarget.Health`, set from this same
+    /// field at :3195) and to the precondition, which reads it before and after every swing.
+    /// </remarks>
     internal static string BuildWeedTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object weed)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}:{weed.MinutesUntilReady}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}";
         return $"weed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -3376,9 +1841,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    // The readback of the felled phase, identified by the same rule as the source it replaced: the location, the tile and
-    // the species. The durability is what `chop_stump` then spends (5 down to 0), so naming the stump by it would expire
-    // the row on every swing that chipped it.
     private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}";
@@ -3391,21 +1853,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"clear_hoedirt_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeClearHoeDirtTarget> DiscoverClearHoeDirtTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
-        return NearestFirst(location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
-            && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
-            && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)), player)
-            .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
-    }
-
     private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y, string qualifiedItemId)
     {
-        // The identity carries the concrete id so `(O)590` and `(O)SeedSpot` at
-        // the same tile are distinct targets; the raw id already varies, so a
-        // shared prefix would alias them.
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"artifact_spot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
@@ -3420,67 +1869,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation farm = Game1.getFarm();
         return farm.objects.Pairs.Count(pair => NativeItemPredicates.IsArtifactSpot(pair.Value));
-    }
-
-    private static IReadOnlyList<BridgeArtifactSpotTarget> DiscoverArtifactSpotTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeArtifactSpotTarget>();
-        return location.objects.Pairs
-            .Where(pair => (int)pair.Key.X is >= 0 and <= 1000 && (int)pair.Key.Y is >= 0 and <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
-                && NativeItemPredicates.IsArtifactSpot(pair.Value)
-                // Artifact spots themselves are object-occupied source tiles;
-                // the legal native interaction position is an adjacent
-                // passable standing tile (checked below), not a passability
-                // predicate on the source tile.
-                && location.isTileOnMap(pair.Key)
-                && !location.terrainFeatures.ContainsKey(pair.Key)
-                && location.GetHoeDirtAtTile(pair.Key) is null
-                && pair.Value is not StardewValley.Objects.IndoorPot
-                && new[] { pair.Key + new Vector2(-1f, 0f), pair.Key + new Vector2(1f, 0f), pair.Key + new Vector2(0f, -1f), pair.Key + new Vector2(0f, 1f) }
-                    // `IsStandableTile` is the one rule for "may the body stop here", and it admits the actor's OWN
-                    // tile without asking the collision test: a live target is not hidden because she already stands
-                    // on its only action tile. A neighbour the map calls open while a bush or a trellis crop holds it
-                    // is refused, which the map-only reading could not see.
-                    .Any(standing => StardewBodyController.IsStandableTile(location, player, standing)))
-            // Keep the published list bounded, but make its cap deterministic
-            // so a fixture-selected source is always discoverable when it is
-            // within the existing eight-target publication boundary.
-            .OrderBy(pair => pair.Key.X)
-            .ThenBy(pair => pair.Key.Y)
-            .Take(8)
-            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId)))
-            .ToArray();
-    }
-
-    private IReadOnlyList<BridgeWoodFenceResultTarget> DiscoverWoodFenceResultTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        BridgeWoodFenceResultTarget? target = this.woodFenceResultTarget;
-        if (target is not null
-            && (this.woodFenceResultExecutionId is null || this.woodFenceResultRequestId is null
-                || this.woodFenceResultRevision != this.revision
-                || this.woodFenceResultDay != Game1.Date.TotalDays
-                || !this.receiptsByRequestId.TryGetValue(this.woodFenceResultRequestId, out LocalExecutionReceipt? receipt)
-                || receipt.ExecutionId != this.woodFenceResultExecutionId
-                || receipt.State != ExecutionState.Succeeded
-                || receipt.ReasonCode != "wood_fence_placed"))
-        {
-            this.InvalidateWoodFenceResult();
-            target = null;
-        }
-        if (location is null || target is null
-            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
-            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
-            || !location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed)
-            || placed is not StardewValley.Fence fence
-            || fence.QualifiedItemId != target.QualifiedItemId
-            || fence.isGate.Value != target.IsGate
-            || fence.health.Value != target.Health
-            || fence.maxHealth.Value != target.MaxHealth)
-            return Array.Empty<BridgeWoodFenceResultTarget>();
-        return new[] { target };
     }
 
     private void InvalidateWoodFenceResult()
@@ -3502,35 +1890,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ToArray();
     }
 
-    private IReadOnlyList<BridgeCrabPotResultTarget> DiscoverCrabPotResultTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        BridgeCrabPotResultTarget? target = this.crabPotResultTarget;
-        if (target is not null
-            && (this.crabPotResultExecutionId is null || this.crabPotResultRequestId is null
-                || this.crabPotResultRevision != this.revision
-                || this.crabPotResultDay != Game1.Date.TotalDays
-                || !this.receiptsByRequestId.TryGetValue(this.crabPotResultRequestId, out LocalExecutionReceipt? receipt)
-                || receipt.ExecutionId != this.crabPotResultExecutionId
-                || receipt.State != ExecutionState.Succeeded
-                || receipt.ReasonCode != "crab_pot_placed"))
-        {
-            this.InvalidateCrabPotResult();
-            target = null;
-        }
-        if (location is null || target is null
-            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
-            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
-            || !location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed)
-            || placed is not StardewValley.Objects.CrabPot crabPot
-            || crabPot.QualifiedItemId != target.QualifiedItemId
-            || crabPot.owner.Value != target.OwnerId
-            || crabPot.directionOffset.Value.X != target.OffsetX
-            || crabPot.directionOffset.Value.Y != target.OffsetY)
-            return Array.Empty<BridgeCrabPotResultTarget>();
-        return new[] { target with { OverlayTiles = BuildCrabPotOverlayFacts(crabPot) } };
-    }
-
     private void InvalidateCrabPotResult()
     {
         this.crabPotResultTarget = null;
@@ -3540,45 +1899,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.crabPotResultDay = 0;
     }
 
-    private IReadOnlyList<BridgeBaitCrabPotResultTarget> DiscoverBaitCrabPotResultTargets(Farmer player)
-    {
-        BridgeBaitCrabPotResultTarget? target = this.baitCrabPotResultTarget;
-        GameLocation? location = player.currentLocation;
-        if (target is not null && (this.baitCrabPotResultExecutionId is null || this.baitCrabPotResultRequestId is null || this.baitCrabPotResultRevision != this.revision || this.baitCrabPotResultDay != Game1.Date.TotalDays || !this.receiptsByRequestId.TryGetValue(this.baitCrabPotResultRequestId, out LocalExecutionReceipt? receipt) || receipt.ExecutionId != this.baitCrabPotResultExecutionId || receipt.State != ExecutionState.Succeeded || receipt.ReasonCode != "crab_pot_baited")) { this.InvalidateBaitCrabPotResult(); target = null; }
-        if (target is null || location is null || !string.Equals(location.NameOrUniqueName, target.Location, StringComparison.Ordinal) || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player) || !location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != target.QualifiedItemId || !string.Equals(crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), target.OwnerId, StringComparison.Ordinal) || crabPot.bait.Value?.QualifiedItemId != target.BaitQualifiedItemId) return Array.Empty<BridgeBaitCrabPotResultTarget>();
-        return new[] { target };
-    }
-
     private void InvalidateBaitCrabPotResult()
     {
         this.baitCrabPotResultTarget = null; this.baitCrabPotResultExecutionId = null; this.baitCrabPotResultRequestId = null; this.baitCrabPotResultRevision = 0; this.baitCrabPotResultDay = 0;
-    }
-
-    private IReadOnlyList<BridgeArtifactSpotResultTarget> DiscoverArtifactSpotResultTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        BridgeArtifactSpotResultTarget? target = this.artifactSpotResultTarget;
-        if (target is not null
-            && (this.artifactSpotResultExecutionId is null || this.artifactSpotResultRequestId is null
-                || this.artifactSpotResultRevision != this.revision
-                || this.artifactSpotResultDay != Game1.Date.TotalDays
-                || !this.receiptsByRequestId.TryGetValue(this.artifactSpotResultRequestId, out LocalExecutionReceipt? receipt)
-                || receipt.ExecutionId != this.artifactSpotResultExecutionId
-                || receipt.State != ExecutionState.Succeeded
-                || receipt.ReasonCode != "artifact_spot_dug"))
-        {
-            this.InvalidateArtifactSpotResult();
-            target = null;
-        }
-        if (location is null || target is null
-            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
-            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
-            || !location.terrainFeatures.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is not null
-            || (location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
-            return Array.Empty<BridgeArtifactSpotResultTarget>();
-        return new[] { target };
     }
 
     private void InvalidateArtifactSpotResult()
@@ -3607,33 +1930,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"rock_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeRockSourceTarget> DiscoverRockSourceTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeRockSourceTarget>();
-        // ORDER BEFORE THE CAP.
-        //
-        // `location.objects.Pairs` is a Dictionary's hash buckets, so "the first eight" was eight arbitrary rocks - and
-        // the Agent walks them in the order it is given. That is the pendulum the chain-nearest-neighbour work was
-        // written for, except that work sits in `synthesizePrograms`, which has NO production caller: the Agent uses
-        // `stardew_plan_work` and reads these targets directly. Measured 2026-10-27, an audit of the chain-fixed run
-        // found the published order was hash order and the Host-side ordering was never reached.
-        //
-        // Nearest-first because the list IS the walking order for a caller that consumes it sequentially; X/Y breaks
-        // ties so the same world always yields the same list. The cap stays eight - only which eight changes.
-        // Nearest first, then cap: `objects.Pairs` is hash-bucket order, so "the first eight" was eight arbitrary
-        // rocks and the Agent walked them in that order. `NearestFirst` carries the reason.
-        //
-        // The predicate is the NATIVE CATEGORY, not "the basic pickaxe finishes it in one swing". It used to be
-        // conjoined with `MinutesUntilReady == 1`, so every stone whose durability is above one - which is every mine
-        // node (MineShaft.cs:1733-1798, :4351-4460) and half the mountain ore (Farm.cs:540-606) - was invisible to the
-        // radar while `break_rock_source` refused it. Each published row carries its real durability in `health`, so the
-        // Agent can see how many swings remain; the action itself decides what one landing swing is worth.
-        return NearestFirst(location.objects.Pairs
-            .Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsBreakableStone(pair.Value)), player)
-            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
-    }
-
     private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
     {
         int left = (int)clump.Tile.X;
@@ -3645,105 +1941,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .Any(tile => Utility.tileWithinRadiusOfPlayer(tile.X, tile.Y, TargetDiscoveryRadius, player));
     }
 
-    private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeDebrisTarget>();
-        List<BridgeDebrisTarget> result = new();
-        for (int index = 0; index < location.resourceClumps.Count && result.Count < 64; index++)
-        {
-            StardewValley.TerrainFeatures.ResourceClump clump = location.resourceClumps[index];
-            int x = (int)clump.Tile.X;
-            int y = (int)clump.Tile.Y;
-            if (!IsDebrisTargetWithinPlayerRadius(clump, player)) continue;
-            // The native requirement table lives in ONE place now
-            // (TryGetDebrisToolRequirement, mirroring ResourceClump.performToolAction), so
-            // discovery and admission cannot drift apart.
-            if (!TryGetDebrisToolRequirement(clump, out string toolKind, out int requiredUpgrade))
-                continue;
-            int usableSlot = -1;
-            for (int slot = 0; slot < player.Items.Count; slot++)
-            {
-                if (player.Items[slot] is Tool candidate && IsValidDebrisTool(clump, candidate, out _, out _))
-                {
-                    usableSlot = slot;
-                    break;
-                }
-            }
-            if (usableSlot < 0)
-            {
-                // The clump is HERE and the swing is refused - `ResourceClump.performToolAction` returns false unless
-                // the tool is the matching family at or above this clump's level (ResourceClump.cs:150-234). Dropping
-                // the row was a snapshot reporting a cleared farm to a companion standing beside the boulder. The row
-                // CANNOT be the target itself: `BridgeDebrisTarget.slot` is the inventory slot to swing with and the
-                // Host validates it as a slot, so a clump with no usable tool has no honest value for it. The count is
-                // what is publishable: the clump is there and nothing in the pack would swing it.
-                if (exclusions is not null)
-                    exclusions.Record("debrisTargets", DiscoveryExclusionReasons.ToolInsufficient);
-                continue;
-            }
-            result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade, (int)clump.health.Value));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeWateringCanFact> DiscoverWateringCanFacts(Farmer player) => player.Items
-        .Select((item, slot) => (item, slot))
-        .Where(entry => entry.item is WateringCan)
-        .Take(36)
-        .Select(entry =>
-        {
-            WateringCan can = (WateringCan)entry.item!;
-            return new BridgeWateringCanFact(entry.slot, can.QualifiedItemId, DescribeTool(can) ?? "watering_can", can.WaterLeft, can.waterCanMax);
-        })
-        .ToArray();
-
     /// <summary>
     /// The cap on published refill tiles. Equal to the Host's `maxItems` for `refillWateringCanTargets`;
     /// one entry past it would close the bridge rather than shorten the list.
     /// </summary>
     private const int MaximumRefillWateringCanTargets = 8;
-
-    /// <summary>
-    /// The tiles a watering can can be refilled at, WHOLE MAP, nearest first.
-    ///
-    /// <para>
-    /// The scan used to stop at <see cref="TargetDiscoveryRadius"/>, which is right for an entity and wrong
-    /// for water: a pond is a map feature, and on a farm the nearest water is routinely ten to twenty tiles
-    /// away. Measured 2026-11-04: the family published ZERO refill targets on a farm whose pond sat outside
-    /// the six-tile ring, so a watering plan dead-ended on an empty can while the map had water the actor
-    /// could walk to. Reachability is decided by the WALK, never by this list - the radius only ever decided
-    /// which water a snapshot mentioned.
-    /// </para>
-    ///
-    /// <para>
-    /// Nearest first, then X, then Y, and the cap keeps the nearest: every dropped row is therefore strictly
-    /// farther than every published one, which is the one truncation a refill plan cannot be misled by - it
-    /// walks to the closest water and refills there. The predicate is the engine's own
-    /// <c>GameLocation.CanRefillWateringCanOnTile</c> (<c>GameLocation.cs:2293</c>), so a water tile, a
-    /// <c>WaterSource</c> property and an indoor kitchen all arrive through the same authority the tool itself
-    /// uses rather than through a second reading of the map data.
-    /// </para>
-    /// </summary>
-    internal static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location?.map is null) return Array.Empty<BridgeRefillWateringCanTarget>();
-        if (location.map.Layers.Count == 0) return Array.Empty<BridgeRefillWateringCanTarget>();
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        List<(int X, int Y)> candidates = new();
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-            if (location.CanRefillWateringCanOnTile(x, y)) candidates.Add((x, y));
-        return candidates
-            .OrderBy(tile => ChebyshevDistance(player, tile.X, tile.Y))
-            .ThenBy(tile => tile.X)
-            .ThenBy(tile => tile.Y)
-            .Take(MaximumRefillWateringCanTargets)
-            .Select(tile => new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, tile.X, tile.Y), tile.X, tile.Y))
-            .ToArray();
-    }
 
     private static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)
     {
@@ -3751,181 +1953,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"watering_can_refill_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The current location's completed Pet Bowl, advertised at each tile the
-    /// native watering gate accepts so the actor plans a walk to an adjacent
-    /// tile. The handler revalidates the exact tile identity and never trusts
-    /// this coordinate as the target of the native call.
-    /// </summary>
-    private static IReadOnlyList<BridgePetBowlTarget> DiscoverPetBowlTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgePetBowlTarget>();
-        List<BridgePetBowlTarget> result = new();
-        foreach (StardewValley.Buildings.PetBowl bowl in location.buildings.OfType<StardewValley.Buildings.PetBowl>())
-        {
-            // A bowl still being built exists on the map but is not yet a target; the engine's own countdown says so.
-            if (bowl.daysOfConstructionLeft.Value > 0)
-            {
-                exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            // A watered bowl admits no further watering, so it is not a target.
-            if (bowl.watered.Value)
-            {
-                exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.AlreadyWatered);
-                continue;
-            }
-            // Advertise only the tiles the native watering gate accepts, derived
-            // from the building's own tile-property data rather than assumed to be
-            // the footprint origin.
-            foreach (Vector2 tile in PetBowlWaterableTiles(bowl))
-            {
-                if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
-                result.Add(new BridgePetBowlTarget(BuildPetBowlTargetId(location, (int)tile.X, (int)tile.Y), (int)tile.X, (int)tile.Y));
-            }
-            if (result.Count >= 8) break;
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// The current Slime Hutch's unwatered trough tiles. `SlimeHutch.
-    /// performToolAction` accepts the literal interior tiles x == 16, y in 6..9,
-    /// so discovery advertises exactly those coordinates (and only the ones the
-    /// actor can legally stand beside / walk to) rather than asking the building
-    /// for tile properties; the handler revalidates the coordinate and the
-    /// location identity and never trusts this list.
-    /// </summary>
-    private static IReadOnlyList<BridgeSlimeHutchTroughTarget> DiscoverSlimeHutchTroughTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        if (player.currentLocation is not StardewValley.SlimeHutch hutch)
-            return Array.Empty<BridgeSlimeHutchTroughTarget>();
-        List<BridgeSlimeHutchTroughTarget> result = new();
-        for (int y = SlimeHutchTroughFirstRow; y <= SlimeHutchTroughLastRow; y++)
-        {
-            if (!IsSlimeHutchTroughTile(SlimeHutchTroughColumn, y)) continue;
-            // A watered spot admits no further watering, so it is not a target.
-            if (hutch.waterSpots[y - SlimeHutchTroughFirstRow])
-            {
-                exclusions.Record("slimeHutchTroughTargets", DiscoveryExclusionReasons.AlreadyWatered);
-                continue;
-            }
-            if (!IsTileWithinChebyshevRadius(player, SlimeHutchTroughColumn, y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeSlimeHutchTroughTarget(BuildSlimeHutchTroughTargetId(hutch, SlimeHutchTroughColumn, y), SlimeHutchTroughColumn, y));
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Every tool in the pack, with an upgrade level ONLY for the tools that upgrade.
-    ///
-    /// <para>
-    /// `Tool.UpgradeLevel` is `-1` by CONSTRUCTION for a tool that cannot be upgraded — measured on Stardew Valley
-    /// 1.6.15 (build 24356): `new MilkPail().UpgradeLevel == -1` and `new Shears().UpgradeLevel == -1`, while Axe, Hoe,
-    /// Pickaxe and WateringCan are `0`. The wire contract's own rule (`host/src/protocol-target-facts.ts`,
-    /// `isToolSlotFact`) reads a level as an upgrade tier, refuses a negative one and closes the bridge with
-    /// `invalid_snapshot:toolSlots`, and states that an ABSENT level means "this tool does not upgrade". So the
-    /// producer speaks that form rather than sending the engine's sentinel: measured 2026-11-09, `collect_animal_product`
-    /// could not read a single snapshot because its fixture stocks the pack with a Milk Pail.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(IList<Item?> items)
-    {
-        List<BridgeToolSlot> slots = new();
-        for (int slot = 0; slot < items.Count; slot++)
-        {
-            if (items[slot] is not Tool tool) continue;
-            slots.Add(new BridgeToolSlot(
-                slot,
-                DescribeTool(tool) ?? "tool",
-                tool.UpgradeLevel >= 0 ? tool.UpgradeLevel : null,
-                ToolCategory(tool) ?? "unknown"));
-        }
-
-        return slots;
-    }
-
     private static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int hayStack)
     {
         string raw = $"{location.NameOrUniqueName}:trough:{x},{y}:slot:{slot}:hay_stack:{hayStack}";
         return $"feed_trough_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private IReadOnlyList<BridgeFeedTroughTarget> DiscoverFeedTroughTargets(Farmer player)
-    {
-        if (player.currentLocation is not AnimalHouse location) return Array.Empty<BridgeFeedTroughTarget>();
-        List<BridgeFeedTroughTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object hay || !string.Equals(hay.QualifiedItemId, "(O)178", StringComparison.Ordinal) || hay.Stack < 1)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 32; x++)
-            {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 32; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || location.doesTileHaveProperty(x, y, "Trough", "Back") is null || location.objects.ContainsKey(tile))
-                        continue;
-                    result.Add(new BridgeFeedTroughTarget(BuildFeedTroughTargetId(location, slot, x, y, hay.Stack), slot, x, y, hay.Stack));
-                }
-            }
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Every eligible storage container as a SENSED ENTITY: one row per container, carrying the container's own
-    /// identity and the contents of EVERY occupied slot in that container's slot order.
-    ///
-    /// <para>
-    /// This is the perception half of a split the two row-per-pair families never made. `chest_store` and
-    /// `chest_retrieve` need an ADDRESS - a container and an item - so discovering them as `containers x items`
-    /// multiplied two independently-sized sets together. That is why every previous fix was a budget tweak rather
-    /// than a correct answer: a budget is what you add when you cannot say why the set is that large. Measured
-    /// 2026-10-31 on the real projection: a 36-item chest reached the model as 16 rows, and four chests of 16
-    /// items saturated the whole 64-row family limit.
-    /// </para>
-    /// <para>
-    /// So the two facts are published separately. Perception is the complete mirror: a container's contents are a
-    /// fact about that container, and a companion told about 16 of its 36 items cannot plan the other 20. Execution
-    /// is the safe slice the handler revalidates. The CONTAINER list is still distance-bounded like every other
-    /// radar family - bounding how many containers are in view is legitimate, truncating one container's contents
-    /// is not.
-    /// </para>
-    /// <para>
-    /// `ChestId` is `BuildContainerTargetId`, the identity an execution already echoes as `expectedTargetId`, so
-    /// the container an observation names and the container a handler revalidates are one spelling rather than a
-    /// second id minted for this family.
-    /// </para>
-    /// </summary>
-    private static IReadOnlyList<BridgeChestState> DiscoverChestStates(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeChestState>();
-        List<BridgeChestState> result = new();
-        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in OrderedStorageContainers(player, location))
-        {
-            // No cap on the contents and no admission filtering: this is what the container HOLDS, not what this
-            // actor's pack could currently accept. Only an empty slot is skipped, because an empty slot is not an
-            // item the container holds.
-            IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
-            List<BridgeChestItem> items = new();
-            for (int slot = 0; slot < inventory.Count; slot++)
-            {
-                StardewValley.Item? item = inventory[slot];
-                if (item is null || item.Stack <= 0) continue;
-                items.Add(new BridgeChestItem(slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
-            }
-            result.Add(new BridgeChestState(
-                BuildContainerTargetId(location, x, y, chest, isFridge),
-                x,
-                y,
-                RequireDisplayName(chest.QualifiedItemId),
-                isFridge,
-                items));
-        }
-        return result;
     }
 
     /// <summary>
@@ -3961,7 +1992,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (!IsOwnedOrdinaryChest(chest)) continue;
             chestCount++;
-            // Same reading as the entity family: an empty slot is not an item the container holds.
             IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
             int occupiedSlots = 0;
             for (int slot = 0; slot < inventory.Count; slot++)
@@ -3976,11 +2006,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return new BridgeChestsSummary(chestCount, itemCount, fullCount);
     }
 
-    /// <summary>
-    /// The eligible storage containers in the order a plan would reach them. `DiscoverStorageContainers` walks the
-    /// object layer, which is a hash map with no spatial order of its own, so the nearest-first ranking is applied
-    /// before the per-container window decides which rows survive.
-    /// </summary>
     private static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
         Farmer player, StardewValley.GameLocation location) =>
         DiscoverStorageContainers(player, location)
@@ -3989,25 +2014,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ThenBy(container => container.Y)
             .ToList();
 
-    /// <summary>
-    /// Every eligible storage container in discovery range: player-owned ordinary
-    /// Chests placed in the location's object layer, plus the location's built-in
-    /// kitchen fridge.
-    ///
-    /// The built-in fridge deserves the same player intent as any chest — store or
-    /// take one adjacent item — because it literally IS a Chest
-    /// (`FarmHouse.fridge`/`IslandFarmHouse.fridge` are `NetRef&lt;Chest&gt;` built with
-    /// `playerChest: true`), and the production transaction is the same
-    /// `Chest.addItem` / `GetItemsForPlayer().Remove` pair. The only difference is
-    /// resolution: the fridge never enters `location.objects`, so it can only be
-    /// reached through `GameLocation.GetFridge()` and its map tile.
-    /// </summary>
-    private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> DiscoverStorageContainers(
-        Farmer player, StardewValley.GameLocation location) =>
-        LocationStorageContainers(location)
-            .Where(container => IsOwnedOrdinaryChest(container.Chest) && IsChestTargetInRange(player, container.X, container.Y));
-
-    /// <summary>The map tile holding the built-in kitchen fridge, or null without a kitchen.</summary>
     private static Vector2? KitchenFridgeTile(StardewValley.GameLocation location) => location switch
     {
         StardewValley.Locations.FarmHouse farmHouse when farmHouse.fridgePosition != Point.Zero
@@ -4047,46 +2053,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"animal_product_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private IReadOnlyList<BridgeAnimalProductTarget> DiscoverAnimalProductTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeAnimalProductTarget>();
-        List<BridgeAnimalProductTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not Tool tool || tool is not MilkPail and not Shears) continue;
-            foreach (FarmAnimal animal in location.animals.Values)
-            {
-                if (result.Count >= 32) return result;
-                int x = (int)animal.Tile.X;
-                int y = (int)animal.Tile.Y;
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool)) continue;
-                StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
-                int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
-                if (!player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack)) continue;
-                result.Add(new BridgeAnimalProductTarget(BuildAnimalProductTargetId(location, slot, animal, tool), slot, x, y, animal.type.Value, produce.QualifiedItemId, RequireDisplayName(produce.QualifiedItemId), tool is MilkPail ? "milk_pail" : "shears", produceStack));
-            }
-        }
-        // Fixture-only diagnostic: a native AnimalHouse may synchronize its
-        // occupant positions/produce after Farmhand arrival. Record the exact
-        // live predicate facts if discovery still fail-closes; never mutate
-        // inventory, animals, or action state here.
-        if (result.Count == 0 && location.NameOrUniqueName.StartsWith("Barn", StringComparison.Ordinal))
-        {
-            string candidates = string.Join(",", location.animals.Values
-                .Where(animal => animal.isAdult() && animal.currentProduce.Value is not null)
-                .Select(animal =>
-                {
-                    int x = (int)animal.Tile.X;
-                    int y = (int)animal.Tile.Y;
-                    StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
-                    return $"{animal.type.Value}@{x},{y}:produce={produce.QualifiedItemId}:in_range={IsAnimalProductTargetInRange(player, x, y)}:shears={animal.CanGetProduceWithTool(new Shears())}:milk={animal.CanGetProduceWithTool(new MilkPail())}:inventory={player.couldInventoryAcceptThisItem(produce.QualifiedItemId, animal.hasEatenAnimalCracker.Value ? 2 : 1)}";
-                }));
-            this.monitor.Log($"GameBuddy animal-product discovery fail-closed: location={location.NameOrUniqueName}; player={(int)player.Tile.X},{(int)player.Tile.Y}; candidates={candidates}", LogLevel.Trace);
-        }
-        return result;
-    }
-
     private static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)
     {
         return IsTileWithinChebyshevRadius(player, targetX, targetY, AnimalProductActionRadius);
@@ -4112,20 +2078,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         return Math.Max(Math.Abs(targetX - (int)player.Tile.X), Math.Abs(targetY - (int)player.Tile.Y));
     }
-    /// <summary>
-    /// Order dictionary-backed targets before a cap truncates them, nearest first.
-    ///
-    /// `location.objects.Pairs`, `terrainFeatures.Pairs` and the rest are Dictionary hash buckets: iteration order is
-    /// an implementation detail of the runtime, not a spatial fact. Taking "the first N" of them publishes N arbitrary
-    /// targets, and a caller that walks the list in the order it was given crosses the farm between consecutive
-    /// targets. Measured 2026-10-27 on the chain-fixed run: the published rock order was hash order, and the Host-side
-    /// nearest-neighbour ordering never ran because it lives in a function with no production caller.
-    ///
-    /// Nearest-first, then X, then Y. The last two are not decoration: without them two equidistant rocks would keep
-    /// whatever order the dictionary produced, and an identical world could yield a different program each run.
-    ///
-    /// The CAP is unchanged everywhere this is used - only which entries fall inside it.
-    /// </summary>
     private static IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> NearestFirst<T>(
         IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> pairs, Farmer player) =>
         pairs.OrderBy(pair => ChebyshevDistance(player, (int)pair.Key.X, (int)pair.Key.Y))
@@ -4136,6 +2088,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// Why this tile cannot be hoed, as one member of a CLOSED set, or null when it can.
     ///
     /// <para>
+    /// THIS is the one authority for "can this tile be hoed". `IsTillableTile` is its boolean projection, the tile-area
+    /// row and the soil discovery both read that projection, and the `for_each` row the companion is dispatched from
+    /// reads it too. The clauses live here, once: a second list beside this one is how one revision came to answer
+    /// `tillable:true` on two rows `till_soil` refused in the same run (round57), because the row was derived from the
+    /// map's `Diggable` alone while the action refused on the whole walk.
+    /// </para>
+    /// <para>
     /// The receipt used to say `soil_not_diggable` and nothing else, so a companion told "this ground is dead hard"
     /// read it as "wrong tile for now" and re-aimed. Measured 2026-11-09: four live refusals about ground that can
     /// never be hoed arrived as one `soil_not_diggable` and three `target_out_of_range` (with a distance attached).
@@ -4144,8 +2103,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// shape exists to prevent.
     /// </para>
     /// <para>
-    /// The order is permanent facts before removable ones. Water and the map's own `Diggable` property are what the
-    /// tile IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
+    /// The order is permanent facts before removable ones. Water, the map's own `Diggable` property and the engine's
+    /// `isTileLocationOpen` (a Buildings/Front obstruction - a greenhouse wall, a farmhouse, a wall) are what the tile
+    /// IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
     /// clear a chest off ground that could not be hoed anyway. `HoeDirt` is deliberately NOT an occupant: a tilled
     /// tile has its own answer one gate earlier (`soil_already_tilled`), and naming it here would call the one state
     /// the hoe exists for "blocked".
@@ -4160,6 +2120,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)
             return "not_map_diggable";
         Vector2 tile = new(x, y);
+        if (!location.isTileLocationOpen(tile))
+            return "map_blocked";
         if (location.objects.TryGetValue(tile, out StardewValley.Object? placed))
             return $"occupied:{DescribeOccupantKind(placed)}";
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -4219,8 +2181,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     farmable.Add((Math.Max(Math.Abs(scanX - x), Math.Abs(scanY - y)), scanX, scanY));
         var evidence = new System.Text.StringBuilder();
         evidence.Append(CultureInfo.InvariantCulture, $";diggable_tiles={farmable.Count}");
-        // Nearest first, then Y, then X - the tie order `DiscoverSoilTiles` publishes with, so two readings of an
-        // unchanged world name the same tile.
         if (farmable.Count > 0)
         {
             (int Distance, int X, int Y) nearest = farmable
@@ -4314,8 +2274,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return deltaX > 0 ? 1 : 3;
         if (deltaY != 0)
             return deltaY > 0 ? 2 : 0;
-        // A live target can occupy the same rounded tile only if its position
-        // changes between discovery and input. The binding guard still decides.
         return player.FacingDirection;
     }
 
@@ -4323,96 +2281,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         .Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
         .Sum(item => item.Stack);
 
-    private static IReadOnlyList<BridgeInventoryItemFact> DiscoverInventoryItemFacts(Farmer player)
-    {
-        List<BridgeInventoryItemFact> result = new();
-        for (int slot = 0; slot < player.Items.Count && result.Count < 36; slot++)
-        {
-            // Hat / Clothing / Boots are Item subclasses, not Object; the
-            // mannequin lane needs their slots surfaced to the Agent.
-            if (player.Items[slot] is not Item item || string.IsNullOrWhiteSpace(item.QualifiedItemId))
-                continue;
-            int stack = item is StardewValley.Object obj ? obj.Stack : 1;
-            if (stack < 1) continue;
-            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), stack));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeFoodTarget> DiscoverFoodTargets(Farmer player)
-    {
-        List<BridgeFoodTarget> result = new();
-        for (int slot = 0; slot < player.Items.Count && result.Count < 36; slot++)
-        {
-            if (player.Items[slot] is not StardewValley.Object food)
-                continue;
-            bool isDrink = Game1.objectData.TryGetValue(food.ItemId, out var objectData) && objectData.IsDrink;
-            if (food.QualifiedItemId == "(O)434" || (!isDrink && food.Edibility == -300))
-                continue;
-            result.Add(new BridgeFoodTarget(slot, food.QualifiedItemId, RequireDisplayName(food.QualifiedItemId), food.Stack, food.Edibility, isDrink));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeForageTarget> DiscoverForageTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeForageTarget>();
-        return NearestFirst(location.objects.Pairs
-            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
-            .Take(64)
-            .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack, pair.Value.isForage()))
-            .ToArray();
-    }
-
     internal static string BuildForageTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object forage)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{forage.QualifiedItemId}:{forage.Stack}:{forage.IsSpawnedObject}";
         return $"forage_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(Farmer player)
-    {
-        const int discoveryRadius = TargetDiscoveryRadius;
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeItemTarget>();
-        List<BridgeItemTarget> result = new();
-        // The actor's count of an item is measured ONCE per publication, at the moment the chunks below are still
-        // on the ground - that is the only moment at which the number can be evidence of anything. Reading it after
-        // the drop was delivered would make the check it feeds a tautology.
-        Dictionary<string, int> inventoryAtPublicationByItemId = new(StringComparer.Ordinal);
-        for (int debrisIndex = 0; debrisIndex < location.debris.Count && result.Count < 64; debrisIndex++)
-        {
-            Debris debris = location.debris[debrisIndex];
-            string? qualifiedItemId = debris.item?.QualifiedItemId ?? debris.itemId.Value;
-            if (string.IsNullOrWhiteSpace(qualifiedItemId) || debris.Chunks.Count == 0 || debris.debrisType.Value is not (Debris.DebrisType.OBJECT or Debris.DebrisType.RESOURCE))
-                continue;
-            int chunkIndex = 0;
-            foreach (Chunk chunk in debris.Chunks)
-            {
-                Point tile = GetChunkTile(chunk);
-                if (IsTileWithinChebyshevRadius(player, tile.X, tile.Y, discoveryRadius))
-                {
-                    string targetId = BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
-                    int stack = Math.Max(1, debris.item?.Stack ?? 1);
-                    if (!inventoryAtPublicationByItemId.TryGetValue(qualifiedItemId, out int inventoryAtPublication))
-                        inventoryAtPublicationByItemId[qualifiedItemId] = inventoryAtPublication = CountQualifiedItem(player, qualifiedItemId);
-                    this.groundItemTargets.Record(new GroundItemPublication(
-                        targetId,
-                        location.NameOrUniqueName,
-                        tile.X,
-                        tile.Y,
-                        qualifiedItemId,
-                        stack,
-                        inventoryAtPublication,
-                        this.tick));
-                    result.Add(new BridgeItemTarget(targetId, tile.X, tile.Y, qualifiedItemId, RequireDisplayName(qualifiedItemId), stack));
-                    if (result.Count >= 64) break;
-                }
-                chunkIndex++;
-            }
-        }
-        return result;
     }
 
     private static Point GetChunkTile(Chunk chunk) => new((int)((chunk.position.Value.X + 32f) / 64f), (int)((chunk.position.Value.Y + 32f) / 64f));
@@ -4426,20 +2298,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemTarget(StardewValley.GameLocation location, string expectedTargetId, string expectedQualifiedItemId) =>
         FindItemChunk(location, expectedQualifiedItemId, expectedTargetId, tileX: null, tileY: null);
 
-    /// <summary>
-    /// A chunk of this item lying on ONE tile, whatever its opaque identity says.
-    ///
-    /// This is the answer "something else of this item is on the address the caller named" - a stack that lost half its
-    /// count, a chunk re-indexed onto that tile - which is a CHANGED target and never a moved one.
-    /// </summary>
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindChunkOnTile(
         StardewValley.GameLocation location, int tileX, int tileY, string expectedQualifiedItemId) =>
         FindItemChunk(location, expectedQualifiedItemId, expectedTargetId: null, tileX, tileY);
 
-    /// <summary>
-    /// The one enumeration of this item's ground chunks: by opaque identity anywhere in the location, or - when no
-    /// identity is asked for - the first one standing on a named tile.
-    /// </summary>
     private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemChunk(
         StardewValley.GameLocation location, string expectedQualifiedItemId, string? expectedTargetId, int? tileX, int? tileY)
     {
@@ -4497,58 +2359,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    private static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeSeedTarget>();
-        int heldStacks = player.Items
-            .OfType<StardewValley.Object>()
-            .Count(item => item.Category == StardewValley.Object.SeedsCategory);
-        int rowLimit = TargetRowBudget.PerKeyRowLimit(heldStacks, TargetRowBudget.PlanNodes);
-        List<BridgeSeedTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
-                continue;
-            // THIS STACK'S OWN WINDOW. The guard used to be one family-wide `result.Count < 64`, tested on both loops,
-            // which the first held stack spent in full: 169 candidate tiles against a 64-row budget meant every later
-            // seed slot published nothing at all, so `plant_seed` had no address for the second crop the companion was
-            // carrying. Measured 2026-10-29 (`round7`): 64 rows, all from one stack, on 14 of 33 observations.
-            List<BridgeSeedTarget> rowsForThisStack = new();
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
-            {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
-                        || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-                        || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
-                        continue;
-                    // Both published facts are the engine's own answers on this tile, read once: the season/raised-crop
-                    // admission `plant_seed` re-checks, and the crop occupancy that makes the tile unusable for a seed.
-                    bool canPlantThisSeedHere = dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false);
-                    if (dirt.crop is not null || !canPlantThisSeedHere)
-                        continue;
-                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
-                }
-            }
-            // Nearest first, THEN the window: the scan walks x then y from the far corner, so trimming first would keep
-            // whichever tiles the loops reached first. Chebyshev, through `TargetOrdering`, because that is the metric
-            // the range gate applies - a tile nearer by Manhattan can still be further from being in range.
-            result.AddRange(TargetOrdering.NearestFirstByChebyshev(
-                rowsForThisStack,
-                player.TilePoint.X,
-                player.TilePoint.Y,
-                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
-        }
-        // A stack is independent of every other stack - a row in slot A can never address slot B's item, and
-        // `ExecutePlantSeed` recomputes `BuildSeedTargetId` from slot AND tile and refuses on a mismatch - so ordering
-        // within each stack's window IS the whole list's order, and the stacks stay in inventory order. Nothing is
-        // renumbered: every id here is exactly the one the action will recompute.
-        return result;
-    }
-
     /// <summary>
     /// The one identity a seed target has: (location, slot, tile, item).
     ///
@@ -4562,35 +2372,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"seed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeWoodFenceTarget> DiscoverWoodFenceTargets(Farmer player)
-    {
-        if (player.currentLocation is not Farm farm) return Array.Empty<BridgeWoodFenceTarget>();
-        List<BridgeWoodFenceTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)322" || source.Stack <= 0)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
-            {
-                Vector2 tile = new(x, y);
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
-                    continue;
-                result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
-            }
-        }
-        return result;
-    }
-
     private static bool IsLegalEmptyFarmFenceTile(Farm farm, Vector2 tile, StardewValley.Object source)
     {
         return farm.isTileOnMap(tile)
             && !farm.objects.ContainsKey(tile)
             && Utility.playerCanPlaceItemHere(farm, source, (int)tile.X * 64 + 32, (int)tile.Y * 64 + 32, Game1.player)
             && source.canBePlacedHere(farm, tile)
-            // The fence tile itself must be passable MAP ground, which is the engine's own placement requirement and
-            // stays a map read. Whether the body can stand beside it is a different question, and the stance below
-            // answers that one with the planner's rule.
             && farm.isTilePassable(tile)
             && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
                 .Any(stance => StardewBodyController.IsStandableTile(farm, Game1.player, stance));
@@ -4647,22 +2434,36 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// section is therefore synchronous on purpose: no <c>await</c>, no continuation and
     /// no reentrancy may sit between the write and the restore, or a STOP, a refusal or
     /// an exception could leave the actor held.
+    /// </para>
+    ///
+    /// <para>
+    /// STAMINA IS SPENT BY THE CALL BELOW, INSIDE EACH TOOL'S OWN <c>DoFunction</c> - not by
+    /// <c>Farmer.useTool</c>, which is only the sprite-frame wrapper around it. Measured on the
+    /// target-version assembly over a fresh <c>TargetFamilyWorld</c> farmer at 270 stamina, one use
+    /// each: hoe 270-&gt;268, axe 268, pickaxe 268, watering can 268; the same can at charge 3 costs 8.
+    /// Each number is the engine's own formula: <c>Hoe.cs:58</c> <c>2*power - FarmingLevel*0.1</c> (the
+    /// ARGUMENT, hence flat in the charge), <c>Axe.cs:68</c> the same against ForagingLevel,
+    /// <c>Pickaxe.cs:88</c> and <c>WateringCan.cs:169</c> <c>2*(toolPower+1) - skill*0.1</c>. So a
+    /// receipt's <c>expected_stamina_cost</c> describes what this call already charges, and a tool-use
+    /// gateway that skipped it would not make a swing free - it would make the swing not happen.
+    /// <c>ProbeWorldContractTests.EveryContractClaimHoldsOnAFreshProbeWorld</c> is the gate that keeps
+    /// "the swing costs nothing" unshippable: it asserts a <c>break_rock</c> swing lowers
+    /// <c>Farmer.Stamina</c> and goes red the moment this call stops charging it.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IS GENUINELY MISSING FROM VANILLA IS THE SWING, NOT THE COST. <c>Tool.beginUsing</c> arms the
+    /// animation (<c>Tool.cs:729-741</c>), <c>Tool.endUsing</c> plays it
+    /// (<c>Tool.cs:605-622</c>, <c>animateOnce(160/168/176/184, 60f*num, 8)</c>), and the effect lands at
+    /// the END of that animation through <c>Game1.toolAnimationDone</c> (<c>Game1.cs:11073-11120</c>) -
+    /// which is why that path would make every action asynchronous. The effects are broadcast on THIS
+    /// path already (<c>Hoe.cs:99,112</c>, <c>WateringCan.cs:183</c>); only the avatar's swing is not.
+    /// The two questions must not be conflated: the cost is settled here, the animation is a separate
+    /// design decision with a documented reason (see the scythe note below).
+    /// </para>
     /// </summary>
     private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore, int charge = 0)
     {
-        // Face the target before swinging, so the picture and the effect describe the same tile.
-        //
-        // The engine derives the swing point from the bounding box plus one tile in `FacingDirection`
-        // (`Character.GetToolLocation`), which is why a swing only lands on a tile the actor is facing
-        // from a cardinal neighbour. This method names the target tile directly instead, so the action
-        // hits whether or not the actor is looking at it - strictly more reliable, and the reason the
-        // animation could show one tile while another changed.
-        //
-        // Setting the facing where the engine can express it is the part that costs nothing: a diagonal
-        // or out-of-reach target has no such facing, and the swing still lands on the target as before.
-        // That asymmetry is deliberate - this change makes the two agree where agreement is possible, it
-        // does not make a previously-landing swing miss. A charge above zero is the exception, because
-        // there the facing is no longer cosmetic: `RefuseToolCharge` refuses it before this method runs.
         int? facing = SwingFacing.For(((int)who.Tile.X, (int)who.Tile.Y), (tileX, tileY));
         if (facing is { } direction)
             who.FacingDirection = direction;
@@ -4714,6 +2515,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// already pays it everywhere: `UseNativeToolOnTile` above calls `DoFunction` directly for the same reason.
     /// </para>
     /// <para>
+    /// A SWING STRIKES NOTHING IN STAMINA, and that is read off the assembly rather than assumed: the only
+    /// <c>who.Stamina -=</c> sites in the target version are the four tool families (<c>Hoe.cs:58</c>, <c>Axe.cs:68</c>,
+    /// <c>Pickaxe.cs:88</c>, <c>WateringCan.cs:169</c>) plus <c>MilkPail.cs:103</c>, <c>Shears.cs:64</c> and
+    /// <c>FishingRod.cs:408</c>. <c>MeleeWeapon</c> has none, so this receipt's <c>expected_stamina_cost=0</c> describes
+    /// the engine instead of excusing a missing charge. The tool families do charge, inside their own <c>DoFunction</c>
+    /// - see the note on <c>UseNativeToolOnTile</c> above for the measured numbers and the gate that pins them.
+    /// </para>
+    /// <para>
     /// THE ACTOR STATE IS THE HAZARD, exactly as `who.toolPower` is for a charged tool use. The animation index is
     /// written per rectangle and restored in a <c>finally</c> that runs on every exit - the engine's own next frame is the
     /// only reader, so a value left behind would resume an animation nobody asked for. The section is synchronous on
@@ -4741,8 +2550,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int restingIndex = who.FarmerSprite.currentAnimationIndex;
         try
         {
-            // The facing IS the arc here (the rectangles are rotated by it), so it is written before the first
-            // rectangle is asked for and is not restored: `UseNativeToolOnTile` leaves the facing it swung with too.
             who.FacingDirection = facing;
             foreach (int index in MeleeSweepIndices)
             {
@@ -4768,16 +2575,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static int ToolChargeCeiling(Tool tool) =>
         tool.UpgradeLevel + (tool.hasEnchantmentOfType<ReachingToolEnchantment>() ? 1 : 0);
 
-    /// <summary>
-    /// The refusal a requested charge earns BEFORE anything is written, or null when it can be performed: the ladder's
-    /// own range, the held tool's ceiling, and - above zero - the cardinal stance the footprint is rotated by.
-    ///
-    /// <para>
-    /// The ceiling is refused rather than clamped. The engine's own hold does nothing past it, which is the argument
-    /// that the ceiling is real, not an argument for performing less than the caller asked for: a clamp would report a
-    /// successful 18-tile sweep while the actor swung the 5-tile one the request did not name.
-    /// </para>
-    /// </summary>
     private static string? RefuseToolCharge(int charge, Tool tool, Farmer who, int tileX, int tileY)
     {
         if (charge < ToolCharge.Minimum || charge > ToolCharge.Maximum)
@@ -4801,95 +2598,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const int AreaToolScanRadius = 5;
 
-    private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeBaitCrabPotTarget>();
-        List<BridgeBaitCrabPotTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object bait || bait.QualifiedItemId != "(O)685" || bait.Stack <= 0) continue;
-            foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-            {
-                Vector2 tile = pair.Key;
-                StardewValley.Object placed = pair.Value;
-                if (result.Count >= 16) return result;
-                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
-                // `CrabPot.NeedsBait` is false for a pot that already carries bait (CrabPot.cs:64-71), and the drop-in
-                // that fills one is gated on that same predicate (:239). The pot exists and is not a bait target.
-                if (crabPot.bait.Value is not null)
-                {
-                    exclusions.Record("baitCrabPotTargets", DiscoveryExclusionReasons.AlreadyBaited);
-                    continue;
-                }
-                result.Add(new BridgeBaitCrabPotTarget(BuildBaitCrabPotTargetId(location, slot, (int)tile.X, (int)tile.Y), location.NameOrUniqueName, slot, (int)tile.X, (int)tile.Y, "(O)710", RequireDisplayName("(O)710"), "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1));
-            }
-        }
-        return result;
-    }
-
     private static string BuildBaitCrabPotTargetId(GameLocation location, int slot, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:(O)710:(O)685:bait-crab-pot";
         return $"bait_crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    /// <summary>
-    /// Publishes the live mature crab pots the collect action may settle from.
-    /// collect_crab_pot_output is an advertised capability, but without this
-    /// channel it could never be reached: no other snapshot field carries the
-    /// mature target identity, so the Agent had no way to name a pot. It only
-    /// reads the already-mature 714 state; production alone performs the single
-    /// native collection and owns the receipt/postcondition.
-    /// </summary>
-    private static IReadOnlyList<BridgeCrabPotCollectTarget> DiscoverCrabPotCollectTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeCrabPotCollectTarget>();
-        List<BridgeCrabPotCollectTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            if (result.Count >= 16) break;
-            Vector2 tile = pair.Key;
-            if (pair.Value is not StardewValley.Objects.CrabPot crabPot
-                || crabPot.QualifiedItemId != "(O)710"
-                || crabPot.owner.Value != player.UniqueMultiplayerID
-                || !crabPot.readyForHarvest.Value
-                || crabPot.tileIndexToShow != 714
-                || crabPot.heldObject.Value is null
-                || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                continue;
-            result.Add(new BridgeCrabPotCollectTarget(
-                BuildCollectCrabPotTargetId(location, (int)tile.X, (int)tile.Y),
-                location.NameOrUniqueName,
-                (int)tile.X,
-                (int)tile.Y,
-                "(O)710",
-                RequireDisplayName("(O)710"),
-                crabPot.heldObject.Value.QualifiedItemId,
-                Math.Max(1, crabPot.heldObject.Value.Stack)));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeCrabPotTarget> DiscoverCrabPotTargets(Farmer player)
-    {
-        if (player.currentLocation is not Farm farm) return Array.Empty<BridgeCrabPotTarget>();
-        List<BridgeCrabPotTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
-            {
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
-                    || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
-                    continue;
-                result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
-            }
-        }
-        return result;
     }
 
     private static string BuildCrabPotTargetId(Farm farm, int slot, int x, int y)
@@ -4898,140 +2610,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeFertilizerTarget>();
-        List<BridgeFertilizerTarget> result = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
-            {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
-                        || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-                        || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
-                        continue;
-                    // The engine's own admission answer on this tile, published beside the tile instead of implied by the
-                    // filter: `fertilize_tile` refuses a row whose `CanApplyFertilizer` no longer holds.
-                    bool canApplyFertilizer = dirt.CanApplyFertilizer(fertilizer.QualifiedItemId);
-                    if (!canApplyFertilizer)
-                        continue;
-                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId), canApplyFertilizer));
-                }
-            }
-        }
-        return result;
-    }
-
     private static string BuildFertilizerTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
         return $"fertilizer_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    private static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeHarvestTarget>();
-        List<BridgeHarvestTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
-                && dirt.crop is not null
-                // A forage crop in the dirt is `pickup_forage`'s subject rather than a `harvest_crop` row; the kind test
-                // stays in the filter because it is a KIND, not a state the engine refuses.
-                && !dirt.crop.forageCrop.Value
-                && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
-        {
-            if (result.Count >= 64) break;
-            StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
-            StardewValley.Crop crop = dirt.crop!;
-            // `HoeDirt.readyForHarvest()` is the engine's readiness answer (HoeDirt.cs:465). A crop still growing is
-            // not a harvest row, and until now the only evidence of it was the row's absence.
-            if (!dirt.readyForHarvest())
-            {
-                exclusions.Record("harvestTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            // `Crop.GetHarvestMethod()` (HoeDirt.cs:483): a scythe crop is taken by a TOOL swing and has its own family
-            // (`scythe_crop`), so a grab row for it would promise an interaction the engine does not offer.
-            if (crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
-            {
-                exclusions.Record("harvestTargets", DiscoveryExclusionReasons.WrongHarvestMethod);
-                continue;
-            }
-            string harvestId = crop.indexOfHarvest.Value;
-            StardewValley.Item? harvestItem = StardewValley.ItemRegistry.Create(harvestId, 1);
-            result.Add(new BridgeHarvestTarget(
-                BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, harvestId),
-                (int)pair.Key.X,
-                (int)pair.Key.Y,
-                crop.netSeedIndex.Value ?? harvestId,
-                harvestItem.QualifiedItemId,
-                harvestItem.DisplayName,
-                crop.RegrowsAfterHarvest(),
-                dirt.readyForHarvest(),
-                crop.forageCrop.Value,
-                ExecutionManager.HarvestMethodName(crop.GetHarvestMethod())));
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeCropTarget>();
-        // `water_crop` refuses a row that is watered and `harvest_crop` needs the ready flag, so the row states both
-        // from the engine's own predicates on this dirt instead of leaving the reader to infer them from the filter.
-        List<BridgeCropTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null }
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
-        {
-            if (result.Count >= 64) break;
-            StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
-            // The tile's own water state, which `water_crop` refuses on (HoeDirt.cs:391-394). It is the exclusion the
-            // companion was told nothing about: a farm whose every crop was already watered answered `[]`.
-            if (dirt.isWatered())
-            {
-                exclusions.Record("cropTargets", DiscoveryExclusionReasons.AlreadyWatered);
-                continue;
-            }
-            // The other half of `CropNeedsWater`, still read through that ONE spelling so this family and the whole-map
-            // count cannot disagree: the crop itself needs no water (`HoeDirt.needsWatering`, HoeDirt.cs:380).
-            if (!CropNeedsWater(dirt)) continue;
-            StardewValley.Crop crop = dirt.crop!;
-            string cropId = crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown";
-            // `Crop.GetData()` is the engine's own `Data/Crops` lookup for THIS crop (Crop.cs:330 -> Game1.cropData), the
-            // same row `look_up({table:"Crops"})` answers with. Null is a fact - a content pack can add a seed whose
-            // data row the engine cannot resolve - so the five data fields stay null and `CropFactsUnknown` says why.
-            StardewValley.GameData.Crops.CropData? data = crop.GetData();
-            result.Add(new BridgeCropTarget(
-                TargetId: BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, crop.indexOfHarvest.Value),
-                X: (int)pair.Key.X,
-                Y: (int)pair.Key.Y,
-                CropId: cropId,
-                DisplayName: RequireDisplayName(crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown"),
-                Watered: dirt.isWatered(),
-                Harvestable: dirt.readyForHarvest(),
-                DaysToHarvest: data is null ? null : data.DaysInPhase.Sum(),
-                RegrowDays: data?.RegrowDays,
-                HarvestMethod: data is null ? null : HarvestMethodName(data.HarvestMethod),
-                IsRaised: data?.IsRaised,
-                Seasons: data?.Seasons is null
-                    ? null
-                    : data.Seasons.Select(static season => Utility.getSeasonKey(season)).Distinct().ToArray(),
-                FullyGrown: crop.fullyGrown.Value,
-                TileBlockedNow: IsTileBlockedForFarmer(location, player, (int)pair.Key.X, (int)pair.Key.Y),
-                CropFactsUnknown: data is null ? CropFactsUnknownToken : null));
-        }
-        return result;
     }
 
     /// <summary>
@@ -5086,7 +2668,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         catch (Exception)
         {
-            // Unknown content must not fail discovery; the caller omits the name.
             return null;
         }
     }
@@ -5137,72 +2718,26 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const int MaximumDiscoveredSoilTiles = 64;
 
     /// <summary>
-    /// Whether the Hoe admits this tile, as the ONE predicate both the soil discovery and the rectangle query use.
+    /// Whether the Hoe admits this tile: the ONE boolean both the soil discovery and the rectangle query publish, and
+    /// the one the `for_each` row is filtered on.
     ///
     /// <para>
-    /// The clauses are the ones <c>DiscoverSoilTiles</c> always carried - the map's own `Diggable` property, no water,
-    /// nothing placed in `objects`, the engine's own `isTileLocationOpen` - plus the tile's own `HoeDirt`, which is the
-    /// state `till_soil` refuses with `soil_already_tilled`. They are a function rather than five lines inside the scan
-    /// because a second copy is how "tillable here" and "a soil row there" become two different answers about the same
-    /// tile - and the rectangle query (`TileAreaQuery`) publishes this fact for every tile it is asked about, whether or
-    /// not the tile is inside the actor's discovery window.
+    /// It carries no clause of its own. Every condition is <see cref="DescribeSoilRefusal"/>'s, because that is the
+    /// predicate `till_soil` itself refuses on - so "tillable here", "a soil row there" and "why the action said no"
+    /// cannot become three answers about one tile. The five clauses this function used to hold were a second copy of
+    /// that walk, differing from it on two of them (no terrain feature, no wall), and the copy is what let a published
+    /// row disagree with the action in the same revision.
     /// </para>
     /// <para>
-    /// A tile that already carries a <c>HoeDirt</c> therefore answers FALSE here, and the soil discovery still publishes
-    /// its row: a hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop` and the record of work
-    /// already done, so it travels as its own state rather than as "not farmable". The two answers are not in conflict -
-    /// they answer different questions, and the caller reads `hoed` for the second one.
+    /// A tile that already carries a <c>HoeDirt</c> answers FALSE here, and the soil discovery still publishes its row:
+    /// a hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop` and the record of work already
+    /// done, so it travels as its own state rather than as "not farmable". The two answers are not in conflict - they
+    /// answer different questions, and the caller reads `hoed` for the second one.
     /// </para>
     /// </summary>
     internal static bool IsTillableTile(StardewValley.GameLocation location, int x, int y)
     {
-        Vector2 tile = new(x, y);
-        return location.GetHoeDirtAtTile(tile) is null
-            && location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
-            && !location.isWaterTile(x, y)
-            && !location.objects.ContainsKey(tile)
-            && location.isTileLocationOpen(tile);
-    }
-
-    internal static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player, out int omitted)
-    {
-        omitted = 0;
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeSoilTile>();
-        List<(int Distance, BridgeSoilTile Tile)> candidates = new();
-        int originX = player.TilePoint.X;
-        int originY = player.TilePoint.Y;
-        for (int x = originX - SoilTileDiscoveryRadius; x <= originX + SoilTileDiscoveryRadius; x++)
-        {
-            if (x < 0) continue;
-            for (int y = originY - SoilTileDiscoveryRadius; y <= originY + SoilTileDiscoveryRadius; y++)
-            {
-                if (y < 0) continue;
-                Vector2 tile = new(x, y);
-                // The engine's own occupancy read: `terrainFeatures[tile] as HoeDirt`, which is what `till_soil`
-                // refuses on and what `plant_seed` requires. Read once, so the row's state and the branch below
-                // cannot disagree.
-                bool hoeDirt = location.GetHoeDirtAtTile(tile) is not null;
-                // A hoed tile is published whatever else occupies it. A TILLABLE one must also be free and
-                // reachable, which is the set `till_soil` admits once the actor walks up to it.
-                if (!hoeDirt && !IsTillableTile(location, x, y))
-                    continue;
-                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt)));
-            }
-        }
-        // Nearest first, then a stable coordinate order so repeated observations
-        // of an unchanged world produce the same bounded list.
-        BridgeSoilTile[] ordered = candidates
-            .OrderBy(candidate => candidate.Distance)
-            .ThenBy(candidate => candidate.Tile.Y)
-            .ThenBy(candidate => candidate.Tile.X)
-            .Select(candidate => candidate.Tile)
-            .ToArray();
-        // Nearest-first truncation, STATED: every dropped tile is farther than every kept one, and the count is
-        // the one number that separates a bounded slice from a complete patch.
-        int published = Math.Min(ordered.Length, MaximumDiscoveredSoilTiles);
-        omitted = ordered.Length - published;
-        return ordered[..published];
+        return location.GetHoeDirtAtTile(new Vector2(x, y)) is null && DescribeSoilRefusal(location, x, y) is null;
     }
 
     private void RecordControllerTransition(ExecutionState state, string reasonCode, string? evidence)
@@ -5220,10 +2755,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeItemPickup is { } pickup && pickup.ExecutionId == specification.ExecutionId)
         {
-            // The body controller is only the first phase of pickup_item. Its
-            // arrival is not the action terminal state: target-version
-            // Debris.updateChunks must subsequently magnetize and collect the
-            // same chunk, which Update verifies by identity and inventory.
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
@@ -5234,9 +2765,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.slots.Active.Clear();
             if (state == ExecutionState.Succeeded)
             {
-                // The controller reached the bounded adjacent arrival. Keep
-                // pickup ownership through the next native location update,
-                // where Debris.updateChunks may perform magnetic collection.
                 this.revision++;
                 this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, ExecutionState.Running, "item_pickup_approach_completed", evidence);
                 return;
@@ -5251,10 +2779,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (this.activeToolApproach is { } toolApproach && toolApproach.ExecutionId == specification.ExecutionId)
         {
-            // The approach leg is phase one of a tool-family action; its arrival in
-            // range is not the action terminal. Progress stays observable, and a
-            // successful arrival hands off to the completion pass, which re-validates
-            // the world and then runs the native tool call.
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
@@ -5270,17 +2794,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            // The walk itself failed, or a world change (modal / event / pass-out)
-            // invalidated it before anything native ran. Either way nothing native
-            // ran, so this is the action's terminal, and it reports the actor's real
-            // position so the caller can tell "could not get there" from "target
-            // changed".
-            //
-            // The evidence must agree with the terminal it ships in: WIA §4.3 freezes
-            // world-change interruptions as their own class (modal_interrupted /
-            // event_started / pass_out), so stamping `approach=failed` onto an
-            // Invalidated receipt would contradict the state one field away and tell
-            // the Agent the walk failed when the world actually moved.
             string approachOutcome = state == ExecutionState.Invalidated ? "invalidated" : "failed";
             this.slots.ToolApproach.Clear();
             this.revision++;
@@ -5293,11 +2806,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         bool terminal = state is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Expired or ExecutionState.Uncertain;
         if (terminal)
             this.slots.Active.Clear();
-        // The one sentence a refusal computed has to travel in the one field a settled node keeps: ADR-006 withholds a
-        // settled failure's evidence, and this receipt used to carry no hint at all. Measured `round41`,
-        // 19:04:10-19:05:26: a `clear_step_blocked` whose evidence held
-        // `clear_step=weed@40,9;stand_at=41,8;remaining_clears=1` reached the model as `Hint=null`, the session contained
-        // `clear_step` 0 times, and 76 seconds went into re-aiming at a corridor one weed closed.
         string? refusalHint = state is ExecutionState.Failed or ExecutionState.Cancelled
             ? ClearingEvidence.DescribeRouteHint(evidence)
             : null;
@@ -5317,7 +2825,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
         {
-            // Progress rides the same single navigation lineage; never settles.
             this.revision++;
             this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, state, reasonCode, "navigation=running;phase=approaching");
             return;
@@ -5325,9 +2832,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         if (state == ExecutionState.Succeeded)
         {
-            // The body controller reports arrival before its callback has released
-            // ownership. Defer the single native commit until the next Update,
-            // after the controller is observed free.
             LocalNavigateSpec? activeNavigation = this.activeNavigate;
             if (activeNavigation is null || activeNavigation.ExecutionId != navigation.ExecutionId)
             {
@@ -5342,8 +2846,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // Any approach terminal (Failed/Expired/Cancelled/Invalidated/Uncertain)
-        // settles the navigation exactly once.
         this.LogNavigationWarpDiagnostic("approach_terminal", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.slots.Active.Clear();
         this.SettleNavigationTerminal(navigation, state, reasonCode,
@@ -5352,7 +2854,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private void CommitNavigationApproach(LocalNavigateSpec navigation)
     {
-        // Revalidate the exact active phase/IDs/nonterminal state before the one commit.
         if (this.activeNavigate is null
             || this.activeNavigate.ExecutionId != navigation.ExecutionId
             || this.activeNavigate.Phase != LocalNavigatePhase.ApproachReleased)
@@ -5362,7 +2863,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (this.controller.HasActiveExecution)
         {
-            // The approach body must have fully released ownership before the warp.
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_commit_body_still_owned", $"destination={navigation.CanonicalDestinationIdentity};never_retry=true");
             return;
         }
@@ -5378,9 +2878,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // Reuse the execution-private accepted binding while reading fresh world
-        // and connectivity facts. Public refs may expire after admission and must
-        // not revoke an already accepted execution.
         AcceptedNavigationExecution? coordinator = this.activeNavigationCoordinator;
         if (coordinator is null)
         {
@@ -5487,10 +2984,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
         this.slots.ClearWarpReplan();
-        // Unthrottled settle marker; the bounded warp throttle may swallow a
-        // transition log that occurs in the same window as another warp event.
-        this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={evidence ?? "none"}", LogLevel.Trace);
-        this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
+        // Every navigation terminal leaves the caller a next step, from the one table that classifies them. A site that
+        // already published one (a body hold's own countermeasure) keeps it: that sentence names the game's condition.
+        string? stated = NavigationNextStep.Describe(reasonCode, evidence);
+        this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={stated ?? "none"}", LogLevel.Trace);
+        this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={stated ?? "none"}");
         this.slots.Active.Clear();
         this.slots.Navigate.Clear();
         this.slots.NavigationCoordinator.Clear();
@@ -5499,7 +2997,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             state == ExecutionState.Succeeded && reasonCode == "navigation_completed"
                 ? this.TryCreatePiggybackedScene()
                 : null;
-        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, evidence, PiggybackedScene: piggybackedScene);
+        LocalExecutionReceipt receipt = new(navigation.ExecutionId, navigation.RequestId, state, reasonCode, this.revision, stated, PiggybackedScene: piggybackedScene);
         this.ledger.Remember(receipt);
         this.AddTrace(receipt);
         this.ledger.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);
@@ -5531,11 +3029,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // The correlated native warp is confirmed. Stardew may adjust the exact
-        // landing tile (collision / standability / spawn offset), so the
-        // postcondition is the target map identity, not the warp's declared tile.
-        // Arrival at the final destination itself is still decided only by the
-        // fresh replan's AtDestination rule before any terminal success.
         bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal);
         if (!isLocalPlayer || !destinationMatches)
         {
@@ -5548,26 +3041,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        // The correlated native warp is confirmed. Decide the next route leg now.
-        // If the fresh replan concludes the player is not actionable yet (a
-        // freshly warped player can report CanMove=false for one transition
-        // frame), defer to the next Update tick instead of misreading that frame
-        // as a locked destination. The Update retry only re-enters after the
-        // player is actionable again; the deadline pass settles it otherwise.
         this.slots.ClearWarpReplan();
         this.LogNavigationWarpDiagnostic("warp_confirmed", $"old={oldLocation};new={newLocation}:{newTileX},{newTileY}");
         this.TryContinueNavigationAfterWarp(navigation);
     }
 
-    /// <summary>
-    /// Decides and arms the next Navigation leg from the confirmed warp state.
-    /// Runs synchronously from the warp callback; if the fresh replan concludes
-    /// the player is not actionable yet (CanMove=false transition frame), sets
-    /// <see cref="navigationWarpReplanDeferred"/> and returns so the Update pass
-    /// retries once the player is actionable again. A genuine locked destination
-    /// (still not actionable on retry) still settles fail-closed via the normal
-    /// terminal path on that retry.
-    /// </summary>
     private void TryContinueNavigationAfterWarp(LocalNavigateSpec navigation)
     {
         if (navigation is null || navigation.Phase != LocalNavigatePhase.AwaitingWarp)
@@ -5597,12 +3075,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         this.LogNavigationWarpDiagnostic("warp_planned", $"terminal={nextPlan.IsTerminal};state={nextPlan.Outcome.State};reason={nextPlan.Outcome.TerminalReasonCode};next={nextPlan.Outcome.NextLeg?.TargetLocation ?? "none"}");
 
-        // A freshly warped player can report CanMove=false for one transition
-        // frame. Defer rather than misreading that instant as a locked
-        // destination; the Update pass retries once the player is actionable.
-        // Retry is bounded by a short grace window and the navigation deadline
-        // so a genuinely locked destination still settles fail-closed exactly
-        // once.
         if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked")
         {
             this.slots.DeferWarpReplan(this.tick);
@@ -5666,17 +3138,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.slots.Active.Assign(approach);
         if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
+            this.slots.ClearWarpReplan();
             this.slots.Active.Clear();
             this.slots.Navigate.Clear();
             this.slots.NavigationCoordinator.Clear();
             this.revision++;
             this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Uncertain, "navigation_multi_hop_arm_failed",
-                $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true",
+                NavigationNextStep.Describe("navigation_multi_hop_arm_failed", $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true"),
                 hint: approachHint);
             return;
         }
 
         this.revision++;
+        // The deferred window ended when the leg it was waiting for was armed: it belongs to the warp that produced it,
+        // and a window left open across a healthy leg would bound the NEXT warp by the previous one's clock.
+        this.slots.ClearWarpReplan();
         this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Running, "navigation_multi_hop_leg_armed", "navigation=multi_hop;phase=approaching");
     }
 
@@ -5739,24 +3215,38 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static string DescribeApproachRing(StardewBodyController.CardinalRing? ring) =>
         ring is null ? string.Empty : $";approaches={ring.Evidence};approach_blocked_by:{ring.BlockedBy}";
 
-    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null)
+    /// <summary>
+    /// One execution's terminal receipt. <paramref name="publish"/> is the producer's answer to "is this NEWS":
+    /// <c>false</c> withholds it from the fact stream while every other step of the funnel still runs, so the receipt
+    /// that answers its own dispatch, that the ledger stores and that the plan's journal row carries is the same bytes
+    /// either way (<see cref="AddTrace"/>).
+    ///
+    /// <para>
+    /// AND THE SETTLEMENT NAMES THE CHORE ITS WORK CONSUMED, HERE AND NOWHERE ELSE. `evidence.detail` is
+    /// <see cref="LocalExecutionReceipt.Evidence"/> projected one-to-one (<c>BridgeSession.TryProjectReceipt</c>), and
+    /// every terminal of every action - native body, router handler, Body Program node, `for_each` row - is minted
+    /// through this method, so a family named in a settlement can only be said in the three lines below. Measured
+    /// `round71`: the clause was minted into the Body Program executor's <c>route_reentrant_terminal:</c> postcondition
+    /// instead, three crops were harvested with complete `crop_harvested` details, and `chore=` appeared zero times in
+    /// the session - because that postcondition is a journal field, not a string a reader receives. A clause on a seam
+    /// nobody's action passes through is green in the unit suite and absent from the run.
+    /// </para>
+    /// <para>
+    /// ONLY A TERMINAL NAMES IT: `accepted` and `running` are the body narrating a step it has not finished, so a family
+    /// named there would claim work not yet done. A terminal of ANY outcome names it - `rejected`, `uncertain` and
+    /// `blocked` included - because "which family is this step's work" is a declaration about the ACTION, and how much
+    /// of it is left is the reader's own world reading rather than anything the clause asserts.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true)
     {
         string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
+        string? detail = evidence;
+        if (state.IsTerminal() && FarmhandActionCatalog.ChoreEntry(boundActionId) is { } chore)
+            detail = string.IsNullOrEmpty(detail) ? chore : $"{detail};{chore}";
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.ledger.Remember(receipt);
-        LocalExecutionReceipt published = this.AddTrace(receipt);
-        // Immediate native actions own no continuing controller/animation, so
-        // their receipt is followed by the same centralized release check.
-        //
-        // WHICH STATES ANNOUNCE THE FREE BODY IS `ExecutionStateWire.IsTerminal`, not a copy of it. This list used to
-        // name six of the nine terminal states, so `Rejected`, `Blocked` and `PartiallySucceeded` announced the idle
-        // from a hand-written site (`CompleteToolApproach`, `UpdateActiveDayAdvance`, `SettleNavigationTerminal`) and
-        // stayed silent here: the same settled outcome published `body_idle` or nothing depending on which path wrote
-        // the receipt, and a caller converting a site had to keep the leak to stay neutral. An extra publication costs
-        // the Host one evictable latest-only progress slot (host/src/event-pump.ts reads `body_idle` as progress that
-        // the next receipt or plan settlement supersedes); a missing one leaves a companion holding a settled
-        // execution with no actor-free fact. Reading the declaration is what makes this match by construction rather
-        // than by coincidence.
+        LocalExecutionReceipt published = this.AddTrace(receipt, publish);
         if (state.IsTerminal())
             this.ledger.PublishIdleAfterRelease(executionId, requestId);
         return published;
@@ -5771,32 +3261,62 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<string> nativeNotices) =>
         this.ledger.AttachNativeNotices(receipt, nativeNotices);
 
-    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
+    /// <summary>
+    /// The ONE place a receipt leaves this Mod, and the ONE decision about which receipts are news.
+    ///
+    /// <para>
+    /// ONE RECEIPT PER EXECUTION, AND IT IS THE SETTLED ONE. A progress transition (<c>Accepted</c>,
+    /// <c>Running</c>, <c>MeaningfulProgress</c>) is the body narrating itself: the request's own response already
+    /// carried it on the wire (<see cref="BridgeSession.TryExecute"/> answers the dispatch with the receipt it just
+    /// minted), and the settlement will say what the execution DID. Publishing it again is the same execution
+    /// answered twice - the flood the pump then holds latest-only and never uses.
+    /// </para>
+    /// <para>
+    /// So a progress transition is FOLDED into the settlement's evidence instead of published. That is also the only
+    /// way a progress transition can no longer arrive AFTER the terminal it belongs to: measured 2026-11-17
+    /// (<c>round66</c>, <c>cut_weeds</c>, execution <c>6a9da5e0…-exec-r1c3</c>) a <c>rejected</c> at revision 840 was
+    /// followed by <c>tool_approach_completed</c> at 842 for the same execution, and the Host's receipt-order audit
+    /// ended the whole session with <c>execution_receipt_replay_rejected:terminal_state_rewritten</c>. A receipt that
+    /// is never published cannot be a second state.
+    /// </para>
+    /// <para>
+    /// The stored receipt still passes through every other step of this funnel - durability, the ledger, the revision
+    /// bookkeeping - because the ledger is what a replay, an exact receipt query and a held request read, and folding
+    /// the step into the SETTLED receipt happens before it is stored, so what is published and what is stored are the
+    /// same bytes.
+    /// </para>
+    /// <para>
+    /// WHAT A STEP WITHHOLDS, AND WHAT IT KEEPS. A receipt that states a STEP of the plan rather than an event of the
+    /// world is minted with <c>publish: false</c>: `design/fact-authority.md` §1 files 「工具被装上了」 under "belongs to
+    /// the settlement's evidence", so the equip answers the dispatch that asked for it and the plan's own journal row,
+    /// and it does not become one more fact for the pump to weigh. Nothing else is skipped - the durable transition, the
+    /// ledger write, the hold mark, the revision and the trace fold below all run before the publish branch, so what the
+    /// caller is answered with and what a later reader finds is the same receipt.
+    /// </para>
+    /// <para>
+    /// AND A SETTLED EXECUTION IS NEVER ANSWERED AGAIN. The progress transition in <c>round66</c> did not merely follow
+    /// the terminal in the fact stream, it would also have OVERWRITTEN the ledger: the same funnel stores every receipt
+    /// it is handed, so a late <c>running</c> replaces a stored <c>rejected</c> and every later reader - an exact
+    /// receipt query, an idempotent replay, a held request - answers with a state the execution already left. So a
+    /// progress transition for a request that already settled is dropped here, and the settled receipt is what the
+    /// caller gets back.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt, bool publish = true)
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
-        // The ledger bound the action at dispatch (`BindAction`, from the router), and a
-        // controller-minted terminal is built without it. Stamping it HERE covers every
-        // mint site at once, which is the difference between one fix and eighty call sites.
-        //
-        // This was the reason a whole night of runs reported `multiday.crossings: 0` with
-        // `night_terminal_missing` while the trace showed the work done: 14 terminal receipts
-        // in one run (13x Succeeded/target_reached, 1x Succeeded/enter_exit_completed) were
-        // refused by BridgeSession.TryCreateReceiptEvent because the action identity could not
-        // be resolved, and the refusal was logged as `closed/backpressured bridge` - which sent
-        // the investigation to the pipe writer instead of to this projection.
         if (receipt.ActionId is null && this.ledger.TryGetActionId(receipt.RequestId, out string boundActionId))
             receipt = receipt with { ActionId = boundActionId };
-        string? category = receipt.State switch
-        {
-            ExecutionState.Accepted => "execution_started",
-            ExecutionState.MeaningfulProgress => "route_progress",
-            ExecutionState.Succeeded => "execution_settled_succeeded",
-            ExecutionState.Cancelled => "execution_settled_cancelled",
-            ExecutionState.Invalidated => "execution_invalidated",
-            ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain => "execution_settled_failed",
-            _ => null,
-        };
+        if (!receipt.State.IsTerminal()
+            && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? answered)
+            && answered.State.IsTerminal())
+            return answered;
+        bool settled = receipt.State.IsTerminal();
+        if (settled)
+            receipt = this.CarryTraceSteps(receipt);
+        else
+            this.RecordTraceStep(receipt);
         if (this.admission.TryGetDurableAdmission(receipt.RequestId, out FarmhandExecutionAdmission admission)
             && this.executionJournal is not null)
         {
@@ -5812,11 +3332,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryPersistReceiptTransition(admission, durableReceipt);
             if (!result.IsSuccess)
             {
-                // Intermediate/progress receipts are observational: a persist
-                // failure for them must not poison the request's later durable
-                // terminal receipt. Only a REAL terminal persist failure is a
-                // genuine durability failure (the admission itself remains the
-                // authoritative baseline and is already durable).
                 if (ModEntry.IsUnconfirmedTerminal(receipt.State))
                 {
                     this.ledger.MarkDurabilityFailure(receipt.RequestId);
@@ -5828,36 +3343,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (this.ledger.HasDurabilityFailure(receipt.RequestId))
             return receipt;
-        // ONE delivery funnel, so the published revision is strictly monotonic PER EXECUTION.
-        //
-        // The Host audits receipt order and refuses a same-revision transition whose content differs
-        // (`execution_receipt_replay_rejected:non_monotonic_revision`, receipt-replay.ts:49), because an equal
-        // revision carrying different content is indistinguishable from a rewrite of a settled transition. The
-        // world revision counter it compares against is shared with the action it is about to perform: a mint site
-        // that read `this.revision` AFTER the native mutation announced `Running/tool_approach_completed` at the
-        // same number as the `Succeeded/crop_harvested` that followed, which the Host correctly refused - and a
-        // refused receipt is a fatal transport fault, so it killed the whole run (measured 2026-10-17, three times
-        // on the first multi-day attempts).
-        //
-        // Bumping here rather than at ~120 mint sites is the smallest fix that cannot regress: the aliasing is
-        // inherent to reading a shared counter on both sides of a mutation, and this is the only place every
-        // receipt passes through on its way out. The comparison is against what was PUBLISHED, not against the
-        // mint-time mirror, so a legitimate redelivery of one transition can still be byte-identical - which is
-        // what the Host's own idempotent path expects - while a genuinely new transition is always strictly higher.
-        // The hold annotation is applied to `receipt` BEFORE anything is stored or published. It used to be added
-        // after the first `Remember`, so the store could keep an un-annotated copy while the publish path sent the
-        // annotated one: a later redelivery of that stored copy then differed from its own predecessor by exactly
-        // `;held_ms=<n>` at the SAME revision, which the Host refuses as `non_monotonic_revision` (named live on
-        // 2026-10-21 by `firstDiffAt=390`, lengths [402, 390] - the twelve characters were the whole difference, and
-        // the refusal closed the bridge at 747 s of a run that had already crossed its first night).
         if (this.ledger.TryGetHeldMs(receipt.RequestId, out long heldMs))
             receipt = receipt with
             {
                 Evidence = string.IsNullOrEmpty(receipt.Evidence) ? $"held_ms={heldMs}" : $"{receipt.Evidence};held_ms={heldMs}",
             };
-        // Store the annotated copy even when the revision needs no bump: otherwise the store keeps whatever the caller
-        // remembered before calling this funnel, and a later redelivery of that stored copy would differ from what
-        // was published by exactly the annotation.
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = receipt;
         this.ledger.TryGetPublishedRevision(receipt.ExecutionId, out long publishedRevision);
@@ -5867,59 +3357,99 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             published = receipt with { Revision = this.revision };
             this.ledger.Remember(published);
         }
-        // A request that waited out a transient body hold says so on the first receipt it PUBLISHES. This is
-        // the only place every receipt passes through on its way out, so the stored record, the fact the Host
-        // audits and the answer the wait resolves into all carry the identical bytes: a response that differed
-        // from its published fact by one annotation would be refused by the Host's receipt-order audit.
-        // NOT `Remove`: the same receipt reaches the Host through two channels - the fact stream and the response
-        // to the execution_request - and an annotation consumed by the first publish makes the second one differ
-        // from it by exactly that field. Equal revision with different content is `non_monotonic_revision`, which
-        // the Host must refuse, and a refused fact is a fatal transport fault (measured 2026-10-20, run g112attrib:
-        // 402 s in, the bridge closed and the night never happened). Every copy of this request's receipts therefore
-        // carries the same annotation; the entry is cleared when the execution settles.
-        // (`held_ms` was folded into `receipt` above, before the store saw it.)
-        // The annotation has been carried by every copy of this request's receipts; a settled execution cannot publish
-        // again, so the entry can go.
         if (published.State is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled
             or ExecutionState.Rejected)
             this.ledger.ClearHeldMs(published.RequestId);
         this.ledger.RecordPublishedRevision(receipt.ExecutionId, published.Revision);
-        // The publish span and the marker line are the same fact: the span carries the identity the line reports,
-        // so the trace and the grep log can never disagree about which request a revision was published for.
         Activity? publishSpan = ModTrace.StartReceiptPublish(published);
         this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
-        if (category is not null && !this.ledger.IsNavigationExecution(published.ExecutionId))
-            this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
-        this.receiptPublished?.Invoke(published);
+        if (settled && publish)
+            this.receiptPublished?.Invoke(published);
         publishSpan?.Dispose();
-        // The CALLER answers with this object, and the fact stream carries it too. Handing back the minted one instead
-        // published a fact without `held_ms` while the response carried it (same revision, different content), which the
-        // Host refuses as `non_monotonic_revision` - named live on 2026-10-21: same execution, same revision 266, same
-        // state and reason, different evidence.
         return published;
+    }
+
+    /// <summary>
+    /// Records one body-trace transition against its execution, to be carried by the receipt that settles it.
+    ///
+    /// <para>
+    /// The step names WHAT the body did and where, in the producer's own words: <c>accepted@route_revision=1,target=3,11</c>,
+    /// <c>tool_approach_completed@tile=9,22</c>. The separators inside a step are commas so that one step stays one
+    /// token in the `;`-separated evidence the receipt already carries - a step that carried its own `;` would read as
+    /// two fields of the settlement.
+    /// </para>
+    /// </summary>
+    private void RecordTraceStep(LocalExecutionReceipt trace)
+    {
+        if (!this.traceStepsByExecutionId.TryGetValue(trace.ExecutionId, out FoldedTraceSteps? folded))
+        {
+            this.traceStepsByExecutionId[trace.ExecutionId] = folded = new FoldedTraceSteps();
+            this.traceStepOrder.Enqueue(trace.ExecutionId);
+            while (this.traceStepOrder.Count > ExecutionReceiptStore.MaximumRememberedReceipts)
+                this.traceStepsByExecutionId.Remove(this.traceStepOrder.Dequeue());
+        }
+        folded.Add(DescribeTraceStep(trace));
+    }
+
+    /// <summary>
+    /// Spends this execution's folded steps on the receipt that settles it: COUNTED, bounded, and named.
+    ///
+    /// A settled receipt's own evidence is what the settlement says happened; the folded steps are the walk that got
+    /// there. <c>steps=3;folded=accepted@…|tool_approach_completed@…</c> is the sentence the fold owes the reader, and
+    /// <c>steps_omitted</c> is the part of it that did not fit - an omitted count of zero is absent rather than
+    /// spelled, so a settlement inside the bound says nothing about a bound.
+    /// </summary>
+    private LocalExecutionReceipt CarryTraceSteps(LocalExecutionReceipt settled)
+    {
+        if (!this.traceStepsByExecutionId.Remove(settled.ExecutionId, out FoldedTraceSteps? folded) || folded.IsEmpty)
+            return settled;
+        string carried = folded.Render();
+        return settled with
+        {
+            Evidence = string.IsNullOrEmpty(settled.Evidence) ? carried : $"{settled.Evidence};{carried}",
+        };
+    }
+
+    private static string DescribeTraceStep(LocalExecutionReceipt trace) =>
+        trace.Evidence is null ? trace.ReasonCode : $"{trace.ReasonCode}@{trace.Evidence.Replace(';', ',')}";
+
+    /// <summary>
+    /// One execution's body-trace transitions, bounded by <see cref="MaximumFoldedTraceSteps"/> and
+    /// <see cref="MaximumFoldedTraceChars"/>, with the overflow COUNTED so a long walk still reads as a long walk.
+    /// </summary>
+    private sealed class FoldedTraceSteps
+    {
+        private readonly List<string> steps = new(MaximumFoldedTraceSteps);
+        private int characters;
+
+        internal bool IsEmpty => this.steps.Count == 0 && this.Omitted == 0;
+
+        internal int Omitted { get; private set; }
+
+        internal void Add(string step)
+        {
+            if (this.steps.Count == MaximumFoldedTraceSteps || this.characters + step.Length > MaximumFoldedTraceChars)
+            {
+                this.Omitted++;
+                return;
+            }
+            this.characters += step.Length;
+            this.steps.Add(step);
+        }
+
+        internal string Render()
+        {
+            string counted = $"steps={this.steps.Count + this.Omitted}";
+            string listed = this.steps.Count == 0 ? string.Empty : $";folded={string.Join("|", this.steps)}";
+            string omitted = this.Omitted == 0 ? string.Empty : $";steps_omitted={this.Omitted}";
+            return $"{counted}{listed}{omitted}";
+        }
     }
 
     private bool HasOwnership(string executionId) => this.slots.OwnsAny(executionId);
 
-    private void AddPublicTrace(string category, string executionId, string requestId)
-    {
-        Farmer? player = Game1.player;
-        ExecutionTrace entry = new(category, executionId, requestId, this.tick, this.revision,
-            player?.currentLocation?.NameOrUniqueName, player?.Tile);
-        this.trace.Add(entry);
-        if (this.trace.Count > ExecutionReceiptStore.MaximumRememberedReceipts)
-            this.trace.RemoveAt(0);
-        this.monitor.Log($"GameBuddy body trace={category} execution={executionId} request={requestId} tick={this.tick} revision={this.revision}", LogLevel.Trace);
-        this.tracePublished?.Invoke(entry);
-    }
-
     private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
 
-    /// <summary>
-    /// The item identity one inventory slot holds, whatever its KIND - the honest counterpart to
-    /// <see cref="DescribeTool"/>. A slot holding seeds reports the seeds, so an absent `currentTool` beside a
-    /// present identity reads as "holding something that is not a tool", and only an EMPTY slot reports null.
-    /// </summary>
     private static string? DescribeSlotItem(IList<Item?> items, int slot) =>
         slot >= 0 && slot < items.Count ? items[slot]?.QualifiedItemId : null;
 
@@ -5974,11 +3504,6 @@ internal sealed class NavigationApproachNative
 /// </summary>
 internal static class AreaToolFootprint
 {
-    /// <summary>
-    /// The tiles within <see cref="ExecutionManager.AreaToolScanRadius"/> of the named tile that satisfy
-    /// <paramref name="holds"/>. The scan is bounded by the engine's own footprint (see the radius) rather than by a
-    /// Mod budget, and it runs on the game thread inside the swing's tick, on both sides of the one native call.
-    /// </summary>
     internal static HashSet<Vector2> Observe(int tileX, int tileY, Func<Vector2, bool> holds)
     {
         HashSet<Vector2> observed = new();
@@ -6110,10 +3635,33 @@ internal readonly record struct MeleeSweepTile(string Occupant, int WeedHealth, 
 /// (`FarmhandForEachHealing.cs:181-196`) - and a sweep is the same pass over tiles nobody named. So: an arc tile the
 /// caller did NOT name may hold nothing the catalogue calls destructive, and the refusal names the tiles.
 /// </para>
+/// <para>
+/// WHY THE NAMED TILE IS CHECKED BEFORE THE SWING. The receipt mints `scythe_sweep_cut` only when the NAMED tile moved,
+/// so a request aimed at an occupant the scythe family never declared can never be the success it asked for - and the
+/// swing that tries is not free: the engine's arc reaches behind the actor, so `round63`'s admitted swing at a twig cut an
+/// UNNAMED weed at `67:29` and reported it as `partially_succeeded/scythe_sweep_partial`. The pre-swing read below is the
+/// same read that answers the completion condition, which is why this is the action's own predicate and not a guess.
+/// </para>
 /// </summary>
 internal static class MeleeSweepOccupancy
 {
     private const string ScytheTool = "scythe";
+
+    /// <summary>
+    /// The refusal a swing mints when the tile the caller NAMED holds something the scythe family never declared it
+    /// clears: `sweep_target_not_scythe_work:twig`.
+    ///
+    /// <para>
+    /// THE NAMED TILE IS THE COMPLETION CONDITION, so a request whose named tile cannot move cannot succeed: the receipt
+    /// mints `scythe_sweep_cut` only when that tile moved, and every other outcome is a partial or an uncertain. Measured
+    /// `round63`: a `sweep_scythe` at Farm `69,31` holding twig litter was admitted, swung, cut an UNNAMED weed at
+    /// `67:29`, and reported `partially_succeeded/scythe_sweep_partial` with `named_moved=false` - a destructive effect
+    /// the caller never named, delivered as "partly worked", whose evidence named no action that would move the tile she
+    /// aimed at. `remove_placed_item` (whose own `Clears` declaration names `twig`, admission `Object.cs:1182`) is the
+    /// answer, and it never appeared in the run's `attemptedActionIds`.
+    /// </para>
+    /// </summary>
+    internal const string TargetNotScytheWork = "sweep_target_not_scythe_work";
 
     /// <summary>`ClearableKind`'s own word for a weed.</summary>
     internal static readonly string Weed = ClearableKind.Map("object", "weed")!;
@@ -6157,6 +3705,34 @@ internal static class MeleeSweepOccupancy
                     && predicate(clearing))
                 .SelectMany(registration => registration.Descriptor!.Clears!.Occupants),
             StringComparer.Ordinal);
+
+    /// <summary>
+    /// The detail a <see cref="TargetNotScytheWork"/> refusal carries: what stands on the named tile, and the published
+    /// action that removes it - the two facts the route refusals already publish.
+    ///
+    /// <para>
+    /// IT IS THE BRIEF SHAPE, and two measurements decide that. `round63`'s own `fish_here` receipt carried
+    /// `blocker_occupant=twig@69,31` and `clears_with=remove_placed_item(...)` as fields 11 and 12 of 16, and the Host
+    /// prints one receipt detail to the model under a 160-character share on whole fields (`host/src/fact-brief.ts`,
+    /// `MODEL_FIELD_CEILINGS.evidence`), so the eight narration fields in front of them cost it both. Then this file's
+    /// own census, over every occupant the scythe does not clear, found the priced shape does not fit for the NINE clump
+    /// kinds: `clears_with=clear_debris(...),break_resource_clump(...)` with a price each is 153 characters, which pushes
+    /// the field past the share on its own and leaves the model the occupant and no action. The brief shape carries the
+    /// occupants and the action ids and drops the price - the one of the three a caller cannot act on here.
+    /// </para>
+    /// <para>
+    /// THE CLEARERS ARE THE CATALOGUE'S ANSWER, never a kind-to-action table kept here: `DeclaredClearersOf` is the same
+    /// join the route refusals use, so a declaration that stops naming an occupant takes its action out of this sentence
+    /// in the same commit. A kind nothing declares answers `no_published_action_clears:&lt;kind&gt;`, which
+    /// `SweepTargetRefusalNamingTests` holds to <see cref="TileOccupantKind.Unclearable"/>: "nothing removes this" is
+    /// only lawful for a kind that says so.
+    /// </para>
+    /// </summary>
+    internal static string DescribeTargetNotScytheWork(string occupant, Vector2 named) =>
+        ClearingEvidence.DescribeBlockerBrief(
+            occupant,
+            ((int)named.X, (int)named.Y),
+            FarmhandForEachHealing.DeclaredClearersOf(occupant));
 
     /// <summary>What stands on one tile, read through the classifier `for_each` rows already use.</summary>
     internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)
@@ -6392,10 +3968,6 @@ internal static class ChargedFootprint
         }
     }
 
-    /// <summary>
-    /// What ONE footprint tile holds that this swing would TAKE, in the vocabulary the scythe's arc check already speaks -
-    /// or <see cref="FarmhandForEachHealing.NoOccupant"/> for every tile the engine leaves exactly as it found it.
-    /// </summary>
     internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)
     {
         // A TILE THAT CARRIES A TERRAIN FEATURE IS SKIPPED WHOLE by `Hoe.DoFunction` (Hoe.cs:69-76): it hands the feature
@@ -6428,10 +4000,6 @@ internal static class ChargedFootprint
         return MeleeSweepOccupancy.Read(location, world, tile);
     }
 
-    /// <summary>
-    /// The footprint tiles a charged use would take without the request naming them, the named tile excluded - the same
-    /// rule <see cref="MeleeSweepOccupancy.Undeclared"/> asks of a scythe's arc. EMPTY is the answer that lets the swing run.
-    /// </summary>
     internal static List<(Vector2 Tile, string Kind)> Undeclared(
         GameLocation location,
         IReadOnlyList<Vector2> footprint,
@@ -6445,10 +4013,6 @@ internal static class ChargedFootprint
             state => !string.Equals(state.Occupant, FarmhandForEachHealing.NoOccupant, StringComparison.Ordinal));
     }
 
-    /// <summary>
-    /// One tile the swing leaves as it found it, spelled in the same vocabulary: an occupant word the caller compares
-    /// against, never a third state.
-    /// </summary>
     private static MeleeSweepTile Untouched(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile) =>
         MeleeSweepOccupancy.Read(location, world, tile) with { Occupant = FarmhandForEachHealing.NoOccupant };
 }

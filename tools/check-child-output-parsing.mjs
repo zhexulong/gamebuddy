@@ -76,6 +76,14 @@
  *   this gate and named at `:58` and `:83` - the two hand splits whose capture read 0 MEASURE lines. See
  *   `tools/check-child-output-parsing.test.mjs`.
  */
+
+export const gateDeclaration = {
+  id: "check-child-output-parsing",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

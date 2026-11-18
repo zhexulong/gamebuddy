@@ -49,6 +49,14 @@
  *                    covered action -> `exclusion_names_a_covered_action:cut_weeds`
  *                    (tools/check-stardew-task-action-coverage.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-task-action-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 
 const MOD_ROOT = join(import.meta.dirname, "..", "..", "integrations", "stardew");
 
@@ -120,6 +120,26 @@ function queuedObservation(eventId: string): WorldFact {
   };
 }
 
+/**
+ * The fact that opens the batch a release is delivered in: the game's own HUD line, a kind the surface can show.
+ *
+ * A RELEASE FACT CANNOT OPEN ONE. A refusal, the owner's terminal receipt and a snapshot are all shapes with no presentation
+ * source (`presentation-lease.ts`), so a turn opened on them would be answered into nothing (`round66`: `lost 12`). What this
+ * fixture holds is unchanged: the release ends the hold, and everything that waited is delivered with it.
+ */
+function queuedNotice(eventId: string): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId,
+    sourceEventId: eventId,
+    correlationId: eventId,
+    revision: 1,
+    semanticKind: "native_notice",
+    payload: Object.freeze({ message: "It is getting late." }),
+  };
+}
+
 function collector(batches: PendingBatch[]): { deliver(batch: PendingBatch): Promise<void> } {
   return {
     async deliver(batch) {
@@ -131,15 +151,16 @@ function collector(batches: PendingBatch[]): { deliver(batch: PendingBatch): Pro
 /** Enter the hold with one refusal, then offer ONE release fact; report what the pump did at each step. */
 async function holdThenRelease(code: string, detail: string, release: WorldFact) {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(refusal(code, detail));
+  pump.enqueueFact(refusal(code, detail), FACT_PRODUCER.adapterIngress);
   const held = pump.isWorldTransition;
 
   // Something happens in the world while the body is held: it QUEUES, and the hold must not let it through.
-  pump.enqueueFact(queuedObservation("observation_during_hold"));
+  pump.enqueueFact(queuedObservation("observation_during_hold"), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(queuedNotice("notice_during_hold"), FACT_PRODUCER.adapterIngress);
   const duringHold: PendingBatch[] = [];
   await pump.flush(collector(duringHold));
 
-  pump.enqueueFact(release);
+  pump.enqueueFact(release, FACT_PRODUCER.adapterIngress);
   const released = !pump.isWorldTransition;
   const afterRelease: PendingBatch[] = [];
   await pump.flush(collector(afterRelease));
@@ -228,8 +249,8 @@ test("an unrelated execution settling says nothing about this hold", async () =>
   // The invariant that makes the receipt release safe: the refusal that STARTED the hold is itself a terminal receipt,
   // and another execution finishing is not evidence about this one.
   const pump = new CompanionEventPump();
-  pump.enqueueFact(refusal("body_owned_by_navigation", OWNER_DETAIL));
-  pump.enqueueFact(ownerTerminalReceipt("exec_something_else", "move_to_tile"));
+  pump.enqueueFact(refusal("body_owned_by_navigation", OWNER_DETAIL), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(ownerTerminalReceipt("exec_something_else", "move_to_tile"), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.isWorldTransition, true, "a receipt for a different execution must not release the hold");
 });
 
@@ -257,13 +278,13 @@ test("a snapshot from before the hold is not the body being free again", async (
   // The pump already held this reading when the refusal arrived: a re-published copy of it describes a moment before
   // the transition, and treating it as a release would put the bookkeeping back through the stage.
   const pump = new CompanionEventPump();
-  pump.enqueueFact(snapshot(3, true));
-  pump.enqueueFact(refusal("body_owned_by_navigation", OWNER_DETAIL));
+  pump.enqueueFact(snapshot(3, true), FACT_PRODUCER.adapterIngress);
+  pump.enqueueFact(refusal("body_owned_by_navigation", OWNER_DETAIL), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.isWorldTransition, true);
-  pump.enqueueFact(snapshot(3, true));
+  pump.enqueueFact(snapshot(3, true), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.isWorldTransition, true, "the same reading twice is one observation, not two");
-  pump.enqueueFact(snapshot(4, false));
+  pump.enqueueFact(snapshot(4, false), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.isWorldTransition, true, "a NEWER snapshot that still reads busy keeps the hold");
-  pump.enqueueFact(snapshot(5, true));
+  pump.enqueueFact(snapshot(5, true), FACT_PRODUCER.adapterIngress);
   assert.equal(pump.isWorldTransition, false, "the newest snapshot saying free is the release");
 });

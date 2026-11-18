@@ -48,6 +48,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
+import { GATE_TREE_ROOTS } from "../gates/directories.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PER_TEST_TIMEOUT = "--test-timeout=120000";
@@ -91,46 +92,40 @@ function readIn(root, relative) {
 }
 
 /**
- * The `tools/` suites one script command runs - or null when the command is not `node --test …` over `tools/`
- * files. Flags are kept in order and re-issued with the run; only the files are read as paths.
+ * The `gate suite` directories one script command runs - or null when the command is not `node --test …` over a
+ * directory a gate suite lives in. Flags are kept in order and re-issued with the run; only the files are read as paths.
+ *
+ * THE ROOTS ARE DERIVED FROM `gates/directories.mjs`, not written here. Written out, this rule said `tools/` alone, and the
+ * day twelve suites moved to `gates/meta/` the corpus lost them without a word: `corpusFiles` 400 -> 388 and no gate
+ * could see the gap, because a command the rule rejects leaves both the run and the report. A file whose NAME says it is
+ * a gate's falsifier but whose directory no root covers is therefore refused loudly rather than dropped.
  *
  * Two spellings are outside this rule and are named rather than guessed at, because a rule that silently drops
  * a script is a corpus that shrinks without saying so: `node --flag --test …` (a flag before `--test`, so the
  * command is not the runner's own form) and a chained line (`node --test a.mjs && node --test b.mjs`, one
  * script for two runs). Neither appears in package.json today.
  */
+const GATE_FALSIFIER = /^(?:check|audit)-.*\.test\.mjs$/u;
+const basenameOf = (file) => file.replace(/^.*\//u, "");
+const inGateDirectory = (file) => GATE_TREE_ROOTS.some((root) => file.startsWith(`${root}/`));
+
 function memberCommand(command) {
   const tokens = command.trim().split(/\s+/);
   if (tokens[0] !== "node" || tokens[1] !== "--test") return null;
   const rest = tokens.slice(2);
   const files = rest.filter((token) => !token.startsWith("-"));
-  if (files.length === 0 || !files.every((file) => file.startsWith("tools/"))) return null;
+  if (files.length === 0) return null;
+  if (!files.every(inGateDirectory)) {
+    const unrooted = files.filter((file) => GATE_FALSIFIER.test(basenameOf(file)) && !inGateDirectory(file));
+    return unrooted.length === 0 ? null : { unrooted };
+  }
   return { flags: rest.filter((token) => token.startsWith("-")), files };
 }
 
 /**
- * The corpus, member by member: one package.json script per member, the `tools/` suite files it runs, and every
- * script that the derivation leaves out - with the reason it was left out.
- *
- * THE POPULATION IS THE NAMESPACE, NOT THE SHAPE. It used to be "a `node --test` command over `tools/` files named
- * `test:`/`suite:`", and every other test script fell through `if (run === null) continue` without a word: measured
- * 2026-11-13, 24 `test:` scripts were dropped in silence while the run printed `corpus_derivation:ok` and `notTaken 0`.
- * A filter that removes 24 members and prints nothing is the "population is hand-written" defect in its purest form -
- * the corpus can only vouch for the members its own pattern happened to match. So a `test:`/`suite:` script is a
- * member of this population by its NAME (that prefix is the claim that it runs), and it lands in exactly one of:
- *
- *   members    this corpus runs it, one child per script
- *   elsewhere  an entry point names it (`ci.yml`, `release-windows.yml`, `test`, `test:all`,
- *              `test:dialogue-web`, `typecheck`), so this step would be a second copy of a run that already happens
- *   package    its files all live under a package's `tests/` directory, that package declares a `test` script, and an
- *              entry point runs it - the package's own runner derives the directory, so a new suite file joins by
- *              existing. Stated limit: this reads the directory-level declaration, never inside the package's runner.
- *   untaken    none of the above: nothing in this tree's CI runs it. Named on every run with the runner it uses
- *              instead and the home that would run it - or, when it has no home, a dated exemption (see
- *              `untakenReason`)
- *
- * Every `test:`/`suite:` name in package.json is returned in `namespace`, which is the population the four buckets
- * are checked against: a member that reaches none of them is named, not lost.
+ * The corpus, member by member: one package.json script per member, the gate-suite files it runs, the scripts that run
+ * such a suite the derivation does not take, and the scripts naming a gate falsifier that no gate directory covers -
+ * the reading that says whether the corpus is behind the tree rather than red.
  */
 export function corpusMembers({ root = ROOT } = {}) {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -143,25 +138,16 @@ export function corpusMembers({ root = ROOT } = {}) {
   const elsewhere = [];
   const packages = [];
   const notTaken = [];
+  const unrooted = [];
   for (const [name, command] of Object.entries(pkg.scripts)) {
     const named = TEST_NAMESPACE.test(name);
     const run = memberCommand(command);
-    // Neither a `test:`/`suite:` name nor a `tools/` suite run: not this corpus's business at all.
-    if (run === null && !named) continue;
-    if (invokedByAnEntryPoint(name, entryPoints)) {
-      elsewhere.push({ name, command });
+    if (run === null) continue;
+    if (run.unrooted !== undefined) {
+      unrooted.push({ name, command, files: run.unrooted });
       continue;
     }
-    if (run === null) {
-      const owner = packageSuiteOwner({ root, command, entryPoints });
-      if (owner === null) {
-        // Filled in below, once every bucket is known: a home is a run that exists, not a run declared later.
-        notTaken.push({ name, command, why: null, kind: "not-a-node-suite" });
-        continue;
-      }
-      packages.push({ name, command, owner });
-      continue;
-    }
+    if (invokedByAnEntryPoint(name, entryPoints)) continue;
     // `suite:` names a library's own tests, `test:` names a gate's. Both run here; only `test:` carries the
     // meta-gate's obligation to state a falsifier, which is why the two prefixes exist separately.
     if (!named) {
@@ -175,126 +161,13 @@ export function corpusMembers({ root = ROOT } = {}) {
     }
     members.push({ name, flags: run.flags, files: run.files });
   }
-  const reachable = new Set([...members, ...elsewhere, ...packages].map((entry) => entry.name));
-  for (const entry of notTaken)
-    if (entry.why === null) entry.why = untakenReason({ entry, pkg, reachable, workflowTexts });
-  return {
-    members,
-    elsewhere,
-    packages,
-    notTaken,
-    namespace: Object.keys(pkg.scripts).filter((name) => TEST_NAMESPACE.test(name)),
-  };
-}
-
-/** A command `node --test` over files the corpus does not take, most often a package's own suite outside `tools/`. */
-const NODE_TEST_ELSEWHERE = "`node --test` over files outside `tools/`";
-
-/**
- * What a script that is not a corpus member actually runs, in the words of the thing that runs it.
- *
- * Derived from the command line, never from a list of script names: a new `test:` script over playwright, python,
- * powershell or a vendored package joins this reading by existing, which is the same rule the members follow.
- */
-function commandRunner(command) {
-  if (/\bplaywright\b/u.test(command)) return "playwright";
-  if (/(?:^|[\s/\\])(?:powershell|pwsh)(?:\.exe)?\b/iu.test(command)) return "powershell";
-  if (/(?:^|[\s/\\])python3?\b/u.test(command)) return "python";
-  if (/(?:^|\s)pnpm\s+--dir\s+\S+\s+(?:run\s+)?\S+/u.test(command)) return "a vendored package's own script";
-  if (/^node\s+--test\b/u.test(command.trim())) return NODE_TEST_ELSEWHERE;
-  if (/^node\s+\S+/u.test(command.trim())) return "a node driver";
-  return "a shell command line";
-}
-
-/**
- * The runs that name every file a command names, or `null` when some named file has no run at all.
- *
- * A HOME HAS TO BE A RUN SOMEONE MAKES. A claimant is a workflow file that names the path, or a package.json script
- * that an entry point invokes (members, `elsewhere`, `package`) - a script no one runs is not a home, which is the
- * whole defect this bucket exists for. `null` therefore means "this tree runs nothing that touches the file", not
- * "I could not find it": the files are printed either way.
- */
-function commandOwners({ command, self, pkg, reachable, workflowTexts }) {
-  const files = [...new Set(command.match(COMMAND_FILE) ?? [])];
-  if (files.length === 0) return { files, owners: [] };
-  const owners = new Set();
-  for (const file of files) {
-    const claimants = [
-      ...workflowTexts.filter(([, text]) => text.includes(file)).map(([path]) => path),
-      ...Object.entries(pkg.scripts)
-        .filter(([name, text]) => name !== self && reachable.has(name) && text.includes(file))
-        .map(([name]) => `scripts.${name}`),
-    ];
-    if (claimants.length === 0) return { files, owners: null };
-    for (const claimant of claimants) owners.add(claimant);
-  }
-  return { files, owners: [...owners] };
-}
-
-/**
- * Why one script is in `untaken`, and what would run it.
- *
- * Two halves, because "not a corpus member" and "nobody runs it" are different findings with different owners: the
- * first is a fact about the command's runner and never a defect, the second is a coverage gap. A gap is recorded as
- * an exemption with a DATE and an expiry condition that is re-read on every run - the condition is the claim itself,
- * so the moment an entry point or a run script names the file the exemption text is replaced by that owner's name,
- * and there is nothing left to remember. No clock is consulted, so the reading repeats.
- */
-function untakenReason({ entry, pkg, reachable, workflowTexts }) {
-  const { files, owners } = commandOwners({
-    command: entry.command,
-    self: entry.name,
-    pkg,
-    reachable,
-    workflowTexts,
-  });
-  const runner = commandRunner(entry.command);
-  const statement =
-    runner === NODE_TEST_ELSEWHERE ? `it runs ${runner}` : `it runs ${runner}, not \`node --test\` over tools/ files`;
-  if (owners === null)
-    return (
-      `${statement}; home: none - nothing this tree's CI runs names ${files.join(", ")} ` +
-      `(exemption dated ${UNCLAIMED_EXEMPTION_DATED}, expiring when an entry point or a run script names it)`
-    );
-  if (owners.length === 0) return `${statement}; home: none - its command names no file in this tree`;
-  return `${statement}; home: ${owners.join(" and ")} runs ${files.join(", ")}`;
-}
-
-/**
- * The package whose own runner covers every file a script names, or `null`.
- *
- * `test:stardew-action-candidates` runs one suite file out of
- * `integrations/stardew/action-development/tests/`, and `ci.yml` runs that package's `test` script, which walks that
- * directory - so the named file is covered by a run this step would only duplicate. The claim is checked in both
- * halves: the package has to DECLARE a `test` script, and an entry point has to invoke it.
- */
-function packageSuiteOwner({ root, command, entryPoints }) {
-  const files = command.match(COMMAND_FILE) ?? [];
-  if (files.length === 0) return null;
-  // A package's own runner walks `tests/*.test.mjs`; a script naming any other shape of file (a `.mutation.mjs`
-  // driver, a `.ps1`) is not covered by running that package and is reported as untaken instead of excused.
-  if (!files.every((file) => PACKAGE_SUITE_FILE.test(file))) return null;
-  const owner = files[0].replace(/\/tests\/[^/]+$/u, "");
-  if (owner === files[0]) return null;
-  let declared;
-  try {
-    declared = JSON.parse(readFileSync(resolve(root, owner, "package.json"), "utf8"));
-  } catch {
-    return null;
-  }
-  if (typeof declared.scripts?.test !== "string") return null;
-  const runsPackageTest = new RegExp(
-    `\\S*${owner.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s+(?:run\\s+)?test\\b`,
-    "u",
-  );
-  if (!runsPackageTest.test(entryPoints)) return null;
-  return owner;
+  return { members, notTaken, unrooted };
 }
 
 /**
  * The `test:*`/`suite:*` suite files the corpus takes.
  *
- * Exported because `tools/check-spec-reachability.mjs` asks the same question - which `tools/` suites a
+ * Exported because `gates/meta/check-spec-reachability.mjs` asks the same question - which gate suites a
  * checkout runs - and a second derivation of the same population would be a second authority for it.
  */
 export function corpusFiles({ root = ROOT } = {}) {
@@ -372,17 +245,7 @@ const detail = (run) =>
 async function main(argv) {
   const rootIndex = argv.indexOf("--root");
   const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : ROOT;
-  const { members, elsewhere, packages, notTaken, namespace } = corpusMembers({ root });
-  const namespaced = new Set(namespace);
-  const inNamespace = (entries) => entries.filter((entry) => namespaced.has(entry.name)).length;
-  const accounted = new Set([...members, ...elsewhere, ...packages, ...notTaken].map((entry) => entry.name));
-  const dropped = namespace.filter((name) => !accounted.has(name));
-  const outside = [
-    ...new Set(
-      [...elsewhere, ...packages, ...notTaken].map((entry) => entry.name).filter((name) => !namespaced.has(name)),
-    ),
-  ];
-  const taken = members.length + inNamespace(elsewhere) + inNamespace(packages) + inNamespace(notTaken);
+  const { members, notTaken, unrooted } = corpusMembers({ root });
   const quarantine = JSON.parse(readFileSync(resolve(root, QUARANTINE_PATH), "utf8")).exclusions;
   const corpus = [...new Set(members.flatMap((member) => member.files))].sort();
   const quarantined = new Set(quarantine.map((entry) => entry.file));
@@ -391,20 +254,22 @@ async function main(argv) {
     .map((member) => ({ ...member, files: member.files.filter((file) => !quarantined.has(file)) }))
     .filter((member) => member.files.length > 0);
 
-  // The derivation's own verdict. An empty corpus, a `tools/` suite no member takes, and a `test:`/`suite:` script
-  // that reaches no bucket are defects of the RULE, not debts of the members: a tree whose scripts stopped matching
-  // would otherwise report a clean run. A script that is simply not a corpus member - playwright, python, a node
-  // driver, a package's own runner - is not evidence about the rule, so it is named as `corpus_untaken` and does not
-  // fail the step; otherwise a dated exemption would still red the step forever, which is not an exemption.
+  // The derivation's own verdict. An empty corpus, a `tools/` suite no member takes, and a gate falsifier outside
+  // every gate directory are defects of the rule, not debts of the members: a tree whose scripts stopped matching would
+  // otherwise report a clean run.
   const derivation = [];
   if (members.length === 0)
-    derivation.push("no members: no `test:`/`suite:` script in package.json runs `node --test` over tools/ files");
+    derivation.push(
+      "no members: no `test:`/`suite:` script in package.json runs `node --test` over a gate directory's files",
+    );
   for (const script of notTaken)
-    if (script.kind === "suite-outside-namespace")
-      derivation.push(`untaken ${script.name}: ${script.why} (${script.command})`);
-  for (const name of dropped)
-    derivation.push(`dropped ${name}: a \`test:\`/\`suite:\` script this derivation classified nowhere`);
-  const excused = notTaken.filter((script) => script.kind === "not-a-node-suite");
+    derivation.push(
+      `untaken ${script.name}: runs a gate suite but is neither a \`test:\`/\`suite:\` script nor run by an entry point (${script.command})`,
+    );
+  for (const script of unrooted)
+    derivation.push(
+      `unrooted ${script.name}: names a gate falsifier that no \`GATE_DIRECTORIES\` entry covers, so no command takes it (${script.files.join(", ")})`,
+    );
 
   process.stdout.write(
     `corpus_population:${members.length} members (${corpus.length} suite files) elsewhere:${elsewhere.length} ` +

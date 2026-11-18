@@ -1,11 +1,11 @@
-// red-proof: inject  removing containment from the game-free generic layer set -> `× reports exact generic-to-game and
+// red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
 //   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
 // red-proof: history the tree before this rule's own unit, where
 //   `host/src/containment/runtime/contract/game-runtime.ts` declared
 //   `FarmhandBridgeConnectionNotAvailableError` -> `generic_runtime_names_game` naming that
 //   file, its line and the identifier, token `farmhand` (re-run of the checker on that tree)
 // red-proof: inject  `tsPreCompilationDeps: true` written into .dependency-cruiser.host-production.cjs ->
-//   `× the module graph declares the type-only edges it cannot see` names the option and the 29
+//   `✖ the module graph declares the type-only edges it cannot see` names the option and the 29
 //   circular violations turning it on costs (tools/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -717,5 +717,100 @@ test("names the type-only game import the module graph cannot see, which its own
     moduleGraphForbidsGameImport(target),
     true,
     "the module graph's rule must forbid exactly the target this checker blocks, or the split is a hole",
+  );
+});
+
+// The wire's own names, read as the brief states the property: a game-free layer may publish
+// a stage token the composition root named, but it may not name the game, the installation or
+// the Mod it prepares. The defect this catches shipped: the wire awaited
+// `deployCompanionGameMod` from the generic composition root, so the import-path rule had a
+// generic target to look at and reported nothing.
+const WIRE = "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts";
+const COMPOSITION_ROOT = "host/src/composition/desktop-host-composition.ts";
+
+test("blocks a wire that names the game, the installation or the Mod in an imported symbol", async () => {
+  await withFixture(
+    {
+      [WIRE]: [
+        "import { deployCompanionGameMod } from '../../composition/desktop-host-composition.js';",
+        "export async function run(): Promise<string> { return await deployCompanionGameMod('/artifact'); }",
+      ].join("\n"),
+      [COMPOSITION_ROOT]: [
+        "export type CompanionGameModDeploymentOutcome = string;",
+        "export async function deployCompanionGameMod(_root: string): Promise<CompanionGameModDeploymentOutcome> {",
+        "  return 'companion-mod-current';",
+        "}",
+      ].join("\n"),
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "blocked");
+      assert.deepEqual(
+        report.violations
+          .filter(({ kind }) => kind === "bootstrap_names_game_symbol")
+          .map(({ importer, identifier, token }) => [importer, identifier, token]),
+        [[WIRE, "deployCompanionGameMod", "game"]],
+      );
+      const typed = report.violations.filter(({ kind }) => kind === "bootstrap_calls_game_typed_value");
+      assert.equal(typed.length, 1);
+      assert.equal(typed[0]?.declared, "Promise<CompanionGameModDeploymentOutcome>");
+      assert.ok(report.wire.callSites > 0, `call sites ${report.wire.callSites}`);
+    },
+  );
+});
+
+test("blocks a renamed wire call whose declared type is still the game's, so a rename is not a fix", async () => {
+  await withFixture(
+    {
+      [WIRE]: [
+        "import { installCompanionContent } from '../../composition/desktop-host-composition.js';",
+        "export async function run(): Promise<string> { return await installCompanionContent('/artifact'); }",
+      ].join("\n"),
+      [COMPOSITION_ROOT]: [
+        "export type CompanionGameModDeploymentOutcome = string;",
+        "export async function installCompanionContent(_root: string): Promise<CompanionGameModDeploymentOutcome> {",
+        "  return 'companion-mod-current';",
+        "}",
+      ].join("\n"),
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.equal(report.verdict, "blocked");
+      // The name is neutral and the type is not: this is the half a vocabulary-only rule misses.
+      assert.equal(report.violations.filter(({ kind }) => kind === "bootstrap_names_game_symbol").length, 0);
+      assert.deepEqual(
+        report.violations.map(({ kind, identifier }) => [kind, identifier]),
+        [["bootstrap_calls_game_typed_value", "installCompanionContent"]],
+      );
+    },
+  );
+});
+
+test("allows a wire that publishes a preparation the composition root named", async () => {
+  await withFixture(
+    {
+      [WIRE]: [
+        "import { prepareDesktopHostLaunch } from '../../composition/desktop-host-composition.js';",
+        "export async function run(artifactRoot: string): Promise<readonly string[]> {",
+        "  const preparation = await prepareDesktopHostLaunch(artifactRoot);",
+        "  return [preparation.stage, preparation.outcome];",
+        "}",
+      ].join("\n"),
+      [COMPOSITION_ROOT]: [
+        "export type DesktopHostLaunchPreparation = Readonly<{ stage: string; outcome: string }>;",
+        "export async function prepareDesktopHostLaunch(_root: string): Promise<DesktopHostLaunchPreparation> {",
+        "  return { stage: 'companion-mod', outcome: 'companion-mod-current' };",
+        "}",
+      ].join("\n"),
+      "host/src/games/stardew/value.ts": "export const value = 1;\n",
+    },
+    (root) => {
+      const report = checkHostGamePhysicalSeam({ root });
+      assert.deepEqual(report.violations, []);
+      assert.equal(report.verdict, "passed");
+      assert.equal(report.wire.callSites > 0, true);
+    },
   );
 });

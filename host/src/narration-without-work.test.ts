@@ -4,12 +4,12 @@ import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
 import * as pumpModule from "./event-pump.js";
 import {
+  FACT_PRODUCER,
   CompanionEventPump,
-  EXECUTION_STALL_BOUND_MS,
-  HOST_MINTED_WAKE_KINDS,
   MEASURED_TURN_CADENCE_MS,
   NARRATION_WITHOUT_WORK_SEMANTIC_KIND,
   NARRATION_WITHOUT_WORK_TURNS,
+  PUMP_MINTED_WAKE_KINDS,
   TURN_PRODUCTION,
   type CompanionTurnOutcome,
   type TurnProduction,
@@ -164,6 +164,10 @@ async function deliverTurn(pump: CompanionEventPump, production: TurnProduction,
  * nothing can produce is the same failure one layer up, so the population comes from the two declarations that own it -
  * the pump's exported `*_SEMANTIC_KIND` constants and `HOST_WAKE_REASONS` - and each is driven to a real answer here
  * rather than asserted in prose.
+ *
+ * The kinds are classified in TWO tables (`PUMP_MINTED_WAKE_KINDS`): a Host-owned schedule coming due, and a verdict the
+ * Mod itself made. Both are facts this pump mints, so both are the population - what may not happen is a kind sitting in
+ * neither.
  */
 test("narration_turns_reach_no_decider: every pump-minted kind and every declared wake reason is consumed", async () => {
   const minted = Object.entries(pumpModule)
@@ -171,13 +175,16 @@ test("narration_turns_reach_no_decider: every pump-minted kind and every declare
     .map(([name, kind]) => [name, kind as string] as const);
   assert.ok(minted.length > 0, "the scan recognised no pump-minted kind, so this reading is blocked rather than green");
 
-  const unclassified = minted.filter(([, kind]) => !(kind in HOST_MINTED_WAKE_KINDS));
+  const unclassified = minted.filter(([, kind]) => !(kind in PUMP_MINTED_WAKE_KINDS));
   assert.deepEqual(
     unclassified.map(([name]) => name),
     [],
     `the pump mints these kinds and nothing says how a turn is created for them: ${unclassified
       .map(([, kind]) => kind)
-      .join(", ")}. Add each to HOST_MINTED_WAKE_KINDS with the Host path that delivers it.`,
+      .join(
+        ", ",
+      )}. Add each to HOST_MINTED_WAKE_KINDS (a Host-owned schedule) or MOD_VERDICT_WAKE_KINDS (the Mod's own ` +
+      "verdict), with the Host path that delivers it.",
   );
 
   // Each declared reason, driven to an answer. The table is keyed by the enum, so a member added tomorrow fails here
@@ -189,7 +196,7 @@ test("narration_turns_reach_no_decider: every pump-minted kind and every declare
   quiet.service.close();
 
   const pending = harness();
-  pending.loop.pump.enqueueFact(milestone(0));
+  pending.loop.pump.enqueueFact(milestone(0), FACT_PRODUCER.narrationWithoutWork);
   const pendingReason = pending.service.wakeReason;
   assert.equal(pendingReason, HOST_WAKE_REASON.pendingDelivery, "a held fact is the ordinary reason, unchanged");
   produced.set(pendingReason, "a fact the pump is holding has not reached a turn yet");
@@ -216,7 +223,7 @@ test("narration_turns_reach_no_decider: every pump-minted kind and every declare
 
   console.log(
     `narration_without_work: examined ${String(minted.length)} pump-minted kind(s) ` +
-      `(${minted.map(([, kind]) => kind).join(", ")}), all classified in HOST_MINTED_WAKE_KINDS; ` +
+      `(${minted.map(([, kind]) => kind).join(", ")}), all classified in PUMP_MINTED_WAKE_KINDS; ` +
       `examined ${String(HOST_WAKE_REASONS.length)} declared wake reason(s) ` +
       `(${HOST_WAKE_REASONS.join(", ")}), all produced: ${[...produced.entries()]
         .map(([reason, how]) => `${reason} <- ${how}`)
@@ -260,14 +267,20 @@ test("idle_mechanism_is_dead_or_alive: five narration turns and no tool call pro
 /* The measurement.                                                                                                   */
 /* ---------------------------------------------------------------------------------------------------------------- */
 
-test("the bound is the first whole turn past the stall bound at the measured cadence", () => {
+test("the bound sits between the ordinary speak-then-work shape and the narration run that was measured", () => {
   assert.ok(
-    NARRATION_WITHOUT_WORK_TURNS * MEASURED_TURN_CADENCE_MS >= EXECUTION_STALL_BOUND_MS,
-    "the bound must not name a companion whose narration is still shorter than the silence this file calls a stall",
+    NARRATION_WITHOUT_WORK_TURNS > 2,
+    "the retired bound was 2: a companion who speaks once and then works is the ordinary shape, so naming her at two " +
+      "would name the shape the product wants",
   );
   assert.ok(
-    (NARRATION_WITHOUT_WORK_TURNS - 1) * MEASURED_TURN_CADENCE_MS < EXECUTION_STALL_BOUND_MS,
-    "and it must be the FIRST such turn, or the bound is later than the measurement it claims to follow",
+    NARRATION_WITHOUT_WORK_TURNS < 5,
+    "and round45's measured defect was FIVE consecutive turns of pure narration, so the bound must be short of it",
+  );
+  assert.ok(
+    NARRATION_WITHOUT_WORK_TURNS * MEASURED_TURN_CADENCE_MS > 60_000,
+    `at the measured cadence this many turns is ${String(NARRATION_WITHOUT_WORK_TURNS * MEASURED_TURN_CADENCE_MS)} ms of ` +
+      "the run spent speaking and doing nothing - a stall of her attention, not of one action",
   );
 });
 
@@ -292,15 +305,18 @@ test("a turn that carried no assistant text is not narration, and neither is a t
   for (let index = 0; index < 3; index += 1) await deliverTurn(pump, TURN_PRODUCTION.spoke, 10 + index);
   assert.equal(pump.narrationWithoutWork.turns, 3);
   pump.turnProduction = TURN_PRODUCTION.spoke;
-  pump.enqueueFact({
-    source: "arcade_adapter",
-    kind: "lifecycle",
-    eventId: "lifecycle_aborted",
-    occurredAtMs: Date.now(),
-    correlationId: "lifecycle_aborted",
-    revision: 99,
-    payload: { state: "connected" },
-  });
+  pump.enqueueFact(
+    {
+      source: "arcade_adapter",
+      kind: "lifecycle",
+      eventId: "lifecycle_aborted",
+      occurredAtMs: Date.now(),
+      correlationId: "lifecycle_aborted",
+      revision: 99,
+      payload: { state: "connected" },
+    },
+    FACT_PRODUCER.narrationWithoutWork,
+  );
   await pump.flush({ deliver: async (): Promise<CompanionTurnOutcome> => "aborted" });
   assert.equal(pump.narrationWithoutWork.turns, 0, "an aborted turn is the player's or the provider's own decision");
 });
@@ -342,11 +358,11 @@ test("the fact says what happened, in the one token a run reader already reads",
 
 test("a frozen world outranks her silence, so the world's own fact is the one published", async () => {
   const pump = new CompanionEventPump();
-  pump.enqueueFact(snapshot(352));
+  pump.enqueueFact(snapshot(352), FACT_PRODUCER.narrationWithoutWork);
   // Six delivered turns: the first carries the snapshot, so the reading is five turns old - the stale bound.
   for (let index = 0; index < 6; index += 1) await deliverTurn(pump, TURN_PRODUCTION.spoke, index);
   // The world says it moved while her picture of it did not.
-  pump.enqueueFact(milestone(0));
+  pump.enqueueFact(milestone(0), FACT_PRODUCER.narrationWithoutWork);
 
   assert.equal(pump.narrationWithoutWork.turns >= NARRATION_WITHOUT_WORK_TURNS, true, "the narration run is real");
   assert.equal(

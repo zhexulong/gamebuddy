@@ -183,6 +183,7 @@ test("manifest-admitted Farmhand Bridge retries only pipe-not-ready before authe
           authority: "SEMANTIC" as const,
           runEnter: async () => connectedSemanticGameLeaseFixture(),
           recoverDeadOwner: async () => undefined,
+          pushActionPolicy: () => false,
           close: async () => undefined,
         });
       },
@@ -263,6 +264,7 @@ test("manifest-admitted semantic Game enter failure is one-shot uncertain and cl
             throw error;
           },
           recoverDeadOwner: async () => undefined,
+          pushActionPolicy: () => false,
           close: async () => {
             closeCalls += 1;
           },

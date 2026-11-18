@@ -729,6 +729,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "target_reached",
       revision: 5,
       evidence: { tile: "11,12" },
+      origin: { kind: "programme", programId: "plan_01", nodeId: "n001" },
     },
     "receipt_01",
     now,
@@ -752,6 +753,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "navigation_completed",
       revision: 6,
       evidence: { detail: "destination=SeedShop;arrived=true" },
+      origin: { kind: "programme", programId: "plan_01", nodeId: "n002" },
       piggybackedScene: {
         observationId: "so1_ABCDEFGHIJKLMNOPQRSTUV",
         currentLocation: "SeedShop",
@@ -805,6 +807,7 @@ test("bridge message payloads fail closed", () => {
       reasonCode: "player_stop",
       revision: 6,
       evidence: null,
+      origin: { kind: "standalone" },
     },
     "receipt_02",
     now,
@@ -820,6 +823,7 @@ test("bridge message payloads fail closed", () => {
       state: "cancelled",
       reasonCode: "player_stop",
       revision: 7,
+      origin: { kind: "standalone" },
     },
     "receipt_03",
     now,
@@ -841,6 +845,8 @@ test("bridge message payloads fail closed", () => {
         revision: 8,
         location: "Farm",
         tile: { x: 10, y: 12 },
+        // A body trace states the same provenance its receipt does (`validateBodyTrace` refuses a frame without it).
+        origin: { kind: "programme", programId: "plan_trace_01", nodeId: "n01" },
       },
     },
     "semantic_trace_01",
@@ -1736,16 +1742,31 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     null,
   );
+  // The arm a selector does not use may be written OUT as `null`: `find_destination` publishes its selector that way
+  // (`{"kind":"label","label":"Mine","ref":null}`), so the object the model copies straight out of that answer has
+  // to be sendable. The absent arm's spelling is not a fact (`readDestinationSelector`).
   for (const destination of [
     { kind: "label", label: "Mine", ref: null },
+    { kind: "ref", label: null, ref: canonicalUrlSafeRef },
+  ])
+    assert.equal(
+      validateExecutionRequest({ ...navigateByLabel, args: { destination } }, navigationSnapshot, now),
+      null,
+      JSON.stringify(destination),
+    );
+  for (const destination of [
     { kind: "label", label: "" },
+    { kind: "label", label: " Mine" },
+    { kind: "label", label: "Mine " },
     { kind: "ref", ref: "destinationRef" },
     { kind: "ref", ref: null },
     { kind: "ref", ref: "dr1_mine" },
     { kind: "ref", ref: "dr1_aaaaaaaaaaaaaaaaaaaaaaa" },
     { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAA!" },
     { kind: "ref", ref: nonCanonicalSixteenByteRef },
-    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA", label: null },
+    // Both arms present names two destinations at once, and an unknown key is not part of the closed shape.
+    { kind: "label", label: "Mine", ref: canonicalUrlSafeRef },
+    { kind: "label", label: "Mine", tile: "10,11" },
   ]) {
     assert.equal(
       validateExecutionRequest({ ...navigateByLabel, args: { destination } }, navigationSnapshot, now),
@@ -1809,11 +1830,11 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       `${action} must still refuse an off-map tile it cannot use`,
     );
   }
-  // `ride_minecart` is its own action: the station tile AND one advertised
-  // objective are both mandatory, so a missing selector is malformed rather than
-  // an ordinary warp. An unknown ID, a stale ID from another snapshot, or a
-  // station/tile mismatch is refused; the named target must be present in this
-  // exact snapshot.
+  // `ride_minecart` is its own action: the station tile AND an opaque ride selector are both mandatory, so a missing
+  // selector is malformed rather than an ordinary warp. WHICH ride the selector names is not decided here: the station's
+  // own `MinecartTransport` action and the destinations it offers are live native state, and `ResolveMinecartRide`
+  // answers `minecart_target_changed` for one this station no longer offers. A snapshot that never advertised the ride -
+  // the stale case - must therefore reach the Mod instead of being refused by the Host with the game's own vocabulary.
   const minecartCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "ride_minecart"] };
   const rideMinecart = { ...valid, action: "ride_minecart" };
   const minecartSnapshot = {
@@ -1841,30 +1862,24 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     null,
   );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" } },
-      minecartSnapshot,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
-      minecartSnapshot,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "minecart_0123456789abcdef" } },
-      minecartCapability,
-      now,
-    ),
-    "invalid_minecart_station",
-  );
+  for (const stale of [
+    {
+      args: { x: 10, y: 10, expectedTargetId: "minecart_deadbeefdeadbeef" },
+      why: "a ride this snapshot never published",
+    },
+    { args: { x: 11, y: 10, expectedTargetId: "minecart_0123456789abcdef" }, why: "a published ride at another tile" },
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest({ ...rideMinecart, args: stale.args }, minecartSnapshot, now),
+      null,
+      `${stale.why} is the game thread's to refuse (minecart_target_changed), not a cached snapshot's`,
+    );
+    assert.equal(
+      validateExecutionRequest({ ...rideMinecart, args: stale.args }, minecartCapability, now),
+      null,
+      `${stale.why}, against a snapshot that published no ride at all, still reaches the Mod`,
+    );
+  }
   assert.equal(
     validateExecutionRequest(
       { ...rideMinecart, args: { x: 10, y: 10, expectedTargetId: "not_a_minecart_id" } },
@@ -1872,6 +1887,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       now,
     ),
     "invalid_args",
+    "the selector's own wire shape is the envelope's, and that is still the Host's",
   );
   assert.equal(
     validateExecutionRequest({ ...rideMinecart, args: { x: 10, y: 10 } }, minecartSnapshot, now),
@@ -1892,10 +1908,12 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(
     validateExecutionRequest({ ...useRaft, args: { slot: 37, x: 10, y: 11 } }, raftSnapshot, now),
     "invalid_raft_target",
+    "a slot no backpack has is still the envelope's to refuse",
   );
   assert.equal(
     validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now),
-    "invalid_raft_target",
+    null,
+    "a water tile discovery never published is `raft_target_not_water`'s call on the live location, not a raftTargets lookup",
   );
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
@@ -2474,8 +2492,10 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_machine_target",
   );
-  // A machine load is the load the machine's own rows offered. The row is where `slot` and the item come from, so the
-  // request must name that pair; two different machines prove the rule is the ROW's, not one hard-coded Keg.
+  // A machine load travels: which inputs the machine takes, how many it consumes and WHICH backpack slot holds one are
+  // all live native facts. Discovery publishes the FIRST acceptable slot and only while the machine is idle, so the Host
+  // refusing any OTHER slot would refuse a load `ResolveLoadInput` performs. `MachineLoadRefusal` answers from the live
+  // machine - `machine_load_unsupported_input` naming the inputs its own `Data/Machines` rows declare.
   const machineLoadCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] };
   const machineLoadSnapshot = {
     ...machineLoadCapability,
@@ -2519,28 +2539,33 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     null,
     "a furnace's own row is as loadable as a Keg's",
   );
-  // ...and each machine REFUSES the other's pair: what decides is the row, not a list of items this Host knows.
-  assert.equal(
-    validateExecutionRequest(
+  // ...and each machine is free to take the other's input: what decides is the machine's own data on the game thread,
+  // not a list of items this Host knows. A snapshot that published a pair is not evidence about what the machine takes
+  // NOW, so the same payloads the row used to refuse above must reach the Mod.
+  for (const [probe, why] of [
+    [
       { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)378" } },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-    "the Keg row does not publish the furnace's input",
-  );
-  assert.equal(
-    validateExecutionRequest(
+      "the Keg row published the Keg's input, not the furnace's",
+    ],
+    [
       {
         ...machineLoad,
         args: { slot: 2, x: 11, y: 12, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_fumacedeed" },
       },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-    "the furnace row does not publish the Keg's input",
-  );
+      "the furnace row published the furnace's input, not the Keg's",
+    ],
+    [
+      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
+      "an item no published row offered",
+    ],
+    [{ ...machineLoad, args: { ...machineLoad.args, slot: 4 } }, "a slot other than the one discovery published"],
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest(probe, machineLoadSnapshot, now),
+      null,
+      `${why} is \`machine_load_unsupported_input\`'s answer from the live machine, not a cached row's`,
+    );
+  }
   // A malformed identity never travels into a native call, whatever the row says.
   assert.equal(
     validateExecutionRequest(
@@ -2549,20 +2574,6 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       now,
     ),
     "invalid_machine_load_target",
-  );
-  // ...and a well-formed item that the row did not publish is refused rather than reconciled onto the slot.
-  assert.equal(
-    validateExecutionRequest(
-      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
-      machineLoadSnapshot,
-      now,
-    ),
-    "machine_load_input_not_published",
-  );
-  assert.equal(
-    validateExecutionRequest({ ...machineLoad, args: { ...machineLoad.args, slot: 4 } }, machineLoadSnapshot, now),
-    "machine_load_input_not_published",
-    "the slot the action loads is the slot the row published, not one the caller chose",
   );
   // A machine the snapshot no longer lists is the Mod's to refuse from the live world: an already-loaded machine is
   // "busy", and a re-sent request must reach the Mod so it can replay the receipt of the load that already ran.
@@ -4857,4 +4868,36 @@ test("a machine row's published acceptance is bounded by the wire schema and kee
     { ...row, accepts: { inputs: [], omitted: 0, extra: 1 } },
   ])
     assert.equal(isMachineTargetFact(bad), false, `refused: ${JSON.stringify(bad.accepts).slice(0, 80)}`);
+});
+
+/**
+ * The action-policy frame's payload is the two denial keys and nothing else.
+ *
+ * The population that matters is "the keys the Mod's `config.json` binds", and the frame deliberately carries the half a
+ * RUNNING Mod honours. An extra key is refused rather than ignored: the document already owns the credential, fixture and
+ * test-only fields, and a frame that could carry them would be a second config authority over a running world.
+ */
+test("the action-policy frame admits exactly the two denial keys, in the casing the bridge codec uses", () => {
+  const envelope = (payload: unknown) =>
+    newEnvelope("farmhand_action_policy_request", scope, payload as never, "policy_01", now);
+
+  assert.equal(validateBridgeMessage(envelope({ deniedActions: [], deniedActionFamilies: [] }), scope, now), null);
+  assert.equal(
+    validateBridgeMessage(envelope({ deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] }), scope, now),
+    null,
+  );
+
+  for (const refused of [
+    { deniedActions: [] },
+    { deniedActions: [], deniedActionFamilies: [], experimentalActions: ["x"] },
+    { DeniedActions: [], DeniedActionFamilies: [] },
+    { deniedActions: [""], deniedActionFamilies: [] },
+    { deniedActions: ["not an id"], deniedActionFamilies: [] },
+    { deniedActions: [], deniedActionFamilies: "crops" },
+  ])
+    assert.equal(
+      validateBridgeMessage(envelope(refused), scope, now),
+      "invalid_farmhand_action_policy_request",
+      `refused: ${JSON.stringify(refused)}`,
+    );
 });

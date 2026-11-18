@@ -45,7 +45,6 @@ internal sealed class StardewBodyController
     private PathFindController? pathController;
     private Vector2 lastTile;
     private int lastProgressTick;
-    private bool hasEmittedRunning;
     private bool hasEmittedStalledWaiting;
     private bool isStallWaiting;
     private int stallWaitStartedTick;
@@ -671,10 +670,6 @@ internal sealed class StardewBodyController
         }
 
         this.InstallStagedStep(arrived.Requested, resumed, localPlayer, tick);
-        this.transition(
-            ExecutionState.Running,
-            "clear_step_cleared",
-            $"tile={FormatTile(currentTile)};target={FormatTile(arrived.Requested.TargetTile)};clear_step_cleared=true");
     }
 
     /// <summary>
@@ -925,7 +920,6 @@ internal sealed class StardewBodyController
         localPlayer.controller = plannedPath;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -956,7 +950,6 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.clearApproach = null;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -990,11 +983,6 @@ internal sealed class StardewBodyController
 
         Farmer localPlayer = Game1.player;
         PathFindController? pathController = this.pathController;
-        if (!this.hasEmittedRunning)
-        {
-            this.hasEmittedRunning = true;
-            this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}{FormatStagedMarker(specification)}");
-        }
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (tick > specification.DeadlineTick || nowMs >= specification.DeadlineMs)
@@ -1150,10 +1138,13 @@ internal sealed class StardewBodyController
 
         if (currentTile != this.lastTile)
         {
+            // WHERE THE BODY IS, NOT WHAT HAPPENED. A tile of movement is body state: the fact stream carries the
+            // settlement (or the terminal receipt) that says how far this got, and the snapshot carries the tile. One
+            // receipt per tile made 130 of a run's 401 facts say "she moved", twice each, so the pump assembled 134
+            // batches and discarded 126 of them.
             this.lastTile = currentTile;
             this.lastProgressTick = tick;
             this.hasEmittedStalledWaiting = false;
-            this.transition(ExecutionState.MeaningfulProgress, "tile_advanced", $"tile={FormatTile(currentTile)};path=stardew_native");
             return;
         }
 
@@ -1166,12 +1157,12 @@ internal sealed class StardewBodyController
 
         if (stallAction == StallWatchdogAction.Waiting)
         {
+            // The wait itself is body state. What the caller needs is its ending, and that is the refusal this
+            // watchdog mints a few seconds later (`StallTimeoutTicks`), not a receipt per no-progress window.
             this.hasEmittedStalledWaiting = true;
             this.isStallWaiting = true;
             this.stallWaitStartedTick = tick;
             this.HaltNativeMovement(localPlayer);
-            int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};wait_ticks={StallWaitTicks}{FormatStagedMarker(specification)}");
         }
     }
 
@@ -1880,20 +1871,26 @@ internal sealed class StardewBodyController
                 return null;
             // A clump's row is published by ONE family whichever clump it is, because "which tool removes this" is a
             // property of the clump and `debrisTargets` carries it as a field rather than as a separate list.
-            return new Occupancy(clumpKind, clumpPrice.Cost, ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
+            return new Occupancy(clumpKind, clumpPrice.Cost, TileOccupancy.ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
         }
 
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
         {
-            // The object's own word for itself, which is also what `ClearableKind` prices: `(O)2` is the engine's stone
-            // and `Object.IsWeeds()` is the engine's weed (Object.cs:6117). Naming the occupant from a SECOND test here
-            // would let the priced tile and the named tile be different tiles.
-            string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
+            // The object's own word for itself - the SAME one the rectangle publishes and the same predicates each
+            // clearing action's preflight asks (`TileOccupancy.ObjectKind`). A second test here would let the priced tile
+            // and the named tile be different tiles, which is what `(O)2`-only used to do to twig litter.
+            string detail = TileOccupancy.ObjectKind(item);
             if (ClearableKind.Map("object", detail) is not { } objectKind)
                 return null;
-            if (Price(objectKind, toolPower, mining) is not { } objectPrice)
+            // A twig is AXE work (`Object.cs:1182`) and an axe charges foraging, the way a clump's stump does.
+            if (Price(objectKind, toolPower, detail == TileOccupantKind.Twig ? foraging : mining) is not { } objectPrice)
                 return null;
-            return new Occupancy(objectKind, objectPrice.Cost, detail, detail == "weed" ? "weedTargets" : "rockSourceTargets", objectPrice.Stamina);
+            return new Occupancy(objectKind, objectPrice.Cost, detail, detail switch
+            {
+                TileOccupantKind.Weed => "weedTargets",
+                TileOccupantKind.Twig => "worldObjectTargets",
+                _ => "rockSourceTargets",
+            }, objectPrice.Stamina);
         }
 
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -1951,37 +1948,6 @@ internal sealed class StardewBodyController
     /// </summary>
     internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
 
-    /// <summary>
-    /// The ENGINE's own name for one resource clump, from the constants its own type declares
-    /// (<c>ResourceClump.cs:15-35</c>): <c>stumpIndex</c>, <c>hollowLogIndex</c>, <c>meteoriteIndex</c>,
-    /// <c>boulderIndex</c>, <c>quarryBoulderIndex</c> and the four <c>mineRock*Index</c> rows.
-    ///
-    /// <para>
-    /// Named from the engine rather than from the costing table because the two answer different questions and a
-    /// refusal has to answer the caller's: `rock` is what a quarry boulder COSTS to remove, and "a quarry boulder" is
-    /// what is standing there. Written against the constants, not their values, so a target-version change to the
-    /// native table lands here as a compile-time rename rather than as a silently wrong word.
-    /// </para>
-    /// <para>
-    /// The fallback is unreachable for a PRICED clump (<c>TryGetDebrisToolRequirement</c> prices exactly these nine),
-    /// and it is kept because the honest answer to "a clump was priced but this function has no name for it" is a word
-    /// no action declares - which the refusal reports as `no_published_action_clears:resource_clump` - rather than a
-    /// name borrowed from a neighbour. A future engine constant therefore announces itself instead of lying.
-    /// </para>
-    /// </summary>
-    internal static string ClumpOccupant(int parentSheetIndex) => parentSheetIndex switch
-    {
-        StardewValley.TerrainFeatures.ResourceClump.stumpIndex => "stump",
-        StardewValley.TerrainFeatures.ResourceClump.hollowLogIndex => "hollow_log",
-        StardewValley.TerrainFeatures.ResourceClump.meteoriteIndex => "meteorite",
-        StardewValley.TerrainFeatures.ResourceClump.boulderIndex => "boulder",
-        StardewValley.TerrainFeatures.ResourceClump.quarryBoulderIndex => "quarry_boulder",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock1Index => "mine_rock_1",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock2Index => "mine_rock_2",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock3Index => "mine_rock_3",
-        StardewValley.TerrainFeatures.ResourceClump.mineRock4Index => "mine_rock_4",
-        _ => "resource_clump",
-    };
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
         GameLocation? location = localPlayer.currentLocation;
@@ -2302,7 +2268,6 @@ internal sealed class StardewBodyController
         localPlayer.controller = path;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
@@ -2384,15 +2349,10 @@ internal sealed class StardewBodyController
         localPlayer.controller = path;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;
         this.transientSinceMs = 0;
-        this.transition(
-            ExecutionState.Running,
-            "staged_approach_continued",
-            $"tile={FormatTile(currentTile)};target={FormatTile(staged.TargetTile)};{evidence}");
         return true;
     }
 
@@ -2473,7 +2433,6 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.clearApproach = null;
-        this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
         this.stallWaitStartedTick = 0;

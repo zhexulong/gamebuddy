@@ -270,8 +270,13 @@ public sealed class WorldInterruptionTests
         dispositionSwitch.Should().BeGreaterThanOrEqualTo(0);
         stallWatchdog.Should().BeGreaterThan(dispositionSwitch,
             "disposition rulings must precede L2 stall handling");
-        source.Should().Contain("transition(ExecutionState.Running, \"stalled_waiting\",",
-            "the first stall is a non-terminal progress notification");
+        // A STALL'S FIRST ATTRIBUTION IS ITS ENDING, NOT A NOTIFICATION WHILE IT WAITS. Waiting is body state, so the
+        // non-terminal `stalled_waiting` notification this pin used to require is gone with the rest of the per-step
+        // facts. What must survive is that the quiet window ends in a NAMED refusal carrying the evidence of the wait.
+        source.Should().Contain("StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(",
+            "the quiet window's ending names the blocker that stood in front of her and how long she waited");
+        source.Should().NotContain("transition(ExecutionState.Running, \"stalled_waiting\"",
+            "and the wait itself is body state: it is not a fact, and the notification that said so is retired");
         source.Should().Contain("this.HaltNativeMovement(localPlayer)",
             "stall detection must stop native pushing before the quiet window");
         MethodBody(source, "private void HaltNativeMovement(")
@@ -327,11 +332,15 @@ public sealed class WorldInterruptionTests
     [Fact]
     public void ArbitrationSkipsAnOwnedModalAndTheLeaseIsReleasedWhereAnExecutionEnds()
     {
-        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string arbitrationPartial = ControllerPartials.Declaring("ArbitrateWorldChangeInterruptions");
+        // The forwarding count stays scoped to the dispatcher, which is what it has always read: the ledger's one
+        // interface forwarding. `this.ReleaseModalOwner(` also appears in an action partial, and counting the family
+        // here would answer a different question (does any action release the lease it opened) in this test's name.
+        string dispatcher = ControllerPartials.Read(ControllerPartials.Main);
         string store = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ExecutionReceiptStore.cs")));
 
         // The ruling: a modal interrupts only when it is NOT the owning execution's own.
-        MethodBody(source, "private void ArbitrateWorldChangeInterruptions(")
+        MethodBody(arbitrationPartial, "private void ArbitrateWorldChangeInterruptions(")
             .Should().Contain("case ActorDispositionKind.Modal when !this.disposition.ModalActionOwned:",
                 "WIA §4.2: an actionOwned modal is closed by its own action, so it cannot interrupt that action");
 
@@ -341,7 +350,7 @@ public sealed class WorldInterruptionTests
         MethodBody(store, "internal LocalExecutionReceipt Remember(LocalExecutionReceipt receipt)")
             .Should().Contain("this.ownership.ReleaseModalLease(receipt.ExecutionId);");
         CountReleaseCalls(store).Should().Be(1, "one owner, one release");
-        CountReleaseCalls(source).Should().Be(1, "the controller only forwards ReleaseModalLease to the owner lease it holds");
+        CountReleaseCalls(dispatcher).Should().Be(1, "the controller only forwards ReleaseModalLease to the owner lease it holds");
     }
 
     private static int CountReleaseCalls(string source)
@@ -360,7 +369,7 @@ public sealed class WorldInterruptionTests
     [Fact]
     public void ArbitrationLetsACommittedArrivalOwnTheTerminal()
     {
-        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string source = ControllerPartials.Declaring("ArbitrateWorldChangeInterruptions");
         string arbitration = MethodBody(source, "private void ArbitrateWorldChangeInterruptions(");
 
         // A world-change disposition must not void a travel the engine already warped: the actor left the origin, so the

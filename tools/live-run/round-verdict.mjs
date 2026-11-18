@@ -1140,17 +1140,27 @@ function formatEfficiency(report) {
       .map(([reason, count]) => `${reason} ${count}`)
       .join(", ");
   push(
-    `  ${label("continuation_prompts_issued")} ${
+    `  ${label("prompt_turns_by_reason")} ${
       report.wakes === null
         ? notMeasured("result.json multiday.wakes was not published by this run")
-        : `${report.wakes.continuationPromptsIssued} of ${report.turns} prompt turns (${wakeReasonLine(report.wakes.byReason ?? {})})`
+        : `${report.turns} prompt turns (${wakeReasonLine(report.wakes.byReason ?? {})})`
     }`,
   );
   push(
-    `  ${label("continuation_prompts_suppressed")} ${
+    `  ${label("suppressions_by_reason")} ${
       report.wakes === null
         ? notMeasured("result.json multiday.wakes was not published by this run")
-        : `${report.wakes.continuationPromptsSuppressed}: ${wakeReasonLine(report.wakes.suppressedByReason ?? {})}`
+        : `${report.wakes.suppressed}: ${wakeReasonLine(report.wakes.suppressedByReason ?? {})}`
+    }`,
+  );
+  // THE SILENCE, NAMED. The quiet bound that used to guarantee a prompt every twenty seconds is gone, so the longest
+  // stretch with no turn is a reading of the run rather than an absence - and `waiting_for_the_world` says the harness
+  // chose it, while a stall nobody published would have said so by its own reason.
+  push(
+    `  ${label("no_wake_for_ms")} ${
+      report.wakes === null
+        ? notMeasured("result.json multiday.wakes was not published by this run")
+        : `no_wake_for_ms:${String(report.wakes.noWakeForMs)}:${String(report.wakes.noWakeLastReason ?? "none")} - the longest stretch with no turn opened, and the decision in force when it ended`
     }`,
   );
   push(

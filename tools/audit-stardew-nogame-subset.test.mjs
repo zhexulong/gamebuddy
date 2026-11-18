@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { deriveGameFreeFiles, projectFiles, suiteFiles } from "./audit-stardew-nogame-subset.mjs";
+import { deriveGameFreeFiles } from "./audit-stardew-nogame-subset.mjs";
+import { compiledFiles, suiteFiles } from "./lib/nogame-partition.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECT = join(
@@ -26,12 +27,12 @@ test("the derivation asks the compiler, so it cannot agree with a hand-edited li
 
 test("the project compiles exactly the headless files that read no gitignored input", () => {
   const derived = deriveGameFreeFiles();
-  assert.deepEqual(projectFiles(), derived.derived);
+  assert.deepEqual(compiledFiles(), derived.derived);
 });
 
 test("no file that reads the gitignored reference tree is compiled into the no-game lane", () => {
   const derived = deriveGameFreeFiles();
-  const included = projectFiles();
+  const included = compiledFiles();
   const offenders = derived.referenceTree.filter((name) => included.includes(name));
   assert.deepEqual(offenders, [], `reference-tree readers in the no-game lane: ${offenders.join(", ")}`);
   // The measurement is only a measurement if every member names the tree: a set that stopped being
@@ -46,14 +47,14 @@ test("no file that reads the gitignored reference tree is compiled into the no-g
 
 test("no game-free file is left out of the no-game lane", () => {
   const derived = deriveGameFreeFiles();
-  const included = projectFiles();
+  const included = compiledFiles();
   const missing = derived.derived.filter((name) => !included.includes(name));
   assert.deepEqual(missing, [], `unrun headless tests: ${missing.join(", ")}`);
 });
 
 test("no file that needs a game is compiled into the no-game lane", () => {
   const derived = deriveGameFreeFiles();
-  const included = projectFiles();
+  const included = compiledFiles();
   const extra = included.filter((name) => !derived.derived.includes(name));
   assert.deepEqual(extra, [], `game-dependent files in the no-game lane: ${extra.join(", ")}`);
 });
@@ -67,7 +68,7 @@ test("the project includes the suite's files and holds no copy of its own", () =
     );
   }
   assert.deepEqual(
-    projectFiles().filter((name) => !suiteFiles().includes(name)),
+    compiledFiles().filter((name) => !suiteFiles().includes(name)),
     [],
   );
 });

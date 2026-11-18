@@ -1,0 +1,19 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "toggle_fence_gate",
+  "expectedReasonCode": "fence_gate_toggled",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"],
+    "require": { "isOpen": false }
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "worldAfter": [
+    { "field": "fenceGateTargets", "rowAtTargetTile": { "isOpen": true } }
+  ]
+}

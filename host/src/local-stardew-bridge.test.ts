@@ -363,6 +363,7 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
               reasonCode: "navigation_completed",
               revision: 9,
               evidence: { detail: "location=Farm;destination=Bus Stop" },
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
               observation: null,
             },
           }),
@@ -1207,6 +1208,7 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
           reasonCode: "completed",
           revision: 7,
           evidence: { fixture: "protocol_shaped_named_pipe_peer" },
+          origin: { kind: "programme", programId: "plan_pipe_01", nodeId: "n01" } as const,
         };
         terminalReceiptsWritten += 2;
         socket.write(
@@ -1348,6 +1350,7 @@ test("local Stardew bridge delivers an unsolicited terminal receipt as a fact", 
               reasonCode: "waiting_for_body:body_owned_by_activity",
               revision: 9,
               evidence: { detail: "held_ms=1840" },
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
             },
           }),
         );
@@ -1453,6 +1456,85 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
       locale: "en-US",
     });
     client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge pushes the action policy as one frame and reports whether a world is there to tell", async () => {
+  const pipeName = `gamebuddy_action_policy_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const received: BridgeMessage["type"][] = [];
+  const pushed: Extract<BridgeMessage, { type: "farmhand_action_policy_request" }>[] = [];
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        received.push(request.type);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_hello_action_policy",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_action_policy",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          continue;
+        }
+        // No reply. The Mod's answer to a policy push is the `catalog_update` it already publishes when its
+        // capability moves, and awaiting a second correlated receipt would be two spellings of one answer.
+        if (request.type === "farmhand_action_policy_request") pushed.push(request);
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    assert.equal(
+      client.pushActionPolicy({ deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] }),
+      true,
+      "an authenticated, connected bridge is a world that can be told",
+    );
+    for (let waited = 0; waited < 2_000 && pushed.length === 0; waited += 5)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.deepEqual(pushed[0]?.payload, { deniedActions: ["water_crop"], deniedActionFamilies: ["crops"] });
+    assert.equal(pushed[0]?.scope.companionId, scope.companionId, "the frame is scoped to this exact bridge");
+    // The push is one message, not a request the client then polls: nothing else was written for it.
+    assert.deepEqual(received, ["hello", "farmhand_action_policy_request"]);
+    client.close();
+    assert.equal(
+      client.pushActionPolicy({ deniedActions: [], deniedActionFamilies: [] }),
+      false,
+      "a closed pipe is a state rather than a throw: the durable record already carries the change to the next world load",
+    );
   } finally {
     peer?.destroy();
     await close(server);
@@ -1603,6 +1685,7 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               reasonCode: "stop_requested",
               revision: 5,
               evidence: null,
+              origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
             },
           }),
         );
@@ -1809,6 +1892,7 @@ test("navigationRead rejects a wrong correlated receipt without mutating receipt
             reasonCode: "completed",
             revision: 1,
             evidence: {},
+            origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
           },
         }),
       );
@@ -1910,6 +1994,114 @@ async function withBodyProgramBridge(
     await close(server);
   }
 }
+
+/**
+ * A reply that outlives its own request's deadline.
+ *
+ * The client's default request deadline is 5 s (`LocalStardewBridgeClient.request`), so this has to be longer than
+ * that before the peer speaks: the whole point is a peer whose answer arrives AFTER the client stopped waiting.
+ */
+const LATE_REPLY_AFTER_DEADLINE_MS = 5_500;
+const LATE_REPLY_SETTLE_MS = 1_000;
+
+/**
+ * A body-program answer to a request this client STOPPED WAITING FOR must not close the attachment.
+ *
+ * Measured round65: a `program_status` request passed its 5 s deadline while the game thread was busy, the Mod's answer
+ * arrived with the next flush, `receive` found no pending correlation, and the WHOLE bridge closed on
+ * `body_program_protocol_invalid:unsolicited:got=program_status_result;pending=none`. The game ran for another twenty
+ * minutes with nothing able to reach it and nothing able to make it reachable (`PROVIDER_RETRY` 0, `reconnect` 0).
+ * Our own deadline is not the peer's violation, and the snapshot channel already states this exact rule
+ * (`acceptSnapshot`: "never let a stale payload ... tear down the bridge").
+ */
+test("a body program reply that arrives after the request's own deadline does not close the attachment", async () => {
+  await withBodyProgramBridge(
+    "late_reply_after_deadline",
+    (socket, request) => {
+      setTimeout(() => {
+        if (socket.destroyed) return;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "body_program_late_reply",
+            type: "program_events_result",
+            payload: {
+              programId: request.payload.programId,
+              code: "found",
+              events: [],
+              nextCursor: request.payload.cursor,
+              highWater: request.payload.cursor,
+            },
+          }),
+        );
+      }, LATE_REPLY_AFTER_DEADLINE_MS).unref();
+    },
+    async (client) => {
+      const connectionFacts: string[] = [];
+      const diagnostics: string[] = [];
+      client.onConnectionFact((fact) => connectionFacts.push(`${fact.state}:${fact.reasonCode}`));
+      client.onDiagnostic((diagnostic) => diagnostics.push(diagnostic.reasonCode));
+      // The client gives up first: this is the ONLY reason the peer's answer will have nothing to match.
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 4 }),
+        /bridge_response_timeout/u,
+      );
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, LATE_REPLY_SETTLE_MS));
+      assert.deepEqual(connectionFacts, [], "the client's own deadline must not cost the attachment");
+      assert.equal(client.state.connected, true);
+      assert.ok(
+        diagnostics.includes("bridge_late_reply_dropped:program_events_result"),
+        `the late reply is NAMED rather than silently swallowed: ${diagnostics.join(",")}`,
+      );
+      client.close();
+    },
+  );
+});
+
+/**
+ * The falsifier for the guard above: forgetting a request is NOT the same as never having asked it.
+ *
+ * A body-program result correlated to something this client never sent is still the protocol violation the close exists
+ * for - the peer answering a question nobody asked is how a foreign or replayed frame enters. If the deadline record
+ * above were widened into "drop every unmatched body-program result", this case would go green and the guard would have
+ * lost its force.
+ */
+test("a body program result for a correlation this client never sent still closes the attachment", async () => {
+  await withBodyProgramBridge(
+    "never_sent_correlation",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_never_asked",
+          correlationId: "correlation_never_asked",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            events: [],
+            nextCursor: request.payload.cursor,
+            highWater: request.payload.cursor,
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(client.programEvents({ programId: "program_01", cursor: 0, pageSize: 4 }));
+      const closed = await factWithinDeadline(disconnected, "connection_fact");
+      assert.equal(closed.state, "disconnected");
+      assert.equal(
+        closed.reasonCode,
+        "body_program_protocol_invalid:unsolicited:got=program_events_result;pending=none",
+        "a frame answering nothing we ever asked stays fatal, and stays named",
+      );
+      assert.equal(client.state.connected, false);
+    },
+  );
+});
 
 test("body program closes the named pipe for a structurally valid wrong correlated response", async () => {
   await withBodyProgramBridge(
@@ -2398,15 +2590,22 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
     });
     assert.ok(sendInbound !== undefined);
     sendInbound();
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "event_pump_event_overflow",
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.equal(published.state, "disconnected");
+    // An overflow keeps its own leading code - it is a load condition the pump owns, not an arbitrary listener bug - and
+    // it names the fact the same way every other listener failure does, so the two cannot be told apart only by a
+    // reader who already knows which wrapper ran.
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "event_pump_event_overflow",
+      factKind: "day_started",
+      factId: "fact_overflow_01",
+      error: "",
     });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(listenerInvocations, 1);
     assert.equal(client.state.connected, false);
     assert.equal(client.state.authenticated, false);
-    assert.equal(client.state.latestReasonCode, "event_pump_event_overflow");
+    assert.equal(client.state.latestReasonCode, published.reasonCode);
   } finally {
     peer?.destroy();
     await close(server);
@@ -2498,7 +2697,7 @@ test("a Mod error frame settles the pending request with the Mod own reason code
   }
 });
 
-test("local Stardew bridge maps an arbitrary fact listener exception to fact_listener_failed", async () => {
+test("local Stardew bridge maps an arbitrary fact listener exception to a reason that names the fact", async () => {
   const pipeName = `gamebuddy_listener_failed_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   let sendInbound: (() => void) | undefined;
@@ -2555,27 +2754,148 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
     let laterListenerInvocations = 0;
     client.onFact(() => {
       throwingInvocations++;
-      throw new Error("arbitrary listener failure");
+      throw new Error("arbitrary_listener_failure");
     });
     client.onFact(() => laterListenerInvocations++);
     assert.ok(sendInbound !== undefined);
     sendInbound();
     // The exception never escaped receive(): the run stays alive, the thrower
     // ran once, and dispatch aborted before the later listener saw the fact.
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "fact_listener_failed",
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.equal(published.state, "disconnected");
+    // WHICH fact was in flight when it threw, WHICH id the Mod minted for it, and the error's own token. A reason that
+    // says only `fact_listener_failed` is the spelling that made round66's drop unattributable: the artifact named the
+    // wrapper and nothing the wrapper was holding.
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "fact_listener_failed",
+      factKind: "day_started",
+      factId: "fact_failed_01",
+      error: "Error:arbitrary_listener_failure",
     });
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(throwingInvocations, 1);
     assert.equal(laterListenerInvocations, 0);
     assert.equal(client.state.connected, false);
-    assert.equal(client.state.latestReasonCode, "fact_listener_failed");
+    assert.equal(client.state.latestReasonCode, published.reasonCode);
   } finally {
     peer?.destroy();
     await close(server);
   }
 });
+
+test("a listener that rejects a replayed terminal receipt publishes a reason naming the receipt and the rejection", async () => {
+  // round66's own disconnect, replayed: `execution_receipt_replay_rejected:terminal_state_rewritten` was thrown by the
+  // terminal-receipt fold while an `execution_receipt` fact was being delivered, and the run published the bare
+  // `fact_listener_failed` - so the artifact could not say whether a projection, the pump or a receipt had thrown.
+  const pipeName = `gamebuddy_listener_replay_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let sendInbound: (() => void) | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type !== "hello") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_hello_listener_replay",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_listener_replay",
+              capabilities: [],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: [],
+              presentationLocale: "en-US",
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }),
+        );
+        sendInbound = () => socket.write(terminalReceiptFrame("request_replay_01", "execution_replay_01"));
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    client.onFact((fact) => {
+      if (fact.type !== "execution_receipt") return;
+      throw new Error("execution_receipt_replay_rejected:terminal_state_rewritten");
+    });
+    assert.ok(sendInbound !== undefined);
+    sendInbound();
+    const published = await factWithinDeadline(disconnected, "connection_fact");
+    assert.deepEqual(namedFactReason(published.reasonCode), {
+      failure: "fact_listener_failed",
+      factKind: "execution_receipt",
+      factId: "execution_replay_01",
+      error: "Error:execution_receipt_replay_rejected:terminal_state_rewritten",
+    });
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+/**
+ * One published disconnect reason, read back as the four things it has to say.
+ *
+ * The assertion is on the FIELDS rather than on one literal string, because the literal is today's spelling of a
+ * property: a reason that separates into a failure, a fact kind, a fact id and an error token answers "which listener
+ * failed and why", and a test that pinned the whole line would go green on any re-spelling that kept the shape.
+ */
+function namedFactReason(reasonCode: string): Readonly<{
+  failure: string;
+  factKind: string;
+  factId: string;
+  error: string;
+}> {
+  const [failure, factKind, factId, ...error] = reasonCode.split(":");
+  return { failure: failure ?? "", factKind: factKind ?? "", factId: factId ?? "", error: error.join(":") };
+}
+
+/** A terminal execution_receipt fact the Mod pushes for an execution this client never dispatched. */
+function terminalReceiptFrame(requestId: string, executionId: string): Buffer {
+  return frame({
+    protocolVersion: 1,
+    messageId: "mod_execution_receipt_replay_01",
+    correlationId: requestId,
+    timestampMs: Date.now(),
+    scope,
+    type: "execution_receipt",
+    payload: {
+      executionId,
+      requestId,
+      actionId: "move_to_tile",
+      state: "succeeded",
+      reasonCode: "completed",
+      revision: 7,
+      evidence: { fixture: "terminal_receipt_replay" },
+      origin: { kind: "programme", programId: "plan_replay_01", nodeId: "n01" },
+    },
+  });
+}
 
 test("a pending observe rejects through the normal close path when a fact listener fails", async () => {
   const pipeName = `gamebuddy_listener_pending_${process.pid}_${Date.now()}`;
@@ -2656,17 +2976,21 @@ test("a pending observe rejects through the normal close path when a fact listen
       client.onConnectionFact(resolvePromise),
     );
     client.onFact(() => {
-      throw new Error("arbitrary listener failure");
+      throw new Error("arbitrary_listener_failure");
     });
     // The admitted snapshot would satisfy the pending observe, but the thrown
     // listener rejects it through the standard close cleanup instead of
     // resolving it or leaking it to the bridge_response_timeout.
     const observe = client.observe();
     await assert.rejects(observe, /bridge_disconnected:fact_listener_failed/);
-    assert.deepEqual(await factWithinDeadline(disconnected, "connection_fact"), {
-      state: "disconnected",
-      reasonCode: "fact_listener_failed",
-    });
+    // The close that rejects it names the fact that was in flight too, so "the observe failed" and "why the observe
+    // failed" are one reading rather than two.
+    const named = namedFactReason((await factWithinDeadline(disconnected, "connection_fact")).reasonCode);
+    assert.equal(named.failure, "fact_listener_failed");
+    assert.equal(named.factKind, "snapshot");
+    assert.equal(named.error, "Error:arbitrary_listener_failure");
+    // A snapshot is not a world fact, so its only identity is the correlation the request was issued under.
+    assert.ok(named.factId.length > 0, "the failed fact's own id travels in the reason");
     assert.equal(client.state.connected, false);
     assert.equal(client.state.snapshot, null);
   } finally {
@@ -2687,4 +3011,208 @@ test("a bridge drop with no reason is published with an explicit code", () => {
   assert.equal(normalizeDisconnectReasonCode(null), "transport_closed_without_reason");
   assert.equal(normalizeDisconnectReasonCode(""), "transport_closed_without_reason");
   assert.equal(normalizeDisconnectReasonCode("   "), "transport_closed_without_reason");
+});
+
+/**
+ * A pipe whose Mod answers ONE `program_status` request with the node rows a caller hands it.
+ *
+ * The frame is otherwise the authenticated fixture the rest of this file uses, so what a case varies is the node row and
+ * nothing else - which is what makes the two arms below a statement about the row's schema rather than about the pipe.
+ */
+async function withStatusNodes(
+  name: string,
+  nodes: readonly Readonly<Record<string, unknown>>[],
+  run: (client: LocalStardewBridgeClient) => Promise<void>,
+): Promise<void> {
+  const pipeName = `gamebuddy_status_nodes_${name}_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: `status_nodes_hello_${name}`,
+              type: "hello_ack",
+              payload: {
+                sessionId: `status_nodes_session_${name}`,
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          continue;
+        }
+        if (request.type !== "program_status") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: `status_nodes_result_${name}`,
+            type: "program_status_result",
+            payload: {
+              code: "found",
+              snapshot: {
+                programId: (request.payload as Readonly<{ programId: string }>).programId,
+                state: "succeeded",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 12,
+                nodes,
+              },
+              programs: null,
+              programCount: 1,
+            },
+          }),
+        );
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject),
+  );
+  try {
+    await run(await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter));
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+}
+
+/** The aggregate a `for_each` node proves a pass with, in the producer's own shape. */
+const BATCH_ROW_TABLE = JSON.stringify({
+  state: "partially_succeeded",
+  succeeded: 1,
+  failed: 0,
+  refused: 1,
+  left_alone: 0,
+  not_matched: 0,
+  deferred: 0,
+  omitted: 0,
+  healed: 0,
+  rowsOmitted: 0,
+  rows: [
+    { x: 61, y: 18, action: "till_soil", state: "succeeded", reasonCode: null, healed: null },
+    { x: 62, y: 18, action: "till_soil", state: "refused", reasonCode: "no_safe_clear", healed: null },
+  ],
+});
+const BATCH_VERDICT = "for_each_pass:partially_succeeded:decided=2:succeeded=1:failed=0:refused=1";
+
+/**
+ * The transport stays OPEN for a batch node's own row table.
+ *
+ * This is the boundary the whole field depends on: `hasExactKeysOrOptional` in `protocol.ts` refuses a key it does not
+ * declare, and `local-stardew-bridge.ts` answers a refused body-program frame by CLOSING the pipe
+ * (`body_program_protocol_invalid:…`). So a Mod that publishes `evidence`/`postconditionVerification` without the Host's
+ * validator admitting them does not lose the field - it kills the connection, and the turn that was in flight with it.
+ * The assertion is therefore that the frame RESOLVES and the client is still connected, not that a parse returned an
+ * object.
+ */
+test("a status frame carrying a batch node's row table is accepted, and the pipe stays open", async () => {
+  await withStatusNodes(
+    "proof",
+    [
+      {
+        nodeId: "n02",
+        actionId: "for_each",
+        state: "partially_succeeded",
+        nodeAttempt: 1,
+        admissionAttempt: 1,
+        evidence: BATCH_ROW_TABLE,
+        postconditionVerification: BATCH_VERDICT,
+      },
+    ],
+    async (client) => {
+      const result = await client.programStatus({ programId: "program_01" });
+      const node = result.snapshot?.nodes[0];
+      assert.equal(node?.evidence, BATCH_ROW_TABLE, "the table arrives byte for byte");
+      assert.equal(node?.postconditionVerification, BATCH_VERDICT, "and so does the pass's own verdict line");
+      assert.equal(client.state.connected, true, "the frame is one the Mod really sends, so nothing closes");
+      client.close();
+    },
+  );
+});
+
+/**
+ * The widening did not become a widening of everything: one key the protocol does not declare, and the pipe still closes.
+ *
+ * `rowTable` is deliberately a plausible name rather than a nonsense one - the point is that a field is admitted by
+ * DECLARATION, never by looking like the ones beside it.
+ */
+test("a status frame carrying an undeclared node key still closes the pipe", async () => {
+  await withStatusNodes(
+    "undeclared_key",
+    [
+      {
+        nodeId: "n02",
+        actionId: "for_each",
+        state: "succeeded",
+        nodeAttempt: 1,
+        admissionAttempt: 1,
+        rowTable: BATCH_ROW_TABLE,
+      },
+    ],
+    async (client) => {
+      let closedReasonCode: string | null = null;
+      client.onConnectionFact((fact) => {
+        closedReasonCode = fact.reasonCode;
+      });
+      await assert.rejects(client.programStatus({ programId: "program_01" }), /body_program_protocol_invalid/u);
+      assert.match(String(closedReasonCode), /^body_program_protocol_invalid:/u);
+      assert.equal(client.state.connected, false);
+    },
+  );
+});
+
+/**
+ * A node that proved nothing may not present proof: `evidence` on a `failed` node is refused, exactly as ADR-006 refuses
+ * `Evidence` on a failed node in the journal. Admitting the key on every state would have made the wire the one place the
+ * two statements could both be made about one tuple.
+ */
+test("a status frame carrying a row table on a failed node closes the pipe", async () => {
+  await withStatusNodes(
+    "proof_on_failure",
+    [
+      {
+        nodeId: "n02",
+        actionId: "for_each",
+        state: "failed",
+        nodeAttempt: 1,
+        admissionAttempt: 1,
+        failureCode: "no_rule_matched",
+        evidence: BATCH_ROW_TABLE,
+        postconditionVerification: BATCH_VERDICT,
+      },
+    ],
+    async (client) => {
+      let closedReasonCode: string | null = null;
+      client.onConnectionFact((fact) => {
+        closedReasonCode = fact.reasonCode;
+      });
+      await assert.rejects(client.programStatus({ programId: "program_01" }), /body_program_protocol_invalid/u);
+      assert.match(String(closedReasonCode), /^body_program_protocol_invalid:/u);
+      assert.equal(client.state.connected, false);
+    },
+  );
 });

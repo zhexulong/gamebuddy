@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, MAX_BATCH_BYTES, type WorldFact } from "./event-pump.js";
+import { assertReportsWithoutInstructing } from "./fact-block-prose.test-support.js";
 import {
   composeFactBrief,
   composeWorldState,
   FACT_BRIEF_BLOCKS,
-  MODEL_FIELD_CEILINGS,
-  type ModelVisibleField,
+  WORLD_STATE_STALE_TURNS,
   unchangedWorldAnswer,
+  worldStateStaleCode,
 } from "./fact-brief.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import {
@@ -20,10 +21,16 @@ import {
   nearbyTargetFamilies,
   TARGET_FAMILY_LABELS,
 } from "./game-world-vocabulary.js";
+import {
+  DECISION_FIELD_RANK,
+  MAX_WORLD_FACT_LINES,
+  MODEL_FIELD_CEILINGS,
+  derivedEvidenceCeiling,
+  type ModelVisibleField,
+} from "./model-field-budget.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
-import { createProgramProgressObserver } from "./program-status-wait.js";
-import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
+import { EXECUTION_REQUEST_ARGUMENT_RULES, SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 
 /**
  * THE FOUR BLOCKS, AS GATES RATHER THAN AS SHAPES SOMEONE REMEMBERED.
@@ -32,7 +39,7 @@ import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
  * The model's user message was one stringified object for a year: measured 2026-11-10 (`round44`, 109 delivered
  * batches) it averaged 11,066 characters, carried `worldFacts` and the SAME facts again under `events`, and the
  * player's own note ("找片水，钓条鱼回来") was one array element inside it - 0 of 162 thinking parts mentioned fishing.
- * `fact-brief.ts` replaces it with four named blocks of prose.
+ * `fact-brief.ts` replaces it with speech at the head of the message and four named blocks of prose after it.
  * </p>
  *
  * <p>
@@ -98,7 +105,7 @@ function fact(overrides: Partial<WorldFact> & Pick<WorldFact, "kind">): WorldFac
 const snapshotFact = (revision: number, payload: Snapshot = { ...world, revision } as Snapshot): WorldFact =>
   fact({ kind: "snapshot", eventId: `snapshot_${String(revision)}`, revision, payload: payload as never });
 
-/** One batch that exercises every block: a player note, a fresh reading, events, and a settled programme. */
+/** One batch that exercises every block: the player speaking, a fresh reading, events, and a settled programme. */
 function richBatchFacts(): WorldFact[] {
   return [
     fact({ kind: "world_fact", eventId: "day_3", semanticKind: "day_started", payload: { day: 3 }, gameTime: "600" }),
@@ -154,40 +161,10 @@ const playerInput = {
 function richBrief(): string {
   return composeFactBrief({
     inputs: [playerInput],
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: richBatchFacts(),
-    inFlight: richInFlight(),
     locale: "zh-CN",
   });
-}
-
-/**
- * A programme mid-flight, read out of the real ledger from a real journal payload.
- *
- * The fixture is not a hand-written `{programmes: [...]}`: it is a `program_status` answer fed to a fresh observer, so
- * the block below is composed from what the production reader actually produces. The clock is fixed (`0` read at, `4000`
- * asked) so the determinism test can compare two renderings.
- */
-function richInFlight() {
-  const observer = createProgramProgressObserver();
-  observer.observe(
-    {
-      code: "found",
-      snapshot: {
-        programId: "plan_rich",
-        state: "active",
-        catalogRevision: 3,
-        stopEpoch: 0,
-        eventHighWater: 9,
-        nodes: [
-          { nodeId: "n001", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
-          { nodeId: "n002", state: "pending", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
-        ],
-      },
-    },
-    0,
-  );
-  return observer.inFlight(4_000);
 }
 
 /** Every block name the text opens, in order. */
@@ -223,57 +200,86 @@ test("block_coverage: every block the composer emits is in the closed set, and e
  * The prompt floor's block sentence, as ONE place the count can come from.
  *
  * <p>
- * The floor (`identity-profile.ts`) introduces the delivery in prose - "it arrives as prose in four blocks - &lt;player-note&gt;
- * … and &lt;execution-result&gt;" - and that `four` is a hand-written copy of `FACT_BRIEF_BLOCKS.length`. `<in-flight>` made
- * it five, and the paragraph was not this change's to edit: `identity-profile.ts` and
- * `game-surface-prompt-floor.test-support.ts` both carry another lane's uncommitted hunk for that very paragraph, so a
- * path-scoped commit here would have swept it.
+ * The floor (`game-surface-prompt-floor.ts` `fact_batch_blocks`) introduces the delivery in prose - "Every turn's message
+ * is the machine's report, in 4 blocks - &lt;world-state&gt; … &lt;execution-result&gt;" - and that `4` is READ FROM
+ * `FACT_BRIEF_BLOCKS.length` rather than typed, which is the property this test holds. It was typed once: `<in-flight>`
+ * made the set five on 2026-11-11 while the paragraph still said four, and `identity-profile.ts` and
+ * `game-surface-prompt-floor.test-support.ts` carried another lane's uncommitted hunk for that paragraph at the time.
  * </p>
  *
  * <p>
- * SO THE DRIFT IS NAMED RATHER THAN SILENT. While the floor's number disagrees with the closed set the test SKIPS with
- * `floor_block_count_owes_update:identity-profile.ts`, which names the file that owes the fix. It is not a green check:
- * `skip` is the one node:test verdict that says "not run" rather than "passed", and the moment the floor's count is
- * regenerated from `FACT_BRIEF_BLOCKS.length` both assertions below go live - the count AND the member names.
+ * WHAT WAS WRONG WITH THE FIRST FIX, and why this one refuses to skip. It matched the sentence's PHRASING - `prose in
+ * (\d|[a-z]+) blocks` - and when the rule was rewritten (2026-11-23, "follows as prose in four blocks" became "the
+ * machine's report, in 4 blocks") the pattern stopped matching anything. The guard then called `context.skip` with
+ * `floor_says_-1_blocks`, which is the one node:test verdict that says "not run" rather than "passed": a green line in
+ * the summary, and the count unexamined on every run since. A guard that skips when it cannot read its population is not
+ * a guard. So the population is now the CLOSED SET - the sentence that names every block `FACT_BRIEF_BLOCKS` declares,
+ * whatever its wording - and both ways of losing it are red: no such sentence (`floor_block_sentence_absent`), and a
+ * sentence whose number is not the set's length (`floor_block_count_owes_update`).
  * </p>
  */
-test("floor_block_count_owes_update: the prompt floor states the closed set's own length, and names each member", (context) => {
+test("floor_block_count: the prompt floor states the closed set's own length, and names each member", () => {
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  const sentences = floor.split(/(?<=[.!?。！？])\s+/u).filter((piece) => piece.trim() !== "");
+  const carriers = sentences.filter((sentence) => FACT_BRIEF_BLOCKS.every((name) => sentence.includes(`<${name}>`)));
+  assert.equal(
+    carriers.length,
+    1,
+    `floor_block_sentence_absent: ${String(carriers.length)} sentence(s) of the Game prompt name all ` +
+      `${String(FACT_BRIEF_BLOCKS.length)} blocks of FACT_BRIEF_BLOCKS, so the count this gate is about is stated nowhere ` +
+      "and a green verdict would be a statement about nothing",
+  );
+  const sentence = carriers[0] ?? "";
   const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-  const paragraph = /prose in (?:\d|[a-z]+) blocks?[^.]*\./u.exec(floor)?.[0] ?? "";
-  const stated = Number.parseInt(/prose in (\d+)/u.exec(floor)?.[1] ?? "", 10);
-  const statedWord = NUMBER_WORDS.indexOf(/prose in ([a-z]+) blocks?/u.exec(floor)?.[1] ?? "");
-  const counts = Number.isNaN(stated) ? statedWord : stated;
-  if (counts !== FACT_BRIEF_BLOCKS.length)
-    return context.skip(
-      `floor_block_count_owes_update:identity-profile.ts:floor_says_${String(counts)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
-    );
-  const named = [...new Set([...paragraph.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
+  const token = /(\d+|[a-z]+)\s+blocks?\b/u.exec(sentence)?.[1] ?? "";
+  const stated = /^\d+$/u.test(token) ? Number.parseInt(token, 10) : NUMBER_WORDS.indexOf(token);
+  assert.notEqual(
+    stated,
+    -1,
+    `floor_block_count_absent: this sentence names every block and states no count at all: ${JSON.stringify(sentence)}`,
+  );
+  assert.equal(
+    stated,
+    FACT_BRIEF_BLOCKS.length,
+    `floor_block_count_owes_update:game-surface-prompt-floor.ts:fact_batch_blocks:floor_says_${String(stated)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
+  );
+  const named = [...new Set([...sentence.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
   assert.deepEqual(
     named,
     [...FACT_BRIEF_BLOCKS].sort(),
     "the floor names the blocks the delivery carries, and no block it does not",
   );
-  process.stdout.write(`floor_blocks examined ${String(counts)} of FACT_BRIEF_BLOCKS\n`);
+  process.stdout.write(`floor_blocks examined ${String(stated)} of FACT_BRIEF_BLOCKS\n`);
 });
 
-test("note_in_own_block: the player's words are in <player-note> and nowhere else", () => {
+test("player_speech_head: the player's words are the head of the message, untouched, and outside every block", () => {
   const text = richBrief();
-  const occurrences = text.split(playerInput.text).length - 1;
   assert.equal(
-    occurrences,
+    text.split(playerInput.text).length - 1,
     1,
-    `the player's note appears ${String(occurrences)} times, and it must appear exactly once`,
+    `player_speech_not_verbatim: the player's words appear ${String(text.split(playerInput.text).length - 1)} time(s) in\n${text}`,
   );
-  // The block holds a label line per run of his sentences (`player-note.ts` reads the note) and his words inside `「」`:
-  // the words are unbroken, in his order, and the labels are the only added text.
-  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1] ?? "";
-  const quoted = [...note.matchAll(/「([^」]*)」/gu)].map((match) => match[1] ?? "");
-  assert.equal(
-    quoted.join(""),
-    playerInput.text,
-    "the quoted runs of the note block are the player's words, verbatim and in his order",
+  // THE HEAD, not merely present: a block that opened the message would put the machine first and the person second,
+  // and `player_speech_inside_a_fact_block` is the whole defect this shape replaced.
+  const firstBlockAt = text.indexOf("<");
+  assert.notEqual(firstBlockAt, -1, `the message carries no blocks at all:\n${text}`);
+  assert.ok(
+    text.startsWith(playerInput.text),
+    `player_speech_inside_a_fact_block: the message opens ${JSON.stringify(text.slice(0, 40))} rather than with the words the person typed`,
   );
+  const head = text.slice(0, firstBlockAt);
+  assert.ok(
+    head.includes(playerInput.text),
+    `player_speech_inside_a_fact_block: the words sit inside a block; the head of the message is ${JSON.stringify(head)}`,
+  );
+  // A label or wrapper is the third way speech stops being speech: the words are present, the block is absent, and the
+  // person is still reading as a field of the machine's report.
+  for (const wrapper of ["player-note", "他跟你说的", "给你做的", "不是给你做的", "上面没有给你做的事"])
+    assert.equal(
+      text.includes(wrapper),
+      false,
+      `player_speech_labelled: ${JSON.stringify(wrapper)} appears in the delivery, so the speech is a labelled section`,
+    );
 });
 
 test("bare_json_in_model_text: the composed text is prose, not an envelope", () => {
@@ -286,17 +292,47 @@ test("bare_json_in_model_text: the composed text is prose, not an envelope", () 
 });
 
 test("the world block names its revision and its freshness, and never claims to be the world", () => {
-  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(fresh, /^<world-state>\n世界（revision 1205，刚刚更新）$/mu);
-  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3, ageMs: 90_000 });
+  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3, ageMs: 0, contentAgeMs: 90_000 });
   assert.match(stale, /^<world-state>\n世界（revision 1205，本轮无新观察）$/mu);
   assert.match(stale, /（这是 3 轮之前看到的，世界已经不一样了）/u, "and how old the reading is, in words");
   const nothing = composeWorldState(undefined);
   assert.equal(nothing, "<world-state>\n世界：尚未收到观察\n</world-state>");
 });
 
+test("the stale note states how old the reading is, and states no order beside it", () => {
+  // Past the declared bound the age becomes the token itself, and the sentence inside it shipped a second clause —
+  // `；先看一眼再动手`. That clause is an order, which the census's `fact_block_issues_an_instruction` owns and a fact
+  // block has no authority to give: the note reports the age and what the age means, and stops there.
+  const stale = { ageTurns: WORLD_STATE_STALE_TURNS, revision: 1205, ageMs: 1_000, contentAgeMs: 900_000 };
+  // THE TOKEN CARRIES THE CONTENT'S AGE, and the reading's own age travels beside it: a picture re-read a second ago is as
+  // invalid as it was before the re-read, and a token keyed on the re-read would have said "one second old" here.
+  assert.equal(
+    worldStateStaleCode(stale),
+    `world_state_stale:${String(WORLD_STATE_STALE_TURNS)};1205;900000`,
+    "the stale token must state how old the PICTURE is, not how long ago it was re-read",
+  );
+  const text = composeWorldState({ snapshot: world, ...stale });
+  // The note is the token and the parenthetical that says what it means, wherever the block puts them.
+  const at = text.indexOf(worldStateStaleCode(stale));
+  assert.ok(
+    at >= 0,
+    `${String(WORLD_STATE_STALE_TURNS)} turns of silence is past the declared bound, so the age is the token: ${text}`,
+  );
+  const close = text.indexOf("）", at);
+  const note = text.slice(at, close < 0 ? text.length : close + 1);
+  assert.match(
+    note,
+    new RegExp(`${String(stale.ageTurns)} 轮之前`, "u"),
+    `the sentence says the age in words: ${note}`,
+  );
+  assert.match(note, /世界已经不是这样了/u, `and what that age means for the reading: ${note}`);
+  assertReportsWithoutInstructing(note, "the world-state stale note");
+});
+
 test("the world block names the objects she acts on, with their tiles", () => {
-  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(text, /手持: 锄头/u, "the held tool is said in words");
   assert.match(text, /待浇水的作物 \(63,14\)/u, "the nearest dry crop is named with its tile, nearest first");
   assert.match(text, /杂草 \(64,15\)/u, "the nearest weed tile is named");
@@ -304,7 +340,8 @@ test("the world block names the objects she acts on, with their tiles", () => {
 });
 
 test("own_health_in_the_world_block: her hit points are in the text she reads, bare and never completed", () => {
-  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
 
   // The fact, in the shape the stamina beside it uses. Before this line `health` was exempted by a rendering into
   // `contextProjection.hud`, a block nothing in the tree reads (`host/src/host-service.ts:1235` is its only consumer).
@@ -325,7 +362,8 @@ test("own_health_in_the_world_block: her hit points are in the text she reads, b
 });
 
 test("can_water_beside_the_held_tool: the can's own water reaches the prose, and an absent reading says nothing", () => {
-  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   const can = {
     slot: 2,
     qualifiedItemId: "(T)WateringCan",
@@ -378,10 +416,77 @@ test("can_water_beside_the_held_tool: the can's own water reaches the prose, and
   assert.equal(/壶里的水/u.test(ambiguous), false, `two unheld cans print no figure: ${ambiguous}`);
 });
 
+test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
+  // THE POPULATION IS TWO AUTHORITIES CROSSED, never today's line. The row's fields are the wire document's own
+  // (`$defs.inventoryItemFact.properties`) and the names an action DEMANDS are the Host validator's own
+  // (`EXECUTION_REQUEST_ARGUMENT_RULES`, whose `exactArgs` rows carry `argumentNames` as data). `expected<Field>` counts
+  // as naming `<Field>`, because that is the pair `open_geode` refuses a stale copy of.
+  const demanded = arguedInventoryRowFields();
+  assert.ok(
+    demanded.length > 0,
+    "the schema's row fields and the validator's argument names crossed to nothing, so this test would assert nothing",
+  );
+
+  /** The one sentence of `<world-state>` that answers "what is in my pack". */
+  const packSentence = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 })
+      .split("\n")
+      .flatMap((line) => line.split("；"))
+      .find((part) => part.includes("身上带着")) ?? "";
+
+  const withSlot = (slot: number): string =>
+    packSentence({
+      ...world,
+      inventoryItemFacts: [{ slot, qualifiedItemId: "(O)378", displayName: "铜矿石", stack: 5 }],
+    } as unknown as Snapshot);
+
+  // THE ROW'S OWN VALUES, one per demanded field, chosen so no one of them contains another: 23 is not inside
+  // `(O)378`, `铜矿石` carries no digit, and the stack is a single digit the slot cannot hide behind.
+  const values: Readonly<Record<string, string>> = Object.freeze({
+    slot: "23",
+    qualifiedItemId: "(O)378",
+    displayName: "铜矿石",
+    stack: "5",
+  });
+  const sentence = withSlot(23);
+  const dropped = demanded.filter((field) => !sentence.includes(values[field] ?? "\u0000"));
+  assert.deepEqual(
+    dropped,
+    [],
+    `these row fields are demanded by an action argument and do not reach the pack line: ${dropped.join(", ")} | ${sentence}`,
+  );
+
+  // A PRINTED CONSTANT IS NOT THE ROW'S SLOT. The same pack at another slot must read differently and must not still
+  // say 23: a renderer that printed the first slot it ever saw, or a `0` default, passes the assertion above and fails
+  // this one.
+  const elsewhere = withSlot(41);
+  assert.notEqual(elsewhere, sentence, `two different slots render the same pack line: ${elsewhere}`);
+  assert.equal(
+    /(?<!\d)23(?!\d)/u.test(elsewhere),
+    false,
+    `the pack line still names the slot it was not given: ${elsewhere}`,
+  );
+  assert.match(elsewhere, /(?<!\d)41(?!\d)/u, `and it names the one it was: ${elsewhere}`);
+
+  // A TRUNCATED LIST STILL SAYS WHERE THE SLOTS ARE. The bound drops rows, and a dropped row cannot be addressed from
+  // this sentence at all, so the sentence has to name the reading that carries the whole family.
+  const crowded = packSentence({
+    ...world,
+    inventoryItemFacts: Array.from({ length: 12 }, (_, index) => ({
+      slot: 30 + index,
+      qualifiedItemId: `(O)${String(400 + index)}`,
+      displayName: `矿石${String(index)}`,
+      stack: 1,
+    })),
+  } as unknown as Snapshot);
+  assert.match(crowded, /其余 4 种未列出/u, `the bound states what it left out: ${crowded}`);
+  assert.match(crowded, /stardew_observe/u, `and names the reading that publishes the slots it dropped: ${crowded}`);
+});
+
 test("a reading that has not changed is one line, not the whole world again", () => {
   const answer = unchangedWorldAnswer(1205);
   assert.equal(answer, "自 revision 1205 以来世界没有变化");
-  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   // The reading is stated as the two lengths, so a future change that quietly returns the dump cannot pass by
   // looking like a sentence.
   assert.ok(
@@ -393,25 +498,25 @@ test("a reading that has not changed is one line, not the whole world again", ()
 test("world_state_present: the pump states the world on EVERY batch, including batches that brought no snapshot", async () => {
   const pump = new CompanionEventPump();
   const batches: string[] = [];
-  pump.enqueueFact(snapshotFact(1205));
-  pump.enqueueFact(
-    fact({ kind: "execution_receipt", eventId: "receipt_1", executionId: "exec_1", payload: { state: "succeeded" } }),
-  );
+  pump.enqueueFact(snapshotFact(1205), FACT_PRODUCER.adapterIngress);
+  // A person's word opens a turn, which a settlement no longer does: a settlement with no surface is CARRIED into the next
+  // turn (`no_surface_for: receipt:succeeded`), so a fixture built from settlements would measure the carry ledger rather
+  // than the property under test. The property is the one this test names: every batch states the world.
+  pump.enqueuePlayerInput({ source: "player_text", inputId: "input_1", text: "hello", locale: "en", timestampMs: 1 });
   await pump.flush({
     async deliver(batch) {
       batches.push(batch.text);
     },
   });
-  // Three later turns, none of which observes anything: each is opened by a receipt and must still state the world.
+  // Three later turns, none of which observes anything: each is opened by the player and must still state the world.
   for (let index = 2; index <= 4; index += 1) {
-    pump.enqueueFact(
-      fact({
-        kind: "execution_receipt",
-        eventId: `receipt_${String(index)}`,
-        executionId: `exec_${String(index)}`,
-        payload: { state: "succeeded" },
-      }),
-    );
+    pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: `input_${String(index)}`,
+      text: "hello",
+      locale: "en",
+      timestampMs: index,
+    });
     await pump.flush({
       async deliver(batch) {
         batches.push(batch.text);
@@ -433,7 +538,7 @@ test("prose_cost_per_batch: what one delivery costs, against the envelope it rep
   const inputs = [playerInput];
   const prose = composeFactBrief({
     inputs,
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 },
     events: facts,
     locale: "zh-CN",
   });
@@ -474,6 +579,33 @@ type WireRecord = Readonly<{ properties?: Readonly<Record<string, unknown>> }>;
  * while it reported green. `x`/`y` is not a spelling, it is the shape this composer prints, and a family added tomorrow is
  * judged by the same property with no edit here.
  */
+/** The `inventoryItemFact` row's field names, from the wire document: what a row the Mod publishes carries. */
+function inventoryRowFields(): readonly string[] {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
+    $defs?: Readonly<Record<string, WireRecord>>;
+  }>;
+  const fields = schema.$defs?.inventoryItemFact?.properties;
+  if (fields === undefined)
+    throw new Error("the wire schema declares no `$defs.inventoryItemFact.properties`: this gate reads it by shape");
+  return Object.keys(fields);
+}
+
+/**
+ * The row fields some action argument DEMANDS: `slot` by its own name, `qualifiedItemId` through
+ * `expectedQualifiedItemId`.
+ */
+function arguedInventoryRowFields(): readonly string[] {
+  const argumentNames = new Set(
+    Object.values(EXECUTION_REQUEST_ARGUMENT_RULES).flatMap((rows) =>
+      rows.flatMap((row) => (row.argumentNames === undefined ? [] : [...row.argumentNames])),
+    ),
+  );
+  return inventoryRowFields().filter(
+    (field) =>
+      argumentNames.has(field) || argumentNames.has(`expected${field.charAt(0).toUpperCase()}${field.slice(1)}`),
+  );
+}
+
 function wireTileFamilies(): readonly string[] {
   const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
     $defs?: Readonly<Record<string, WireRecord>>;
@@ -493,6 +625,78 @@ function wireTileFamilies(): readonly string[] {
   }
   return tile;
 }
+
+/**
+ * The tile families whose rows carry a `kind` AND a `displayName`: the wire's own statement that the rows of one
+ * family are not one thing, and its own word for what each of them is.
+ *
+ * THE POPULATION IS THE ROW SHAPE, for the same reason `wireTileFamilies` is: a family added tomorrow is judged by the
+ * same property with no edit here, and a family whose rows lose their name leaves the population loudly rather than
+ * quietly passing it.
+ */
+function wireNamedRowFamilies(): readonly string[] {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
+    $defs?: Readonly<Record<string, WireRecord>>;
+  }>;
+  const families = schema.$defs?.snapshot?.properties as Readonly<Record<string, WireFamily>> | undefined;
+  if (families === undefined)
+    throw new Error("the wire schema declares no `$defs.snapshot.properties`: this gate reads it by shape");
+  const named: string[] = [];
+  for (const [family, spec] of Object.entries(families)) {
+    if (spec.type !== "array") continue;
+    const reference = spec.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const row = schema.$defs?.[reference.slice(reference.lastIndexOf("/") + 1)]?.properties;
+    if (row === undefined) continue;
+    if ("x" in row && "y" in row && "kind" in row && "displayName" in row) named.push(family);
+  }
+  return named;
+}
+
+/**
+ * A row family whose rows carry a `kind` prints WHAT stands on the tile, not only where.
+ *
+ * WHY (measured 2026-11-14, `round57`). The Mod published the FarmHouse's furniture with its own names -
+ * `{"displayName":"床","kind":"placed_furniture","x":9,"y":8}`, beside `橡木桌`, `橡木椅子`, `红色木屋地毯`, `红砖壁炉` - and
+ * the block printed tiles only: 「可交互的物件 (9,8) (6,8) (4,4) (5,4) (8,4)」. The companion had to guess what stood
+ * there, and did: 「可交互物件 (6,6)(6,8)(1,10) 大概是床、壁炉之类」. It then spent two turns moving "this furniture" and two
+ * more putting it back, because it never knew which piece it had lifted.
+ *
+ * WHY `kind` IS THE KEY AND NOT `displayName` ALONE. A family's label already names what its rows are (`待浇水的作物`,
+ * `杂草`), so a name there is a second word for the same thing - and `cropTargets` carries `Cauliflower`, an untranslated
+ * data key that would replace 花椰菜 with English. `kind` is the wire saying the rows are NOT one thing (a bed, a table, a
+ * rug, a twig), which is exactly the case where the label cannot answer "what is on this tile".
+ *
+ * RED AT `beef49e8` (the commit this unit started from): every family below printed bare coordinates.
+ */
+test("named_rows: a tile row that carries a kind prints its own displayName beside the tile", () => {
+  const block = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
+  const families = wireNamedRowFamilies();
+  // Refuse to pass on nothing: an empty population agrees with every assertion below.
+  assert.ok(families.length >= 2, `examined ${String(families.length)} named row families, too few to be the wire`);
+  for (const family of families) {
+    // The bed from `round57`, as the row itself stood: a piece with its own name, on one tile.
+    const named = block({
+      ...world,
+      [family]: [{ targetId: "t", kind: "placed_furniture", displayName: "床", location: "FarmHouse", x: 6, y: 6 }],
+    } as unknown as Snapshot);
+    assert.match(named, /床 \(6,6\)/u, `${family} names the row it printed: ${named}`);
+
+    // A row the Mod could not name prints its tile alone - never the word `undefined`, which is what a composition
+    // that interpolates an absent field hands her. Both shapes a nameless row arrives in are covered: no
+    // `displayName` member at all, and a blank one.
+    for (const row of [
+      { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6 },
+      { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6, displayName: "  " },
+    ]) {
+      const anonymous = block({ ...world, [family]: [row] } as unknown as Snapshot);
+      assert.match(anonymous, /\(7,6\)/u, `${family} still names the tile of an anonymous row: ${anonymous}`);
+      assert.equal(/undefined/u.test(anonymous), false, `${family} prints no absent-field word: ${anonymous}`);
+    }
+  }
+  process.stdout.write(`named_rows examined ${String(families.length)} named row families: ${families.join(", ")}\n`);
+});
 
 /**
  * A tile family the batch prints has a word, or states why it is not a row here.
@@ -515,7 +719,7 @@ test("target_family_labels: every tile family the wire publishes has a word, or 
     [],
     `the wire publishes these tile families and SNAPSHOT_KEYS does not admit them: ${unpublished.join(", ")}`,
   );
-  const unaccounted = families.filter((family) => !(family in TARGET_FAMILY_LABELS) && !(family in NON_ROW_FAMILIES));
+  const unaccounted = families.filter((family) => !(family in TARGET_FAMILY_LABELS || family in NON_ROW_FAMILIES));
   assert.deepEqual(
     unaccounted,
     [],
@@ -560,7 +764,7 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
   assert.equal(family?.label, "可锄的地块");
   assert.equal(family?.total, 2);
   assert.equal(family?.rendered, "可锄的地块 (65,15) (66,15)");
-  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(text, /可锄的地块 \(65,15\) \(66,15\)/u);
   assert.match(text, /可清的地块 \(67,15\)/u, "the family `till_soil` refuses keeps its own sentence");
   // A measured empty family is the answer "there is no ground to hoe here", not silence.
@@ -569,8 +773,130 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
     revision: 1205,
     ageTurns: 0,
     ageMs: 0,
+    contentAgeMs: 0,
   });
   assert.match(none, /这一带没有：[^\n]*可锄的地块/u);
+});
+
+/**
+ * The morning the seed fact is about: sixty-two tiles under the Hoe, and the seed half of "can I sow" unstated.
+ *
+ * The fields are the ones the wire really publishes for that morning - `soilTiles` is the `till_soil` target list,
+ * `seedTargets` is the empty hoe dirt the Mod pairs with a seed she HOLDS (so it is `[]` until she has one), and
+ * `seedSupplyTargets` is published only while `plant_seed` is advertised. `inventoryItemFacts` is absent on purpose:
+ * the Mod gates it on eight OTHER capabilities, and `plant_seed` is not one of them, so the pack line she would have read
+ * the seeds out of is not there on a reduced action set either.
+ */
+function seedWorld(overrides: Readonly<Record<string, unknown>> = {}): Snapshot {
+  return {
+    ...world,
+    cropTargets: undefined,
+    weedTargets: undefined,
+    debrisTargets: undefined,
+    rockSourceTargets: undefined,
+    inventoryItemFacts: undefined,
+    soilTiles: Array.from({ length: 62 }, (_, index) => ({ x: 60 + (index % 20), y: 15 + Math.floor(index / 20) })),
+    seedTargets: [],
+    ...overrides,
+  } as unknown as Snapshot;
+}
+
+/** The world block for one snapshot of that morning. */
+const seedText = (snapshot: Snapshot): string =>
+  composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
+
+/**
+ * A TRUE FACT THAT IS NOT ACTIONABLE: "these sixty-two tiles can be hoed" and no word about seeds.
+ *
+ * Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and said nothing about whether
+ * she held a seed, so her thinking answered the question itself - `Note 让种地，但我背包似乎没种子？` - never checked, never
+ * planned to buy, and she went and chopped trees. The block below also said `这一带没有：…、卖种子的地方`, because
+ * `seedSupplyTargets: []` is a row set of (a seed she HOLDS x a shop) and an empty one was read as "no shop is here".
+ */
+test("seed_shortage: a measured no-seed pack says so, and the block stops calling a seed shop absent", () => {
+  const text = seedText(seedWorld({ seedSupplyTargets: [] }));
+  assert.match(text, /种子: 0（背包里没有种子）/u, `the block must state the measured zero; it read:\n${text}`);
+  assert.ok(
+    !text.includes("卖种子的地方"),
+    `\`seedSupplyTargets: []\` means she holds no plantable seed, not that no shop is here; the block read:\n${text}`,
+  );
+  // And the family is not one the row printer speaks for at all: its rows carry no tile of their own.
+  assert.equal(
+    nearbyTargetFamilies(seedWorld({ seedSupplyTargets: [] })).some((family) => family.family === "seedSupplyTargets"),
+    false,
+    "a supply row is (held seed x shop) and names no place, so the family must not be rendered as one",
+  );
+  assert.ok(
+    (NON_ROW_FAMILIES.seedSupplyTargets ?? "").trim() !== "",
+    "seedSupplyTargets must state the reason it is not a row family",
+  );
+});
+
+/**
+ * The other half: she HAS seeds, and the count reaches her once.
+ *
+ * Once, because `heldCount` is the Mod's own sum of the published pack rows - two sentences stating it would be one fact
+ * with two spellings, and the pack line is the sentence that must give the seed half up: a plantable seed is the one
+ * thing in the pack that a tile family is waiting on.
+ */
+test("seed_held: the seeds she can plant print their own count, once", () => {
+  const held = seedWorld({
+    inventoryItemFacts: [
+      { slot: 0, qualifiedItemId: "(O)388", displayName: "木头", stack: 47 },
+      { slot: 4, qualifiedItemId: "(O)472", displayName: "防风草种子", stack: 3 },
+    ],
+    seedTargets: [{ targetId: "seed_1", slot: 4, x: 65, y: 15, qualifiedItemId: "(O)472", displayName: "防风草种子" }],
+    seedSupplyTargets: [
+      {
+        qualifiedItemId: "(O)472",
+        displayName: "防风草种子",
+        heldCount: 3,
+        shopId: "SeedShop",
+        shopDisplayName: "皮埃尔杂货店",
+        openNow: true,
+        shopLocation: "SeedShop",
+      },
+    ],
+  });
+  const text = seedText(held);
+  assert.match(text, /种子: 3 防风草种子/u, `the held count must reach the block; it read:\n${text}`);
+  assert.equal(
+    (text.match(/防风草种子/gu) ?? []).length,
+    1,
+    `one fact, one spelling: the pack line must hand the plantable seeds over, and the block read:\n${text}`,
+  );
+  // `heldCount` absent is NOT zero: the Mod publishes it only when the pack rows were published too.
+  const unmeasured = seedText(
+    seedWorld({ seedSupplyTargets: [{ qualifiedItemId: "(O)472", displayName: "防风草种子" }] }),
+  );
+  assert.match(
+    unmeasured,
+    /种子: 防风草种子（数量未测）/u,
+    `an unmeasured count must not print as a number:\n${unmeasured}`,
+  );
+  assert.doesNotMatch(unmeasured, /种子: 0/u, "a count the Mod did not measure must never render as zero");
+});
+
+/**
+ * Degrading to today's bytes: a snapshot that never published the family gets the line it gets now.
+ *
+ * The golden below is the block this snapshot rendered at `fcfdce40`, before the seed fact existed - captured from the
+ * running composer, not retyped from memory.
+ */
+test("seed_absent: an unmeasured seed family leaves the block byte-identical", () => {
+  const text = seedText(seedWorld());
+  assert.equal(
+    text,
+    [
+      "<world-state>",
+      "世界（revision 1205，刚刚更新）",
+      "06:20（清晨）；1年第3天 春季；天气：雨天；位置: 农场；脚下: (64, 15)；手持: 锄头（+2）；体力: 82；血量: 100；身体: 空闲",
+      "可锄的地块 (64,15) (63,15) (63,16) (64,16) (65,15) (65,16) 其余 56 格未列出",
+      "这一带没有：可收的作物、已播种的地",
+      "</world-state>",
+    ].join("\n"),
+    "a snapshot with no seed family must not gain a word: absent is not zero",
+  );
 });
 
 /**
@@ -616,7 +942,7 @@ test("target_family_cap: with thirteen families in reach, the line names the one
     families.length,
     "thirteen families are in reach, so the cap has something to leave out",
   );
-  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   const printed = text.split("\n").filter((line) => /\(-?\d+,-?\d+\)/u.test(line) && !line.includes("未列出"));
   assert.equal(printed.length, MAX_TARGET_FAMILIES_SHOWN, "the cap prints twelve families and counts the rest");
   assert.match(
@@ -891,10 +1217,11 @@ function composedField(field: ModelVisibleField, value: string): string {
  * </p>
  *
  * <p>
- * POPULATION, from the writer rather than from a list: every field name `fact-brief.ts` hands to `boundedField`, read out
- * of its own source and printed below. It must equal the declared ceilings both ways - a field printed under no ceiling,
- * and a ceiling for a field nothing prints, are both drift. The node fields' ceilings are then checked against the WIRE's
- * own numbers (`protocol.ts`), because a Host ceiling below the producer's bound is the ceiling that cut these.
+ * POPULATION, from the writer rather than from a list: every field name the Host hands to `boundedField`, read out of
+ * the source of every module that calls it and printed below. It must equal the declared ceilings both ways - a field
+ * printed under no ceiling, and a ceiling for a field nothing prints, are both drift. The node fields' ceilings are then
+ * checked against the WIRE's own numbers (`protocol.ts`), because a Host ceiling below the producer's bound is the
+ * ceiling that cut these.
  * </p>
  *
  * <p>
@@ -903,9 +1230,13 @@ function composedField(field: ModelVisibleField, value: string): string {
  * </p>
  */
 test("truncated_enumeration_is_silent: each field prints whole to its producer's bound, and a cut is named", () => {
-  const source = hostSource("fact-brief.ts");
+  // The table lives in `model-field-budget.ts` and its CALLERS are wherever a Mod-authored field is printed, so the
+  // population is read from both: a call in a module this list forgot is the drift this gate exists to name.
   const bounded = new Set(
-    [...source.matchAll(/boundedField\("(\w+)"/gu)].map((match) => match[1] ?? "").filter((name) => name !== ""),
+    ["model-field-budget.ts", "fact-brief.ts"]
+      .flatMap((name) => [...hostSource(name).matchAll(/boundedField\("(\w+)"/gu)])
+      .map((match) => match[1] ?? "")
+      .filter((name) => name !== ""),
   );
   const declared = Object.keys(MODEL_FIELD_CEILINGS);
   assert.ok(bounded.size > 0, "the writer calls boundedField at all, or this gate examines nothing");
@@ -976,7 +1307,49 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
 });
 
 /**
- * A CUT KEEPS WHOLE FIELDS, AND COUNTS WHAT IT DROPPED.
+ * THE SHARE IS DERIVED FROM THE LINE IT PROTECTS, not written beside a comment that claims a measurement.
+ *
+ * <p>
+ * `evidence: 160` was a hand-written number whose docblock called it "the Host's own measured share of one
+ * `<world-facts>` line" - a measurement of OTHER lines, not a share of the bound any of them is held to. Nothing tied it
+ * to the delivery it was a share OF, so it could not be re-derived when that bound moved, and it did not move while
+ * receipt evidence grew to 200-600 characters. This gate is the tie: the published number must be the derivation's own
+ * value, computed here from the same two constants the delivery already uses.
+ * </p>
+ *
+ * <p>
+ * THE ARITHMETIC IS ASSERTED, not restated: `MAX_BATCH_BYTES` from `event-pump.ts` (the delivery's own bound) over
+ * `MAX_WORLD_FACT_LINES` (how many lines the block names) is one line's share, and a line carries two of these fields
+ * (`failureWords` joins a node's `hint` and `reasonDetail`), so one field's share is half. A drift in either constant
+ * reddens this by name - which is the point: the number is not free to disagree with the bound it exists to stay inside.
+ * </p>
+ */
+test("evidence_ceiling_is_derived: the published share is the derivation's own value", () => {
+  const lineShare = Math.floor(MAX_BATCH_BYTES / MAX_WORLD_FACT_LINES);
+  const derived = derivedEvidenceCeiling();
+  process.stdout.write(
+    `evidence ceiling published ${String(MODEL_FIELD_CEILINGS.evidence)} · derived ${String(derived)} · ` +
+      `line share ${String(lineShare)} of MAX_BATCH_BYTES ${String(MAX_BATCH_BYTES)} over ${String(MAX_WORLD_FACT_LINES)} ` +
+      `lines\n`,
+  );
+  assert.ok(Number.isInteger(derived) && derived > 0, `the derivation has to produce a length: ${String(derived)}`);
+  assert.equal(
+    MODEL_FIELD_CEILINGS.evidence,
+    derived,
+    "`MODEL_FIELD_CEILINGS.evidence` is published as a literal so the Mod's census can parse it, and it must equal what " +
+      "`derivedEvidenceCeiling()` computes from `MAX_BATCH_BYTES` and `MAX_WORLD_FACT_LINES` - otherwise the published " +
+      `number has stopped being the derivation (published ${String(MODEL_FIELD_CEILINGS.evidence)}, derived ` +
+      `${String(derived)})`,
+  );
+  assert.ok(
+    derived < lineShare,
+    `one field may not spend a whole line's share (${String(derived)} against ${String(lineShare)}): a line carries two of ` +
+      "them beside the action, its state and its reason code",
+  );
+});
+
+/**
+ * A CUT KEEPS WHOLE FIELDS, AND NAMES WHAT IT DROPPED.
  *
  * <p>
  * A receipt's evidence is `k=v;k=v` (`ToolActionEvidence.Compose`) - proof facts, each of which is either true as written
@@ -986,13 +1359,15 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
  * </p>
  *
  * <p>
- * PROPERTY, and it is the one that cannot be reintroduced by a later change to the cut: what a truncated line prints is
- * the FIRST WHOLE FIELDS of the Mod's detail, byte for byte, and the marker's number is exactly how many whole fields it
- * did not show. A field that alone exceeds the ceiling is withheld by name, never sliced - asserted over every declared
- * field above.
+ * PROPERTY, and it is the one that cannot be reintroduced by a later change to the cut: what a truncated line prints is a
+ * set of WHOLE fields of the Mod's detail, byte for byte, in the order `DECISION_FIELD_RANK` declares and then the
+ * producer's own; and the tail NAMES the fields it did not print (counting only the ones it had no room to name). A
+ * field that alone exceeds the ceiling is withheld by name, never sliced - asserted over every declared field above.
  * </p>
  */
-test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and counts the rest", () => {
+test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and names the ones it dropped", () => {
+  // The two fields a reader acts on sit at the END, which is the shape `round63` had: a cut that keeps the producer's
+  // first fields would drop both, and one that keeps a prefix of the TEXT would print half of one.
   const fields = [
     "location=Farm",
     "target=58,9",
@@ -1012,6 +1387,12 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
     "tool_restored=true",
     "revision=1205",
     "observer=mod",
+    "water_before=40",
+    "water_after=39",
+    "fertilizer_before=none",
+    "fertilizer_after=none",
+    "blocker_occupant=twig@58,9",
+    "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)",
   ];
   const detail = fields.join(";");
   assert.ok(
@@ -1020,21 +1401,32 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
       `${String(MODEL_FIELD_CEILINGS.evidence)}), or this gate examines no cut at all`,
   );
 
-  const text = composedField("evidence", detail);
-  const rendered = text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
-  const marker = "…[fields_not_shown:";
-  const markerAt = rendered.indexOf(marker);
+  const rendered = renderedEvidence(detail);
+  const notice = dropNotice(rendered);
   assert.notEqual(
-    markerAt,
-    -1,
-    `a cut must say how many whole fields it did not show; the line says ${JSON.stringify(rendered)}`,
+    notice.named.length,
+    0,
+    `a cut must NAME the whole fields it did not show; the line says ${JSON.stringify(rendered)}`,
   );
 
-  const shown = rendered.slice(0, markerAt).split(";");
+  const shown = keptFields(rendered);
+  // THE ORDER, derived from the rank rather than restated: every ranked field first in the rank's own order, then the
+  // remaining fields in the order their producer wrote them.
+  const rankedFirst = DECISION_FIELD_RANK.flatMap((name) => fields.filter((field) => field.startsWith(`${name}=`)));
+  const expectedOrder = [
+    ...rankedFirst,
+    ...fields.filter((field) => !DECISION_FIELD_RANK.some((name) => field.startsWith(`${name}=`))),
+  ];
   assert.deepEqual(
     shown,
-    fields.slice(0, shown.length),
-    "what a cut prints is the FIRST WHOLE FIELDS of the Mod's detail, byte for byte - not a prefix of the text",
+    expectedOrder.slice(0, shown.length),
+    "what a cut prints is whole fields in the rank's order and then the producer's - byte for byte, not a prefix of the " +
+      "text, and never the producer's order alone",
+  );
+  assert.deepEqual(
+    shown.slice(0, 2),
+    ["blocker_occupant=twig@58,9", "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)"],
+    "the two fields a decision needs come before everything else: what stands there, then what removes it",
   );
   assert.ok(
     shown.length > 0 && shown.length < fields.length,
@@ -1047,20 +1439,25 @@ test("truncated_evidence_keeps_whole_fields: a cut shows whole k=v fields and co
       `every printed field is a whole k=v, never half of one: ${JSON.stringify(field)}`,
     );
   assert.equal(
-    rendered.slice(markerAt),
-    `${marker}${String(fields.length - shown.length)}]`,
-    "and the number is exactly the whole fields it did not show",
+    notice.named.length + notice.unnamed,
+    fields.length - shown.length,
+    "and the tail accounts for exactly the whole fields it did not show",
   );
+  for (const name of notice.named)
+    assert.ok(
+      fields.some((field) => field.startsWith(`${name}=`)),
+      `every name the tail states is one of the fields it withheld, whole: ${JSON.stringify(name)}`,
+    );
   assert.ok(
     rendered.length <= MODEL_FIELD_CEILINGS.evidence,
-    `the line stays inside its own ceiling, marker included (${String(rendered.length)} characters)`,
+    `the line stays inside its own ceiling, tail included (${String(rendered.length)} characters)`,
   );
 
   // NO FIELD IS EVER SLICED, ANYWHERE IN THE WRITER: the cut this test replaced was one `text.slice(0, ceiling)` inside the
   // one function every Mod-authored field goes through, so a byte slice reappearing there would reintroduce the defect for
   // all three fields at once. Read from the source, because the assertion is about the writer and not about one value.
   assert.equal(
-    /text\.slice\(0, ceiling\)/u.test(hostSource("fact-brief.ts")),
+    /text\.slice\(0, ceiling\)/u.test(hostSource("model-field-budget.ts")),
     false,
     "no Mod-authored field is cut at a byte offset: a field is printed whole or withheld by name",
   );
@@ -1155,3 +1552,705 @@ test("destructive_refusal_sentence_reaches_the_model: a refused destructive row 
   );
   assert.ok(withSentence.includes(round45Hint), "and it must not cost the ledger the hint carries");
 });
+
+/**
+ * A CUT KEEPS THE FIELDS A DECISION NEEDS, AND NAMES EVERY FIELD IT DROPPED.
+ *
+ * <p>
+ * THE DEFECT, measured 2026-11-13 (`round63`). A `fish_here` refusal at Farm carried sixteen fields; the two a reader
+ * acts on - `blocker_occupant=twig@69,31` (what stands there) and
+ * `clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)` (the published action that removes it) -
+ * were fields 11 and 13, and the writer kept the FIRST whole fields up to the ceiling. So the line showed her
+ * `footprint=1` and `clear_step=twig@69,31` and neither fact, and its only trace was `…[fields_not_shown:8]`: a count
+ * that says something is missing and nothing about what. She had the scythe, aimed at a twig, cut an unnamed weed at
+ * `67:29` instead, and `remove_placed_item` - the one action whose `Clears` declaration names a twig - was never tried.
+ * </p>
+ *
+ * <p>
+ * TWO PROPERTIES, because the defect has two halves. First, IMPORTANCE IS NOT THE PRODUCER'S WRITING ORDER: the fields a
+ * decision needs are declared once (`DECISION_FIELD_RANK`, `model-field-budget.ts`) and come first, so no ranked field
+ * may be dropped while an unranked one is kept. That is what `footprint` present beside an absent `clears_with` broke.
+ * Second, A CUT NAMES WHAT IT DROPPED: a reader who is told a field is missing can ask for it, and the whole failure was
+ * that she was told a COUNT.
+ * </p>
+ *
+ * <p>
+ * POPULATION, from the authority rather than from a list of cases. (1) The run's own two `round63` detail strings, quoted
+ * from `tools/_multiday_routine-round63-live-runner.log` (`BRIDGE_FACT` rows). (2) EVERY evidence literal the Host
+ * declares it validates, read out of `stardew-completion-contracts.ts`'s own `declaredCompletionEvidence` field lists -
+ * 76 lists, 847 field entries - so a field vocabulary added tomorrow is examined without an edit here, at three values
+ * widths (1, 9 and 40 characters) because the interesting boundary is wherever a cut lands inside a list. (3) The
+ * `fish_here` string again with fourteen narration fields appended, which is over every ceiling: the case where a cut is
+ * unavoidable and the order has to decide.
+ * </p>
+ *
+ * <p>
+ * THE COUNTS ARE PRINTED and an empty population is a failure: `evidence strings examined N · over budget M · cut
+ * mid-value K · decision fields dropped D · unnamed drops U`. `K` is the same rule the writer has held since a
+ * 254-character proof was sliced at 160 and ended `stamina_bef` - a printed field is a whole field of the input, never a
+ * prefix of one.
+ * </p>
+ */
+test("evidence_cut_keeps_the_decision_fields: the fields a reader acts on survive, and a cut names the rest", () => {
+  const round63FishNoApproach =
+    "target=71,30;actor=69,28;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=1;footprint=1;" +
+    "clear_step=twig@69,31;stand_at=69,30;remaining_clears=1;blocker_occupant=twig@69,31;" +
+    "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1);blocker_target=blocker_not_published;" +
+    "candidates=750;described=8;blocked_by=range:reach:2";
+  const round63SweepPartial =
+    "location=Farm;target=69,31;before_occupant=twig;after_occupant=twig;named_moved=false;arc_tiles=16;" +
+    "arc_sweepable=1;arc_clear=13;changed=67:29:weed;tiles_changed=1;tool_selected=scythe;slot=4;" +
+    "tool_before=fishing_rod;slot_before=5;stamina_before=270;stamina_after=270;stamina_delta=0;" +
+    "expected_stamina_cost=0;tool_restored=fishing_rod";
+  // The narration a refusal of this shape carries AFTER the answer, which is the case a cut has to decide about.
+  const fishWithNarration =
+    `${round63FishNoApproach};weather=clear;season=spring;day=12;hour=0610;player_name=Amy;` +
+    "farm_name=Meadow;save_id=xyzzy;difficulty=normal;money=1200;total_money_earned=4000;deepest_mine_level=5;" +
+    "days_played=13;friendship_best=4";
+
+  const declared = [
+    ...hostSource("stardew-completion-contracts.ts").matchAll(
+      /declaredCompletionEvidence\(\s*[A-Za-z_.]+,\s*\[(?<list>[^\]]*)\]/gu,
+    ),
+  ].map((match) => [...(match.groups?.list ?? "").matchAll(/"([a-zA-Z0-9_.]+)"/gu)].map((name) => name[1] ?? ""));
+  assert.ok(
+    declared.length > 0,
+    "the Host's own evidence declarations are the population, or this gate examines nothing",
+  );
+
+  const population: string[] = [round63FishNoApproach, round63SweepPartial, fishWithNarration];
+  for (const fields of declared)
+    for (const width of [1, 9, 40]) population.push(fields.map((name) => `${name}=${"v".repeat(width)}`).join(";"));
+
+  const ranked = new Map(DECISION_FIELD_RANK.map((name, index) => [name, index]));
+  const midValue: string[] = [];
+  const droppedDecision: string[] = [];
+  const unnamedDrops: string[] = [];
+  const silentCuts: string[] = [];
+  let overBudget = 0;
+  let cut = 0;
+
+  for (const detail of population) {
+    const input = detail.split(";");
+    if (input.length === 0) continue;
+    if (new Set(input.map(nameOf)).size !== input.length)
+      throw new Error(`this population entry repeats a field name, so "which field" would be ambiguous: ${detail}`);
+    const rendered = renderedEvidence(detail);
+    const kept = keptFields(rendered);
+    const notice = dropNotice(rendered);
+    const shown = kept.map(nameOf);
+    if (detail.length > MODEL_FIELD_CEILINGS.evidence) overBudget += 1;
+    if (shown.length < input.length) cut += 1;
+
+    for (const entry of kept)
+      if (!input.includes(entry))
+        midValue.push(
+          `model_field_truncated_mid_value:${nameOf(entry)}:${String(MODEL_FIELD_CEILINGS.evidence)}:${entry}`,
+        );
+
+    const dropped = input.filter((entry) => !kept.includes(entry));
+    if (dropped.length !== notice.named.length + notice.unnamed)
+      unnamedDrops.push(
+        `model_field_dropped_unnamed:${dropped.map(nameOf).join(",")}:${String(MODEL_FIELD_CEILINGS.evidence)}:` +
+          `named ${notice.named.join(",") || "none"} + ${String(notice.unnamed)}`,
+      );
+    // A cut that drops NAMEABLE fields and names NONE of them tells a reader that something is missing and nothing
+    // about what. A cut whose every dropped entry is a refused row's sentence has no field name to state, and the count
+    // is the most it can honestly say.
+    if (dropped.some((entry) => entry.includes("=")) && notice.named.length === 0)
+      silentCuts.push(
+        `model_field_dropped_silently:${dropped.map(nameOf).join(",")}:${String(MODEL_FIELD_CEILINGS.evidence)}`,
+      );
+    const keptUnranked = shown.filter((name) => !ranked.has(name));
+    for (const entry of dropped)
+      if (ranked.has(nameOf(entry)) && keptUnranked.length > 0)
+        droppedDecision.push(
+          `model_field_dropped_decision_field:${nameOf(entry)}:${String(MODEL_FIELD_CEILINGS.evidence)}:` +
+            `kept ${keptUnranked.join(",")}`,
+        );
+  }
+
+  process.stdout.write(
+    `evidence strings examined ${String(population.length)} · over budget ${String(overBudget)} · cut mid-value ` +
+      `${String(midValue.length)} · decision fields dropped ${String(droppedDecision.length)} · unnamed drops ` +
+      `${String(unnamedDrops.length)} · silent cuts ${String(silentCuts.length)}\n`,
+  );
+  assert.ok(population.length > 0, "a census that examines nothing agrees with itself");
+  assert.deepEqual(midValue, [], "no printed field may be a prefix of one the Mod wrote");
+  assert.deepEqual(unnamedDrops, [], "a cut must account for every field it dropped");
+  assert.deepEqual(silentCuts, [], "a cut must NAME the fields it dropped, not count them");
+  assert.deepEqual(droppedDecision, [], "a field a decision needs may not be dropped while narration is kept");
+
+  // THE DEFECT ITSELF, in the run's own words: the answer is in the line, and so is the reason it is there.
+  const answer = renderedEvidence(round63FishNoApproach);
+  assert.ok(
+    answer.includes("blocker_occupant=twig@69,31"),
+    `the blocker has to reach her - it is what stands on the tile she aimed at; the line says ${JSON.stringify(answer)}`,
+  );
+  assert.ok(
+    answer.includes("clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1)"),
+    `and the published action that removes it, or the refusal is undecodable; the line says ${JSON.stringify(answer)}`,
+  );
+  // AND THE OTHER DIRECTION: a value inside the ceiling loses nothing, and says nothing was dropped.
+  const short = "target=71,30;actor=69,28;reach=1";
+  assert.equal(
+    renderedEvidence(short),
+    short,
+    "a detail inside the ceiling is printed whole: no field dropped, no notice to read",
+  );
+});
+
+/**
+ * EVERY NAME THE RANK HOISTS IS STILL A FIELD A PRODUCER EMITS.
+ *
+ * <p>
+ * A rank name that no producer writes is worse than absent: it silently hoists nothing, and the next reader believes the
+ * answering field is protected when it is not. So the population is the Mod's own production sources - the `*.cs` files
+ * under `integrations/stardew`, tests excluded - and the property is that each declared name is still spelled as a
+ * `name=` key somewhere in them. A producer that renames its blocker field reddens this BY NAME, which is the moment to
+ * change the rank rather than the moment to notice a wrong cut in a run.
+ * </p>
+ */
+test("decision_field_rank_names_a_producer: every ranked field is still one the Mod writes", () => {
+  const keys = producerEvidenceKeys();
+  assert.ok(
+    keys.size > 100,
+    `the Mod's production sources carry the evidence vocabulary; examined ${String(keys.size)}`,
+  );
+  const orphans = DECISION_FIELD_RANK.filter((name) => !keys.has(name));
+  process.stdout.write(
+    `ranked fields examined ${String(DECISION_FIELD_RANK.length)} of ${String(keys.size)} producer keys · ` +
+      `without a producer ${String(orphans.length)}\n`,
+  );
+  assert.deepEqual(orphans, [], "a ranked name no producer writes hoists nothing, and hides that behind a declaration");
+});
+
+/** Every `name=` key the Mod's production sources spell, read from the C# that composes the details. */
+function producerEvidenceKeys(): ReadonlySet<string> {
+  const keys = new Set<string>();
+  const skip = new Set(["tests", "bin", "obj", "action-development"]);
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) walk(path);
+      } else if (entry.name.endsWith(".cs")) {
+        for (const match of readFileSync(path, "utf8").matchAll(/(?:^|[;"+\s])([a-z][a-z0-9_]{2,})=(?=[{"$])/gmu))
+          keys.add(match[1] ?? "");
+      }
+    }
+  };
+  walk(join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "integrations", "stardew"));
+  return keys;
+}
+
+/** One evidence detail's field name. */
+function nameOf(entry: string): string {
+  const at = entry.indexOf("=");
+  return at <= 0 ? entry : entry.slice(0, at);
+}
+
+/** What the receipt line shows of one evidence detail, as the model reads it. */
+function renderedEvidence(detail: string): string {
+  const text = composedField("evidence", detail);
+  return text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
+}
+
+/** The whole fields a rendered detail keeps, with any notice already removed. */
+function keptFields(rendered: string): readonly string[] {
+  const body = rendered.replace(/…\[[^\]]*\]$/u, "");
+  return body === "" ? [] : body.split(";");
+}
+
+/**
+ * The `…[dropped:…]` tail: the fields it names, and how many it could only count.
+ *
+ * One spelling for the reader and one for this reader: `<name>,<name>+<n>` names the ones it had room for and counts the
+ * rest, `<n>` alone is a cut with no room for any name. A tail of any OTHER shape - `…[fields_not_shown:8]`, which is
+ * what this line said until the count was replaced by the names - names nothing and counts nothing, so the gate reads it
+ * as a silent cut rather than as a pass.
+ */
+function dropNotice(rendered: string): { named: readonly string[]; unnamed: number } {
+  const match = /…\[dropped:(?<body>[^\]]*)\]$/u.exec(rendered);
+  if (match === null) return { named: [], unnamed: 0 };
+  const body = match.groups?.body ?? "";
+  if (/^\d+$/u.test(body)) return { named: [], unnamed: Number(body) };
+  const parts = body.split(",");
+  const tail = /^(?<name>[^+]*)\+(?<count>\d+)$/u.exec(parts[parts.length - 1] ?? "");
+  if (tail === null) return { named: parts, unnamed: 0 };
+  const named = tail.groups?.name === "" ? parts.slice(0, -1) : [...parts.slice(0, -1), tail.groups?.name ?? ""];
+  return { named, unnamed: Number(tail.groups?.count) };
+}
+
+/**
+ * A SETTLEMENT THAT SAYS "DONE" AND NEVER SAYS WHAT IS LEFT.
+ *
+ * <p>
+ * Measured `round69` (`tools/_multiday-routine-round69-live-runner.log`): healthy on every reading - `carried 24 ·
+ * consumed 24 · lost 0 · held 0`, `travel_postcondition_mismatch 0`, `due 0`, `nothing_pending 0` - with real work
+ * (`weeds_cut 6`, `crop_harvested 3`, `rock_source_broken`, `worked 6`), one script of 16 nodes, and then **2.8 minutes
+ * idle**: nothing pending, nothing owed, nothing to read. She cleared six weeds out of a field that has more, read
+ * `16/16 步做成了`, and answered "done" - because the one thing every settlement omitted was the remainder of the
+ * chore it had just finished.
+ * </p>
+ *
+ * <p>
+ * THE REMAINDER IS DERIVED, NEVER RE-READ. The population it is taken from is the reading this very message already
+ * carries (`<world-state>`, from the same `Snapshot`), and the tiles to subtract are the ones the settlement's own
+ * node rows prove were worked (`tile` on a single node, the pass's own row table for a `for_each`). No world query is
+ * made to answer it - a second read would disagree with the settlement it sits beside, and the number would be a
+ * different number than the answer it explains. What the Mod must supply is the one thing the Host cannot derive:
+ * WHICH family the step's work consumes, minted into the node's proof as `chore=<family>` (its descriptor's own
+ * `TargetFamily`, a declaration and not a read).
+ * </p>
+ *
+ * <p>
+ * THE PROPERTY IS TWO-SIDED. An answer states the remaining work of its own kind when there is some, and states that
+ * there is none when there is not: a settlement that always says 还有 is as wrong as one that never does, and it is
+ * the second that cost the 2.8 minutes. A third answer is legal and must be NAMED rather than silent - a settlement
+ * composed with no reading, or one whose nodes name no chore, says `还剩多少未测` and why. `silent` counts the
+ * settlements that say nothing at all, and any one of them fails, naming the program.
+ * </p>
+ *
+ * <p>
+ * POPULATION, from the authority: every row family the wire publishes (`TARGET_FAMILY_LABELS`) is settled three ways -
+ * one tile worked out of `ROWS`, every tile worked, and a family the reading does not carry - so a family added
+ * tomorrow is examined without an edit here. Plus the `round69` shape itself (six of twenty) replayed, and the two
+ * unmeasurable shapes.
+ * </p>
+ */
+test("a_settlement_does_not_say_what_is_left: every settlement states its own remainder, or says none", () => {
+  const ROWS = 5;
+  const families = Object.keys(TARGET_FAMILY_LABELS);
+
+  /** A reading that carries `rows` tiles of ONE family, all of them at y=40, spread along x from 80. */
+  const readingWith = (family: string, rows: number) => ({
+    snapshot: {
+      revision: 7,
+      location: "Farm",
+      tile: { x: 80, y: 40 },
+      [family]: Array.from({ length: rows }, (_, index) => ({
+        targetId: `${family}_${String(index)}`,
+        x: 80 + index,
+        y: 40,
+      })),
+    } as unknown as Snapshot,
+    revision: 7,
+    ageTurns: 0,
+    ageMs: 0,
+    contentAgeMs: 0,
+  });
+
+  /**
+   * One settled plan whose steps all worked tiles of `family`, on the first `worked` of them.
+   *
+   * THE MINT IS WHERE THE MOD MINTS IT (`ExecutionManager.RememberTerminal`: `;chore=<family>` appended to the receipt's
+   * evidence, which is `evidence.detail` on the wire), so this population is fed the producer's own shape. This fixture
+   * used to carry `route_reentrant_terminal:…:chore=<family>` instead - a journal postcondition no reader receives -
+   * and passed while `round73` said `未测` for 9 of 9 clauses beside 205 mints.
+   */
+  const settlement = (
+    family: string,
+    worked: number,
+    total: number,
+    programId: string,
+    origin: Readonly<{ x: number; y: number }> = { x: 80, y: 40 },
+  ): WorldFact =>
+    fact({
+      kind: "world_fact",
+      eventId: `program_settled_${programId}`,
+      semanticKind: "program_settled",
+      payload: {
+        total,
+        counts: { succeeded: worked },
+        nodes: Array.from({ length: worked }, (_, index) => ({
+          nodeId: `n${String(index)}`,
+          actionId: "cut_weeds",
+          state: "succeeded",
+          tile: { x: origin.x + index, y: origin.y },
+          evidence: `weeds_cut;tile=${String(origin.x + index)},${String(origin.y)};count=1;chore=${family};steps=2;folded=accepted@tile=80,40`,
+        })),
+      },
+    });
+
+  const compose = (events: readonly WorldFact[], reading: ReturnType<typeof readingWith> | undefined): string =>
+    composeFactBrief({ inputs: [], snapshot: reading, events, locale: "zh-CN" });
+
+  const examined: string[] = [];
+  const statesRemainder: string[] = [];
+  const saysNone: string[] = [];
+  const saysUnmeasured: string[] = [];
+  const silent: string[] = [];
+
+  /** THE ONE READING OF ONE ANSWER: does it state a remainder, none, or a named cannot-measure - or nothing? */
+  const classify = (
+    programId: string,
+    text: string,
+    family: string | undefined,
+    remaining: number | undefined,
+  ): void => {
+    examined.push(programId);
+    const clause = remainderClause(text);
+    if (clause === undefined) {
+      silent.push(`${programId}:no clause`);
+      return;
+    }
+    if (remaining === undefined) {
+      if (!clause.includes("未测")) silent.push(`${programId}:clause says nothing about what could not be measured`);
+      else saysUnmeasured.push(programId);
+      return;
+    }
+    if (remaining === 0) {
+      if (
+        !clause.includes("没剩") ||
+        (family !== undefined && !clause.includes(TARGET_FAMILY_LABELS[family] ?? family))
+      )
+        silent.push(`${programId}:should say none for ${String(family)}, says ${JSON.stringify(clause)}`);
+      else saysNone.push(programId);
+      return;
+    }
+    if (!clause.includes(`${String(remaining)} 处`)) {
+      silent.push(`${programId}:should state ${String(remaining)} left, says ${JSON.stringify(clause)}`);
+      return;
+    }
+    if (family !== undefined && !clause.includes(TARGET_FAMILY_LABELS[family] ?? family)) {
+      silent.push(`${programId}:does not name the family ${String(family)}, says ${JSON.stringify(clause)}`);
+      return;
+    }
+    statesRemainder.push(programId);
+  };
+
+  for (const family of families) {
+    const label = TARGET_FAMILY_LABELS[family] ?? family;
+    // (a) ONE TILE WORKED OF MANY: the family the plan touched still has `ROWS - 1` in the same reading.
+    classify(
+      `${family}:partial`,
+      compose([settlement(family, 1, 1, `plan_partial_${family}`)], readingWith(family, ROWS)),
+      family,
+      ROWS - 1,
+    );
+    // (b) EVERY TILE WORKED: the reading still shows them all, and the answer must say the chore is finished - the
+    //     falsifier for "a settlement that always says there is more".
+    classify(
+      `${family}:complete`,
+      compose([settlement(family, ROWS, ROWS, `plan_complete_${family}`)], readingWith(family, ROWS)),
+      family,
+      0,
+    );
+    // (c) THE READING DOES NOT CARRY THE FAMILY: it cannot be measured, and saying so is not silence.
+    classify(
+      `${family}:unmeasured`,
+      compose(
+        [settlement(family, 1, 1, `plan_unmeasured_${family}`)],
+        readingWith(family === "harvestTargets" ? "weedTargets" : "harvestTargets", 0),
+      ),
+      undefined,
+      undefined,
+    );
+    // (d) NO READING AT ALL: the same answer, from the other reason.
+    classify(
+      `${family}:no_reading`,
+      compose([settlement(family, 1, 1, `plan_no_reading_${family}`)], undefined),
+      undefined,
+      undefined,
+    );
+    assert.ok(label.length > 0, `the family ${family} has no label, so no sentence could name it`);
+  }
+
+  // (e) THE ROUND69 SHAPE, REPLAYED: six `cut_weeds` nodes out of the twenty weeds this reading carries. That is the
+  //     batch whose `16/16 步做成了` cost 2.8 idle minutes, and the remainder is what it never said.
+  const round69 = compose([settlement("weedTargets", 6, 16, "plan_round69", { x: 60, y: 15 })], {
+    snapshot: world,
+    revision: 1205,
+    ageTurns: 0,
+    ageMs: 0,
+    contentAgeMs: 0,
+  });
+  const round69Clause = remainderClause(round69);
+  classify("round69", round69, "weedTargets", 14);
+
+  const report =
+    `settlements examined ${String(examined.length)} · states-the-remainder ${String(statesRemainder.length)} · ` +
+    `says-none ${String(saysNone.length)} · says-unmeasured ${String(saysUnmeasured.length)} · silent ${String(silent.length)}`;
+  assert.ok(examined.length > 0, `${report} - an empty population agrees with itself`);
+  assert.deepEqual(silent, [], `${report}\nthese settlements never say what is left: ${silent.join("; ")}`);
+  assert.ok(statesRemainder.length > 0 && saysNone.length > 0, `${report} - both polarities must be produced`);
+  assert.ok(
+    round69Clause?.includes("(68,15)") === true,
+    `the remainder must say WHERE the work is, not only how much; the clause is ${JSON.stringify(round69Clause)}`,
+  );
+});
+
+/** The remainder clause of one composed answer, or undefined when the answer has none. */
+function remainderClause(text: string): string | undefined {
+  const at = text.indexOf("剩下的：");
+  if (at < 0) return undefined;
+  const end = text.indexOf("\n", at);
+  return text.slice(at, end < 0 ? undefined : end);
+}
+
+/**
+ * A SETTLEMENT MINTS THE CHORE, AND THE READER SAYS THE MOD SAID NOTHING.
+ *
+ * <p>
+ * Measured `round73`: the Mod minted `chore=<family>` 205 times in one session's log, and all nine remainders the run
+ * delivered said `未测（这一份结算没说是哪一类活）`. The clause was there and the reader looked elsewhere - `choreFamilyOf`
+ * split a node's fields on `:` and required a segment to START with `chore=`, while the funnel appends the clause with a
+ * `;` (`ExecutionManager.RememberTerminal`: `$"{detail};{chore}"`). A real `crop_harvested` detail carries no `:` at
+ * all, so its evidence was ONE segment that did not start with the token, and every settlement read as silent.
+ * </p>
+ *
+ * <p>
+ * THE STRING IS THE MOD'S, READ FROM THE MOD. The token's field name and both separators the producer appends it with
+ * are extracted from the C# that mints them (`theModsMint` below) rather than typed here, so the day the mint moves or
+ * changes its separator this gate reddens BY NAME and the reader is pointed at the new seam - instead of a run
+ * answering `未测` beside a log full of mints, which is what the previous move cost.
+ * </p>
+ *
+ * <p>
+ * THE PROPERTY IS ONE-SIDED ON PURPOSE. A clause composed from a settlement whose evidence or verdict line carries the
+ * field may not say `未测`; that word is right only when the Mod said nothing, so the falsifier below feeds a settlement
+ * with no mint and requires `未测` to survive. Population: every family the wire publishes (`TARGET_FAMILY_LABELS`),
+ * through both seams a settlement can name it at, plus the separator matrix a reader keyed on one spelling would fail
+ * on - so a reader that hard-codes a prefix or a delimiter is red before any run is spent.
+ * </p>
+ */
+test("a_minted_chore_is_not_read_by_the_reader: a settlement carrying the mint never says 未测", () => {
+  const mint = theModsMint();
+  // `SettlementChoreSeamTests.RoundSeventyOneHead`: the `crop_harvested` detail `round71` printed, transcribed. It has
+  // no `:` in it at all, which is the whole of why a `:`-split reader found nothing in a settlement that carried a mint.
+  const HARVEST_DETAIL =
+    "location=Farm;target=crop_2a7e1fd59d0206a0;tile=60,9;crop=474;item=(O)190;native_path_return=true";
+  const ROWS = 3;
+
+  /** A reading carrying `ROWS` tiles of ONE family, the first of them worked by every settlement below. */
+  const readingOf = (family: string) => ({
+    snapshot: {
+      revision: 7,
+      location: "Farm",
+      tile: { x: 80, y: 40 },
+      [family]: Array.from({ length: ROWS }, (_, index) => ({
+        targetId: `${family}_${String(index)}`,
+        x: 80 + index,
+        y: 40,
+      })),
+    } as unknown as Snapshot,
+    revision: 7,
+    ageTurns: 0,
+    ageMs: 0,
+    contentAgeMs: 0,
+  });
+
+  /** One settled programme of one node, as the digest publishes it. */
+  const settled = (programId: string, node: Readonly<Record<string, unknown>>): WorldFact =>
+    fact({
+      kind: "world_fact",
+      eventId: `program_settled_${programId}`,
+      semanticKind: "program_settled",
+      payload: { total: 1, counts: { succeeded: 1 }, nodes: [node] },
+    });
+
+  /** One settlement's own evidence: the funnel's `detail` + its separator + `chore=<family>`, then the folded walk. */
+  const evidenceNaming = (family: string, separator: string): string =>
+    `${HARVEST_DETAIL}${separator}${mint.field}=${family};steps=1;folded=accepted@tile=60,9`;
+
+  const composed: Array<{ site: string; family: string; clause: string; minted: boolean }> = [];
+  const scene = [
+    "the-settlement-evidence",
+    "the-pass-verdict-line",
+    "a-separator-this-reader-has-never-seen",
+    "the-token-at-the-start-of-the-field",
+  ] as const;
+
+  for (const family of Object.keys(TARGET_FAMILY_LABELS)) {
+    const reading = readingOf(family);
+    const node = { nodeId: "n0", actionId: "harvest_crop", state: "succeeded", tile: { x: 80, y: 40 } };
+    // (a) THE SETTLEMENT'S OWN EVIDENCE, spelled with the separator the funnel uses today.
+    composed.push({
+      site: "the-settlement-evidence",
+      family,
+      minted: true,
+      clause:
+        remainderClause(
+          composeFactBrief({
+            inputs: [],
+            snapshot: reading,
+            locale: "zh-CN",
+            events: [
+              settled(`plan_evidence_${family}`, {
+                ...node,
+                evidence: evidenceNaming(family, mint.settlementSeparator),
+              }),
+            ],
+          }),
+        ) ?? "",
+    });
+    // (b) A PASS'S OWN VERDICT LINE, which states the same field after its own separator.
+    composed.push({
+      site: "the-pass-verdict-line",
+      family,
+      minted: true,
+      clause:
+        remainderClause(
+          composeFactBrief({
+            inputs: [],
+            snapshot: reading,
+            locale: "zh-CN",
+            events: [
+              settled(`plan_pass_${family}`, {
+                nodeId: "n0",
+                actionId: "for_each",
+                state: "succeeded",
+                evidence: JSON.stringify({ state: "succeeded", rows: [{ x: 80, y: 40, state: "succeeded" }] }),
+                postconditionVerification: `for_each_pass:decided=1:succeeded=1:left_alone=0:omitted=0${mint.passSeparator}${mint.field}=${family}`,
+              }),
+            ],
+          }),
+        ) ?? "",
+    });
+    // (c) AND THE FIELD IS A NAME RATHER THAN A POSITION: a separator nobody mints today is still the same field.
+    composed.push({
+      site: "a-separator-this-reader-has-never-seen",
+      family,
+      minted: true,
+      clause:
+        remainderClause(
+          composeFactBrief({
+            inputs: [],
+            snapshot: reading,
+            locale: "zh-CN",
+            events: [settled(`plan_odd_${family}`, { ...node, evidence: evidenceNaming(family, "|") })],
+          }),
+        ) ?? "",
+    });
+    // (d) The token opening its field, which the reader must not require either.
+    composed.push({
+      site: "the-token-at-the-start-of-the-field",
+      family,
+      minted: true,
+      clause:
+        remainderClause(
+          composeFactBrief({
+            inputs: [],
+            snapshot: reading,
+            locale: "zh-CN",
+            events: [
+              settled(`plan_head_${family}`, {
+                ...node,
+                evidence: `${mint.field}=${family};steps=1;folded=accepted@tile=80,40`,
+              }),
+            ],
+          }),
+        ) ?? "",
+    });
+    // (e) THE HONEST `未测`: this node's evidence carries the detail and no mint, so the Mod really did say nothing.
+    composed.push({
+      site: "no-mint-at-all",
+      family,
+      minted: false,
+      clause:
+        remainderClause(
+          composeFactBrief({
+            inputs: [],
+            snapshot: reading,
+            locale: "zh-CN",
+            events: [settled(`plan_silent_${family}`, { ...node, evidence: `${HARVEST_DETAIL};steps=1` })],
+          }),
+        ) ?? "",
+    });
+  }
+
+  const minted = composed.filter((entry) => entry.minted);
+  const read = minted.filter((entry) => !entry.clause.includes("未测"));
+  const unread = minted.filter((entry) => entry.clause.includes("未测"));
+  const noMint = composed.filter((entry) => !entry.minted);
+  const report =
+    `clauses ${String(composed.length)} · read ${String(read.length)} · ` +
+    `said-未测-despite-a-mint ${String(unread.length)} · no-mint ${String(noMint.length)} · sites ${String(scene.length)}`;
+  process.stdout.write(`${report}\n`);
+
+  assert.ok(composed.length > 0, `${report} - an empty population agrees with itself`);
+  assert.deepEqual(
+    unread.map((entry) => `${entry.site}:${entry.family}: ${JSON.stringify(entry.clause)}`),
+    [],
+    `${report}\nthese clauses said the Mod never named the chore while their settlement carried ${mint.field}<family>`,
+  );
+  assert.equal(read.length, minted.length, `${report} - every minted clause must be read, not merely most of them`);
+
+  // THE FALSIFIER'S OTHER HALF: with no mint the same composition still answers `未测`, and names why. A reader that
+  // answered a family here would be inventing one, and a remainder that guessed is worse than one that says 未测.
+  assert.ok(noMint.length > 0, `${report} - the no-mint population must exist, or nothing tests the honest case`);
+  const honest = noMint.filter((entry) => entry.clause.includes("未测（这一份结算没说是哪一类活）"));
+  assert.equal(
+    honest.length,
+    noMint.length,
+    `${report}\na settlement that minted nothing must say 未测 and say why: ${noMint
+      .filter((entry) => !entry.clause.includes("未测（这一份结算没说是哪一类活）"))
+      .map((entry) => `${entry.site}:${entry.family}: ${JSON.stringify(entry.clause)}`)
+      .join("; ")}`,
+  );
+
+  // (f) AND A REAL HARVEST IS COUNTED, not merely un-refused: one crop off a three-crop reading says TWO left.
+  const round73 = composeFactBrief({
+    inputs: [],
+    snapshot: readingOf("harvestTargets"),
+    locale: "zh-CN",
+    events: [
+      settled("plan_round73", {
+        nodeId: "n0",
+        actionId: "harvest_crop",
+        state: "succeeded",
+        tile: { x: 80, y: 40 },
+        evidence: evidenceNaming("harvestTargets", mint.settlementSeparator),
+      }),
+    ],
+  });
+  const round73Clause = remainderClause(round73) ?? "";
+  assert.ok(
+    round73Clause.includes("2 处") && round73Clause.includes(TARGET_FAMILY_LABELS.harvestTargets ?? "harvestTargets"),
+    `round73's own harvest settlement must say how much of its chore is left; the clause is ${JSON.stringify(round73Clause)}`,
+  );
+});
+
+/**
+ * The clause the Mod mints, read from the C# that mints it: its field's name and the separator each seam appends it with.
+ *
+ * A SEPARATOR IS NOT A PROPERTY OF THIS READER, so it is not typed here. `ExecutionManager.RememberTerminal` appends
+ * `;chore=<family>` to a terminal's evidence and a pass states `:chore=<family>` on its own verdict line; both are read
+ * out of production source so a producer that moves or re-spells the clause fails this gate by name instead of costing a
+ * run in which every remainder read `未测`.
+ */
+function theModsMint(): Readonly<{ field: string; settlementSeparator: string; passSeparator: string }> {
+  const field = /public const string ChoreField = "([a-z_]+)";/u.exec(
+    modSource("src/Core/Policy/FarmhandActionDefinitions.cs"),
+  )?.[1];
+  assert.ok(
+    field !== undefined,
+    "FarmhandActionCatalog.ChoreField is the clause's own name; this gate reads it so the reader and the mint stay one spelling",
+  );
+  const settlementSeparator = /\{detail\}([^{}]*)\{chore\}/u.exec(modSource("farmhandexecutioncontroller.cs"))?.[1];
+  assert.ok(
+    settlementSeparator !== undefined,
+    "ExecutionManager.RememberTerminal no longer composes the clause as `detail<sep>chore`: the mint moved, so point this gate and fact-brief.ts#choreFamilyOf at its new seam",
+  );
+  const passSeparator =
+    /ChoreSuffix\(string\? family\) =>\s*family is null \? string\.Empty : \$"([^{}]*)\{[A-Za-z.]*ChoreField\}/u.exec(
+      modSource("src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs"),
+    )?.[1];
+  assert.ok(
+    passSeparator !== undefined,
+    "RouteReenteringBodyProgramExecutor.ChoreSuffix no longer composes `<sep>chore` on a pass's verdict line: the pass seam moved, so point this gate at it",
+  );
+  return Object.freeze({ field, settlementSeparator, passSeparator });
+}
+
+/** One file of the Mod's production source, read from the repository - the suite itself runs emitted JavaScript. */
+function modSource(relative: string): string {
+  const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  const path = join(root, "integrations", "stardew", relative);
+  assert.ok(
+    existsSync(path),
+    `the Mod's source this gate compares the reader against is not at ${path}; a reader nobody can check against its producer is the defect, not the guard`,
+  );
+  return readFileSync(path, "utf8");
+}

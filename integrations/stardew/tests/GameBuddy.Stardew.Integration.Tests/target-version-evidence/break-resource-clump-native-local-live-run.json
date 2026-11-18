@@ -1,0 +1,150 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "break_resource_clump",
+  "fixtureScenario": "native_clear_debris_resource_clump_v1",
+  "resolvedRunner": "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/live-captures/break_resource_clump.log",
+    "durable": false,
+    "note": "The runner prints its result object to stdout and writes nothing durable. This bundle is that object, verbatim, captured from the stdout of one disposable native-local run driven by tools/run-stardew-native-local-player-move-fixture.ps1; the capture path is gitignored and will not survive."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "clump_broken",
+    "target": {
+      "health": 8,
+      "parentSheetIndex": 752,
+      "requiredUpgradeLevel": 0,
+      "slot": 4,
+      "targetId": "debris_728803e60d6cdb56",
+      "toolKind": "pickaxe",
+      "x": 62,
+      "y": 17
+    },
+    "heldTool": {
+      "slot": 0,
+      "category": "axe",
+      "label": "(T)Axe"
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "clump_broken",
+      "revision": 49,
+      "hasEvidence": true
+    },
+    "evidence": {
+      "location": "Farm",
+      "target": "debris_728803e60d6cdb56",
+      "tile": "62,17",
+      "parent": "752",
+      "required_upgrade": "0",
+      "tool": "pickaxe",
+      "tool_selected": "pickaxe",
+      "slot": "4",
+      "tool_before": "axe",
+      "slot_before": "0",
+      "health_before": "8",
+      "health_after": "0",
+      "swings": "8",
+      "clump_removed": "true",
+      "drop_observed": "true",
+      "stamina_before": "270",
+      "stamina_after": "254",
+      "stamina_delta": "-16",
+      "expected_stamina_cost": "16",
+      "tool_restored": "axe"
+    },
+    "freshPostcondition": {
+      "clumpGone": true,
+      "toolRestored": true,
+      "revision": 49,
+      "held": {
+        "slot": 0,
+        "category": "axe",
+        "label": "(T)Axe"
+      }
+    },
+    "trace": [
+      {
+        "phase": "move_to_farm_warp",
+        "action": "move_to_tile",
+        "args": {
+          "x": 3,
+          "y": 12
+        },
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "accepted",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "travel",
+        "action": "travel",
+        "args": {
+          "x": 3,
+          "y": 12
+        },
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "accepted",
+          "revision": 11,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "move_to_clump_approach",
+        "action": "move_to_tile",
+        "args": {
+          "x": 61,
+          "y": 17
+        },
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "accepted",
+          "revision": 13,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "equip_wrong_tool",
+        "action": "equip_tool",
+        "args": {
+          "tool": "axe"
+        },
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "already_equipped",
+          "revision": 48,
+          "hasEvidence": true
+        }
+      },
+      {
+        "action": "break_resource_clump",
+        "target": "debris_728803e60d6cdb56",
+        "heldTool": "axe",
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "clump_broken",
+          "revision": 49,
+          "hasEvidence": true
+        }
+      }
+    ],
+    "durationMs": 9556
+  },
+  "whatThisProves": [
+    "The Mod really ran the game's own clump `performToolAction` against a live 2x2 boulder (`parentSheetIndex=752`) on the Farm at (62,17) with opaque target `debris_728803e60d6cdb56`: the receipt is `succeeded/clump_broken`, correlated to the exact request/execution pair by the runner.",
+    "The clump's own native requirement chose the tool, not the caller: the actor was deliberately holding the WRONG tool (`tool_before=axe` in slot 0), the handler selected `pickaxe` for slot 4, and `tool_restored=axe` put the axe back — confirmed independently by the fresh observation's held tool after the run.",
+    "The clump really broke: health 8 -> 0 across 8 swings, `clump_removed=true`, `drop_observed=true`, and the fresh observation at revision 49 no longer publishes the target id.",
+    "Stamina moved 270 -> 254 against `expected_stamina_cost=16`, the game's own class cost, so the swings were the engine's work and not a receipt-side claim."
+  ],
+  "whatThisDoesNotProve": [
+    "One clump class only: a large boulder requiring the Pickaxe. Stump, hollow log and meteorite variants are not exercised by this run.",
+    "No axe-class clump, no `clump_tool_too_weak` refusal, no cancellation, deadline, replay or recovery coverage.",
+    "No shared-world (Farmhand) coverage; the seam is multiplayer-insensitive per the derived sensitivity register.",
+    "The fixture placed the clump. Real-farm discovery-radius behaviour around an organic clump is not covered."
+  ]
+}

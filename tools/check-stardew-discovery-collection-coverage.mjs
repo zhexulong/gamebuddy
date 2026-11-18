@@ -84,6 +84,14 @@
  *                    the run prints that line and exits 1; restored, it prints `green` and exits 0
  *                    (measured 2026-11-04, pasted in the lane report)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-discovery-collection-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -201,7 +209,7 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
   DiscoverPedestalTargets: { mustRead: ["objects"] },
   DiscoverFenceGateTargets: { mustRead: ["objects"] },
   DiscoverFeedTroughTargets: { mustRead: ["objects"] },
-  DiscoverSoilTiles: { mustRead: ["objects"], via: ["IsTillableTile"] },
+  DiscoverSoilTiles: { mustRead: ["objects"], via: ["IsTillableTile", "DescribeSoilRefusal"] },
   DiscoverRockSourceTargets: { mustRead: ["objects"] },
   DiscoverWoodFenceResultTargets: { mustRead: ["objects"] },
   DiscoverCrabPotResultTargets: { mustRead: ["objects"] },

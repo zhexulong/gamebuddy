@@ -8,6 +8,7 @@ import {
 } from "./companion-activity.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { CompanionLoop } from "./companion-loop.js";
+import { FACT_PRODUCER } from "./event-pump.js";
 
 /**
  * THE SCRIPTED TURN, and what the player could have been shown while it ran.
@@ -103,7 +104,7 @@ async function runScriptedTurns(): Promise<ScriptedRun> {
         emit({ type: "tool_execution_start", toolCallId: "call_1", toolName: "stardew_plan_work" });
         // A native execution has begun: the pump has never been handed its terminal receipt, so `busy` is the pump's
         // own answer at the end of the tool call and at the end of the turn.
-        loop.pump.enqueueFact(receipt("running", "execution_water", 1));
+        loop.pump.enqueueFact(receipt("running", "execution_water", 1), FACT_PRODUCER.adapterIngress);
         emit({ type: "tool_execution_end", toolCallId: "call_1", toolName: "stardew_plan_work" });
         emit({ type: "message_start", message: assistantSnapshot("a2") });
         emit(textStart("a2"));
@@ -154,7 +155,7 @@ async function runScriptedTurns(): Promise<ScriptedRun> {
     await loop.flush();
     // The execution settles. Its terminal receipt is a fact a turn is owed, which is the only way `idle` becomes true:
     // the second turn delivers it, and its end finds the pump empty.
-    loop.pump.enqueueFact(receipt("succeeded", "execution_water", 2));
+    loop.pump.enqueueFact(receipt("succeeded", "execution_water", 2), FACT_PRODUCER.adapterIngress);
     await loop.flush();
   } finally {
     process.stderr.write = stderrWrite;

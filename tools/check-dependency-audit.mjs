@@ -57,6 +57,14 @@
  *                    paths and hid the one that decided the verdict
  *                    (tools/check-dependency-audit.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-dependency-audit",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

@@ -17,6 +17,14 @@
  * *                    `run_used_a_window_mode_the_engine_advances_a_day_in` failed with `windowMode=hidden`, exit 1
  * *                    (tools/check-live-run-multiday-baseline.mjs, the rule this marker names)
  */
+
+export const gateDeclaration = {
+  id: "check-live-run-multiday-baseline",
+  domain: "data",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";

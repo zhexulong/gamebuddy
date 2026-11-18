@@ -394,6 +394,91 @@ test("Host service schedules a second turn for a triggering fact received during
   service.close();
 });
 
+test("a stopped-plan receipt steers the turn that is already running, instead of waiting it out", async () => {
+  const adapter = eventHarness();
+  const texts: string[] = [];
+  const loop = new CompanionLoop(
+    reducedSession(async (text: string) => {
+      texts.push(text);
+    }) as never,
+  );
+  // A turn is genuinely in flight: the loop's own flush does not return until released.
+  let releaseFirst: () => void = () => undefined;
+  let flushes = 0;
+  const originalFlush = loop.flush.bind(loop);
+  loop.flush = async () => {
+    flushes++;
+    await new Promise<void>((resolvePromise) => {
+      releaseFirst = resolvePromise;
+    });
+    return await originalFlush();
+  };
+  const service = new CompanionHostService(loop, adapter.events);
+  adapter.emit(snapshot(7));
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.equal(flushes, 1, "a turn is running");
+  assert.deepEqual(texts, [], "and it has not spoken yet");
+
+  // The step the turn is thinking about is refused by the Mod. Nothing else is waiting.
+  adapter.emit({
+    source: "stardew_mod",
+    kind: "execution_receipt",
+    eventId: "receipt_refused",
+    correlationId: "receipt_refused",
+    revision: 2,
+    executionId: "exec_refused",
+    payload: {
+      state: "rejected",
+      actionId: "navigate_to_destination",
+      reasonCode: "destination_unreachable",
+      evidence: { detail: "topology=unreachable" },
+    },
+  } as WorldFact);
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+
+  // THE DEFECT THIS REPLACES: `hasExpiringFact` recognises only the world's clock, so this steer never happened and the
+  // refusal waited for the rest of the turn (26 s measured in `round66`).
+  assert.equal(texts.length, 1, "she is told while the turn is still running");
+  assert.match(texts[0] ?? "", /destination_unreachable/u, "and the Mod's own reason reaches her");
+
+  releaseFirst();
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+  service.close();
+});
+
+test("with no turn running a stopped-plan receipt is delivered as that turn's own content", async () => {
+  const adapter = eventHarness();
+  const texts: string[] = [];
+  const loop = new CompanionLoop(
+    reducedSession(async (text: string) => {
+      texts.push(text);
+    }) as never,
+  );
+  let steers = 0;
+  const originalSteer = loop.steer.bind(loop);
+  loop.steer = async () => {
+    steers++;
+    return await originalSteer();
+  };
+  const service = new CompanionHostService(loop, adapter.events);
+  adapter.emit({
+    source: "stardew_mod",
+    kind: "execution_receipt",
+    eventId: "receipt_failed",
+    correlationId: "receipt_failed",
+    revision: 2,
+    executionId: "exec_failed",
+    payload: { state: "failed", actionId: "navigate_to_destination", reasonCode: "native_path_ended" },
+  } as WorldFact);
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+
+  // A preempting fact must never be a way to OPEN a turn: with nothing in flight the ordinary flush opens it.
+  assert.equal(steers, 0, "no steer without a turn to steer");
+  assert.equal(texts.length, 1, "the receipt is delivered, as the turn's own content");
+  assert.match(texts[0] ?? "", /native_path_ended/u);
+  service.close();
+});
+
 test("a provider wait is legible: the run says it is waiting before its first request, then the provider's own words", async () => {
   const adapter = eventHarness();
   const order: string[] = [];
@@ -738,13 +823,19 @@ test("Host service seals real terminal-receipt overflow before disconnect callba
   // dropped: a progress-filled window is the one the drop rule evicts from (its own journey lives in
   // event-pump.test.ts), so this journey is about the overflow that really does seal - one terminal too many
   // with nothing replaceable in the window.
+  //
+  // `succeeded` rather than `failed`/`rejected`, and the premise changed for a reason rather than to keep this green: a
+  // stopped-plan receipt is now handed to the running turn the moment it arrives (`hasPreemptingFact`), which CONSUMES
+  // it - so a window filled with refused steps is no longer reachable while a flush is in flight, and the 513th would
+  // find room. What this journey pins is the overflow that seals because nothing in the window may be dropped, and a
+  // terminal receipt that proved its effect is exactly that: terminal, undroppable, and carried rather than steered.
   for (let index = 0; index < MAX_PENDING_RECEIPTS; index++) {
     adapter.emit({
       source: "arcade_adapter",
       kind: "execution_receipt",
       correlationId: `terminal_${index}`,
       revision: 1,
-      payload: { state: "failed" },
+      payload: { state: "succeeded" },
     });
   }
   adapter.emit({
@@ -752,7 +843,7 @@ test("Host service seals real terminal-receipt overflow before disconnect callba
     kind: "execution_receipt",
     correlationId: "terminal_overflow",
     revision: 2,
-    payload: { state: "failed" },
+    payload: { state: "succeeded" },
   });
 
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));

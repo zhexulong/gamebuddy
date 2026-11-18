@@ -25,6 +25,14 @@
  * `control` before the injection. Second falsifier: an empty contract population (`OperationId` union removed) blocks
  * with `contract_operation_ids_not_found` rather than passing.
  */
+
+export const gateDeclaration = {
+  id: "check-configuration-surfaces",
+  domain: "product",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 

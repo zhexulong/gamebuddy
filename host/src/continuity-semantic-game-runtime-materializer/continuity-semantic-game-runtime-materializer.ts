@@ -1,122 +1,121 @@
 import { dirname, join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
+import { Type } from "typebox";
 import {
-  compilePlanScript,
-  legalPlanActionIds,
-  PLAN_FORM_ACTION_IDS,
-  PLAN_TOOL_SLOT_MEANING,
-  planActionsFromRegistrations,
-  planProgramId,
-  planSettlementNote,
-  planShape,
-  planWorkDescription,
-  type CompiledPlan,
-  type PlanScriptRequest,
-  type PublishedPlanAction,
-} from "../body-program-script.js";
-import { planFormExecutionUnavailableReason } from "../body-program-for-each.js";
+  type HostNodeAdmissionResult,
+  HostNodeAdmissionService,
+  type HostNodeAdmissionValidator,
+} from "../action-execution-coordinator.internal.js";
 import {
   type BodyProgramNodeCatalogue,
   bodyProgramNodeAdmissionRefusal,
   bodyProgramPreflightRefusal,
 } from "../body-program-preflight.js";
-import { Type } from "typebox";
+import {
+  type CompiledPlan,
+  compilePlanScript,
+  legalPlanActionIds,
+  MAX_PLAN_NODES,
+  PLAN_TOOL_SLOT_MEANING,
+  type PlanScriptRequest,
+  type PublishedPlanAction,
+  planActionsFromRegistrations,
+  planProgramId,
+  planSettlementNote,
+  planShape,
+  planWorkDescription,
+} from "../body-program-script.js";
+import type { CompanionInterruption } from "../companion-interruption.js";
+import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
+import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
   createStableGameRuntimeBindingIdentity,
   createStardewRecoveryBindingContext,
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import {
-  type HostNodeAdmissionResult,
-  type HostNodeAdmissionValidator,
-  HostNodeAdmissionService,
-} from "../action-execution-coordinator.internal.js";
-import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
-import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
-import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
-import { companionArrivalAlreadySaid } from "../companion-arrival-fact.js";
-import type { CompanionInterruption } from "../companion-interruption.js";
-import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
+import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
   createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "../farmhand-companion-presentation.js";
-import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
-import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
-import {
-  CompanionHostService,
-  createGamePresentationAdmissionProvider,
-  GameTurnLineageTracker,
-} from "../host-service.js";
+import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
 import type {
   GameIntegrationAdapter,
   IntegrationActionPolicy,
   IntegrationActionRegistration,
   IntegrationStateView,
 } from "../game-integration-adapter.js";
-import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
-import type { ChatVoiceSpeechPublisher } from "../voice.js";
-import type { RuntimeSession } from "../runtime.js";
-import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
-import { identityProfileMetadata } from "../identity-profile.js";
-import { resolveRuntimePaths } from "../runtime-identity.js";
-import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
+import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
+import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
+import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
 import {
-  createRunTrace,
-  describeTraceFailure,
-  RUN_SPAN_NAMES,
-  RUN_TRACE_FILE_NAME,
-  startRunTraceFile,
-  type RunTrace,
-} from "../run-trace.js";
-import {
-  validateBodyProgramCandidateRequest,
-  validateBodyProgramEventsResult,
-  validateBodyProgramStatusResult,
-  validateBodyProgramSubmitResult,
-  type BodyProgramStatusResult,
-  type BodyNodeAdmissionChallenge,
-  type BodyNodeAdmissionResult,
-  type BodyProgramCandidateRequest,
-  type BodyProgramEventsRequest,
-  type BodyProgramStatusRequest,
-  type ActionRegistration,
-  type FarmhandPolicyIdentity,
-  type Snapshot,
-} from "../protocol.js";
-import {
-  consumeGameVoicePresentationAttachment,
-  type GameVoicePresentationAttachment,
-} from "../voice-gateway-client.js";
-import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
-import {
-  isTerminalProgramStatus,
-  MAX_PROGRAM_STATUS_WAIT_MS,
-  planBatchAnswer,
-  programStatusProgress,
-  waitForTerminalProgramStatus,
-  type PlanAnswerNode,
-  type PlanBatchAnswer,
-  type ProgramStatusProgress,
-  type ProgramStatusWaitFacts,
-} from "../program-status-wait.js";
+  CompanionHostService,
+  createGamePresentationAdmissionProvider,
+  GameTurnLineageTracker,
+} from "../host-service.js";
+import { identityProfileMetadata } from "../identity-profile.js";
+import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
 import {
   createProgramSettlementReporter,
   type SettledProgramAnswer,
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
-import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
-import type { WorldFact } from "../event-pump.js";
-import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
+import {
+  isTerminalProgramStatus,
+  MAX_PROGRAM_STATUS_WAIT_MS,
+  type PlanAnswerNode,
+  type PlanBatchAnswer,
+  type ProgramStatusProgress,
+  type ProgramStatusWaitFacts,
+  planBatchAnswer,
+  programStatusProgress,
+  waitForTerminalProgramStatus,
+} from "../program-status-wait.js";
+import {
+  type ActionRegistration,
+  type BodyNodeAdmissionChallenge,
+  type BodyNodeAdmissionResult,
+  type BodyProgramCandidateRequest,
+  type BodyProgramEventsRequest,
+  type BodyProgramStatusRequest,
+  type BodyProgramStatusResult,
+  type FarmhandPolicyIdentity,
+  type Snapshot,
+  validateBodyProgramCandidateRequest,
+  validateBodyProgramEventsResult,
+  validateBodyProgramStatusResult,
+  validateBodyProgramSubmitResult,
+} from "../protocol.js";
+import {
+  createRunTrace,
+  describeTraceFailure,
+  RUN_SPAN_NAMES,
+  RUN_TRACE_FILE_NAME,
+  type RunTrace,
+  startRunTraceFile,
+  tracedStep,
+} from "../run-trace.js";
+import type { RuntimeSession } from "../runtime.js";
+import { resolveRuntimePaths } from "../runtime-identity.js";
+import { type CompanionLocale, resolveCompanionLocale } from "../settings/player-preference-store.js";
+import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
+import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
+import {
+  consumeGameVoicePresentationAttachment,
+  type GameVoicePresentationAttachment,
+} from "../voice-gateway-client.js";
 import {
   type GameRuntimeMaterializer,
   type MaterializedGameRuntime,
   materializeExactEnter,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
+import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
+import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
 
 type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPorts>["bodyProgram"];
 type BodyProgramConsumer = object;
@@ -353,14 +352,17 @@ function createBodyProgramTools(
           const span = runTrace.begin("plan.script", {
             scriptSource: compiled.scriptSource,
             snapshotRevision: compiled.snapshotRevision ?? -1,
-            producedProgram: compiled.ok ? JSON.stringify(compiled.program) : "",
+            producedProgram: compiled.status === "refused" ? "" : JSON.stringify(compiled.program),
           });
-          if (!compiled.ok) {
+          // A PARTIAL PLAN HAS A PROGRAM, so the run artifact records it like one (`producedProgram` above): the artifact's
+          // job is to say what would run, and a plan half of which runs is not the same reading as a refusal with nothing
+          // behind it.
+          if (compiled.status === "refused") {
             span.end({ reasonCode: compiled.reasonCode });
-            // The compiler's own name for the refusal, unchanged and with no plan behind it: there is no partial plan
-            // to run, so the count is zero and the reason is what the companion tells the player. A name the builder
-            // does not have also gets the ids it DOES have, so a wrong guess teaches instead of blocking the turn.
+            // The compiler's own name for the refusal, unchanged and with no plan behind it. A name the builder does not
+            // have also gets the ids it DOES have, so a wrong guess teaches instead of blocking the turn.
             return planDetails({
+              planStatus: "refused",
               accepted: false,
               nodeCount: 0,
               reasonCode: compiled.reasonCode,
@@ -387,7 +389,6 @@ function createBodyProgramTools(
               droppedTruncated: compiled.droppedCount > compiled.dropped.length,
               acceptedSteps: compiled.acceptedSteps,
               acceptedStepsCount: compiled.acceptedStepsCount,
-              ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
               ...(compiled.noStepNeededCount === 0
                 ? {}
                 : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
@@ -396,22 +397,6 @@ function createBodyProgramTools(
           }
           const nodes = compiled.program.nodes;
           const programId = planProgramId(compiled.snapshotRevision, nodes);
-          // A HOST PLAN FORM THE ATTACHED MOD DOES NOT PUBLISH CANNOT BE EXECUTED, and naming that is the difference between
-          // an answer and a silent success. Submitted anyway, the program is refused whole by the preflight, so every step
-          // the caller wrote beside the loop is lost and the reason names a policy refusal instead of the one thing that has
-          // to change. Answered HERE, the caller is told which nodes cannot run, in which order, and that nothing was sent.
-          const unavailable = planFormNodesOutsideCatalogue(nodes, actions);
-          if (unavailable.length > 0) {
-            span.end({ reasonCode: unavailable[0]!.reasonCode, programId });
-            return planDetails({
-              accepted: false,
-              nodeCount: nodes.length,
-              reasonCode: unavailable[0]!.reasonCode,
-              programId,
-              submitted: NOT_SUBMITTED,
-              unavailable,
-            });
-          }
           try {
             const submitted = await submitProgram({ programId, nodes });
             const code = submitted.details.code;
@@ -694,39 +679,6 @@ function readPlanActions(connection: GameConnection): readonly PublishedPlanActi
   return planActionsFromRegistrations(state?.catalogRegistrations ?? []);
 }
 
-/**
- * The word the plan answer uses when a compiled program was never sent to the Mod.
- *
- * `accepted: false` alone cannot tell "the Mod refused it" from "the Host did not send it", and those two need different
- * corrections - one is about the world, the other about a form this Host can compile but the attached Mod cannot run.
- */
-const NOT_SUBMITTED = "not_submitted";
-
-/**
- * The nodes of a compiled plan whose action id is a Host plan FORM the attached Mod does not publish, in node order.
- *
- * Derived from `PLAN_FORM_ACTION_IDS` and the Mod's OWN catalogue, never from a list of "things that do not work yet":
- * the day the Mod publishes `for_each`, this answers empty and the loop is submitted like any other node. The reason code
- * is derived from the action id too (`for_each` -> `for_each_execution_unavailable`), so a second form needs no edit here.
- */
-function planFormNodesOutsideCatalogue(
-  nodes: readonly Readonly<{ actionId: string }>[],
-  actions: readonly PublishedPlanAction[],
-): readonly Readonly<{ index: number; actionId: string; reasonCode: string }>[] {
-  const published = new Set(actions.map((action) => action.actionId));
-  const unavailable: Readonly<{ index: number; actionId: string; reasonCode: string }>[] = [];
-  for (const [index, node] of nodes.entries())
-    if (PLAN_FORM_ACTION_IDS.includes(node.actionId) && !published.has(node.actionId))
-      unavailable.push(
-        Object.freeze({
-          index,
-          actionId: node.actionId,
-          reasonCode: planFormExecutionUnavailableReason(node.actionId),
-        }),
-      );
-  return Object.freeze(unavailable);
-}
-
 /** The current Mod snapshot: a plan script reads the world as the Mod last published it. */
 function readLiveSnapshot(connection: GameConnection): Snapshot | null {
   const state = (connection as { state?: { snapshot?: Snapshot | null } }).state;
@@ -845,23 +797,45 @@ export function planRefusalAnswer(verification: unknown, submitted: string): Rea
 }
 
 /**
- * The difference between the plan she wrote and the program that runs, on an ACCEPTED plan.
+ * The difference between the plan she wrote and the program that runs, on a plan that HAS a program.
  *
  * <p>
- * Empty when there is none, for the same reason `layoutFactsNote` is: an ordinary plan should not spend payload saying
- * nothing. Present with a count and a `truncated` flag the moment the compiler wrote a step she did not (`inserted`),
- * folded two loops into one pass (`merged`) or found a step already true (`noStepNeeded`).
+ * Always says WHICH STATE the plan is in - `compiled` or `partial` - because that is the one fact every reader of this
+ * answer needs and the one the old `accepted: true` beside `droppedCount: 15` answer withheld. Empty otherwise, for the
+ * same reason `layoutFactsNote` is: an ordinary plan should not spend payload saying nothing. Present with a count and a
+ * `truncated` flag the moment the compiler wrote a step she did not (`inserted`), found a step already true
+ * (`noStepNeeded`) or REFUSED a call she did write (`dropped`).
  * </p>
  * <p>
- * `dropped` cannot appear here, and that is the invariant rather than a coincidence: a plan with a refused call is refused
- * whole by the compiler, so an accepted answer always carries every step she wrote. Measured at `3d249ff1`:
- * `builder.talk_to_npc(...); builder.shop_purchase(...)` came back `ok: true` with ONE node, and the answer said the plan
- * was accepted - which is the shape this answer may never be able to produce again.
+ * `dropped` on this answer is the whole point of `partial`: the steps that compiled run under `programId`, and the ones
+ * that did not are named by the position she wrote them, so "what ran" and "what I wrote" can be compared without
+ * guessing. Measured at `3d249ff1`: `builder.talk_to_npc(...); builder.shop_purchase(...)` came back `ok: true` with ONE
+ * node and the answer said the plan was accepted - the shape this answer may never produce again, because a plan that
+ * refused a call now says `planStatus: partial` beside the names.
  * </p>
  */
 function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
-  if (!compiled.ok) return {};
+  if (compiled.status === "refused") return {};
   return Object.freeze({
+    planStatus: compiled.status,
+    ...(compiled.status === "compiled"
+      ? {}
+      : {
+          // THE FIRST refusal's own code, unchanged, and every refused call with the action it named and the arguments it
+          // omitted - the same records the whole-plan refusal has always carried, now beside a program that runs.
+          reasonCode: compiled.reasonCode,
+          dropped: compiled.dropped,
+          droppedCount: compiled.droppedCount,
+          droppedTruncated: compiled.droppedCount > compiled.dropped.length,
+          rejected: compiled.rejected,
+          ...(compiled.requirement === undefined
+            ? {}
+            : {
+                actionId: compiled.requirement.actionId,
+                requiredArguments: compiled.requirement.requiredArguments,
+                resourceClaims: compiled.requirement.resourceClaims,
+              }),
+        }),
     ...(compiled.insertedCount === 0
       ? {}
       : {
@@ -872,7 +846,6 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
           // reading over the run's node outcomes can join on it without matching a node-id prefix.
           insertedNodeIds: compiled.insertedNodeIds,
         }),
-    ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
     ...(compiled.noStepNeededCount === 0
       ? {}
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
@@ -889,7 +862,7 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
  * </p>
  */
 function layoutFactsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
-  if (!compiled.ok || compiled.layoutFactsAbsentCount === 0) return {};
+  if (compiled.status === "refused" || compiled.layoutFactsAbsentCount === 0) return {};
   return Object.freeze({
     layoutFactsAbsent: compiled.layoutFactsAbsent,
     layoutFactsAbsentCount: compiled.layoutFactsAbsentCount,
@@ -967,7 +940,7 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live: a plan holds at most ${String(MAX_PLAN_NODES)} nodes; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
       /**
        * Declared here because the tool already reads it: a parameter the implementation honours but the schema hides is
@@ -1132,7 +1105,7 @@ function assertFreshBodyProgramPreflight(
   } catch {
     throw new Error("integration_not_ready");
   }
-  if (!isStateView(state) || !state.connected || state.registrations === undefined)
+  if (!(isStateView(state) && state.connected) || state.registrations === undefined)
     throw new Error("integration_not_ready");
   assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
   // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by four layers - the
@@ -1230,9 +1203,7 @@ function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPoli
     throw new Error("integration_not_ready");
   }
   if (
-    !isStateView(state) ||
-    !state.connected ||
-    !isFarmhandPolicyIdentity(state.policyIdentity) ||
+    !(isStateView(state) && state.connected && isFarmhandPolicyIdentity(state.policyIdentity)) ||
     state.capabilityRevision !== state.policyIdentity.capabilityRevision
   ) {
     throw new Error("integration_not_ready");
@@ -1261,7 +1232,7 @@ function assertCurrentBodyProgramPolicyIdentity(
 }
 
 function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {
-  if (!isRecord(value) || !hasExactKeys(value, ["value", "capabilityRevision"])) return false;
+  if (!(isRecord(value) && hasExactKeys(value, ["value", "capabilityRevision"]))) return false;
   const capabilityRevision = value.capabilityRevision;
   if (
     typeof value.value !== "string" ||
@@ -1274,7 +1245,7 @@ function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdenti
 
 function validateStatusRequest(value: Record<string, unknown>): string | null {
   const allowed = Object.hasOwn(value, "waitMs") ? ["programId", "waitMs"] : ["programId"];
-  if (!hasExactKeys(value, allowed) || !isOpaque(value.programId)) return "invalid_body_program_request";
+  if (!(hasExactKeys(value, allowed) && isOpaque(value.programId))) return "invalid_body_program_request";
   if (!Object.hasOwn(value, "waitMs")) return null;
   const waitMs = value.waitMs;
   return typeof waitMs === "number" && Number.isSafeInteger(waitMs) && waitMs >= 0 && waitMs <= 30_000
@@ -1464,6 +1435,8 @@ export type GameCompanionLoopInput = Readonly<{
   connection: GameConnection;
   /** Where a fact this pump minted goes: the Host's Host-minted-fact route. */
   publish: (fact: WorldFact) => void;
+  /** This run's span recorder: the loop's delivery and turn-tail spans land in it. */
+  runTrace?: RunTrace;
 }>;
 
 /**
@@ -1491,14 +1464,20 @@ export function createGameCompanionLoop(input: GameCompanionLoopInput): Companio
     input.liveSourceAttester,
     input.voiceSink,
     input.volatileContext,
+    undefined,
+    input.runTrace,
   );
   loop.pump.attachWorldStateRefresh(
     Object.freeze({
       observe: () => {
         const observe = (input.connection as StardewBridgeConnection).observe;
-        return observe === undefined
-          ? Promise.reject(new Error("world_state_observation_route_unavailable"))
-          : observe.call(input.connection);
+        // The round trip of the refresh the pump asks for when the reading it holds has gone stale: this is exactly the
+        // wait the product had no name for (a 34-minute run saw five snapshots and 64 stalled polls).
+        return tracedStep(input.runTrace, RUN_SPAN_NAMES.snapshotObserve, { surface: "game" }, () =>
+          observe === undefined
+            ? Promise.reject(new Error("world_state_observation_route_unavailable"))
+            : observe.call(input.connection),
+        );
       },
       publish: (fact) => input.publish(fact),
     }),
@@ -1517,17 +1496,23 @@ export function createHostGameRuntimeMaterializer(
         const mountedPolicy = execution.connection.module.parsePolicy(execution.connection.module.defaultPolicy);
         const retainedPolicyIdentity = readBodyProgramPolicyIdentity(execution.connection);
         const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
-        const recoveryJournal = await StardewLogicalActionRecoveryJournal.open(
-          Object.freeze({
-            directory: join(
-              execution.runtimeRoot,
-              "stardew-recovery",
-              recoveryIdentity.continuityId,
-              recoveryIdentity.saveId,
-              recoveryIdentity.worldId,
+        const recoveryJournal = await tracedStep(
+          runTrace,
+          RUN_SPAN_NAMES.journalRead,
+          { journal: "recovery", at: "mount" },
+          () =>
+            StardewLogicalActionRecoveryJournal.open(
+              Object.freeze({
+                directory: join(
+                  execution.runtimeRoot,
+                  "stardew-recovery",
+                  recoveryIdentity.continuityId,
+                  recoveryIdentity.saveId,
+                  recoveryIdentity.worldId,
+                ),
+                scope: recoveryIdentity,
+              }),
             ),
-            scope: recoveryIdentity,
-          }),
         );
         const bodyProgramAdmission = new HostNodeAdmissionService(
           recoveryJournal,
@@ -1575,7 +1560,7 @@ export function createHostGameRuntimeMaterializer(
         // moment the Host service exists - the tools and the pump's port are built first and cannot see it - and a fact
         // that arrives before then (it cannot: nothing has been submitted and no turn has been opened) is dropped by the
         // no-op rather than queued somewhere else.
-        let announceHostFact: (fact: WorldFact) => void = () => {};
+        let announceHostFact: (fact: WorldFact, producedBy: FactProducer) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1584,10 +1569,12 @@ export function createHostGameRuntimeMaterializer(
               retainedPolicyIdentity,
               () => revealProgramReaders(),
               runTrace,
-              (fact) => announceHostFact(fact),
+              (fact) => announceHostFact(fact, FACT_PRODUCER.programSettlement),
             )
           : Object.freeze([]);
-        const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        const recovery = tracedStep(runTrace, RUN_SPAN_NAMES.journalRead, { journal: "recovery", at: "binding" }, () =>
+          readStardewRecoveryBindingContext(recoveryContext),
+        );
         // Resolved once, because two things need the SAME answer: the runtime's presentation profile and the locale of
         // the Host's own status lines. Two reads could disagree after a Settings change between them.
         const companionLocale = options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot));
@@ -1656,9 +1643,10 @@ export function createHostGameRuntimeMaterializer(
           voiceSink: gameVoicePayload?.streamingSink,
           volatileContext: constructed.volatileAuthoredContext,
           connection: execution.connection,
+          runTrace,
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
-          publish: (fact) => announceHostFact(fact),
+          publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),
         });
         const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
         const host = new CompanionHostService(
@@ -1695,11 +1683,6 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           liveSourceAttester,
-          // The durable half of "she greets once": this Game session's own Pi transcript already holds
-          // the batch that carried the arrival fact if a previous mount delivered it.
-          Object.freeze({
-            alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager),
-          }),
           // The last mile of "the player speaks and the work stops". The Mod has been able to cancel a program since
           // the journal was written, but nothing on this side ever asked: a STOP sealed the model and left the body
           // walking, because a submitted program is immutable and the Mod only refuses NEW intents.
@@ -1716,10 +1699,11 @@ export function createHostGameRuntimeMaterializer(
                     `body_program_stop_refused:${String(error instanceof Error ? error.message : error)}`,
                   );
                 }),
+          runTrace,
         );
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
-        announceHostFact = (fact) => host.acceptHostMintedFact(fact);
+        announceHostFact = (fact, producedBy) => host.acceptHostMintedFact(fact, producedBy);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined
@@ -1966,13 +1950,15 @@ async function createMaterializedGameRuntime(
   // live-run script) supplying it. Missing files keep the default profile and
   // an empty Book; system assembly never fabricates content and never writes
   // (only the runtime core creates the default profile when absent).
-  const context = await assembleGameRuntimeContext({
-    identity,
-    runtimeRoot,
-    ...(identityProfile === undefined ? {} : { identityProfile }),
-    ...(worldBook === undefined ? {} : { worldBook }),
-    ...(companionLocale === undefined ? {} : { locale: companionLocale }),
-  });
+  const context = await tracedStep(runTrace, RUN_SPAN_NAMES.promptContext, { surface: "game" }, () =>
+    assembleGameRuntimeContext({
+      identity,
+      runtimeRoot,
+      ...(identityProfile === undefined ? {} : { identityProfile }),
+      ...(worldBook === undefined ? {} : { worldBook }),
+      ...(companionLocale === undefined ? {} : { locale: companionLocale }),
+    }),
+  );
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
   const assembledScenario = context.scenario;
@@ -2104,7 +2090,9 @@ async function createMaterializedGameRuntime(
           },
           volatileAuthoredContext: Object.freeze({
             bind: (turnId: string, deliveredBatch: string): void => {
-              authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection));
+              tracedStep(runTrace, RUN_SPAN_NAMES.promptBlocks, { turn: turnId }, () =>
+                authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection)),
+              );
             },
             clear: (turnId: string): void => {
               authoredContext.clearVolatileForTurn(turnId);

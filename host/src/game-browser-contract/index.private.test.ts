@@ -54,7 +54,7 @@ const baseState = {
     companionName: null,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available: false, count: 0 },
+    capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" },
     latestOutcome: "none" as const,
   },
 };
@@ -539,7 +539,7 @@ test("GameBrowserStateV1 capability summary rejects negative count", () => {
   assert.equal(
     validator.Check({
       ...baseState,
-      game: { ...baseState.game, capabilitySummary: { available: true, count: -1 } },
+      game: { ...baseState.game, capabilitySummary: { status: "published", count: -1 } },
     }),
     false,
   );
@@ -550,7 +550,7 @@ test("GameBrowserStateV1 capability summary rejects count exceeding max", () => 
   assert.equal(
     validator.Check({
       ...baseState,
-      game: { ...baseState.game, capabilitySummary: { available: true, count: 513 } },
+      game: { ...baseState.game, capabilitySummary: { status: "published", count: 513 } },
     }),
     false,
   );
@@ -1252,8 +1252,14 @@ test("GameBrowserFixtureV1 produces a connected state", () => {
   assert.equal(fixture.game.connectionStatus, "connected_idle");
   assert.equal(fixture.game.role, "player");
   assert.equal(fixture.game.companionName, "Farmhand");
-  assert.equal(fixture.game.capabilitySummary.available, true);
-  assert.equal(fixture.game.capabilitySummary.count, 3);
+  assert.deepEqual(fixture.game.capabilitySummary, { status: "published", count: 3 });
+  // And the unconnected fixture is the OTHER shape: an unmeasured reading carries a reason and no count at all.
+  assert.equal(GameBrowserFixtureV1.state().game.capabilitySummary.status, "not_measured");
+  assert.equal(
+    "count" in GameBrowserFixtureV1.state().game.capabilitySummary,
+    false,
+    "an unmeasured reading must not carry a count",
+  );
   assert.equal(fixture.game.latestOutcome, "succeeded");
 });
 

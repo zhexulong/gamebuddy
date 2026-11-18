@@ -49,6 +49,51 @@ function replaceOnce(source, search, replacement) {
   return source.slice(0, at) + replacement + source.slice(at + search.length);
 }
 
+/**
+ * The experimental catalog rows, each bounded by its OWN lifecycle token so a match cannot slide into a later row.
+ * `(?!E\(")` is what bounds it: a row that carries no lifecycle token stops the scan instead of swallowing the next.
+ */
+function experimentalCatalogRows(source) {
+  const row =
+    /E\("([a-z][a-z0-9_]*)"(?:(?!E\(")[\s\S])*?FarmhandActionLifecycle\.(Experimental|LiveVerified|Published)/gu;
+  return [...source.matchAll(row)].map((match) => ({ actionId: match[1], lifecycle: match[2], at: match.index }));
+}
+
+/**
+ * The catalog's experimental rows, and the one this case mutates: the FIRST of them.
+ *
+ * THE SUBJECT IS DERIVED, never named. It used to be `rotate_furniture` - "experimental today" - and when that row
+ * was promoted on 2026-11-14 the case's non-greedy anchor slid into the NEXT Experimental row, so it kept passing
+ * while asserting about a different action. Deriving it means the case survives any promotion; the injection below
+ * supplies the second half itself, so the case no longer depends on the tree already holding a half-write.
+ */
+const FIRST_EXPERIMENTAL_ROW = (() => {
+  const row = experimentalCatalogRows(catalogSource).find((candidate) => candidate.lifecycle === "Experimental");
+  assert.ok(
+    row !== undefined,
+    "no Experimental catalog action is left, so this case cannot construct the half-write it asserts about",
+  );
+  return Object.freeze({ actionId: row.actionId });
+})();
+
+/** A well-formed runner name for the synthetic experimental entry, derived from the subject so it cannot be mistaken
+ * for a runner this tree really ships. */
+const SYNTHETIC_EXPERIMENTAL_RUNNER = `run-stardew-native-local-player-${FIRST_EXPERIMENTAL_ROW.actionId.replaceAll("_", "-")}-smoke.mjs`;
+
+/** The experimental runner map's opening line: the anchor the synthetic entry is injected after. */
+const EXPERIMENTAL_MAP_ANCHOR = "STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({";
+
+/** Replace the lifecycle token of ONE row, located from that row's own start, without touching any other row. */
+function spliceRowLifecycle(source, actionId, lifecycle) {
+  const start = source.indexOf(`E("${actionId}"`);
+  assert.ok(start >= 0, `the row must still exist: ${actionId}`);
+  const token = source.indexOf("FarmhandActionLifecycle.Experimental", start);
+  assert.ok(token >= 0, `the row must still carry its own lifecycle token: ${actionId}`);
+  const end = source.indexOf("FarmhandActionLifecycle.", start);
+  assert.equal(token, end, "the first lifecycle token after the row's start must be the row's own");
+  return `${source.slice(0, token)}FarmhandActionLifecycle.${lifecycle}${source.slice(token + "FarmhandActionLifecycle.Experimental".length)}`;
+}
+
 const USE_MINE_LADDER_ROW = `  gate(
     "use_mine_ladder",
     1,
@@ -114,17 +159,22 @@ test("a gate row naming a scenario the Mod does not declare is named, even when 
 });
 
 test("an experimental action that already carries a gate row is named", () => {
-  // rotate_furniture is experimental today, so promoting the catalog alone (the row and the runner map
-  // untouched) is the half-write a hand edit leaves behind.
-  const catalog = catalogSource.replace(
-    /(E\("rotate_furniture"[\s\S]*?FarmhandActionLifecycle\.)Experimental/u,
-    "$1LiveVerified",
-  );
+  // BOTH HALVES ARE INJECTED, because neither belongs in a tree whose promotions are complete: the catalog rung is
+  // promoted here, and the runner entry this case must see is inserted into the experimental map (a half-write no
+  // promotion tool can produce, which is exactly what a hand edit leaves behind).
+  const subject = FIRST_EXPERIMENTAL_ROW;
+  const catalog = spliceRowLifecycle(catalogSource, subject.actionId, "LiveVerified");
   assert.notEqual(catalog, catalogSource, "the mutation must actually apply");
-  const report = check({ catalog });
+  const gates = replaceOnce(
+    gateDescriptorSource,
+    EXPERIMENTAL_MAP_ANCHOR,
+    `${EXPERIMENTAL_MAP_ANCHOR}\n  ${subject.actionId}: "${SYNTHETIC_EXPERIMENTAL_RUNNER}",`,
+  );
+  assert.notEqual(gates, gateDescriptorSource, "the runner entry must actually be injected");
+  const report = check({ catalog, gates });
   // Both halves of the half-write are named: no gate row appeared, and the runner never left the map.
   assert.deepEqual(report.findings, [
-    "promotion_places_disagree:rotate_furniture:catalog=live_verified;gate=absent;experimental=present:run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+    `promotion_places_disagree:${subject.actionId}:catalog=live_verified;gate=absent;experimental=present:${SYNTHETIC_EXPERIMENTAL_RUNNER}`,
   ]);
 });
 

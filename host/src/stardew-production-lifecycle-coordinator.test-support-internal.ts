@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ConstructedUnmountedGameSemanticFacade } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
+import type { StardewFarmhandGameSessionFacade } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import {
   createStardewProductionLifecycleCoordinatorFromTestingComposition,
@@ -72,7 +72,7 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   connectFarmhandGameRuntimeFacade?(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
-  ): Promise<ConstructedUnmountedGameSemanticFacade>;
+  ): Promise<StardewFarmhandGameSessionFacade>;
   /**
    * When provided, the testing coordinator routes BOTH role launches through
    * the same per-owner contained runtime and this collaborator (the
@@ -200,6 +200,7 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
           },
           recoverDeadOwner: async () => undefined,
           close: async () => undefined,
+          pushActionPolicy: () => false,
         })),
     createTestWindowsStardewFolderPicker(() => {
       const process = Object.assign(new EventEmitter(), {

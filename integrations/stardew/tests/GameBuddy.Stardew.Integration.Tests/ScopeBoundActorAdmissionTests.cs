@@ -488,12 +488,13 @@ public sealed class ScopeBoundActorAdmissionTests
                     || body.Contains("AdmitExecution(", StringComparison.Ordinal)
                     || body.Contains("AdmitLocalExecution(", StringComparison.Ordinal)
                     || TileTargetSeamAuthorization.IsMatch(body)
-                    // The walking-subject form does not name its authorization: handing the seam a gate that answers a
-                    // LIVE tile is that shape, and the proof comes with it (the seam's 7-argument overload supplies
-                    // `AuthorizeActorOnReadyWorld`, which
-                    // TheTileTargetSeamAuthorizesTheActorBeforeItReadsTheWorld holds to the actor proof).
-                    || (body.Contains("this.RequestLocalTileTarget(", StringComparison.Ordinal)
-                        && body.Contains("TileTargetGate.", StringComparison.Ordinal)))
+                    // The seam IS the mechanical admission in every form it takes, so a site that hands it its gate, its
+                    // reach and its body delegates the identity preamble and the admission together. That includes the
+                    // form that hands `authorize: null` - it admits at the top, exactly like `AdmitLocalExecution`, and
+                    // a matching actor therefore reaches the game state. Reading only the forms that name a proof
+                    // reported a converged family as unguarded and made the completeness assertion below shrink
+                    // silently.
+                    || body.Contains("this.RequestLocalTileTarget(", StringComparison.Ordinal))
                     guardedMethods.Add(method);
             }
 

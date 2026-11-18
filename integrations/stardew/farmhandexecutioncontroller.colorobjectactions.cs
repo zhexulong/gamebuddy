@@ -91,8 +91,6 @@ internal sealed partial class ExecutionManager
         int colorSelection,
         long requestedDeadlineMs)
     {
-        // General, not Physical: the seam drives no tool and starts no swing - it is two public
-        // statements on the chest, the same profile `clear_fish_pond` and `toggle_animal_door` admit under.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
@@ -101,8 +99,6 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        // 5.2: out of the interaction radius, walk in rather than refuse. Every position-independent
-        // check is re-run in the shared execution body after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -121,11 +117,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteColorPlacedObject(executionId, requestId, targetX, targetY, expectedTargetId, colorSelection);
     }
 
-    /// <summary>
-    /// Executes color_placed_object against the current world, re-validating the chest and re-reading
-    /// the preconditions in the card's own order because an approach leg may have taken several ticks.
-    /// Shared by the in-range path and the post-approach path so the two cannot drift.
-    /// </summary>
     private LocalExecutionReceipt ExecuteColorPlacedObject(string executionId, string requestId, int x, int y, string targetId, int colorSelection)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -134,7 +125,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
         string identity = resolution.Identity;
-        // 7. the target's own reach, in the family's Chebyshev-1 terms.
         if (!IsTileWithinChebyshevRadius(Game1.player, x, y, 1))
             return this.RememberTerminal(
                 requestId,
@@ -143,8 +133,6 @@ internal sealed partial class ExecutionManager
                 "color_target_out_of_range",
                 $"{identity};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y}");
 
-        // 8. the palette bound is the GAME's own, read here and never hardcoded: a two-sided bound, so
-        // a negative index and a past-the-end index are the same named refusal.
         int totalColors = DiscreteColorPicker.totalColors;
         if (colorSelection < 0 || colorSelection >= totalColors)
             return this.RememberTerminal(
@@ -154,7 +142,6 @@ internal sealed partial class ExecutionManager
                 "invalid_color_selection",
                 $"{identity};color_selection={colorSelection};total_colors={totalColors}");
 
-        // 9. a repaint to the colour the chest already carries is not a world change.
         Chest chest = resolution.Chest!;
         Color expected = DiscreteColorPicker.getColorFromSelection(colorSelection);
         Color before = chest.playerChoiceColor.Value;
@@ -183,7 +170,6 @@ internal sealed partial class ExecutionManager
                 $"{identity};color_selection={colorSelection};color_before={FormatColor(before)};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        // The postcondition is the CHEST INSTANCE after the call, never "we assigned it".
         Color after = chest.playerChoiceColor.Value;
         bool changed = !after.Equals(before);
         bool matches = after.Equals(expected);
@@ -227,10 +213,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal static string FormatColor(Color color) => $"{color.R},{color.G},{color.B}";
 
-    /// <summary>
-    /// Re-derives the named chest on the game thread. Every mismatch is a NAMED refusal, never a
-    /// silent re-target.
-    /// </summary>
     private static ColorTargetResolution ResolveColorTarget(GameLocation location, int x, int y, string expectedTargetId)
     {
         Vector2 tile = new(x, y);
@@ -252,9 +234,6 @@ internal sealed partial class ExecutionManager
                 "color_target_moved",
                 $"{identity};live={liveId};item={chest.QualifiedItemId}");
 
-        // The card's location precondition: the chest the actor resolves must BE in the actor's
-        // location. A chest whose own Location was reassigned elsewhere is not the world the
-        // observation described, and the write would land outside the observed scene.
         if (chest.Location is not null && !string.Equals(chest.Location.NameOrUniqueName, location.NameOrUniqueName, StringComparison.Ordinal))
             return ColorTargetResolution.Reject(
                 "color_target_location_mismatch",
@@ -293,12 +272,8 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    /// <summary>Per-family cap on published repaintable chests, matching the siblings' bounded discovery.</summary>
     private const int ColorTargetLimit = 16;
 
-    /// <summary>
-    /// One resolved chest, or the named reason the published target no longer matches the live world.
-    /// </summary>
     private sealed record ColorTargetResolution(
         bool Accepted,
         string ReasonCode,

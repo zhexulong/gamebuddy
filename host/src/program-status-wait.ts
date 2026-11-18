@@ -301,7 +301,9 @@ export interface ProgramProgressObserver {
    * Every programme this observer has read and the journal still calls `active`, with nothing settled left out.
    *
    * A READING, not a poll: it never reads the journal, never mints a fact and never starts a turn. The pump asks it when
-   * it composes a batch, which is the only moment the answer is model-visible.
+   * it composes a batch, which is the only moment the answer is model-visible - and NOT when it decides whether a receipt
+   * is a step or a lone outcome, because the receipt states that itself
+   * (`event-pump.ts#factExecutionOrigin`).
    */
   inFlight(nowMs?: number): InFlightProgrammeReading;
 }
@@ -342,11 +344,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another
       // plan's work as this one's.
       if (plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE)
-        programs.set(key, {
-          programId: plan.programId,
-          lastSeen: nowMs,
-          nodes: anchors,
-        });
+        programs.set(key, { programId: plan.programId, lastSeen: nowMs, nodes: anchors });
       else programs.delete(key);
       pruneObservations(programs, nowMs);
       const remaining = plan.nodes.length - settled;
@@ -392,7 +390,10 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // two batches composed from the same ledger render the same bytes.
       live.sort((left, right) => left.readAgeMs - right.readAgeMs || left.programId.localeCompare(right.programId));
       const shown = live.slice(0, MAX_IN_FLIGHT_PROGRAMMES);
-      return Object.freeze({ programmes: Object.freeze(shown), omittedProgrammes: live.length - shown.length });
+      return Object.freeze({
+        programmes: Object.freeze(shown),
+        omittedProgrammes: live.length - shown.length,
+      });
     },
   });
 }
@@ -459,6 +460,57 @@ export function readInFlightProgrammes(nowMs: number = Date.now()): InFlightProg
 }
 
 /**
+ * Why the Host is waiting, in the two conditions it can tell apart.
+ *
+ * <p>
+ * `nothing_owed` was the ONLY idle reason, and it answered two different situations with one word: the pump held nothing
+ * that owed a turn (a quiet world), or her own body still had nodes the settlement had not answered yet (her own
+ * executor). Measured 2026-11-17 (`round65`, the run's own account line): `turns opened 26` over a median 35 s, every one
+ * of them `adapter_ingress` - so the run could say she decided once per 35 s and could not say WHAT she was waiting on.
+ * A reader joining that bundle by hand could not separate "the world said nothing" from "our executor was still working",
+ * and those are the two halves of "the work is too little" that need different answers.
+ * </p>
+ * <p>
+ * `body_still_working` claims nothing about time and nothing about progress: it is the journal's own statement that a
+ * plan has nodes that have not happened (`InFlightProgramme.remaining`, filled by the settlement watch and every status
+ * call). The reading expires (`IN_FLIGHT_READING_MAX_AGE_MS`), so a watch that died does not keep saying this.
+ * </p>
+ */
+export const IDLE_WAIT_REASON = Object.freeze({
+  /** The pump owed no turn and the journal shows no plan with a node left: the wait is the world's. */
+  nothingOwed: "nothing_owed",
+  /** The pump owed no turn while her own plan still had nodes left: the wait is our executor's. */
+  bodyStillWorking: "body_still_working",
+});
+
+export const IDLE_WAIT_REASONS = Object.freeze(Object.values(IDLE_WAIT_REASON));
+
+export type IdleWaitReason = (typeof IDLE_WAIT_REASONS)[number];
+
+/** One idle wait: which of the two it was, and the population the answer was taken on. */
+export interface IdleWaitReading {
+  readonly reason: IdleWaitReason;
+  readonly programmes: number;
+  readonly remaining: number;
+}
+
+/**
+ * The idle reason for one ledger reading, so the span and any test asking the same question cannot disagree.
+ *
+ * `remaining` is summed over the programmes the reading shows; `programmes` is that same population's size. Both are
+ * printed beside the reason because a wait of 35 s behind one node and one behind four plans are different facts, and a
+ * bare word would answer neither.
+ */
+export function idleWaitReading(reading: InFlightProgrammeReading = readInFlightProgrammes()): IdleWaitReading {
+  const programmes = reading.programmes.length;
+  const remaining = reading.programmes.reduce((total, programme) => total + programme.remaining, 0);
+  // A plan whose last node has happened is not work left to wait for: its settlement is one watch interval away, and
+  // `body_still_working` would say the executor had something in front of it when the only thing left is the answer.
+  if (remaining === 0) return Object.freeze({ reason: IDLE_WAIT_REASON.nothingOwed, programmes, remaining });
+  return Object.freeze({ reason: IDLE_WAIT_REASON.bodyStillWorking, programmes, remaining });
+}
+
+/**
  * One node of a plan, answered where the caller wrote it: at its index, with the Mod's own state and reason.
  *
  * `state` is the Mod's node-state token VERBATIM (`BodyProgramNodeState` -> `BridgeSession.ToWire`), not a Host
@@ -521,6 +573,42 @@ interface PlanNodeAnswer {
    * running) names nothing rather than guessing one.
    */
   readonly skippedBecause?: readonly Readonly<{ nodeId: string; reasonCode: string }>[];
+  /**
+   * The pass's own ROW TABLE, verbatim - what a batch node proved it did, one row per row.
+   *
+   * <p>
+   * A `for_each` node settles ONE node for sixty tiles, and the Mod writes the whole pass into its
+   * `BodyProgramJournalNode.Evidence` (`RouteReenteringBodyProgramExecutor.Aggregate`: `{"state":…,"succeeded":N,…,
+   * "rows":[{"x":67,"y":19,"action":"till_soil","state":"refused","reasonCode":…,"detail":…}]}`). Until this field
+   * existed the projection kept the node's state and dropped the table, so a pass that had fifteen blocked tiles and
+   * forty-five good ones reached a caller as `succeeded` - and `round63` is the reading: `plan_239_2793c52c60b8cadf`
+   * node `n02` settled `succeeded` with fifteen `soil_tilled` receipts, and the run's own bundle carries
+   * `{"nodeId":"n02","actionId":"for_each","state":"succeeded"}` and no row of it. **A count is not this field**:
+   * which tile was refused, and what was on it, is the fact that makes the next plan different from this one.
+   * </p>
+   *
+   * <p>
+   * CARRIED, NEVER RENDERED. The Mod's own bytes, under the Mod's own name, bounded by the Mod's own
+   * `BodyProgramValidation.IsOpaqueTerminalProof` (1..4096) - the aggregate is built to that same ceiling
+   * (`MaximumAggregateChars`) and counts what it could not fit (`rowsOmitted`), so a table that arrives short says so
+   * itself rather than being cut here. Absent on every node that proved no effect, which is `rejected`, `failed`,
+   * `cancelled`, `recovery_required` and every state short of a terminal one (ADR-006: a node claiming no effect must
+   * not present proof of one).
+   * </p>
+   */
+  readonly evidence?: string;
+  /**
+   * The pass's own verdict line, verbatim: `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`, or the
+   * `partially_succeeded` spelling with `failed`/`refused` beside them.
+   *
+   * <p>
+   * The Mod's `BodyProgramJournalNode.PostconditionVerification`. It is the one sentence that says HOW MANY of the rows
+   * the table lists did the thing, and `partially_succeeded` lives only here - a batch node carries no other field that
+   * distinguishes "all sixty" from "forty-five of sixty". Carried for the same reason `evidence` is: it is the
+   * producer's own words, and re-deriving the counts here would be a second author of a fact the Mod observed.
+   * </p>
+   */
+  readonly postconditionVerification?: string;
 }
 
 /** A plan's per-node answer, and the batch statement that goes with it. */
@@ -605,6 +693,8 @@ export function planBatchAnswer(
       ...(tile === undefined ? {} : { tile }),
       ...(clock === undefined ? {} : { elapsedMs: clock }),
       ...(skippedBecause.length === 0 ? {} : { skippedBecause }),
+      ...(row?.evidence == null ? {} : { evidence: row.evidence }),
+      ...(row?.postconditionVerification == null ? {} : { postconditionVerification: row.postconditionVerification }),
     });
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
@@ -695,6 +785,8 @@ type PlanJournalNode = Readonly<{
   hint?: string | null;
   refusalDetail?: string | null;
   recoveryDiagnostic?: string | null;
+  evidence?: string | null;
+  postconditionVerification?: string | null;
 }>;
 
 /**
@@ -719,6 +811,11 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
         hint: typeof entry.hint === "string" ? entry.hint : null,
         refusalDetail: typeof entry.refusalDetail === "string" ? entry.refusalDetail : null,
         recoveryDiagnostic: typeof entry.recoveryDiagnostic === "string" ? entry.recoveryDiagnostic : null,
+        // The two proof fields a batch node carries. Read here rather than at a call site because this is the ONE reader
+        // of a status frame, and a field it does not read is a field no plan answer can ever carry.
+        evidence: typeof entry.evidence === "string" ? entry.evidence : null,
+        postconditionVerification:
+          typeof entry.postconditionVerification === "string" ? entry.postconditionVerification : null,
       }),
     );
   }

@@ -171,7 +171,7 @@ internal sealed class GuardianSupervisor : IAsyncDisposable
     private static async Task TerminateAndWaitForExitAsync(WindowsNative.SafeProcessHandle process)
     {
         _ = WindowsNative.TerminateProcess(process, 1);
-        _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+        _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs), CancellationToken.None).ConfigureAwait(false);
     }
 
     private static void VerifyCreatedProcessIdentity(WindowsNative.SafeProcessHandle process, AdmittedGuardianImage image)
@@ -192,6 +192,13 @@ internal sealed record GuardianProcessResources(WindowsNative.SafeProcessHandle 
 
 internal sealed class GuardianSupervisorLease : IAsyncDisposable
 {
+    /// <summary>
+    /// How long the native Guardian may take to contain the roles it created and leave after its
+    /// control EOF. It is a ceiling INSIDE the budget the caller declared, never an extension of it: a
+    /// quit that has spent its deadline has nothing left to give this wait.
+    /// </summary>
+    internal const uint ContainmentCeilingMs = 30_000;
+
     private const int MaxNativeFrameBytes = 16_384;
     // FILETIME's zero point is 1601-01-01; the Unix epoch is this many 100 ns ticks after it.
     private const long UnixEpochFileTimeTicks = 116_444_736_000_000_000;
@@ -202,6 +209,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     private readonly TaskCompletionSource? controlClosedForTesting;
     private readonly SemaphoreSlim relayGate = new(1, 1);
     private bool closed;
+    private uint containmentCeilingMs = ContainmentCeilingMs;
     private FileStream? publicInputStream;
     private FileStream? publicOutputStream;
 
@@ -229,6 +237,15 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     /// later: a reused pid starts at a different instant, so the record can never name the wrong process.
     /// </summary>
     internal long StartedAtUnixMs { get; }
+
+    /// <summary>
+    /// Narrows how long this guardian may take to leave, to what a quit's declared budget has left.
+    ///
+    /// It can only shorten <see cref="ContainmentCeilingMs"/>, never extend it: a settlement that a
+    /// quit is waiting on spends what that quit has, so the player waits one declared number and not
+    /// the guardian's ceiling followed by the child's deadline, counted separately.
+    /// </summary>
+    internal void BindContainmentCeiling(uint waitMilliseconds) => containmentCeilingMs = Math.Min(waitMilliseconds, ContainmentCeilingMs);
 
     internal async Task<GuardianRelayResult> RelayResidentAsync(GuardianRelayCommand command, CancellationToken cancellationToken)
     {
@@ -288,6 +305,30 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    internal Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken) =>
+        WaitForExitAsync(cancellationToken, ContainmentCeilingMs);
+
+    /// <summary>
+    /// Closes the guardian's control pipe and waits for it to leave within the bound the caller
+    /// supplies - the quit's one declared budget when a child published one, or this class's own
+    /// containment ceiling when the session failed before any child declared anything.
+    /// </summary>
+    internal async Task CloseControlAndWaitForExitAsync(uint waitMilliseconds, CancellationToken cancellationToken)
+    {
+        await CloseControlAsync(cancellationToken).ConfigureAwait(false);
+        if (await WaitForExitAsync(cancellationToken, waitMilliseconds).ConfigureAwait(false) is GuardianSupervisorExit.Unavailable)
+            throw new GuardianLaunchUnavailableException();
+    }
+
+    private Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken, uint timeoutMilliseconds)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = WindowsNative.WaitForSingleObject(process, timeoutMilliseconds);
+        if (result == WindowsNative.WaitTimeout) return Task.FromResult(GuardianSupervisorExit.Unavailable);
+        if (result != WindowsNative.WaitObject0 || !WindowsNative.GetExitCodeProcess(process, out _)) return Task.FromResult(GuardianSupervisorExit.Unavailable);
+        return Task.FromResult(closed ? GuardianSupervisorExit.ControlClosed : GuardianSupervisorExit.Unavailable);
+    }
+
     /// <summary>
     /// Ends this resident Guardian and answers whether the exact process is GONE.
     ///
@@ -306,9 +347,9 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     internal async Task<bool> SettleAsync()
     {
         await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
-        if (await WaitForExitAsync(CancellationToken.None, 30_000).ConfigureAwait(false) is GuardianSupervisorExit.ControlClosed) return true;
+        if (await WaitForExitAsync(CancellationToken.None, containmentCeilingMs).ConfigureAwait(false) is GuardianSupervisorExit.ControlClosed) return true;
         _ = WindowsNative.TerminateProcess(process, 1);
-        _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+        _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs), CancellationToken.None).ConfigureAwait(false);
         return WindowsNative.WaitForSingleObject(process, 0) == WindowsNative.WaitObject0 && WindowsNative.GetExitCodeProcess(process, out _);
     }
 
@@ -317,28 +358,14 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
             ? (creationTime - UnixEpochFileTimeTicks) / 10_000
             : 0;
 
-    internal Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken) =>
-        WaitForExitAsync(cancellationToken, 30_000);
-
-    internal async Task CloseControlAndWaitForExitAsync(CancellationToken cancellationToken)
-    {
-        await CloseControlAsync(cancellationToken).ConfigureAwait(false);
-        if (await WaitForExitAsync(cancellationToken, 30_000).ConfigureAwait(false) is GuardianSupervisorExit.Unavailable)
-            throw new GuardianLaunchUnavailableException();
-    }
-
-    private Task<GuardianSupervisorExit> WaitForExitAsync(CancellationToken cancellationToken, uint timeoutMilliseconds)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var result = WindowsNative.WaitForSingleObject(process, timeoutMilliseconds);
-        if (result == WindowsNative.WaitTimeout) return Task.FromResult(GuardianSupervisorExit.Unavailable);
-        if (result != WindowsNative.WaitObject0 || !WindowsNative.GetExitCodeProcess(process, out _)) return Task.FromResult(GuardianSupervisorExit.Unavailable);
-        return Task.FromResult(closed ? GuardianSupervisorExit.ControlClosed : GuardianSupervisorExit.Unavailable);
-    }
-
     public async ValueTask DisposeAsync()
     {
-        await SettleAsync().ConfigureAwait(false);
+        await CloseControlAsync(CancellationToken.None).ConfigureAwait(false);
+        if (await WaitForExitAsync(CancellationToken.None).ConfigureAwait(false) is GuardianSupervisorExit.Unavailable)
+        {
+            _ = WindowsNative.TerminateProcess(process, 1);
+            _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs), CancellationToken.None).ConfigureAwait(false);
+        }
         publicInputStream?.Dispose();
         publicOutputStream?.Dispose();
         privateIngress.Dispose();
@@ -587,7 +614,7 @@ internal sealed class GuardianRecoverySupervisorLease : IAsyncDisposable
 
     private async Task<uint> WaitForProcessExitAsync(CancellationToken cancellationToken)
     {
-        return await Task.Run(() => WindowsNative.WaitForSingleObject(process, 100), cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.HandlePollIntervalMs), cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task CloseControlAsync(CancellationToken cancellationToken)
@@ -617,7 +644,7 @@ internal sealed class GuardianRecoverySupervisorLease : IAsyncDisposable
         if (WindowsNative.WaitForSingleObject(process, 0) == WindowsNative.WaitTimeout)
         {
             _ = WindowsNative.TerminateProcess(process, 1);
-            _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, 30_000), CancellationToken.None).ConfigureAwait(false);
+            _ = await Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs), CancellationToken.None).ConfigureAwait(false);
         }
         publicInputStream?.Dispose();
         privateIngress.Dispose();

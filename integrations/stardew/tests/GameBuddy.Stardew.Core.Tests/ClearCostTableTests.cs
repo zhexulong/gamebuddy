@@ -25,6 +25,7 @@ public sealed class ClearCostTableTests
     [Theory]
     [InlineData("rock", 9)]
     [InlineData("stump", 7)]
+    [InlineData("twig", 7)]
     [InlineData("weed", 5)]
     [InlineData("grass", 5)]
     [InlineData("crop", 5)]
@@ -65,6 +66,8 @@ public sealed class ClearCostTableTests
     [Fact]
     public void TheTableIsTheOneAuthorityForEveryKindTheModCanClear()
     {
-        ClearCostTable.Kinds.Should().BeEquivalentTo(new[] { "rock", "stump", "weed", "grass", "crop" });
+        // A twig is here because it is AXE work (`Object.cs:1182`) and the search has to be able to price it: before it,
+        // a strip of twig litter was a wall to the route search and `object` to every reader.
+        ClearCostTable.Kinds.Should().BeEquivalentTo(new[] { "rock", "stump", "weed", "twig", "grass", "crop" });
     }
 }

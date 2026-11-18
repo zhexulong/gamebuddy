@@ -13,6 +13,10 @@ import {
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import {
+  validFixtureSlotRelationship,
+  validateNativeLocalFixtureConfig,
+} from "./lib/native-local-runner-primitives.mjs";
 
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree"];
 const REQUIRED_CAPABILITIES = [
@@ -39,7 +43,7 @@ export async function runChopTreeSourceSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "chop_tree", requiredActions: EXPECTED_ACTIONS });
   try {
     let snapshot = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -311,20 +315,4 @@ function summarizeWithChop(snapshot) {
     treeChopSourceTargets: Array.isArray(snapshot.treeChopSourceTargets) ? snapshot.treeChopSourceTargets.length : 0,
     treeChopResultTargets: Array.isArray(snapshot.treeChopResultTargets) ? snapshot.treeChopResultTargets.length : 0,
   };
-}
-function validateNativeLocalFixtureConfig(value) {
-  // `Portfolio` is not a ModConfig property, so the game drops the key when it
-  // writes the config back during startup. Its ABSENCE therefore proves nothing;
-  // only an explicit `true` shows the topology is not isolated. Requiring
-  // `=== false` made every runner fail once the file had been rewritten, which is
-  // what the minecart runner already hit and fixed.
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

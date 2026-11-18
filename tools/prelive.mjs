@@ -22,7 +22,7 @@
  *                             stale, and the reason is visible in the same run: `check-harness-conformance` alone is
  *                             27.9 s (it spawns every gate whose default run prints a report) and `audit-totality`
  *                             8.9 s, so the rung's cost is two members rather than its thirty-eight. It ends with
- *                             `tools/check-prelive-gate-registry.mjs`, which
+ *                             `gates/meta/check-prelive-gate-registry.mjs`, which
  *                             derives the population of every gate in the tree and fails when one of them neither runs
  *                             here nor names where else it runs - so a gate added to this list, or left out of it, is a
  *                             fact this rung states rather than a habit someone remembers.
@@ -41,13 +41,26 @@
  *   L3  runner shape        - a one-shot `observeFresh({actionable:true})` may not be the basis of an assertion
  *   L4  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
  *
+ * THE BASELINE'S ONLY WRITER. L3 is a ratchet over `tools/prelive-l3-baseline.json`, and until `--record-shrinks` the
+ * ratchet's only way down was a hand edit - which is how two entries outlived the runners `b6128a58` deleted and left
+ * `baseline_stale` naming them at HEAD with nobody able to discharge them. The flag may REMOVE a recorded site or LOWER
+ * its count, never add one or raise one, and it prints the members it refused as `added [...]`/`raised [...]` so a
+ * recorder is never a way to bank new debt. See `recordShrinks`.
+ *
  * USAGE:
  *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L3 (L0b and L2 are the slow rungs)
  *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the Host build
  *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
  *   node tools/prelive.mjs --action <id> --game             # the same, then L4 for that action
+ *   node tools/prelive.mjs --record-shrinks                # L3's baseline, lowered/removed and never grown
  *
  * No game, no network, no model. Exit 1 on the first red rung.
+ *
+ * red-proof: history  the two L3 entries whose runners `b6128a58` retired, put back by hand -> `baseline_stale` for
+ *   both, and `--record-shrinks` deletes exactly those two, printing `added [] · raised [] · lowered 0 · removed 2`
+ *   (tools/prelive.test.mjs)
+ * red-proof: inject  a recorded site the tree now violates MORE often than its `count`, and a runner with no entry at
+ *   all -> `baseline_shrink_refused`, both members named, the baseline byte-identical (tools/prelive.test.mjs)
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -74,7 +87,7 @@ export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
  * name. Reimplementing any of them here would give the same fact two spellings, and the copy would be the one that goes
  * stale.
  *
- * The last member is the registry (`tools/check-prelive-gate-registry.mjs`): it derives the population of every gate in
+ * The last member is the registry (`gates/meta/check-prelive-gate-registry.mjs`): it derives the population of every gate in
  * the tree, reads the two lists below through `PRELUDE_RUNGS`, and fails naming any gate that neither runs here nor
  * declares where else it runs. It is in L0 because it costs milliseconds - and it must be, because a register nobody
  * runs is the defect it exists to catch.
@@ -99,7 +112,7 @@ export const L0_GATES = Object.freeze([
   // so as a rung it exited 0 having examined nothing, which is how four blocking findings stayed invisible. The
   // module and its test still exist and are still exercised; the rung below runs the full audit, which has a CLI.
   "tools/check-stardew-fixture-action-coverage.mjs",
-  "tools/check-harness-conformance.mjs",
+  "gates/meta/check-harness-conformance.mjs",
   "tools/check-stardew-task-action-coverage.mjs",
   // The other half of the same question: the coverage gate asks whether a rotation task NAMES an action, this one asks
   // whether the world that receives the day actually publishes the family the action addresses. Measured 2026-11-09:
@@ -192,6 +205,13 @@ export const L0_GATES = Object.freeze([
   // tools in total silence`) was reviewed, shipped, and answered with 132 bubbles over 93 prompt turns - 90 of them
   // standalone speech with no tool call - before anyone asked what KIND of rule it was. Pure file reads, milliseconds.
   "tools/check-game-surface-conduct-classes.mjs",
+  // Where a delivered line's CEILING comes from. The delivery cut every turn's speech at 80 characters - 77 with the
+  // reaction sound - while the presentation transport carries 4,000 and the bubble clamps its own two lines with `…`;
+  // measured on `round62` (90 turns carried text, 70 delivered a bubble), 18 turns lost their tails for it: 533 characters,
+  // 26 whole sentences. Nothing read where the number came from, and the floor restated it, so the two agreed with each
+  // other and neither agreed with the wire. This rung reads the bound, its three producers and the bubble's clamp, and
+  // fails when a bound states a literal instead of resolving to the transport's declaration. Pure file reads.
+  "tools/check-delivery-truncation-bound.mjs",
   // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
   // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
   // - and this rung ran `audit-totality-head.mjs` above instead, whose entry guard is missing, so it exits 0 having
@@ -200,7 +220,7 @@ export const L0_GATES = Object.freeze([
   // written here rather than left as a surprise: the run that put it in the ladder found four blocking findings - one
   // bounds pair and three ceilings a player could meet as a generic failure - and no other gate in any rung reports
   // that class.
-  "tools/audit-totality.mjs",
+  "gates/meta/audit-totality.mjs",
   // Cognitive complexity per FUNCTION and per CLASS-with-its-partials-merged, plus class size across partials, as a
   // ratchet over `tools/cognitive-complexity-baseline.json`. It belongs on the ladder because the ladder is what
   // a lane reads before trusting the tree, and a per-file measure cannot see `ExecutionManager`: 46
@@ -255,7 +275,7 @@ export const L0_GATES = Object.freeze([
   // in the derivation (342 today, 55 of them recorded silent in `tools/gate-population-baseline.json`) by reading each
   // gate's own report contract - milliseconds, no child process - so a new gate that says nothing about its population
   // is red here instead of green in a rung.
-  "tools/check-gate-populations.mjs",
+  "gates/meta/check-gate-populations.mjs",
   // The artefact census: every file in the tree that SAYS it is generated, paired with the tool or Mod export that emits
   // it, re-derived into a temp path and compared byte for byte. Measured 2026-11-13 before it was wired: the projection
   // producer reproduces its 180 614 bytes in 88 ms, the Mod export DLL reproduces all three of its artefacts in 600 ms,
@@ -272,7 +292,7 @@ export const L0_GATES = Object.freeze([
   // filters without a reason 5 (filed 5)`, 0.3 s, worktree only - and it already answers `examined 0` with
   // `stardew_discovery_exclusions_skipped:`, which is the dialect this rung reads as UNAVAILABLE.
   "tools/check-stardew-discovery-exclusions.mjs",
-  "tools/check-prelive-gate-registry.mjs",
+  "gates/meta/check-prelive-gate-registry.mjs",
   // The five instance family of one two days: a thing the companion can SAY that one layer accepts and the next refuses or
   // silently reinterprets - `charge` on the wire but not in the tool schema, `sweep_scythe` in three surfaces and no mount,
   // `for_each` sources, an emote the prompt named and nothing mounted, a `refusalDetail` the Mod sent and the Host refused.
@@ -319,7 +339,7 @@ export const L0B_GATES = Object.freeze([
 ]);
 
 /**
- * The gate rungs as data. `tools/check-prelive-gate-registry.mjs` imports THIS, not a regex over this file: the ladder's
+ * The gate rungs as data. `gates/meta/check-prelive-gate-registry.mjs` imports THIS, not a regex over this file: the ladder's
  * own declaration is the authority for what prelive runs, so wiring a gate is one edit in one place.
  */
 export const PRELUDE_RUNGS = Object.freeze([
@@ -339,7 +359,7 @@ export const PRELUDE_RUNGS = Object.freeze([
 export const LADDER_RUNGS = Object.freeze(["prep", ...PRELUDE_RUNGS.map((rung) => rung.id), "l1", "l1b", "l2", "l3"]);
 
 /**
- * How a gate says it measured nothing, in the convention `tools/check-ci-coverage.mjs` already counts: a whole line whose
+ * How a gate says it measured nothing, in the convention `gates/meta/check-ci-coverage.mjs` already counts: a whole line whose
  * marker ends in `_skipped`. A gate that prints one has exited cleanly without comparing anything, so this ladder reports
  * it UNAVAILABLE and counts it apart from the gates that passed. The rule is the marker, not a list of gate names.
  */
@@ -1093,6 +1113,10 @@ function firstParamName(body) {
  * sites whose file no resolver declaration names, are listed in `tools/prelive-l3-baseline.json`; that baseline is a ratchet - an unlisted site is red, and a listed site that no
  * longer violates is red too, so the number can only go down. The baseline records HOW each site was classified, so
  * the classification can be checked rather than trusted.
+ *
+ * `sites` is the same reading as per-entry DATA rather than a verdict: one row per baseline entry with the `count` it
+ * records and the `seen` this tree produced. The ratchet's verdict is derived from those rows, and `--record-shrinks`
+ * writes from them - so the thing that judges a site and the thing that records it cannot disagree about what it read.
  */
 export function checkRunnerShape({ runners, harnessSource, baseline, reachableRunners = new Set() }) {
   const violations = [];
@@ -1100,6 +1124,7 @@ export function checkRunnerShape({ runners, harnessSource, baseline, reachableRu
   const baselineSites = baseline?.knownSites ?? [];
   const checked = runners.length;
   const knownRunners = new Set();
+  const seen = new Map();
   for (const runner of runners) {
     const source = blankComments(runner.source);
     const optOuts = optOutRules(runner.source);
@@ -1114,15 +1139,22 @@ export function checkRunnerShape({ runners, harnessSource, baseline, reachableRu
       const site = baselineSites.find((candidate) => candidate.file === entry.file && candidate.fact === entry.fact);
       if (site === undefined) violations.push({ ...entry, baselined: false });
       else {
-        site.seen = (site.seen ?? 0) + 1;
+        const occurrences = (seen.get(siteLabel(entry)) ?? 0) + 1;
+        seen.set(siteLabel(entry), occurrences);
         known.push(entry);
         knownRunners.add(entry.file);
-        if ((site.seen ?? 0) > (site.count ?? 1)) violations.push({ ...entry, baselined: true });
+        if (occurrences > (site.count ?? 1)) violations.push({ ...entry, baselined: true });
       }
     }
   }
-  for (const site of baselineSites) {
-    if ((site.seen ?? 0) === 0 || (site.seen ?? 0) < (site.count ?? 1))
+  const sites = baselineSites.map((site) => ({
+    file: site.file,
+    fact: site.fact,
+    count: site.count ?? 1,
+    seen: seen.get(siteLabel(site)) ?? 0,
+  }));
+  for (const site of sites) {
+    if (site.seen === 0 || site.seen < site.count)
       violations.push({ rule: "baseline_stale", file: site.file, fact: site.fact, line: 0, baselined: true });
   }
   return {
@@ -1131,8 +1163,75 @@ export function checkRunnerShape({ runners, harnessSource, baseline, reachableRu
     checked,
     knownRunners: knownRunners.size,
     knownSites: known.length,
+    sites,
     violations,
   };
+}
+
+/** A baseline entry's identity: the runner file it was classified in, and the world fact it asserts. */
+export function siteLabel(site) {
+  return `${site.file}:${site.fact}`;
+}
+
+/**
+ * THE ONE WRITE, AND ITS POWER IS DOWNWARD.
+ *
+ * `b6128a58` retired six runners into their contracts and dropped their entries from every baseline that had a way to
+ * drop them - `tools/check-native-local-runner-scaffold.mjs --record-shrinks` deleted its two - while this baseline had
+ * no writer at all, so `shake_tree` and `take_pedestal_item` outlived their runners and `baseline_stale` named them at
+ * HEAD with nobody able to discharge them. A ratchet whose only way down is a hand edit is a ratchet that stops.
+ *
+ * A record is removed when the tree no longer produces it, lowered when it produces it fewer times than recorded, and
+ * left alone when the count agrees. It cannot ADD an entry or RAISE one: an unlisted site is new debt and a site seen
+ * more often than its count is raised debt, so both are named in `added`/`raised`, neither is written, and the file it
+ * leaves is the recorded set minus what the tree genuinely stopped saying. The two directions are independent facts -
+ * a lane's half-wired runner must not stop this tool from discharging an entry whose runner is gone - so the write is
+ * the shrink and the refusal is the growth, printed together. What it must never be is a way to bank new debt.
+ */
+export function recordShrinks({ baseline, report }) {
+  if (baseline === null || baseline === undefined)
+    return {
+      blocked: true,
+      refused:
+        `baseline_shrink_refused: there is no ${BASELINE} to shrink - this operation only removes or lowers an entry ` +
+        "that is already recorded, so a missing baseline is not something it can create",
+      added: [],
+      raised: [],
+    };
+  const sites = report?.sites;
+  if (!Array.isArray(sites))
+    return {
+      blocked: true,
+      refused: "baseline_shrink_refused: the L3 reading carries no per-site population, so there is nothing to compare",
+      added: [],
+      raised: [],
+    };
+  const added = (report.violations ?? []).filter((entry) => !entry.baselined).map(siteLabel);
+  const raised = sites.filter((site) => site.seen > site.count).map(siteLabel);
+  const knownSites = [];
+  const lowered = [];
+  const removed = [];
+  for (const entry of baseline.knownSites ?? []) {
+    const site = sites.find((candidate) => candidate.file === entry.file && candidate.fact === entry.fact);
+    const occurrences = site?.seen ?? 0;
+    if (occurrences === 0) {
+      removed.push(siteLabel(entry));
+      continue;
+    }
+    const count = entry.count ?? 1;
+    if (occurrences < count) {
+      lowered.push(siteLabel(entry));
+      knownSites.push({ ...entry, count: occurrences });
+      continue;
+    }
+    knownSites.push(entry);
+  }
+  return { blocked: false, payload: { ...baseline, knownSites }, added, raised, lowered, removed };
+}
+
+/** The baseline as a file again: every key it carries, with only `knownSites` replaced. */
+export function serialiseBaseline(baseline) {
+  return `${JSON.stringify(baseline, null, 2)}\n`;
 }
 
 /**
@@ -1252,9 +1351,9 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
-export function shapeRung({ directory = TOOLS } = {}) {
+export function shapeRung({ directory = TOOLS, root = REPO } = {}) {
   const files = runnerFiles(directory);
-  const baselinePath = path.join(REPO, BASELINE);
+  const baselinePath = path.join(root, BASELINE);
   const baseline = fs.existsSync(baselinePath) ? JSON.parse(fs.readFileSync(baselinePath, "utf8")) : { knownSites: [] };
   return checkRunnerShape({
     runners: files.map((file) => ({ file, source: fs.readFileSync(path.join(directory, file), "utf8") })),
@@ -1262,6 +1361,54 @@ export function shapeRung({ directory = TOOLS } = {}) {
     baseline,
     reachableRunners: reachableRunnerNames(),
   });
+}
+
+/** `added [...] · raised [...] · lowered N · removed M` - the members in brackets are the ones it refused to record. */
+function summariseRecord(outcome) {
+  const list = (labels) => `[${labels.join(", ")}]`;
+  return (
+    `record_shrinks: added ${list(outcome.added ?? [])} · raised ${list(outcome.raised ?? [])} · ` +
+    `lowered ${outcome.lowered?.length ?? 0} · removed ${outcome.removed?.length ?? 0}`
+  );
+}
+
+/**
+ * `--record-shrinks`: L3's baseline, written by the tool that reads it. The verdict printed afterwards is the one the
+ * file it just wrote produces, re-read from disk - not the outcome this function hoped for. So a shrink recorded beside
+ * a half-wired runner exits non-zero and names what it did not bank, instead of reporting a pass it did not earn.
+ */
+export function recordShrinksCli({ root = REPO } = {}) {
+  const baselinePath = path.join(root, BASELINE);
+  const baseline = fs.existsSync(baselinePath) ? JSON.parse(fs.readFileSync(baselinePath, "utf8")) : null;
+  const outcome = recordShrinks({ baseline, report: shapeRung({ root }) });
+  const lines = [];
+  if (outcome.refused !== undefined) {
+    lines.push(outcome.refused);
+    lines.push(summariseRecord(outcome));
+    process.stdout.write(`${lines.join("\n")}\n`);
+    return outcome.blocked ? 2 : 1;
+  }
+  if (outcome.removed.length + outcome.lowered.length > 0)
+    fs.writeFileSync(baselinePath, serialiseBaseline(outcome.payload), "utf8");
+  lines.push(summariseRecord(outcome));
+  for (const label of outcome.removed) lines.push(`  removed ${label}`);
+  for (const label of outcome.lowered) lines.push(`  lowered ${label}`);
+  if (outcome.removed.length + outcome.lowered.length === 0) lines.push("  the baseline already describes the tree");
+  for (const label of [...outcome.added, ...outcome.raised]) lines.push(`  not recorded: ${label}`);
+  if (outcome.added.length + outcome.raised.length > 0)
+    lines.push(
+      "  the members above are debt this flag will not bank - fix them; a baseline that recorded them" +
+        " would be lying in your favour",
+    );
+  const after = shapeRung({ root });
+  lines.push(
+    `  after: l3 ${after.status} · known ${after.knownSites} site(s) in ${after.checked} runners · ` +
+      `${after.violations.length} violation(s)`,
+  );
+  for (const entry of after.violations)
+    lines.push(`    ${entry.file}:${entry.line} ${entry.rule} asserts ${entry.fact}`);
+  process.stdout.write(`${lines.join("\n")}\n`);
+  return after.status === "passed" ? 0 : 1;
 }
 
 /**
@@ -1288,6 +1435,7 @@ export function parseArgs(argv) {
     noGame: argv.includes("--no-game"),
     game: argv.includes("--game"),
     skipCompile: argv.includes("--skip-compile"),
+    recordShrinks: argv.includes("--record-shrinks"),
     action: value("--action"),
     modsPath: value("--mods-path"),
     gameInstall: value("--game-install"),
@@ -1312,8 +1460,14 @@ export function runLadder({ rungs, stopOnFirstRed = true }) {
 
 function main(argv) {
   const options = parseArgs(argv);
+  if (options.recordShrinks) {
+    process.exitCode = recordShrinksCli();
+    return;
+  }
   if (!options.noGame && options.action === null) {
-    process.stderr.write("usage: node tools/prelive.mjs --no-game | --action <id> [--game] [--skip-compile]\n");
+    process.stderr.write(
+      "usage: node tools/prelive.mjs --no-game | --action <id> [--game] [--skip-compile] | --record-shrinks\n",
+    );
     process.exitCode = 2;
     return;
   }

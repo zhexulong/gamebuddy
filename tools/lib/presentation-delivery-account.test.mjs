@@ -4,12 +4,14 @@ import {
   assessBundleDeliveryAccount,
   deliveryAccountClause,
   describeDeliveryAccount,
+  describeSpeechFrequency,
   EXECUTION_STALL_PREFIX,
   MAX_BUNDLE_STALL_FACTS,
   readStallWatch,
   readTurnDeliveryRecords,
   readWorldStateStaleFacts,
   summarizeDeliveryAccount,
+  summarizeSpeechFrequency,
   TURN_DELIVERY_PREFIX,
   WORLD_STATE_STALE_PREFIX,
 } from "./presentation-delivery-account.mjs";
@@ -154,6 +156,9 @@ test("a run's committed bubbles and its account are the same population, one per
     unaccounted: 0,
     turns: 2,
     perTurnMax: 1,
+    spoke: 2,
+    lost: 0,
+    lostReasons: {},
     overOne: [],
     truncatedTurns: 1,
     truncatedChars: 22,
@@ -169,7 +174,7 @@ test("a run's committed bubbles and its account are the same population, one per
   assert.equal(account.blocked, null);
   assert.match(
     describeDeliveryAccount(account),
-    /^bubbles produced 2 · accounted 2 · unaccounted 0 · parts produced 46 · presented 46 · suppressed 0 · missing 0 · turns examined 2 · bubbles 2 · per-turn max 1 · messages rolled up: 4 into 2 · bubbles truncated 1 \(chars 22\) · reconciled$/u,
+    /^bubbles produced 2 · accounted 2 · unaccounted 0 · parts produced 46 · presented 46 · suppressed 0 · missing 0 · turns examined 2 · bubbles 2 · per-turn max 1 · messages rolled up: 4 into 2 · bubbles truncated 1 \(chars 22\) · reconciled · bubbles 0 · nothing was delivered/u,
   );
 });
 
@@ -232,7 +237,10 @@ test("parts that do not add up block the run and print the three populations and
     passed: false,
     reasonCode: "delivery_account_parts_do_not_add_up",
   });
-  assert.match(describeDeliveryAccount(account), /delivery_mismatch:produced=3;presented=1;suppressed=0;missing=2$/u);
+  assert.match(
+    describeDeliveryAccount(account),
+    /delivery_mismatch:produced=3;presented=1;suppressed=0;missing=2 · bubbles 0 · nothing was delivered/u,
+  );
 });
 
 test("two turns that err in opposite directions do not cancel: the run-level totals can agree while no turn does", () => {
@@ -253,7 +261,10 @@ test("two turns that err in opposite directions do not cancel: the run-level tot
   assert.equal(account.blocked, "delivery_account_parts_do_not_add_up");
   const described = describeDeliveryAccount(account);
   assert.match(described, /turns mismatched 2/u);
-  assert.match(described, /delivery_mismatch:produced=4;presented=4;suppressed=0;missing=0$/u);
+  assert.match(
+    described,
+    /delivery_mismatch:produced=4;presented=4;suppressed=0;missing=0 · bubbles 0 · nothing was delivered/u,
+  );
   assert.deepEqual(deliveryAccountClause(account), {
     id: "delivery_account",
     passed: false,
@@ -265,7 +276,7 @@ test("a run that presented nothing and printed nothing says so instead of agreei
   const account = summarizeDeliveryAccount({ records: [], bubblesProduced: 0 });
   assert.equal(account.blocked, null, "nothing to deliver is not a broken account");
   assert.equal(account.nothingPresented, true);
-  assert.match(describeDeliveryAccount(account), /nothing presented$/u);
+  assert.match(describeDeliveryAccount(account), /nothing presented · bubbles 0 · nothing was delivered/u);
 });
 
 test("bubbles with no records at all are an absent account, never a pass", () => {
@@ -326,4 +337,167 @@ test("the written bundle is judged by the same invariant, and an old bundle bloc
   const partsVerdict = assessBundleDeliveryAccount({ presentation: { pieceCount: 1, deliveryAccount: brokenParts } });
   assert.equal(partsVerdict.code, "delivery_account_parts_do_not_add_up");
   assert.match(partsVerdict.detail, /delivery_mismatch:produced=1;presented=2;suppressed=0;missing=-1$/u);
+});
+
+/**
+ * `round73`'s own delivered bubbles, verbatim from its `result.json`, with the moments the port committed them at.
+ *
+ * The seven are the run this reading was written for: the audit counted them by hand off `run-progress.jsonl` and got
+ * seven bubbles in 252 s, one every 36 s, with a 7-second gap between the third and the fourth. Nothing in the artifact
+ * said any of it, which is why the numbers live here as the red case rather than in a sentence.
+ */
+const ROUND73_PIECES = [
+  { index: 0, atMs: 1794984854863, text: "醒了就起，趁日头还软。门口那三棵花椰菜该掰了，我出门了。" },
+  { index: 1, atMs: 1794984901571, text: "嗯。 行，镇上你去忙，家里这摊我收拾。" },
+  { index: 2, atMs: 1794984918904, text: "还剩一棵花椰菜卡在那块地上，我绕到它边上再掰。" },
+  { index: 3, atMs: 1794984926037, text: "掰下来了。这边草和石头我接着往西捋。" },
+  { index: 4, atMs: 1794984998509, text: "西头这片的草有点密，我顺着往西捋。" },
+  { index: 5, atMs: 1794985036604, text: "西头这一圈总算能看出地皮了，地上落的东西我也顺手揣进兜里。" },
+  { index: 6, atMs: 1794985051954, text: "树桩一个个挖掉，地上散的木头也捡了。" },
+];
+const ROUND73_WINDOW = { startedAtMs: 1794984809363, endedAtMs: 1794985062407 };
+
+test("the run reports how often she spoke from its own pieces, not from a count taken by hand", () => {
+  // RED ON REAL HISTORY: this is round73's own bundle, and before this reading the run published `pieceCount 7` and an
+  // account of `bubbles accounted 7` - both true, neither able to answer "how often did she talk", so the audit answered
+  // it by counting a progress log by hand.
+  const speech = summarizeDeliveryAccount({
+    records: ROUND73_PIECES.map(() => ({ textParts: 1, presented: 1, suppressed: {}, bubbles: 1 })),
+    bubblesProduced: ROUND73_PIECES.length,
+    pieces: ROUND73_PIECES,
+    window: ROUND73_WINDOW,
+  }).speech;
+  assert.equal(speech.bubbles, ROUND73_PIECES.length, "the population is every delivered bubble");
+  assert.equal(speech.spanMs, ROUND73_WINDOW.endedAtMs - ROUND73_WINDOW.startedAtMs);
+  // The properties, not today's numbers: the rate is the span divided by the bubbles, and the shortest gap is the
+  // smallest adjacent difference - recomputed here from the same inputs by a different route.
+  assert.equal(speech.oneEveryMs, Math.round(speech.spanMs / ROUND73_PIECES.length));
+  const gaps = ROUND73_PIECES.slice(1).map((piece, index) => piece.atMs - ROUND73_PIECES[index].atMs);
+  assert.equal(speech.shortestGapMs, Math.min(...gaps));
+  assert.equal(
+    gaps[speech.shortestGap.fromIndex],
+    speech.shortestGapMs,
+    "the gap is named by the two pieces it sits between, so a reader can open them",
+  );
+  assert.equal(speech.shortestGap.toIndex, speech.shortestGap.fromIndex + 1);
+  assert.equal(speech.notMeasured, null);
+  // The sentence the run prints for itself, in the two numbers a frequency claim needs.
+  assert.match(
+    describeSpeechFrequency(speech),
+    /^bubbles 7 over 253 s = one every 36\.1 s · shortest gap 7\.1 s · turns 7 · spoke 7 · lost 0 \{\}$/u,
+  );
+});
+
+test("a run whose deliveries nobody could present says how many it lost and why", () => {
+  // ROUND42'S OWN SHAPE, measured from `tools/_multiday_routine-round42-live-runner.log`: seventeen delivered records, of
+  // which three are `presented: 0` with `suppressed: {no_presentation_lease: 1}` - text produced, paid for, and thrown
+  // away. A cadence that counts only what reached the player reads those seventeen as fourteen quiet turns.
+  const records = Array.from({ length: 17 }, (_, index) =>
+    index % 5 === 4
+      ? { textParts: 1, presented: 0, suppressed: { no_presentation_lease: 1 }, bubbles: 0 }
+      : { textParts: 1, presented: 1, suppressed: {}, bubbles: 1 },
+  );
+  const account = summarizeDeliveryAccount({
+    records,
+    bubblesProduced: 14,
+    pieces: Array.from({ length: 14 }, (_, index) => ({ index, atMs: index * 76_000 })),
+    window: { startedAtMs: 0, endedAtMs: 1_290_000 },
+  });
+  assert.equal(account.bubbles.turns, 17);
+  assert.equal(account.bubbles.spoke, 14);
+  assert.equal(account.bubbles.lost, 3);
+  assert.deepEqual(account.bubbles.lostReasons, { no_presentation_lease: 3 });
+  assert.equal(account.speech.lost, 3);
+  assert.match(
+    describeSpeechFrequency(account.speech),
+    /· turns 17 · spoke 14 · lost 3 \{no_presentation_lease: 3\}$/u,
+  );
+  // A turn that carried nothing is neither one that spoke nor one that lost: the three populations are not a partition
+  // of the turns, and saying so is what stops `spoke + lost === turns` from being believed.
+  const withSilent = summarizeDeliveryAccount({
+    records: [...records, { textParts: 0, presented: 0, suppressed: {}, bubbles: 0 }],
+    bubblesProduced: 14,
+    pieces: Array.from({ length: 14 }, (_, index) => ({ index, atMs: index * 76_000 })),
+    window: { startedAtMs: 0, endedAtMs: 1_290_000 },
+  });
+  assert.equal(withSilent.bubbles.turns, 18);
+  assert.equal(withSilent.bubbles.spoke, 14);
+  assert.equal(withSilent.bubbles.lost, 3);
+});
+
+test("a run that delivered nothing reports zero bubbles and the reason, never nothing at all", () => {
+  const silent = summarizeDeliveryAccount({ records: [], bubblesProduced: 0, pieces: [], window: ROUND73_WINDOW });
+  assert.equal(silent.speech.bubbles, 0);
+  assert.equal(silent.speech.notMeasured, "run_presented_no_bubble");
+  assert.equal(silent.speech.oneEveryMs, null, "a rate with no numerator is not a rate");
+  assert.equal(silent.speech.shortestGapMs, null);
+  assert.match(describeSpeechFrequency(silent.speech), /^bubbles 0 · nothing was delivered/u);
+});
+
+test("the three zeroes are told apart: no bubble, no window, and one bubble that cannot make a gap", () => {
+  const oneBubble = summarizeDeliveryAccount({
+    records: [],
+    bubblesProduced: 1,
+    pieces: [{ index: 0, atMs: 1794984854863 }],
+    window: ROUND73_WINDOW,
+  }).speech;
+  assert.equal(oneBubble.notMeasured, "fewer_than_two_bubbles_on_the_run_clock");
+  assert.equal(
+    oneBubble.oneEveryMs,
+    ROUND73_WINDOW.endedAtMs - ROUND73_WINDOW.startedAtMs,
+    "one bubble over the span is still a rate",
+  );
+  assert.equal(oneBubble.shortestGapMs, null);
+  const noWindow = summarizeDeliveryAccount({
+    records: [],
+    bubblesProduced: 2,
+    pieces: ROUND73_PIECES.slice(0, 2),
+  }).speech;
+  assert.equal(noWindow.notMeasured, "run_window_not_recorded");
+  assert.equal(noWindow.oneEveryMs, null);
+  assert.equal(
+    noWindow.shortestGapMs,
+    ROUND73_PIECES[1].atMs - ROUND73_PIECES[0].atMs,
+    "the gap needs no window: it is between two pieces that carry moments",
+  );
+  // A bundle that predates the absolute clock carries `elapsedMs` against a turn start, so it has no gap this can
+  // measure - and says so rather than reporting the one it can place as if it were the only one.
+  const unplaced = summarizeDeliveryAccount({
+    records: [],
+    bubblesProduced: 3,
+    pieces: [
+      { index: 0, elapsedMs: 1_000 },
+      { index: 1, elapsedMs: 2_000 },
+      { index: 2, atMs: 3_000 },
+    ],
+    window: ROUND73_WINDOW,
+  }).speech;
+  assert.equal(unplaced.placedBubbles, 1);
+  assert.equal(unplaced.bubbles, 3, "every delivered bubble is counted, placed or not");
+  assert.equal(unplaced.shortestGapMs, null);
+  assert.equal(unplaced.notMeasured, "fewer_than_two_bubbles_on_the_run_clock");
+});
+
+test("an even cadence reads as an even cadence: seven bubbles seven seconds apart are a 7-second shortest gap", () => {
+  // THE FALSIFIER the frequency reading needs. If the shortest gap could not come out at a value other than round73's,
+  // the reading would be decoration: this input makes it 7 s by construction, and the rate 7 s too.
+  const metronome = Array.from({ length: 7 }, (_, index) => ({ index, atMs: index * 7_000 }));
+  const speech = summarizeDeliveryAccount({
+    records: [],
+    bubblesProduced: metronome.length,
+    pieces: metronome,
+    window: { startedAtMs: 0, endedAtMs: 49_000 },
+  }).speech;
+  assert.equal(speech.shortestGapMs, 7_000);
+  assert.equal(speech.oneEveryMs, 7_000);
+  assert.match(describeSpeechFrequency(speech), /bubbles 7 over 49 s = one every 7 s · shortest gap 7 s · turns 0/u);
+  // And the reading is not a constant in the other direction either: double the spacing and both numbers move.
+  const spaced = summarizeDeliveryAccount({
+    records: [],
+    bubblesProduced: metronome.length,
+    pieces: metronome.map((piece) => ({ ...piece, atMs: piece.atMs * 2 })),
+    window: { startedAtMs: 0, endedAtMs: 98_000 },
+  }).speech;
+  assert.equal(spaced.shortestGapMs, 14_000);
+  assert.equal(spaced.oneEveryMs, 14_000);
 });

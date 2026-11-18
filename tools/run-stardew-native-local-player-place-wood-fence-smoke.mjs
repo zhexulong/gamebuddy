@@ -12,6 +12,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
 
 const ACTION = "place_wood_fence";
 const REQUIRED_CAPABILITIES = [ACTION, "move_to_tile", "travel"];
@@ -25,7 +26,7 @@ export async function runPlaceWoodFenceSmoke(
   const trace = [];
   const startedAt = Date.now();
   try {
-    validateConfig(config);
+    validateNativeLocalFixtureConfig(config, { action: ACTION });
     let snapshot = await actionableSnapshot(client);
     requireCapabilities(snapshot);
     if (snapshot.location !== "Farm")
@@ -224,16 +225,6 @@ async function actionableSnapshot(client) {
   return snapshot;
 }
 
-function validateConfig(config) {
-  if (config?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    config.Portfolio?.Enable === true ||
-    config.HostAutomation?.Enable === true ||
-    config.HostFarmhandProvisioning?.Enable === true ||
-    config.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-}
 function requireCapabilities(snapshot) {
   for (const action of REQUIRED_CAPABILITIES)
     if (!snapshot.capabilities?.includes(action)) throw new Error(`native_local_${action}_capability_missing`);

@@ -88,10 +88,6 @@ internal sealed partial class ExecutionManager
         return this.ExecuteRedeemPrizeTicket(executionId, requestId);
     }
 
-    /// <summary>
-    /// The one execution body. It re-reads the preconditions against the live world rather than
-    /// trusting the admission read, because admission and the body are two separate game-thread reads.
-    /// </summary>
     private LocalExecutionReceipt ExecuteRedeemPrizeTicket(string executionId, string requestId)
     {
         Farmer player = Game1.player;
@@ -135,7 +131,6 @@ internal sealed partial class ExecutionManager
             + $"prizes_claimed_after={prizesClaimedAfter.ToString(CultureInfo.InvariantCulture)};"
             + $"prize_delivered={delivered.ToString().ToLowerInvariant()}";
 
-        // The postcondition is the LIVE PACK and the LIVE STAT read after the call, both halves of it.
         bool postcondition = delivered
             && ticketsAfter == ticketsBefore - 1
             && prizesClaimedAfter == prizesClaimedBefore + 1

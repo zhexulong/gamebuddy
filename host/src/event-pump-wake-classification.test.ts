@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { HELD_RECEIPT_PROGRESS_STATES, HELD_SEMANTIC_PROGRESS_KINDS, HOST_MINTED_WAKE_KINDS } from "./event-pump.js";
+import {
+  HELD_RECEIPT_PROGRESS_STATES,
+  HELD_SEMANTIC_PROGRESS_KINDS,
+  HOST_MINTED_WAKE_KINDS,
+  MOD_VERDICT_WAKE_KINDS,
+  PUMP_MINTED_WAKE_KINDS,
+} from "./event-pump.js";
 
 /**
  * A gate, not a test of today's two tables.
@@ -148,15 +154,24 @@ test("every kind the pump mints itself is classified", () => {
     own.length > 0,
     "the scan recognised no kind in event-pump.ts, so this reading is blocked rather than green",
   );
-  const unclassified = own.filter((kind) => !(kind in HOST_MINTED_WAKE_KINDS));
+  // THE POPULATION IS BOTH AUTHORITY TABLES: a kind the Host mints on its own schedule (`HOST_MINTED_WAKE_KINDS`) and one
+  // it gives the Mod's own decision its shape in (`MOD_VERDICT_WAKE_KINDS`) are both pumped by this Host, so a kind added
+  // to either table without a classification fails here rather than sitting in the pump unwatched.
+  const unclassified = own.filter((kind) => !(kind in PUMP_MINTED_WAKE_KINDS));
   assert.deepEqual(
     unclassified,
     [],
     `the pump mints these kinds and nothing says how a turn is created for them: ${unclassified.join(", ")}. ` +
-      "Add each to HOST_MINTED_WAKE_KINDS with the Host path that delivers it.",
+      "Add each to HOST_MINTED_WAKE_KINDS (a Host-owned schedule) or MOD_VERDICT_WAKE_KINDS (the Mod's own verdict), with " +
+      "the path that delivers it.",
+  );
+  assert.ok(
+    Object.keys(MOD_VERDICT_WAKE_KINDS).length > 0,
+    "the verdict table is part of the population this assertion reads; an empty one would prove nothing about it",
   );
   console.log(
     `event_pump_wake_classification: examined ${String(own.length)} pump-minted kinds (${own.join(", ")}), ` +
-      `all classified in HOST_MINTED_WAKE_KINDS`,
+      `all classified in ${String(Object.keys(PUMP_MINTED_WAKE_KINDS).length)} declared pick-up paths ` +
+      `(${String(Object.keys(HOST_MINTED_WAKE_KINDS).length)} Host schedule · ${String(Object.keys(MOD_VERDICT_WAKE_KINDS).length)} Mod verdict)`,
   );
 });

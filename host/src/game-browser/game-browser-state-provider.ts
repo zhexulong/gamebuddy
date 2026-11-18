@@ -196,7 +196,7 @@ function projectGameFacts(views: GameBrowserViews): Readonly<{
           generation: views.attachmentView.generation,
         }),
         connectionStatus: views.attachmentView.connectionStatus,
-        capabilitySummary: projectCapabilitySummary(views.attachmentView, views.capabilityView),
+        capabilitySummary: projectCapabilitySummary(views.capabilityView),
       }),
     }),
     selectedWorld: Object.freeze({
@@ -230,8 +230,8 @@ function projectGameBrowserState(
       : { eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }) }),
     game: Object.freeze({
       prerequisites: prerequisitesMet
-        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley" })
-        : Object.freeze({ status: "unknown" as const, detectedGame: null }),
+        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
+        : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
       ...facts.instance.game,
       ...facts.attachment.game,
       ...facts.selectedWorld.game,
@@ -239,8 +239,25 @@ function projectGameBrowserState(
       role: null,
       companionName: null,
       selectedSave: null,
+      capabilitySummary: projectCapabilitySummary(views.capabilityView),
     }),
   });
+}
+
+/**
+ * The capability surface as the browser publishes it: the runtime's own count, or the reason this layer has none.
+ *
+ * `published` carries the number the live surface produced, and `0` there means the runtime advertised nothing - a
+ * measurement. `not_measured` carries the reason and NO count: `capabilitySummary` is the field the companion board
+ * renders, and a `0` in place of an unmeasured reading is the browser telling the player a fact nobody measured.
+ */
+function projectCapabilitySummary(
+  capability: StardewGameSurfaceCapabilityView | undefined,
+): GameBrowserStateV1["game"]["capabilitySummary"] {
+  if (capability === undefined) return Object.freeze({ status: "not_measured", reason: "no_capability_reader" });
+  return capability.status === "published"
+    ? Object.freeze({ status: "published", count: capability.count })
+    : Object.freeze({ status: "not_measured", reason: capability.reason });
 }
 
 /**
@@ -259,6 +276,11 @@ function projectInstanceStatus(
     case "pending":
     case "awaiting_attestation":
       return "launching";
+    case "attested":
+      // A GameBuddy-launched Player Host whose own advertisement correlated. This is the
+      // `running` the whole surface hangs off, and it was unreachable until the coordinator
+      // stopped overriding this slot with an attestation state it never left.
+      return "running";
     case "authenticated":
       return "running";
     case "unavailable":
@@ -292,35 +314,6 @@ function compatibilityProjection(
   if (status === "below_minimum_warning")
     return { status: "warning", message: "This Stardew installation is below the advisory minimum." };
   return { status: "warning", message: "This Stardew installation is compatible but unverified." };
-}
-
-/**
- * How many actions the attached game advertises right now, as the game itself answered.
- *
- * This field was frozen to `available: false, count: 0` while the Mod published dozens of typed
- * actions, so the board read "waiting for the game to publish capabilities" for the whole life of
- * a session. The count is now the attached runtime's own `actionCatalog.visibleActions` length,
- * read through the lease that runtime is entered under - the same projection the action tools
- * execute against, so the surface can never advertise a capability the Host would refuse.
- *
- * `available` is the fact "this Host holds a current capability answer for an attached game", not
- * "the answer is non-zero": a game that publishes no action right now is still a game that
- * answered, and `count: 0` beside `available: true` is that answer. An absent or unreadable
- * capability answer is `available: false, count: 0`, which is the one shape this projection has
- * for "nothing was published" - the panel tells "no game" apart from "a game that published
- * nothing" by `attachment.status`, which is projected beside it.
- *
- * An attachment this Host does not hold publishes no count even if a reader still returns one:
- * `attachment.status === "none"` is the projection saying there is no surface, and a count
- * beside it would be the projection contradicting itself.
- */
-function projectCapabilitySummary(
-  attachment: StardewGameSurfaceAttachmentView,
-  capability: StardewGameSurfaceCapabilityView | undefined,
-): Readonly<{ available: boolean; count: number }> {
-  if (attachment.status !== "attached" || capability?.status !== "published")
-    return Object.freeze({ available: false, count: 0 });
-  return Object.freeze({ available: true, count: capability.count });
 }
 
 function validateContext(context: GameBrowserReadStateContext): void {

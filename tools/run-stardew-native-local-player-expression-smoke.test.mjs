@@ -123,7 +123,7 @@ test("expression runner refuses a non-isolated fixture topology", async () => {
     Portfolio: { Enable: true },
   });
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "native_local_fixture_topology_not_isolated");
+  assert.equal(result.reasonCode, "native_local_express_emote_action_policy_invalid");
 });
 
 test("expression runner accepts a bridge that answers with the terminal receipt directly", async () => {

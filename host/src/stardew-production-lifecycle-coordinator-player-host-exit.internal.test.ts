@@ -347,6 +347,56 @@ test("a settled attempt hands the surface back: the ending stops being the answe
   });
 });
 
+test("a settle is one per ATTEMPT: the press after it takes the fresh path, not the settled one again", async () => {
+  await withWindowsPlatform(async () => {
+    const guardian = guardianSession();
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(guardian.session),
+    );
+    const fixture = await createFixture({ overrides: { runtimeLaunchContained: collaborator } });
+    try {
+      await launchOwnedPlayerHost(fixture);
+      guardian.report(Object.freeze({ role: "player_host", exitCode: PLAYER_QUIT_EXIT_CODE }));
+
+      // Press 2 settles the ended attempt and stops at the process owner's one-shot launch
+      // reservation, which reserved nothing: that is the shape the after-settle path exists for, so
+      // it lands where a first attempt starts instead of latching `activation_failed`.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation")),
+        /stardew_lifecycle_activation_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "inactive");
+
+      // Press 3 has nothing left to settle - the attempt that ended was handed back by press 2 - so
+      // it must take the FRESH activation path. The reading that distinguishes the two paths is
+      // where a refusal that reserved nothing leaves the surface: the fresh path keeps
+      // `activation_failed` (the state a first attempt in a new lifecycle ends in when its own
+      // activation refuses - see `stardew-production-lifecycle-coordinator-activation.internal.test.ts`),
+      // and only `runActivationAfterSettle` resets to `inactive`. A settle latch left behind after a
+      // successful settle makes every later press report `inactive` here.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation")),
+        /stardew_lifecycle_activation_failed/,
+      );
+      assert.equal(
+        fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state,
+        "activation_failed",
+        "a press with nothing to settle is a fresh activation, and a fresh activation that reserved nothing latches its failure",
+      );
+      // The second reading of the same divergence: the fresh path keeps this attempt's latch, so a
+      // press with a different admission is a conflict rather than a fourth attempt behind it. Under
+      // the stale latch the reset also cleared `acceptedAdmission`, and this press would have run.
+      await assert.rejects(
+        fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation")),
+        /stardew_lifecycle_activation_conflict/,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
 test("an AI-client exit is not the game's, and no exit at all never becomes a crash claim", async () => {
   await withWindowsPlatform(async () => {
     const guardian = guardianSession();

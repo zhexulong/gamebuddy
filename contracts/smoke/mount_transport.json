@@ -1,0 +1,19 @@
+{
+  "schema": "stardew-action-smoke-contract/v1",
+  "action": "mount_transport",
+  "discovery": {
+    "cardinality": "at_least_one",
+    "select": "first",
+    "requiredFields": ["targetId", "x", "y"]
+  },
+  "args": {
+    "x": "$target.x",
+    "y": "$target.y",
+    "expectedTargetId": "$target.targetId"
+  },
+  "evidence": {
+    "mounted": "true",
+    "mounting": "false",
+    "target": { "equalsTarget": "targetId" }
+  }
+}

@@ -464,6 +464,9 @@ export function fixtureActions(action) {
   // publishes the read-only observe_scene capability so the runner can pull a
   // projection with reachability attached.
   if (action === "scene_reachable_probe") return ["observe_scene"];
+  // The shop action's SECOND world: the same capability set the published shop_purchase gate publishes, because the
+  // runner is the same one - only the counter the Given stands at differs.
+  if (action === "shop_purchase_tool_upgrade") return ["shop_purchase"];
   if (action === "move_to_tile") return ["move_to_tile"];
   // The move-stall probe (design 5.3 observation) drives the published
   // move_to_tile action over a fixture that stands a native blocker on the
@@ -824,6 +827,10 @@ export function fixtureActions(action) {
   // a pass-out or a modal mid-move; travel is needed only if the actor starts
   // inside the FarmHouse.
   if (action === "scythe_crop") return ["equip_tool", "scythe_crop"];
+  // `sweep_scythe` names the tile to FACE and nothing else, so the fixture supplies what the action's own `tool:scythe`
+  // claim and its `self_walked` approach need: a plain scythe in the pack, the Farm, and the typed routes to reach a
+  // patch. The weed the run swings at is the world's own - published by `weedTargets` - and is never planted here.
+  if (action === "sweep_scythe") return ["move_to_tile", "travel", "sweep_scythe"];
   // The fixture keeps the Farm's own native Shipping Bin building and adds one
   // shippable Object to the backpack; production alone calls Farm.shipItem.
   if (action === "ship_item") return ["ship_item"];
@@ -900,6 +907,10 @@ export function fixtureScenario(actions, action) {
   if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "shop_purchase") return "native_shop_purchase_v1";
+  // The SAME action over the blacksmith's counter. Action-keyed here, before every includes() fallback, because the
+  // published action's world is the SeedShop and no single world can be in two shops: the upgrade Given is one copper
+  // hoe in the pack, the counter tile the engine's own `Blacksmith` action opens, and the material the upgrade charges.
+  if (action === "shop_purchase_tool_upgrade") return "native_shop_tool_upgrade_v1";
   // Action-keyed, before every includes() fallback: the farm-animal pet needs its own Given (one coop, exactly one animal,
   // the actor in its ring), which no other action's world carries.
   if (action === "pet_farm_animal") return "native_pet_farm_animal_v1";
@@ -1102,6 +1113,10 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("dismount_transport")) return "native_dismount_transport_v1";
   if (actions.includes("enter_mine")) return "native_enter_mine_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
+  // `sweep_scythe` keys its Given on the ACTION, not on a family: its own capability set carries no per-tile verb, and
+  // the cut-weeds world is already the exact precondition set (a plain scythe in the pack, the actor on the Farm beside
+  // a native weed). Falling through to "" would arm the ordinary world, whose FarmHouse start has no patch at all.
+  if (action === "sweep_scythe") return "native_cut_weeds_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
   if (actions.includes("craft_item")) return "native_craft_item_v1";
   if (actions.includes("cook_recipe")) return "native_cook_recipe_v1";
@@ -1376,6 +1391,29 @@ function bodyProgramJournalScopeDirectory(options) {
   return join(bodyProgramJournalRoot(options.stardewSaveRoot), "BodyProgramJournal-v1", "stardew", ...segments);
 }
 
+/**
+ * The journal's own name, and the marker file the transaction writes beside its scope copy.
+ *
+ * ONE SPELLING FOR THREE DESTINATIONS: the scope copy inside the transaction's backup, the marker beside it, and
+ * the copy inside the run's evidence bundle. The names were literals at each site, so a writer could be added in a
+ * fourth place that no restore and no reader knows about - and the journal is the one authority a leftover program
+ * survives in (`body_program_journal_unavailable` on the next run). The marker is this same name with `.json`
+ * because it is written beside the directory it describes, not because the two are independent facts.
+ */
+const JOURNAL_NAME = "body-program-journal";
+const JOURNAL_MARKER_FILE = `${JOURNAL_NAME}.json`;
+
+/**
+ * The name of the directory this fixture CREATES INSIDE A RUN'S EVIDENCE BUNDLE, and clears before writing it.
+ *
+ * Exported because it is a destructive target, not an implementation detail: `archiveBodyProgramJournal` removes this
+ * directory recursively, and a real run's evidence root is `<repo>/tools` (`launch-ladder-live.mjs` puts its result
+ * file there and hands `dirname(resultPath)` to `restore`), so the path it removes is `<repo>/tools/<this name>`.
+ * Whether that path is under version control is the question that decides whether a run may delete it, and the only
+ * way a gate can ask it without a second hand-written spelling of the name is to read it from here.
+ */
+export const BODY_PROGRAM_JOURNAL_ARCHIVE_NAME = JOURNAL_NAME;
+
 async function backupBodyProgramJournal(options, backup) {
   // The bootstrap-phase prepare has no binding yet (the game has not created the
   // save whose ids scope the journal), and offline callers declare no save root.
@@ -1384,7 +1422,7 @@ async function backupBodyProgramJournal(options, backup) {
   // alone for that path.
   const scopeDirectory = bodyProgramJournalScopeDirectory(options);
   if (scopeDirectory === null) {
-    await writeJson(join(backup, "body-program-journal.json"), {
+    await writeJson(join(backup, JOURNAL_MARKER_FILE), {
       version: 1,
       path: null,
       existed: null,
@@ -1392,7 +1430,7 @@ async function backupBodyProgramJournal(options, backup) {
     });
     return { path: null, existed: null };
   }
-  const scopeBackup = join(backup, "body-program-journal");
+  const scopeBackup = join(backup, JOURNAL_NAME);
   const existed = await exists(scopeDirectory);
   if (existed) {
     await mkdir(dirname(scopeBackup), { recursive: true });
@@ -1410,7 +1448,7 @@ async function backupBodyProgramJournal(options, backup) {
   // The backup above is what makes this honest: `restore` puts the caller's own bytes back, so the world OUTSIDE the
   // transaction is unchanged while the run itself starts coherent.
   await rm(scopeDirectory, { recursive: true, force: true });
-  await writeJson(join(backup, "body-program-journal.json"), {
+  await writeJson(join(backup, JOURNAL_MARKER_FILE), {
     version: 1,
     path: scopeDirectory,
     existed,
@@ -1448,8 +1486,8 @@ function ownedJournalScopePath(marker) {
 }
 
 async function restoreBodyProgramJournal(backup, evidenceDir) {
-  const scopeBackup = join(backup, "body-program-journal");
-  const markerPath = join(backup, "body-program-journal.json");
+  const scopeBackup = join(backup, JOURNAL_NAME);
+  const markerPath = join(backup, JOURNAL_MARKER_FILE);
   const marker = await readJson(markerPath);
   if (marker?.version !== 1) throw new Error("invalid_fixture_backup_manifest");
   const { path, existed } = marker;
@@ -1482,9 +1520,6 @@ async function restoreBodyProgramJournal(backup, evidenceDir) {
   }
   return archive;
 }
-
-/** The directory inside a run's evidence bundle that receives the journal copy. */
-const JOURNAL_ARCHIVE_DIRECTORY = "body-program-journal";
 
 /**
  * One record of the archive attempt: `archived` is true exactly when no refusal reason was recorded.
@@ -1551,7 +1586,7 @@ async function archiveBodyProgramJournal(scopePath, evidenceDir) {
   if (typeof evidenceDir !== "string" || evidenceDir.length === 0)
     return journalArchiveRecord({ reason: "no_bundle_path" });
   if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute" });
-  const directory = join(evidenceDir, JOURNAL_ARCHIVE_DIRECTORY);
+  const directory = join(evidenceDir, BODY_PROGRAM_JOURNAL_ARCHIVE_NAME);
   // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
   // claims an archive nobody can read. Refused as a refusal rather than trusted.
   const containment = relative(resolve(scopePath), resolve(directory));

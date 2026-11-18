@@ -267,6 +267,63 @@ public sealed class DeclaredToolSelectionTests
     }
 
     [Fact]
+    public void AToolAtClintsIsNamedAsAnUpgradeRatherThanAsAToolThePackNeverHeld()
+    {
+        // Measured 2026-11-13: every tool action refused `tool_not_owned:hoe` for the two in-game days a tool spends at
+        // Clint's, which sends the reader to buy a tool it already owns and cannot buy twice. The engine keeps the fact
+        // in two fields - `Farmer.toolBeingUpgraded` (the tool itself) and `Farmer.daysLeftForToolUpgrade` (Farmer.cs:628-632;
+        // Tool.cs:889-890 sets the counter to two days on purchase) - so the refusal names the upgrade instead.
+        using (PendingUpgrade.Of(Hoe(), daysLeft: 2))
+        {
+            Resolve(new List<Item?>(), "till_soil").RefusalCode.Should().Be(
+                "tool_being_upgraded:hoe:2",
+                "the hoe is in Clint's hands, not missing: the pack is short because the player already bought the upgrade");
+        }
+
+        // The other half of the pair, and the reason both words must survive: with nothing being upgraded the pack really
+        // does hold no hoe, and acquiring one is the only repair.
+        using (PendingUpgrade.Of(null, daysLeft: 0))
+        {
+            Resolve(new List<Item?>(), "till_soil").RefusalCode.Should().Be(
+                "tool_not_owned:hoe",
+                "a cleared upgrade slot says nothing about a tool the player never owned");
+        }
+    }
+
+    [Fact]
+    public void AToolWhoseCounterRanOutIsReportedAsReadyRatherThanAsZeroDaysFromDone()
+    {
+        // `daysLeftForToolUpgrade == 0` with a tool still held is not a finished upgrade: `Farmer.cs:3535-3538` only
+        // decrements the counter at day start, and `GameLocation.cs:10961-10966` hands the tool back when the actor talks
+        // to Clint - and keeps it if the pack has no room (`Clint_NoInventorySpace`). So the tool is READY and
+        // UNCOLLECTED, and `tool_being_upgraded:hoe:0` would read as "done" about a request being refused right now.
+        using (PendingUpgrade.Of(Hoe(), daysLeft: 0))
+        {
+            string? refusal = Resolve(new List<Item?>(), "till_soil").RefusalCode;
+
+            refusal.Should().Be("tool_being_upgraded:hoe:ready_at_clint", "the reader's next move is Clint's counter");
+            refusal.Should().NotEndWith(":0", "a zero-day wait is the one number that reads as a completed upgrade");
+        }
+    }
+
+    [Fact]
+    public void AToolAtClintsThatThisActionWouldNotHaveTakenLeavesTheRefusalAlone()
+    {
+        // The new word answers "where is the tool this action needs", so a tool the action was never looking for cannot
+        // account for its refusal. Without this the resolver would replace every `tool_not_owned` with an upgrade story
+        // the moment anything at all was at the blacksmith's - the same lie in a friendlier voice.
+        using (PendingUpgrade.Of(Pickaxe(upgradeLevel: 0), daysLeft: 2))
+        {
+            Resolve(new List<Item?>(), "till_soil").RefusalCode.Should().Be(
+                "tool_not_owned:hoe",
+                "the pickaxe at Clint's is not the hoe `till_soil` claims");
+            Resolve(new List<Item?>(), "break_rock").RefusalCode.Should().Be(
+                "tool_being_upgraded:pickaxe:2",
+                "and the action that does claim a pickaxe hears the upgrade");
+        }
+    }
+
+    [Fact]
     public void EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins()
     {
         // The Host recognises a success by a DECLARED receipt-detail key set
@@ -382,7 +439,7 @@ public sealed class DeclaredToolSelectionTests
         {
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass(", "CutGrass"),
-            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
+            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRock(", "BreakRockSource"),
             ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop(", "WaterCrop"),
         })
         {
@@ -402,6 +459,40 @@ public sealed class DeclaredToolSelectionTests
     private const string ResourceToolActions = "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs";
     private const string FarmingConstructionActions = "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs";
     private const string HostCompletionContracts = "host/src/stardew-completion-contracts.ts";
+
+    /// <summary>
+    /// An actor whose tool is at Clint's, installed as <c>Game1.player</c> for the duration. The resolver reads the
+    /// engine's own two fields rather than a snapshot, so the fixture sets exactly those two on an uninitialized
+    /// <see cref="Farmer"/> - the same pattern <see cref="SeedTool{T}"/> uses for the tools themselves.
+    /// </summary>
+    private sealed class PendingUpgrade : IDisposable
+    {
+        private static readonly FieldInfo Player = typeof(Game1)
+            .GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        private readonly Farmer? before;
+
+        private PendingUpgrade(Tool? upgrading, int daysLeft)
+        {
+            this.before = Game1.player;
+            var actor = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+            var pending = new NetRef<Tool>();
+            if (upgrading is not null)
+                pending.Value = upgrading;
+            SetField(actor, "toolBeingUpgraded", pending);
+            SetField(actor, "daysLeftForToolUpgrade", new NetInt(daysLeft));
+            Player.SetValue(null, actor);
+        }
+
+        public static PendingUpgrade Of(Tool? upgrading, int daysLeft) => new(upgrading, daysLeft);
+
+        public void Dispose() => Player.SetValue(null, this.before);
+
+        private static void SetField(object target, string name, object value) =>
+            target.GetType()
+                .GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(target, value);
+    }
 
     /// <summary>The claim an action's own registration publishes, read through the Mod's own resolver.</summary>
     private static FarmhandActionResourceTemplateClaim? Claim(string actionId) =>

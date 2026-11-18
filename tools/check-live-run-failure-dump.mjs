@@ -13,6 +13,14 @@
  *                    exit 1; the unmodified fixture prints the same gate `"status":"passed","cases":20`, exit 0
  *                    (tools/check-live-run-failure-dump.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-live-run-failure-dump",
+  domain: "data",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

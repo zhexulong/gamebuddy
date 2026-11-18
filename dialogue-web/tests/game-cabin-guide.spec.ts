@@ -48,7 +48,7 @@ test("a cabin list read before the game started says what happened, and why relo
         instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
         connectionStatus: "active",
         actionAuthority: "active",
-        capabilitySummary: { available: true, count: 1 },
+        capabilitySummary: { status: "published", count: 1 },
       },
     },
   };

@@ -83,6 +83,14 @@
  *   A root with no preset at all - `--root tools/fixtures` - blocks rather than passing:
  *   `examined 0 preset file(s), 0 macro occurrences` and `preset_macro_frequency_no_presets`, exit 1.
  */
+
+export const gateDeclaration = {
+  id: "audit-preset-macro-frequency",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

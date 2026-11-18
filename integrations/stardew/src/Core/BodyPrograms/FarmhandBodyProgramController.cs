@@ -11,7 +11,20 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 /// </summary>
 public interface IBodyProgramAdmissionTransport
 {
-    void Send(NodeAdmissionChallenge challenge);
+    /// <summary>
+    /// Hands one node's admission challenge to the transport, and answers <see langword="null" /> when it took it.
+    ///
+    /// <para>
+    /// WHY A REFUSAL IS RETURNED AND NOT SWALLOWED. Measured `round73`: `send_skipped; reason=enqueue_failed;
+    /// program=plan_311; node=n15` sat in the SMAPI console while the node stayed `AwaitingHostAdmission` for ever - the
+    /// frame had never left this process, no Host answer could ever arrive for it, and nothing in the programme's
+    /// settlement counted it. The pump therefore has to learn the refusal HERE, where it still holds the exact challenge,
+    /// so the node ends in a NAMED outcome of its own instead of being dropped: `rejected/&lt;the transport's own code&gt;`.
+    /// </para>
+    /// </summary>
+    /// <returns>The refusal code, or <see langword="null" /> when the challenge was accepted for delivery.</returns>
+    string? Send(NodeAdmissionChallenge challenge);
+
     BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt);
 
     /// <summary>
@@ -272,6 +285,22 @@ public sealed class FarmhandBodyProgramController
     {
         while (true)
         {
+            // ONE NODE IN FLIGHT, ACROSS EVERY PROGRAMME. The body is one actor: a second admitted node - the first node
+            // of a plan submitted while another plan is mid-action, or an independent branch of the same graph - collides
+            // with the one already running and the collision is spent from BOTH sides. Measured `round73`: `plan_311`
+            // still had nodes when `plan_327` was submitted, the two programmes' nodes fought for one farmhand, and a
+            // node of the first was dropped by the outbound queue while the second's nodes re-routed underneath it.
+            //
+            // WHAT WAITING IS HERE: the node stays `Pending` and NOTHING IS MINTED for it. That is the only wait this
+            // vocabulary has that costs nothing: a durable admission starts the node's watchdog, so a node admitted into
+            // a busy body is a node that will later be settled `deadline_expired` for a wait it never got to start -
+            // a wait published as an outcome, one layer up. The gate therefore runs BEFORE the mint, exactly as the
+            // modal start gate above it does, and for the same reason.
+            if (this.ProgramWithNodeInFlight() is { } occupying)
+            {
+                this.DiagnoseStartHeldBehindProgram(programId, occupying);
+                return;
+            }
             // THE START GATE RUNS BEFORE THE MINT, and that ordering is the whole fix.
             //
             // A node whose action needs a free body must not be admitted while a modal holds the actor. The admission
@@ -300,9 +329,67 @@ public sealed class FarmhandBodyProgramController
             string attemptKey = AttemptKey(programId, started.Value!.NodeId, started.Value!.NodeAttempt);
             this.admissionAttachmentGenerations[attemptKey] = this.admission!.AttachmentGeneration;
             this.admissionChallenges[attemptKey] = started.Value!;
-            this.admission!.Send(started.Value!);
+            if (this.admission!.Send(started.Value!) is { } refusal)
+            {
+                // THE QUEUE'S REFUSAL IS THE NODE'S OUTCOME. The frame never left this process, so no answer can ever
+                // arrive for this attempt - and a node left `AwaitingHostAdmission` for that is a node dropped in
+                // silence: measured `round73`, `send_skipped; reason=enqueue_failed; program=plan_311; node=n15` in the
+                // SMAPI console, with nothing in the programme's settlement to count it.
+                this.SettleRefusedSend(programId, started.Value!, refusal);
+                if (!this.authority.IsLifecycleOpen) return;
+                continue;
+            }
             if (!this.authority.IsLifecycleOpen) return;
         }
+    }
+
+    /// <summary>
+    /// Settles one node whose admission challenge the transport refused to take, as `rejected/&lt;the transport's own
+    /// code&gt;` naming what happened, so the programme's settlement counts the node and the plan never claims work it
+    /// never queued.
+    ///
+    /// <para>
+    /// The code is the TRANSPORT's, not a word chosen here: only the transport knows whether the outbound queue was full,
+    /// whether there was no authenticated attachment to send on, or whether the frame could not be built at all. What the
+    /// controller contributes is the exact challenge - the rejection may only be recorded for the tuple it minted - and
+    /// the evidence sentence that says the frame never reached the Host.
+    /// </para>
+    /// </summary>
+    private void SettleRefusedSend(string programId, NodeAdmissionChallenge asked, string refusalCode)
+    {
+        string key = AttemptKey(programId, asked.NodeId, asked.NodeAttempt);
+        this.admissionChallenges.Remove(key);
+        this.admissionAttachmentGenerations.Remove(key);
+        this.Diagnose($"send_refused;program={programId};node={asked.NodeId};code={refusalCode}");
+        this.authority.TryRejectAdmission(
+            asked,
+            refusalCode,
+            $"transport={refusalCode};phases=send;delivered=false;node_attempt={asked.NodeAttempt}");
+    }
+
+    /// <summary>
+    /// The programme that already has a node in flight - awaiting its admission answer, or running its native effect -
+    /// or null when no node is in flight anywhere. Its own state is the answer to "may another node start": the farmhand
+    /// is one actor, so a second node would collide with this one rather than work beside it.
+    /// </summary>
+    private string? ProgramWithNodeInFlight()
+    {
+        foreach (BodyProgramJournalProgram program in this.authority.Snapshot.Programs)
+        {
+            if (program.State != BodyProgramState.Active) continue;
+            if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.Running))
+                return program.Program.ProgramId;
+        }
+        return null;
+    }
+
+    private void DiagnoseStartHeldBehindProgram(string programId, string occupying)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"state=pending;program={programId};held_by=body_program:{occupying};next_step=wait_for_that_node_to_settle";
+        if (this.diagnosticsLastStartHold.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastStartHold[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] node_waiting;{detail}");
     }
 
     /// <summary>
@@ -355,8 +442,10 @@ public sealed class FarmhandBodyProgramController
             // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
             // the admission and strand the node awaiting a result that no longer exists. The deferral is bounded, so a
             // world that never becomes ready delays a node instead of holding it for ever.
-            if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is not null)
+            if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is { } met)
             {
+                // A HOLD THAT CLEARS ON ITS OWN IS WAITED OUT, not spent. See `WaitOutTheHold`.
+                if (met.Wait == BodyHoldWait.RequestDeadline && this.WaitOutTheHold(programId, node, met)) return;
                 string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
                 if (deferred < this.MaxCadenceDeferrals)
@@ -445,7 +534,8 @@ public sealed class FarmhandBodyProgramController
         }
         this.Diagnose($"admission_reasked;program={programId};node={node.NodeId};generation={current};askedOn={askedOn}");
         this.admissionAttachmentGenerations[key] = current;
-        this.admission!.Send(asked);
+        if (this.admission!.Send(asked) is { } refusedAgain)
+            this.SettleRefusedSend(programId, asked, refusedAgain);
     }
 
     /// <summary>
@@ -459,19 +549,66 @@ public sealed class FarmhandBodyProgramController
     /// Host refuses to issue at `&lt;=` - so this is the first instant at which a local verdict cannot contradict a real
     /// answer that is merely slow.
     /// </summary>
-    private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node)
+    private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node, string? refusalDetail = null)
     {
         if (node.DerivedDeadlineMs is not { } deadlineMs || deadlineMs >= this.NowMs()) return false;
         string key = AttemptKey(programId, node.NodeId, node.NodeAttempt);
         // The challenge is the settlement's own argument: the authority accepts a rejection only for the exact tuple it
         // minted, so nothing is settled unless the object that was SENT is still here to be presented.
         if (!this.admissionChallenges.TryGetValue(key, out NodeAdmissionChallenge? asked)) return false;
-        this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs}");
+        this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs};detail={refusalDetail ?? "none"}");
         this.admissionChallenges.Remove(key);
         this.admissionAttachmentGenerations.Remove(key);
-        this.authority.TryRejectAdmission(asked, "deadline_expired");
+        this.authority.TryRejectAdmission(asked, "deadline_expired", refusalDetail);
         return true;
     }
+
+    /// <summary>
+    /// Waits out a hold declared <see cref="BodyHoldWait.RequestDeadline"/> for as long as this node's own watchdog
+    /// still allows the dispatch. True means the node was left waiting (or settled because the watchdog ran out).
+    ///
+    /// <para>
+    /// WHY THE CADENCE WINDOW IS THE WRONG BOUND FOR THESE. `MaxCadenceDeferrals` is the flat admission's own parking
+    /// window (two seconds, the same number that evidence publishes as `retry_window_ms`), and it is right for a hold
+    /// that ends inside it - a tool cooldown, an eating pause. A cutscene is not that, and the same two seconds made
+    /// it a terminal. Measured `round56` (day 6, 06:00, the furnace cutscene): one clear-and-plant program's three
+    /// nodes were deferred for the cadence window, dispatched into the running event, and settled
+    /// `Rejected:cutscene_active` - four row receipts and one node receipt, `0/3` nodes - while the world was free
+    /// again four seconds later. Nothing was spent but the plan: the three nodes were the plan.
+    /// </para>
+    /// <para>
+    /// THE BOUND IS THE NODE'S OWN WATCHDOG (<see cref="BodyProgramJournalNode.DerivedDeadlineMs"/>), which is not a
+    /// new number: it is the instant this node's admission can no longer be consumed at all (`TryConsumeHostGrant`
+    /// refuses a grant past it), so a wait longer than it would be a wait for a dispatch that cannot happen. While it
+    /// stands the node is neither dispatched nor settled and nothing is spent; when it passes with the hold still up,
+    /// the node settles `deadline_expired` CARRYING THE HOLD in <see cref="BodyProgramJournalNode.RefusalDetail"/>,
+    /// because "the deadline passed" and "what held her for the whole window" are two facts and a receipt that states
+    /// only the first is the one the companion cannot act on.
+    /// </para>
+    /// </summary>
+    private bool WaitOutTheHold(string programId, BodyProgramJournalNode node, BodyProgramHold met)
+    {
+        if (node.DerivedDeadlineMs is not { } deadlineMs) return false;
+        if (deadlineMs < this.NowMs()) return this.TrySettleExpiredAdmission(programId, node, met.Evidence);
+        this.DiagnoseHeld(programId, node, met, deadlineMs);
+        return true;
+    }
+
+    /// <summary>
+    /// Reports a node waiting out a hold once per program per hold, for the same reason <see cref="DiagnoseStartHeld"/> does:
+    /// a hold that stands for a whole cutscene is one line, not one per tick.
+    /// </summary>
+    private void DiagnoseHeld(string programId, BodyProgramJournalNode node, BodyProgramHold met, long deadlineMs)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"node_waiting_out_hold;program={programId};node={node.NodeId};deadlineMs={deadlineMs};{met.Evidence}";
+        if (this.diagnosticsLastHold.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastHold[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
+
+    /** The last hold printed per program, so a repeat says nothing. */
+    private readonly Dictionary<string, string> diagnosticsLastHold = new(StringComparer.Ordinal);
 
     private static string AttemptKey(string programId, string nodeId, int nodeAttempt) =>
         $"{programId}\u001f{nodeId}\u001f{nodeAttempt}";

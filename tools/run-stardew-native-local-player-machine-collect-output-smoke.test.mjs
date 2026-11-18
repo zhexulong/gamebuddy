@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runMachineCollectOutputSmoke } from "./run-stardew-native-local-player-machine-collect-output-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { runMachineCollectOutputSmoke } from "./run-stardew-native-local-player-machine-collect-output-smoke.mjs";
 
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "machine_load", "machine_collect_output"];
 
@@ -98,6 +98,17 @@ function createFake() {
       if (action === "machine_load") {
         phase = "loaded";
         publish({ ...receipt, state: "succeeded", reasonCode: "machine_coffee_loaded", revision });
+      } else if (action === "machine_collect_output" && phase === "after") {
+        // The stale re-send: the keg was emptied, so the same target has nothing to collect.
+        const refused = {
+          requestId,
+          executionId: "execution-machine_collect_output-stale",
+          state: "rejected",
+          reasonCode: "machine_collect_target_not_ready",
+          revision,
+        };
+        publish(refused);
+        return refused;
       } else if (action === "machine_collect_output") {
         phase = "after";
         publish({
@@ -144,12 +155,13 @@ test("machine-collect runner passes the load-to-collect lifecycle", async () => 
 
 test("machine-collect runner rejects a mismatched fixture scenario", async () => {
   const client = createFake();
-  await assert.rejects(
-    runMachineCollectOutputSmoke(
-      client,
-      [],
-      fixtureConfig({ NativeLocalPlayerFixture: { Enable: true, FixtureScenario: "native_machine_inspect_v1" } }),
-    ),
-    (error) => error?.message === "native_local_machine_collect_fixture_config_invalid",
+  // The template refuses the wrong scenario before a request, and it returns that refusal rather than throwing: a
+  // block is what the batch reads as a failed run, and a throw would escape the result line it is judged on.
+  const result = await runMachineCollectOutputSmoke(
+    client,
+    [],
+    fixtureConfig({ NativeLocalPlayerFixture: { Enable: true, FixtureScenario: "native_machine_inspect_v1" } }),
   );
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "native_local_machine_collect_output_fixture_config_invalid");
 });

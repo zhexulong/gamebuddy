@@ -56,6 +56,14 @@
  * red-proof: inject  adding `tool_insufficient` to `DiscoveryExclusionReasons.All` while the other four
  *   `token pending` entries stay filed; each names `capability_token_available` instead of accepting the stale disposition.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-discovery-exclusions",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

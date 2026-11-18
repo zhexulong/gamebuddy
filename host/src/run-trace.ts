@@ -36,7 +36,7 @@ const RUN_TRACE_MAX_SPANS = 5_000;
 const RUN_TRACE_FLUSH_INTERVAL_MS = 5_000;
 
 type RunTraceAttribute = string | number | boolean | null;
-type RunTraceAttributes = Readonly<Record<string, RunTraceAttribute>>;
+export type RunTraceAttributes = Readonly<Record<string, RunTraceAttribute>>;
 
 export type RunTraceSpan = Readonly<{
   traceId: string;
@@ -71,7 +71,17 @@ export type RunTrace = Readonly<{
   dropped(): number;
 }>;
 
-/** The one action-path taxonomy, so a stage cannot be spelled two ways. */
+/**
+ * The one span-name taxonomy, so a stage cannot be spelled two ways.
+ *
+ * <p>
+ * The first group is the action path. The second group is the time BETWEEN two model calls - the interval a run's
+ * wall clock used to leave unattributed because every step in it (assembling the next request, folding memory,
+ * writing and reading the journal, handing a batch to Pi, ending a turn, waiting for a picture of the world) did its
+ * work and recorded nothing. A span named here is a step a reader can subtract from the wall clock; a step with no
+ * name here is a hole, which `run-trace-budget.ts` reports rather than absorbs.
+ * </p>
+ */
 export const RUN_SPAN_NAMES = Object.freeze({
   action: "action",
   admission: "admission",
@@ -79,6 +89,24 @@ export const RUN_SPAN_NAMES = Object.freeze({
   bridgeCall: "bridge.call",
   modExecute: "mod.execute",
   present: "present",
+  /** Card, scenario, world info, world book and preset read into the mount's authored context. */
+  promptContext: "prompt.context",
+  /** The system prompt itself: floor, conduct, card, preset `main`. */
+  promptSystem: "prompt.system",
+  /** Tool descriptions and the mount's tool surface, computed from what is published. */
+  promptTools: "prompt.tools",
+  /** One turn's keyword-gated world-book blocks, selected immediately before Pi consumes that batch. */
+  promptBlocks: "prompt.blocks",
+  /** Magic Context's extension bootstrap: the memory/recall capability becoming available. */
+  memoryMount: "memory.mount",
+  /** Reading the recovery journal back: what a relaunch inherits. */
+  journalRead: "journal.read",
+  /** One pending batch reaching Pi: model reload, world-book bind, send, queue admission. */
+  delivery: "delivery",
+  /** The end of a turn after its last words: Pi settling, then our presentation drain. */
+  turnTail: "turn.tail",
+  /** Asking the Mod for a fresh picture when the reading this session holds has gone stale. */
+  snapshotObserve: "snapshot.observe",
 });
 
 export function createRunTrace(
@@ -304,4 +332,22 @@ export function startRunTraceFile(
 export function describeTraceFailure(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return text.length > 200 ? text.slice(0, 200) : text;
+}
+
+/**
+ * Run one step inside a span when the run has a recorder, and plainly when it does not.
+ *
+ * <p>
+ * The call sites that emit the between-call spans sit in code that must also run on surfaces which trace nothing (the
+ * Chat mount, every deterministic fixture). Without this, each site would repeat the "is there a trace" test and one
+ * of them would eventually run the step twice or not at all.
+ * </p>
+ */
+export function tracedStep<T>(
+  trace: RunTrace | undefined,
+  name: string,
+  attributes: RunTraceAttributes,
+  body: () => T,
+): T {
+  return trace === undefined ? body() : trace.span(name, attributes, body);
 }

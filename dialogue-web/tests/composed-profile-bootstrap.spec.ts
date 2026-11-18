@@ -201,7 +201,7 @@ test("the Game data disclosure is closed by default and reveals the Host's own p
       instance: { status: "running", gameTitle: "Stardew Valley", generation: 7 },
       connectionStatus: "active",
       actionAuthority: "active",
-      capabilitySummary: { available: true, count: 42 },
+      capabilitySummary: { status: "published", count: 42 },
     },
   };
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>

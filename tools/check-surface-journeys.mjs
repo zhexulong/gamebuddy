@@ -62,11 +62,20 @@
  * red-proof: history  the guard above is the real one: with the reader that demanded `&& (<Component` this
  *            gate exited 1 with `surface_without_component:chat` on a tree whose shell renders ChatSurface.
  */
+
+export const gateDeclaration = {
+  id: "check-surface-journeys",
+  domain: "product",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertionsOf, journeySpecs, parseTests } from "./lib/journey-source.mjs";
+import { rootFromArgv } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROUTE_SOURCE = "dialogue-web/src/composed-surface-route.ts";
@@ -417,9 +426,7 @@ function report(reading) {
 }
 
 function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const root = rootFromArgv(argv, REPOSITORY_ROOT);
   const reading = auditSurfaceJourneys({ root });
   if (argv.includes("--json")) {
     process.stdout.write(`${JSON.stringify(reading, null, 2)}\n`);

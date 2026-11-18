@@ -271,12 +271,21 @@ public sealed record BridgeTileAreaQueryRequest(int X, int Y, int W, int H);
 /// <c>PathFindController.cs:222</c>). There is no <c>fixture</c> field: a fixture plants real engine entities, so the
 /// occupant and soil facts already carry it and a flag beside them would be a second spelling of one fact.
 /// </para>
+/// <para>
+/// TWO OCCUPANT FIELDS, TWO VOCABULARIES, said out loud because a reader must never have to guess which one a filter
+/// speaks: <see cref="Occupant"/> answers "what engine thing is stored here" in runtime type names, and
+/// <see cref="OccupantKind"/> answers "what is standing here" in the words a `for_each` `where: [{ occupant: ... }]`
+/// filter and an action's `Clears` declaration are written in (<see cref="TileOccupancy.Of"/>, the one producer both
+/// this row and the pass read). A weed is `object` in the first and `weed` in the second; a crop tile is `none` in the
+/// first and `crop` in the second.
+/// </para>
 /// </summary>
 public sealed record BridgeTileAreaRow(
     int X,
     int Y,
     bool Tillable,
     string Occupant,
+    string OccupantKind,
     bool Hoed,
     bool Watered,
     bool Crop,
@@ -481,7 +490,17 @@ public sealed record BridgeBaitCrabPotTarget(string TargetId, string Location, i
 
 public sealed record BridgeBaitCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, string BaitQualifiedItemId, string OwnerId, int BaitStack);
 
-public sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health);
+/// <summary>
+/// One native ResourceClump a tool swing could break, with the footprint it occupies.
+///
+/// <para>
+/// <c>W</c>/<c>H</c> are the engine's own <c>ResourceClump.width</c>/<c>height</c> - the tiles the clump spans, which
+/// is not the same thing as the one tile its <c>X</c>/<c>Y</c> names. A 2x2 boulder read as a single tile is a boulder
+/// whose remaining three tiles the companion never learns about, so the row states the footprint instead of leaving a
+/// reader to assume one. <c>X</c>/<c>Y</c> stay the LEFT-TOP origin.
+/// </para>
+/// </summary>
+public sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health, int W, int H);
 
 public sealed record BridgeRockSourceTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName, int Health);
 
@@ -1016,7 +1035,13 @@ public sealed record BridgeSnapshot(
     // The tiles this location's own engine predicates say a rod may be cast at - the discovery projection `fish_here`'s
     // expectedTargetId comes from. Published only while `fish_here` is advertised. Defaulted and LAST for the same reason
     // as its siblings above: the positional list is already closed by the parameters before them.
-    IReadOnlyList<BridgeWaterTarget>? WaterTargets = null);
+    IReadOnlyList<BridgeWaterTarget>? WaterTargets = null,
+    // Whether the LOCATION half of the night's own eligibility admits where the actor stands - the same `HomeOf`
+    // declaration `TryEnterEligibility` refuses `not_home` from, read on the game thread. Only the location half: the
+    // clock, an open menu, a running event and the co-op minimum are separate and transient, so this answers "can the
+    // day end here" and never "will `sleep` succeed now". Absent when no world is ready. Nullable and LAST for the same
+    // reason as its siblings: the positional list is already closed by the parameters before them.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -1039,6 +1064,20 @@ public sealed record BridgeActiveExecution(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? CancelSafe = null
 );
 
+/// <summary>
+/// What this Mod's own journal says about the programme an execution belongs to: the exact node that started it
+/// (`programme`), the fact that no node did (`standalone`), or the fact that the journal could not answer
+/// (`unattributed`).
+///
+/// <para>
+/// IT TRAVELS WITH EVERY RECEIPT AND EVERY BODY TRACE, because those are the two statements of one step and a consumer
+/// that has to file either of them must not be left inferring which programme it belongs to. The tokens are the union the
+/// Host's protocol validates, so a token added here without a Host member is refused at the bridge rather than read as an
+/// unknown.
+/// </para>
+/// </summary>
+public sealed record BridgeExecutionOrigin(string Kind, string? ProgramId = null, string? NodeId = null);
+
 public sealed record BridgeReceipt(
     string ExecutionId,
     string RequestId,
@@ -1047,6 +1086,7 @@ public sealed record BridgeReceipt(
     string ReasonCode,
     long Revision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
+    BridgeExecutionOrigin Origin,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeLocalObservation? Observation = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
     // Raw native HUD notice text observed inside the action's synchronous
@@ -1090,7 +1130,8 @@ public sealed record BridgeBodyTrace(
     int Tick,
     long Revision,
     string? Location,
-    BridgeTile? Tile
+    BridgeTile? Tile,
+    BridgeExecutionOrigin Origin
 );
 
 public sealed class BridgeExecutionArgs
@@ -1264,7 +1305,13 @@ public sealed record BridgeFarmBuildingTarget(
     int BuildCost,
     int BuildDays,
     string BuildingId,
-    int DaysOfConstructionLeft);
+    int DaysOfConstructionLeft,
+    // The footprint the structure occupies, in tiles, with `X`/`Y` as its LEFT-TOP origin. A `built` row carries the
+    // standing building's own `tilesWide`/`tilesHigh`; a `build_site` row carries the type's declared `Size`, because the
+    // structure does not exist yet and the numbers still decide which tiles the commission will take. Without them a
+    // coop and a cabin read as the same one-tile square.
+    int W,
+    int H);
 
 /// <summary>One owned warp totem the actor can activate right now. `Slot` and
 /// `QualifiedItemId` are exactly the action's arguments, and `Destination` is derived by the
@@ -1640,7 +1687,36 @@ string? ActionId = null,
 /// </summary>
 int? X = null,
 /// <summary>The tile's y, beside <see cref="X"/>.</summary>
-int? Y = null
+int? Y = null,
+/// <summary>
+/// The pass's own ROW TABLE - the journal's `BodyProgramJournalNode.Evidence`, verbatim.
+///
+/// <para>
+/// A `for_each` node settles sixty tiles as ONE node, and this is the sixty rows: `{"state":"succeeded","succeeded":0,
+/// …, "rows":[{"x":67,"y":19,"action":"till_soil","state":"refused","reasonCode":…,"detail":…}]}`, built by
+/// <see cref="Core.BodyPrograms.RouteReenteringBodyProgramExecutor"/>'s own aggregate. The journal has always stored it; this
+/// projection dropped it, so a pass that tilled fifteen of sixty tiles reached every reader as `succeeded` with no tile
+/// named - measured `round63`, `plan_239_2793c52c60b8cadf` node `n02`, whose own run bundle kept `{"nodeId":"n02",
+/// "actionId":"for_each","state":"succeeded"}` and not one row.
+/// </para>
+/// <para>
+/// Legal only where the node PROVED an effect (`succeeded`/`partially_succeeded`, the same `provesEffect`
+/// <see cref="Core.BodyPrograms.OpenBodyProgramJournalAuthority"/> decides with), and bounded by
+/// <see cref="Core.BodyPrograms.BodyProgramValidation.IsOpaqueTerminalProof"/> - which is the aggregate's own ceiling, so a
+/// table that arrives whole is printed whole and one that does not says so itself (`rowsOmitted`). Omitted when null.
+/// </para>
+string? Evidence = null,
+/// <summary>
+/// The pass's own verdict line - the journal's `BodyProgramJournalNode.PostconditionVerification`, verbatim:
+/// `for_each_pass:decided=60:succeeded=45:left_alone=0:omitted=0`, or the `partially_succeeded` spelling with
+/// `failed`/`refused` beside them.
+///
+/// <para>
+/// The one field that says HOW MANY of the rows in <see cref="Evidence"/> did the thing, and the only place a
+/// `partially_succeeded` batch says so on its own row. Same state rule and same bound as <see cref="Evidence"/>; omitted
+/// when null.
+/// </para>
+string? PostconditionVerification = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

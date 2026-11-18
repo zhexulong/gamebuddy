@@ -135,18 +135,12 @@ internal sealed partial class ExecutionManager
         string expectedQualifiedItemId,
         long requestedDeadlineMs)
     {
-        // One synchronous store with no await, so there is no cancel window inside it: the seam drives
-        // no tool lifecycle and starts no swing.
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
         return this.ExecuteOpenGeode(executionId, requestId, slot, expectedQualifiedItemId ?? string.Empty);
     }
 
-    /// <summary>
-    /// The one execution body: it re-reads every precondition against the live world, because
-    /// admission and the body are two separate game-thread reads.
-    /// </summary>
     private LocalExecutionReceipt ExecuteOpenGeode(string executionId, string requestId, int slot, string expectedQualifiedItemId)
     {
         // Identity and scope admission are `AdmitExecution`'s ruling; the body re-reads the WORLD. The actor is
@@ -225,7 +219,6 @@ internal sealed partial class ExecutionManager
             }
             finally
             {
-                // The menu this execution opened never outlives it: the native close, then the lease.
                 if (menu is not null && Game1.activeClickableMenu is GeodeMenu)
                 {
                     try
@@ -234,7 +227,6 @@ internal sealed partial class ExecutionManager
                     }
                     catch (Exception)
                     {
-                        // Named in the receipt by its own postcondition read below, not swallowed silently.
                     }
                 }
             }
@@ -254,18 +246,6 @@ internal sealed partial class ExecutionManager
         }
     }
 
-    /// <summary>
-    /// The smash and its result, driven through the menu's own handler and update. The fee, the drop
-    /// table, the animation and the delivery are all the engine's; this body only supplies the click
-    /// and the elapsed time, then reads the outcome back from the pack.
-    ///
-    /// <para>
-    /// Named <c>Execute*</c> because that is the unit <c>tools/check-stardew-postcondition-delta.mjs</c> reads: it takes
-    /// the dispatch entry plus every <c>Execute*</c> body it delegates to, and the <c>geode_owned_before</c>/
-    /// <c>geode_owned_after</c> pair that witnesses <c>geode_opened</c> lives HERE, not in the opening body. A plain
-    /// <c>CrackGeode</c> name left the delta invisible and the action's declared postcondition unmeasured.
-    /// </para>
-    /// </summary>
     private LocalExecutionReceipt ExecuteCrackGeode(
         GeodeMenu menu,
         Farmer player,
@@ -283,8 +263,6 @@ internal sealed partial class ExecutionManager
 
         if (menu.geodeAnimationTimer <= 0)
         {
-            // The click ran and did NOT start the crack. The menu states why in its own refusal UI
-            // fields (:157-168); this body reads them instead of re-deriving either rule.
             string refusal = menu.alertTimer > 0
                 ? "inventory_full"
                 : (Game1.dayTimeMoneyBox?.moneyShakeTimer ?? 0) > 0 ? "fee_unavailable" : "not_eligible";
@@ -300,8 +278,6 @@ internal sealed partial class ExecutionManager
                     + $"menu_closed={closed.ToString().ToLowerInvariant()};{GeodeRefusal(RefusalLayerKind.Item, refusal)}");
         }
 
-        // Drive the menu's OWN update until the timer IT set is spent, one frame step at a time so the
-        // animation the treasure depends on advances exactly as it would live.
         string? treasureItemId = null;
         int treasureStack = 0;
         int treasureOwnedBeforeDelivery = 0;
@@ -312,8 +288,6 @@ internal sealed partial class ExecutionManager
             {
                 treasureItemId = minted.QualifiedItemId;
                 treasureStack = minted.Stack;
-                // Read BEFORE the delivery update: the mint and the delivery are separate steps of the
-                // menu's own update, and this snapshot is the "before" half of the delivery count.
                 treasureOwnedBeforeDelivery = player.Items.CountId(treasureItemId);
             }
 
@@ -322,7 +296,6 @@ internal sealed partial class ExecutionManager
         }
 
         bool crackSettled = menu.geodeAnimationTimer <= 0;
-        // "no menu open" is half the postcondition, so the close happens BEFORE the read that reports it.
         bool menuClosed = CloseGeodeMenu(menu);
 
         int geodeOwnedAfter = player.Items.CountId(geodeItemId);
@@ -344,15 +317,11 @@ internal sealed partial class ExecutionManager
 
         if (!crackSettled)
         {
-            // The menu's own 2700ms timer did not expire inside the ceiling: the crack is suspended, so
-            // the outcome is unknown rather than empty.
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "geode_result_not_observed", $"{evidence};reason=timer_not_settled");
         }
 
         if (treasureItemId is null)
         {
-            // The engine's second outcome, reported as what it is: the geode was consumed and the menu
-            // minted nothing to show for it.
             return this.RememberTerminal(requestId, executionId, ExecutionState.Failed, "geode_result_not_observed", $"{evidence};reason=treasure_not_minted");
         }
 
@@ -374,26 +343,14 @@ internal sealed partial class ExecutionManager
         if (geodeOwnedAfter == geodeOwnedBefore - 1 && feeTaken == GeodeProcessingFee)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "geode_opened", evidence, this.TryCreateLocalObservation(player));
 
-        // A delivered treasure with a geode that did not leave the pack (or a fee that did not move) is
-        // not something to claim: the two halves disagree.
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "geode_result_not_observed", $"{evidence};reason=world_disagrees_with_menu");
     }
 
-    /// <summary>
-    /// The declared layer a geode refusal names, in the one <c>blocked_by=</c> token the refusal vocabulary
-    /// publishes (<see cref="RefusalLayerToken"/>). A refusal that cannot say which of the action's own
-    /// requirements refused leaves the caller re-aiming instead of adapting, which is why every Rejected
-    /// terminal of this action carries this field.
-    /// </summary>
     private static string GeodeRefusal(RefusalLayerKind layer, string? detail)
     {
-        // One token, one field: the layer that refused and the bounded detail that makes it specific.
         return $"blocked_by={new RefusalLayerToken(layer, detail).Format()}";
     }
 
-    /// <summary>
-    /// Closes the menu this execution opened with the native close step, and answers whether it is gone.
-    /// </summary>
     private static bool CloseGeodeMenu(GeodeMenu menu)
     {
         if (Game1.activeClickableMenu is GeodeMenu)
@@ -404,8 +361,6 @@ internal sealed partial class ExecutionManager
             }
             catch (Exception)
             {
-                // The caller reads and reports the live state right after this, so a throwing close is
-                // visible as menu_left_open instead of being swallowed here.
             }
         }
 
@@ -459,12 +414,6 @@ internal sealed partial class ExecutionManager
         return counters;
     }
 
-    /// <summary>
-    /// Whether the actor may open the blacksmith's geode counter from where they stand: this room's map carries the
-    /// counter tile, Clint is in the room, and the two spatial conditions the engine's counter case applies both hold.
-    /// The refusal names which of those facts was missing, so a caller can act on it (walk to the counter, come back
-    /// while he is in) instead of guessing from a distance.
-    /// </summary>
     internal static bool TryLocateGeodeCounter(
         Farmer player,
         GameLocation? location,
@@ -525,7 +474,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>One counter tile as the evidence spells it: `x,y`.</summary>
     private static string CounterPoint(Point counter) =>
         $"{counter.X.ToString(CultureInfo.InvariantCulture)},{counter.Y.ToString(CultureInfo.InvariantCulture)}";
 }

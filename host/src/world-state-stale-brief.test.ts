@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
+import { FACT_PRODUCER, CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 import { composeWorldState, WORLD_STATE_STALE_TURNS, worldStateStaleCode } from "./fact-brief.js";
 import type { Snapshot } from "./protocol.js";
 
@@ -54,12 +54,18 @@ test("a block older than the bound carries the stale token verbatim, and a fresh
   const ages = Array.from({ length: 50 }, (_, index) => index + 1);
   assert.ok(ages.length > 0, "examined 0 ages - a check whose population is empty agrees with itself");
   for (const ageTurns of ages) {
-    const text = composeWorldState({ snapshot: STUCK_READING, revision: 352, ageTurns, ageMs: ageTurns * 30_000 });
+    const text = composeWorldState({
+      snapshot: STUCK_READING,
+      revision: 352,
+      ageTurns,
+      ageMs: 0,
+      contentAgeMs: ageTurns * 30_000,
+    });
     if (ageTurns < WORLD_STATE_STALE_TURNS) {
       assert.ok(!text.includes(STALE), `stale token before the bound: age ${String(ageTurns)}`);
       continue;
     }
-    const expected = worldStateStaleCode({ ageTurns, revision: 352, ageMs: ageTurns * 30_000 });
+    const expected = worldStateStaleCode({ ageTurns, revision: 352, contentAgeMs: ageTurns * 30_000 });
     assert.ok(
       text.includes(expected),
       `a block ${String(ageTurns)} turns old must carry ${expected} - it is the one number that says the world block is a memory`,
@@ -69,12 +75,19 @@ test("a block older than the bound carries the stale token verbatim, and a fresh
 });
 
 test("the token names the reading it invalidates, so two stale blocks are not the same statement", () => {
-  const older = composeWorldState({ snapshot: STUCK_READING, revision: 352, ageTurns: 48, ageMs: 1_500_000 });
+  const older = composeWorldState({
+    snapshot: STUCK_READING,
+    revision: 352,
+    ageTurns: 48,
+    ageMs: 0,
+    contentAgeMs: 1_500_000,
+  });
   const newer = composeWorldState({
     snapshot: { ...STUCK_READING, revision: 400 } as Snapshot,
     revision: 400,
     ageTurns: 48,
-    ageMs: 1_500_000,
+    ageMs: 0,
+    contentAgeMs: 1_500_000,
   });
   assert.ok(older.includes("world_state_stale:48;352;1500000"), older);
   assert.ok(newer.includes("world_state_stale:48;400;1500000"), newer);
@@ -90,14 +103,17 @@ test("a delivered turn carries the stale token in the block, not only in prose",
       },
     });
   };
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "snapshot",
-    eventId: "snapshot_352",
-    correlationId: "observe_352",
-    revision: 352,
-    payload: STUCK_READING as never,
-  } satisfies WorldFact);
+  pump.enqueueFact(
+    {
+      source: "stardew_mod",
+      kind: "snapshot",
+      eventId: "snapshot_352",
+      correlationId: "observe_352",
+      revision: 352,
+      payload: STUCK_READING as never,
+    } satisfies WorldFact,
+    FACT_PRODUCER.worldStateStale,
+  );
   await flush();
   // Forty-eight turns of narration from the reading that brought the first one: the measured shape of the freeze, where
   // the player said nothing and the world published nothing that reached her state block.

@@ -38,51 +38,32 @@ namespace GameBuddy.Stardew;
 // because it never enters location.objects. Both targets run the identical
 // transaction, so only resolution and the opaque target id differ.
 //
-// Shared-container contention: a chest and the fridge are world objects more than one player
-// can reach at once, so both bodies read the container's own native lock (Chest.GetMutex(), the
-// same NetMutex the vanilla menu path acquires while a player has it open) immediately before
-// the write and refuse BY NAME (`container_in_use`) when another player already holds it. The
-// shared admission serialises only THIS actor's body; it cannot see the other player's hands.
-// See ContainerContentionRefusal.
+// Shared-container contention: a chest and the fridge are world objects more than one player can reach at
+// once, so both bodies TAKE the container's own native lock (Chest.GetMutex(), the same NetMutex the vanilla
+// menu path acquires while a player has it open) and hold it across the write, releasing it in a `finally`.
+// Reading that lock and then writing would answer only "is somebody else in there", and two actors can both
+// answer "no" to that and then write the same inventory - an item-duplication or item-loss race. The shared
+// admission serialises only THIS actor's body, so it is no substitute for the container's lock. The two ways
+// of not getting the lock are named apart: `container_in_use` (another player holds it) and
+// `container_lock_not_granted` (we asked, and the grant did not arrive in this tick). See TakeContainerLock.
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalChestStore(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
-        if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
+    public LocalExecutionReceipt RequestLocalChestStore(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chest_store", requestId, chestId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
+            {
+                if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
+                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none"));
+                StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
+                return resolved.Resolved
+                    ? TileTargetGate.Resolved(resolved.X, resolved.Y)
+                    : TileTargetGate.Refused(new TileTargetRefusal(resolved.RefusalReasonCode!, $"target={chestId}"));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteChestStore(executionId, admittedRequestId, chestId, expectedQualifiedItemId));
 
-        GameLocation location = Game1.player.currentLocation;
-        StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
-        if (!resolved.Resolved)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolved.RefusalReasonCode!, $"target={chestId}");
-        // 5.2: out of the native radius, walk in rather than refuse. The item and the
-        // container are resolved above; both are re-resolved after the walk inside the
-        // closure, because the walk takes several ticks and either can change.
-        if (!IsTileWithinChebyshevRadius(Game1.player, resolved.X, resolved.Y, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chest_store",
-                location,
-                resolved.X,
-                resolved.Y,
-                chestId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestStore(arrivalExecutionId, arrivalRequestId, chestId, expectedQualifiedItemId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteChestStore(executionId, requestId, chestId, expectedQualifiedItemId);
-    }
-
-    /// <summary>
-    /// Executes chest_store against the current world, re-resolving the item, the
-    /// container and its tile because an approach leg may have taken several
-    /// ticks. Shared by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteChestStore(string executionId, string requestId, string chestId, string expectedQualifiedItemId)
     {
         if (!TryFindCarriedStack(expectedQualifiedItemId, out int slot, out Item? storedItem) || storedItem is null)
@@ -95,74 +76,60 @@ internal sealed partial class ExecutionManager
         Chest chest = resolved.Chest!;
         int targetX = resolved.X;
         int targetY = resolved.Y;
-        // Another player's open container outranks this actor's hands: the shared admission can
-        // only see that THIS body is free, so the container's own native lock is the authority on
-        // whether its inventory is already in use.
         if (ReadContainerContentionRefusal(chest) is string contentionRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, contentionRefusal, $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};lock=held_by_other_player");
+        if (TakeContainerLock(chest, location) is string lockRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, lockRefusal, $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};lock=not_granted");
 
         int playerStackBefore = storedItem.Stack;
         int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
         bool menuBefore = Game1.activeClickableMenu is not null;
-        Item? remaining = chest.addItem(storedItem);
-        // Native Chest.grabItemFromInventory parity: Chest.addItem moves the
-        // exact item reference into the chest inventory and never touches the
-        // player. When the chest accepted the whole stack, the player slot must
-        // release that same reference or the item exists in both inventories.
-        bool stored = remaining is null || remaining.Stack <= 0;
-        if (stored)
-            Game1.player.removeItemFromInventory(storedItem);
+        Item? remaining;
+        bool stored;
+        int playerStackAfter;
+        bool sourceConsumed;
+        try
+        {
+            remaining = chest.addItem(storedItem);
+            // Native Chest.grabItemFromInventory parity: Chest.addItem moves the
+            // exact item reference into the chest inventory and never touches the
+            // player. When the chest accepted the whole stack, the player slot must
+            // release that same reference or the item exists in both inventories.
+            stored = remaining is null || remaining.Stack <= 0;
+            if (stored)
+                Game1.player.removeItemFromInventory(storedItem);
+            playerStackAfter = Game1.player.Items[slot] is Item remainingItem && ReferenceEquals(remainingItem, storedItem) ? storedItem.Stack : 0;
+            sourceConsumed = Game1.player.Items[slot] is null || !ReferenceEquals(Game1.player.Items[slot], storedItem);
+        }
+        finally
+        {
+            chest.GetMutex().ReleaseLock();
+        }
         bool menuAfter = Game1.activeClickableMenu is not null;
 
-        int playerStackAfter = Game1.player.Items[slot] is Item remainingItem && ReferenceEquals(remainingItem, storedItem) ? storedItem.Stack : 0;
         int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
-        bool sourceConsumed = Game1.player.Items[slot] is null || !ReferenceEquals(Game1.player.Items[slot], storedItem);
         bool postconditionHeld = stored && sourceConsumed && chestStackAfter == chestStackBefore + playerStackBefore;
         string evidence = $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};source_slot={slot};player_stack_before={playerStackBefore};player_stack_after={playerStackAfter};source_consumed={sourceConsumed.ToString().ToLowerInvariant()};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
         if (postconditionHeld)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "chest_stored", evidence);
-        // A partial accept (some stack merged, remainder still held) mutated the
-        // chest without consuming the source slot; never claim those as a clean
-        // success or a clean rejection.
         ExecutionState failureState = chestStackAfter != chestStackBefore ? ExecutionState.Uncertain : ExecutionState.Rejected;
         return this.RememberTerminal(requestId, executionId, failureState, "chest_full", evidence);
     }
 
-    public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs)
-    {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
+    public LocalExecutionReceipt RequestLocalChestRetrieve(string requestId, string chestId, string expectedQualifiedItemId, long requestedDeadlineMs) =>
+        this.RequestLocalTileTarget(
+            "chest_retrieve", requestId, chestId, requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            authorize: null,
+            gate: location =>
+            {
+                StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
+                return resolved.Resolved
+                    ? TileTargetGate.Resolved(resolved.X, resolved.Y)
+                    : TileTargetGate.Refused(new TileTargetRefusal(resolved.RefusalReasonCode!, $"target={chestId}"));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteChestRetrieve(executionId, admittedRequestId, chestId, expectedQualifiedItemId));
 
-        GameLocation location = Game1.player.currentLocation;
-        StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
-        if (!resolved.Resolved)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolved.RefusalReasonCode!, $"target={chestId}");
-        // 5.2: out of the native radius, walk in rather than refuse. The container is
-        // resolved above; it and the stored item are re-resolved after the walk inside
-        // the closure, because the walk takes several ticks and either can change.
-        if (!IsTileWithinChebyshevRadius(Game1.player, resolved.X, resolved.Y, 1))
-        {
-            return this.TryBeginToolApproach(
-                requestId,
-                executionId,
-                "chest_retrieve",
-                location,
-                resolved.X,
-                resolved.Y,
-                chestId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChestRetrieve(arrivalExecutionId, arrivalRequestId, chestId, expectedQualifiedItemId),
-                nowMs,
-                requestedDeadlineMs);
-        }
-
-        return this.ExecuteChestRetrieve(executionId, requestId, chestId, expectedQualifiedItemId);
-    }
-
-    /// <summary>
-    /// Executes chest_retrieve against the current world, re-resolving the container
-    /// and the stored item because an approach leg may have taken several ticks. Shared
-    /// by the in-range path and the post-approach path.
-    /// </summary>
     private LocalExecutionReceipt ExecuteChestRetrieve(string executionId, string requestId, string chestId, string expectedQualifiedItemId)
     {
         GameLocation location = Game1.player.currentLocation;
@@ -172,39 +139,43 @@ internal sealed partial class ExecutionManager
         Chest chest = resolved.Chest!;
         int targetX = resolved.X;
         int targetY = resolved.Y;
-        // Same contention ruling as chest_store: the container is resolved here too, and the
-        // native lock is the only thing that can say another player already has it open.
         if (ReadContainerContentionRefusal(chest) is string contentionRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, contentionRefusal, $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};lock=held_by_other_player");
+        if (TakeContainerLock(chest, location) is string lockRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, lockRefusal, $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};lock=not_granted");
 
-        Item? target = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && string.Equals(item.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
-        if (target is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_empty", $"target={chestId};item={expectedQualifiedItemId}");
-        if (!Game1.player.couldInventoryAcceptThisItem(target))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={chestId};item={expectedQualifiedItemId}");
-
-        int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
-        int inventoryBefore = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
-        bool menuBefore = Game1.activeClickableMenu is not null;
-        chest.GetItemsForPlayer().Remove(target);
-        chest.clearNulls();
-        Item? leftover = Game1.player.addItemToInventory(target);
-        // An unaccepted remainder means the player inventory could not take the whole stack. Returning
-        // it to the same chest keeps the item in the world instead of letting the reference fall out of
-        // scope; `retrieved` still requires leftover is null, so a rolled-back attempt stays Uncertain.
-        bool leftoverReturned = false;
-        if (leftover is not null && leftover.Stack > 0)
+        try
         {
-            chest.addItem(leftover);
-            leftoverReturned = true;
-        }
-        bool menuAfter = Game1.activeClickableMenu is not null;
+            Item? target = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && string.Equals(item.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
+            if (target is null)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_empty", $"target={chestId};item={expectedQualifiedItemId}");
+            if (!Game1.player.couldInventoryAcceptThisItem(target))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={chestId};item={expectedQualifiedItemId}");
 
-        int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
-        int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
-        bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
-        string evidence = $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};leftover_returned={leftoverReturned.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, retrieved ? ExecutionState.Succeeded : ExecutionState.Uncertain, retrieved ? "chest_retrieved" : "chest_retrieve_postcondition_unavailable", evidence);
+            int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
+            int inventoryBefore = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
+            bool menuBefore = Game1.activeClickableMenu is not null;
+            chest.GetItemsForPlayer().Remove(target);
+            chest.clearNulls();
+            Item? leftover = Game1.player.addItemToInventory(target);
+            bool leftoverReturned = false;
+            if (leftover is not null && leftover.Stack > 0)
+            {
+                chest.addItem(leftover);
+                leftoverReturned = true;
+            }
+            bool menuAfter = Game1.activeClickableMenu is not null;
+
+            int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
+            int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
+            bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
+            string evidence = $"location={location.NameOrUniqueName};target={chestId};tile={targetX},{targetY};container={(resolved.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};leftover_returned={leftoverReturned.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
+            return this.SettlePostcondition(requestId, executionId, retrieved, "chest_retrieved", "chest_retrieve_postcondition_unavailable", evidence);
+        }
+        finally
+        {
+            chest.GetMutex().ReleaseLock();
+        }
     }
 
     /// <summary>
@@ -239,11 +210,6 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    /// <summary>
-    /// One resolved storage container for a published container id, or the named reason that id
-    /// no longer names a live eligible one. <see cref="X"/>/<see cref="Y"/> are the container's
-    /// own tile, recovered from the id rather than from a second caller-supplied coordinate.
-    /// </summary>
     internal readonly record struct StorageContainerResolution(
         StardewValley.Objects.Chest? Chest,
         bool IsFridge,
@@ -274,8 +240,6 @@ internal sealed partial class ExecutionManager
         {
             if (!string.Equals(BuildContainerTargetId(location, x, y, chest, isFridge), chestId, StringComparison.Ordinal))
                 continue;
-            // The id matched, so this is the container that was published - it is only no longer one
-            // this actor may open. A name of its own, rather than the staleness code above.
             if (!IsOwnedOrdinaryChest(chest))
                 return new StorageContainerResolution(null, isFridge, x, y, "chest_not_owned");
             return new StorageContainerResolution(chest, isFridge, x, y, null);
@@ -283,15 +247,6 @@ internal sealed partial class ExecutionManager
         return new StorageContainerResolution(null, false, 0, 0, "chest_target_changed");
     }
 
-    /// <summary>
-    /// Every storage container the current location holds, with the tile each one occupies: the
-    /// chests in the object layer plus the room's built-in kitchen fridge, which never enters that
-    /// layer. No eligibility and no radius filter - resolution asks "does this id still name a
-    /// container" while discovery asks "which ones are published now", and folding the second
-    /// question into the first would let the snapshot's row budget decide a refusal. Both read this
-    /// one list (<see cref="DiscoverStorageContainers"/> filters it), so the container family has a
-    /// single spelling.
-    /// </summary>
     private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> LocationStorageContainers(StardewValley.GameLocation location)
     {
         foreach (StardewValley.Object obj in location.objects.Values)
@@ -314,15 +269,6 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const string ContainerInUse = "container_in_use";
 
-    /// <summary>
-    /// The container-contention ruling: null when the acting player may use the container,
-    /// otherwise the named refusal. The facts/decision split <see cref="WorldModel"/> uses, so the
-    /// ruling is pinnable without a live game thread. <paramref name="locked"/> is the
-    /// native lock's "somebody owns this container" reading and <paramref name="heldLocally"/> is
-    /// "that somebody is the acting player". A LOCALLY held lock is the actor's own open
-    /// container UI, which the shared admission's non-Modal profiles already refuse as a hold,
-    /// so only a lock owned by another player is contention.
-    /// </summary>
     internal static string? ContainerContentionRefusal(bool locked, bool heldLocally) =>
         locked && !heldLocally ? ContainerInUse : null;
 
@@ -340,5 +286,48 @@ internal sealed partial class ExecutionManager
     {
         NetMutex mutex = chest.GetMutex();
         return ContainerContentionRefusal(mutex.IsLocked(), mutex.IsLockHeld());
+    }
+
+    internal const string ContainerLockNotGranted = "container_lock_not_granted";
+
+    /// <summary>
+    /// Takes the container's own lock for one menu-free write, or answers the named refusal. The caller releases it in
+    /// a <c>finally</c>.
+    ///
+    /// <para>
+    /// <c>RequestLock</c> only RECORDS a request when the mutex is free: the lock is claimed when the net event is
+    /// polled on the master (NetMutex.cs:34-41), and the acquired callback runs from <c>NetMutex.Update</c>
+    /// (NetMutex.cs:83-99), which the engine calls once per tick from <c>Chest.updateWhenCurrentLocation</c>
+    /// (Chest.cs:1075). Driving that same public method once is how the grant settles inside one receipt - the identical
+    /// step the fish-tank and pedestal deposits drive around their own mutexes. On the host the claim and the callback
+    /// both land inside that call. On a farmhand the request needs the host's round trip, which a receipt that settles
+    /// inside one game tick cannot wait for, so the write is refused as
+    /// <see cref="ContainerLockNotGranted"/> instead of being performed unlocked.
+    /// </para>
+    ///
+    /// <para>
+    /// A refused request is cancelled with <see cref="NetMutex.ReleaseLock"/> rather than left pending: a grant that
+    /// arrives for a request nobody is waiting on would hold the container against the other players until the chest's
+    /// own per-tick release ran (<c>Chest.updateWhenCurrentLocation</c>, Chest.cs:1132-1134).
+    /// </para>
+    ///
+    /// <para>
+    /// <see cref="ReadContainerContentionRefusal"/> answers the <see cref="ContainerInUse"/> case first, so this is
+    /// reached with the mutex either free or already ours. The "already ours" state is the actor's own open container
+    /// UI, which the shared admission's non-Modal profiles refuse as a hold before the body runs.
+    /// </para>
+    /// </summary>
+    private static string? TakeContainerLock(Chest chest, GameLocation location)
+    {
+        NetMutex mutex = chest.GetMutex();
+        bool granted = false;
+        mutex.RequestLock(() => granted = true);
+        if (!granted)
+            mutex.Update(location);
+        if (granted)
+            return null;
+
+        mutex.ReleaseLock();
+        return ContainerLockNotGranted;
     }
 }

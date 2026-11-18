@@ -1,3 +1,10 @@
+export const gateDeclaration = {
+  id: "check-stardew-fixture-scenario-wiring",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

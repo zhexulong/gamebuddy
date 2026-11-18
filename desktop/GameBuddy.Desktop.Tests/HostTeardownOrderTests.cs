@@ -176,6 +176,76 @@ public sealed class HostTeardownOrderTests
         Assert.Equal("desktop_host_child_will_not_stop", failed.GetProperty("failure").GetString());
     }
 
+    /// <summary>
+    /// The quit's ONE budget, measured on two real processes.
+    ///
+    /// A Guardian that is still holding a role when the child's controller EOF arrives was waited for
+    /// BEFORE the measured wait began: the player sat through the Guardian's exit and then the deadline
+    /// the child published, counted separately, and the number the launcher published described only
+    /// the second half. Here the native Guardian is parked in its own barrier - a real process that will
+    /// not leave - and the child ignores its EOF, so both waits really happen and the difference between
+    /// "what the record says" and "what the player waited" is a measured number rather than a reading.
+    /// </summary>
+    [Fact]
+    public async Task The_quit_spends_one_declared_deadline_across_the_guardian_and_the_host_child()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        const long Declared = 900;
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync(
+            acknowledgementPlan: $$"""{ "rewrite": { "drainDeadlineMs": {{Declared}} } }""",
+            reclamationPlan: """{ "ignoreEof": true }""",
+            silenceTimeout: Silence);
+        await using var lease = await harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None);
+        // The fixture child sends the real arm/launch pair and the native parks the role it created at
+        // this barrier, so the Guardian cannot leave until this test lets it go.
+        var barrier = Path.Combine(harness.Layout.DataRoot, "guardian-eof-barrier");
+        Directory.CreateDirectory(barrier);
+        var executable = WindowsNative.CreateFile(harness.Generation.TestGuardianExePath, WindowsNative.FileReadData | WindowsNative.FileExecute, WindowsNative.FileShareRead, IntPtr.Zero, WindowsNative.OpenExisting, WindowsNative.FileAttributeNormal, IntPtr.Zero);
+        Assert.False(executable.IsInvalid);
+        Assert.True(WindowsNative.GetFileInformationByHandle(executable, out var identity));
+        await using var image = new AdmittedGuardianImage(executable, harness.Generation.TestGuardianExePath, "test", identity);
+        await using var guardianSupervisor = new GuardianSupervisor { TestBarrierDirectory = barrier, TestBarrierPhase = "after-create" };
+        try
+        {
+            // The mount is the factory, not a lease: the broker creates this attempt's guardian from
+            // it when the fixture child arms, and settles it when the quit ends the attempt - so the
+            // guardian the quit waits for is a real parked process the test never holds.
+            await lease.AttachResidentGuardianFactory(token => guardianSupervisor.StartResidentAsync(image, token), CancellationToken.None);
+            File.WriteAllText(Path.Combine(harness.Layout.DataRoot, "broker-eof-race.trigger"), "trigger");
+            var parked = Path.Combine(barrier, "after-create.ready");
+            var parkDeadline = DateTimeOffset.UtcNow.AddSeconds(20);
+            while (!File.Exists(parked) && DateTimeOffset.UtcNow < parkDeadline) await Task.Delay(10);
+            Assert.True(File.Exists(parked), "the native guardian never reached its after-create barrier");
+
+            var elapsed = Stopwatch.StartNew();
+            await lease.DisposeAsync();
+            elapsed.Stop();
+
+            var record = Assert.Single(TeardownRecords(harness));
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(record));
+            var recorded = document.RootElement.GetProperty("elapsedMs").GetInt64();
+
+            // One budget: the whole quit fits inside the deadline the child published, plus the
+            // scheduling slack of two real processes on a shared machine. Two waits counted separately
+            // (the Guardian's exit, THEN the child's deadline) is exactly what this bound catches.
+            Assert.True(
+                elapsed.Elapsed < TimeSpan.FromMilliseconds(Declared + 1500),
+                $"the quit waited {elapsed.Elapsed.TotalMilliseconds:F0} ms for a {Declared} ms deadline");
+            // And the number the launcher publishes is the wait the player experienced, not a fragment
+            // of it: a record of ~{Declared} ms written after a quit that took four times that is a
+            // measurement no operator could act on.
+            Assert.True(
+                Math.Abs(recorded - elapsed.ElapsedMilliseconds) < 1500,
+                $"the record says {recorded} ms while the quit waited {elapsed.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            // The broker settled the guardian it created; releasing the barrier is what lets a
+            // guardian the quit could not reach leave by itself instead of parking this test.
+            File.WriteAllText(Path.Combine(barrier, "after-create.release"), "release");
+        }
+    }
+
     private static string[] TeardownRecords(BootstrapHandshakeHarness harness) =>
         Directory.Exists(harness.HostExitRecordDirectory)
             ? Directory.GetFiles(harness.HostExitRecordDirectory, "host-teardown-*.json")

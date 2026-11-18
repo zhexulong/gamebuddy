@@ -11,6 +11,13 @@
  * Conforms to AGENTS.md: pure, deterministic, modular, fail-closed.
  */
 
+export const gateDeclaration = {
+  id: "check-chat-conversational-quality-gate",
+  domain: "product",
+  tier: "l0",
+  kind: "ratchet",
+};
+
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

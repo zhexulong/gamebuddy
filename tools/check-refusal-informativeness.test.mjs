@@ -502,16 +502,26 @@ test("FALSIFIER: the measured soil verdict - evidence that repeats only the tile
 });
 
 test("FALSIFIER: a range verdict that loses where the actor stands is named at its own line", () => {
-  const relativePath = "integrations/stardew/farmhandexecutioncontroller.gatheringactions.cs";
+  // The site this was written against was `pickup_forage`'s `forage_target_out_of_range`, and it is gone: measured
+  // `round65`, four of those refusals were the only failure class in the run and one lily was never picked, so the
+  // action now WALKS to the item (see `integrations/stardew/farmhandexecutioncontroller.gatheringactions.cs`). The
+  // rule it protects is unchanged and still has a live site: a range verdict that will not say where the actor stands
+  // is a coordinate with no direction from it, which is the shape that produced the `round43` re-aiming loop.
+  const relativePath = "integrations/stardew/farmhandexecutioncontroller.itemtileactions.cs";
   const source = read(relativePath);
-  const published = ";actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1";
-  assert.equal(source.includes(published), true, "the shipped site must say where the actor is");
+  const published =
+    ";actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach={PanNativeReachTiles.ToString(CultureInfo.InvariantCulture)}";
+  assert.equal(
+    source.includes(published),
+    true,
+    "the shipped site must say where the actor is and how far its reach is",
+  );
   const mutated = source.replace(published, "");
   assert.notEqual(mutated, source);
 
   const findings = findingsOf(run({ [relativePath]: mutated }), "refusal_names_nothing_actionable");
   assert.equal(findings.length, 1, "the one de-published site is the one finding");
-  assert.match(findings[0].subject, new RegExp(`^forage_target_out_of_range:${relativePath}:\\d+$`, "u"));
+  assert.match(findings[0].subject, new RegExp(`^pan_site_out_of_range:${relativePath}:\\d+$`, "u"));
 });
 
 test("a family whose target kind is undeclared is a finding, not a default", () => {

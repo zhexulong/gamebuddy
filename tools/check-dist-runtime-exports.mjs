@@ -3,6 +3,14 @@
  *                    `root dist leaks createGameBuddyPlayerMemoryCrudFacade`, `dist/tavern/index.js missing required export: registerGameOperationalGateMarker`, exit 1
  *                    (tools/check-dist-runtime-exports.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-dist-runtime-exports",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 

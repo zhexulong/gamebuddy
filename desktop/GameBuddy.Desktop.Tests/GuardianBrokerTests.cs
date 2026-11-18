@@ -163,7 +163,7 @@ public sealed class GuardianBrokerTests
         Assert.Contains("BindDeadline(cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("await CloseControlAsync(CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.Contains("CloseControlAndWaitForExitAsync", source, StringComparison.Ordinal);
-        Assert.Contains("WaitForExitAsync(cancellationToken, 30_000)", source, StringComparison.Ordinal);
+        Assert.Contains("WaitForExitAsync(cancellationToken, ContainmentCeilingMs)", source, StringComparison.Ordinal);
         Assert.Contains("InjectArmToken", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Console.", source, StringComparison.Ordinal);
     }
@@ -172,11 +172,11 @@ public sealed class GuardianBrokerTests
     public void Broker_close_releases_the_host_facing_pipe_before_the_guardian_control_it_relays_to()
     {
         var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
-        var close = source.IndexOf("internal async Task CloseAsync(CancellationToken cancellationToken)", StringComparison.Ordinal);
+        var close = source.IndexOf("internal async Task CloseAsync(ShutdownBudget budget, CancellationToken cancellationToken)", StringComparison.Ordinal);
         // The Host-facing pipe is the child's controller EOF. Closing it first is what lets a child
         // that is already reclaiming finish; closing it last made every clean quit a kill.
         var pipe = source.IndexOf("server.Dispose();", close, StringComparison.Ordinal);
-        var guardControl = source.IndexOf("await SettleAttemptAsync().ConfigureAwait(false)", close, StringComparison.Ordinal);
+        var guardControl = source.IndexOf("await guardian.CloseControlAndWaitForExitAsync(budget.Take(GuardianSupervisorLease.ContainmentCeilingMs), cancellationToken)", close, StringComparison.Ordinal);
 
         Assert.True(pipe > close && guardControl > pipe);
         // The settlement is the one path every attempt end takes: control EOF, a bounded wait, the kill as

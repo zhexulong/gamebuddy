@@ -27,8 +27,15 @@ public sealed class GuardianSupervisorTests
         var dispose = source.IndexOf("createdProcess.Dispose()", cleanup, StringComparison.Ordinal);
 
         Assert.True(cleanup >= 0 && terminate > cleanup && dispose > terminate);
+        // The kill, and then a wait on the process object bounded by the declared number rather than a
+        // literal of its own - the wait that makes the surrounding Dispose() safe draws its ceiling from
+        // TerminatedHandleCeilingMs. The other half of that property is ShutdownWaitBudgetTests, which
+        // fails on any bare literal passed to a process wait.
         Assert.Contains("WindowsNative.TerminateProcess(process, 1)", source, StringComparison.Ordinal);
-        Assert.Contains("WindowsNative.WaitForSingleObject(process, 30_000)", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "WindowsNative.WaitForSingleObject(process, WindowsNative.TerminatedHandleCeilingMs)",
+            source,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -38,7 +45,10 @@ public sealed class GuardianSupervisorTests
         var settle = source.IndexOf("internal async Task<bool> SettleAsync()", StringComparison.Ordinal);
         var dispose = source.IndexOf("public async ValueTask DisposeAsync()", settle, StringComparison.Ordinal);
         var control = source.IndexOf("await CloseControlAsync(CancellationToken.None)", settle, StringComparison.Ordinal);
-        var wait = source.IndexOf("WaitForExitAsync(CancellationToken.None, 30_000)", control, StringComparison.Ordinal);
+        // The bounded wait, named: containmentCeilingMs is the declared ceiling a quit narrows through
+        // BindContainmentCeiling (it clamps, never extends), and the kill below is the watchdog over
+        // exactly this wait.
+        var wait = source.IndexOf("WaitForExitAsync(CancellationToken.None, containmentCeilingMs)", control, StringComparison.Ordinal);
         var terminate = source.IndexOf("WindowsNative.TerminateProcess(process, 1)", wait, StringComparison.Ordinal);
         var proof = source.IndexOf("WindowsNative.WaitForSingleObject(process, 0) == WindowsNative.WaitObject0", terminate, StringComparison.Ordinal);
         var release = source.IndexOf("process.Dispose()", dispose, StringComparison.Ordinal);
@@ -65,7 +75,13 @@ public sealed class GuardianSupervisorTests
 
         Assert.True(release >= 0 && helper > release && close > release && wait > close && exitCode > wait);
         Assert.Contains("finally", releaseBody, StringComparison.Ordinal);
-        Assert.Contains("Task.Run(() => WindowsNative.WaitForSingleObject(process, 100), cancellationToken).WaitAsync(cancellationToken)", waitBody, StringComparison.Ordinal);
+        // The bounded poll: one slice of the declared HandlePollIntervalMs per attempt, run under the
+        // caller's token and awaited with it, so a cancelled release stops waiting instead of polling to
+        // the end of a timeout of its own (the assertion below is the token half of the same property).
+        Assert.Contains(
+            "Task.Run(() => WindowsNative.WaitForSingleObject(process, WindowsNative.HandlePollIntervalMs), cancellationToken).WaitAsync(cancellationToken)",
+            waitBody,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("CancellationToken.None", waitBody, StringComparison.Ordinal);
     }
 

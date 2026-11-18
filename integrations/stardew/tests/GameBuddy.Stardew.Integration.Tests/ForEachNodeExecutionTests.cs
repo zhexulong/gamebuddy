@@ -75,6 +75,93 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
+    /// THE ONE TILLABILITY ANSWER, measured on the row the loop dispatches from.
+    ///
+    /// <para>
+    /// Measured live (round57, one revision): the loop reported `not_matched=0 of decided=16` while TWO rows it dispatched
+    /// were `HoeDirt`, and `inspect_tiles` at that same revision called exactly those two `tillable:false`. The row was
+    /// derived from the map's `Diggable` property alone and the action refused on the whole walk, so the same revision held
+    /// two answers about one tile. The assertion is therefore not "a hoed tile is false" but: the row's answer IS the
+    /// executor's answer for every shape a tile can have, and the kind the loop dispatches by follows the same fact.
+    /// </para>
+    /// <para>
+    /// The shapes are the ones a hand-rolled `Diggable` read admitted and the executor refused - a hoed tile, a dug tile
+    /// under a wall, a dug tile carrying a weed, a dug tile with a grass tuft on it, and a dug tile under water - beside the
+    /// two the old read got right. A shape added here without an answer is a compile error, and one the executor changes its
+    /// mind about fails the cross-check below rather than this table.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheRowPublishesTheOneAnswerTheActionRefusesOn()
+    {
+        using var harness = ForEachHarness.Create();
+        var tiles = new (string Shape, int X, int Y, bool Diggable, bool Tillable)[]
+        {
+            ("bare diggable ground", 10, 10, true, true),
+            ("a tile that already carries a HoeDirt", 11, 10, true, false),
+            ("a dug tile under a wall", 12, 10, true, false),
+            ("a dug tile carrying a weed", 13, 10, true, false),
+            ("a dug tile with a grass tuft", 14, 10, true, false),
+            ("a dug tile under water", 15, 10, true, false),
+            ("ground the map does not call diggable", 16, 10, false, false),
+        };
+        foreach ((string _, int x, int y, bool diggable, bool _) in tiles)
+            if (diggable) harness.SetDiggable(x, y);
+        harness.PlaceHoeDirt(11, 10);
+        harness.Wall(12, 10);
+        harness.PlaceWeed(13, 10);
+        harness.PlaceGrass(14, 10);
+        harness.SetWater(15, 10);
+
+        var disagreements = new List<string>();
+        foreach ((string shape, int x, int y, bool _, bool tillable) in tiles)
+        {
+            FarmhandForEachRow? row = harness.World.ReadRow(x, y, 0, 0);
+            if (row is null)
+            {
+                disagreements.Add($"{shape}: no row at {x},{y}");
+                continue;
+            }
+            bool published = row.Fields["tillable"].Flag ?? false;
+            bool executor = ExecutionManager.IsTillableTile(harness.Farm, x, y);
+            if (published != executor)
+                disagreements.Add($"{shape}: the row says {published}, the executor says {executor}");
+            else if (published != tillable)
+                disagreements.Add($"{shape}: the answer moved to {published}");
+            bool dispatchedAsTillable = (row.Fields["kind"].Text ?? "") == FarmhandForEachKindActions.EmptyTillableKind;
+            if (dispatchedAsTillable != published)
+                disagreements.Add($"{shape}: kind is {row.Fields["kind"].Text} while tillable is {published}");
+        }
+
+        string.Join("; ", disagreements).Should().BeEmpty(
+            $"one word, one answer: the row, the action and the kind it dispatches by must agree on all {tiles.Length} shapes");
+    }
+
+    /// <summary>
+    /// The two questions stay two, and the pair that made this look self-consistent is the one that broke it.
+    ///
+    /// <para>
+    /// A hoed tile answers <c>tillable: false</c> and asks the SOIL predicate nothing: it is not an obstacle, it is the
+    /// state <c>till_soil</c> refuses one gate earlier with <c>soil_already_tilled</c>. Both readings are asserted here, so a
+    /// future "fix" that folds the two words into one fails instead of quietly renaming the second answer.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AHoedTileIsNotTillableAndIsStillNotAnObstacle()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.SetDiggable(10, 10);
+        harness.PlaceHoeDirt(10, 10);
+
+        ExecutionManager.IsTillableTile(harness.Farm, 10, 10)
+            .Should().BeFalse("the hoe has already been here; `till_soil` refuses with `soil_already_tilled`");
+        ExecutionManager.DescribeSoilRefusal(harness.Farm, 10, 10)
+            .Should().BeNull("a tilled tile is the hoe's own result, not an obstacle standing on it");
+        harness.World.ReadRow(10, 10, 0, 0)!.Fields["hoed"].Flag
+            .Should().BeTrue("and the state it IS in is published beside the answer");
+    }
+
+    /// <summary>
     /// A rectangle may reach past the farm's edge. Every tile is in the answer by name, and the ones that are not on the farm
     /// say so instead of being counted as worked.
     /// </summary>
@@ -510,6 +597,7 @@ public sealed class ForEachNodeExecutionTests
             ["tree"] = (x, y) => harness.PlaceTree(x, y, stump: false),
             ["tree_stump"] = (x, y) => harness.PlaceTree(x, y, stump: true),
             ["stone"] = harness.PlaceStone,
+            ["twig"] = harness.PlaceTwig,
             ["weed"] = harness.PlaceWeed,
             ["grass"] = harness.PlaceGrass,
             ["crop"] = (x, y) => harness.PlaceCrop(x, y, seedIndex: "472"),
@@ -811,13 +899,43 @@ public sealed class ForEachNodeExecutionTests
         internal void PlaceClump(int x, int y, int parentSheetIndex) =>
             this.Farm.resourceClumps.Add(new ResourceClump(parentSheetIndex, 1, 1, new Vector2(x, y)));
 
-        /// <summary>A stone in the object layer: the engine's own `(O)2`, which is what `break_rock` declares it clears.</summary>
+        /// <summary>A stone in the object layer, built from the two facts `Object.IsBreakableStone` reads (`Category == -999` and the name `Stone`) rather than from the id `(O)2`, which the engine itself never keys on.</summary>
         internal void PlaceStone(int x, int y) =>
-            this.Farm.objects[new Vector2(x, y)] = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)2", name: "Stone", category: -2);
+            this.Farm.objects[new Vector2(x, y)] = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)2", name: "Stone", category: -999);
+
+        /// <summary>
+        /// Twig litter: the engine's own `(O)294`, which `Object.IsTwig()` selects by ID and which the AXE branch removes
+        /// (`Object.cs:1182`). `remove_placed_item` is the published action that declares it.
+        /// </summary>
+        internal void PlaceTwig(int x, int y)
+        {
+            StardewValley.Object twig = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)294", name: "Twig", category: -999);
+            if (!twig.IsTwig())
+                throw new InvalidOperationException($"fixture_twig_is_not_the_engines_twig:item={twig.QualifiedItemId};name={twig.name ?? "none"}");
+            this.Farm.objects[new Vector2(x, y)] = twig;
+        }
 
         /// <summary>A grass tuft, built the way the crop fixture is: the reader names it by its type, not by its state.</summary>
         internal void PlaceGrass(int x, int y) =>
             this.Farm.terrainFeatures[new Vector2(x, y)] = (Grass)FormatterServices.GetUninitializedObject(typeof(Grass));
+
+        /// <summary>A hoed but bare tile: the `HoeDirt` state `till_soil` refuses with `soil_already_tilled`.</summary>
+        internal void PlaceHoeDirt(int x, int y) => this.Farm.terrainFeatures[new Vector2(x, y)] = new HoeDirt();
+
+        /// <summary>
+        /// A wall on one tile, which is what the engine's own obstruction layer is: `isTileLocationOpen` reads the
+        /// <c>Buildings</c> layer, so a diggable tile under one is ground the hoe admits and cannot reach.
+        /// </summary>
+        internal void Wall(int x, int y) =>
+            this.Farm.map.GetLayer("Buildings").Tiles[x, y] =
+                new xTile.Tiles.StaticTile(this.Farm.map.GetLayer("Buildings"), this.sheet, xTile.Tiles.BlendMode.Alpha, 0);
+
+        /// <summary>The engine's own water reading: the map's own <c>Water</c> property on the Back layer.</summary>
+        internal void SetWater(int x, int y)
+        {
+            var tile = (xTile.Tiles.StaticTile)this.Farm.map.GetLayer("Back").Tiles[x, y];
+            tile.Properties["Water"] = "T";
+        }
 
         /// <summary>
         /// A tree in either phase. `Tree`'s constructor reads game data this process never loads, so the fixture seeds the
@@ -988,7 +1106,7 @@ public sealed class ForEachNodeExecutionTests
 
         public long AttachmentGeneration => 1;
 
-        public void Send(NodeAdmissionChallenge challenge)
+        public string? Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
             this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = new HostAdmissionGrant(
@@ -1006,6 +1124,7 @@ public sealed class ForEachNodeExecutionTests
                 $"grant-{challenge.NodeId}-{challenge.NodeAttempt}",
                 "attachment_01",
                 "host-policy_01");
+            return null;
         }
 
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) =>

@@ -17,6 +17,14 @@
  * not-measured status. The tolerance for the two vendor gaps survives, but it now needs messages that were actually
  * parsed: an unexplained non-zero exit is a failure whether or not a gap happens to be active.
  */
+
+export const gateDeclaration = {
+  id: "check-publint",
+  domain: "arch",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";

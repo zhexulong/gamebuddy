@@ -31,6 +31,13 @@
  * path-safe segments.
  */
 
+export const gateDeclaration = {
+  id: "check-vendored-bundle-leaks",
+  domain: "arch",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";

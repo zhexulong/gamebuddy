@@ -13,6 +13,11 @@ import {
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import {
+  sameTile,
+  validFixtureSlotRelationship,
+  validateNativeLocalFixtureConfig,
+} from "./lib/native-local-runner-primitives.mjs";
 
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "till_soil"];
 const REQUIRED_CAPABILITIES = [
@@ -39,7 +44,7 @@ export async function runTillSoilSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
+  validateNativeLocalFixtureConfig(config, { action: "till_soil", requiredActions: EXPECTED_ACTIONS });
   try {
     let snapshot = await observeFresh(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -265,10 +270,6 @@ function adjacent(left, right) {
   );
 }
 
-function sameTile(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
-}
-
 function chooseReachableSoilTile(snapshot) {
   return (
     snapshot.soilTiles?.find(
@@ -307,15 +308,4 @@ function parseTargetCoordinates(value) {
 }
 function summarizeWithSoil(snapshot) {
   return { ...summarizeSnapshot(snapshot), soilTiles: snapshot.soilTiles?.length ?? 0 };
-}
-function validateNativeLocalFixtureConfig(value) {
-  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (
-    value.Portfolio?.Enable === true ||
-    value.HostAutomation?.Enable === true ||
-    value.HostFarmhandProvisioning?.Enable === true ||
-    value.FarmhandProvisioner?.Enable === true
-  )
-    throw new Error("native_local_fixture_topology_not_isolated");
-  validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

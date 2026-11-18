@@ -64,6 +64,14 @@
  * REFUSES TO PASS ON ZERO: no write action declaring a postcondition means the surface or the dispatch table moved and
  * this gate measured nothing - `not_measured`, exit 2.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-postcondition-delta",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

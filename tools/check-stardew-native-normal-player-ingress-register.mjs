@@ -1,6 +1,14 @@
 // red-proof: fixture  the legal synthetic register in tools/fixtures/stardew-native-ingress-register exits 0
 //                    (`entrypointCount 1, rootCount 1`); its `entrypoints` row deleted ->
 //                    `normal_player_ingress_no_entrypoints_or_gaps`, its `callerEdges` row deleted -> `normal_player_ingress_inventory_invalid: Router inventory needs existing ordered edge IDs.`, exit 1
+
+export const gateDeclaration = {
+  id: "check-stardew-native-normal-player-ingress-register",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { verifyExactMechanismReportSources } from "./lib/stardew-native-mechanism-review-register.mjs";

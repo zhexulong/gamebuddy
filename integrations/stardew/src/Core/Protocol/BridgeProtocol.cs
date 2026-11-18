@@ -436,26 +436,18 @@ public static class BridgeProtocol
         || (selector.Kind == "ref" && selector.Label is null
             && (selector.Ref is null || IsNavigationHandle(selector.Ref, "dr1_")));
 
-    private static bool IsExactNavigationDestinationSelector(JsonElement destination)
-    {
-        if (destination.ValueKind != JsonValueKind.Object
-            || !destination.TryGetProperty("kind", out JsonElement kind)
-            || kind.ValueKind != JsonValueKind.String)
-            return false;
-
-        return kind.GetString() switch
-        {
-            "label" => HasExactProperties(destination, "kind", "label")
-                && destination.TryGetProperty("label", out JsonElement label)
-                && label.ValueKind == JsonValueKind.String
-                && label.GetString() is { Length: >= 1 and <= 128 },
-            "ref" => HasExactProperties(destination, "kind", "ref")
-                && destination.TryGetProperty("ref", out JsonElement reference)
-                && reference.ValueKind == JsonValueKind.String
-                && IsNavigationHandle(reference.GetString(), "dr1_"),
-            _ => false,
-        };
-    }
+    /// <summary>
+    /// Whether an execution argument names a destination the closed shape admits.
+    ///
+    /// <para>
+    /// The shape (which keys may be present, and that the absent arm may be written out as `null`) and the content of
+    /// the arm it names both belong to <see cref="BodyProgramValidation"/>; this door adds no rule of its own, because
+    /// a door with its own rule is a second spelling of the same fact.
+    /// </para>
+    /// </summary>
+    private static bool IsExactNavigationDestinationSelector(JsonElement destination) =>
+        BodyProgramValidation.TryReadSelectorShape(destination, out string? kind, out string? label, out string? reference)
+        && BodyProgramValidation.IsValidSelector(BodyProgramValidation.SelectorFromShape(kind, label, reference));
 
     private static bool IsNavigationHandle(string? value, string prefix)
     {
@@ -993,7 +985,10 @@ public static class BridgeProtocol
          // The refusal detail and the recovery diagnostic carry the same two rules the journal enforces: a bound (so a
          // reason cannot become a payload) and a STATE (so a node that proved an effect can never also describe its
          // absence). The state rule is asked of the same declaration the journal uses, not restated here.
-         && IsLocatedReasonShape(node.State, node.RefusalDetail, node.RecoveryDiagnostic);
+         && IsLocatedReasonShape(node.State, node.RefusalDetail, node.RecoveryDiagnostic)
+         // The two fields a BATCH node proves with, on the same footing and the opposite direction: those name the absence
+         // of an effect, these ARE the effect, and each is legal only on the states its declaring layer permits.
+         && IsProofShape(node.State, node.Evidence, node.PostconditionVerification);
 
 private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @event is not null
          && IsJavaScriptSafeInteger(@event.Cursor)
@@ -1017,14 +1012,15 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "actionId", "x", "y" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "evidence", "postconditionVerification", "actionId", "x", "y" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
          && IsAbsentNullOrIdentifier(value, "actionId")
          && IsAbsentNullOrCoordinatePair(value)
          && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
          && IsAbsentNullOrBoundedHint(value, "hint")
-         && IsLocatedReasonShape(value);
+         && IsLocatedReasonShape(value)
+         && IsProofShape(value);
 
     /// <summary>
     /// An optional action id: absent, JSON null, or a program identifier in the journal's own grammar.
@@ -1101,6 +1097,36 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         return TryReadOptionalString(value, "refusalDetail", out string? refusalDetail)
             && TryReadOptionalString(value, "recoveryDiagnostic", out string? recoveryDiagnostic)
             && IsLocatedReasonShape(stateValue.GetString(), refusalDetail, recoveryDiagnostic);
+    }
+
+    /// <summary>
+    /// The two PROOF fields a batch node carries, checked against the state that may carry them.
+    ///
+    /// <para>
+    /// The mirror of <see cref="IsLocatedReasonShape(string, string, string)"/>: that pair names the ABSENCE of an effect and
+    /// is legal exactly on the states that stopped short, while `Evidence`/`PostconditionVerification` ARE the effect and are
+    /// legal only where it was proved (<see cref="BodyProgramValidation.MayCarryProof"/>). The bound is the journal's own
+    /// <see cref="BodyProgramValidation.IsOpaqueTerminalProof"/>, which is also the aggregate's ceiling
+    /// (`MaximumAggregateChars`), so a frame this accepts cannot be one the journal would have refused - and a frame it
+    /// refuses cannot be one the journal stored. Both overloads recover the state through the same `ToWireValue` projection
+    /// that produced the token.
+    /// </para>
+    /// </summary>
+    private static bool IsProofShape(string? wireState, string? evidence, string? postconditionVerification)
+    {
+        BodyProgramNodeState[] named = Enum.GetValues<BodyProgramNodeState>().Where(state => ToWireValue(state) == wireState).ToArray();
+        if (named.Length != 1) return false;
+        bool proved = BodyProgramValidation.MayCarryProof(named[0]);
+        return (evidence is null || (proved && BodyProgramValidation.IsOpaqueTerminalProof(evidence)))
+            && (postconditionVerification is null || (proved && BodyProgramValidation.IsOpaqueTerminalProof(postconditionVerification)));
+    }
+
+    private static bool IsProofShape(JsonElement value)
+    {
+        if (!value.TryGetProperty("state", out JsonElement stateValue) || stateValue.ValueKind != JsonValueKind.String) return false;
+        return TryReadOptionalString(value, "evidence", out string? evidence)
+            && TryReadOptionalString(value, "postconditionVerification", out string? postconditionVerification)
+            && IsProofShape(stateValue.GetString(), evidence, postconditionVerification);
     }
 
     /// <summary>
@@ -1209,7 +1235,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             snapshot.Nodes.Select(node =>
             {
                 BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y);
+                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification);
             }).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)
@@ -1283,12 +1309,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static bool TryReadBodyProgramSelector(JsonElement value, out BodyProgramDestinationSelector? selector)
     {
-        selector = null;
-        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("kind", out JsonElement kind) || kind.ValueKind != JsonValueKind.String) return false;
-        if (kind.GetString() == "label" && HasExactProperties(value, "kind", "label") && ReadPlayerText(value.GetProperty("label"), out string? label))
-            selector = new BodyProgramDestinationSelector("label", label, null);
-        else if (kind.GetString() == "ref" && HasExactProperties(value, "kind", "ref") && ReadNavigationRef(value.GetProperty("ref"), out string? reference))
-            selector = new BodyProgramDestinationSelector("ref", null, reference);
+        selector = BodyProgramValidation.TryReadSelectorShape(value, out string? kind, out string? label, out string? reference)
+            ? BodyProgramValidation.SelectorFromShape(kind, label, reference)
+            : null;
         if (selector is not null && !BodyProgramValidation.IsValidSelector(selector)) selector = null;
         return selector is not null;
     }
@@ -1346,8 +1369,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         return IsOpaqueId(result) || BodyProgramValidation.IsResourceClaimKey(result);
     }
-    private static bool ReadPlayerText(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is { Length: >= 1 and <= 128 } && result.Trim().Length > 0 && result == result.TrimStart() && result == result.TrimEnd() && result.Normalize(System.Text.NormalizationForm.FormC) == result; }
-    private static bool ReadNavigationRef(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is not null && result.StartsWith("dr1_", StringComparison.Ordinal) && result.Length == 26; }
     private static bool IsBoundedString(string? value, int maximum) => value is not null && value.Length <= maximum;
     /// <summary>
     /// The `correlationId` of a frame whose typed parse FAILED, so a refusal can still be attached to the call it

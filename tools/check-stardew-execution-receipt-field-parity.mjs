@@ -26,6 +26,14 @@
 //
 // Host-side intentional extras are legal only when explicitly listed in
 // DOCUMENTED_EXTRAS (currently empty) together with a reason.
+
+export const gateDeclaration = {
+  id: "check-stardew-execution-receipt-field-parity",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

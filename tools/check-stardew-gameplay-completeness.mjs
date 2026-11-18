@@ -11,19 +11,22 @@
  * internally complete. It never means the entire game or capability set is
  * complete, and this command is intentionally not part of the default CI gate.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-gameplay-completeness",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fail } from "./lib/gate-preamble.mjs";
 
 function argument(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
-}
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
 }
 
 const defaultCatalogPath = path.resolve(
@@ -91,22 +94,23 @@ export function validateDirectGameplaySurfaceReport(report, catalog = null) {
     errors.push("Surface report target does not match Stardew 1.6.15 build 24356.");
   }
   if (
-    !report?.assembly?.sha256 ||
-    !Number.isInteger(report?.assembly?.lengthBytes) ||
+    !(report?.assembly?.sha256 && Number.isInteger(report?.assembly?.lengthBytes)) ||
     report.assembly.lengthBytes <= 0
   ) {
     errors.push("Surface report is missing the target assembly length/SHA-256 attestation.");
   }
   if (
-    !report?.attestation?.extractedAtUtc ||
-    !report?.decompilation?.tool ||
-    !report?.decompilation?.toolVersion ||
-    !report?.decompilation?.configurationDigest ||
-    !report?.sourceSnapshot?.contentManifestSha256
+    !(
+      report?.attestation?.extractedAtUtc &&
+      report?.decompilation?.tool &&
+      report?.decompilation?.toolVersion &&
+      report?.decompilation?.configurationDigest &&
+      report?.sourceSnapshot?.contentManifestSha256
+    )
   ) {
     errors.push("Surface report is missing decompilation/source attestation.");
   }
-  if (!report?.content?.contentHashesSha256 || !report?.content?.relevantAssetManifestSha256) {
+  if (!(report?.content?.contentHashesSha256 && report?.content?.relevantAssetManifestSha256)) {
     errors.push("Surface report is missing ContentHashes/asset manifest attestation.");
   }
 

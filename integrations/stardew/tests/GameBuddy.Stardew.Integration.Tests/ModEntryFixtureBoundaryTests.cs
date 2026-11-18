@@ -122,7 +122,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeFertilizeTileFixture", "InitializeNativeFeedAnimalFixture",
         "InitializeNativeAnimalProductFixture",
         "InstallSharedWorldTalkToNpcFixture", "VerifySharedWorldTalkToNpcJoin",
-        "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
+        "TryObserveNativeAutomationClientExit", "TryTriggerNativeSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
         "FindNativeMineEntranceFixtureTarget", "FindNativeRaftFixtureWaterEdge",
         "InstallWiaEatInterruptionFixture",
@@ -135,6 +135,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InstallNativeLocalRideBusFixture", "TryFindBusTicketMachine",
         "InstallNativeLocalMineElevatorFixture",
         "InstallNativeLocalShopPurchaseFixture",
+        "InstallNativeLocalShopToolUpgradeFixture",
         // 2026-10-07：建筑自藏箱对（load_building_chest / collect_building_chest_output）的
         // 夹具家族。Given 数据来源是 Data/Buildings 的 BuildingData.Chests，夹具只建立
         // “已完工、Load 箱为空、Collect 箱有 1 或 2 堆、玩家手持被转换接受的物品”这一声明事实。

@@ -127,6 +127,6 @@ test("travel runner rejects a non-isolated topology", async () => {
   const client = createFake();
   await assert.rejects(
     runTravelSmoke(client, [], fixtureConfig({ Portfolio: { Enable: true } })),
-    (error) => error?.message === "native_local_fixture_topology_not_isolated",
+    (error) => error?.message === "native_local_travel_action_policy_invalid",
   );
 });

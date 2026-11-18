@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   assessDialogueGates,
-  gateIsDue,
+  assessPlayerInputSchedule,
+  gameClockMinutes,
   MAXIMUM_SPOKEN_CHARACTERS,
   OBSTACLE_RECENCY_MS,
   obstacleGateIsDue,
@@ -13,6 +14,11 @@ import {
 
 const gate = (id) => SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === id);
 const findingFor = (verdict, id) => verdict.findings.find((entry) => entry.id === id);
+
+// The task sentences the runner's own prompt table writes into the day's note. The runner suite proves the fragment is
+// read out of `DAILY_TASK_PROMPT_ZH` rather than copied; here they only stand for the text a session received.
+const NOTE_ZH = "东头那片地该收拾了，杂草和石头都清一清。";
+const NOTE_DAY2_ZH = "地里长好的都收下来，收完再把空地种上。";
 
 test("a companion that defers the decision fails the stance gate", () => {
   const outcome = gate("turn-initiative-split").assert({ text: "都行，听你的。" });
@@ -92,11 +98,60 @@ test("pushing back like a person passes the report gate", () => {
   assert.equal(outcome.pass, true);
 });
 
-test("a clock gate is due only on its own day and its own game time", () => {
-  const stance = gate("turn-initiative-split");
-  assert.equal(gateIsDue(stance, { day: 1, gameTime: "1200" }), true);
-  assert.equal(gateIsDue(stance, { day: 2, gameTime: "1200" }), false);
-  assert.equal(gateIsDue(stance, { day: 1, gameTime: "1800" }), false);
+test("a gate declared for 12:00 is not due at 06:20 on its own day", () => {
+  // This is round49: the planner compared the day and nothing else, so `turn-initiative-split` was due from the first
+  // tick of day 1 and took the slot the day's note needed at 06:20.
+  const early = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: 620, nowMs: 5_000 });
+  const stance = early.find((plan) => plan.gate.id === "turn-initiative-split");
+  assert.equal(stance.deliver, false, "06:20 is before the 12:00 the gate declares");
+  assert.equal(stance.reason, "gate_not_yet_due:1200:at_0620");
+
+  // Due once its hour has passed, and it stays due: the runner cannot pre-empt a turn at exactly 12:00, which is why
+  // the axis is a lower bound rather than an equality.
+  const due = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: 1205, nowMs: 5_000 });
+  assert.equal(due.find((plan) => plan.gate.id === "turn-initiative-split").deliver, true);
+  const late = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: 1859, nowMs: 5_000 });
+  assert.equal(late.find((plan) => plan.gate.id === "turn-initiative-split").deliver, true);
+});
+
+test("a gate whose clock nobody read is not delivered, and says it was not measured", () => {
+  // The other way to fire early is to fire when you cannot tell the hour. `not_measured` is a finding; a delivery here
+  // would be the same defect wearing the clock's absence as an excuse.
+  const blind = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: null, nowMs: 5_000 }).find(
+    (plan) => plan.gate.id === "turn-initiative-split",
+  );
+  assert.equal(blind.deliver, false);
+  assert.equal(blind.reason, "gate_clock_not_measured:1200");
+});
+
+test("the day-2 gates keep their own hours, so the report is not asked for at breakfast", () => {
+  const morning = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 2, gameTime: 602, nowMs: 5_000 });
+  assert.equal(
+    morning.find((plan) => plan.gate.id === "turn-yesterday-honesty").reason,
+    "gate_not_yet_due:0900:at_0602",
+  );
+  assert.equal(
+    morning.find((plan) => plan.gate.id === "turn-weekly-report-refused").reason,
+    "gate_not_yet_due:1800:at_0602",
+  );
+  const evening = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 2, gameTime: 1800, nowMs: 5_000 });
+  assert.equal(evening.find((plan) => plan.gate.id === "turn-yesterday-honesty").deliver, true);
+  assert.equal(evening.find((plan) => plan.gate.id === "turn-weekly-report-refused").deliver, true);
+});
+
+test("the game clock is compared in minutes, not as the digits it is written with", () => {
+  // `"900" < "1200"` as text and `900 < 1200` as integers are both wrong once leading zeros arrive (`"0900"`), and
+  // `"1100" > "900"` reads a 09:00 gate as already past at 11:00 while a 12:00 gate reads as not yet due. The field is
+  // HHMM, so the only comparison that means anything is minute-of-day.
+  assert.equal(gameClockMinutes("1200"), 720);
+  assert.equal(gameClockMinutes("0620"), 380);
+  assert.equal(gameClockMinutes(620), 380);
+  assert.equal(gameClockMinutes("900"), 540);
+  assert.equal(gameClockMinutes("2600"), 1560);
+  // A clock nobody published is not midnight.
+  assert.equal(gameClockMinutes(null), null);
+  assert.equal(gameClockMinutes("none"), null);
+  assert.equal(gameClockMinutes("1260"), null, "60 is not a minute");
 });
 
 test("the obstacle gate is due only while a refusal is still recent", () => {
@@ -262,6 +317,139 @@ test("no refusal at all, or an unreadable log, is a named reason rather than a s
     nowMs: 5_000,
   }).find((plan) => plan.gate.id === "turn-stuck-just-now");
   assert.equal(stillJudged.deliver, true);
+});
+
+test("the day's note is what the run was asked to do, so it must arrive before any gate that presupposes it", () => {
+  // round49, replayed from the real gate module: the stance gate's own prompt reached her session and the day's note
+  // did not. `turn-initiative-split` asks "which job first", and its assertion accepts any sentence naming 草 or 石头 -
+  // so a gate delivered over a lost note reports a PASS for behaviour it never observed.
+  const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
+  const verdict = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [
+      {
+        day: 1,
+        channel: "gate",
+        gateId: "turn-initiative-split",
+        text: stance.prompt,
+        declaredGameTime: stance.trigger.atGameTime,
+        gameTime: 620,
+        admitted: true,
+      },
+    ],
+    sessionTexts: [stance.prompt],
+  });
+  assert.equal(verdict.reading, "days scheduled 1 · notes delivered 0");
+  assert.deepEqual(
+    verdict.findings.map((finding) => finding.code),
+    [
+      "day_note_not_delivered:1:clear_east_patch",
+      "dialogue_gate_preempted_the_day_note:turn-initiative-split:1",
+      "dialogue_gate_fired_early:turn-initiative-split:1200:0620",
+    ],
+  );
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.verdictCode, "day_note_not_delivered:1:clear_east_patch");
+});
+
+test("the note's absence names WHY it is absent, from the delivery the runner recorded", () => {
+  const admittedButLost = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [{ day: 1, channel: "harness", text: `桌上留着便签：“${NOTE_ZH}”`, admitted: true }],
+    sessionTexts: ["unrelated"],
+  });
+  assert.equal(admittedButLost.findings[0].cause, "admitted_but_absent_from_session");
+
+  const refused = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [{ day: 1, channel: "harness", text: NOTE_ZH, admitted: false }],
+    sessionTexts: [],
+  });
+  assert.equal(refused.findings[0].cause, "admission_refused");
+
+  const never = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [],
+    sessionTexts: [],
+  });
+  assert.equal(never.findings[0].cause, "never_submitted");
+});
+
+test("a note that arrives AFTER a gate's prompt has still been preempted", () => {
+  // Presence is not order. This is the falsifier for the ordering assertion: both lines arrived, so a check that only
+  // asked "was the note delivered" would be green while the gate had already asked about work never stated.
+  const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
+  const verdict = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [
+      { day: 1, channel: "gate", gateId: stance.id, text: stance.prompt, declaredGameTime: "1200", gameTime: 1205 },
+    ],
+    sessionTexts: [stance.prompt, `桌上留着便签：“${NOTE_ZH}”`],
+  });
+  assert.equal(verdict.reading, "days scheduled 1 · notes delivered 1");
+  assert.deepEqual(
+    verdict.findings.map((finding) => finding.code),
+    ["dialogue_gate_preempted_the_day_note:turn-initiative-split:1"],
+  );
+});
+
+test("a run that delivers the note first, then the gate on its own hour, has no findings", () => {
+  // The green case, from the same real gate: this is what the runner must produce, and the population is printed so a
+  // zero is visible as a zero rather than as silence.
+  const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
+  const verdict = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [
+      { day: 1, task: "clear_east_patch", note: NOTE_ZH },
+      { day: 2, task: "water_and_harvest", note: NOTE_DAY2_ZH },
+    ],
+    inputs: [
+      { day: 1, channel: "harness", text: `桌上留着便签：“${NOTE_ZH}”`, admitted: true },
+      { day: 1, channel: "gate", gateId: stance.id, text: stance.prompt, declaredGameTime: "1200", gameTime: 1205 },
+      { day: 2, channel: "harness", text: `桌上留着便签：“${NOTE_DAY2_ZH}”`, admitted: true },
+    ],
+    sessionTexts: [`桌上留着便签：“${NOTE_ZH}”`, stance.prompt, `桌上留着便签：“${NOTE_DAY2_ZH}”`],
+  });
+  assert.deepEqual(verdict.findings, []);
+  assert.equal(verdict.reading, "days scheduled 2 · notes delivered 2");
+  assert.equal(verdict.passed, true);
+  assert.equal(verdict.verdictCode, null);
+});
+
+test("a session nobody could read is not a note that was not delivered, and neither is a pass", () => {
+  const unmeasured = assessPlayerInputSchedule({
+    schedulesDayNotes: true,
+    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    inputs: [{ day: 1, channel: "harness", text: NOTE_ZH, admitted: true }],
+    sessionTexts: null,
+    sessionReason: "no_session_record_for_run_surface_session",
+  });
+  assert.equal(unmeasured.measured, false);
+  assert.deepEqual(
+    unmeasured.findings.map((finding) => finding.code),
+    ["day_note_delivery_not_measured:no_session_record_for_run_surface_session"],
+  );
+  assert.equal(unmeasured.passed, false, "an unread session cannot be green");
+});
+
+test("a scenario that schedules no note says so instead of passing an empty population", () => {
+  const inapplicable = assessPlayerInputSchedule({ schedulesDayNotes: false, scheduled: [], sessionTexts: [] });
+  assert.equal(inapplicable.applicable, false);
+  assert.equal(inapplicable.passed, true);
+  assert.equal(inapplicable.reading, "days scheduled 0 · notes delivered 0");
+
+  // A multi-day run that scheduled nothing has not passed; it measured no day, and "nothing scheduled" is the defect.
+  const empty = assessPlayerInputSchedule({ schedulesDayNotes: true, scheduled: [], sessionTexts: [] });
+  assert.deepEqual(
+    empty.findings.map((finding) => finding.code),
+    ["day_notes_not_scheduled"],
+  );
+  assert.equal(empty.passed, false);
 });
 
 test("a clock gate the run never reached says which day it was offered on", () => {

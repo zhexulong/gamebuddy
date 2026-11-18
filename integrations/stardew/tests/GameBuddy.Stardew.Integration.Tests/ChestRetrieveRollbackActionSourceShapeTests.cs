@@ -81,8 +81,9 @@ public sealed class ChestRetrieveRollbackActionSourceShapeTests
         executed.Should().Contain(
             "bool retrieved = leftover is null &&",
             "a partial handoff is never a success");
-        executed.Should().Contain("ExecutionState.Uncertain");
-        executed.Should().Contain("\"chest_retrieve_postcondition_unavailable\"");
+        executed.Should().Contain(
+            "SettlePostcondition(requestId, executionId, retrieved, \"chest_retrieved\", \"chest_retrieve_postcondition_unavailable\"",
+            "the unobserved half of the verdict is Uncertain, derived from the same `retrieved` the gate above reads");
     }
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>

@@ -19,10 +19,12 @@ import { describeMemberDiff, memberDiff } from "./lib/member-diff.mjs";
 //            <file>:2:15 - use list.length or assert.deepEqual(...)` (see "a frozen count beside a derived
 //            population is named with the file, the line and the literal" below).
 //
-// Also injected, each seen red once (this file): a literal on the left of the assertion, a bare
-// `list.length === 15`, two derived sides reported as a literal, every file in a directory treated as a
-// test, an unsorted member diff, an empty population treated as a pass, and a raw-text sweep in place of
-// the syntax tree - which names the defect inside a comment and a string.
+// Also injected, each seen red once (this file): a literal on the left of the assertion, an
+// `assert.ok(list.length === 15)` beside the `filter((line) => line.writers.length === 0)` that builds the
+// population a later `assert.deepEqual` reads, the same pair around `assert.throws`'s callback, two derived
+// sides reported as a literal, every file in a directory treated as a test, an unsorted member diff, an empty
+// population treated as a pass, and a raw-text sweep in place of the syntax tree - which names the defect
+// inside a comment and a string.
 //
 // PROVENANCE - the four instances that named this class, all measured on 2026-11-05:
 //
@@ -100,6 +102,9 @@ test("the literal on the left of the assertion is the same violation", async () 
 });
 
 test("a bare length comparison is the same violation, and extra assertion arguments do not hide it", async () => {
+  // A branch condition is the population's BUILDER, not its frozen size: the comparison that decides which members
+  // exist is not the class (see "a predicate that builds the population an assertion reads"). The same literal, spelled
+  // inside an assertion, is - with or without the assertion's message argument.
   const { violations } = await reading({
     "host/src/seams.test.ts": [
       `test("x", () => {`,
@@ -111,9 +116,60 @@ test("a bare length comparison is the same violation, and extra assertion argume
   });
   assert.deepEqual(
     violations.map((violation) => [violation.line, violation.operator, violation.literal]),
+    [[3, "equal", "15"]],
+  );
+});
+
+test("a predicate that builds the population an assertion reads is not a frozen count", async () => {
+  // The shape this gate was red on in the real tree (host/src/framework-roleplay-gate.test.ts): a filter decides WHICH
+  // members are unattributed, and the assertion beneath it is already the correct form. The `0` in the predicate is not
+  // the frozen size of a population; flagging it teaches `!line.writers.length` to dodge the detector, which is worse
+  // code than the line it replaces.
+  const { violations } = await reading({
+    "host/src/tail.test.ts": [
+      `test("x", () => {`,
+      `  const unattributed = lines.filter((line) => line.writers.length === 0);`,
+      `  assert.deepEqual(unattributed.map((line) => line.text), []);`,
+      `  const blank = lines.filter((line) => line.trim().length === 0);`,
+      `  assert.deepEqual(blank, []);`,
+      `  if (lines.length === 0) assert.fail("examined 0 lines: the population is unreadable");`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(violations, []);
+});
+
+test("a callback handed to an assertion is code under test, not the assertion's own expression", async () => {
+  const { violations } = await reading({
+    "host/src/throws.test.ts": [
+      `test("x", () => {`,
+      `  assert.throws(() => { if (list.length === 15) throw new Error("no members"); });`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(violations, []);
+});
+
+test("a literal count compared inside an assertion is still the violation", async () => {
+  // The other direction of the same scoping: what an assertion compares is the class, however it is spelled.
+  const { violations } = await reading({
+    "host/src/inside.test.ts": [
+      `test("x", (t) => {`,
+      `  assert.ok(list.length === 15);`,
+      `  assert(list.length === 15);`,
+      `  t.ok(list.length === 15);`,
+      `});`,
+      "",
+    ].join("\n"),
+  });
+  assert.deepEqual(
+    violations.map((violation) => [violation.line, violation.operator, violation.literal]),
     [
       [2, "===", "15"],
-      [3, "equal", "15"],
+      [3, "===", "15"],
+      [4, "===", "15"],
     ],
   );
 });

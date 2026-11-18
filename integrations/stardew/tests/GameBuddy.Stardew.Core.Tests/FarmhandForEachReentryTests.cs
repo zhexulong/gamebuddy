@@ -133,7 +133,7 @@ public sealed class FarmhandForEachReentryTests
             world.Settled);
 
     private static FarmhandForEachPredicate Unworked() =>
-        new("worked", FarmhandForEachComparison.Eq, new[] { FarmhandForEachValue.Of(false) });
+        new("worked", new[] { FarmhandForEachValue.Of(false) });
 
     private static FarmhandForEachSource Area(int x, int y, int w, int h) =>
         new(x, y, w, h);

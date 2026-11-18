@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
+import { readHostCompletionContracts } from "../check-stardew-postcondition-delta.mjs";
 import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION } from "./multiday-daily-tasks.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
@@ -45,36 +46,106 @@ const ENTERED_MINE = receipt("enter_mine", {
   reasonCode: "mine_entered",
   evidence: { detail: "level=11;tile=6,6;from_level=10" },
 });
-// The tile-bearing terminals, in the producer's own shapes (`stardew-game-integration-adapter.test.ts`). A patch day's
-// evidence IS a coordinate: these three actions each name the tile they changed as part of their postcondition.
+// The mine's OWN exit ladder: `use_mine_ladder`'s `mine_left` terminal, in the two-key and five-key shapes the Host's
+// rule admits (here the five: the question the level asked, the answer given, the ladder tile and where she came out).
+const LEFT_BY_LADDER = receipt("use_mine_ladder", {
+  reasonCode: "mine_left",
+  evidence: { detail: "from=mine_shaft_11;question=ExitMine;response=Leave;ladder=6,7;actual=Farm:64,15" },
+});
+/**
+ * The KEY LIST a receipt of `actionId` must carry, read out of the file that declares it.
+ *
+ * This file used to spell `till_soil`'s evidence by hand, and the hand spelling drifted: `5a068fa9` gave the action
+ * `charge_requested`, `charge_applied`, `window`, `tiles_changed`, `changed` and the three tool-selection keys, the
+ * fixture here carried none of them, and because the Host's rule is `required ⊆ emitted ⊆ required ∪ optional` every
+ * tilled tile became a REFUSED receipt - so eight criteria in this file read a patch day as work the run could not
+ * describe. A key list written beside the contract is a second spelling of the contract, which is the same defect as a
+ * recorded count written beside its producer.
+ *
+ * The parser is `readHostCompletionContracts`, the one `tools/check-stardew-postcondition-delta.mjs` owns and
+ * `tools/check-stardew-task-gap-reasons.mjs` already reuses: it resolves a predicate's inline array AND a module
+ * constant such as `TILL_SOIL_EVIDENCE_KEYS`, so the keys are read from the declaration the adapter folds over.
+ */
+const HOST_COMPLETION_CONTRACT = new URL("../../host/src/stardew-completion-contracts.ts", import.meta.url);
+
+function declaredEvidenceKeys(actionId) {
+  const { contracts, findings } = readHostCompletionContracts(readFileSync(HOST_COMPLETION_CONTRACT, "utf8"));
+  const contract = contracts.get(actionId);
+  if (contract === undefined || contract.keys.length === 0)
+    throw new Error(
+      `blocked: the Host's completion contract declares no evidence keys for ${actionId}, so this file's ${actionId} ` +
+        `fixture would be built from nothing and no receipt it minted would prove a tile ` +
+        `(parser findings: ${findings.join(" | ") || "none"})`,
+    );
+  return contract.keys;
+}
+
+/**
+ * One receipt's evidence: the contract's keys, filled with the values the Mod prints for ONE single-tile use.
+ *
+ * The values cannot be derived from anything - they ARE what the handler measured (`Farm`, `HoeDirt`, the stamina the
+ * swing cost) - and `stardew-game-integration-adapter.test.ts` carries the same shape for `till_soil`. What must not be
+ * written a second time is the KEY SET, and a key the contract grows that this table does not fill fails here NAMING
+ * that key, rather than quietly leaving the receipt refused.
+ */
+function contractEvidence(actionId, values) {
+  const keys = declaredEvidenceKeys(actionId);
+  const missing = keys.filter((key) => !(key in values));
+  if (missing.length > 0)
+    throw new Error(
+      `blocked: the ${actionId} contract requires ${missing.join(", ")} and this fixture states no value for it; take ` +
+        `the value from the Mod's handler instead of dropping the key from the receipt`,
+    );
+  return keys.map((key) => `${key}=${String(values[key])}`).join(";");
+}
+
+// The tile-bearing terminals. A patch day's evidence IS a coordinate: each of these actions names the tile it changed as
+// part of its own postcondition, and the keys come from that postcondition rather than from this comment.
 const TILLED = (x, y, location = "Farm") =>
   receipt("till_soil", {
     reasonCode: "soil_tilled",
     evidence: {
-      detail:
-        "location=" +
-        location +
-        ";target=" +
-        String(x) +
-        "," +
-        String(y) +
-        ";before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      detail: contractEvidence("till_soil", {
+        location,
+        target: `${String(x)},${String(y)}`,
+        tool_selected: "hoe",
+        slot: "3",
+        tool_before: "none",
+        slot_before: "0",
+        before: "none",
+        after: "HoeDirt",
+        // An uncharged tap, and the box ONE native use scanned. The contract refuses a `changed` tile outside it.
+        charge_requested: "0",
+        charge_applied: "0",
+        window: `${String(x - 5)},${String(y - 5)}:${String(x + 5)},${String(y + 5)}`,
+        tiles_changed: "1",
+        changed: `${String(x)}:${String(y)}`,
+        stamina_before: "100",
+        stamina_after: "98",
+        stamina_delta: "-2",
+        expected_stamina_cost: "2",
+        tool_restored: "none",
+      }),
     },
   });
 const PLANTED = (x, y, location = "Farm") =>
   receipt("plant_seed", {
     reasonCode: "seed_planted",
     evidence: {
-      detail:
-        "location=" +
-        location +
-        ";target=soil_01;tile=" +
-        String(x) +
-        "," +
-        String(y) +
-        ";item=(O)472;crop=Parsnip;inventory_before=2;inventory_after=1",
+      detail: contractEvidence("plant_seed", {
+        location,
+        target: "soil_01",
+        tile: `${String(x)},${String(y)}`,
+        item: "(O)472",
+        crop: "Parsnip",
+        inventory_before: "2",
+        inventory_after: "1",
+      }),
     },
   });
+
+/** The fixtures above, by the action each one mints: the population the admission check below walks. */
+const TILE_FIXTURES = Object.freeze({ till_soil: TILLED, plant_seed: PLANTED });
 const CUT_WEEDS = receipt("cut_weeds", {
   reasonCode: "weeds_cut",
   evidence: {
@@ -94,6 +165,40 @@ const rectangle = (width, height, originX = 12, originY = 4) => {
 
 /** The receipts a patch day's own history would leave: every tile tilled, then a seed put in it. */
 const patchReceipts = (points) => points.flatMap(([x, y]) => [TILLED(x, y), PLANTED(x, y)]);
+
+test("every tile-bearing fixture is a receipt its own contract admits, and one key short is refused", () => {
+  // A fixture the contract REFUSES tests nothing but this file: every criterion below would read a patch day as
+  // "the receipts proved nothing" and the red would name the criterion rather than the fixture. `5a068fa9` is exactly
+  // that incident - eight tests went red for four days with the contract's change four files away.
+  const findings = [];
+  for (const [actionId, build] of Object.entries(TILE_FIXTURES)) {
+    const admitted = purposeReceipts([build(12, 4)]);
+    if (admitted.refused.length > 0)
+      findings.push(
+        `${actionId}: the fixture is refused as ${admitted.refused.map((entry) => entry.reasonCode).join(", ")}`,
+      );
+  }
+  assert.deepEqual(
+    findings,
+    [],
+    "a tile-bearing fixture in this file no longer satisfies the completion contract it derives its keys from, so " +
+      "every criterion that reads it is measuring a refusal: fill the key the contract requires from the Mod's handler",
+  );
+  // The falsifier: the SAME reader, told to drop one declared key, must move that receipt to refused. Without it, the
+  // check above would be green on a `purposeReceipts` that admitted everything.
+  const complete = TILLED(12, 4).evidence.detail;
+  const omitted = declaredEvidenceKeys("till_soil")[0];
+  const oneShort = complete
+    .split(";")
+    .filter((field) => !field.startsWith(`${String(omitted)}=`))
+    .join(";");
+  assert.equal(
+    purposeReceipts([Object.freeze({ ...TILLED(12, 4), evidence: { detail: oneShort } })]).refused.length,
+    1,
+    `removing the contract's own \`${String(omitted)}\` key from the fixture left the receipt ADMITTED, so nothing here ` +
+      "can tell a complete receipt from a key short one",
+  );
+});
 
 test("every rotation task declares a purpose or names the fact that is missing", () => {
   const undeclared = ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task] === undefined);
@@ -280,6 +385,36 @@ test("mine_delve: the surface rock that started this gate does not accomplish th
   const delved = judgeTaskPurpose("mine_delve", [ENTERED_MINE, BROKE_ROCK]);
   assert.equal(delved.state, "achieved", "entering a mine and then breaking something is the purpose");
   assert.match(delved.purpose ?? "", /mine level was entered/);
+});
+
+test("mine_ladder_to_depth: the level's own exit ladder is a proven fact, so the named gap is gone", () => {
+  // THE EXPIRED GAP, and the reason this suite has a date on it. The entry read: `use_mine_ladder` "is
+  // `FarmhandActionLifecycle.Experimental` (`FarmhandActionDefinitions.cs:270`): the action is not published, so no run
+  // can dispatch it and no receipt can prove a ladder was taken". The action was promoted to `LiveVerified` - live gate
+  // runner, gate row, fixture, promotion parity - and the cited line came to hold a different declaration, so the entry
+  // went on answering "this purpose cannot be decided" while both halves were published facts.
+  assert.equal(
+    TASK_PURPOSE_CRITERIA.mine_ladder_to_depth.missingFact,
+    undefined,
+    "the exit half is dispatchable and carries its own postcondition, so this purpose has a criterion, not a gap",
+  );
+
+  // Below that, the criterion behaves as the purpose is written: the ladder alone is NOT a level worked, and the order
+  // the world saw the two facts in is part of the statement.
+  const ladderOnly = judgeTaskPurpose("mine_ladder_to_depth", [LEFT_BY_LADDER]);
+  assert.equal(ladderOnly.state, "not_achieved", "a ladder taken with no mine entered is not a level worked");
+  assert.deepEqual(
+    ladderOnly.admittedActionIds,
+    ["use_mine_ladder"],
+    "its postcondition IS admitted - it is not the purpose",
+  );
+
+  const wrongOrder = judgeTaskPurpose("mine_ladder_to_depth", [LEFT_BY_LADDER, ENTERED_MINE]);
+  assert.equal(wrongOrder.state, "not_achieved", "leaving before entering is not the order the world saw");
+
+  const left = judgeTaskPurpose("mine_ladder_to_depth", [ENTERED_MINE, LEFT_BY_LADDER]);
+  assert.equal(left.state, "achieved", "entering a level and then leaving by its own ladder is the purpose");
+  assert.match(left.purpose ?? "", /worked deeper/);
 });
 
 test("a task with a named gap answers unproven for every receipt set, however complete", () => {

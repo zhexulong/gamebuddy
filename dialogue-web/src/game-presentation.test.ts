@@ -178,10 +178,15 @@ void test("the Host's own note becomes the player's sentence, never the Host's E
   assert.equal(installationHintLabel(labels, "another producer sentence"), sentence);
 });
 
-void test("the capability board states one line, and which silence a session is in", () => {
+test("the capability board states the published facts, and waits when nothing is measured", () => {
   const labels = messages("en");
-  const projection = (available: boolean, count: number, companionName: string | null, attached = true) => ({
-    prerequisites: { status: "met" as const, detectedGame: null },
+  const projection = (
+    capabilitySummary:
+      | Readonly<{ status: "published"; count: number }>
+      | Readonly<{ status: "not_measured"; reason: string }>,
+    companionName: string | null,
+  ) => ({
+    prerequisites: { status: "met" as const, detectedGame: null, missingItems: [] },
     instance: { status: "running" as const, gameTitle: null, generation: 1 },
     compatibility: { status: "compatible" as const, message: null },
     attachment: attached ? { status: "attached" as const, generation: 1 } : { status: "none" as const, generation: 0 },
@@ -191,11 +196,11 @@ void test("the capability board states one line, and which silence a session is 
     companionName,
     selectedWorld: null,
     selectedSave: null,
-    capabilitySummary: { available, count },
+    capabilitySummary,
     latestOutcome: "none" as const,
   });
 
-  const published = deriveCapabilityBoard(labels, projection(true, 7, "Mira"));
+  const published = deriveCapabilityBoard(labels, projection({ status: "published", count: 7 }, "Mira"));
   assert.deepEqual(
     published.cards.map((card) => card.key),
     ["companion", "abilities", "action"],
@@ -206,18 +211,27 @@ void test("the capability board states one line, and which silence a session is 
   // The board is a derivation of the projection, not a mutation surface.
   assert.ok(Object.isFrozen(published) && Object.isFrozen(published.cards));
 
-  // A game that is attached and has published nothing is NOT a session with no game:
-  // both publish `{ available: false, count: 0 }`, and only the attachment tells them
-  // apart, so they must not share a sentence.
-  const attachedEmpty = deriveCapabilityBoard(labels, projection(false, 0, null));
-  assert.equal(attachedEmpty.line, labels.gameBoardLineAttachedEmpty);
-  assert.equal(attachedEmpty.waiting, labels.gameBoardWaiting);
-  const noGame = deriveCapabilityBoard(labels, projection(false, 0, null, false));
-  assert.equal(noGame.line, labels.gameBoardLineNoGame);
-  assert.notEqual(noGame.line, attachedEmpty.line, "two silences cannot read as one fact");
+  const unmeasured = deriveCapabilityBoard(
+    labels,
+    projection({ status: "not_measured", reason: "no_attached_runtime" }, null),
+  );
+  assert.equal(unmeasured.waiting, labels.gameBoardWaiting);
+  assert.equal(unmeasured.cards[0].title, labels.gameBoardCompanionTitle);
   // What the board is waiting for is never a fallback list of abilities.
-  assert.equal(noGame.cards[0].title, labels.gameBoardCompanionTitle);
-  assert.notEqual(noGame.cards[1].detail, published.cards[1].detail);
+  assert.equal(unmeasured.lead, labels.gameBoardUnpublishedLead);
+  assert.notEqual(unmeasured.cards[1].detail, published.cards[1].detail);
+
+  // THREE ZEROS STAY APART: a runtime that answered and published nothing is a measured zero and says `0`, while a
+  // reading this layer could not take has no count at all. Collapsing them is what the literal `{available:false,
+  // count:0}` did on every reply.
+  const measuredZero = deriveCapabilityBoard(labels, projection({ status: "published", count: 0 }, null));
+  assert.ok(measuredZero.lead.includes("0"), "a measured zero is still a measurement");
+  assert.notEqual(
+    measuredZero.lead,
+    unmeasured.lead,
+    "a measured zero reads as the same sentence as an unmeasured one",
+  );
+  assert.equal(measuredZero.waiting, null, "a measured zero is not 'waiting for the session'");
 });
 
 void test("every installation state reaches the player as a sentence, in both catalogues", () => {

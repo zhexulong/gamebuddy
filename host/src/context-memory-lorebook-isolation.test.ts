@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import { buildChatCompanionSystemPrompt } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import { candidateToIdentityProfile, previewStCard } from "./st-card-import.js";
 import { MAX_GAME_SNAPSHOT_PROJECTION_BYTES, projectGameSnapshotContext } from "./snapshot-projection.js";
 import type { Snapshot } from "./protocol.js";

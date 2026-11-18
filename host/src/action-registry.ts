@@ -616,6 +616,68 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
 
 export type StardewActionId = (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId"];
 
+/**
+ * The actions that are EXPRESSION rather than work - and therefore the one exception to a plan surface's mount rule.
+ *
+ * <p>
+ * A surface that carries the plan builder drops every per-action tool this Host publishes as an action, because a
+ * one-step tool beside the builder only invites one-step runs of work. That reason says nothing about an emote or a turn
+ * of the head: expression is ONE STEP BY NATURE, so forcing it into the plan makes a gesture queue behind the work
+ * steps in front of it and settle with them. Measured `round47` (2026-11-12, 64 assistant turns, 188 planned nodes,
+ * zero emotes): the only route the surface mounted for body language was a plan step, beside a builder whose own
+ * examples never showed one.
+ * </p>
+ *
+ * <p>
+ * So this is a DECLARATION, not a second list: it is typed against `StardewActionId`, the mount reads it through
+ * `isExpressionOnlyAction`, and the plan vocabulary excludes exactly it in the generator. One declaration, one route per
+ * action - `action-route-gate.test.ts` fails by name when an action has two or none.
+ * </p>
+ */
+export const EXPRESSION_ONLY_ACTION_IDS = Object.freeze([
+  "express_emote",
+  "face_direction",
+] as const satisfies readonly StardewActionId[]);
+
+const EXPRESSION_ONLY_ACTION_ID_SET: ReadonlySet<string> = new Set<string>(EXPRESSION_ONLY_ACTION_IDS);
+
+/** The one way either side of the mount asks whether an action is expression rather than a unit of work. */
+export function isExpressionOnlyAction(actionId: string | null | undefined): boolean {
+  return actionId !== null && actionId !== undefined && EXPRESSION_ONLY_ACTION_ID_SET.has(actionId);
+}
+
+/**
+ * Whether an adapter action tool survives a plan-builder surface, which keeps one tool per action the PLAN cannot carry.
+ *
+ * <p>
+ * A surface that carries the builder replaces the flat per-action tools for EXACTLY the actions its vocabulary carries -
+ * one builder method per plannable action, so a second spelling of the same act is a one-step tool beside it. An action
+ * the plan really cannot carry therefore keeps its own tool, because the plan is not a route it has.
+ * </p>
+ *
+ * <p>
+ * Two declarations decide "cannot carry", and this function reads both rather than restating either:
+ * `EXPRESSION_ONLY_ACTION_IDS` (one step by nature) and the plan vocabulary itself
+ * (`body-program-script.ts` `planActionsFromRegistrations`), which drops a lifecycle the Mod's own Body Program catalog
+ * refuses as a node (`FarmhandBodyProgramCatalogProjection.cs` `lifecycle_not_allowed:<action>:<lifecycle>`). So a
+ * lifecycle the Mod refuses keeps the tool, and the day the Mod admits one the tool stops being mounted - by
+ * construction, with no list to edit here.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-14, WHY THIS IS NOT JUST THE EXPRESSION EXCEPTION. The mount filter read `isExpressionOnlyAction`
+ * alone, while the Host's admission (`visibleActionsFromModCatalog`) publishes the seven `experimental` actions that have
+ * a complete Mod descriptor. Those left the plan vocabulary on their lifecycle and lost their tool one layer below, so
+ * they had no route at all and nothing in the companion's context said they existed (`round54`: `sweep_scythe` appeared
+ * zero times). `action-route-gate.test.ts` names them now; its population was the same lifecycle rule, which is why it
+ * could not before.
+ * </p>
+ */
+export function keepsOwnToolOnPlanSurface(actionId: string | null, planActionIds: ReadonlySet<string>): boolean {
+  if (actionId === null) return true;
+  return isExpressionOnlyAction(actionId) || !planActionIds.has(actionId);
+}
+
 /** A current restrictive projection: registration facts remain Mod-owned. */
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 
@@ -762,7 +824,10 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "claim_minigame_or_festival_reward",
   ]),
   minigame_play: Object.freeze(["start_minigame_phase", "control_minigame_phase", "claim_minigame_or_festival_reward"]),
-  end_day: Object.freeze(["sleep_ready", "sleep_after_ready"]),
+  // The two coordination steps of `end_day_multiplayer_v1`. The day-progression term keeps its own name
+  // after the `advance_day -> sleep` action rename (b4c44ea8): these values name capabilities, and the
+  // capability is `advance_day_after_ready` even though the action a player issues is `sleep`.
+  end_day: Object.freeze(["sleep_ready", "advance_day_after_ready"]),
   milk_animal: Object.freeze(["collect_animal_product"]),
   shear_animal: Object.freeze(["collect_animal_product"]),
   tool_upgrade: Object.freeze(["request_tool_upgrade", "claim_tool_upgrade"]),

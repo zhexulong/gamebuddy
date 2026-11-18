@@ -32,6 +32,14 @@
  * red-proof: inject  with `--fail-on-ungranted` removed from the reconciliation step, the falsifier failed on
  *   "the chain arms --fail-on-ungranted on the reconciliation step, which is the whole point"
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-observation-gap",
+  domain: "stardew",
+  tier: "l2",
+  kind: "totality",
+};
+
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

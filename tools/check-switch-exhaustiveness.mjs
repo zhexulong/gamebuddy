@@ -45,6 +45,14 @@
  *                    Both readings are made by tools/check-switch-exhaustiveness.test.mjs, whose fixtures live in a
  *                    throwaway workspace so the red case sits beside the reader instead of in this tree.
  */
+
+export const gateDeclaration = {
+  id: "check-switch-exhaustiveness",
+  domain: "arch",
+  tier: "l1",
+  kind: "totality",
+};
+
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";

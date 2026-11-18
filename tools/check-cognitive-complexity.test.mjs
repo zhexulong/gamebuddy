@@ -586,6 +586,32 @@ test("cli: without a baseline an over-bound function is red, and --update record
   }
 });
 
+test("cli: the record says it is debt and names the worst member of each producer", () => {
+  const root = fixtureRoot();
+  try {
+    writeBiomeConfig(root, 1);
+    writeTypeScriptSource(root, 12);
+    writeFileSync(join(root, "integrations", "stardew", "Deep.cs"), csharpPartial("Deep", 1, 31));
+    writeFileSync(join(root, "integrations", "stardew", "Wide.cs"), csharpPartial("Wide", 30, 8));
+    assert.equal(run(root, ["--update"]).status, 0);
+    const baseline = JSON.parse(readFileSync(join(root, "tools", "cognitive-complexity-baseline.json"), "utf8"));
+    // The worst is derived from the entries the record itself holds, never from a second hand-written copy of them.
+    const worst = (entries) =>
+      entries.reduce((best, entry) => (best === null || entry.value > best.value ? entry : best), null);
+    const ts = worst(baseline.members.filter((entry) => entry.language === "ts"));
+    const cs = worst(baseline.members.filter((entry) => entry.language === "cs"));
+    const clazz = worst(baseline.classes);
+    assert.match(baseline.note, /debt measured on the tree at `revision`, not an accepted value/u);
+    assert.match(baseline.note, /a recorded value may only shrink/u);
+    assert.ok(baseline.note.includes(`Worst: ts ${ts.name} = ${ts.value}`), baseline.note);
+    assert.ok(baseline.note.includes(`cs ${cs.name} = ${cs.value}`), baseline.note);
+    assert.ok(baseline.note.includes(`class ${clazz.name} = ${clazz.value}`), baseline.note);
+    assert.ok(baseline.note.includes("largest none"), baseline.note);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli: a recorded function that grows is red, and one that disappears leaves the baseline", () => {
   const root = fixtureRoot();
   try {

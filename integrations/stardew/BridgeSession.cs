@@ -695,14 +695,31 @@ string? bodyProgramUnavailableReason = null,
     /// the bounded wait ended in. Called from the execution pump, on the game thread, once per parked request
     /// per tick.
     /// </summary>
-    private void ResolveHeldRequest(string requestId, LocalExecutionReceipt? refusal)
+    private void ResolveHeldRequest(string requestId, HeldRequestRefusal? refusal)
     {
         if (!this.heldExecutions.Remove(requestId, out HeldExecution? held))
             return;
         if (refusal is not null)
         {
-            if (TryToBridgeReceipt(refusal, out BridgeReceipt refusalReceipt, refusal.ActionId))
-                this.EnqueueHeldExecutionResponse(held, Reply("execution_receipt", held.Envelope.CorrelationId, refusalReceipt));
+            // A WAIT IS NOT AN OUTCOME. Nothing was dispatched, so this request has no execution state to publish: it
+            // never started, and the identity it would run under has minted no receipt. The pending request is answered
+            // on the bridge's refusal channel (`bridge_rejected:<hold code>`) - the same answer every other
+            // pre-dispatch refusal gives, and the one the Host reads as proof that no write happened - instead of with a
+            // `rejected` receipt.
+            //
+            // WHY THAT MATTERS, MEASURED TWICE. A receipt is a statement about an EXECUTION, and publishing one here
+            // claimed a terminal for an execution whose only artifact would be that terminal. The same request could
+            // still be dispatched afterwards (the Host re-issues it once the remedy says nothing was started, or the
+            // pump catches the body as it frees), and its real `succeeded` then arrived for an executionId the Host had
+            // already settled: `round66` ended that way at revision 840, and `round73` repeated it at 252 s with the
+            // identical pair - `rejected/waiting_for_body:body_owned_by_movement`, then `succeeded/weeds_cut` 1.4 s
+            // later under one executionId - and the Host's receipt-order audit ended the session with
+            // `execution_receipt_replay_rejected:terminal_state_rewritten`. The Host was right; the receipt was the lie.
+            //
+            // The hold's evidence has no field on the refusal channel, and that is the whole price of this: the code
+            // survives (it is derived from the owner code, so `waiting_for_body:body_owned_by_movement` still names what
+            // held the request) and the host's own remedy turns it into "re-issue the same request".
+            this.EnqueueHeldExecutionResponse(held, this.CreateError(held.Envelope.CorrelationId, refusal.ReasonCode));
             return;
         }
         // The body is free: the request is dispatched through the path it arrived on, so the freshness,
@@ -723,8 +740,8 @@ string? bodyProgramUnavailableReason = null,
             // The body went back to being held between this park resolving and the dispatch, so the admission parked it
             // AGAIN and answered with the marker. That is not a failure to report: the request is still being waited on,
             // and this bridge keeps owning it until a later tick dispatches it - or until the bounded window passes,
-            // which answers the SAME named refusal the caller would have seen without a park at all. Measured 2026-10-20
-            // (the hold gate): answering the marker here surfaced to the Host as
+            // which answers the SAME hold as a refusal (never as a receipt: nothing was started, so there is no execution
+            // state to state). Measured 2026-10-20 (the hold gate): answering the marker here surfaced to the Host as
             // `bridge_rejected:held_awaiting_actionability`.
             if (string.Equals(reasonCode, ExecutionManager.HeldRequestMarker, StringComparison.Ordinal))
             {
@@ -934,30 +951,34 @@ string? bodyProgramUnavailableReason = null,
         return this.TryDepositResult(generation, envelope.CorrelationId, envelope.Payload, out reasonCode);
     }
 
-    void IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
+    string? IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
     {
         // Every failure below used to return silently, and the consequence was measured on 2026-10-25: twenty-two nodes
         // sat in `AwaitingHostAdmission`, the Host received zero challenges, and nothing anywhere said why. The
         // companion diagnosed it from the outside - "the door action keeps sitting in awaiting_host_admission ... The
         // host isn't processing new actions" - while four separate return points inside this method were dropping the
         // frame without a word.
+        //
+        // They now return WHY. A challenge that never left this process is a node no Host answer can ever arrive for, so
+        // the pump settles that node `rejected/<code>` instead of leaving it awaiting for ever (measured `round73`:
+        // `send_skipped; reason=enqueue_failed; program=plan_311; node=n15`, a node dropped in silence).
         if (challenge is null)
         {
             this.Diagnose("send_skipped;reason=no_challenge");
-            return;
+            return "no_challenge";
         }
 
         if (!IsAuthenticated(this.authenticatedGeneration, out _) || this.pipeBridge is null)
         {
             this.Diagnose($"send_skipped;reason=not_authenticated_or_no_pipe;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "admission_not_delivered";
         }
 
         string correlationId = Guid.NewGuid().ToString("N");
         if (!TryCreateBodyNodeAdmissionChallenge(this.authenticatedGeneration, challenge, correlationId, out string json))
         {
             this.Diagnose($"send_skipped;reason=challenge_not_serialisable;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "challenge_not_serialisable";
         }
 
         this.pendingBodyProgramAdmissions[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = correlationId;
@@ -965,10 +986,11 @@ string? bodyProgramUnavailableReason = null,
         {
             this.pendingBodyProgramAdmissions.Remove((challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt));
             this.Diagnose($"send_skipped;reason=enqueue_failed;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "enqueue_failed";
         }
 
         this.Diagnose($"sent;program={challenge.ProgramId};node={challenge.NodeId};attempt={challenge.NodeAttempt}");
+        return null;
     }
 
     BodyNodeAdmissionResult? IBodyProgramAdmissionTransport.TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
@@ -1110,49 +1132,15 @@ string? bodyProgramUnavailableReason = null,
         => this.TryCreateWorldFactEvent(generation, fact, fact.EventId, out json);
 
     internal bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, out string json)
-        => this.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, null, out json);
-
-    internal bool TryCreateBodyTraceEvent(long generation, ExecutionTrace trace, string correlationId, out string json)
-    {
-        // A body trace is published only through the typed semantic-event
-        // channel. Its category is the event kind, so remote consumers can
-        // reject a mismatched envelope before treating it as lifecycle proof.
-        if (!IsBodyTraceCategory(trace.Category) || this.IsNavigationTrace(trace))
-        {
-            json = string.Empty;
-            return false;
-        }
-        BridgeBodyTrace bodyTrace = new(trace.Category, trace.ExecutionId, trace.RequestId, trace.Tick, trace.Revision,
-            trace.Location, trace.ActorTile is Vector2 tile ? new BridgeTile(tile.X, tile.Y) : null);
-        return this.TryCreateSemanticEvent(generation, trace.Category, correlationId, "body_trace", bodyTrace, out json);
-    }
-
-    private static bool IsBodyTraceCategory(string category) => category is
-        "execution_started" or
-        "route_progress" or
-        "execution_settled_succeeded" or
-        "execution_settled_cancelled" or
-        "execution_settled_failed" or
-        "execution_invalidated" or
-        "body_idle";
-
-    // Defense in depth for the manager's no-trace Navigation policy. A direct
-    // caller must not serialize a synthetic navigation trace with a live
-    // location/tile after the ledger has bound that request to Navigation.
-    private bool IsNavigationTrace(ExecutionTrace trace) =>
-        this.executions.TryGetReceipt(trace.RequestId, out LocalExecutionReceipt receipt)
-        && string.Equals(receipt.ExecutionId, trace.ExecutionId, StringComparison.Ordinal)
-        && string.Equals(receipt.ActionId, "navigate_to_destination", StringComparison.Ordinal);
-
-    private bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, BridgeBodyTrace? bodyTrace, out string json)
     {
         json = string.Empty;
         if (!IsAuthenticated(generation, out _) || !BridgeProtocol.IsOpaqueId(correlationId) || !BridgeProtocol.IsReasonCode(reasonCode)) return false;
-        // One field, from the projection that names it - never the whole world. A semantic event is published per
-        // observation (`route_progress` per tile), so asking `CreateBridgeSnapshot()` walked every radar source and
-        // minted a SHA-256 id per target on the game thread to read `ActiveExecution` and nothing else.
+        // One field, from the projection that names it - never the whole world: asking `CreateBridgeSnapshot()` walked
+        // every radar source and minted a SHA-256 id per target on the game thread to read `ActiveExecution` and nothing
+        // else. No body trace is published: the executor states outcomes, not the steps it took to reach them, so this
+        // event carries the active execution and nothing about the body's own path.
         BridgeActiveExecution? active = this.executions.DescribeActiveExecution();
-        return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode, bodyTrace)), out json, out _);
+        return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode)), out json, out _);
     }
 
     internal bool TryCreatePlayerControlEvent(long generation, BridgePlayerControlFact control, string correlationId, out string json)
@@ -1582,7 +1570,28 @@ string? bodyProgramUnavailableReason = null,
         string? resolvedActionId = actionId ?? receipt.ActionId ?? binding?.ActionId;
         if (!BridgeProtocol.IsOpaqueId(resolvedActionId))
             return false;
-        return TryProjectReceipt(receipt, resolvedActionId!, out bridgeReceipt);
+        return TryProjectReceipt(receipt, resolvedActionId!, this.OriginOf(receipt.ExecutionId), out bridgeReceipt);
+    }
+
+    /// <summary>
+    /// What this Mod's journal says about the programme an execution belongs to.
+    ///
+    /// <para>
+    /// ONE LOOKUP, TWO PROJECTIONS. A receipt and its body trace are the same step stated twice, so both read this and
+    /// neither can state a different programme for one execution. A composition with no body-program journal has no
+    /// programmes at all, so every execution in it is genuinely <c>standalone</c> - a complete statement, not a guess.
+    /// </para>
+    /// </summary>
+    private BridgeExecutionOrigin OriginOf(string? executionId)
+    {
+        if (this.bodyProgramAuthority is null) return new BridgeExecutionOrigin("standalone");
+        BodyProgramExecutionOrigin origin = this.bodyProgramAuthority.AttributeExecution(executionId);
+        return origin.Kind switch
+        {
+            BodyProgramExecutionOriginKind.Node => new BridgeExecutionOrigin("programme", origin.ProgramId, origin.NodeId),
+            BodyProgramExecutionOriginKind.Standalone => new BridgeExecutionOrigin("standalone"),
+            _ => new BridgeExecutionOrigin("unattributed"),
+        };
     }
 
     /// <summary>
@@ -1593,13 +1602,18 @@ string? bodyProgramUnavailableReason = null,
     /// ledger model is not published until it is added below -- the scene ground
     /// summary and the native notices were both silently dropped this way. Kept
     /// pure and internal so that omission is testable directly.
+    ///
+    /// <paramref name="origin"/> is required rather than defaulted for the same reason: an origin that a caller could
+    /// leave out is an origin the wire would silently stop carrying, which is the defect this field exists to end. The
+    /// journal supplies it (<see cref="OriginOf"/>), so "which programme" is never this projection's opinion.
     /// </summary>
-    internal static bool TryProjectReceipt(LocalExecutionReceipt receipt, string resolvedActionId, out BridgeReceipt bridgeReceipt)
+    internal static bool TryProjectReceipt(LocalExecutionReceipt receipt, string resolvedActionId, BridgeExecutionOrigin origin, out BridgeReceipt bridgeReceipt)
     {
         bridgeReceipt = default!;
         if (!BridgeProtocol.IsOpaqueId(resolvedActionId)
             || !BridgeProtocol.IsOpaqueId(receipt.ExecutionId)
-            || !BridgeProtocol.IsOpaqueId(receipt.RequestId))
+            || !BridgeProtocol.IsOpaqueId(receipt.RequestId)
+            || origin is null)
             return false;
 
         bridgeReceipt = new BridgeReceipt(
@@ -1610,6 +1624,7 @@ string? bodyProgramUnavailableReason = null,
             receipt.ReasonCode,
             receipt.Revision,
             receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
+            origin,
             receipt.Observation,
             receipt.PiggybackedScene,
             receipt.NativeNotices);
@@ -1746,7 +1761,7 @@ string? bodyProgramUnavailableReason = null,
     private static BridgeBodyProgramNodeStatus NodeStatus(BodyProgramStatusSnapshot snapshot, BodyProgramJournalNode node)
     {
         BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y);
+        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification);
     }
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs);

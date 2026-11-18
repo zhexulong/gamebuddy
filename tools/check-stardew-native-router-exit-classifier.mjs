@@ -7,6 +7,14 @@
  *                    classification.`, exit 1; the same classifier naming that invocation prints its
  *                    `classificationState` and exits 0 (tools/check-stardew-native-router-exit-classifier.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-native-router-exit-classifier",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readFile } from "node:fs/promises";
 import { validateNativeRouterExitClassifier } from "./lib/stardew-native-router-exit-classifier.mjs";
 

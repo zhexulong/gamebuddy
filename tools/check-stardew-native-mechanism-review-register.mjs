@@ -1,19 +1,22 @@
 // red-proof: fixture  an exact mechanism report whose one discovered mechanism has no review row
 //  -> `mechanism_review_register_unreviewed: Every discovered mechanism must receive exactly one explicit review disposition.`, exit 1; the reviewed twin prints `{"status":"valid","mechanismCount":1,...}` and exits 0
+
+export const gateDeclaration = {
+  id: "check-stardew-native-mechanism-review-register",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fail } from "./lib/gate-preamble.mjs";
 import {
   validateMechanismReport,
   validateNativeMechanismReviewRegister,
 } from "./lib/stardew-native-mechanism-review-register.mjs";
 
-function fail(code, message, details = {}) {
-  const error = new Error(message);
-  error.code = code;
-  error.details = details;
-  throw error;
-}
 function args(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index += 1) {

@@ -56,15 +56,15 @@ public sealed class ModalAnswerDialogueTests
     public void Answer_IsRejected_ForTheEnginesOwnBedPrompt()
     {
         // MEASURED 2026-11-09 (round41): answering `Yes` to the bed prompt crossed a day with no execution behind it, and
-        // the still-pending `sleep` intent crossed a second one 9 s later. `advance_day` is the action that crosses a
-        // night WITH a receipt, so the crossing is never this seam's.
+        // the still-pending `sleep` intent crossed a second one 9 s later. `sleep` is the action that crosses a night
+        // WITH a receipt, so the crossing is never this seam's.
         var location = new AnswerRecordingLocation(acceptAnswer: true) { lastQuestionKey = NativeSleepPrompt.QuestionKey };
         RunWithGameState(CreateBedPrompt(), location, () =>
         {
             LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_answer_bed_prompt", "Yes");
 
             receipt.State.Should().Be(ExecutionState.Rejected);
-            receipt.ReasonCode.Should().Be("native_sleep_prompt_owned_by_advance_day");
+            receipt.ReasonCode.Should().Be("native_sleep_prompt_owned_by_sleep");
             location.AnsweredResponse.Should().BeNull("the answer that ends a day must never reach the engine from here");
         });
     }

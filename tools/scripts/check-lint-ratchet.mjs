@@ -43,11 +43,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
 import { runWhenEntry } from "./cli-entry.mjs";
+import { GATE_TREE_ROOTS } from "../../gates/directories.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The roots `package.json`'s `lint` script names, unchanged. */
-export const SCOPE = ["tools", "host/src", "dialogue-web/src", "vendor/pi-koe/src"];
+export const SCOPE = [...GATE_TREE_ROOTS, "host/src", "dialogue-web/src", "vendor/pi-koe/src"];
 const biomeBinary = join(repositoryRoot, "node_modules", "@biomejs", "biome", "bin", "biome");
 
 const baselineFor = (root) => join(root, "tools", "scripts", "lint-baseline.json");

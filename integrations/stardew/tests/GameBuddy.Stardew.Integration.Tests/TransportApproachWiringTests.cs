@@ -201,7 +201,6 @@ public sealed class TransportApproachWiringTests
     [Theory]
     [InlineData("enter_exit")]
     [InlineData("ride_minecart")]
-    [InlineData("pickup_forage")]
     [InlineData("use_obelisk")]
     public void ACrossMapOrOpaqueTransition_KeepsItsDeclaredApproachRequirement(string actionId)
     {

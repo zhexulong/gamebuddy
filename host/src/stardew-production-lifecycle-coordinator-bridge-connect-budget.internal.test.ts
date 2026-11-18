@@ -73,6 +73,7 @@ test("the coordinator hands the connect its own budget instead of the whole join
           authority: "SEMANTIC" as const,
           runEnter: async () => connectedSemanticGameLeaseFixture(),
           recoverDeadOwner: async () => undefined,
+          pushActionPolicy: () => false,
           close: async () => undefined,
         });
       },

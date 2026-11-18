@@ -2044,7 +2044,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
             configuredFarmhandId = 0;
         long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
+        if (farmhandId == 0)
             throw new InvalidOperationException("fixture_farmhand_id_invalid");
         return farmhandId;
     }
@@ -2083,32 +2083,42 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.hostAutomationObservedAiClientExit = true;
     }
 
-    private void TryTriggerNativeAutomationSave()
+    /// <summary>
+    /// Asks the engine to run its own save cycle when the Host is waiting for one to make something it
+    /// staged durable.
+    ///
+    /// Two facts can be waiting: a Farmhand binding this session staged (the first attachment of a
+    /// GameBuddy-launched world happens on a morning nobody has ended, so no player save is coming), and
+    /// the fixture's own client-exit check, which is fixture setup and stays with the fixture. The save
+    /// itself is the engine's - this method only opens the native <c>SaveGameMenu</c> the player's own
+    /// save uses, and the engine raises <c>Saving</c>/<c>Saved</c> as it always does.
+    /// </summary>
+    private void TryTriggerNativeSave()
     {
-        if (!this.hostRoleConfigured || this.config.HostAutomation is not { Enable: true } || this.hostFarmhandProvisioner is null)
+        if (!this.hostRoleConfigured || this.hostFarmhandProvisioner is null)
         {
             // A completed request clears the latch so a later attachment in the
             // same host process gets its own native Saving/Saved cycle.
-            this.hostAutomationSaveMenuOpened = false;
+            this.nativeSaveMenuOpened = false;
             return;
         }
-        bool attachmentSavePending = this.config.HostAutomation.TriggerNativeSaveAfterAttachment && this.hostFarmhandProvisioner.IsAwaitingSave;
-        bool clientExitSavePending = this.config.HostAutomation.TriggerNativeSaveAfterClientExit && this.hostAutomationObservedAiClientExit;
-        if (!attachmentSavePending && !clientExitSavePending)
+        bool bindingSavePending = this.hostFarmhandProvisioner.RequestsNativeSave;
+        bool clientExitSavePending = this.config.HostAutomation is { Enable: true, TriggerNativeSaveAfterClientExit: true } && this.hostAutomationObservedAiClientExit;
+        if (!bindingSavePending && !clientExitSavePending)
         {
-            this.hostAutomationSaveMenuOpened = false;
+            this.nativeSaveMenuOpened = false;
             return;
         }
-        if (this.hostAutomationSaveMenuOpened || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.game1.IsSaving || Game1.activeClickableMenu is not null)
+        if (this.nativeSaveMenuOpened || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.game1.IsSaving || Game1.activeClickableMenu is not null)
             return;
-        this.hostAutomationSaveMenuOpened = true;
+        this.nativeSaveMenuOpened = true;
         if (clientExitSavePending)
         {
             this.hostAutomationObservedAiClient = false;
             this.hostAutomationObservedAiClientExit = false;
         }
         Game1.activeClickableMenu = new SaveGameMenu();
-        this.Monitor.Log("GameBuddy HostAutomation opened the native SaveGameMenu to drive the original Saving/Saved lifecycle for the attachment fixture.", LogLevel.Info);
+        this.Monitor.Log("GameBuddy opened the native SaveGameMenu so the engine's own Saving/Saved cycle can make the staged Farmhand binding durable.", LogLevel.Info);
     }
 
     private bool IsNativeAutomationWorldReady() => Context.IsWorldReady

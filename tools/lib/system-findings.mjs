@@ -46,16 +46,16 @@ const REASON_COMPONENT = Object.freeze({
   no_modal_present: "native_state",
   modal_not_answerable: "native_state",
   modal_not_dismissible: "native_state",
-  // The engine's own bed prompt: answering it ends a day, and the day belongs to `advance_day` (which receipts it).
+  // The engine's own bed prompt: answering it ends a day, and the day belongs to `sleep` (which receipts it).
   // Orchestration rather than native state, because the world allowed the answer - the product reserves the crossing.
-  native_sleep_prompt_owned_by_advance_day: "orchestration",
+  native_sleep_prompt_owned_by_sleep: "orchestration",
   // The NAMED body owners: WHICH in-flight execution owns the body, and whether it can be taken over.
   body_owned_by_movement: "orchestration",
   body_owned_by_navigation: "orchestration",
   body_owned_by_travel: "orchestration",
   body_owned_by_approach: "orchestration",
   body_owned_by_ride: "orchestration",
-  body_owned_by_day_advance: "orchestration",
+  body_owned_by_night: "orchestration",
   body_owned_by_activity: "orchestration",
   player_cannot_move: "native_state",
   player_menu_open: "native_state",

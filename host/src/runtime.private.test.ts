@@ -14,7 +14,8 @@ import {
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { CHAT_SURFACE_SKIP_SIGNATURE, DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE } from "./chat-surface-block.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
@@ -202,6 +203,7 @@ async function withAuthenticatedStardew(
     reasonCode: "accepted",
     revision: request.expectedRevision,
     evidence: null,
+    origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" },
   });
   const write = (value: unknown): void => {
     socket?.write(bridgeFrame(value));
@@ -266,6 +268,7 @@ async function withAuthenticatedStardew(
           reasonCode: request.payload.reasonCode,
           revision: state.snapshot.revision,
           evidence: null,
+          origin: { kind: "programme", programId: "plan_fixture_01", nodeId: "n01" } as const,
         },
       });
       return;
@@ -426,6 +429,7 @@ test("mounted Companion status reports live integration facts without inferring 
         reasonCode: "accepted",
         revision: 9,
         evidence: null,
+        origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" },
       },
     },
     async (mod) => {
@@ -1327,6 +1331,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
           reasonCode: "tool_selected",
           revision: 1,
           evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+          origin: { kind: "programme", programId: "plan_runtime_01", nodeId: "n01" } as const,
         };
       });
       const runtime = await createCompanionRuntime(identity, root, mod.connection);
@@ -1403,7 +1408,6 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
           "stardew_harvest_bush",
           "stardew_harvest_crop",
           "stardew_harvest_fruit_tree",
-          "stardew_inspect_tiles",
           "stardew_inspect_world_map",
           "stardew_interaction_catalog",
           "stardew_look_up",

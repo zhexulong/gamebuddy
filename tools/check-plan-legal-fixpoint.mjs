@@ -107,6 +107,14 @@
  * red-proof: inject   an empty Y, an empty X, a Y the surface does not publish, or an X that cannot be written alone ->
  *            `blocked`, never a green run (tools/check-plan-legal-fixpoint.test.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-plan-legal-fixpoint",
+  domain: "product",
+  tier: "l2",
+  kind: "contract",
+};
+
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
@@ -131,6 +139,15 @@ export const SOURCES = Object.freeze({
  * and a red proof that follows HEAD silently stops being a proof.
  */
 export const PRE_FIX_REVISION = "3d249ff1894040dc2f0a960486dff1ff04992946";
+
+/**
+ * The commit the fourth assertion's red proof replays: the last tree on which ONE refused call voided the batch.
+ *
+ * Pinned rather than `HEAD` for the same reason `PRE_FIX_REVISION` is - a red proof that follows `HEAD` silently stops
+ * being a proof the moment the fix lands. This commit is ". an answer that runs the calls it did not refuse was not yet
+ * possible", and the gate's job on it is to name all 295 sites where a refusal took the batch with it.
+ */
+export const PRE_BATCH_FIX_REVISION = "6d6fde6033c881c3aba48bd8b3567b8fdb461f72";
 
 /**
  * The world a pair is compiled against: the minimum `compilePlanScript` requires, and nothing a pair could be about.
@@ -337,14 +354,31 @@ export function scriptFor(actions, actionIds) {
 }
 
 /**
+ * The state one compiled answer is in, in either spelling an answer can carry it.
+ *
+ * `status` is today's: `compiled` (every call became a step), `partial` (some did, and the steps that did RUN) or
+ * `refused` (nothing compiled, so there is no program). An answer from before that field existed answers `ok`: `true`
+ * meant every call became a step, and `false` meant a plan-level refusal that ran nothing - so the two questions the old
+ * shape could answer map onto the two states it had, and `--revision` keeps measuring the history it was written for.
+ */
+export function runStateOf(compiled) {
+  if (compiled === null || compiled === undefined) return "refused";
+  if (typeof compiled.status === "string") return compiled.status;
+  return compiled.ok === true ? "compiled" : "refused";
+}
+
+/**
  * Does the program carry every step the script asked for, in the count it asked for?
  *
  * THE MULTISET, not the set: `[talk_to_npc, talk_to_npc]` asking for one node twice is not satisfied by one node, and a
  * membership test would call that pair legal. Nodes the compiler adds (a walk, a dismissal) are not counted against it:
  * the property is that the author's steps survive, not that nothing was added.
+ *
+ * A `partial` answer does not carry them: some of the steps it was asked for did not compile, which is the fact its
+ * `status` states and the reason `dropped` exists beside it.
  */
 export function carriesSteps(compiled, steps) {
-  if (compiled?.ok !== true) return false;
+  if (runStateOf(compiled) !== "compiled") return false;
   const carried = new Map();
   for (const node of compiled.program?.nodes ?? []) carried.set(node.actionId, (carried.get(node.actionId) ?? 0) + 1);
   const wanted = new Map();
@@ -387,72 +421,143 @@ export function droppedNamesOf(compiled) {
  * THE THIRD ASSERTION: what an answer says about the calls its own script wrote.
  *
  * <p>
- * Two halves, one sentence each. <b>NO FORGED SUCCESS</b> - an `ok` answer means every step the author wrote is in the
- * program, so an `ok` answer that says it dropped a call is the shape that shipped at `3d249ff1`
+ * Three halves, one sentence each. <b>NO FORGED SUCCESS</b> - a `compiled` answer means every step the author wrote is in
+ * the program, so a `compiled` answer that says it dropped a call is the shape that shipped at `3d249ff1`
  * (`talk_to_npc` + `shop_purchase` compiled to ONE node and `ok: true`) and at round40 (`accepted: true` beside
- * `droppedCount: 15`). <b>NO VANISHED CALL</b> - the compiler's four lists partition her calls, so their counts must sum
- * to the number of calls the script made, each call must land in exactly one of them, and none may be a silent window.
- * A call in none of them is the defect; a call in two would hide it.
+ * `droppedCount: 15`). <b>A PARTIAL PLAN IS NEVER A SUCCESS</b> - an answer in any state but `compiled` may not carry a
+ * success marker, and an answer that says `partial` must name the calls it refused and carry the program that runs; an
+ * answer that says one of its calls did not compile while naming none is the same silence in a new spelling.
+ * <b>NO VANISHED CALL</b> - the answer's lists PARTITION her calls, so their counts must sum to the number of calls the
+ * script made, each call must land in exactly one of them, and none may be a silent window. A call in none of them is the
+ * defect; a call in two would hide it.
  * </p>
  * <p>
- * The population is every answer the pair reading already compiled - the same scripts, the same compiler - and the
- * authored call count is read from the script THIS GATE WROTE, which is the authority on what was asked for. An answer
- * that carries no account at all (a compiler from before the field existed) is not measured, and `statusOf` blocks the
- * run when nothing was: "0 violations" over an empty population is the silence this gate exists to break.
+ * WHICH LISTS, and why that set is derived rather than listed: an answer carries `acceptedSteps`, `noStepNeeded` and
+ * `dropped` today, and carried `merged` when the compiler still folded loops. The set is read from the ANSWER's own keys,
+ * so a list the compiler no longer has is not invented as a window of `undefined` (which is what this reading did to
+ * `merged` after it was removed), and a list an older answer does have is still judged. The SUM is what catches a
+ * list that was dropped from the account entirely.
+ * </p>
+ * <p>
+ * The population is every answer the reading compiled - the same scripts, the same compiler - and the authored call count
+ * is read from the script THIS GATE WROTE, which is the authority on what was asked for. An answer that carries no account
+ * at all (a compiler from before the field existed) is not measured, and `statusOf` blocks the run when nothing was: "0
+ * violations" over an empty population is the silence this gate exists to break.
  * </p>
  */
+/** The account lists an answer can carry - the key holding the entries, and the key holding the population - in the
+ *  order the answer renders them. `merged` is here because an answer from before the compiler stopped folding loops still
+ *  carries it; whether a given answer's set includes it is read from that answer's own keys. */
+const ACCOUNT_LISTS = Object.freeze([
+  ["acceptedSteps", "acceptedStepsCount"],
+  ["merged", "mergedCount"],
+  ["noStepNeeded", "noStepNeededCount"],
+  ["dropped", "droppedCount"],
+]);
+
+/**
+ * The two ways an answer can claim a success its own state denies.
+ *
+ * A `compiled` answer that names a refused call is the `3d249ff1` shape; an answer in any other state that still carries
+ * the old `ok: true` marker is the same lie written in the spelling the old contract used. Both are the same finding:
+ * the answer ran part (or none) of the work and said it ran all of it.
+ */
+function successLiesOf({ shape, state, compiled, dropped }) {
+  const forged = [];
+  if (state === "compiled" && dropped.length > 0) forged.push(`forged_success:${shape}:${dropped[0]}`);
+  if (state !== "compiled" && compiled?.ok === true) forged.push(`forged_success:${shape}:reported_ok_while_${state}`);
+  return forged;
+}
+
+/**
+ * What a `partial` answer must carry, and the two ways it can fail to.
+ *
+ * `partial` is a claim about the author's OWN calls - some did not compile - so an answer that makes the claim and names
+ * none of them is the old silence in a new spelling, and one that carries no program has nothing for its state to be
+ * about. A `partial` answer is the one shape whose honesty depends on `dropped`, so it is the one shape this checks.
+ */
+function partialFaultsOf({ shape, state, compiled, dropped }) {
+  if (state !== "partial") return [];
+  const faults = [];
+  if (dropped.length === 0)
+    faults.push(
+      `plan_partial_unannounced:${shape}:the answer says one of its calls did not compile and names none of them`,
+    );
+  if ((compiled?.program?.nodes ?? []).length === 0)
+    faults.push(
+      `plan_partial_without_a_program:${shape}:a partial plan runs part of the work, so it must carry the program it runs`,
+    );
+  return faults;
+}
+
+/**
+ * The vanished-call reading for ONE answer: the lists the answer DECLARES must partition the calls the script made.
+ *
+ * Which lists exist is read from the answer's own keys, so an answer from before a field was removed is still judged and
+ * one that never had the field is not invented as a window of `undefined`. A list dropped from the account entirely is
+ * caught by the SUM, which is why the sum is computed from the same set the per-list checks read.
+ */
+function accountFaultsOf({ shape, script, compiled }) {
+  const faults = [];
+  const calls = callsIn(script);
+  const lists = ACCOUNT_LISTS.filter(
+    ([name, count]) => compiled?.[name] !== undefined || compiled?.[count] !== undefined,
+  ).map(([name, count]) => [name, compiled?.[name], compiled?.[count]]);
+  const counted = lists.reduce((total, [, , count]) => total + (Number(count) || 0), 0);
+  if (counted !== calls)
+    faults.push(
+      `plan_account_gap:${shape}:the script made ${calls} call(s) and the answer accounts for ${counted} ` +
+        `(${lists.map(([name, , count]) => `${name} ${String(count)}`).join(", ")})`,
+    );
+  const seen = new Map();
+  for (const [list, entries, count] of lists) {
+    if (!Array.isArray(entries) || entries.length !== count)
+      faults.push(
+        `plan_account_truncated:${shape}:${list} spells ${Array.isArray(entries) ? entries.length : 0} of ${String(count)} ` +
+          `entries, so the list is a window and the count cannot be read against it`,
+      );
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      // The call's own position is the first field of every entry, whatever the list: `n07`, `n07:into=n03:...`.
+      const step = String(entry).split(":")[0];
+      const previous = seen.get(step);
+      if (previous !== undefined)
+        faults.push(`plan_account_double:${shape}:${step} is in both ${previous} and ${list}`);
+      seen.set(step, list);
+      const named = /^n(\d+)$/u.exec(step);
+      if (named === null || Number(named[1]) < 1 || Number(named[1]) > calls)
+        faults.push(
+          `plan_account_unplaceable:${shape}:${list} names ${step}, which is not one of the ${calls} calls written`,
+        );
+    }
+  }
+  return faults;
+}
+
 export function readPlanCallTally(answers) {
-  let ok = 0;
-  let refused = 0;
+  const states = { compiled: 0, partial: 0, refused: 0 };
   let measured = 0;
   const forged = [];
   const faults = [];
   for (const { shape, script, compiled } of answers) {
-    if (compiled?.ok === true) {
-      ok += 1;
-      const dropped = droppedNamesOf(compiled);
-      if (dropped.length > 0) forged.push(`forged_success:${shape}:${dropped[0]}`);
-    } else refused += 1;
+    const state = runStateOf(compiled);
+    states[state] = (states[state] ?? 0) + 1;
+    const dropped = droppedNamesOf(compiled);
+    forged.push(...successLiesOf({ shape, state, compiled, dropped }));
+    faults.push(...partialFaultsOf({ shape, state, compiled, dropped }));
     // The account is only answerable by a compiler that keeps one.
     if (!Array.isArray(compiled?.acceptedSteps)) continue;
     measured += 1;
-    const calls = callsIn(script);
-    const lists = [
-      ["acceptedSteps", compiled.acceptedSteps, compiled.acceptedStepsCount],
-      ["merged", compiled.merged, compiled.mergedCount],
-      ["noStepNeeded", compiled.noStepNeeded, compiled.noStepNeededCount],
-      ["dropped", compiled.dropped, compiled.droppedCount],
-    ];
-    const counted = lists.reduce((total, [, entries, count]) => total + (Number(count) || 0), 0);
-    if (counted !== calls)
-      faults.push(
-        `plan_account_gap:${shape}:the script made ${calls} call(s) and the answer accounts for ${counted} ` +
-          `(acceptedSteps ${compiled.acceptedStepsCount}, merged ${compiled.mergedCount}, noStepNeeded ` +
-          `${compiled.noStepNeededCount}, dropped ${compiled.droppedCount})`,
-      );
-    const seen = new Map();
-    for (const [list, entries, count] of lists) {
-      if (!Array.isArray(entries) || entries.length !== count)
-        faults.push(
-          `plan_account_truncated:${shape}:${list} spells ${Array.isArray(entries) ? entries.length : 0} of ${String(count)} ` +
-            `entries, so the list is a window and the count cannot be read against it`,
-        );
-      for (const entry of Array.isArray(entries) ? entries : []) {
-        // The call's own position is the first field of every entry, whatever the list: `n07`, `n07:into=n03:...`.
-        const step = String(entry).split(":")[0];
-        const previous = seen.get(step);
-        if (previous !== undefined)
-          faults.push(`plan_account_double:${shape}:${step} is in both ${previous} and ${list}`);
-        seen.set(step, list);
-        const named = /^n(\d+)$/u.exec(step);
-        if (named === null || Number(named[1]) < 1 || Number(named[1]) > calls)
-          faults.push(
-            `plan_account_unplaceable:${shape}:${list} names ${step}, which is not one of the ${calls} calls written`,
-          );
-      }
-    }
+    faults.push(...accountFaultsOf({ shape, script, compiled }));
   }
-  return Object.freeze({ examined: answers.length, ok, refused, measured, forged, faults });
+  return Object.freeze({
+    examined: answers.length,
+    compiled: states.compiled,
+    partial: states.partial,
+    refused: states.refused,
+    measured,
+    forged,
+    faults,
+  });
 }
 
 /** What a pair is, as one name, so a finding and the pair it names cannot drift apart. */
@@ -504,7 +609,9 @@ export function readPlanLegalFixpoint({
     const compiled = examine(`alone:${action.actionId}`, alone.script);
     if (!carriesSteps(compiled, [action.actionId]))
       unmeasured.push(
-        `plan_population_unwritable:${action.actionId}:${compiled?.ok === true ? "accepted_without_the_step" : compiled?.reasonCode}`,
+        `plan_population_unwritable:${action.actionId}:${
+          runStateOf(compiled) === "compiled" ? "accepted_without_the_step" : compiled?.reasonCode
+        }`,
       );
   }
   // A Y THE SURFACE DOES NOT PUBLISH would silently shrink the pair population to nothing; it is named instead.
@@ -535,6 +642,9 @@ export function readPlanLegalFixpoint({
       deadEnds.push(deadEndOf({ examine, actions, yieldingId, dependentId, compiled, modalClearingActionIds }));
     }
   }
+
+  // THE FOURTH ASSERTION, ASKED FROM THE OTHER END: what does ONE refused call cost?
+  const refusedCallCost = readRefusedCallCost({ examine, actions });
 
   const contradictions = [];
   const modalTargeted = Object.freeze(modalTargetedActionIds.filter((actionId) => byId.has(actionId)));
@@ -568,8 +678,11 @@ export function readPlanLegalFixpoint({
       deadEnds: Object.freeze(deadEnds),
     }),
     answers: readPlanCallTally([...answers.values()]),
+    refusedCallCost,
     contradictions: Object.freeze(contradictions),
-    unmeasured: Object.freeze(unmeasured),
+    // The two populations that could not be measured travel together, because both mean "this rule was not judged" and a
+    // reader who had to collect them from two places would read one of them as clean.
+    unmeasured: Object.freeze([...unmeasured, ...refusedCallCost.unmeasured]),
   });
 }
 
@@ -578,9 +691,10 @@ function repairedByRemedy({ examine, actions, yieldingId, dependentId }) {
   const written = scriptFor(actions, [yieldingId, dependentId]);
   if (!written.ok) return null;
   const compiled = examine(`pair:${pairName(yieldingId, dependentId)}`, written.script);
-  // Only a REFUSED plan can be repaired: an `ok` answer that dropped the step ran without it, and inserting a step into
-  // a plan that was already accepted is not applying a remedy to anything.
-  if (compiled?.ok !== false) return null;
+  // Only a plan that did not carry the steps can be repaired: a `compiled` answer that lost the step ran without it, and
+  // inserting a step into a plan that was already complete is not applying a remedy to anything. A `partial` answer is
+  // repairable for the same reason a `refused` one is - the step it named did not compile, and the remedy is what makes it.
+  if (runStateOf(compiled) === "compiled") return null;
   for (const remedyId of remediesNamedIn(compiled.reasonCode)) {
     const applied = scriptFor(actions, [yieldingId, remedyId, dependentId]);
     if (
@@ -596,12 +710,98 @@ function repairedByRemedy({ examine, actions, yieldingId, dependentId }) {
   return null;
 }
 
+/**
+ * THE FOURTH ASSERTION: ONE REFUSED CALL COSTS THE CALL IT NAMES, AND NOT THE BATCH.
+ *
+ * <p>
+ * WHY THIS IS A GATE AND NOT A TEST. The compiler answered `partial` for nothing until it learned to: before that, a
+ * single refused call refused the whole plan, and the price is measured - `.tmp/fork-why-slow.jsonl` holds fourteen voided
+ * batches, and the companion's own words are "write 30 nodes and any one miss zeroes the batch", which is why it kept its
+ * bets at 2.8 nodes per plan and paid a model round-trip between each. The rule that voided them was written to stop a
+ * real forgery (`3d249ff1`: `ok: true` beside a refused call), so the fix is not "stop refusing" - it is that a refusal
+ * costs the calls it NAMES. That is a property of every refusal site the compiler has, not of the one this lane thought
+ * of, so the population is derived: every action the surface publishes and every argument it declares, because an omitted
+ * argument is the per-call refusal this gate can inject for ANY action without a second table of mistakes.
+ * </p>
+ * <p>
+ * WHAT IS ASSERTED, per site: the batch is `partial`, the two calls written correctly are BOTH nodes of the program, and
+ * exactly one call is named as dropped - at the position it was written. Anything else is
+ * `a_refused_call_voids_the_batch:<site>`: either the answer runs nothing (`refused`), or it lost a call nobody refused.
+ * The bad call sits SECOND, between two good ones, so a rule that dropped everything AFTER the failure is caught and not
+ * only one that dropped everything.
+ * </p>
+ * <p>
+ * THE POPULATION IS PRINTED AND MAY NOT BE EMPTY: `sites examined N · per-call P · whole-batch W`, and a W above zero
+ * fails the run naming the site, so the next agent reads which refusal stopped paying for itself. A surface whose
+ * declarations this gate cannot write is `blocked` with the site named, never silently skipped.
+ * </p>
+ */
+function readRefusedCallCost({ examine, actions }) {
+  const sites = [];
+  const perCall = [];
+  const wholeBatch = [];
+  const unmeasured = [];
+  const before = 'builder.move_to_tile({ "x": 5, "y": 5 });';
+  const after = 'builder.move_to_tile({ "x": 6, "y": 5 });';
+  for (const action of actions) {
+    for (const argument of action.arguments) {
+      const site = `${action.actionId}.${argument.name}`;
+      const supplied = {};
+      let writable = true;
+      for (const declared of action.arguments) {
+        if (declared.name === argument.name) continue;
+        const value = valueOf(declared);
+        if (value === undefined) {
+          writable = false;
+          break;
+        }
+        supplied[declared.name] = value;
+      }
+      if (!writable) {
+        unmeasured.push(
+          `plan_refused_call_unwritable:${site}:the declaration carries an argument type this gate cannot write, so the ` +
+            `cost of refusing this call was not measured`,
+        );
+        continue;
+      }
+      const script = [before, `builder.${action.actionId}(${JSON.stringify(supplied)});`, after].join("\n");
+      const compiled = examine(`batch:${site}`, script);
+      const carried = (compiled?.program?.nodes ?? []).length;
+      sites.push(site);
+      if (
+        runStateOf(compiled) === "partial" &&
+        carried === 2 &&
+        (compiled?.droppedCount ?? 0) === 1 &&
+        String(compiled?.dropped?.[0] ?? "").startsWith("n02:")
+      ) {
+        perCall.push(site);
+        continue;
+      }
+      wholeBatch.push(
+        `a_refused_call_voids_the_batch:${site}:the batch answered ${runStateOf(compiled)} and carried ${carried} of the ` +
+          `2 calls written correctly (dropped ${String(compiled?.droppedCount ?? "none")}, ` +
+          `reason ${String(compiled?.reasonCode ?? "none")})`,
+      );
+    }
+  }
+  if (sites.length === 0 && unmeasured.length === 0)
+    unmeasured.push(
+      "plan_refused_call_unmeasured:the surface declares no action with an argument, so no per-call refusal could be injected",
+    );
+  return Object.freeze({
+    sites: sites.length,
+    perCall: perCall.length,
+    wholeBatch: Object.freeze(wholeBatch),
+    unmeasured: Object.freeze(unmeasured),
+  });
+}
+
 /** One dead end: the pair, the code that made it one, and what would have to change for the pair to stop being one. */
 function deadEndOf({ examine, actions, yieldingId, dependentId, compiled, modalClearingActionIds }) {
-  const kind = compiled?.ok === true ? "accepted_without_step" : "refused";
-  const code =
-    compiled?.ok === true ? (compiled.rejected?.[0]?.reasonCode ?? "accepted_without_the_step") : compiled?.reasonCode;
-  const named = compiled?.ok === true ? remediesNamedIn(compiled.rejected?.[0]?.reasonCode ?? "") : [];
+  const complete = runStateOf(compiled) === "compiled";
+  const kind = complete ? "accepted_without_step" : "refused";
+  const code = complete ? (compiled.rejected?.[0]?.reasonCode ?? "accepted_without_the_step") : compiled?.reasonCode;
+  const named = complete ? remediesNamedIn(compiled.rejected?.[0]?.reasonCode ?? "") : [];
   const handWritten = modalClearingActionIds.filter((actionId) => {
     const applied = scriptFor(actions, [yieldingId, actionId, dependentId]);
     return (
@@ -613,7 +813,7 @@ function deadEndOf({ examine, actions, yieldingId, dependentId, compiled, modalC
       ])
     );
   });
-  const carried = compiled?.ok === true ? (compiled.program?.nodes ?? []).length : 0;
+  const carried = complete ? (compiled.program?.nodes ?? []).length : 0;
   const change =
     kind === "accepted_without_step"
       ? `the answer was accepted and carried ${carried} node(s); the dropped call named ${named.length > 0 ? named.join(",") : "no remedy"}` +
@@ -645,7 +845,8 @@ export function statusOf(reading) {
     reading.pairs.deadEnds.length > 0 ||
     reading.contradictions.length > 0 ||
     reading.answers.forged.length > 0 ||
-    reading.answers.faults.length > 0
+    reading.answers.faults.length > 0 ||
+    reading.refusedCallCost.wholeBatch.length > 0
   )
     return "failed";
   if (reading.pairs.examined === 0 || reading.unmeasured.length > 0 || reading.answers.measured === 0) return "blocked";
@@ -671,6 +872,12 @@ export function checksOf(reading) {
     reading.answers.examined === 0 ? "blocked" : reading.answers.forged.length > 0 ? "failed" : "passed";
   const accountStatus =
     reading.answers.measured === 0 ? "blocked" : reading.answers.faults.length > 0 ? "failed" : "passed";
+  const refusedCallStatus =
+    reading.refusedCallCost.sites === 0
+      ? "blocked"
+      : reading.refusedCallCost.wholeBatch.length > 0
+        ? "failed"
+        : "passed";
   return Object.freeze([
     Object.freeze({ id: "pair_fixpoint", status: pairStatus, examined: reading.pairs.examined }),
     Object.freeze({
@@ -680,6 +887,11 @@ export function checksOf(reading) {
     }),
     Object.freeze({ id: "no_forged_success", status: forgedStatus, examined: reading.answers.examined }),
     Object.freeze({ id: "call_accounting", status: accountStatus, examined: reading.answers.measured }),
+    Object.freeze({
+      id: "refused_call_cost",
+      status: refusedCallStatus,
+      examined: reading.refusedCallCost.sites,
+    }),
   ]);
 }
 
@@ -707,9 +919,21 @@ export function summaryOf(reading) {
 export function answerSummaryOf(reading) {
   const answers = reading.answers;
   return (
-    `plan_legal_fixpoint answers examined ${answers.examined} · ok ${answers.ok} · refused ${answers.refused} · ` +
-    `forged ${answers.forged.length} · accounted ${answers.measured}`
+    `plan_legal_fixpoint answers examined ${answers.examined} · compiled ${answers.compiled} · partial ${answers.partial} · ` +
+    `refused ${answers.refused} · forged ${answers.forged.length} · accounted ${answers.measured}`
   );
+}
+
+/**
+ * The third population line: what one refused call cost, over every per-call refusal site the surface can produce.
+ *
+ * The three numbers are the reading, not a decoration: `examined` is the population, `per-call` the sites where the calls
+ * that were written correctly still ran, and `whole-batch` the sites where one refusal took the batch with it - which is
+ * the only one of the three that can fail, and it fails naming the site.
+ */
+function refusedCallSummaryOf(reading) {
+  const cost = reading.refusedCallCost;
+  return `plan_legal_fixpoint refused_call_cost sites examined ${cost.sites} · per-call ${cost.perCall} · whole-batch ${cost.wholeBatch.length}`;
 }
 
 function report(reading, { json }) {
@@ -721,6 +945,8 @@ function report(reading, { json }) {
       `plan_legal_fixpoint_modal_targets examined ${reading.population.modalTargeted.length} published actions its own adapter ` +
         `names as acting on a modal (${reading.population.modalTargeted.join(",") || "none"}) · contradictions ${reading.contradictions.length}\n`,
     );
+    process.stdout.write(`${refusedCallSummaryOf(reading)}\n`);
+    for (const finding of reading.refusedCallCost.wholeBatch) process.stdout.write(`${finding}\n`);
     for (const deadEnd of reading.pairs.deadEnds) {
       process.stdout.write(`plan_dead_end:${deadEnd.pair}:${deadEnd.code}\n`);
       process.stdout.write(`  what would have to change: ${deadEnd.change}\n`);
@@ -736,9 +962,14 @@ function report(reading, { json }) {
       );
     if (reading.answers.measured === 0)
       process.stdout.write(
-        "plan_legal_fixpoint_blocked: no compiled answer carried the account of its own calls (the four lists), so the " +
+        "plan_legal_fixpoint_blocked: no compiled answer carried the account of its own calls (the lists), so the " +
           "forged-success and vanished-call assertions were not measured - a compiler from before the field existed is " +
           "not a compiler that passed this\n",
+      );
+    if (reading.refusedCallCost.sites === 0)
+      process.stdout.write(
+        "plan_legal_fixpoint_blocked: no per-call refusal site could be injected (the surface declares no action with an " +
+          "argument), so what one refused call costs was not measured\n",
       );
     process.stdout.write(`plan_legal_fixpoint status ${status}\n`);
   }

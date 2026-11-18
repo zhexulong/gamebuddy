@@ -53,11 +53,14 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
-    /// <summary>The Host's published cap on <c>shopTargets</c> (host/src/protocol.ts), which the
-    /// one snapshot contract enforces; exceeding it invalidates the WHOLE snapshot.</summary>
     private const int MaxShopTargets = 32;
-    /// <summary>How many tile-opened shops one location may contribute.</summary>
     private const int MaxTileShopTargets = 8;
+
+    /// <summary>
+    /// The one counter whose purchase is a TOOL UPGRADE: `Tool.actionWhenPurchased` upgrades only for this shop id
+    /// (Tool.cs:875), and the entry it charges for is discarded rather than carried (ShopMenu.cs:1369-1378).
+    /// </summary>
+    private const string ShopUpgradeCounter = "ClintUpgrade";
 
     /// <summary>
     /// The owner entry that would RUN this shop's counter right now, resolved the way
@@ -83,19 +86,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         catch (Exception)
         {
-            // A malformed content pack must not take the whole snapshot down. "Could not be resolved" is stated by the
-            // caller as a null answer, never as "closed".
             return null;
         }
 
         return SelectCurrentShopOwner(owners.ToArray(), ownerName);
     }
 
-    /// <summary>
-    /// The selection half of <see cref="ResolveCurrentShopOwner"/>, split out so the rule can be asserted on real
-    /// <see cref="ShopOwnerData"/> rows without a world (the condition evaluation in
-    /// <c>ShopBuilder.GetCurrentOwners</c> needs the game).
-    /// </summary>
     internal static ShopOwnerData? SelectCurrentShopOwner(IReadOnlyList<ShopOwnerData> currentOwners, string ownerName)
     {
         if (currentOwners is null || currentOwners.Count == 0)
@@ -119,22 +115,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </summary>
     internal static bool OpensNow(ShopOwnerData? resolvedOwner) => resolvedOwner is { ClosedMessage: null };
 
-    /// <summary>
-    /// One counter in the actor's current room: the identity discovery mints for it, the tile it is acted on from, and
-    /// the engine's OPEN verdict.
-    ///
-    /// <para>
-    /// Two readers share this ONE enumeration: discovery publishes the open counters (recording
-    /// <c>shop_closed_today</c> for the others), and the purchase path resolves the caller's id against it - so a caller
-    /// holding a stale id is answered with "this counter shuts today" in the game's own words, not with a distance it
-    /// would then try to close.
-    /// </para>
-    /// <para>
-    /// It carries no stock. Resolving the item queries behind a shop's stock is the expensive half (<c>seedSupplyTargets</c>
-    /// caches it per day for exactly that reason), and a withheld counter is never published, so only
-    /// <see cref="PublishShopCounter"/> pays for it.
-    /// </para>
-    /// </summary>
     private readonly record struct DiscoveredShopCounter(
         string TargetId,
         string ShopId,
@@ -225,14 +205,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
             catch (Exception)
             {
-                // A malformed content pack must not take the whole snapshot down; the shop
-                // is simply not advertised.
                 continue;
             }
 
             foreach (ShopOwnerData owner in owners)
             {
-                // Only a named NPC is a physical owner standing in the room.
                 if (owner.Type != ShopOwnerType.NamedNpc || string.IsNullOrWhiteSpace(owner.Name))
                     continue;
 
@@ -241,8 +218,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 if (npc is null)
                     continue;
 
-                // ONE resolution per counter: the verdict and the game's own closed text are both projected from the
-                // entry that would RUN this counter, so "open now" and "why not" cannot be two readings.
                 ShopOwnerData? resolvedOwner = ResolveCurrentShopOwner(shopData, owner.Name);
                 counters.Add(new DiscoveredShopCounter(
                     ShopTargetId(shopId, owner.Name),
@@ -256,11 +231,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
         }
 
-        // A shop whose owner entry is NOT a named NPC standing in the room (AnyOrNone /
-        // None, which is what the tile-opened stalls use) is reachable only through the
-        // tile that opens it, so that is where it is discovered. The reachable set is the
-        // tile set, not every non-NamedNpc owner entry: an owner entry nothing in the
-        // world opens has no counter to walk up to and must not be advertised.
         counters.AddRange(DiscoverTileShopTargets(location));
         return counters;
     }
@@ -290,14 +260,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             stockItemIds);
     }
 
-    /// <summary>
-    /// The counters this location has that the game would OPEN right now. Empty is the honest answer everywhere else.
-    ///
-    /// <para>
-    /// The withheld ones are named in the family's exclusions rather than dropped, so an empty <c>shopTargets</c> never
-    /// reads as "no shop in this room" when the truth is "the counter is here and shut".
-    /// </para>
-    /// </summary>
     private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
     {
         GameLocation? location = player.currentLocation;
@@ -319,19 +281,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return targets.Take(MaxShopTargets).ToArray();
     }
 
-    /// <summary>
-    /// What a shop can actually sell right now, so a caller does not have to guess an item
-    /// id. Same call the purchase itself uses, so discovery and execution cannot disagree
-    /// about what is on offer.
-    ///
-    /// <para>
-    /// <c>priceByQualifiedItemId</c> is the COMPLETE stock with what the menu would charge for each entry
-    /// (<c>ItemStockInformation.Price</c>, after the shop's and the entry's own modifiers). This method is the ONE
-    /// reader of shop stock in this class: the shortage fact's supply half calls it too, rather than asking
-    /// <c>ShopBuilder</c> a second time and risking two answers about one shop. <c>stockItemIds</c> stays the bounded
-    /// list a target row publishes, so the two readers cannot drift about what is on offer.
-    /// </para>
-    /// </summary>
     private static void ReadShopStock(
         string shopId,
         ShopData shopData,
@@ -418,8 +367,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 if (tile is null || !tile.Properties.TryGetValue("Action", out var actionValue))
                     continue;
                 string action = actionValue.ToString();
-                // One target per shop: two tiles of the same stall would mint the same
-                // target id twice and make the request ambiguous.
                 if (!TryResolveTileShop(action, out string shopId)
                     || !shops.TryGetValue(shopId, out ShopData? shopData) || shopData is null
                     || !seen.Add(shopId))
@@ -485,9 +432,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 shopId = "Bookseller";
                 return true;
             case "OpenShop":
-                // Only the gate-free two-token form. The native case parses a direction, an
-                // opening window and an owner area out of the remaining arguments and
-                // returns without opening on each of them.
                 if (tokens.Length != 2)
                     return false;
                 shopId = tokens[1];
@@ -497,24 +441,16 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
     }
 
-    /// <summary>
-    /// The game's own "this shop is closed" text, read at refusal time rather than carried on
-    /// the discovered target. Carrying it meant the snapshot had a nullable field the Mod's
-    /// serializer omitted when null, which the Host's exact-key check then rejected — the
-    /// message belongs in the refusal evidence, not in a snapshot contract.
-    /// </summary>
     private static string? GameStateQueryClosedMessageFor(string shopId, string ownerName)
     {
         try
         {
             if (!DataLoader.Shops(Game1.content).TryGetValue(shopId, out ShopData? shopData) || shopData is null)
                 return null;
-            // The same resolution the discovery gate uses: one answer about which entry runs this counter.
             return ResolveCurrentShopOwner(shopData, ownerName)?.ClosedMessage;
         }
         catch (Exception)
         {
-            // A refusal must not fail because the message could not be read.
         }
         return null;
     }
@@ -592,14 +528,27 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     }
 
     /// <summary>
-    /// How many units the purse can pay for at the price the shop charges, and the arithmetic behind it.
+    /// How many purchases this actor can actually complete - the purse, the stock, what was asked for, and the pack.
     ///
     /// <para>
-    /// ONE producer, because two refusal branches read it: <c>Affordable &lt; 1</c> is <c>insufficient_money</c> and
-    /// <c>Purchasable &lt; 1</c> beside it is <c>out_of_stock</c>, so a second copy of "held divided by price" is how
-    /// one refusal ends up naming a number the other branch never used. The price arrives as the stock ENTRY rather
-    /// than as a bare integer: the entry is the object the menu charges (<c>ShopMenu.cs:1337</c>), so a caller cannot
-    /// hand this function the item's sale value by mistake.
+    /// ONE producer, because four refusal branches read it: <c>Affordable &lt; 1</c> is <c>insufficient_money</c>, a
+    /// stock below one is <c>out_of_stock</c>, and <c>Purchasable &lt; 1</c> beside a full pack is
+    /// <c>inventory_cannot_accept</c>. A second copy of "held divided by price" is how one refusal ends up naming a
+    /// number the other branch never used. The price arrives as the stock ENTRY rather than as a bare integer: the entry
+    /// is the object the menu charges (<c>ShopMenu.cs:1337</c>), so a caller cannot hand this function the item's sale
+    /// value by mistake.
+    /// </para>
+    /// <para>
+    /// THE PACK IS A TERM, and it is the one that was missing. Measured 2026-11-14 at HEAD: a purchase whose goods no
+    /// slot could take moved the money first (the engine charges inside <c>tryToPurchaseItem</c>, ShopMenu.cs:1364),
+    /// left the stack on the cursor (:1352), and then the handler's own close DELETED it - <c>Game1.exitActiveMenu()</c>
+    /// is <c>activeClickableMenu = null</c> (Game1.cs:6128-6131), and the <c>ShopMenu</c> holding the cursor goes with
+    /// it. The player's own path never does that: the menu refuses to close while it holds goods
+    /// (<c>ShopMenu.readyToClose</c> answers false, ShopMenu.cs:1255-1262), and the close its menu key DOES perform
+    /// hands the stack to <c>Utility.CollectOrDrop</c> (<c>ShopMenu.receiveKeyPress</c>, :965-978), which puts it in the
+    /// pack or on the ground (<c>Utility.cs:2092-2112</c>) and never destroys it. So the player cannot pay for goods
+    /// that evaporate, and this count makes the same answer at admission: <paramref name="packPurchases"/> below one is
+    /// refused BEFORE the click, with the purse untouched.
     /// </para>
     /// <para>
     /// <c>Math.Max(1, ...)</c> is not a price: a row that trades an item instead of gold carries <c>Price = 0</c>
@@ -612,12 +561,373 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal static (long Affordable, int Purchasable) ShopPurchaseCapacity(
         ItemStockInformation charged,
         long currencyHeld,
-        int requestedQuantity)
+        int requestedQuantity,
+        int packPurchases)
     {
         long affordable = charged.Price <= 0
             ? requestedQuantity
-            : (currencyHeld / Math.Max(1, charged.Price));
-        return (affordable, (int)Math.Min(Math.Min(requestedQuantity, charged.Stock), affordable));
+            : currencyHeld / Math.Max(1, charged.Price);
+        int purchasable = (int)Math.Min(Math.Min(requestedQuantity, charged.Stock), affordable);
+        return (affordable, Math.Min(purchasable, packPurchases));
+    }
+
+    /// <summary>
+    /// How many of these purchases the pack can take, in CLICKS, through the engine's own arithmetic.
+    ///
+    /// <para>
+    /// <c>Utility.GetNumberOfItemThatCanBeAddedToThisInventoryList</c> is the engine's count of what a list can still
+    /// absorb (Utility.cs:6283-6302): the remaining room of every stack the goods merge into, plus one full stack per
+    /// empty slot - the same <c>getRemainingStackSpace</c> / <c>maximumStackSize</c> pair the pack's own placement reads
+    /// (<c>Farmer.addItemToInventory</c>, Farmer.cs:4291-4325). Dividing by the units ONE click buys
+    /// (<c>ShopMenu.cs:1340</c>: <c>stack = stockToBuy * item.Stack</c>, with one unit asked per click here) turns that
+    /// room into clicks, which is the unit the click loop counts in.
+    /// </para>
+    /// <para>
+    /// <paramref name="consumedByThePurchase"/> is <c>int.MaxValue</c> from the caller's own reading of the engine's
+    /// purchase hook - see <see cref="ShopPurchaseConsumesTheEntry"/> - because an entry the hook consumes never reaches
+    /// the cursor and the pack owes it no room.
+    /// </para>
+    /// </summary>
+    internal static int ShopPackPurchases(
+        IList<Item> pack,
+        int packSlots,
+        Item goods,
+        int unitsPerPurchase,
+        bool consumedByThePurchase)
+    {
+        if (consumedByThePurchase)
+            return int.MaxValue;
+        int units = Utility.GetNumberOfItemThatCanBeAddedToThisInventoryList(goods, pack, packSlots);
+        return units / Math.Max(1, unitsPerPurchase);
+    }
+
+    /// <summary>
+    /// Whether the engine's own purchase hook CONSUMES this entry instead of handing it to the cursor, so the pack owes
+    /// it no room.
+    ///
+    /// <para>
+    /// The hook is <c>ISalable.actionWhenPurchased(ShopId)</c>, which <c>ShopMenu.tryToPurchaseItem</c> calls at
+    /// <c>ShopMenu.cs:1369</c>: when it answers true the menu discards the stack it charged for (:1369-1378), so only a
+    /// false answer leaves goods a slot must take. The answers read here are the engine's own: <c>Object</c> answers
+    /// <c>isRecipe.Value</c> (Object.cs:7112-7116), and <c>Tool</c> upgrades only from the <c>ClintUpgrade</c> counter and
+    /// only for the tool <c>ShopBuilder.GetToolUpgradeData</c> names (Tool.cs:875-895) - the SAME call the handler already
+    /// makes to read the tool the upgrade takes, so this count and the purchase cannot disagree about what an upgrade
+    /// is.
+    /// </para>
+    /// <para>
+    /// WHAT IT DOES NOT CLAIM: a few shop wrappers implement the same hook (a pet licence, a house renovation, a
+    /// purchasable key item, the movie concession). For those a full pack answers <c>inventory_cannot_accept</c> where
+    /// the engine would have consumed the entry. That is the only safe direction - nothing is spent and nothing is
+    /// created - and it is stated here rather than hidden behind an item list that would drift.
+    /// </para>
+    /// </summary>
+    internal static bool ShopPurchaseConsumesTheEntry(ISalable offer, string shopId, string? requiredToolId)
+    {
+        if (offer.IsRecipe)
+            return true;
+        return requiredToolId is not null && string.Equals(shopId, ShopUpgradeCounter, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The row inside <c>forSaleButtons</c> that holds <paramref name="saleIndex"/>, once the menu's own cursor has been
+    /// moved onto the page that shows it; -1 with <paramref name="refusal"/> naming why no row can hold it.
+    ///
+    /// <para>
+    /// A ROW, not a sale index, because the native click handler resolves the button under the pointer as
+    /// <c>forSale[currentItemIndex + k]</c> (<c>ShopMenu.cs:1096-1102</c>): the number it accepts is an offset from
+    /// the page on screen, so the same sale has a different one at every scroll position. Measured 2026-11-13: the
+    /// translation without the scroll refused EVERY purchase past the fourth with <c>button=-1</c> - a number that is
+    /// not an item, not a page and not a reason - because the menu draws four rows at a time and nothing ever moved
+    /// the cursor to the page an off-screen sale sits on.
+    /// </para>
+    /// </summary>
+    internal static int ShopSaleRowInView(ShopMenu shop, int saleIndex, out string? refusal)
+    {
+        int rows = shop.forSaleButtons.Count;
+        if (rows > 0 && saleIndex >= 0 && saleIndex < shop.forSale.Count)
+        {
+            // The engine's own pager, not a coordinate: receiveScrollWheelAction(-1) is downArrowPressed()
+            // (ShopMenu.cs:933-951), the same cursor move the down arrow's click makes, and the engine clamps the
+            // cursor into [0, forSale.Count - 4] every time it handles a click (ShopMenu.cs:1021). Driving that cursor
+            // is what makes every entry reachable; the click then lands on a row that really holds the sale.
+            int lastPage = Math.Max(0, shop.forSale.Count - rows);
+            int target = Math.Clamp(saleIndex, 0, lastPage);
+            for (int step = 0; step <= shop.forSale.Count && shop.currentItemIndex != target; step++)
+                shop.receiveScrollWheelAction(shop.currentItemIndex < target ? -1 : 1);
+
+            int row = saleIndex - shop.currentItemIndex;
+            if (row >= 0 && row < rows)
+            {
+                refusal = null;
+                return row;
+            }
+        }
+
+        refusal = ShopPageRefusal(saleIndex, shop.forSale.Count, rows);
+        return -1;
+    }
+
+    /// <summary>
+    /// The refusal a sale the menu's pager could not reach is answered with: which sale, out of how many pages the
+    /// menu draws. Naming both is what a bare <c>button=-1</c> never did - it stated an index that is not an item, not
+    /// a page and not a reason, so round42's refusal could only be read as "the shop has no such thing".
+    /// </summary>
+    internal static string ShopPageRefusal(int saleIndex, int saleCount, int visibleRows)
+    {
+        int rows = Math.Max(1, visibleRows);
+        return $"shop_item_beyond_last_page:{saleIndex}:{(saleCount + rows - 1) / rows}";
+    }
+
+    /// <summary>
+    /// The inventory slot that can take <paramref name="held"/> when a purchase leaves it on the cursor.
+    ///
+    /// <para>
+    /// The engine's own placement is <c>InventoryMenu.leftClick</c> at the slot's centre, which hands the stack to
+    /// <c>Utility.addItemToInventory</c> (<c>InventoryMenu.cs:318-344</c>): that call MERGES into a stack it can add to
+    /// and only otherwise takes an empty slot (<c>Utility.cs:6397-6411</c>), so which slot this answers decides whether
+    /// a stackable purchase is merged or left unplaceable.
+    /// </para>
+    /// </summary>
+    internal static int ShopDropSlot(IList<Item> slots, Item? held)
+    {
+        if (held is null)
+            return -1;
+
+        // A stack it merges into comes FIRST, and the one with the most room wins: Utility.addItemToInventory takes the
+        // whole stack or leaves the remainder on the cursor (Utility.cs:6397-6411), so a nearly-full stack chosen over
+        // an emptier one would strand what did not fit. An empty slot is the fallback, never the first answer: an
+        // inventory with room left but a partial stack of the same goods must still grow that stack.
+        int mergeSlot = -1;
+        int mergeRoom = 0;
+        int emptySlot = -1;
+        for (int slot = 0; slot < slots.Count; slot++)
+        {
+            Item? occupying = slots[slot];
+            if (occupying is null)
+            {
+                if (emptySlot < 0)
+                    emptySlot = slot;
+                continue;
+            }
+
+            int room = occupying.getRemainingStackSpace();
+            if (room > mergeRoom && occupying.canStackWith(held))
+            {
+                mergeRoom = room;
+                mergeSlot = slot;
+            }
+        }
+
+        return mergeSlot >= 0 ? mergeSlot : emptySlot;
+    }
+
+    /// <summary>
+    /// The refusal a stack the inventory could not take is answered with. The item is named because the caller cannot
+    /// act on "the purchase failed": it has to know WHICH goods are stranded - the purse already paid for them.
+    /// </summary>
+    internal static string ShopInventoryRefusal(Item held) => $"inventory_cannot_accept:{held.QualifiedItemId}";
+
+    /// <summary>
+    /// The evidence a purchase the pack cannot hold is refused with, stated BEFORE the purse pays.
+    ///
+    /// <para>
+    /// `room=` is the pack's own reading (<see cref="ShopPackPurchases"/>), `held=/unit_price=/currency=` are the money
+    /// the charge would have taken - so the caller can see the purse was not the reason - and
+    /// `money_before`/`money_after` and `owned_before`/`owned_after` are stated EQUAL because nothing was bought: both
+    /// sides are the counts read at admission, so this is the receipt the purchase invariant is read on
+    /// (tools/check-stardew-shop-purchase-pays-for-goods.mjs) and no fact here is written as a literal.
+    /// </para>
+    /// </summary>
+    internal static string ShopPackRefusalEvidence(
+        string shopId,
+        string itemId,
+        int requested,
+        int unitPrice,
+        int shopCurrency,
+        long held,
+        int stock,
+        int room,
+        int owned)
+    {
+        return $"shop={shopId};item={itemId};requested={requested};purchased=0;unit_price={unitPrice};"
+            + $"currency={ShopCurrencyName(shopCurrency)};held={held};money_before={held};money_after={held};"
+            + $"owned_before={owned};owned_after={owned};gained=0;stock={stock};room={room}";
+    }
+
+    /// <summary>
+    /// The refusal a purchase the engine itself refused is answered with, and the reason it refused.
+    ///
+    /// <para>
+    /// The engine's confirm path is <c>ShopMenu.receiveLeftClick</c> - the same handler a player's click runs - so what
+    /// it does with an entry is the engine's business: money, stock limits, stacking, and
+    /// <c>ISalable.actionWhenPurchased</c> (a tool upgrade, a recipe, a recovered item) all happen inside
+    /// <c>ShopMenu.tryToPurchaseItem</c> (<c>ShopMenu.cs:1319-1397</c>). None of them is done here, so a purchase that
+    /// does not happen has to be answered with the engine's own reason rather than with a claim about the trade.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseRefusal(string engineReason) => $"shop_purchase_refused:{engineReason}";
+
+    /// <summary>
+    /// The disposition of one purchase, from the facts the transaction produced — the ONE place that decides it, so the
+    /// state the caller reads and the terminal it reads cannot be two judgements.
+    ///
+    /// <para>
+    /// A TOOL UPGRADE is a purchase whose goods never enter the pack: <c>Tool.actionWhenPurchased</c> sets
+    /// <c>Farmer.toolBeingUpgraded</c> and <c>daysLeftForToolUpgrade = 2</c> for the shop id <c>ClintUpgrade</c>
+    /// (Tool.cs:875-895) and returns true, so <c>ShopMenu.tryToPurchaseItem</c> discards the entry it charged for
+    /// (ShopMenu.cs:1369-1378) while the tool the upgrade consumes leaves the pack (:879-888). Judged by "goods
+    /// arrived" alone, a successful upgrade therefore read as <c>Uncertain/purchase_partial</c> — the receipt could not
+    /// tell a finished upgrade from a half-done trade. The engine's own two fields are the effect, so they are what
+    /// this reads: nothing else in the game writes <c>toolBeingUpgraded</c>.
+    /// </para>
+    /// <para>
+    /// The upgraded tool's id is compared with the requested one because <c>toolBeingUpgraded</c> may already have held
+    /// a DIFFERENT tool (Tool.cs:875 is the only writer's guard); a purchase is never the answer for a tool it did not
+    /// put there. <paramref name="requiredToolBefore"/> and <paramref name="requiredToolAfter"/> are the pack counts of
+    /// the item the upgrade consumes, which is the second half of the engine's effect.
+    /// </para>
+    /// </summary>
+    internal readonly record struct ShopPurchaseOutcome(ExecutionState State, string ReasonCode);
+
+    internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(
+        long currencyBefore,
+        long currencyAfter,
+        int gained,
+        string? purchaseRefusal,
+        string expectedItemId,
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string? requiredToolId,
+        int requiredToolBefore,
+        int requiredToolAfter)
+    {
+        bool paid = currencyAfter < currencyBefore;
+        bool requiredToolTaken = requiredToolId is not null && requiredToolAfter == requiredToolBefore - 1;
+
+        if (purchaseRefusal is not null)
+            return new ShopPurchaseOutcome(
+                paid || gained > 0 || requiredToolTaken ? ExecutionState.Uncertain : ExecutionState.Rejected,
+                purchaseRefusal);
+
+        if (paid
+            && upgradedToolId is not null
+            && string.Equals(upgradedToolId, expectedItemId, StringComparison.Ordinal)
+            && daysLeftForToolUpgrade > 0
+            && requiredToolTaken)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "tool_upgrade_purchased");
+
+        if (paid && gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "item_purchased");
+
+        if (paid || gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Uncertain, "purchase_partial");
+
+        return new ShopPurchaseOutcome(ExecutionState.Failed, ShopPurchaseRefusal("no_effect"));
+    }
+
+    /// <summary>
+    /// What a purchase that was a TOOL UPGRADE adds to the receipt: the engine's own three effects, in the one spelling
+    /// the Host's <c>tool_upgrade_purchased</c> rule declares.
+    ///
+    /// <para>
+    /// Empty for every other purchase, which is what keeps the ordinary <c>item_purchased</c> detail byte-identical: the
+    /// Host reads a detail as an exact key set, so an extra field on the ordinary path would be a producer bug there.
+    /// </para>
+    /// </summary>
+    internal static string ShopToolUpgradeEvidence(
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string requiredToolQualifiedId,
+        int requiredToolBefore,
+        int requiredToolAfter,
+        string purchaseDialogue)
+    {
+        if (upgradedToolId is null)
+            return string.Empty;
+        return $";tool_upgraded={upgradedToolId};days_left={daysLeftForToolUpgrade}"
+            + $";required_tool={(requiredToolQualifiedId.Length == 0 ? "none" : requiredToolQualifiedId)}"
+            + $";required_before={requiredToolBefore};required_after={requiredToolAfter}"
+            + $";purchase_dialogue={purchaseDialogue}";
+    }
+
+    /// <summary>
+    /// What one purchase receipt states, as the handler read each fact from the game.
+    ///
+    /// <para>
+    /// A record rather than a list of arguments because the receipt IS this shape: the Host reads the detail as an exact
+    /// key set (see <see cref="ShopPurchaseReceipt"/>), and the shop suite builds the same receipt from these same facts
+    /// so the invariant it asserts is asserted on the text the Mod emits.
+    /// </para>
+    /// </summary>
+    internal readonly record struct ShopPurchaseReceiptFacts(
+        string ShopId,
+        string OwnerName,
+        bool TileOpened,
+        string ItemId,
+        int Requested,
+        int Purchased,
+        int UnitPrice,
+        long CurrencyBefore,
+        long CurrencyAfter,
+        int OwnedBefore,
+        int OwnedAfter,
+        int StockBefore,
+        int StockAfter,
+        int CounterX,
+        int CounterY,
+        bool MenuClosed,
+        IReadOnlyList<string> Clicks,
+        IReadOnlyList<string> Drops,
+        string? UpgradedToolId,
+        int DaysLeftForToolUpgrade,
+        string RequiredToolQualifiedId,
+        int RequiredToolBefore,
+        int RequiredToolAfter,
+        string PurchaseDialogue);
+
+    /// <summary>
+    /// The ONE producer of a purchase receipt's detail.
+    ///
+    /// <para>
+    /// The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail on `;`
+    /// and requires every field to be a non-empty `key=value`. <c>money_before</c>/<c>money_after</c> are frozen key
+    /// NAMES that the Host's shop_purchase completion rule requires
+    /// (host/src/stardew-game-integration-adapter.ts:1995-2055, exactEvidence, money_after &lt; money_before); their values
+    /// carry the amount of the CURRENCY the native charge moved, so a club-coin or Qi-gem purchase reports the decrease
+    /// that rule looks for:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects - so an
+    /// absent owner is spelled `none`, the same way other optional values are spelled here;</item>
+    /// <item>the two diagnostics are lists, and their entries used to embed `;`, which split each entry into fields the
+    /// Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and entries with `||`, so
+    /// the whole diagnostic stays ONE field.</item>
+    /// </list>
+    /// <para>
+    /// <c>money_before</c>, <c>money_after</c>, <c>gained</c> and <c>tool_upgraded</c> are also the four fields the
+    /// purchase invariant is stated over (tools/check-stardew-shop-purchase-pays-for-goods.mjs): money may leave the
+    /// purse only when goods arrived or a tool was upgraded.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseReceipt(ShopPurchaseReceiptFacts facts)
+    {
+        int gained = facts.OwnedAfter - facts.OwnedBefore;
+        string entryKind = facts.TileOpened ? "tile_action" : "npc_owner";
+        return $"shop={facts.ShopId};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};item={facts.ItemId};"
+            + $"requested={facts.Requested};purchased={facts.Purchased};unit_price={facts.UnitPrice};"
+            + $"money_before={facts.CurrencyBefore};money_after={facts.CurrencyAfter};"
+            + $"owned_before={facts.OwnedBefore};owned_after={facts.OwnedAfter};gained={gained};"
+            + $"stock_before={facts.StockBefore};stock_after={facts.StockAfter};"
+            + $"owner_tile={facts.CounterX},{facts.CounterY};menu_closed={facts.MenuClosed.ToString().ToLowerInvariant()};"
+            + $"clicks={facts.Clicks.Count}[{string.Join("||", facts.Clicks)}];"
+            + $"drops={facts.Drops.Count}[{string.Join("||", facts.Drops)}]"
+            + ShopToolUpgradeEvidence(
+                facts.UpgradedToolId,
+                facts.DaysLeftForToolUpgrade,
+                facts.RequiredToolQualifiedId,
+                facts.RequiredToolBefore,
+                facts.RequiredToolAfter,
+                facts.PurchaseDialogue);
     }
 
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
@@ -631,12 +941,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             : this.ledger.NewExecutionId(request.RequestId);
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
-            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
-            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
-            // the failure-mode collapse the review flagged.
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        // One body at a time, like every other action.
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null
@@ -647,8 +953,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RejectBodyOwned(request.RequestId, executionId);
         }
 
-        // A menu is already up: this action would be driving the game's own UI, so it
-        // cannot proceed without stepping on whatever opened it.
         if (Game1.activeClickableMenu is not null || Game1.dialogueUp)
         {
             return this.RememberTerminal(
@@ -671,18 +975,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (quantity < 1)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_quantity", $"quantity={quantity}");
 
-        // Re-resolve the target from live state: the client's opaque id is only matched against a set derived here,
-        // never parsed. It is the SAME enumeration `shopTargets` publishes from, so a counter this action cannot open
-        // today cannot be published by one check and refused by another.
         GameLocation? location = actor.currentLocation;
         if (location is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
         List<DiscoveredShopCounter> counters = EnumerateShopCounters(location);
 
-        // ONE producer per refusal this action mints about a counter, so each reason has exactly one spelling and the
-        // sites below cannot drift apart: a counter the actor cannot act on from where it stands, and a counter the game
-        // says is shut today (in discovery's own token, with the game's own closed text).
         LocalExecutionReceipt RefuseUnreachableCounter(string evidence) =>
             this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "shop_counter_out_of_reach", evidence);
 
@@ -713,9 +1011,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         if (chosen is not DiscoveredShopCounter target)
         {
-            // A counter that is here but SHUT answers with the reason discovery withheld it (`shop_closed_today`, the
-            // same token the family's exclusions use) and the game's own closed text. It used to answer
-            // `shop_counter_out_of_reach` with a `closed_message=` appended - a distance for a shop that was not open.
             foreach (DiscoveredShopCounter candidate in counters)
             {
                 if (candidate.OpensNow || !string.Equals(candidate.TargetId, targetId, StringComparison.Ordinal))
@@ -723,8 +1018,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 return RefuseClosedCounter(candidate, candidate.ClosedMessage);
             }
 
-            // Distinguish "the shop exists but its owner is not here / not eligible" from
-            // "this is not a shop at all", because they need different Agent responses.
             string knownHere = string.Join(",", counters.Where(c => c.OpensNow).Select(c => c.ShopId).Distinct().Take(8));
             return this.RememberTerminal(
                 request.RequestId,
@@ -734,8 +1027,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"target={targetId};location={location.NameOrUniqueName};available_here={knownHere}");
         }
 
-        // The deliberate scope boundary: walking is move_to_tile's job. What is measured here is the counter the engine
-        // itself gates - a TILE - never the distance to the NPC running it (see `ShopCounterReachRefusal`).
         bool tileOpened = target.OwnerName.Length == 0;
         string? reachRefusal = ShopCounterReachRefusal(
             tileOpened, target.OwnerName, target.CounterX, target.CounterY, actor);
@@ -781,11 +1072,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     $"shop={target.ShopId};counter={target.CounterX},{target.CounterY};gate=bookseller_choice");
         }
 
-        // The stock the game would actually offer right now.
-        // Filled by the click loop below and reported in the receipt, so a swallowed click
-        // is diagnosable from the evidence instead of requiring another live round.
         List<string> clickDiagnostics = new();
         List<string> dropDiagnostics = new();
+        string? purchaseRefusal = null;
 
         Dictionary<ISalable, ItemStockInformation> stock;
         try
@@ -835,7 +1124,35 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // then read the real one as having spent nothing.
         int shopCurrency = ShopCurrencyFor(target.ShopId);
         long currencyHeld = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-        (long affordable, int purchasable) = ShopPurchaseCapacity(charged, currencyHeld, quantity);
+        int ownedBefore = actor.Items.Where(i => i is not null)
+            .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
+            .Sum(i => i.Stack);
+
+        // Which pack item this entry consumes, read BEFORE the click: `GetToolUpgradeData` filters on the required tool
+        // still being in the pack (ShopBuilder.cs:171), so after `Tool.actionWhenPurchased` removed it (:882-888) the
+        // same call answers a different row. The rule is the engine's own (:879-888 only removes what
+        // `GetToolUpgradeData` names), not a second one; a shop entry that is not a tool upgrade has no required item and
+        // the three facts below stay zero. Read HERE rather than after admission because the pack gate below is asked
+        // the same question the hook answers: whether these goods ever reach the pack.
+        Tool? upgradeEntry = offer as Tool;
+        string? requiredToolId = upgradeEntry is null
+            ? null
+            : ShopBuilder.GetToolUpgradeData(upgradeEntry.GetToolData(), actor)?.RequireToolId;
+        string requiredToolQualifiedId = requiredToolId is null
+            ? string.Empty
+            : actor.Items.GetById(requiredToolId).FirstOrDefault()?.QualifiedItemId ?? string.Empty;
+        int requiredToolBefore = requiredToolId is null ? 0 : actor.Items.CountId(requiredToolId);
+
+        Item? goods = offer.GetSalableInstance() as Item;
+        int packPurchases = goods is null
+            ? int.MaxValue
+            : ShopPackPurchases(
+                actor.Items,
+                actor.maxItems.Value,
+                goods,
+                Math.Max(1, offer.Stack),
+                ShopPurchaseConsumesTheEntry(offer, target.ShopId, requiredToolId));
+        (long affordable, int purchasable) = ShopPurchaseCapacity(charged, currencyHeld, quantity, packPurchases);
         if (affordable < 1)
         {
             return this.RememberTerminal(
@@ -845,26 +1162,37 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "insufficient_money",
                 ShopPurchaseAffordabilityEvidence(target.ShopId, expectedItemId, unitPrice, shopCurrency, currencyHeld));
         }
-        if (purchasable < 1)
+        if (charged.Stock < 1)
         {
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "out_of_stock",
-                $"shop={target.ShopId};item={expectedItemId};stock={stock[offer].Stock}");
+                $"shop={target.ShopId};item={expectedItemId};stock={charged.Stock}");
+        }
+        if (packPurchases < 1 && goods is not null)
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                ShopInventoryRefusal(goods),
+                ShopPackRefusalEvidence(
+                    target.ShopId,
+                    expectedItemId,
+                    quantity,
+                    unitPrice,
+                    shopCurrency,
+                    currencyHeld,
+                    charged.Stock,
+                    packPurchases,
+                    ownedBefore));
         }
 
         long currencyBefore = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-        int ownedBefore = actor.Items.Where(i => i is not null)
-            .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
-            .Sum(i => i.Stack);
         int stockBefore = stock[offer].Stock;
 
-        // The transaction is the game's. TryOpenShopMenu builds the real ShopMenu from the
-        // same content data; the purchase is then dispatched through the menu's own click
-        // handler over its public forSaleButtons, so pricing, currency, stock decrement and
-        // inventory insertion all run inside native code.
         ShopMenu? menu = null;
         try
         {
@@ -887,19 +1215,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 : Utility.TryOpenShopMenu(target.ShopId, location, ownerArea: null, maxOwnerY: null, forceOpen: false);
             if (!shopOpened)
             {
-                // The location overload's closed-message path mounts the game's own
-                // DialogueBox before returning false. Leaving it mounted would make every
-                // later action reject as modal_open, so it is closed with the public step
-                // the native input paths use and its text goes into the refusal instead.
                 string nativeClosedMessage = Game1.activeClickableMenu is DialogueBox closedBox
                     ? string.Join(" | ", closedBox.dialogues)
                     : string.Empty;
                 if (Game1.activeClickableMenu is DialogueBox)
                     ((DialogueBox)Game1.activeClickableMenu).closeDialogue();
 
-                // TWO answers, and the engine's own call is what separates them: a counter that is shut today names
-                // its closed text and is refused with the reason discovery withheld it; a counter whose owner entry
-                // could not be resolved from this room is the reach refusal, because standing elsewhere is the fix.
                 string? closedMessage = string.IsNullOrEmpty(nativeClosedMessage)
                     ? GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)
                     : nativeClosedMessage;
@@ -923,34 +1244,30 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
             menu = opened;
 
-            // Match by wire identity, NOT by object reference: GetShopStock builds its own
-            // items, so the instance that was priced is never the instance the menu holds.
-            // IndexOf would therefore always miss (measured live: shop_offer_not_purchasable).
-            //
-            // The result is a BUTTON index, not a sale index. The game resolves a clicked
-            // button k as forSale[currentItemIndex + k] (ShopMenu.cs:1096-1102), so returning
-            // the raw sale index happens to work only while the view is scrolled to the top.
-            // Translating here keeps the coordinate and the item in agreement at any scroll.
-            int FindOfferIndex(ShopMenu shop)
-            {
-                int saleIndex = shop.forSale.FindIndex(candidate => string.Equals(
-                    candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
-                if (saleIndex < 0)
-                    return -1;
-                int buttonIndex = saleIndex - shop.currentItemIndex;
-                // Scrolled past it: the native click handler cannot reach an off-screen row.
-                return buttonIndex >= 0 && buttonIndex < shop.forSaleButtons.Count ? buttonIndex : -1;
-            }
+            int SaleIndexOf(ShopMenu shop) => shop.forSale.FindIndex(candidate => string.Equals(
+                candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
 
-            int buttonIndex = FindOfferIndex(menu);
-            if (buttonIndex < 0 || buttonIndex >= menu.forSaleButtons.Count)
+            int saleIndex = SaleIndexOf(menu);
+            if (saleIndex < 0)
             {
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
                     ExecutionState.Rejected,
-                    "shop_offer_not_purchasable",
-                    $"shop={target.ShopId};item={expectedItemId};button={buttonIndex};offers={menu.forSale.Count}");
+                    $"shop_item_absent_from_sale:{expectedItemId}",
+                    $"shop={target.ShopId};item={expectedItemId};offers={menu.forSale.Count}");
+            }
+
+            int row = ShopSaleRowInView(menu, saleIndex, out string? pageRefusal);
+            if (row < 0)
+            {
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    pageRefusal!,
+                    $"shop={target.ShopId};item={expectedItemId};offers={menu.forSale.Count};"
+                    + $"rows={menu.forSaleButtons.Count};cursor={menu.currentItemIndex}");
             }
 
             // One native click per unit; the game decrements stock and moves money itself.
@@ -972,15 +1289,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             for (int bought = 0; bought < purchasable; bought++)
             {
                 if (Game1.activeClickableMenu is not ShopMenu stillOpen || !ReferenceEquals(stillOpen, menu))
+                {
+                    purchaseRefusal = ShopPurchaseRefusal("menu_closed");
                     break;
+                }
 
-                int index = FindOfferIndex(menu);
-                if (index < 0 || index >= menu.forSaleButtons.Count)
+                int saleRow = SaleIndexOf(menu);
+                if (saleRow < 0)
+                {
+                    purchaseRefusal = $"shop_item_absent_from_sale:{expectedItemId}";
                     break;
+                }
 
-                ClickableComponent button = menu.forSaleButtons[index];
-                // Record the state the native handler will read, and what it did, instead of
-                // guessing which gate refused. These are all public members.
+                saleRow = ShopSaleRowInView(menu, saleRow, out string? loopPageRefusal);
+                if (saleRow < 0)
+                {
+                    purchaseRefusal = loopPageRefusal;
+                    break;
+                }
+
+                ClickableComponent button = menu.forSaleButtons[saleRow];
                 long currencyBeforeClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
                 int stockBeforeClick = stock.TryGetValue(offer, out ItemStockInformation? s0) && s0 is not null ? s0.Stock : -1;
                 int safetyBefore = menu.safetyTimer;
@@ -989,68 +1317,70 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 int clickY = button.bounds.Center.Y;
                 bool addressedToButton = button.containsPoint(clickX, clickY);
 
-                // The native click handler, at the native click coordinates.
+                // The engine's own confirm path: ShopMenu.receiveLeftClick is the handler a player's click runs, and
+                // its purchase branch does the money, the stock limit, the stacking and `actionWhenPurchased`
+                // (ShopMenu.cs:1096-1140, 1319-1421). Nothing about the trade is computed here.
                 menu.receiveLeftClick(clickX, clickY, playSound: true);
 
-                // The purchase leaves the item ON THE CURSOR, not in the inventory:
-                // tryToPurchaseItem assigns heldItem = item.GetSalableInstance()
-                // (ShopMenu.cs:1352) and only clears it for items with
-                // actionWhenPurchased (:1369-1378). A real player then clicks an empty
-                // inventory slot to put it away; a scripted purchase must do the same or
-                // the money moves and the goods never arrive. Measured live: money 500->480
-                // with owned_before = owned_after = 0, i.e. purchase_partial.
-                //
-                // receiveLeftClick routes coordinates inside the inventory to
-                // inventory.leftClick (ShopMenu.cs:1094), which is the native drop.
-                string heldBeforeDrop = menu.heldItem?.QualifiedItemId ?? "none";
-                int emptySlotIndex = -1;
-                string dropAt = "none";
-                if (menu.heldItem is not null)
+                long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
+                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
+                clickDiagnostics.Add(
+                    $"click{bought}:row={saleRow}|cursor={menu.currentItemIndex}|at={clickX},{clickY}|addressed={addressedToButton}|"
+                    + $"safety_before={safetyBefore}|held_null={heldNull}|"
+                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
+                    + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
+
+                if (currencyAfterClick == currencyBeforeClick)
                 {
+                    // The engine's purchase charged nothing. Two shapes produce that, and they need different answers:
+                    // an item already on the cursor reaches only the `held_item.canStackWith(item)` branch
+                    // (ShopMenu.cs:1431), which silently does nothing when the two do not stack; with an empty cursor
+                    // the click never entered the branch at all.
+                    purchaseRefusal = ShopPurchaseRefusal(heldNull ? "native_click_refused" : "held_item_occupied");
+                    break;
+                }
+
+                // The purchase leaves the goods ON THE CURSOR, not in the inventory: tryToPurchaseItem assigns
+                // heldItem = item.GetSalableInstance() (ShopMenu.cs:1352) and only clears it for items whose
+                // actionWhenPurchased consumed them (:1369-1378). A real player then clicks an inventory slot to put
+                // them away, so this does the same: receiveLeftClick routes coordinates inside the inventory to
+                // inventory.leftClick (ShopMenu.cs:1094), the game's own placement step.
+                Item? held = menu.heldItem as Item;
+                string heldBeforeDrop = held?.QualifiedItemId ?? "none";
+                int dropSlot = -1;
+                string dropAt = "none";
+                if (held is not null)
+                {
+                    // The ITEM LIST is what decides, not ClickableComponent.item: the menu builds its slots as
+                    // `new ClickableComponent(bounds, j.ToString())` (InventoryMenu.cs:103) and never assigns `.item`,
+                    // so selecting on that field picked slot 0 every time.
                     List<ClickableComponent>? slots = menu.inventory?.inventory;
                     IList<Item>? actual = menu.inventory?.actualInventory;
                     if (slots is not null && actual is not null)
                     {
-                        for (int slotIndex = 0; slotIndex < slots.Count && slotIndex < actual.Count; slotIndex++)
-                        {
-                            // Read the ITEM LIST, not ClickableComponent.item. The menu builds its
-                            // slots as `new ClickableComponent(bounds, j.ToString())`
-                            // (InventoryMenu.cs:103) — the string overload — and never assigns
-                            // `.item`, so `slot.item` is ALWAYS null. Selecting on it picked slot 0
-                            // every time; when slot 0 holds a tool, InventoryMenu.leftClick refuses
-                            // (InventoryMenu.cs:318 `actualInventory[num] != null && !canStackWith`)
-                            // and returns the held item unchanged. Measured live:
-                            // `drops=1[drop0:empty_slot=0;at=412,544;held=(O)472->(O)472]`.
-                            if (actual[slotIndex] is null && slots[slotIndex] is { bounds.Width: > 0 })
-                            {
-                                emptySlotIndex = slotIndex;
-                                dropAt = $"{slots[slotIndex].bounds.Center.X},{slots[slotIndex].bounds.Center.Y}";
-                                break;
-                            }
-                        }
+                        dropSlot = ShopDropSlot(actual, held);
+                        if (dropSlot >= 0 && (dropSlot >= slots.Count || slots[dropSlot].bounds.Width <= 0))
+                            dropSlot = -1;
                     }
-                    if (emptySlotIndex >= 0)
+
+                    if (dropSlot >= 0)
                     {
-                        // The native drop: ShopMenu.receiveLeftClick routes coordinates that
-                        // land in the inventory to inventory.leftClick with the held item
-                        // (ShopMenu.cs:1094), which is the game's own placement step.
+                        dropAt = $"{slots![dropSlot].bounds.Center.X},{slots[dropSlot].bounds.Center.Y}";
                         menu.receiveLeftClick(
-                            slots![emptySlotIndex].bounds.Center.X,
-                            slots![emptySlotIndex].bounds.Center.Y,
+                            slots[dropSlot].bounds.Center.X,
+                            slots[dropSlot].bounds.Center.Y,
                             playSound: true);
                     }
                 }
                 string heldAfterDrop = menu.heldItem?.QualifiedItemId ?? "none";
                 dropDiagnostics.Add(
-                    $"drop{bought}:empty_slot={emptySlotIndex}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
+                    $"drop{bought}:slot={dropSlot}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
 
-                long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
-                clickDiagnostics.Add(
-                    $"click{bought}:button={index}|at={clickX},{clickY}|addressed={addressedToButton}|"
-                    + $"safety_before={safetyBefore}|held_null={heldNull}|"
-                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
-                    + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
+                if (menu.heldItem is Item stranded)
+                {
+                    purchaseRefusal = ShopInventoryRefusal(stranded);
+                    break;
+                }
             }
         }
         catch (Exception nativeException)
@@ -1073,7 +1403,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
             catch (Exception)
             {
-                // Reported as part of the receipt below via the leftover-menu fact.
             }
         }
 
@@ -1082,40 +1411,68 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
             .Sum(i => i.Stack);
         int gained = ownedAfter - ownedBefore;
+        // The upgrade the engine ran also MOUNTS ITS OWN NOTICE and freezes the actor: `Tool.actionWhenPurchased` calls
+        // Game1.exitActiveMenu then Game1.DrawDialogue(Clint, ...) (Tool.cs:892-893), and DrawDialogue pushes a
+        // DialogueBox onto activeClickableMenu and sets player.CanMove = false (Game1.cs:9614-9625). The body is only
+        // free once that box is closed - `menu_closed` alone would not say so, because it tests for a ShopMenu. Closed
+        // here with the same public step the closed-message path above uses.
+        Tool? upgradedTool = actor.toolBeingUpgraded?.Value;
+        int daysLeftForToolUpgrade = actor.daysLeftForToolUpgrade?.Value ?? 0;
+        int requiredToolAfter = requiredToolId is null ? 0 : actor.Items.CountId(requiredToolId);
+        string purchaseDialogue = "none";
+        if (upgradedTool is not null && Game1.activeClickableMenu is DialogueBox upgradeNotice)
+        {
+            purchaseDialogue = "closed";
+            upgradeNotice.closeDialogue();
+        }
         bool menuClosed = Game1.activeClickableMenu is not ShopMenu;
 
-        string entryKind = tileOpened ? "tile_action" : "npc_owner";
-        // The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail
-        // on `;` and requires every field to be a non-empty `key=value`. money_before/money_after are frozen key
-        // NAMES that the Host's shop_purchase completion rule requires
-        // (host/src/stardew-game-integration-adapter.ts:1995-2055, exactEvidence, money_after < money_before);
-        // their values now carry the amount of the CURRENCY the native charge moved, so a club-coin or Qi-gem
-        // purchase reports the decrease that rule looks for:
-        //   * a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects -
-        //     so an absent owner is spelled `none`, the same way other optional values are spelled here;
-        //   * the two diagnostics below are lists, and their entries used to embed `;`, which split each entry into
-        //     fields the Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and
-        //     entries with `||`, so the whole diagnostic stays ONE field.
-        string ownerName = ShopOwnerToken(target.OwnerName);
-        string evidence =
-            $"shop={target.ShopId};owner={ownerName};entry={entryKind};item={expectedItemId};"
-            + $"requested={quantity};purchased={purchasable};unit_price={unitPrice};"
-            + $"money_before={currencyBefore};money_after={currencyAfter};"
-            + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
-            + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
-            + $"owner_tile={target.CounterX},{target.CounterY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
-            + $"clicks={clickDiagnostics.Count}[{string.Join("||", clickDiagnostics)}];"
-            + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]";
+        string evidence = ShopPurchaseReceipt(new ShopPurchaseReceiptFacts(
+            ShopId: target.ShopId,
+            OwnerName: target.OwnerName,
+            TileOpened: tileOpened,
+            ItemId: expectedItemId,
+            Requested: quantity,
+            Purchased: purchasable,
+            UnitPrice: unitPrice,
+            CurrencyBefore: currencyBefore,
+            CurrencyAfter: currencyAfter,
+            OwnedBefore: ownedBefore,
+            OwnedAfter: ownedAfter,
+            StockBefore: stockBefore,
+            StockAfter: stock.TryGetValue(offer, out ItemStockInformation? stockAfterReading) && stockAfterReading is not null
+                ? stockAfterReading.Stock
+                : -1,
+            CounterX: target.CounterX,
+            CounterY: target.CounterY,
+            MenuClosed: menuClosed,
+            Clicks: clickDiagnostics,
+            Drops: dropDiagnostics,
+            UpgradedToolId: upgradedTool?.QualifiedItemId,
+            DaysLeftForToolUpgrade: daysLeftForToolUpgrade,
+            RequiredToolQualifiedId: requiredToolQualifiedId,
+            RequiredToolBefore: requiredToolBefore,
+            RequiredToolAfter: requiredToolAfter,
+            PurchaseDialogue: purchaseDialogue));
 
-        // Success is the world fact: the shop's own currency left the purse AND the item entered the inventory.
-        // A receipt that spent nothing and gained nothing is not a purchase.
-        if (currencyAfter < currencyBefore && gained > 0)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "item_purchased", evidence, this.TryCreateLocalObservation(actor));
-
-        if (currencyAfter < currencyBefore || gained > 0)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Uncertain, "purchase_partial", evidence);
-
-        return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, "purchase_not_effective", evidence);
+        ShopPurchaseOutcome outcome = ShopPurchaseOutcomeFor(
+            currencyBefore,
+            currencyAfter,
+            gained,
+            purchaseRefusal,
+            expectedItemId,
+            upgradedTool?.QualifiedItemId,
+            daysLeftForToolUpgrade,
+            requiredToolId,
+            requiredToolBefore,
+            requiredToolAfter);
+        return this.RememberTerminal(
+            request.RequestId,
+            executionId,
+            outcome.State,
+            outcome.ReasonCode,
+            evidence,
+            outcome.State == ExecutionState.Succeeded ? this.TryCreateLocalObservation(actor) : null);
     }
 }
 
@@ -1140,27 +1497,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 /// </summary>
 internal sealed partial class ExecutionManager
 {
-    /// <summary>The Host's published cap on `seedSupplyTargets` (host/src/protocol.ts), which the snapshot contract
-    /// enforces; exceeding it invalidates the WHOLE snapshot.</summary>
     private const int MaxSeedSupplyRows = 8;
 
-    /// <summary>
-    /// The stock scan behind `seedSupplyTargets`, cached per in-game day and per set of held seeds.
-    ///
-    /// `ReadShopStock` resolves every shop's item queries and touches the team's synchronized shop stock, so asking all
-    /// of `Data/Shops` on every snapshot would put that cost on the game thread once per observation, for a fact that
-    /// changes once a day. What is NOT cached is `OpenNow`: that is the engine's answer about the clock, it moves with
-    /// the hour, and freezing it at 06:00 would be the one thing this fact exists to prevent.
-    /// </summary>
     private static int seedSupplyScanDay = int.MinValue;
     private static string seedSupplyScanKey = string.Empty;
     private static IReadOnlyList<(string QualifiedItemId, string ShopId, int Price)> seedSupplyScan =
         Array.Empty<(string QualifiedItemId, string ShopId, int Price)>();
 
-    /// <summary>
-    /// Every (held seed, shop that stocks it) pair, as the game states it. Null only when the caller decided not to
-    /// measure; an empty array is the measured answer "this actor holds no plantable seed".
-    /// </summary>
     private IReadOnlyList<BridgeSeedSupplyTarget> DiscoverSeedSupplyTargets(
         Farmer player,
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts,
@@ -1203,8 +1546,6 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            // An unreadable content table is "the shops could not be read", which the empty list states honestly: the
-            // companion is told there is no known source, not that the seed does not exist.
             return Array.Empty<BridgeSeedSupplyTarget>();
         }
 
@@ -1228,8 +1569,6 @@ internal sealed partial class ExecutionManager
                 }
                 catch (Exception)
                 {
-                    // The condition could not be evaluated. That is NOT "closed": the row carries no answer and names
-                    // the reason, so a companion cannot read a failed query as a shop she need not walk to.
                     eligibleOwners = null;
                 }
                 rows.Add(SeedSupplyRow(
@@ -1244,9 +1583,6 @@ internal sealed partial class ExecutionManager
                     shopTargetsHere,
                     ShopOwningLocation(entry.ShopId)));
             }
-            // A seed nobody stocks still gets a row: the absent shop half IS the answer ("no known source"), and it
-            // must not be confused with no row at all (she holds no plantable seed) or with no family (nothing was
-            // measured).
             if (!stockedSomewhere)
                 rows.Add(SeedWithoutSupplyRow(seedId, displayName, heldCount));
         }
@@ -1254,13 +1590,6 @@ internal sealed partial class ExecutionManager
         return rows.Count > MaxSeedSupplyRows ? rows.GetRange(0, MaxSeedSupplyRows) : rows;
     }
 
-    /// <summary>
-    /// Which shops stock which of the held seeds, with what the menu would charge, for the given day.
-    ///
-    /// One pass over `Data/Shops` through `ReadShopStock`, which is the reader the shop targets already use: a second
-    /// `ShopBuilder` call site could disagree with it about what a shop offers, and then a fact would name a shop the
-    /// purchase action would refuse.
-    /// </summary>
     private static IReadOnlyList<(string QualifiedItemId, string ShopId, int Price)> ScanSeedSupply(
         IReadOnlyList<string> seedIds)
     {
@@ -1346,10 +1675,6 @@ internal sealed partial class ExecutionManager
         }
         else
         {
-            // The SAME rule `shopTargets` gates its rows on, applied to the eligible set this row was handed: the
-            // engine's answer about whether the counter opens today (`OpensNow` over the entry that would run it), not a
-            // second reading of the conditions alone. A supply row that said "open now" for the counter the shop family
-            // just withheld is the two-spellings defect this fact exists to avoid.
             openNow = OpensNow(SelectCurrentShopOwner(eligibleOwners, ownerName));
             openNowReason = null;
         }
@@ -1373,13 +1698,6 @@ internal sealed partial class ExecutionManager
             address.Unknown);
     }
 
-    /// <summary>
-    /// How many of this seed the actor holds, summed from the PUBLISHED stack rows for the slots that hold it.
-    ///
-    /// Null - never 0 - when those rows were not published, or do not cover every holding slot. A zero derived from an
-    /// absence would answer "you have none" about a pack nobody read, which is the defect class this field must not
-    /// join: the same shape as a null key and a default that reads as truth.
-    /// </summary>
     private static int? HeldSeedCount(
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts,
         string qualifiedItemId,
@@ -1400,13 +1718,6 @@ internal sealed partial class ExecutionManager
         return covered == slots.Count ? total : null;
     }
 
-    /// <summary>
-    /// The `Data/Shops` row's own declared price for this item, or null when no entry names it literally.
-    ///
-    /// Only a literal id can be matched: vanilla writes many entries as item QUERIES (`ALL_ITEMS`, the seasonal forms),
-    /// and the id a query resolves to is not the row's <c>ItemId</c>. Null is that fact - "this row states no price for
-    /// this item" - and it is never the charged price written a second time.
-    /// </summary>
     private static int? DeclaredSeedPrice(ShopData shopData, string qualifiedItemId)
     {
         string unqualified = qualifiedItemId.StartsWith("(O)", StringComparison.Ordinal)
@@ -1440,27 +1751,10 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            // A lookup that threw is the same answer this field needs: no location could be read for this id. The
-            // supply row names that rather than failing the whole snapshot.
             return null;
         }
     }
 
-    /// <summary>
-    /// The shop's address, of which EXACTLY ONE member is always set.
-    ///
-    /// <list type="number">
-    /// <item><c>Destination</c> - this shop's counter is in the location the actor is standing in, because
-    /// <paramref name="shopTargetsHere"/> (the list <c>DiscoverShopTargets</c> produced for THIS snapshot) holds a row
-    /// for it. The destination carries that row's own <c>TargetId</c>, location and owner tile, so it and the
-    /// <c>shopTargets</c> row `shop_purchase` resolves are the same fact. No id is minted here.</item>
-    /// <item><c>Location</c> - the shop exists on a map but its counter is not in this one, so only the room can be
-    /// named. This is the farm-at-06:00 case that started it: "SeedShop" is the answer to "where do I head", and it
-    /// is deliberately not a destination, so it cannot read as a waypoint already within reach.</item>
-    /// <item><c>Unknown</c> - neither could be read, and the reason is named (<c>shop_location_unreadable</c>) so an
-    /// absent address is a stated fact instead of an empty field beside a real price.</item>
-    /// </list>
-    /// </summary>
     private static (BridgeSeedSupplyDestination? Destination, string? Location, string? Unknown) ResolveShopAddress(
         string shopId,
         string ownerName,
@@ -1475,8 +1769,6 @@ internal sealed partial class ExecutionManager
             {
                 if (!string.Equals(candidate.ShopId, shopId, StringComparison.Ordinal))
                     continue;
-                // The row publishes ONE owner entry and its hours, so the counter that owner stands at is the address
-                // that entry describes. A tile-opened stall has no owner name to match and keeps the first row.
                 if (string.Equals(candidate.OwnerName, ownerName, StringComparison.Ordinal))
                 {
                     counter = candidate;
@@ -1504,10 +1796,6 @@ internal sealed partial class ExecutionManager
             : (null, null, "shop_location_unreadable");
     }
 
-    /// <summary>
-    /// The shop's own name as the game localizes it, or empty when the id names no map at all (a stall, the casino, a
-    /// festival shop). Empty is that fact; the caller still has `shopId`.
-    /// </summary>
     private static string ShopDisplayName(string shopId)
     {
         GameLocation? location = ShopOwningLocation(shopId);

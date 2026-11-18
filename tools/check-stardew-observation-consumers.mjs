@@ -17,8 +17,10 @@
  *   - `host/src/game-lookup.ts` - the `stardew_look_up` subjects. Each subject's answer is computed from specific
  *     snapshot families; the derivation reads the `case "<subject>": return <fn>` table for the subject vocabulary and
  *     the `snapshot.<family>` reads inside each subject's own function body for the families it can answer.
- *   - the same tool's generic family door, declared by the source itself (`lookUp` keyed on `SNAPSHOT_KEYS`), which
- *     answers any family the snapshot publishes by name.
+ *   - `<world-state>` - the per-turn paragraph, composed by `host/src/fact-brief.ts` from the formatters and the row
+ *     table in `host/src/game-world-vocabulary.ts`. `perTurnFamilies` (in `tools/check-snapshot-field-rendering.mjs`,
+ *     the gate that owns the renderer declaration) derives the names it carries: every key of a row table a renderer
+ *     ITERATES, plus every member the renderers read. The fact arrives with every turn, so nothing has to be asked.
  * A third channel is derived from the Mod's own affordance construction sites, because `stardew_read_scene` answers a
  * location's affordances with the identifier the action demands (`host/src/affordance-action-agreement.test.ts` is the
  * gate that proves the identifier is offered); a scene kind whose `actionHint` names a registered action is a channel
@@ -28,8 +30,9 @@
  * says where to copy a value from: both describe a dependency on `observe` rather than a way to ask.
  *
  * CLASSIFICATION per pair, and only one of them reds:
- *   `queryable`   a `stardew_look_up` subject reads the family, or the generic family door answers it by name - the
- *                 model can ask a bounded question for free;
+ *   `queryable`   a `stardew_look_up` subject reads the family - the model can ask a bounded question for free;
+ *   `world_state` `<world-state>` prints it - the fact arrives with every turn, so nothing has to be asked. This is a
+ *                 legitimate answer, not a gap: `shop_purchase -> shopTargets` is answered by the `商店` row.
  *   `scene`       the Mod publishes an affordance for this action, or the action requires an `ObservationBinding`;
  *   `no_channel`  none of the above. The model cannot ask, so the family's values are only visible in a full observe.
  *                 This is the finding, and it reds unless the baseline below declares it.
@@ -45,9 +48,17 @@
  * checked in BOTH directions - an entry whose pair now has a channel is `stale_baseline_entry` and must be deleted, and
  * an entry naming a pair the surface no longer declares is `baseline_entry_unknown_pair` - so the list can only shrink.
  *
- * ZERO POPULATION IS BLOCKED, never green: a surface with no target-bearing action, a lookup source with no subject, or
- * a subject advertised by `LOOKUP_SUBJECTS` with no case in the switch, all print
+ * ZERO POPULATION IS BLOCKED, never green: a surface with no target-bearing action, a lookup source with no subject, a
+ * per-turn text that names nothing, or a subject advertised by `LOOKUP_SUBJECTS` with no case in the switch, all print
  * `observation_consumers_blocked: <reason>` and exit 1. A check that agrees with itself proves nothing.
+ *
+ * WHAT CHANGED IN THIS GATE'S CLAIM (2026-11-13). The second channel used to be the `[State HUD: …]` block, read out of
+ * `host/src/snapshot-hud.ts` line by line. `213cde50` retired that block on purpose - its 22 facts were split by
+ * audience and `<world-state>` is what a per-turn fact reaches her through now - so this gate read a deleted file and
+ * every run printed `observation_consumers_blocked: missing_input:host/src/snapshot-hud.ts`. The QUESTION did not
+ * change ("does this family reach the model without a full observe?"); the SOURCE did, and it is now the same
+ * declaration the field-rendering gate owns instead of a path hand-picked here. `hud_line` became `world_state`
+ * because a classification named after a module that no longer exists is the defect it was meant to report.
  *
  *   node tools/check-stardew-observation-consumers.mjs            # the verdict; exit 1 on an undeclared no_channel
  *   node tools/check-stardew-observation-consumers.mjs --list     # every pair and its classification
@@ -55,9 +66,19 @@
  * red-proof: inject  add a target-bearing action to a synthetic surface whose family no channel reads, and the gate
  *   fails naming that pair; `tools/check-stardew-observation-consumers.test.mjs` plants exactly that.
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-observation-consumers",
+  domain: "stardew",
+  tier: "l1",
+  kind: "contract",
+};
+
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { perTurnFamilies } from "./check-snapshot-field-rendering.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -186,7 +207,7 @@ export function targetBearingPairs(surface) {
 }
 
 /** One classification per pair, from the derived channels. Order of precedence is the order of the channels' cost. */
-export function classifyPairs({ pairs, lookup, scene, snapshotKeys = [] }) {
+export function classifyPairs({ pairs, lookup, perTurn, scene, snapshotKeys = [] }) {
   const subjectByFamily = new Map();
   for (const [subject, families] of lookup.channels)
     for (const family of families) if (!subjectByFamily.has(family)) subjectByFamily.set(family, subject);
@@ -194,6 +215,8 @@ export function classifyPairs({ pairs, lookup, scene, snapshotKeys = [] }) {
   return pairs.map((pair) => {
     const subject = subjectByFamily.get(pair.family);
     if (subject !== undefined) return { ...pair, classification: "queryable", channel: `look_up:${subject}` };
+    if (perTurn.families.has(pair.family))
+      return { ...pair, classification: "world_state", channel: `world_state:${pair.family}` };
     if (scene.has(pair.actionId)) return { ...pair, classification: "scene", channel: "read_scene:affordance" };
     if (pair.requiresSceneBinding) return { ...pair, classification: "scene", channel: "read_scene:binding" };
     // The generic family door: the tool answers any family the snapshot declares, so a declared family is askable
@@ -221,9 +244,11 @@ function opaqueOf(pairs) {
 /**
  * The verdict, from sources rather than from files, so the tests can drive it without the tree.
  *
- * `files` carries the texts: `{ surface, lookup, modEntry, baseline, protocol }`. A missing file is a blocked measurement.
+ * `perTurn` is the derived set from `perTurnFamilies`, not a source text: the derivation lives with the renderer
+ * declaration it reads, and a copy here is how the two came to disagree about a deleted HUD. A source this gate could
+ * not read is a blocked measurement.
  */
-export function auditConsumers({ surface, lookupSource, modEntrySource, baseline, protocolSource }) {
+export function auditConsumers({ surface, lookupSource, perTurn, modEntrySource, baseline, protocolSource }) {
   const blocked = [];
   const pairs = targetBearingPairs(surface);
   if (pairs.length === 0) blocked.push("surface_declares_no_target_family");
@@ -231,6 +256,10 @@ export function auditConsumers({ surface, lookupSource, modEntrySource, baseline
   const lookup = lookupChannels(lookupSource ?? "");
   if (lookup.vocabulary.length === 0) blocked.push("lookup_subjects_unread");
   blocked.push(...lookup.problems);
+
+  const worldState = perTurn ?? { rows: new Set(), mentioned: new Set(), families: new Set(), problems: [] };
+  if (worldState.families.size === 0) blocked.push("world_state_families_unread");
+  blocked.push(...worldState.problems);
 
   const knownActionIds = (Array.isArray(surface?.actions) ? surface.actions : [])
     .map((action) => action?.actionId)
@@ -241,6 +270,7 @@ export function auditConsumers({ surface, lookupSource, modEntrySource, baseline
   const classified = classifyPairs({
     pairs,
     lookup,
+    perTurn: worldState,
     scene,
     snapshotKeys: readStringArray(protocolSource ?? "", /export const SNAPSHOT_KEYS = \[([\s\S]*?)\n\]/u),
   });
@@ -289,7 +319,7 @@ export function auditConsumers({ surface, lookupSource, modEntrySource, baseline
     findings.push({ code: "no_channel_undeclared", pair: pairId(pair), detail: pair });
   }
 
-  const counts = { queryable: 0, scene: 0, no_channel: 0, family_not_in_snapshot: 0 };
+  const counts = { queryable: 0, world_state: 0, scene: 0, no_channel: 0, family_not_in_snapshot: 0 };
   for (const pair of classified) counts[pair.classification] += 1;
   const reds = classified.filter((pair) => pair.classification === "no_channel");
   return {
@@ -306,6 +336,8 @@ export function auditConsumers({ surface, lookupSource, modEntrySource, baseline
     opaque: opaqueOf(reds),
     lookupVocabulary: lookup.vocabulary,
     lookupNonSnapshot: [...lookup.nonSnapshot.keys()],
+    hudLines: worldState.rows.size,
+    worldStateNames: worldState.families.size,
     sceneActions: scene.size,
   };
 }
@@ -339,6 +371,9 @@ export function auditTree({ read = (file) => readFileSync(resolve(ROOT, file), "
   return auditConsumers({
     surface: JSON.parse(surfaceText),
     lookupSource,
+    // Not a file this gate names: the per-turn text is derived where its renderer declaration lives, so a renderer that
+    // moves is one edit in one declaration instead of a path here going stale in silence.
+    perTurn: perTurnFamilies({ root: ROOT }),
     modEntrySource,
     baseline: JSON.parse(baselineText),
     protocolSource,
@@ -384,13 +419,14 @@ export function report(result, { list = false, write = (text) => process.stdout.
       `(${result.families} families)`,
   );
   out(
-    `observation_consumers: queryable=${result.counts.queryable} ` +
+    `observation_consumers: queryable=${result.counts.queryable} world_state=${result.counts.world_state} ` +
       `scene=${result.counts.scene} no_channel=${result.counts.no_channel} ` +
       `(declared ${result.declared}, undeclared ${result.undeclared}; ${result.opaque} demand an opaque id)`,
   );
   out(
     `observation_consumers: channels derived from ${result.lookupVocabulary.length} look_up subjects ` +
-      `[${result.lookupVocabulary.join(",")}], ${result.sceneActions} scene affordance(s)` +
+      `[${result.lookupVocabulary.join(",")}], ${result.worldStateNames} names in the per-turn text ` +
+      `(${result.hudLines} printed as rows), ${result.sceneActions} scene affordance(s)` +
       (result.lookupNonSnapshot.length === 0
         ? ""
         : `; read from a source other than the snapshot [${result.lookupNonSnapshot.join(",")}]`),
@@ -402,8 +438,8 @@ export function report(result, { list = false, write = (text) => process.stdout.
     switch (finding.code) {
       case "no_channel_undeclared":
         out(
-          `observation_consumers_no_channel: ${finding.pair} - no look_up subject reads it, the generic family door ` +
-            `does not answer it, and no read_scene affordance names the action; the only channel is a full stardew_observe`,
+          `observation_consumers_no_channel: ${finding.pair} - no look_up subject reads it, <world-state> does not ` +
+            `name it, and no read_scene affordance names the action; the only channel is a full stardew_observe`,
         );
         break;
       case "family_not_in_snapshot":

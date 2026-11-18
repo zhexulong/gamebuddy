@@ -85,6 +85,14 @@
  *   rule, and the rule that passed still enumerates", "a debt entry that expired is the one rule that goes red for it",
  *   and the blocked case's `not_measured` census in "an empty population blocks instead of passing"
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-invented-gates",
+  domain: "stardew",
+  tier: "l0",
+  kind: "contract",
+};
+
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

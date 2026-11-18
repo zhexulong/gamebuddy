@@ -24,6 +24,14 @@
  *                    `hud_chain_is_routed: 92 native call sites in 29 files, readers: none`, exit 1; the same tree
  *                    reports `status="passed" examined=106`, exit 0 (tools/check-stardew-native-notice-coverage.mjs)
  */
+
+export const gateDeclaration = {
+  id: "check-stardew-native-notice-coverage",
+  domain: "stardew",
+  tier: "l0",
+  kind: "totality",
+};
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

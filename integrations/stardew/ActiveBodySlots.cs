@@ -148,7 +148,7 @@ internal sealed class ActiveBodySlots : IActiveBodyOwnership
                 executionId => this.DayAdvance.Peek() is { } night && string.Equals(night.ExecutionId, executionId, StringComparison.Ordinal),
                 Settled: true,
                 HoldsIdle: false,
-                Code: ExecutionManager.BodyOwnedByDayAdvance,
+                Code: ExecutionManager.BodyOwnedByNight,
                 Owner: this.PeekDayAdvanceOwner),
             new SlotRow(
                 nameof(this.Pet),
@@ -273,9 +273,19 @@ internal sealed class ActiveBodySlots : IActiveBodyOwnership
     /// True between a native warp's postcondition pass and the next tick where the player is actionable again. The tick
     /// is recorded with the flag because the deferred replan is bounded by <c>NavigationWarpReplanGraceTicks</c>: a flag
     /// that outlived its window would be an unbounded retry.
+    ///
+    /// <para>
+    /// AN OPEN WINDOW DOES NOT MOVE. Measured 2026-11-18 (`round67`): every retry inside the window re-read the same
+    /// locked destination and called this again, so the window restarted on each attempt and the bound it exists to
+    /// enforce could never expire - the navigation held the body with no terminal, published nothing, and the caller's
+    /// ten-minute deadline was the only thing left that could end it. The window belongs to the WARP, so the first arm
+    /// after a warp is the one that counts; only <see cref="ClearWarpReplan"/> ends it.
+    /// </para>
     /// </summary>
     internal void DeferWarpReplan(int tick)
     {
+        if (this.WarpReplanDeferred)
+            return;
         this.WarpReplanDeferred = true;
         this.WarpReplanDeferredAtTick = tick;
     }
@@ -327,10 +337,10 @@ internal sealed class ActiveBodySlots : IActiveBodyOwnership
     /// Whether an execution still holds the body, asked of the slots the idle drain has always asked.
     ///
     /// <para>
-    /// This is deliberately NARROWER than <see cref="IsSettled"/>: the drain publishes an execution's <c>body_idle</c>
+    /// This is deliberately NARROWER than <see cref="IsSettled"/>: the idle drain retires an execution's transition
     /// once that execution no longer owns the actor, and the mount, bus-ride, day-advance and tool-approach slots have
     /// never been part of that question (HoldsIdle is true for nine of the thirteen settled slots). Widening it in a
-    /// refactor would change when an execution announces that the actor came back.
+    /// refactor would change when an execution is treated as having come back.
     /// </para>
     /// </summary>
     internal bool OwnsAny(string executionId)
