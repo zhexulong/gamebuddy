@@ -1,6 +1,10 @@
-// red-proof: inject  declaring `string RedProofProbe = null!` on BridgeReceipt (a wire field no layer names)
-//   -> verdict `blocked`, exit 1, violations naming every layer, e.g. `{"layer":
-//   "BridgeProtocolModels.cs/LocalExecutionReceipt", "field": "redProofProbe", "issue": "missing"}`
+// red-proof: inject a `LocalExecutionReceipt` member without declaring it (`string RedProofProbe = null!`)
+//   -> verdict `blocked`, exit 1, one violation on the ledger layer with
+//   `"issue": "produced_and_never_read"`, the report's `fields` reading
+//   `{written: 12, exported: 10, declaredIgnored: 1}` and the field named in both the violation and those counts.
+// red-proof: delete the `hint` entry from `DOCUMENTED_EXTRAS` -> the same violation names `hint`.
+// red-proof: rename the `hint` record member while the declaration keeps the old spelling ->
+//   `"issue": "stale_exemption"` names `hint`, because an exemption that exempts nothing must expire.
 // Gate: stardew_execution_receipt_field_parity/v1
 //
 // Single-authority mechanical check for the execution receipt field contract.
@@ -25,7 +29,12 @@
 //                 projection subset and every read must name an authority field.
 //
 // Host-side intentional extras are legal only when explicitly listed in
-// DOCUMENTED_EXTRAS (currently empty) together with a reason.
+// DOCUMENTED_EXTRAS together with a reason, and the ledger layer is held to one
+// more property: a field the Mod WRITES into a receipt must reach the exported
+// receipt or be declared ignored BY NAME with a stated reason. The report prints
+// `fields written W · exported E · declared-ignored I`; an undeclared writer field
+// is `produced_and_never_read`, reported with those counts so the reader can see
+// the gap rather than just the name.
 
 export const gateDeclaration = {
   id: "check-stardew-execution-receipt-field-parity",
@@ -61,14 +70,7 @@ const PROJECTION_DROP_REASON =
 export const DOCUMENTED_EXTRAS = Object.freeze({
   "BridgeProtocolModels.cs/LocalExecutionReceipt": Object.freeze([
     //
-    // `Hint` is carried beside `ReasonCode` rather than folded into `Evidence`, because the evidence
-    // string is a diagnostic the model cannot act on and this one is the direction it can. It is a
-    // documented extra rather than an authority field because the wire `BridgeReceipt` deliberately
-    // does not carry it: the hint belongs to the Body Program journal's node status, and the local
-    // receipt only needs it long enough for `RouteReenteringBodyProgramExecutor` to copy it into a
-    // `BodyProgramTerminalResult`. Written at `farmhandexecutioncontroller.cs:5145`, read at
-    // `RouteReenteringBodyProgramExecutor.cs:348`.
-    // `Hint` in the C# record; the extractor normalises every name to lowerCamelCase, so the
+    // `hint` in the C# record; the extractor normalises every name to lowerCamelCase, so the
     // allowlist entry carries the normalised spelling.
     "hint",
   ]),
@@ -78,6 +80,50 @@ export const DOCUMENTED_EXTRAS = Object.freeze({
   "game-integration-adapter.ts/IntegrationExecutionReceipt": Object.freeze([]),
   "stardew-game-integration-adapter.ts/toIntegrationReceipt": Object.freeze([]),
   "stardew-game-integration-adapter.ts/parseStardewReceipt": Object.freeze([]),
+});
+
+/**
+ * Wire fields the Mod's ledger record does NOT write, because another layer owns them.
+ *
+ * The ledger (`LocalExecutionReceipt`) is what an execution writes down; `origin` is what the JOURNAL says about the
+ * programme that execution belongs to, and one lookup answers for a receipt and its body trace alike
+ * (`BridgeSession.OriginOf`). Two copies would be two answers to one question.
+ */
+export const DOCUMENTED_LEDGER_OMISSIONS = Object.freeze({
+  origin:
+    "the ledger receipt carries no programme attribution: `BridgeSession.OriginOf` reads it from the body-program " +
+    "journal for the receipt and its body trace at once, so a copy stored here could disagree with the journal it names",
+});
+
+/**
+ * `layer/field` optional markers that deliberately differ from the wire authority, with a reason.
+ */
+export const DOCUMENTED_OPTIONAL_MISCLASSIFICATIONS = Object.freeze({
+  "protocol.ts/ExecutionReceipt/origin":
+    "required on the wire and optional in this Host type, on purpose: `validateReceipt` refuses a frame without it, while " +
+    "a test or a tool that reads a receipt for another purpose (a cancel sender in `execution-correlation-ledger.test.ts`) " +
+    "must not have to invent a statement it is not making. The pump treats an absent one as no statement.",
+});
+
+/**
+ * Why a declared extra is not on the wire, keyed `<layer>/<field>`.
+ *
+ * A REASON, NOT A COMMENT BESIDE ONE. The exemption above used to justify itself in a comment that cited
+ * `farmhandexecutioncontroller.cs:5145` and `RouteReenteringBodyProgramExecutor.cs:348`; the first line does not exist in
+ * a 4019-line file and the second lands inside an argument list, so the one sentence a reader could check was wrong in
+ * both halves and nothing noticed. A reason held here is data: it cannot be emptied, it cannot outlive the field it
+ * describes, and it may not cite a reader by line number - a symbol survives a refactor and a line number does not.
+ */
+export const DOCUMENTED_EXTRA_REASONS = Object.freeze({
+  "BridgeProtocolModels.cs/LocalExecutionReceipt/hint":
+    "`Hint` is the ONE part of a settled refusal a caller can act on - `closest=49,14;clears_with=cut_weeds;stand_at=41,8` - " +
+    "bounded by `BodyProgramValidation.MaximumNodeHintLength` (256) on the journal, the read-back and the wire alike. The " +
+    "wire `BridgeReceipt` deliberately does not carry it: a receipt already publishes its whole `evidence.detail`, the " +
+    "hint is a bounded projection OF that string, and sending both would put one fact on the frame twice. It is read where " +
+    "a channel has NO evidence to carry the tokens: `RouteReenteringBodyProgramExecutor.SettleWithoutProof` copies it into " +
+    "`BodyProgramTerminalResult.Hint` on every terminal that settles with a reason, " +
+    "`OpenBodyProgramJournalAuthority.TryComplete` stores it on that node, and `BridgeSession.NodeStatus` exports it as " +
+    "`BridgeBodyProgramNodeStatus.Hint` - the one hint channel whose sibling evidence ADR-006 withholds.",
 });
 
 // ---------------------------------------------------------------------------
@@ -244,20 +290,25 @@ export function extractCSharpRecordFields(source, recordName) {
 /** Count the positional args of the `new BridgeReceipt(...)` call inside TryProjectReceipt. */
 export function extractProjectionArgCount(source) {
   const tokens = tokenize(source);
-  const fnIndex = tokens.findIndex(
-    (token, index) => token.type === "word" && token.value === "TryProjectReceipt" && tokens[index + 1]?.value === "(",
-  );
-  if (fnIndex < 0) throw new Error("TryProjectReceipt declaration not found");
-  const signatureClose = balanced(tokens, fnIndex + 1);
-  if (signatureClose < 0) throw new Error("TryProjectReceipt signature has unbalanced parentheses");
-  let bodyOpen = -1;
-  for (let index = signatureClose + 1; index < tokens.length; index += 1) {
-    if (tokens[index].value === "{") {
-      bodyOpen = index;
+  // THE DECLARATION, NOT THE FIRST SENDER. `TryProjectReceipt` is also CALLED (from `TryToBridgeReceipt`), and matching
+  // the first name-plus-paren found the call site: its "signature" ended at the call's `)`, the body-open search then
+  // walked into the next method, and the whole check threw `new BridgeReceipt(...) call not found` on every run since
+  // that sender landed. A gate that throws is a gate nobody can read, so this identifies a declaration by the one thing
+  // a declaration has and a call does not: a `{` immediately after the balanced parameter list.
+  let fnIndex = -1;
+  let signatureClose = -1;
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].type !== "word" || tokens[index].value !== "TryProjectReceipt" || tokens[index + 1]?.value !== "(")
+      continue;
+    const close = balanced(tokens, index + 1);
+    if (close > 0 && tokens[close + 1]?.value === "{") {
+      fnIndex = index;
+      signatureClose = close;
       break;
     }
   }
-  if (bodyOpen < 0) throw new Error("TryProjectReceipt body not found");
+  if (fnIndex < 0) throw new Error("TryProjectReceipt declaration (a parameter list followed by a body) not found");
+  const bodyOpen = signatureClose + 1;
   const bodyClose = balanced(tokens, bodyOpen);
   if (bodyClose < 0) throw new Error("TryProjectReceipt body has unbalanced braces");
   const body = tokens.slice(bodyOpen + 1, bodyClose);
@@ -471,9 +522,20 @@ function defaultRead(root, relativePath) {
 }
 
 /**
- * @param {{ root?: string, overrides?: Record<string, string> }} options
+ * @param {{
+ *   root?: string,
+ *   overrides?: Record<string, string>,
+ *   extras?: Record<string, readonly string[]>,
+ *   extraReasons?: Record<string, string>,
+ * }} options The declaration is injectable so a test can show what the gate does when it is removed, emptied or
+ * left behind - a gate that can only be driven with today's declaration cannot prove it would catch tomorrow's field.
  */
-export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot, overrides = {} } = {}) {
+export function checkStardewExecutionReceiptFieldParity({
+  root = repositoryRoot,
+  overrides = {},
+  extras = DOCUMENTED_EXTRAS,
+  extraReasons = DOCUMENTED_EXTRA_REASONS,
+} = {}) {
   const read = (relativePath) => overrides[relativePath] ?? defaultRead(root, relativePath);
   const authority = extractCSharpRecordFields(read(BRIDGE_MODELS_PATH), "BridgeReceipt");
   const fullSet = new Set(authority.wire);
@@ -492,6 +554,7 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
     actualOptional = null,
     expectedOptional = null,
     extraAllowlist = [],
+    extraIssue = "extra",
   }) => {
     const actual = new Set(actualFields);
     for (const field of expectedSet) {
@@ -499,7 +562,7 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
         pushViolation(name, pathname, field, "missing", `authority field '${field}' is not named by this layer`);
     }
     for (const field of actual) {
-      if (!expectedSet.has(field) && !extraAllowlist.includes(field)) {
+      if (!expectedSet.has(field) && !extraAllowlist.includes(field) && extraIssue !== null) {
         pushViolation(
           name,
           pathname,
@@ -515,27 +578,91 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
           pushViolation(name, pathname, field, "not_optional", `field '${field}' must be marked optional here`);
       }
       for (const field of actualOptional) {
-        if (!expectedOptional.has(field))
+        if (!expectedOptional.has(field) && !(`${name}/${field}` in DOCUMENTED_OPTIONAL_MISCLASSIFICATIONS))
           pushViolation(
             name,
             pathname,
             field,
             "optional_misclassified",
-            `field '${field}' is marked optional here but must not be`,
+            `field '${field}' is marked optional here but must not be, and no declared difference says why`,
           );
       }
     }
   };
 
-  // 1. Mod ledger model (LocalExecutionReceipt) — exact full set.
+  // 1. Mod ledger model (LocalExecutionReceipt) — the fields the Mod WRITES into a receipt, each of which either
+  // reaches the exported receipt (the wire authority) or is declared ignored by name. `checkFieldSet` is not allowed to
+  // answer the extra direction here: a field the producer writes that nobody reads is a different defect from a consumer
+  // naming a field the authority does not have, and it is the one this repository keeps shipping, so it gets its own
+  // name and the counts that make the gap visible.
+  const ledgerLayer = "BridgeProtocolModels.cs/LocalExecutionReceipt";
   const ledger = extractCSharpRecordFields(read(BRIDGE_MODELS_PATH), "LocalExecutionReceipt");
+  const ledgerDeclared = new Set(extras[ledgerLayer] ?? []);
+  const ledgerOmits = new Set(Object.keys(DOCUMENTED_LEDGER_OMISSIONS));
   checkFieldSet({
-    name: "BridgeProtocolModels.cs/LocalExecutionReceipt",
+    name: ledgerLayer,
     pathname: BRIDGE_MODELS_PATH,
     actualFields: ledger.wire,
-    expectedSet: fullSet,
-    extraAllowlist: DOCUMENTED_EXTRAS["BridgeProtocolModels.cs/LocalExecutionReceipt"],
+    expectedSet: new Set([...fullSet].filter((field) => !ledgerOmits.has(field))),
+    extraIssue: null,
   });
+  for (const field of ledgerOmits) {
+    if (ledger.wire.includes(field))
+      pushViolation(
+        ledgerLayer,
+        BRIDGE_MODELS_PATH,
+        field,
+        "stale_omission",
+        `'${field}' is declared as a wire field this record does not write, and it now does: the declaration must go`,
+      );
+  }
+  const written = ledger.wire;
+  // Disjoint by construction, so `exported + declaredIgnored + unaccounted === written` and a non-empty `unaccounted`
+  // IS `written > exported + declaredIgnored` - the property, not a second sum that could disagree with it.
+  const exported = written.filter((field) => fullSet.has(field));
+  const ignored = written.filter((field) => !fullSet.has(field) && ledgerDeclared.has(field));
+  const unaccounted = written.filter((field) => !fullSet.has(field) && !ledgerDeclared.has(field));
+  for (const field of unaccounted) {
+    pushViolation(
+      ledgerLayer,
+      BRIDGE_MODELS_PATH,
+      field,
+      "produced_and_never_read",
+      `the Mod writes '${field}' into LocalExecutionReceipt and no layer exports it: fields written ${written.length} · ` +
+        `exported ${exported.length} · declared-ignored ${ignored.length}. Export it on BridgeReceipt (which pulls the ` +
+        `Host type, the validator, the schema and both adapters after it), or declare it in DOCUMENTED_EXTRAS with a ` +
+        `reason in DOCUMENTED_EXTRA_REASONS that names its reader.`,
+    );
+  }
+  // An exemption is data, so it is checkable in both directions: it must say why, and it must still exempt something.
+  for (const field of ledgerDeclared) {
+    if (!written.includes(field))
+      pushViolation(
+        ledgerLayer,
+        BRIDGE_MODELS_PATH,
+        field,
+        "stale_exemption",
+        `'${field}' is declared ignored but the Mod no longer writes it into a receipt: the declaration exempts nothing`,
+      );
+    if (fullSet.has(field))
+      pushViolation(
+        ledgerLayer,
+        BRIDGE_MODELS_PATH,
+        field,
+        "stale_exemption",
+        `'${field}' is declared not-exported and the wire authority now carries it: the declaration must be removed, or ` +
+          `the field has two spellings on one frame`,
+      );
+    const reason = extraReasons[`${ledgerLayer}/${field}`];
+    if (typeof reason !== "string" || reason.trim().length === 0)
+      pushViolation(
+        ledgerLayer,
+        BRIDGE_MODELS_PATH,
+        field,
+        "declared_without_a_reason",
+        `a declared-ignored field must say why it is not on the wire, in DOCUMENTED_EXTRA_REASONS['${ledgerLayer}/${field}']`,
+      );
+  }
 
   // 2. Mod projection (TryProjectReceipt) — must pass every authority field.
   const argCount = extractProjectionArgCount(read(BRIDGE_SESSION_PATH));
@@ -558,7 +685,7 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
     expectedSet: fullSet,
     actualOptional: executionType.optional,
     expectedOptional: authority.optional,
-    extraAllowlist: DOCUMENTED_EXTRAS["protocol.ts/ExecutionReceipt"],
+    extraAllowlist: extras["protocol.ts/ExecutionReceipt"],
   });
 
   // 4. Host allowlist validator (validateReceipt).
@@ -615,7 +742,7 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
     pathname: SCHEMA_PATH,
     actualFields: schema.properties ?? [],
     expectedSet: fullSet,
-    extraAllowlist: DOCUMENTED_EXTRAS["schema.json/$defs.receipt"],
+    extraAllowlist: extras["schema.json/$defs.receipt"],
   });
   if (schema.required !== null) {
     const schemaRequired = new Set(schema.required);
@@ -650,7 +777,7 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
     expectedSet: projectionSet,
     actualOptional: integrationType.optional,
     expectedOptional: new Set(["nativeNotices"]),
-    extraAllowlist: DOCUMENTED_EXTRAS["game-integration-adapter.ts/IntegrationExecutionReceipt"],
+    extraAllowlist: extras["game-integration-adapter.ts/IntegrationExecutionReceipt"],
   });
 
   // 7. stardew adapter toIntegrationReceipt — written keys equal projection subset, reads ⊆ authority.
@@ -691,6 +818,14 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
       drops: Object.freeze([...DOCUMENTED_PROJECTION_DROPS]),
       reason: PROJECTION_DROP_REASON,
     }),
+    // What the producer writes, what reaches the wire, and what is declared ignored. Printed by the CLI and asserted by
+    // the suite: a check whose population is empty, or whose accounting silently loses a field, agrees with itself.
+    fields: Object.freeze({
+      written: Object.freeze([...written]),
+      exported: Object.freeze([...exported]),
+      declaredIgnored: Object.freeze([...ignored]),
+      unaccounted: Object.freeze([...unaccounted]),
+    }),
     violations: Object.freeze(violations),
   });
 }
@@ -712,6 +847,11 @@ function checkMapping(name, pathname, mapping, projectionSet, fullSet, pushViola
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const report = checkStardewExecutionReceiptFieldParity();
+  const { written, exported, declaredIgnored, unaccounted } = report.fields;
+  process.stdout.write(
+    `fields written ${written.length} · exported ${exported.length} · ` +
+      `declared-ignored ${declaredIgnored.length}${unaccounted.length === 0 ? "" : ` · unaccounted ${unaccounted.join(",")}`}\n`,
+  );
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   process.exitCode = report.verdict === "passed" ? 0 : 1;
 }
