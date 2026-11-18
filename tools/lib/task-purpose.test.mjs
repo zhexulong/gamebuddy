@@ -24,7 +24,10 @@ import { judgeTaskPurpose, purposeReceipts, TASK_PURPOSE_CRITERIA } from "./task
  *
  * red-proof: inject  restoring `mine_delve` to "a rock or container was broken" (one action, no mine) turns two
  *            falsifiers red - `a rock broken with no mine entered is not a mine delved` (got `achieved`) and
- *            `a criterion of one step can be satisfied by a single action's success`
+ *            `a criterion of one step can be satisfied by a single action's success`;
+ *            re-ordering `clear_and_cultivate` (dropping `ordered: false`) turns its day-1 replay red, because
+ *            `round76`'s day 1 did the four kinds of work in an order that criterion forbade; and dropping a `because`
+ *            from an ordered row turns `a_criterion_requires_an_order_the_world_does_not` red, naming that row
  *            (tools/lib/task-purpose.test.mjs)
  */
 
@@ -144,8 +147,41 @@ const PLANTED = (x, y, location = "Farm") =>
     },
   });
 
+const WATERED = (x, y, location = "Farm") =>
+  receipt("water_crop", {
+    reasonCode: "crop_watered",
+    evidence: {
+      detail: contractEvidence("water_crop", {
+        location,
+        target: `crop_${String(x)}_${String(y)}`,
+        tile: `${String(x)},${String(y)}`,
+        tool_selected: "watering_can",
+        slot: "2",
+        tool_before: "watering_can",
+        slot_before: "2",
+        before_watered: "false",
+        after_watered: "true",
+        // The engine spends `power + 1` water per use, so an uncharged tap drops the can by exactly one.
+        water_before: "40",
+        water_after: "39",
+        water_consumed: "true",
+        water_expected_cost: "1",
+        charge_requested: "0",
+        charge_applied: "0",
+        window: `${String(x - 5)},${String(y - 5)}:${String(x + 5)},${String(y + 5)}`,
+        tiles_changed: "1",
+        changed: `${String(x)}:${String(y)}`,
+        stamina_before: "254",
+        stamina_after: "252",
+        stamina_delta: "-2",
+        expected_stamina_cost: "2",
+        tool_restored: "watering_can",
+      }),
+    },
+  });
+
 /** The fixtures above, by the action each one mints: the population the admission check below walks. */
-const TILE_FIXTURES = Object.freeze({ till_soil: TILLED, plant_seed: PLANTED });
+const TILE_FIXTURES = Object.freeze({ till_soil: TILLED, plant_seed: PLANTED, water_crop: WATERED });
 const CUT_WEEDS = receipt("cut_weeds", {
   reasonCode: "weeds_cut",
   evidence: {
@@ -275,6 +311,67 @@ test("a purpose is either a criterion of more than one fact, a declared shape, o
       );
     }
   }
+});
+
+/**
+ * THE ORDER GATE: `a_criterion_requires_an_order_the_world_does_not:<task>`.
+ *
+ * A criterion that reads its steps forward through the receipt log asserts that each earlier fact is a PRECONDITION of
+ * the next, and that is a claim about the WORLD: the farm has to be unable to offer the work in the other order. The
+ * gate cannot decide causality - a sentence is a sentence - so it decides the two things that ARE readable: an ordered
+ * row names both ends of the order it claims (its `because` mentions at least two of its own steps' actions, derived
+ * from the row), and a row that declares itself unordered does not also claim a cause. The rest is left to the reader
+ * the reason exists for.
+ *
+ * Measured 2026-11-18 (`round76`): `clear_and_cultivate` was ONE row, ordered by the default, and its order was a
+ * route rather than a cause - a day that cleared, sowed, watered and tilled answered `not_achieved`. This gate is what
+ * keeps the next such row from being a sequence nobody had to justify.
+ *
+ * red-proof: inject  `{ ordered: true }` (dropping the `because`) onto a row, or adding a `because` to
+ *                   `forage_and_trees` - both turn this test red, naming the row
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+test("a_criterion_requires_an_order_the_world_does_not", (t) => {
+  const table = Object.entries(TASK_PURPOSE_CRITERIA);
+  const violations = [];
+  let ordered = 0;
+  let reasoned = 0;
+  for (const [task, entry] of table) {
+    // A gap names a fact nothing publishes and a declared shape names a rectangle: neither states an order.
+    if (entry.steps === undefined) continue;
+    const code = `a_criterion_requires_an_order_the_world_does_not:${task}`;
+    if (entry.ordered === false) {
+      if (entry.because !== undefined)
+        violations.push(`${code} - the row is unordered and still carries a because, so it is neither`);
+      continue;
+    }
+    ordered += 1;
+    const actionIds = new Set(
+      entry.steps.flatMap((candidate) =>
+        candidate.actionId === undefined ? [...candidate.anyOf] : [candidate.actionId],
+      ),
+    );
+    // Tokens rather than substring matches: an id found inside a longer word is not a name for the fact.
+    const tokens = new Set((entry.because ?? "").split(/[^A-Za-z0-9_-]+/u));
+    const named = [...actionIds].filter((actionId) => tokens.has(actionId));
+    if (named.length < 2) {
+      violations.push(
+        `${code} - its because names ${named.length === 0 ? "none of its steps" : `only ${named.join(", ")}`} ` +
+          `(${[...actionIds].sort().join(", ")}). A causal link has two ends: name them in \`because\`, or declare the ` +
+          "row `ordered: false` - the farm may do the work in another order, and then the order is not the purpose",
+      );
+      continue;
+    }
+    reasoned += 1;
+  }
+  const reading = `criteria examined ${String(table.length)} · ordered ${String(ordered)} · ordered-with-a-reason ${String(reasoned)}`;
+  t.diagnostic(reading);
+  // Zero is not green: an order gate with no ordered row examined agrees with itself.
+  assert.ok(
+    table.length > 0 && ordered > 0,
+    `${reading} - this table holds no ordered criterion, so nothing here was examined and the gate cannot fail`,
+  );
+  assert.deepEqual(violations, [], `${reading}\n${violations.join("\n")}`);
 });
 
 test("every action a criterion reads is published by the Mod", async () => {
@@ -677,4 +774,104 @@ test("a refused receipt of an action that proves a TILE still leaves the patch u
   const judged = judgeTaskPurpose("clear_and_plant_long_patch", receipts);
   assert.equal(judged.state, "unproven");
   assert.equal(judged.reasonCode, "task_purpose_evidence_without_postcondition");
+});
+
+/**
+ * ROUND76'S DAY 1, RE-JUDGED: the criterion demanded an order the world did not impose.
+ *
+ * Measured 2026-11-18 on `tools/_multiday_routine-round76.result.json` day 1 (task `clear_and_cultivate`), and re-read
+ * here from the same run's own `timeline.jsonl`. The day did all four kinds of work, in the order the farm allowed (the
+ * numbers are the day's own receipt indices, and the day is every receipt up to and including its one `day_advanced`):
+ *
+ *   #52/#53  `plant_seed`  on (69,20) and (69,19)          - into ground that was ALREADY tilled
+ *   #54/#55  `water_crop`  on those same two tiles
+ *   #70-#73  `till_soil`   on four OTHER tiles, (70,19) (68,20) (69,22) (71,21)
+ *   #76      `chop_tree`   a tree felled AFTER all four tills, with only four weeds cut after it
+ *
+ * Before #52 the day had already cut 19 weeds and 19 grasses, broken 8 rocks and harvested three crops - the clearing
+ * the ordered row wanted FIRST - and it went on to cut 11 more weeds and one more grass and break 5 more rocks after
+ * the sowing, so the two ends of the chain were interleaved rather than sequenced.
+ *
+ * The ordered row wanted a `till_soil` AFTER the clearing and a `plant_seed` after that, so it answered `not_achieved`
+ * for a day in which a farmhand would say the work was done - and she was right: she sowed into prepared ground and
+ * then prepared more. The receipt order is the run's, verbatim.
+ */
+const ROUND76_CHOPPED_TREE = receipt("chop_tree", {
+  reasonCode: "tree_source_chopped",
+  // The run's own `tree_source_chopped` detail (#76), with the fold suffix (`chore`/`steps`/`folded`) left off: it is
+  // the router's account of how the action was reached, not part of the postcondition.
+  evidence: {
+    detail:
+      "target=tree_chop_source_953f451bed556643;tool=axe;tree=2;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=232;stamina_after=212;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe",
+  },
+});
+const ROUND76_DAY_ONE = Object.freeze([
+  PLANTED(69, 20),
+  PLANTED(69, 19),
+  WATERED(69, 20),
+  WATERED(69, 19),
+  TILLED(70, 19),
+  TILLED(68, 20),
+  TILLED(69, 22),
+  TILLED(71, 21),
+  ROUND76_CHOPPED_TREE,
+]);
+
+test("clear_and_cultivate: round76's day 1 is the purpose, in the order the farm allowed", () => {
+  // The fixture is only that day if every receipt is admitted: a receipt this file's own contract reading refuses would
+  // make the verdict below a statement about the fixture rather than about the run.
+  const { refused } = purposeReceipts(ROUND76_DAY_ONE);
+  assert.deepEqual(
+    refused,
+    [],
+    "a receipt of round76's day 1 is refused here, so this fixture is not the run and the verdict below measures nothing",
+  );
+  const judged = judgeTaskPurpose("clear_and_cultivate", ROUND76_DAY_ONE);
+  assert.equal(
+    judged.state,
+    "achieved",
+    "a day that cleared, tilled, sowed and watered did all four kinds of work; the route it took is not the purpose",
+  );
+  assert.deepEqual(
+    judged.admittedActionIds,
+    ["chop_tree", "plant_seed", "till_soil", "water_crop"],
+    "the day's admitted actions are these four kinds and nothing else, which is also the whole of the criterion",
+  );
+});
+
+test("clear_and_cultivate: clearing alone, and the day minus any one kind, is not the day", () => {
+  // THE OPPOSITE FALSIFIER. Without it, `ordered: false` could be satisfied by "any one of the four" and every one of
+  // the assertions above would still pass. The steps are read from the row itself, so a criterion that grows a fifth
+  // kind is covered without editing this test.
+  const steps = TASK_PURPOSE_CRITERIA.clear_and_cultivate.steps;
+  const actionIdsOf = (candidate) =>
+    new Set(candidate.actionId === undefined ? [...candidate.anyOf] : [candidate.actionId]);
+  const drifting = [];
+  for (const [index, candidate] of steps.entries()) {
+    const actionIds = actionIdsOf(candidate);
+    const alone = judgeTaskPurpose(
+      "clear_and_cultivate",
+      ROUND76_DAY_ONE.filter((entry) => actionIds.has(entry.actionId)),
+    );
+    if (alone.state !== "not_achieved")
+      drifting.push(`step ${String(index)} (${[...actionIds].join("/")}) alone answered ${alone.state}`);
+    const without = judgeTaskPurpose(
+      "clear_and_cultivate",
+      ROUND76_DAY_ONE.filter((entry) => !actionIds.has(entry.actionId)),
+    );
+    if (without.state !== "not_achieved")
+      drifting.push(`the day without step ${String(index)} (${[...actionIds].join("/")}) answered ${without.state}`);
+  }
+  assert.deepEqual(
+    drifting,
+    [],
+    `unordered is not "any of them": ${drifting.join("; ")} - the purpose is all four kinds of work and no three of them`,
+  );
+  // A day of clearing with nothing sown, which is the shape a criterion that lost its sowing half would pass.
+  const clearedOnly = judgeTaskPurpose(
+    "clear_and_cultivate",
+    ROUND76_DAY_ONE.filter((entry) => entry.actionId === "chop_tree"),
+  );
+  assert.equal(clearedOnly.state, "not_achieved");
+  assert.deepEqual(clearedOnly.admittedActionIds, ["chop_tree"], "the clearing is proved and is not the purpose");
 });

@@ -19,8 +19,14 @@
  * Measured: a `go_mining`-shaped day declared `[travel, enter_mine, break_rock]`, broke rocks on the surface, and
  * was counted as having accomplished the task because `break_rock` came back `succeeded`. The postcondition was
  * real; the purpose was never touched. So a criterion is composed from postconditions that TOGETHER state the
- * purpose - the order the world saw them in is part of the statement - and "some declared action succeeded"
- * satisfies none of them.
+ * purpose, and "some declared action succeeded" satisfies none of them.
+ *
+ * ORDER IS PART OF A CRITERION ONLY WHERE THE PURPOSE IS A CAUSE. An ordered criterion (`ordered`, the default) matches
+ * its steps forward through the receipt log, so it asserts that each earlier fact is a PRECONDITION of the next - and
+ * the row must name that link in `because`. A row that cannot name it is unordered. Measured 2026-11-18 (`round76`): a
+ * day that cleared, sowed, watered and tilled was reported `not_achieved`, because `clear_and_cultivate` demanded the
+ * chain clearing-then-tilling-then-sowing. The chain is ONE way to prepare ground; she had sown into ground that was
+ * already tilled, which is what a farmhand does, so the criterion graded the drawing instead of the day.
  *
  * WHAT A CRITERION MAY NOT DO. It may not read a fact the receipts do not publish, and it may not substitute a
  * readable neighbour for the purpose (clearing "one patch somewhere" is not clearing the east patch). Where the
@@ -39,8 +45,18 @@ const step = (actionId) => Object.freeze({ actionId });
 /** A step satisfied by any one of several actions - the same purpose reached by different native seams. */
 const anyOf = (...actionIds) => Object.freeze({ anyOf: Object.freeze(actionIds) });
 
-const criterion = (purpose, steps, { ordered = true } = {}) =>
-  Object.freeze({ purpose, steps: Object.freeze(steps), ordered });
+/**
+ * A criterion, and the causal link that makes its order unavoidable.
+ *
+ * `ordered` says the steps are read forward through the receipt log, so the earlier fact has to be a precondition of the
+ * later one; `because` is where the row names that link. An ORDERED row without a link is an order the table invented,
+ * and one the day cannot fail to violate when the farm offers the same work in another sequence - which is why the gate
+ * over this table (`a_criterion_requires_an_order_the_world_does_not` in `task-purpose.test.mjs`) refuses it. An
+ * unordered criterion takes its steps in whatever order the farm allowed, still from distinct receipts, and carries no
+ * `because`: a row that declares both has not decided which it is.
+ */
+const criterion = (purpose, steps, { ordered = true, because } = {}) =>
+  Object.freeze({ purpose, steps: Object.freeze(steps), ordered, because });
 
 /**
  * What a task's reason rests on, one fact at a time.
@@ -124,20 +140,28 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       ],
     },
   ),
-  water_and_harvest: criterion("a crop was brought in and the ground it left was then planted", [
-    step("harvest_crop"),
-    step("plant_seed"),
-  ]),
+  // Ordered, because the two facts are one piece of ground: the seed goes into the soil the harvest emptied.
+  water_and_harvest: criterion(
+    "a crop was brought in and the ground it left was then planted",
+    [step("harvest_crop"), step("plant_seed")],
+    {
+      because:
+        "`plant_seed` fills the soil `harvest_crop` emptied, so a sowing before the harvest is a different piece of ground",
+    },
+  ),
   forage_and_trees: criterion(
     "something was picked up and a tree was shaken",
     [step("pickup_forage"), step("shake_tree")],
     { ordered: false },
   ),
-  craft_and_place_machine: criterion("a machine was crafted, then put down, then put to work", [
-    step("craft_item"),
-    step("place_owned_object"),
-    step("machine_load"),
-  ]),
+  craft_and_place_machine: criterion(
+    "a machine was crafted, then put down, then put to work",
+    [step("craft_item"), step("place_owned_object"), step("machine_load")],
+    {
+      because:
+        "`place_owned_object` sets down the object `craft_item` produced, and `machine_load` fills that very machine - each later fact names an object the earlier one made",
+    },
+  ),
   town_market: gap(
     "something was bought in town and the post was brought in",
     "the RECEIPT carries no location on the buying half: `shop_purchase`'s `item_purchased` evidence is exactly shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops (`host/src/stardew-completion-contracts.ts`), which names the shop and the counter tile and never the map the actor stood on - while the mail half's `claim_mail_attachment` does carry `location` in its `mail_claimed` evidence. The observation publishes the map she is standing on, so the purchase is the half with no map of its own, and a criterion decides a task from admitted receipts rather than from an observation.",
@@ -165,19 +189,30 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       ],
     },
   ),
-  mine_delve: criterion("a mine level was entered and something was broken after it", [
-    step("enter_mine"),
-    anyOf("break_rock", "break_container"),
-  ]),
-  store_and_sort: criterion("something was put into a chest and taken back out", [
-    step("chest_store"),
-    step("chest_retrieve"),
-  ]),
-  till_and_sow: criterion("the ground was tilled, then planted, then watered", [
-    step("till_soil"),
-    step("plant_seed"),
-    step("water_crop"),
-  ]),
+  mine_delve: criterion(
+    "a mine level was entered and something was broken after it",
+    [step("enter_mine"), anyOf("break_rock", "break_container")],
+    {
+      because:
+        "the purpose is something broken INSIDE a mine, so `enter_mine` has to come first - a `break_rock` on the surface is the run this table exists for",
+    },
+  ),
+  store_and_sort: criterion(
+    "something was put into a chest and taken back out",
+    [step("chest_store"), step("chest_retrieve")],
+    {
+      because:
+        "`chest_retrieve` can only take out of a chest what `chest_store` put in it: the two receipts are one chest's contents before and after",
+    },
+  ),
+  till_and_sow: criterion(
+    "the ground was tilled, then planted, then watered",
+    [step("till_soil"), step("plant_seed"), step("water_crop")],
+    {
+      because:
+        "`plant_seed` needs the HoeDirt `till_soil` turned, and `water_crop` waters the crop `plant_seed` put in it - each postcondition is the next one's precondition",
+    },
+  ),
   tidy_and_repair: criterion(
     "debris was cleared and something placed was put away",
     [step("clear_debris"), step("remove_placed_item")],
@@ -188,16 +223,38 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
     [step("pet_animal"), step("feed_animal"), step("collect_animal_product")],
     { ordered: false },
   ),
-  dress_and_display: criterion("something else was put on and the house was given a display", [
-    step("equip_wearable"),
-    anyOf("dress_mannequin", "set_sign_display"),
-  ]),
-  clear_and_cultivate: criterion("a patch was cleared, then tilled, then planted and watered", [
-    anyOf("chop_tree", "chop_stump", "clear_debris"),
-    step("till_soil"),
-    step("plant_seed"),
-    step("water_crop"),
-  ]),
+  dress_and_display: criterion(
+    "something else was put on and the house was given a display",
+    [step("equip_wearable"), anyOf("dress_mannequin", "set_sign_display")],
+    {
+      because:
+        "`dress_mannequin` and `set_sign_display` both display what she is wearing or holding, so `equip_wearable` has to come first for the display to be of THAT thing",
+    },
+  ),
+  // UNORDERED, and it was the only row whose order was a claim about the table rather than about the world.
+  //
+  // Measured 2026-11-18 (`round76`, day 1, judged here from the run's own `timeline.jsonl`): the day cut 30 weeds and
+  // 20 grasses, broke 13 rocks, sowed two seeds on (69,20) and (69,19) (receipt #52/#53), watered those same two tiles
+  // (#54/#55), tilled four OTHER tiles (#70-#73) and felled a tree (#76, with only four more weeds cut after it) - and
+  // answered `not_achieved`, because the chain wanted a `till_soil` AFTER the clearing and the four tills all came
+  // before it.
+  //
+  // She was right and the row was wrong. She sowed into ground that was already tilled - what a farmhand does - so
+  // "clear the ground, then till it, then sow it" describes ONE way of preparing ground, not the purpose of a day that
+  // did all four kinds of work in whatever order the farm allowed: something cleared (a tree, a stump, debris), the
+  // ground tilled, a seed in it, and the crop watered. The purpose is what the day produced, not the route it took.
+  //
+  // THE ORDER DID CARRY INFORMATION IN ONE CASE, and this is what was dropped on purpose: ground that has NEVER been
+  // tilled, where the clearing and the tilling are the same dirt and a `till_soil` before the felling left that tile
+  // untouched. No receipt can show that pairing - `chop_tree`'s and `chop_stump`'s evidence key sets carry neither
+  // `location` nor `tile` (`host/src/stardew-completion-contracts.ts`), `cut_weeds` and `break_rock` declare no
+  // `location` at all (`clear_east_patch`'s claims), and `clear_debris` is the only one of the three that names the tile
+  // it cleared - so the chain was asserting a same-tile relation for all three that only one of them can describe.
+  clear_and_cultivate: criterion(
+    "a patch was cleared, and the ground was tilled, planted and watered",
+    [anyOf("chop_tree", "chop_stump", "clear_debris"), step("till_soil"), step("plant_seed"), step("water_crop")],
+    { ordered: false },
+  ),
   // THE ONLY CRITERION THAT COUNTS TILES. `clear_east_patch` cannot say which part of the farm was cleared, and
   // `till_and_sow` cannot say how much was tilled, because a receipt names one tile and no criterion asked for a
   // shape. This one does: sixty tiles, all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the
@@ -218,10 +275,14 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   // Two steps, because the purpose is not "an action succeeded": it is that she went to water and came back with a
   // fish. `navigate_to_destination`/`travel` is how a day reaches water `waterTargets` named, and `fish_here` is the
   // catch; a one-step criterion would be a single success standing in for the whole purpose.
-  a_fish_from_the_water: criterion("she went to the water and came back with a fish", [
-    anyOf("navigate_to_destination", "travel"),
-    step("fish_here"),
-  ]),
+  a_fish_from_the_water: criterion(
+    "she went to the water and came back with a fish",
+    [anyOf("navigate_to_destination", "travel"), step("fish_here")],
+    {
+      because:
+        "`fish_here` casts where she stands, so `navigate_to_destination` or `travel` is what makes the catch the water she went to",
+    },
+  ),
   home_and_hearth: gap(
     "the house was tidied and a few things put out so it feels lived in",
     "what is absent is an ACTION with a postcondition for tidying, not a published fact: `place_owned_object`'s receipt carries `location` and the object it set down, and the snapshot publishes the room's own furniture as `kind: \"placed_furniture\"` rows carrying `location`, `displayName`, the tile and the footprint (`integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs`, measured round57: the bed and the oak table reached her as rows), so what the room holds IS readable. 'Tidy it up' still names no action whose postcondition is the room tidied or the clutter gone.",
@@ -258,10 +319,14 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   // level it entered, and `use_mine_ladder`'s `mine_left` terminal names the ladder and the level it left
   // (`from`, `question=ExitMine`, `response=Leave`, `ladder`), so the purpose is decided by two receipts in the order the
   // world saw them.
-  mine_ladder_to_depth: criterion("a mine level was worked deeper and then left by its own exit ladder", [
-    step("enter_mine"),
-    step("use_mine_ladder"),
-  ]),
+  mine_ladder_to_depth: criterion(
+    "a mine level was worked deeper and then left by its own exit ladder",
+    [step("enter_mine"), step("use_mine_ladder")],
+    {
+      because:
+        "`use_mine_ladder` leaves the level `enter_mine` entered - a ladder taken with no level entered is not a depth worked",
+    },
+  ),
   furnish_and_arrange: gap(
     "placed furniture was moved and something was recoloured",
     "`move_placed_furniture` is live and its receipt proves the piece LEFT a tile (`location`, `tile`, `carried_tile`, `removed_from_furniture`, `carried`, `inventory_before`/`inventory_after`), but its own postcondition is `placed_furniture_picked_up` and nothing in it - nor in `place_owned_object`, whose receipt names only the tile a stack landed on - says which tile the SAME piece came to rest on (`integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs`). So 'the furniture was moved' (one piece, two places) is not a fact any receipt states, and `color_placed_object` alone is one action rather than the arrangement.",
@@ -276,10 +341,14 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       ],
     },
   ),
-  run_the_machines: criterion("a machine was loaded and its output collected", [
-    step("machine_load"),
-    step("machine_collect_output"),
-  ]),
+  run_the_machines: criterion(
+    "a machine was loaded and its output collected",
+    [step("machine_load"), step("machine_collect_output")],
+    {
+      because:
+        "`machine_collect_output` collects what `machine_load` put in it, and a machine loaded after the collect had nothing to give",
+    },
+  ),
   // The sweep tasks, each of whose purpose is "this group of the farm was worked". No receipt names a group - one
   // receipt names one action and one target - so every one of them is a gap, and a criterion built from two of the
   // group's actions would claim a purpose the group never had. The sentences live on the task definitions in
