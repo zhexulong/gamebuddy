@@ -1133,6 +1133,14 @@ export const TavernBrowserOperationV1Schema = strictObject({
   routeId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9._-]*$" }),
 });
 const NavigationItemId = Type.Union([Type.Literal("chat"), Type.Literal("memory"), Type.Literal("characters")]);
+/**
+ * The navigation items this contract declares, read off `NavigationItemId`'s own arms.
+ *
+ * One union and one list, not two: `contractDeclaredNavigationItemIds` below holds a composed profile's untrusted
+ * `navigationItemIds` to it, and the management composition pairs each route group with the item ids that group
+ * mounts. Both read this, so neither can name an item the contract does not declare.
+ */
+export const TAVERN_NAVIGATION_ITEM_IDS_V1 = Object.freeze(NavigationItemId.anyOf.map((arm) => arm.const));
 const NavigationItem = strictObject({
   itemId: NavigationItemId,
   labelKey: LabelKey,
@@ -4404,7 +4412,7 @@ const routeIdByOperationId = new Map<TavernBrowserOperationIdV1, TavernBrowserRo
   }),
 );
 const routeBoundOperationIds = new Set(routeIdByOperationId.keys());
-const contractDeclaredNavigationItemIds = new Set<TavernBrowserNavigationItemIdV1>(["chat", "memory", "characters"]);
+const contractDeclaredNavigationItemIds = new Set<TavernBrowserNavigationItemIdV1>(TAVERN_NAVIGATION_ITEM_IDS_V1);
 export type ComposedTavernProfile = Readonly<{
   readonly profileId: string;
   readonly releaseTier: TavernReleaseTierV1;

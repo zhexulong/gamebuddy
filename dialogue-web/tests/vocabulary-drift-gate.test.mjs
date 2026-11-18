@@ -112,6 +112,13 @@ export const MIRRORED_VOCABULARIES = [
   { mirror: "STATUS_DISPOSITIONS", contract: { name: "MessageSubmissionStatusV1Schema", property: "disposition" } },
   { mirror: "OPERATION_AVAILABILITY", contract: { name: "TavernBrowserOperationV1Schema", property: "availability" } },
   { mirror: "NAVIGATION_ITEM_IDS", contract: { name: "NavigationItemId" } },
+  // The release gate's own three id list. It is in `tools/`, not the bundle, but it is the same fact spelled by
+  // hand: a gate that pins the contract's navigation items must know the item the contract added, by name.
+  {
+    mirror: "CONTRACT_NAVIGATION_ITEM_IDS",
+    mirrorFile: join(REPO, "tools/run-tavern-release-live-gate.mjs"),
+    contract: { name: "NavigationItemId" },
+  },
   { mirror: "NAVIGATION_AVAILABILITY", contract: { name: "NavigationItem", property: "availability" } },
   { mirror: "WORLD_INFO_STATES", contract: { name: "WorldInfoBindingState" } },
   { mirror: "VOICE_SURFACE_STATES", contract: { name: "TavernVoiceSurfaceStateV1Schema", property: "state" } },

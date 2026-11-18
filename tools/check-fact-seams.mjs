@@ -358,6 +358,21 @@ export const SEAMS = Object.freeze([
     owner: "the connection panel lane",
   },
   {
+    fact: "navigation item ids",
+    authority: { file: TAVERN_CONTRACT, name: "NavigationItemId" },
+    readers: [
+      { file: MANAGEMENT_CLIENT, name: "NAVIGATION_ITEM_IDS" },
+      { file: REFERENCE_CLIENT, name: "NAVIGATION_ITEM_IDS" },
+      { file: "tools/run-tavern-release-live-gate.mjs", name: "CONTRACT_NAVIGATION_ITEM_IDS" },
+    ],
+    derives: {
+      kind: "asserted-by",
+      assertion: "dialogue-web/tests/vocabulary-drift-gate.test.mjs",
+      symbols: ["NavigationItemId", "NAVIGATION_ITEM_IDS"],
+    },
+    owner: "the release gate lane",
+  },
+  {
     fact: "thinking levels",
     authority: { file: "host/src/runtime-identity.ts", name: "COMPANION_THINKING_LEVELS" },
     readers: [
@@ -442,13 +457,6 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
-  mirrorDebt("navigation item ids", `${TAVERN_CONTRACT}:NavigationItemId`, [
-    `${TAVERN_CONTRACT}:contractDeclaredNavigationItemIds`,
-    "host/src/tavern-management-dialogue-web.ts:MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY",
-    `${MANAGEMENT_CLIENT}:NAVIGATION_ITEM_IDS`,
-    `${REFERENCE_CLIENT}:NAVIGATION_ITEM_IDS`,
-    "tools/run-tavern-release-live-gate.mjs:CONTRACT_NAVIGATION_ITEM_IDS",
-  ]),
 
   // ─── The Host's own vocabularies, restated by the harnesses and the audits ───
   mirrorDebt(

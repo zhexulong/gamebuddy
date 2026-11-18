@@ -56,6 +56,7 @@ import {
   type StCardImportStageResultV1,
   TAVERN_BROWSER_API_V1,
   TAVERN_BROWSER_API_VERSION,
+  TAVERN_NAVIGATION_ITEM_IDS_V1,
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
@@ -261,7 +262,8 @@ const MANAGEMENT_MODEL_PROFILE_ROUTES = ["settings.profiles.read", "settings.pro
  */
 const MANAGEMENT_SAMPLER_ROUTES = ["settings.sampler.read", "settings.sampler.update"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat", "characters"] as const;
-const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory", "characters"] as const;
+// The contract's own union is the authority for which items exist; this is the full set it mounts.
+const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = TAVERN_NAVIGATION_ITEM_IDS_V1;
 /** Legacy navigation variants before the Characters surface (no characters item). */
 const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY = ["chat"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY = ["chat", "memory"] as const;
