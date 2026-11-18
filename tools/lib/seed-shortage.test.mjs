@@ -107,10 +107,93 @@ test("a pack that already covers the patch produces no fact at all", () => {
   assert.equal(seedShortageFact({ taskId: TASK, snapshot: snapshotWith([both, split]), locale: "zh" }), null);
 });
 
-test("a task that declares no patch has no shortage to state", () => {
+test("a task that declares no patch has no tile count to state", () => {
   assert.equal(taskPatchTiles("till_and_sow"), null, "a criterion made of steps declares no tile count");
   assert.equal(taskPatchTiles(TASK), TILES);
-  assert.equal(seedShortageFact({ taskId: "till_and_sow", snapshot: snapshotWith([parsnip]), locale: "zh" }), null);
+});
+
+/**
+ * THE CRITERION WITH NO PATCH IS NOT A REASON TO WITHHOLD THE FACT.
+ *
+ * <p>
+ * Measured on `round67` (2026-11-18): the day's task was a criterion of steps, `seedSupplyTargets` was populated
+ * EIGHTEEN times - `heldCount:2, price:80, shopId:"SeedShop", openNow:false, hoursCondition:"TIME 0000 1659"` - and
+ * this module composed nothing at all, because `taskPatchTiles` answers `null` for a criterion and the composition
+ * treated that as "there is nothing to say". Zero `shortage`, zero `no_known_supply`, zero `affordability_unknown` in
+ * fifty-seven turns, while the one fact she needed (the seed she holds is sold in town, for that price, shut until
+ * tomorrow) sat in the observation unread.
+ * </p>
+ * <p>
+ * A criterion with no declared shape asks for no NUMBER of tiles, so there is no SHORTFALL to state - but the supply
+ * half does not need a shape: the seeds she holds and where more of them are sold are facts about the world. The
+ * population that decides whether a task wants a seed at all is `TASK_PURPOSE_CRITERIA`: a criterion whose steps include
+ * `plant_seed` sows, and a task whose purpose is to fish or to talk does not.
+ * </p>
+ */
+test("a criterion that plants carries the supply even though it declares no tile count", () => {
+  const fact = seedShortageFact({ taskId: "till_and_sow", snapshot: snapshotWith([parsnip]), locale: "zh" });
+
+  assert.notEqual(fact, null, "a planting day with a measured supply has something to hand over");
+  assert.equal(fact.reasonCode, "seed_supply", "a supply with no declared patch is not a shortage claim");
+  assert.equal(fact.tiles, null, "a criterion of steps declares no tile count, and none is invented");
+  assert.equal(fact.shortfall, null, "no shape, no shortfall: the number would be ours, not the task's");
+  assert.equal(fact.held, 2);
+  for (const fragment of [
+    "格数未声明",
+    "手上 2 颗",
+    parsnip.shopId,
+    `price=${String(parsnip.price)}`,
+    "affordability_unknown",
+  ])
+    assert.ok(fact.text.includes(fragment), `the fact states "${fragment}": ${fact.text}`);
+  assert.ok(!fact.text.includes("差 "), `there is no shortfall to state: ${fact.text}`);
+});
+
+/** The same day in a world where she holds no plantable seed: still a fact, and no number of tiles beside it. */
+test("a planting criterion with no seed held is a supply fact, not a shortage of an unstated number", () => {
+  const fact = seedShortageFact({ taskId: "clear_and_cultivate", snapshot: snapshotWith([]), locale: "zh" });
+
+  assert.equal(fact.reasonCode, "no_known_supply");
+  assert.ok(fact.text.includes("手上没有可种的种子"), fact.text);
+  assert.ok(fact.text.includes("affordability_unknown"), fact.text);
+  assert.ok(!/差 \d/u.test(fact.text), `no shortfall is invented for a task with no declared shape: ${fact.text}`);
+});
+
+/**
+ * THE FALSIFIER DIRECTION: a day that sows nothing gets no seed fact, however full the supply family is.
+ *
+ * Without this, "compose for a criterion" would be "compose for every task", and a fishing day would be handed a seed
+ * shop. The membership is read off the criteria table, not off a list written here.
+ */
+test("a day that plants nothing is handed no seed fact at all", () => {
+  for (const taskId of ["forage_and_trees", "town_market", "town_visit", "tend_the_animals", "run_the_machines"])
+    assert.equal(
+      seedShortageFact({ taskId, snapshot: snapshotWith([parsnip]), locale: "zh" }),
+      null,
+      `"${taskId}" does not sow, so its supply half is not news`,
+    );
+});
+
+/** `round67`'s own row, verbatim from that run's observation. */
+const round67 = Object.freeze({
+  qualifiedItemId: "(O)470",
+  displayName: "Rare Seed",
+  heldCount: 2,
+  shopId: "SeedShop",
+  hoursCondition: "TIME 0000 1659",
+  price: 80,
+  currency: 0,
+  openNow: false,
+});
+
+test("round67's row: 80g at a shut SeedShop, and the fact says where, when and at what price", () => {
+  const fact = seedShortageFact({ taskId: "clear_and_cultivate", snapshot: snapshotWith([round67]), locale: "zh" });
+
+  assert.notEqual(fact, null, "this is the run whose day composed nothing");
+  for (const fragment of ["SeedShop", "price=80", "money", "时段=TIME 0000 1659", "现在=关门", "手上 2 颗"])
+    assert.ok(fact.text.includes(fragment), `round67's own value "${fragment}": ${fact.text}`);
+  assert.equal(fact.seedQualifiedItemId, "(O)470");
+  assert.equal(fact.held, 2);
 });
 
 test("a seed she holds that no shop stocks answers no_known_supply with the item", () => {
@@ -141,6 +224,38 @@ test("a world that never looked is named, and is not an empty world", () => {
   assert.equal(fact.reasonCode, "seed_supply_not_measured");
   assert.ok(fact.text.includes("seed_supply_not_measured"), fact.text);
   assert.ok(!fact.text.includes("no_known_supply"), "not measured is not 'nothing there': " + fact.text);
+});
+
+/**
+ * THE MONEY FIELD IS NOT OURS TO INVENT, SO ITS ABSENCE MUST BE STATED EVERY TIME.
+ *
+ * <p>
+ * The projection publishes no balance at all (`host/src/protocol.ts` has no money field), and `round67`'s session is
+ * what that costs: she priced copper at 75 g and concluded 「I have little money」 with nothing to read. An absent
+ * number is our gap, not a "she can afford it" - so every fact this module composes ends by naming the gap, including
+ * the one that could not measure the supply.
+ * </p>
+ */
+test("every fact names affordability as unmeasured, including the one that never looked", () => {
+  const worlds = {
+    measured: snapshotWith([parsnip]),
+    empty: snapshotWith([]),
+    unmeasured: Object.freeze({}),
+    unsold: snapshotWith([Object.freeze({ ...parsnip, shopId: undefined, price: undefined })]),
+  };
+  for (const taskId of [TASK, "till_and_sow"])
+    for (const [label, snapshot] of Object.entries(worlds)) {
+      const fact = seedShortageFact({ taskId, snapshot, locale: "zh" });
+      if (fact === null) continue;
+      assert.ok(
+        fact.text.includes("affordability_unknown"),
+        `the ${label} fact must name the money gap rather than stay silent: ${fact.text}`,
+      );
+      assert.ok(
+        !/affordab[^_]*[:=]\s*(true|yes|measured)/iu.test(fact.text),
+        `and it must never claim the question was answered: ${fact.text}`,
+      );
+    }
 });
 
 test("an unpublished seed count says seed_count_unknown instead of zero", () => {

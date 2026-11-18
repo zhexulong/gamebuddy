@@ -25,14 +25,24 @@
  *   - No invented count. `heldCount` is absent when the published stack rows did not cover the holding slots, and the
  *     fact then says `seed_count_unknown` rather than "0". A zero derived from an absence would tell her she has none
  *     of a seed nobody counted.
- *   - No invented affordability. The projection publishes no money field at all, so the fact always ends
- *     `affordability_unknown`: that is a named gap, and it is different from "she can afford it".
+ *   - No invented affordability. The projection publishes no money field at all (`host/src/protocol.ts` has none), so
+ *     every fact this module composes ends `affordability_unknown`: that is a named gap, and it is different from "she
+ *     can afford it". Measured on `round67`: she priced copper at 75 g and concluded 「I have little money」 with no
+ *     balance anywhere in the observation. A balance is a WIRE decision (the Mod publishes one, or nobody does); until
+ *     then the gap is stated rather than left silent.
  *
- * THE THREE STATES THAT MUST NOT READ ALIKE, because they answer "is walking to town worth it" differently:
+ * THE FOUR STATES THAT MUST NOT READ ALIKE, because they answer "is walking to town worth it" differently:
  *
  *   - `seed_supply_not_measured` - `plant_seed` was not advertised, so nothing looked. This is our gap.
  *   - `no_known_supply` - measured, and she holds no plantable seed at all.
  *   - `no_known_supply:<item>` - measured, she holds that seed, and no shop in `Data/Shops` stocks it.
+ *   - `seed_supply` - measured, she holds at least one, and a shop sells it. The day asks for no NUMBER of tiles, so
+ *     there is no shortfall to state: this is the supply, and the number is hers to decide.
+ *
+ * A TASK WITH NO DECLARED SHAPE IS NOT A REASON TO WITHHOLD THE FACT. Measured 2026-11-18 (`round67`): the day's task
+ * was a criterion of steps, `seedSupplyTargets` was populated eighteen times, and this module composed nothing - the
+ * `null` from `taskPatchTiles` was read as "nothing to say" instead of "no tile count to say it against". The supply
+ * half never needed a shape.
  */
 
 import { TASK_PURPOSE_CRITERIA } from "./task-purpose.mjs";
@@ -52,6 +62,8 @@ export const MAX_SEED_SHORTAGE_FACT_CHARS = 320;
  * The population is `TASK_PURPOSE_CRITERIA` - the one place a task's purpose is declared - so a task whose shape
  * changes, or a new shape task, is covered without editing this module. A criterion made of steps declares no tiles
  * (there is no count to make short), and a `gap` declares none either: those tasks have no patch to fall short of.
+ * `null` is therefore the answer for both, and it decides the SHORTFALL half alone - see `taskSowsSeed` for the half
+ * that survives it.
  */
 export function taskPatchTiles(taskId) {
   const declared = TASK_PURPOSE_CRITERIA[taskId]?.patch;
@@ -59,6 +71,23 @@ export function taskPatchTiles(taskId) {
   if (!Number.isInteger(declared.width) || !Number.isInteger(declared.height)) return null;
   if (declared.width <= 0 || declared.height <= 0) return null;
   return declared.width * declared.height;
+}
+
+/**
+ * Whether the day's task puts a seed in the ground at all - the population that decides whether a supply fact is due.
+ *
+ * Read from the same declaration `taskPatchTiles` reads, so a new criterion is covered by what it says its purpose is:
+ * a patch task sows the whole way, and a criterion sows when one of its admitted steps is `plant_seed`. A `gap` sows
+ * nothing it can prove, and a `town_visit` sows nothing at all - handing a fishing day a seed shop would be a fact
+ * about a task nobody was given.
+ */
+export function taskSowsSeed(taskId) {
+  const entry = TASK_PURPOSE_CRITERIA[taskId];
+  if (entry === undefined) return false;
+  if (entry.patch !== undefined) return true;
+  return (entry.steps ?? []).some(
+    (candidate) => candidate.actionId === "plant_seed" || (candidate.anyOf ?? []).includes("plant_seed"),
+  );
 }
 
 /** The currency a shop charges in, as the menu's own words: only `money` is gold. */
@@ -167,24 +196,58 @@ export function dayPromptWithFact(prompt, fact, locale = "zh") {
   return `${prompt}\n${locale === "zh" ? `（地里的事实：${fact.text}）` : `(world fact: ${fact.text})`}`;
 }
 
+/** The task half of the sentence: how many tiles it asks for, or the name of the fact that it asks for no number. */
+function taskClause(tiles, zh) {
+  if (tiles !== null) return zh ? `种子: 任务 ${String(tiles)} 格` : `seed: task ${String(tiles)} tiles`;
+  return zh ? "种子: 任务 格数未声明(task_tiles_undeclared)" : "seed: task tiles undeclared (task_tiles_undeclared)";
+}
+
+/** How many plantable seeds she holds, or the name of the fact that nobody counted them. */
+function heldClause(held, zh) {
+  if (held !== null) return zh ? `手上 ${String(held)} 颗` : `held ${String(held)}`;
+  return zh ? "手上 未知(seed_count_unknown)" : "held unknown (seed_count_unknown)";
+}
+
+/** The shortfall, or nothing at all when the task declared no shape to fall short of. */
+function shortfallClause(shortfall, zh) {
+  if (shortfall === null) return null;
+  return zh ? `差 ${String(shortfall)} 颗` : `short ${String(shortfall)}`;
+}
+
+/** The fact's text, bounded: one line is the whole budget, so a long shop name costs a shop rather than the task. */
+function boundedText(segments) {
+  const text = segments.filter((segment) => segment !== null).join("; ");
+  return Array.from(text).length > MAX_SEED_SHORTAGE_FACT_CHARS
+    ? Array.from(text)
+        .slice(0, MAX_SEED_SHORTAGE_FACT_CHARS - 1)
+        .join("") + "…"
+    : text;
+}
+
 /**
  * The fact, or null when there is nothing to hand over.
  *
  * `snapshot` is the last observed projection: `seedSupplyTargets` is the Mod's own answer, and its ABSENCE is a fact
- * of its own (`seed_supply_not_measured`), never an empty world. `taskId` names the day's task, whose declared shape
- * decides the tile count. `locale` picks the wording; the numbers and codes are the same in both.
+ * of its own (`seed_supply_not_measured`), never an empty world. `taskId` names the day's task: its declared shape
+ * decides the tile count and therefore the shortfall, and its own steps decide whether a supply fact is due at all
+ * (`taskSowsSeed`) - which is the half `round67` needed and did not get.
+ *
+ * `locale` picks the wording; the numbers and codes are the same in both.
  */
 export function seedShortageFact({ taskId, snapshot, locale = "zh" }) {
   const zh = locale === "zh";
   const tiles = taskPatchTiles(taskId);
-  if (tiles === null) return null;
+  if (tiles === null && !taskSowsSeed(taskId)) return null;
+  const task = taskClause(tiles, zh);
   const rows = snapshot?.seedSupplyTargets;
   if (!Array.isArray(rows)) {
     return Object.freeze({
       reasonCode: "seed_supply_not_measured",
-      text: zh
-        ? `种子: 任务 ${String(tiles)} 格, 供应未测量(seed_supply_not_measured)`
-        : `seed: task ${String(tiles)} tiles, supply not measured (seed_supply_not_measured)`,
+      text: boundedText([
+        task,
+        zh ? "供应未测量(seed_supply_not_measured)" : "supply not measured (seed_supply_not_measured)",
+        "affordability_unknown",
+      ]),
     });
   }
   // Grouped by seed, because the shortage is about the seeds she holds while the supply is about one seed at a time.
@@ -209,55 +272,39 @@ export function seedShortageFact({ taskId, snapshot, locale = "zh" }) {
     // "she holds one and nobody sells it".
     return Object.freeze({
       reasonCode: "no_known_supply",
-      text: zh
-        ? `种子: 任务 ${String(tiles)} 格, 手上没有可种的种子, 差 ${String(tiles)} 颗; 卖点 未知:no_known_supply; affordability_unknown`
-        : `seed: task ${String(tiles)} tiles, no plantable seed held, short ${String(tiles)}; sold at: no_known_supply; affordability_unknown`,
+      text: boundedText([
+        task,
+        zh ? "手上没有可种的种子" : "no plantable seed held",
+        shortfallClause(tiles, zh),
+        zh ? "卖点 未知:no_known_supply" : "sold at: no_known_supply",
+        "affordability_unknown",
+      ]),
+      tiles,
+      held: 0,
+      shortfall: tiles,
     });
   }
   const held = totalHeld(groups);
   // No shortfall to state: the pack covers the patch, so there is nothing here she needs. Silence is the answer, and a
-  // fact that appeared anyway would be a shortage claim she could act on wrongly.
-  if (held !== null && held >= tiles) return null;
+  // fact that appeared anyway would be a shortage claim she could act on wrongly. There is no such answer without a
+  // declared shape: a criterion that plants asks for no count, so nothing can cover it.
+  if (tiles !== null && held !== null && held >= tiles) return null;
 
   const seed = preferredSeed(groups);
   const supply = preferredSupply(seed.rows);
-  const shortfall = held === null ? null : tiles - held;
-  const segments = [];
-  segments.push(zh ? `种子: 任务 ${String(tiles)} 格` : `seed: task ${String(tiles)} tiles`);
-  segments.push(
-    held === null
-      ? zh
-        ? "手上 未知(seed_count_unknown)"
-        : "held unknown (seed_count_unknown)"
-      : zh
-        ? `手上 ${String(held)} 颗`
-        : `held ${String(held)}`,
-  );
-  segments.push(
-    shortfall === null
-      ? zh
-        ? "差 未知"
-        : "short unknown"
-      : zh
-        ? `差 ${String(shortfall)} 颗`
-        : `short ${String(shortfall)}`,
-  );
-  segments.push(supplyClause(seed, supply, locale));
-  // The projection publishes no money field, so affordability is a named gap rather than a silence or a guess.
-  segments.push("affordability_unknown");
-  const text = segments.join(zh ? "; " : "; ");
-  const bounded =
-    Array.from(text).length > MAX_SEED_SHORTAGE_FACT_CHARS
-      ? Array.from(text)
-          .slice(0, MAX_SEED_SHORTAGE_FACT_CHARS - 1)
-          .join("") + "…"
-      : text;
+  const shortfall = tiles === null || held === null ? null : tiles - held;
+  const sellsIt = typeof supply.shopId === "string" && supply.shopId.length > 0;
   return Object.freeze({
-    reasonCode:
-      typeof supply.shopId === "string" && supply.shopId.length > 0
-        ? "seed_shortage"
-        : `no_known_supply:${seed.qualifiedItemId}`,
-    text: bounded,
+    // A shortfall claim needs a shape to be short of. Without one this is the supply, and what to do about it is hers.
+    reasonCode: !sellsIt ? `no_known_supply:${seed.qualifiedItemId}` : tiles === null ? "seed_supply" : "seed_shortage",
+    text: boundedText([
+      task,
+      heldClause(held, zh),
+      shortfallClause(shortfall, zh),
+      supplyClause(seed, supply, locale),
+      // The projection publishes no money field, so affordability is a named gap rather than a silence or a guess.
+      "affordability_unknown",
+    ]),
     seedQualifiedItemId: seed.qualifiedItemId,
     tiles,
     held,
