@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4554, largest ExecutionManager at 24455 lines / 841 members across 52 partial(s).",
-  "revision": "75869916",
+  "revision": "6a194fa8",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -192,7 +192,7 @@
       "name": "FarmhandBodyProgramController.AdvanceAwaitingNodes(string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramController.cs",
       "line": 431,
-      "value": 36,
+      "value": 39,
       "reason": "33 -> 36 in `df79b260`, which made a cutscene something the waiting node waits out instead of spending the plan on. Three branches, no move: the owner and the signature are unchanged."
     },
     {
@@ -355,7 +355,7 @@
       "language": "cs",
       "name": "OpenBodyProgramJournalAuthority.TryComplete(HostAdmissionGrant,BodyProgramTerminalResult)",
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
-      "line": 643,
+      "line": 654,
       "value": 47
     },
     {
@@ -389,7 +389,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 702,
+      "line": 729,
       "value": 40
     },
     {
@@ -520,7 +520,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda13",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1493,
+      "line": 1494,
       "value": 48,
       "reason": "the same function the record called `materializeEnter#lambda11`, at the same 48: Biome reports 48 for the callback passed to `materializeExactEnter` in both trees (`72582adf` at line 1514, HEAD at line 1522). Only the ID moved, and this gate names an anonymous function by its nearest named owner plus `anonymousOrdinal`, which counts the anonymous functions in that owner's subtree (11 at `72582adf`, 13 at HEAD). The two added are `1f9ae023`'s `tracedStep` wrappers around the recovery-journal open and the recovery-binding read. Nothing was raised: 48 stays the ceiling, and this row exists because the identity moved, not because the number did."
     },
@@ -784,7 +784,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3876,
+      "line": 3875,
       "value": 59
     },
     {
@@ -792,7 +792,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3046,
+      "line": 3045,
       "value": 49
     },
     {
@@ -800,7 +800,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3178,
+      "line": 3177,
       "value": 64
     },
     {
@@ -808,7 +808,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3363,
+      "line": 3362,
       "value": 47
     },
     {
@@ -816,7 +816,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4050,
+      "line": 4049,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -825,7 +825,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2479,
+      "line": 2478,
       "value": 44
     },
     {
@@ -1174,7 +1174,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "value": 219,
+      "value": 218,
       "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
@@ -1366,7 +1366,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "lines": 1211,
+      "lines": 1222,
       "methods": 61,
       "reason": "lines 1209 -> 1211 in `a3e6eb34` (+5/-3 in the file) at the same 61 methods and the same one part: `TryComplete`'s `provesEffect` stopped spelling the outcome set and asks `BodyProgramValidation.MayCarryProof`, the declaration the wire validator refuses a frame by, and the two lines that replaced it are its comment. A re-partition of one authority plus a comment, not a member."
     },
@@ -1377,8 +1377,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 41,
-      "lines": 1155,
-      "methods": 40,
+      "lines": 1182,
+      "methods": 41,
       "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {
