@@ -335,6 +335,29 @@ test("desktop bootstrap helper does not send expired launch", async (t) => {
   assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_command_input_invalid\n$/);
 });
 
+// The other end of the same fact `peer-disconnect` proves: a session the composition closes
+// ITSELF is not a loss of its owner. An attempt that ends - an explicit endgame, or the next
+// launch press after a game ended - takes exactly this path (`stardew-guardian-platform.ts:913`
+// `settle()` -> `closeSessionOnce()` -> `session.close()`), and the Host must keep serving Chat
+// on the same process instead of asking to die. The Desktop then re-offers the one-instance
+// pipe (`DesktopHostBootstrapBroker.ServeSessionsAsync`), which the next test spends.
+test("desktop bootstrap helper stays alive when its own composition closes the guardian session", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("settled-session");
+  assert.deepEqual(
+    result.requests.map((request) => request.operation),
+    ["hello", "arm_attempt", "launch_role", "contain_role"],
+  );
+  // The session really ended - the peer read the EOF - so this is not a scenario where
+  // nothing happened and the process merely had no reason to leave.
+  assert.equal(result.guardianClosed, true, "the attempt's authenticated session must really close");
+  assert.equal(
+    result.exitCodeWhileServing,
+    null,
+    `the composition closed its own session and the Host asked to die with it (exit ${String(result.exitCodeWhileServing)}); a close this side initiates ends the attempt, not the owner`,
+  );
+});
+
 test("desktop bootstrap helper rejects when guardian peer disconnects", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("peer-disconnect");
@@ -483,6 +506,7 @@ async function runWireFixture(
     | "expired-launch"
     | "overhorizon-launch"
     | "peer-disconnect"
+    | "settled-session"
     | "composition-failure"
     | "ack-write-failure"
     | "termination-failure"
@@ -501,6 +525,12 @@ async function runWireFixture(
   workerClosedAt: number | undefined;
   workerExitCode: number | null;
   workerExitedNaturally: boolean;
+  /**
+   * The child's exit code read while it was still expected to be serving - after the
+   * scenario's own session close, before this harness asks it to leave. `null` is
+   * "still running", which is the only answer a session close may produce.
+   */
+  exitCodeWhileServing: number | null;
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
@@ -562,16 +592,32 @@ async function runWireFixture(
   let worker: ReturnType<typeof spawn> | undefined;
   let peerError: Error | undefined;
   let armReceiptAt: number | undefined;
+  let exitCodeWhileServing: number | null = null;
   let guardianClosed = false;
   let guardianClosedResolve!: () => void;
   const guardianPeerClosed = new Promise<void>((resolve) => {
     guardianClosedResolve = resolve;
   });
+  // How many authenticated sessions the Host has closed, and a way to wait for the
+  // Nth one: the per-attempt scenarios need to observe a close that is not the end of
+  // the process.
+  let guardianCloses = 0;
+  const guardianCloseWatchers = new Map<number, () => void>();
+  const waitForGuardianCloses = (target: number): Promise<void> =>
+    guardianCloses >= target
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => guardianCloseWatchers.set(target, resolve));
   const server = createServer((socket) => {
     connected = true;
     socket.once("close", () => {
       guardianClosed = true;
       guardianClosedResolve();
+      guardianCloses += 1;
+      for (const [target, resolve] of [...guardianCloseWatchers]) {
+        if (guardianCloses < target) continue;
+        guardianCloseWatchers.delete(target);
+        resolve();
+      }
     });
     socket.on("error", (error) => {
       peerError = error;
@@ -926,6 +972,17 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         worker.kill("SIGTERM");
         await withTimeout(workerClose, 10_000, "shutdown-malformed cleanup");
       }
+    } else if (scenario === "settled-session") {
+      await withTimeout(operationsComplete, 10_000, "guardian operations");
+      // The attempt is over. The Host closes its own end of the session and nothing else
+      // happens; a wrong termination would be visible immediately, so give it a bounded
+      // window and then read the process state rather than the state after this harness's
+      // own kill.
+      await withTimeout(waitForGuardianCloses(1), 10_000, "attempt session close");
+      await new Promise((resolveSettle) => setTimeout(resolveSettle, 750));
+      exitCodeWhileServing = worker.exitCode;
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "settled-session cleanup");
     } else if (scenario === "success" || scenario === "recovery-success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
@@ -955,6 +1012,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       workerClosedAt,
       workerExitCode: worker.exitCode,
       workerExitedNaturally: worker.exitCode === 0,
+      exitCodeWhileServing,
     };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) {
@@ -1027,6 +1085,43 @@ async function drive(session) {
       attemptId: fixture.attemptId,
       operationWaitBudgetMs: 123,
       role: "player_host",
+    });
+    return;
+  }
+  if (scenario === "settled-session") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    await platform.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      armFacts: fixture.armFacts,
+      authorization: { executable: fixture.approvedExecutable },
+    });
+    await platform.launch({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      deadlineUnixMs: Date.now() + 60000,
+      role: "player_host",
+      authorization: fixture.launchFacts,
+    });
+    await platform.contain({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      role: "player_host",
+    });
+    // The attempt is over. This is the production seam an explicit endgame and the next
+    // launch press both reach, and it closes only this attempt's authenticated session.
+    await platform.settle({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      launchedRoles: ["player_host"],
     });
     return;
   }

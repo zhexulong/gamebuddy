@@ -654,6 +654,12 @@ type PendingResponse = {
 class GuardianSessionClient implements DesktopGuardianSession {
   #closed = false;
   #lost: (() => void) | undefined;
+  /**
+   * Why the session ended: the other end going away (`true`) or this side ending the
+   * attempt it was driving (`false`). It is what a watcher registered AFTER the fact is
+   * told, so a close this side initiated can never be read as an owner that vanished.
+   */
+  #endedByLoss = false;
   #buffer = Buffer.alloc(0);
   #waiter: PendingResponse | undefined;
   #roleExit: ((exit: GuardianRoleExit) => void) | undefined;
@@ -670,14 +676,20 @@ class GuardianSessionClient implements DesktopGuardianSession {
   }
 
   /**
-   * Registers the one watcher the session's loss drives. EOF, a socket error or
-   * an explicit close all end the session the same way, and all of them mean the
-   * owner on the other end is gone: nothing may be written to it again. A session
-   * already closed reports the loss immediately rather than dropping it.
+   * Registers the one watcher a session's LOSS drives.
+   *
+   * A loss is the other end going away - EOF, a socket error, a frame that can no
+   * longer be written or read, an acknowledgement that never came - and it is the only
+   * evidence this process has that the Desktop which started it is gone: nothing may be
+   * written to it again. A session this side closes is NOT that. The composition closes
+   * the session an attempt ran on at the end of the attempt - an explicit endgame, or
+   * the next launch press - while the Desktop still holds the one-instance pipe for the
+   * next one (ADR-0015 §3: one session per attempt), so a close this side initiates ends
+   * the attempt and reaches no watcher, including one registered afterwards.
    */
   onLost(callback: () => void): void {
     if (this.#closed) {
-      callback();
+      if (this.#endedByLoss) callback();
       return;
     }
     this.#lost = callback;
@@ -758,8 +770,16 @@ class GuardianSessionClient implements DesktopGuardianSession {
       }
     });
   }
+  /**
+   * Ends this attempt's session on purpose.
+   *
+   * The attempt is over; the Desktop is not. It goes through the one teardown path with
+   * the loss report switched off, so the connection is destroyed and a pending operation
+   * is refused exactly like any other closure, but the one watcher that would make this
+   * process ask to die is never called.
+   */
   async close(): Promise<void> {
-    this.fail();
+    this.fail(false);
   }
 
   async hello(): Promise<void> {
@@ -879,14 +899,23 @@ class GuardianSessionClient implements DesktopGuardianSession {
     }
   }
 
-  private fail(): void {
+  /**
+   * The one teardown of a session, for both ways a session can end: the other end went
+   * away, or this side closed the attempt it was driving.
+   *
+   * `loss` is which of the two this is, and it is the caller's own fact - EOF and socket
+   * errors are a loss, `close()` is not. It is a parameter rather than a field read here
+   * so the teardown itself stays one path with one meaning.
+   */
+  private fail(loss = true): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#endedByLoss = loss;
     this.socket.destroy();
     const waiter = this.#waiter;
     this.#waiter = undefined;
     if (waiter?.timer !== undefined) clearTimeout(waiter.timer);
-    const lost = this.#lost;
+    const lost = loss ? this.#lost : undefined;
     this.#lost = undefined;
     waiter?.reject(unavailable("guardian_session_closed"));
     // After the waiter settles, so an operation this loss interrupted reports its
