@@ -583,6 +583,39 @@ const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string
  */
 const DESTINATION_DISCOVERY_ACTION_ID = "find_destination";
 
+/**
+ * The closed SHAPES a plan argument can be, spelled out where the caller reads them.
+ *
+ * A type NAME is not a shape. `stardew_plan_shape` answered `navigate_to_destination` with
+ * `{"name":"destination","type":"destination_selector","required":true}` and no description at all, while every refusal
+ * spelled `destination_selector[one_of:label,ref]` - four words that never say `kind`. Measured `round75`: she answered it
+ * three ways (a run handle, a bare label, the object `find_destination` had just handed her in `candidates[].destination`)
+ * and read back `got:string(dr1_...)`, `got:string()` and `got:object`. None of the three says which keys go together.
+ *
+ * The keys are the Host protocol's, read once by `readDestinationSelector`; the worked values printed here are checked
+ * against that one reader by `body-program-argument-answer.test.ts`, because a description that drifted from the reader
+ * would teach a shape the door refuses - worse than the bare name it replaces.
+ */
+type PlanClosedArgumentShape = Readonly<{
+  /** The keys each arm carries, in the order a refusal names them. */
+  arms: readonly (readonly string[])[];
+  /** What the shape answer says: every arm as a caller writes it, and where a real one comes from. */
+  description: string;
+}>;
+
+const PLAN_CLOSED_ARGUMENT_SHAPES: Readonly<Record<string, PlanClosedArgumentShape>> = Object.freeze({
+  destination_selector: Object.freeze({
+    arms: Object.freeze([Object.freeze(["kind", "label"]), Object.freeze(["kind", "ref"])]),
+    description:
+      'One place, named one way: {"kind":"label","label":"Mine"} or ' +
+      `{"kind":"ref","ref":"dr1_AAAAAAAAAAAAAAAAAAAAAA"}. ${DESTINATION_DISCOVERY_ACTION_ID} answers both in ` +
+      "candidates[].destination, and the object it returns is accepted here as it comes.",
+  }),
+});
+
+/** How many keys of an object argument a refusal quotes back, so a wide record cannot spend the answer on its own shape. */
+const PLAN_RECEIVED_MAX_KEYS = 6;
+
 /** How many rows of one family are sampled when deriving the fields it publishes. */
 const PLAN_SOURCE_ROWS_SAMPLED = 4;
 
@@ -599,7 +632,7 @@ const PLAN_SOURCE_MAX_FIELDS = 24;
  */
 const PLAN_SOURCE_MATCH_FLOOR = 0.6;
 
-/** How much of a value the script passed is quoted back in a refusal, and it is quoted as printable ASCII only. */
+/** How much of a value the script passed is quoted back in a refusal, in code points so a bound cannot split a character. */
 const PLAN_REASON_VALUE_CHARS = 24;
 
 /** How many actions one unknown-argument refusal names when the name it refused IS declared somewhere else. */
@@ -714,9 +747,7 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
         type: argument.type,
         required: true as const,
         ...(argument.enum === undefined ? {} : { enum: Object.freeze([...argument.enum]) }),
-        // Carried through because it is the reason `plan_shape` answers better than a name can: the Mod says what the
-        // argument means, and an absent description stays absent rather than becoming an empty string.
-        ...(argument.description === undefined ? {} : { description: argument.description }),
+        ...planArgumentDescription(argument),
       }),
     );
     return declared.every((argument) => argument.name.length > 0 && argument.type.length > 0) ? declared : undefined;
@@ -730,10 +761,25 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
         type: declared.type,
         required: true as const,
         ...(declared.enum === undefined ? {} : { enum: Object.freeze([...declared.enum]) }),
-        ...(declared.description === undefined ? {} : { description: declared.description }),
+        ...planArgumentDescription(declared),
       }),
     ),
   );
+}
+
+/**
+ * What a shape answer says about one argument: the Mod's own words, and - for a closed shape - the arms themselves.
+ *
+ * The Mod's description is carried through because it is what the argument MEANS; the closed shape is added because no
+ * description of a selector can be copied and called with, and the arms are the part that is read as a shape rather than
+ * as prose. An argument the surface describes and this compiler does not shape keeps the Mod's words alone.
+ */
+function planArgumentDescription(
+  declared: Readonly<{ type: string; description?: string }>,
+): Readonly<{ description?: string }> {
+  const closed = PLAN_CLOSED_ARGUMENT_SHAPES[declared.type]?.description;
+  if (closed === undefined) return declared.description === undefined ? {} : { description: declared.description };
+  return { description: declared.description === undefined ? closed : `${closed} ${declared.description}` };
 }
 
 /** The facts a later program node may bind to this action's output, exactly as the Mod declared them. */
@@ -1817,7 +1863,10 @@ function planArgumentOwners(actions: readonly PublishedPlanAction[]): ReadonlyMa
  * This is half of every argument refusal's answer. The other half is `planArgumentSource`.
  */
 function planArgumentExpectation(declaration: PlanArgumentShape): string {
-  if (declaration.type === "destination_selector") return "destination_selector[one_of:label,ref]";
+  // A closed shape names its ARMS, one key list per arm: `kind+label` is the arm she could not read out of
+  // `one_of:label,ref`, and it is the half of every refusal that says what to write.
+  const closed = PLAN_CLOSED_ARGUMENT_SHAPES[declaration.type];
+  if (closed !== undefined) return `${declaration.type}[one_of:${closed.arms.map((arm) => arm.join("+")).join(",")}]`;
   // A tile coordinate and a backpack index are both `integer` on the wire and both refuse a fractional value, which is
   // the fact `travel({ x: 12.5 })` needed and `argument_not_canonical` did not state. WHICH integers are legal belongs to
   // the action's own bounds, and those are checked where they are declared: the Mod's registry (`transitions declare the
@@ -2003,8 +2052,9 @@ function planArgumentSource(action: PublishedPlanAction, snapshot: Snapshot, arg
  * What the script ACTUALLY passed, in one bounded word.
  *
  * `travel({ x: 12.5 })` was refused `argument_not_canonical:travel.x` and nothing said the value was a float: the model
- * could not tell a rounding slip from a wrong field, from the wrong action. Printable ASCII only and bounded, because a
- * value the model wrote must not be able to forge a line in a log or spend the turn's context.
+ * could not tell a rounding slip from a wrong field, from the wrong action. So the value is named - bounded to one line
+ * and stripped of invisible characters, which is what keeps a value the model wrote from forging a log line or spending
+ * the turn's context - but it is named rather than described, which is the half this answer used to lose.
  */
 function planReceivedValue(value: unknown): string {
   if (value === null) return "null";
@@ -2016,8 +2066,16 @@ function planReceivedValue(value: unknown): string {
       return `string(${planBoundedReasonText(value)})`;
     case "boolean":
       return `boolean(${String(value)})`;
-    case "object":
-      return "object";
+    case "object": {
+      // WHICH KEYS, because `object` answered nothing: the object `find_destination` hands back was refused by a word that
+      // names neither the arm it carried nor the key the door wanted, so the one correction worth making was invisible.
+      const keys = Object.keys(value as Readonly<Record<string, unknown>>)
+        .slice(0, PLAN_RECEIVED_MAX_KEYS)
+        .map((key) => planBoundedReasonText(key))
+        .sort()
+        .join(",");
+      return keys.length === 0 ? "object{}" : `object{${keys}}`;
+    }
     case "undefined":
       return "missing";
     default:
@@ -2026,8 +2084,15 @@ function planReceivedValue(value: unknown): string {
 }
 
 function planBoundedReasonText(value: string): string {
-  const printable = value.replace(/[^\u0020-\u007e]/gu, "");
-  return printable.length > PLAN_REASON_VALUE_CHARS ? `${printable.slice(0, PLAN_REASON_VALUE_CHARS)}...` : printable;
+  // IT KEPT PRINTABLE ASCII ONLY, so `皮埃尔的杂货店` was deleted character by character and the refusal said
+  // `got:string()` - the same words as a value she never sent (measured `round75`). A value is quoted in the language it
+  // was written in. INVISIBLE characters are still dropped: they cannot be read, and a right-to-left override inside a log
+  // line can make a refusal say something nobody wrote. `<empty>` and `<invisible>` are facts about the ARGUMENT, kept
+  // apart from each other and from a formatter that produced nothing.
+  const readable = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+  if (readable.length === 0) return value.length === 0 ? "<empty>" : `<invisible ${String([...value].length)}>`;
+  const points = [...readable];
+  return points.length > PLAN_REASON_VALUE_CHARS ? `${points.slice(0, PLAN_REASON_VALUE_CHARS).join("")}...` : readable;
 }
 
 /**
