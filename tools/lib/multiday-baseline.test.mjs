@@ -21,6 +21,7 @@ import {
   NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
+  reconcileDaysWithTheWorld,
   WAIT_ROLLOVER_MENUS,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
@@ -1152,12 +1153,20 @@ test("a pass-out the world published is counted and named, and is not given to t
   assert.equal(result.nightWitness, "world", "the attribution came from the world's facts, and says so");
   assert.equal(result.passOutNights, 1, "the engine took one night, and the world said so");
   assert.deepEqual(result.worldNightEndings, endings, "the night's own cause travels with the verdict");
-  // The night the pass-out ended (day 6, opened by `day_started_day_6`) came AFTER both recorded nights: record 2's
-  // night ended on day 6 of the month and crossed into `day_started_day_6`. A mapping that gave the pass-out to record
-  // 2 would state that a night which ended 880 s earlier was a pass-out.
+  // The night the pass-out ended (day 6 of the month, opened by `day_started_day_6`) came AFTER both recorded nights:
+  // record 2's night ended on day 6 of the month and crossed into `day_started_day_6`. A mapping that gave the pass-out to
+  // record 2 would state that a night which ended 880 s earlier was a pass-out.
+  //
+  // THE DAY IN THE FINDING IS A `dayOfMonth`, the same number the records carry. The fact says `TotalDays 6`, which is day
+  // 7 of the month; printing the raw total here named a day no record could be looked up by.
   assert.ok(
-    codes(result).includes("world_night_not_recorded:6:pass_out"),
+    codes(result).includes(`a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_PASS_OUT}:7`),
     `a night in no record must be named; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.deepEqual(
+    { ...result.worldNights },
+    { examined: 1, recorded: 0, missing: 1, watched: 2 },
+    "the gate prints its own population: one ending, none recorded, two nights the watcher stood over",
   );
   assert.equal(result.unobservedNights, 2, "and neither recorded night is attributed to the engine by it");
   // The world moved a third time, and the count says so: two `day_started` facts plus the pass-out's own new day.
@@ -1201,7 +1210,10 @@ test("a world ending decides the recorded night it names, and contradicts a clai
     !codes(named).includes("night_mechanism_unobserved"),
     `the world said how the night ended; got ${JSON.stringify(codes(named))}`,
   );
-  assert.ok(!codes(named).some((code) => code.startsWith("world_night_not_recorded")), "the night IS recorded");
+  assert.ok(
+    !codes(named).some((code) => code.startsWith("a_night_the_world_had_is_not_missing_from_the_record")),
+    "the night IS recorded",
+  );
 
   // A record claiming her own sleep for a night the world says the engine took is a DISAGREEMENT between two
   // witnesses, and it is named with both sides instead of one of them silently winning.
@@ -1422,5 +1434,79 @@ test("the world night reader refuses a fact whose id carries no day", () => {
       { worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: "night_ended_pass_out_day_6" } },
     ]).length,
     1,
+  );
+});
+
+test("a night the world ended after the watcher stopped is recorded with its cause, and the two counts stay apart", () => {
+  // round76's own ledger: `crossings: 2` with two records both attributed to her own sleep, `worldDaysCrossed: 3`, and
+  // `worldNightEndings: [{ day: 6, cause: "pass_out" }]`. The third night really happened - it ended inside the CLOSING
+  // day's turn, after `runMultiDayLoop` had already stopped watching - so the record had to be reconciled from the world
+  // rather than counted from a watcher that was not there.
+  const watchedRecords = [
+    DAY({
+      day: 1,
+      cause: NIGHT_CAUSE_SLEEP,
+      after: { dayOfMonth: 6, dayBefore: 5, seasonIndex: 0 },
+      terminal: { evidence: EVIDENCE({ dayBefore: 4, daysBefore: 5, dayAfter: 5, daysAfter: 6 }) },
+    }),
+    DAY({
+      day: 2,
+      cause: NIGHT_CAUSE_SLEEP,
+      after: { dayOfMonth: 7, dayBefore: 6, seasonIndex: 0 },
+      terminal: { evidence: EVIDENCE({ dayBefore: 5, daysBefore: 6, dayAfter: 6, daysAfter: 7 }) },
+    }),
+  ];
+  const facts = [
+    { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_5" },
+    { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_6" },
+    { type: "world_fact", worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_6" },
+    { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_7" },
+  ];
+  const worldEndings = worldNightEndingsFromFacts(facts);
+  const reconciliation = reconcileDaysWithTheWorld({ dayRecords: watchedRecords, worldNightEndings: worldEndings });
+  assert.equal(reconciliation.watched, 2, "the loop stood over two nights, and that number is reported on its own");
+  assert.equal(reconciliation.recorded, 3, "the ledger covers the third, which the world ended");
+  assert.equal(reconciliation.missing, 1, "one night was reconciled rather than watched");
+  const appended = reconciliation.records[2];
+  assert.equal(appended.watched, false, "the record says nobody watched it");
+  assert.equal(
+    appended.cause,
+    NIGHT_CAUSE_PASS_OUT,
+    "and says how it ended: a night nobody watched and cannot attribute is two silences",
+  );
+  assert.equal(appended.endedDayOfMonth, 7, "the ending day is a `dayOfMonth`, the base every other record uses");
+  assert.equal(appended.day, null, "the loop's day numbers are its own iterations, and this night has none");
+
+  const result = assessMultiDayBaseline({
+    dayRecords: reconciliation.records,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(facts),
+    worldNightEndings: worldEndings,
+  });
+  assert.ok(
+    !codes(result).some((code) => code.startsWith("a_night_the_world_had_is_not_missing_from_the_record")),
+    `the reconciled night IS recorded; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.ok(
+    !codes(result).some((code) => code.startsWith("day_count_disagrees_with_the_world")),
+    `three records and three world days agree; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.equal(result.passOutNights, 1, "the night the engine took is counted once, from the record it now has");
+  assert.deepEqual(
+    { ...result.worldNights },
+    { examined: 1, recorded: 1, missing: 0, watched: 2 },
+    "and the gate prints its population: nothing missing, over two nights the watcher stood over",
+  );
+
+  // THE SAME NIGHT, UNRECONCILED, IS STILL RED: reconciliation is the fix, not a rule that stopped firing.
+  const skipped = assessMultiDayBaseline({
+    dayRecords: watchedRecords,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(facts),
+    worldNightEndings: worldEndings,
+  });
+  assert.ok(
+    codes(skipped).includes(`a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_PASS_OUT}:7`),
+    `a night nothing recorded must be named by cause and by day; got ${JSON.stringify(codes(skipped))}`,
   );
 });

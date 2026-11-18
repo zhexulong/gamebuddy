@@ -152,8 +152,16 @@ const clockText = (bedTime) => (Number.isInteger(bedTime) ? String(bedTime) : "a
  * engine's own 26:00 pass-out crosses the day (`2026-11-05T11-37-35-764Z-multiday_routine` recorded `crossings 0` for
  * a night `night_ended_pass_out_day_4` crossed).
  */
-export function summarizeCrossings({ crossings, requestedCrossings, nights = [] } = {}) {
-  const head = `crossings ${String(crossings)} of ${String(requestedCrossings)}`;
+export function summarizeCrossings({ crossings, requestedCrossings, nights = [], watched = null } = {}) {
+  const reconciled = watched === null ? 0 : crossings - watched;
+  const head =
+    `crossings ${String(crossings)} of ${String(requestedCrossings)}` +
+    // WHAT THE NUMBER IS MADE OF. A ledger that covers a night nobody watched must say so where the count is read: the
+    // alternative is a `crossings 3` that hides which of the three stood in front of a watcher, which is the same defect
+    // as a count that hides its cause.
+    (reconciled > 0
+      ? ` (${String(watched)} watched · ${String(reconciled)} reconciled from the world's own night ending)`
+      : "");
   const failed = nights.find((night) => sleepVerdictCase(night?.nightVerdict?.reasonCode) !== null);
   if (failed === undefined) {
     return crossings === requestedCrossings

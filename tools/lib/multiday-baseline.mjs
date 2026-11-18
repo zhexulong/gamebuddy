@@ -110,6 +110,18 @@ export function dayOfMonthForTotalDays(totalDays) {
   return (Math.trunc(totalDays) % DAYS_PER_SEASON) + 1;
 }
 
+/**
+ * The day a `night_ended_*` fact names, in the ONE base this ledger uses.
+ *
+ * The Mod mints `night_ended_pass_out_day_<TotalDays>` (`Sensory/StardewSalientEventHooks.cs:64-75`), while every day a
+ * `dayRecords` entry carries is a `dayOfMonth` (`after.dayBefore`). Converting at the point of comparison but printing
+ * the raw `TotalDays` in the finding is how `world_night_not_recorded:6` came to name a day nobody could look up: 6 was
+ * the engine's own count and the record it was missing was day 7 of the month. One number, one base, converted once.
+ */
+export function worldEndingDayOfMonth(ending) {
+  return isPlainObject(ending) ? dayOfMonthForTotalDays(ending.day) : null;
+}
+
 /** The ENGINE took the night: `Game1.PassOutNewDay()` calls `NewDay(0f)` itself. */
 export const NIGHT_CAUSE_PASS_OUT = "pass_out";
 
@@ -242,7 +254,7 @@ export function lifecycleDisagreement({ lifecycle, worldCrossed } = {}) {
  * event, so the crossing is kept - with the lifecycle's word published beside it as `lifecycleDisagreement` - and the
  * failure stays the night's answer only when the calendar agrees that nothing crossed.
  */
-export function classifyNight({ terminal, after }) {
+export function classifyNight({ terminal, after, worldEnding = null } = {}) {
   const crossed = calendarCrossed(after);
   if (!isPlainObject(terminal)) {
     if (crossed === true) {
@@ -251,6 +263,26 @@ export function classifyNight({ terminal, after }) {
         witness: "calendar",
         reasonCode: null,
         facts: Object.freeze({ day_before: String(after.dayBefore), day_of_month: String(after.dayOfMonth) }),
+      });
+    }
+    // A THIRD WITNESS: THE WORLD'S OWN SAYING THAT A NIGHT ENDED.
+    //
+    // The Mod mints `night_ended_<cause>_day_<n>` while the clock is still at 26:00
+    // (`StardewSalientEventHooks.TryEmitNightEndedPassOut`), and `Game1.PassOutNewDay()` calls `NewDay` itself - so the
+    // fact is the engine crossing a night, which is a crossing whether or not a watcher was standing. Measured
+    // 2026-11-18 (`round76`): the pass-out happened inside the CLOSING day's turn, after the night watcher had stopped,
+    // so the night had no record at all and the ledger read `crossings 2` beside three world days.
+    //
+    // It carries no lifecycle edges because there was no lifecycle to publish them - the same reason the calendar branch
+    // above carries none, and why `advance` is `undefined` here rather than a zero.
+    if (isPlainObject(worldEnding) && typeof worldEnding.cause === "string") {
+      return Object.freeze({
+        advanced: true,
+        witness: "world",
+        reasonCode: null,
+        cause: worldEnding.cause,
+        expectedDayOfMonth: dayOfMonthForTotalDays(worldEnding.day + 1),
+        facts: Object.freeze({ day_of_month: String(worldEndingDayOfMonth(worldEnding)) }),
       });
     }
     return Object.freeze({ advanced: false, reasonCode: "night_terminal_missing", facts: Object.freeze({}) });
@@ -415,6 +447,74 @@ export function worldNightEndingsFromFacts(facts) {
 }
 
 /**
+ * A NIGHT THE WATCHER NEVER SAW, as a record the baseline can judge.
+ *
+ * The loop watches the nights it was asked for; the CLOSING day's turn can still end in a night, and by then no watcher
+ * is running (`runMultiDayLoop`). Measured 2026-11-18 (`round76`): the pass-out landed inside that closing turn, so the
+ * ledger read `crossings: 2` beside three world days while `round-verdict` counted the third from the run's own evidence.
+ *
+ * `watched: false` and the CAUSE are the two things this record exists to say. A night nobody watched and cannot say how
+ * it ended is two silences, and `day` is `null` rather than invented: the loop's day numbers are its own iterations and
+ * this night has none.
+ */
+export function worldWitnessedNightRecord(ending) {
+  return Object.freeze({
+    day: null,
+    terminal: null,
+    after: null,
+    menus: Object.freeze([]),
+    nextDayAccomplishedActionIds: Object.freeze([]),
+    watched: false,
+    cause: ending.cause,
+    passedOut: ending.cause === NIGHT_CAUSE_PASS_OUT,
+    // THE SAME NUMBER THE WATCHED RECORDS CARRY: a `dayOfMonth`, converted from the fact's `TotalDays` here and nowhere
+    // else, so `nightEndedDayOfMonth` and the finding that names a missing night agree about which day it was.
+    endedDayOfMonth: worldEndingDayOfMonth(ending),
+  });
+}
+
+/**
+ * EVERY NIGHT THIS RUN HAD, as the ledger of it: the ones the watcher saw, plus the ones only the world witnessed.
+ *
+ * The two counts are reported SEPARATELY and never merged into one number, because they answer different questions:
+ * `watched` is how many nights the loop stood over, and `recorded` is how many the ledger covers. A reader who sees
+ * `recorded 3 · watched 2` knows the third night was reconciled rather than observed, and a reader who sees only
+ * `crossings 3` does not.
+ *
+ * A night is reconciled only when NO record's own ending day is the day the world ended it: the world's ending for a
+ * night the watcher already recorded is that record's cause, which the baseline matches by day and which must not be
+ * added twice.
+ */
+export function reconcileDaysWithTheWorld({ dayRecords = [], worldNightEndings = null } = {}) {
+  if (!Array.isArray(dayRecords)) {
+    return Object.freeze({ records: Object.freeze([]), watched: 0, examined: null, recorded: 0, missing: null });
+  }
+  const endings = Array.isArray(worldNightEndings) ? worldNightEndings : null;
+  const watched = dayRecords.length;
+  if (endings === null) {
+    return Object.freeze({ records: dayRecords, watched, examined: null, recorded: watched, missing: null });
+  }
+  const covered = new Set(
+    dayRecords
+      .map((record) =>
+        isFiniteNumber(record?.endedDayOfMonth) ? record.endedDayOfMonth : nightEndedDayOfMonth(null, record),
+      )
+      .filter(isFiniteNumber),
+  );
+  const open = endings.filter((ending) => {
+    const day = worldEndingDayOfMonth(ending);
+    return day !== null && !covered.has(day);
+  });
+  return Object.freeze({
+    records: Object.freeze([...dayRecords, ...open.map(worldWitnessedNightRecord)]),
+    watched,
+    examined: endings.length,
+    recorded: watched + open.length,
+    missing: open.length,
+  });
+}
+
+/**
  * The calendar day (1..28) the night ENDED on, from whichever witness carried the crossing.
  *
  * Two shapes, one question. A receipt-witnessed night carries the engine's own totals, so its `dayBefore` is a
@@ -424,9 +524,14 @@ export function worldNightEndingsFromFacts(facts) {
  * wrong night - which is worse than saying nothing.
  */
 function nightEndedDayOfMonth(night, record) {
+  // THE WORLD'S OWN READING FIRST. A record's `after.dayBefore` is the `dayOfMonth` the watch began on - the world's own
+  // number - and the receipt's `day_before` is a `TotalDays` that has to be converted before it means anything. They
+  // agreed by construction until a run whose first night the receipt called day 4 while the world called it day 5, and
+  // two spellings of one day is how a night gets attributed to its neighbour.
+  if (isFiniteNumber(record?.endedDayOfMonth)) return record.endedDayOfMonth;
+  if (isFiniteNumber(record?.after?.dayBefore)) return record.after.dayBefore;
   if (isFiniteNumber(night?.dayBefore)) return dayOfMonthForTotalDays(night.dayBefore);
-  const dayBefore = record?.after?.dayBefore;
-  return isFiniteNumber(dayBefore) ? dayBefore : null;
+  return null;
 }
 
 /**
@@ -652,7 +757,17 @@ export function assessMultiDayBaseline({
       violations.push(violation("day_record_not_object", where));
       continue;
     }
-    const night = classifyNight({ terminal: record.terminal, after: record.after });
+    const night = classifyNight({
+      terminal: record.terminal,
+      after: record.after,
+      // A reconciled night names its own ending day, so the world's fact is found BEFORE the night is classified rather
+      // than after it: a night nobody watched has no receipt and no calendar inside the record, and the fact is its only
+      // witness.
+      worldEnding:
+        worldEndings === null || !isFiniteNumber(record.endedDayOfMonth)
+          ? null
+          : (worldEndings.find((entry) => worldEndingDayOfMonth(entry) === record.endedDayOfMonth) ?? null),
+    });
     if (!night.advanced) {
       // `where` NAMES A FIELD THE RECORD ACTUALLY HAS.
       //
@@ -696,8 +811,8 @@ export function assessMultiDayBaseline({
     const worldEnding =
       worldEndings === null || endedDayOfMonth === null
         ? undefined
-        : worldEndings.find((entry) => dayOfMonthForTotalDays(entry.day) === endedDayOfMonth);
-    if (worldEnding !== undefined) recordedEndedDays.add(dayOfMonthForTotalDays(worldEnding.day));
+        : worldEndings.find((entry) => worldEndingDayOfMonth(entry) === endedDayOfMonth);
+    if (worldEnding !== undefined) recordedEndedDays.add(worldEndingDayOfMonth(worldEnding));
     const cause = worldEnding === undefined ? claimed : worldEnding.cause;
     // A DISAGREEMENT IS NAMED, NEVER SILENCED. A record whose receipt says her sleep crossed the night, beside a world
     // fact saying the engine passed her out on it, is one of the two being wrong - and a verdict that silently prefers
@@ -802,11 +917,11 @@ export function assessMultiDayBaseline({
     // What a calendar night must prove instead is what the calendar can prove: that the day actually advanced, which
     // `classifyNight` already decided (`advanced: true`) before this code runs. `night_terminal_missing` remains the
     // violation for a night nobody witnessed at all.
-    const witnessedByCalendar = night.witness === "calendar";
-    if (!witnessedByCalendar && night.facts.saved_observed !== "true") {
+    const witnessedWithoutALifecycle = night.witness === "calendar" || night.witness === "world";
+    if (!witnessedWithoutALifecycle && night.facts.saved_observed !== "true") {
       violations.push(violation("night_saved_edge_not_observed", `${where}.terminal.evidence.saved_observed`));
     }
-    if (!witnessedByCalendar && night.facts.day_started_observed !== "true") {
+    if (!witnessedWithoutALifecycle && night.facts.day_started_observed !== "true") {
       violations.push(
         violation("night_day_started_edge_not_observed", `${where}.terminal.evidence.day_started_observed`),
       );
@@ -907,10 +1022,33 @@ export function assessMultiDayBaseline({
   // opened the next day, while the two day records covered the nights that had already crossed - so the pass-out night
   // belonged to no record, `passOutNights` read 0, and nothing in the assessment mentioned it. Its cause still counts
   // toward `passOutNights` here, because the count is a statement about the WORLD and not about the records.
+  //
+  // THE DAY IS A `dayOfMonth`, THE SAME NUMBER THE RECORDS CARRY. It used to print the fact's own `TotalDays`, so a
+  // reader comparing `a_night_the_world_had_is_not_missing_from_the_record:pass_out:6` against a record whose night ended
+  // on day 6 of the month was looking at two different bases - the engine's own count of days played, and the calendar.
+  // `round76`'s `worldNightEndings: [{ day: 6 }]` was a pass-out on day 7 of the month.
+  //
+  // THE GATE'S POPULATION IS EVERY WAY A DAY CAN END, and it is printed with all four numbers, because `0 missing`
+  // beside `examined 3` is a reading and `0 missing` alone is not.
+  let worldEndingsExamined = null;
+  let worldEndingsRecorded = null;
   for (const ending of worldEndings ?? []) {
-    if (recordedEndedDays.has(dayOfMonthForTotalDays(ending.day))) continue;
+    const day = worldEndingDayOfMonth(ending);
+    if (day !== null && recordedEndedDays.has(day)) continue;
     if (ending.cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
-    violations.push(violation(`world_night_not_recorded:${String(ending.day)}:${ending.cause}`, "worldNightEndings"));
+    violations.push(
+      violation(
+        `a_night_the_world_had_is_not_missing_from_the_record:${ending.cause}:${String(day)}`,
+        "worldNightEndings",
+      ),
+    );
+  }
+  if (worldEndings !== null) {
+    worldEndingsExamined = worldEndings.length;
+    worldEndingsRecorded = worldEndings.filter((ending) => {
+      const day = worldEndingDayOfMonth(ending);
+      return day !== null && recordedEndedDays.has(day);
+    }).length;
   }
   // THE POPULATION COMES FROM THE AUTHORITY, NOT FROM THE ASSESSOR'S OWN LOOP COUNT.
   //
@@ -964,6 +1102,15 @@ export function assessMultiDayBaseline({
     passOutCauses: Object.freeze(passOutCauses),
     worldDaysCrossed,
     dayCountWitness,
+    // EVERY WAY A DAY CAN END, AGAINST WHAT THE RECORD COVERS: the gate's own population, printed with the criterion so
+    // `0 missing` never travels alone. `watched` is how many records the loop stood over; the difference is the nights
+    // reconciled from the world's own ending, and it is a reading about the WATCH rather than about the run.
+    worldNights: Object.freeze({
+      examined: worldEndingsExamined,
+      recorded: worldEndingsRecorded,
+      missing: worldEndingsExamined === null ? null : worldEndingsExamined - worldEndingsRecorded,
+      watched: dayRecords.filter((record) => isPlainObject(record) && record.watched !== false).length,
+    }),
     // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
     // `null` when nobody supplied the facts (which is not "the world said nothing"). A reader must be able to see WHICH
     // night was called a pass-out, and `nightWitness` says whose answer that was.
@@ -1005,6 +1152,6 @@ const CHECKED_RULES = Object.freeze([
   "baseline_days_crossed_below_minimum",
   "day_count_disagrees_with_the_world",
   "night_cause_disagrees_with_the_world",
-  "world_night_not_recorded",
+  "a_night_the_world_had_is_not_missing_from_the_record",
   "first_night_shipping_menu_never_dismissed",
 ]);

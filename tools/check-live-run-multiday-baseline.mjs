@@ -329,8 +329,17 @@ function fixtureChecks() {
     "a_world_pass_out_is_counted_and_the_night_it_names_is_named",
     round39.passOutNights === 1 &&
       round39.nightWitness === "world" &&
-      codes(round39).includes("world_night_not_recorded:6:pass_out"),
+      codes(round39).includes("a_night_the_world_had_is_not_missing_from_the_record:pass_out:7"),
     `passOut=${String(round39.passOutNights)}:${codes(round39).join(",")}`,
+  );
+  check(
+    "a_night_the_world_had_is_not_missing_from_the_record_names_its_population",
+    // The gate prints `endings examined E · recorded R · missing M · watched W`: `0 missing` alone is not a reading.
+    round39.worldNights.examined === 1 &&
+      round39.worldNights.recorded === 0 &&
+      round39.worldNights.missing === 1 &&
+      round39.worldNights.watched === 2,
+    JSON.stringify(round39.worldNights),
   );
   check(
     "a_pass_out_the_day_starts_missed_still_counts_as_a_crossing",

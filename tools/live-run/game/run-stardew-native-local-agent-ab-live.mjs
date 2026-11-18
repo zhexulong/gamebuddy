@@ -49,6 +49,7 @@ import {
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
   parseReceiptEvidence,
+  reconcileDaysWithTheWorld,
   sleepPromisesNotTaken,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
@@ -5508,12 +5509,30 @@ try {
         );
       },
     });
+    // THE NIGHTS THIS RUN HAD, NOT ONLY THE NIGHTS THE LOOP STOOD OVER.
+    //
+    // `runMultiDayLoop` watches the nights it was asked for; the CLOSING day's turn can end in a night of its own, and by
+    // then no watcher is running. Measured 2026-11-18 (`round76`): the engine passed her out inside that closing turn, so
+    // `multiday.crossings` read 2 beside three world days while `round-verdict` counted the third from the run's own
+    // evidence - two honest numbers, one incomplete record. The Mod's `night_ended_*` fact is that night's witness, and
+    // `reconcileDaysWithTheWorld` is where it becomes a record carrying its cause and `watched: false`.
+    //
+    // THE TWO COUNTS ARE NEVER MERGED: `crossings` is what the LEDGER covers and `crossingsWatched` is how many of those
+    // stood in front of a watcher. A reader who sees both learns that one night was reconciled; a reader who sees only
+    // `crossings: 3` does not, and that is the difference between a record and a witness.
+    const worldEndings = worldNightEndingsFromFacts(factLog);
+    const worldDayStarts = worldDayStartsFromFacts(factLog);
+    const reconciliation = reconcileDaysWithTheWorld({
+      dayRecords: crossing.dayRecords,
+      worldNightEndings: worldEndings,
+    });
     // The crossings, in ONE line, published beside the count it explains and printed once so an operator reading the
     // run's log does not have to join `crossings 0` to a night record to learn whose night it was.
     const crossingSummary = summarizeCrossings({
-      crossings: crossing.daysCrossed,
+      crossings: reconciliation.recorded,
       requestedCrossings: MULTIDAY_CROSSINGS,
-      nights: crossing.dayRecords,
+      nights: reconciliation.records,
+      watched: reconciliation.watched,
     });
     console.error("MULTIDAY_CROSSINGS", crossingSummary);
     // What each day was asked for versus what was delivered, and the tasks it never asked for, in one line.
@@ -5571,12 +5590,12 @@ try {
     // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
     // clean `crossings: 2`.
     const assessment = assessMultiDayBaseline({
-      dayRecords: crossing.dayRecords,
+      dayRecords: reconciliation.records,
       daysRequested: MULTIDAY_CROSSINGS,
-      worldDayStarts: worldDayStartsFromFacts(factLog),
+      worldDayStarts,
       // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
       // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
-      worldNightEndings: worldNightEndingsFromFacts(factLog),
+      worldNightEndings: worldEndings,
       // The turn stream's own reading: a list is MEASURED, and an empty list is the measurement answering that no
       // promise was delivered. `null` would be "nobody looked", which is never the case here.
       sleepPromises: sleepPromises.readings,
@@ -5584,7 +5603,11 @@ try {
     // A lifecycle that reported a failure for a night the world crossed is stated on the run's own log, beside them.
     for (const entry of assessment.lifecycleDisagreements) console.error("MULTIDAY_LIFECYCLE", entry.code);
     multidayOutcome = Object.freeze({
-      crossings: crossing.daysCrossed,
+      // What the LEDGER covers: the nights a watcher stood over, plus the nights only the world witnessed.
+      crossings: reconciliation.recorded,
+      // THE OTHER NUMBER, ALWAYS BESIDE IT. `crossings 3` with no watched count is a claim about a watch that did not
+      // happen; `3 recorded · 2 watched` is a statement about both.
+      crossingsWatched: reconciliation.watched,
       // A day scope captured while the world was still arriving makes every later reading of that day suspect, so it
       // travels with the crossings instead of staying in this process.
       dayScopeCaptureProblem,
@@ -5620,7 +5643,7 @@ try {
       // What the turn stream said about going to bed, with its own population: the assessment names it as the cause of
       // a night the engine took, and this is the reading itself, so a promise that caused nothing is still visible.
       sleepPromises,
-      dayRecords: crossing.dayRecords,
+      dayRecords: reconciliation.records,
     });
   } else {
     // Time origin for chunked-presentation TTFB: the moment the agent turn is

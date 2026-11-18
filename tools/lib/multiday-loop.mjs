@@ -402,6 +402,14 @@ export function worldFactWake() {
  * N nights need N+1 day turns (the closing day the run works after the last night), and a day's work is what
  * proves the day it FOLLOWS was crossed by a companion that kept working. `crossNights` is validated against
  * the baseline's own window so the two cannot drift.
+ *
+ * WHAT `crossNights` COUNTS, AND WHAT THIS LOOP DOES NOT WATCH. It counts the nights the loop STANDS OVER. The closing
+ * day's turn can end in a night of its own, and no watcher is running by then - that is the loop's contract, not an
+ * omission, and it is written here because the next reader will otherwise wonder and one of them will "fix" it by
+ * watching a night the run was never asked for (which would publish `crossings 3 of 2`, an instrument exceeding its own
+ * request). A night the world ended after the watcher stopped is reconciled from the Mod's own `night_ended_*` fact by
+ * `reconcileDaysWithTheWorld` (`multiday-baseline.mjs`), which records it with its cause and keeps the watched count
+ * apart from the recorded one.
  */
 export async function runMultiDayLoop({ crossNights, dayTurn, nightWatch, onDay = () => {} } = {}) {
   if (!Number.isInteger(crossNights) || crossNights < MINIMUM_BASELINE_DAYS || crossNights > MAXIMUM_BASELINE_DAYS) {

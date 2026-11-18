@@ -1564,6 +1564,29 @@ const crossingsText =
 // that never reached the thing this criterion exists to check. `nightsNull` is not the signal either: it counts days whose
 // record carries no night, which is 1 on a single-day run for reasons that have nothing to do with attribution.
 const nightsJudged = assessment === null ? 0 : (assessment.daysCrossed ?? 0);
+
+/**
+ * EVERY WAY A DAY CAN END, AGAINST WHAT THE RECORD COVERS - printed with the numbers it is computed from.
+ *
+ * `0 missing` alone is not a reading any more than `0 violations` is: the gate has to say how many endings it examined,
+ * and how many of the recorded nights a watcher actually stood over. `round76` published `crossings: 2` beside three
+ * world days with nothing showing that one of the three nights was ended inside the CLOSING day's turn, after the night
+ * watcher had stopped - a record that covered it, and a watch that did not.
+ */
+function worldEndingsLine({ assessment, multiday }) {
+  const nights = assessment?.worldNights ?? null;
+  if (nights === null || !Number.isInteger(nights.examined))
+    return "world endings not_measured (no night_ended_* fact was read)";
+  const watched = Number.isInteger(multiday?.crossingsWatched) ? multiday.crossingsWatched : nights.watched;
+  const reconciled = Number.isInteger(multiday?.crossings) ? Math.max(0, multiday.crossings - watched) : null;
+  return (
+    `endings examined ${String(nights.examined)} · recorded ${String(nights.recorded)} · missing ${String(nights.missing)} · watched ${String(watched)}` +
+    (reconciled === null || reconciled === 0
+      ? ""
+      : ` (${String(reconciled)} recorded from the world's own night ending, not watched)`)
+  );
+}
+
 record(
   "4 night mechanism",
   assessment === null || nightsJudged === 0
@@ -1575,7 +1598,7 @@ record(
     ? "no assessment in result.json"
     : nightsJudged === 0
       ? `no night was crossed, so there is no mechanism to judge (daysCrossed=0, days recorded=${dayRecords.length})`
-      : `${crossingsText} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"}`,
+      : `${crossingsText} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"}  ${worldEndingsLine({ assessment, multiday: result.multiday })}`,
   crossings.timelinePath === null ? resultPath : `${resultPath} + ${crossings.timelinePath}`,
 );
 
