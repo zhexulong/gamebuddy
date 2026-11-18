@@ -101,8 +101,20 @@ public sealed class ExecutionTerminalUniquenessTests
             "the wait ends in exactly one answer, carrying the receipt the fact channel published");
     }
 
+    /// <summary>
+    /// THE SHAPE THAT ENDED round73 (and round66 before it), replayed: a request is parked because the body is held, the
+    /// bounded wait ends with the hold still in force, and the SAME request is dispatched afterwards and succeeds.
+    ///
+    /// <para>
+    /// The wait must answer the pending request and mint NOTHING: no receipt, no revision, no published fact. A request
+    /// that was never dispatched has not started, so the execution identity it would run under is unspent, and the
+    /// `succeeded` that arrives later is that execution's FIRST outcome - legal, and not the rewrite of a terminal the
+    /// Host refuses (`execution_receipt_replay_rejected:terminal_state_rewritten`, measured 2026-11-17 at revision 840
+    /// and again on 2026-11-20 at 252 s, 1.4 s apart, both under one executionId).
+    /// </para>
+    /// </summary>
     [Fact]
-    public void AParkedWaitThatExpiresPublishesOneTerminalFact_AndAnswersItOnce()
+    public void AWaitThatEndsWithoutDispatching_PublishesNothing_SoTheLaterSuccessIsTheExecutionsFirstOutcome()
     {
         Harness harness = Harness.Create("parked-expired", bodyHeld: true);
         harness.Dispatch(out _, out string parkedReason);
@@ -113,9 +125,23 @@ public sealed class ExecutionTerminalUniquenessTests
         harness.DrainDeferred();
         harness.Handler.Invocations.Should().Be(0, "an expired wait never dispatches");
 
+        // THE WAIT STATES NOTHING: no fact, no ledger row, and an answer on the refusal channel instead.
+        harness.PublishedCount().Should().Be(0,
+            "a receipt here would claim a terminal for an execution that never started, which is what the Host refuses");
+        harness.TryStoredReceipt(out _).Should().BeFalse(
+            "and it would spend the request's identity: the executionId it binds is the one its real outcome must carry");
+        harness.RefusalReasonCode().Should().NotBeNull("the pending request is still answered, as the hold that ended it");
+
+        // FALSIFIER: the hold clears, the SAME request is dispatched, and its success is the execution's ONE outcome.
+        harness.FreeTheBody();
+        harness.Dispatch(out BridgeEnvelope<BridgeReceipt>? response, out string reason);
+        reason.Should().Be("accepted", "the identity was never spent, so the request is a first dispatch rather than a replay");
+        response!.Payload.State.Should().Be("succeeded");
+        harness.Handler.Invocations.Should().Be(1, "the request that waited out the hold is the one that ran");
+
         harness.TerminalsOf(Harness.TerminalChannel.Published).Should().HaveCount(1,
-            "the named refusal that ends a wait is published once, like any other terminal");
-        harness.TerminalsOf(Harness.TerminalChannel.Answered).Should().HaveCount(1);
+            "one execution, one published outcome - and it is the success it really had");
+        harness.TerminalsOf(Harness.TerminalChannel.Published)[0].Should().EndWith(":terminal_action_succeeded:succeeded");
     }
 
     [Fact]
@@ -214,8 +240,26 @@ public sealed class ExecutionTerminalUniquenessTests
         /// <summary>The receipt the ledger holds for this request - what a replay, a query and a held request read.</summary>
         internal LocalExecutionReceipt StoredReceipt()
         {
-            this.Executions.TryGetReceipt(this.RequestId, out LocalExecutionReceipt stored).Should().BeTrue();
+            this.TryStoredReceipt(out LocalExecutionReceipt stored).Should().BeTrue();
             return stored;
+        }
+
+        /// <summary>Whether the ledger holds a receipt for this request at all.</summary>
+        internal bool TryStoredReceipt(out LocalExecutionReceipt stored) =>
+            this.Executions.TryGetReceipt(this.RequestId, out stored);
+
+        /// <summary>
+        /// The reason code of the refusal the wait answered with: the bridge's own error frame, or null when no refusal
+        /// was delivered. A refusal is not a receipt - it names the hold without claiming an execution state.
+        /// </summary>
+        internal string? RefusalReasonCode()
+        {
+            foreach (JsonElement frame in this.answeredFrames)
+            {
+                if (frame.GetProperty("type").GetString() != "error") continue;
+                return frame.GetProperty("payload").GetProperty("reasonCode").GetString();
+            }
+            return null;
         }
 
         /// <summary>Every receipt one channel carried, as `state/reasonCode` - progress INCLUDED, which is the point.</summary>

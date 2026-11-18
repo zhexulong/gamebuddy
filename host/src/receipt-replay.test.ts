@@ -116,3 +116,48 @@ test("receipt replay stores and returns an immutable deep snapshot", () => {
     evidence.trail.push("mutated_return");
   }, TypeError);
 });
+
+/**
+ * ROUND73'S PAIR, REPLAYED. On 2026-11-20 `round73` published `rejected/waiting_for_body:body_owned_by_movement` for one
+ * executionId and 1.4 s later `succeeded/weeds_cut` for the SAME one; this audit ended the session with
+ * `terminal_state_rewritten`, and it was right to - one execution has one outcome. `round66` had already died the same
+ * way, which is what makes this a class rather than an incident.
+ *
+ * The Mod's answer is that a WAIT IS NOT A RECEIPT: a request that was never dispatched has no execution state to
+ * state, so a parked wait contributes nothing here and the settlement that arrives afterwards is that execution's FIRST
+ * outcome. Both halves are pinned below, because only the pair says which side is at fault: a wait-shaped receipt is
+ * still refused by name, and the settlement a real dispatch mints is accepted.
+ */
+test("a wait is not a receipt, so the success that follows it is that execution's first outcome", () => {
+  const requestId = "6a9da5e044b141429de30b8f67fe1c32-req-r1c3";
+  const executionId = "6a9da5e044b141429de30b8f67fe1c32-exec-r1c3";
+  const wait: ExecutionReceipt = {
+    executionId,
+    requestId,
+    actionId: "cut_weeds",
+    state: "rejected",
+    reasonCode: "waiting_for_body:body_owned_by_movement",
+    revision: 840,
+    evidence: { detail: "owner_action=move_to_tile" },
+  };
+  const settled: ExecutionReceipt = {
+    executionId,
+    requestId,
+    actionId: "cut_weeds",
+    state: "succeeded",
+    reasonCode: "weeds_cut",
+    revision: 841,
+    evidence: { detail: "target=weed_45d650194571158e;removed=true" },
+  };
+
+  // STILL REFUSED, BY NAME: two terminals for one execution is exactly the shape that killed round66 and round73.
+  const replaying = new ReceiptReplayLedger();
+  assert.equal(replaying.apply(wait), null);
+  assert.equal(replaying.apply(settled), "terminal_state_rewritten");
+  assert.equal(replaying.receipt(executionId)?.state, "rejected", "the first terminal stands");
+
+  // AND THE SHAPE THE MOD NOW PUBLISHES: nothing for the wait, so the settlement is the first thing this audit sees.
+  const fixed = new ReceiptReplayLedger();
+  assert.equal(fixed.apply(settled), null);
+  assert.deepEqual(fixed.receipt(executionId), settled);
+});

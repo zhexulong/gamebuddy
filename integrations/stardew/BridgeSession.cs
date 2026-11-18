@@ -695,14 +695,31 @@ string? bodyProgramUnavailableReason = null,
     /// the bounded wait ended in. Called from the execution pump, on the game thread, once per parked request
     /// per tick.
     /// </summary>
-    private void ResolveHeldRequest(string requestId, LocalExecutionReceipt? refusal)
+    private void ResolveHeldRequest(string requestId, HeldRequestRefusal? refusal)
     {
         if (!this.heldExecutions.Remove(requestId, out HeldExecution? held))
             return;
         if (refusal is not null)
         {
-            if (TryToBridgeReceipt(refusal, out BridgeReceipt refusalReceipt, refusal.ActionId))
-                this.EnqueueHeldExecutionResponse(held, Reply("execution_receipt", held.Envelope.CorrelationId, refusalReceipt));
+            // A WAIT IS NOT AN OUTCOME. Nothing was dispatched, so this request has no execution state to publish: it
+            // never started, and the identity it would run under has minted no receipt. The pending request is answered
+            // on the bridge's refusal channel (`bridge_rejected:<hold code>`) - the same answer every other
+            // pre-dispatch refusal gives, and the one the Host reads as proof that no write happened - instead of with a
+            // `rejected` receipt.
+            //
+            // WHY THAT MATTERS, MEASURED TWICE. A receipt is a statement about an EXECUTION, and publishing one here
+            // claimed a terminal for an execution whose only artifact would be that terminal. The same request could
+            // still be dispatched afterwards (the Host re-issues it once the remedy says nothing was started, or the
+            // pump catches the body as it frees), and its real `succeeded` then arrived for an executionId the Host had
+            // already settled: `round66` ended that way at revision 840, and `round73` repeated it at 252 s with the
+            // identical pair - `rejected/waiting_for_body:body_owned_by_movement`, then `succeeded/weeds_cut` 1.4 s
+            // later under one executionId - and the Host's receipt-order audit ended the session with
+            // `execution_receipt_replay_rejected:terminal_state_rewritten`. The Host was right; the receipt was the lie.
+            //
+            // The hold's evidence has no field on the refusal channel, and that is the whole price of this: the code
+            // survives (it is derived from the owner code, so `waiting_for_body:body_owned_by_movement` still names what
+            // held the request) and the host's own remedy turns it into "re-issue the same request".
+            this.EnqueueHeldExecutionResponse(held, this.CreateError(held.Envelope.CorrelationId, refusal.ReasonCode));
             return;
         }
         // The body is free: the request is dispatched through the path it arrived on, so the freshness,
@@ -723,8 +740,8 @@ string? bodyProgramUnavailableReason = null,
             // The body went back to being held between this park resolving and the dispatch, so the admission parked it
             // AGAIN and answered with the marker. That is not a failure to report: the request is still being waited on,
             // and this bridge keeps owning it until a later tick dispatches it - or until the bounded window passes,
-            // which answers the SAME named refusal the caller would have seen without a park at all. Measured 2026-10-20
-            // (the hold gate): answering the marker here surfaced to the Host as
+            // which answers the SAME hold as a refusal (never as a receipt: nothing was started, so there is no execution
+            // state to state). Measured 2026-10-20 (the hold gate): answering the marker here surfaced to the Host as
             // `bridge_rejected:held_awaiting_actionability`.
             if (string.Equals(reasonCode, ExecutionManager.HeldRequestMarker, StringComparison.Ordinal))
             {
@@ -934,30 +951,34 @@ string? bodyProgramUnavailableReason = null,
         return this.TryDepositResult(generation, envelope.CorrelationId, envelope.Payload, out reasonCode);
     }
 
-    void IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
+    string? IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
     {
         // Every failure below used to return silently, and the consequence was measured on 2026-10-25: twenty-two nodes
         // sat in `AwaitingHostAdmission`, the Host received zero challenges, and nothing anywhere said why. The
         // companion diagnosed it from the outside - "the door action keeps sitting in awaiting_host_admission ... The
         // host isn't processing new actions" - while four separate return points inside this method were dropping the
         // frame without a word.
+        //
+        // They now return WHY. A challenge that never left this process is a node no Host answer can ever arrive for, so
+        // the pump settles that node `rejected/<code>` instead of leaving it awaiting for ever (measured `round73`:
+        // `send_skipped; reason=enqueue_failed; program=plan_311; node=n15`, a node dropped in silence).
         if (challenge is null)
         {
             this.Diagnose("send_skipped;reason=no_challenge");
-            return;
+            return "no_challenge";
         }
 
         if (!IsAuthenticated(this.authenticatedGeneration, out _) || this.pipeBridge is null)
         {
             this.Diagnose($"send_skipped;reason=not_authenticated_or_no_pipe;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "admission_not_delivered";
         }
 
         string correlationId = Guid.NewGuid().ToString("N");
         if (!TryCreateBodyNodeAdmissionChallenge(this.authenticatedGeneration, challenge, correlationId, out string json))
         {
             this.Diagnose($"send_skipped;reason=challenge_not_serialisable;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "challenge_not_serialisable";
         }
 
         this.pendingBodyProgramAdmissions[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = correlationId;
@@ -965,10 +986,11 @@ string? bodyProgramUnavailableReason = null,
         {
             this.pendingBodyProgramAdmissions.Remove((challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt));
             this.Diagnose($"send_skipped;reason=enqueue_failed;program={challenge.ProgramId};node={challenge.NodeId}");
-            return;
+            return "enqueue_failed";
         }
 
         this.Diagnose($"sent;program={challenge.ProgramId};node={challenge.NodeId};attempt={challenge.NodeAttempt}");
+        return null;
     }
 
     BodyNodeAdmissionResult? IBodyProgramAdmissionTransport.TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)

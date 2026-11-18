@@ -1,13 +1,4 @@
 {
   "schema": "gamebuddy-terminal-idle-publication-exemptions/v1",
-  "exemptions": [
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "RefuseHeldRequest",
-      "line": 1263,
-      "sites": 1,
-      "family": "controller",
-      "reason": "a request refused while it was still held was never dispatched, so it took no body ownership to release; the seam's own idle guard writes the same rule - it names every terminal state the enum declares, and this one is Rejected because nothing was dispatched to own the body"
-    }
-  ]
+  "exemptions": []
 }

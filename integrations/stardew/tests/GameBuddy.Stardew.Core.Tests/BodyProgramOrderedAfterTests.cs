@@ -289,13 +289,14 @@ public sealed class BodyProgramOrderedAfterTests
         private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), HostAdmissionGrant> grants = new();
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge)
+        public string? Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
             this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = new HostAdmissionGrant(
                 challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision,
                 challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs,
                 $"grant-{challenge.NodeId}-{challenge.NodeAttempt}", "attachment_01", "host-policy_01");
+            return null;
         }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
@@ -308,7 +309,11 @@ public sealed class BodyProgramOrderedAfterTests
     {
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
+        public string? Send(NodeAdmissionChallenge challenge)
+        {
+            this.Sent.Add(challenge);
+            return null;
+        }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) => null;
     }
 

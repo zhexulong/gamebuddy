@@ -391,15 +391,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <summary>
     /// The internal reason code of a parked request's acceptance. It never reaches the Agent: the bridge
     /// reads it as "the Mod is holding this request", answers nothing, and lets the tick pump answer when the
-    /// park resolves (with the dispatch's own receipt, or with the named refusal once the window passes).
+    /// park resolves (with the dispatch's own receipt, or with the hold's refusal once the window passes).
     /// </summary>
     internal const string HeldRequestMarker = "held_awaiting_actionability";
-
-    /// <summary>
-    /// The reason prefix for a park whose bounded wait ended with no bridge left to take the answer. Only that one
-    /// branch mints it: a park that a bridge can still answer keeps the admission's own hold code, byte for byte.
-    /// </summary>
-    internal const string HeldRequestNeverAnsweredPrefix = "held_request_never_answered:";
 
     /// <summary>
     /// The resolver the bridge registers so a parked request is answered on the path it arrived on. The wait itself is
@@ -573,14 +567,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     internal void PumpHeldRequests() => this.admission.PumpHeld();
 
-    private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
-    {
-        LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, reasonCode, this.revision, holdEvidence, ActionId: held.ActionId);
-        this.ledger.Remember(receipt);
-        LocalExecutionReceipt published = this.AddTrace(receipt);
-        return published;
-    }
-
     /// <summary>
     /// Records how long a request waited for the actor to become actionable, so the first receipt its
     /// dispatch stores carries <c>held_ms=&lt;n&gt;</c>: the trace then shows a hold rather than a mystery.
@@ -706,8 +692,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     LocalExecutionReceipt IAdmissionCommit.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) =>
         this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
 
-    LocalExecutionReceipt IAdmissionCommit.RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence) =>
-        this.RefuseHeldRequest(requestId, held, reasonCode, holdEvidence);
+    /// <summary>
+    /// A wait that ended with nobody left to answer it. Nothing is minted: the request was never dispatched, so it owes
+    /// no receipt, and the park's drain is the only fact here. It is reported at trace level under one marker so a
+    /// reader can tell "the wait ended with the bridge gone" from "the park was never pumped".
+    /// </summary>
+    void IAdmissionCommit.NoteUndeliveredHeldRequest(string requestId, HeldRequest held, string because) =>
+        this.monitor.Log(
+            $"[held-request-dropped] request={requestId};action={held.ActionId};execution={held.ExecutionId};hold={held.HoldCode};because={because}",
+            LogLevel.Trace);
 
     void IAdmissionCommit.SupersedeNightThatHasNotBegun(string incomingExecutionId) =>
         this.SupersedeNightThatHasNotBegun(incomingExecutionId);

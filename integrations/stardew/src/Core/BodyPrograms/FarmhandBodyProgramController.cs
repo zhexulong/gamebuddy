@@ -11,7 +11,20 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 /// </summary>
 public interface IBodyProgramAdmissionTransport
 {
-    void Send(NodeAdmissionChallenge challenge);
+    /// <summary>
+    /// Hands one node's admission challenge to the transport, and answers <see langword="null" /> when it took it.
+    ///
+    /// <para>
+    /// WHY A REFUSAL IS RETURNED AND NOT SWALLOWED. Measured `round73`: `send_skipped; reason=enqueue_failed;
+    /// program=plan_311; node=n15` sat in the SMAPI console while the node stayed `AwaitingHostAdmission` for ever - the
+    /// frame had never left this process, no Host answer could ever arrive for it, and nothing in the programme's
+    /// settlement counted it. The pump therefore has to learn the refusal HERE, where it still holds the exact challenge,
+    /// so the node ends in a NAMED outcome of its own instead of being dropped: `rejected/&lt;the transport's own code&gt;`.
+    /// </para>
+    /// </summary>
+    /// <returns>The refusal code, or <see langword="null" /> when the challenge was accepted for delivery.</returns>
+    string? Send(NodeAdmissionChallenge challenge);
+
     BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt);
 
     /// <summary>
@@ -272,6 +285,22 @@ public sealed class FarmhandBodyProgramController
     {
         while (true)
         {
+            // ONE NODE IN FLIGHT, ACROSS EVERY PROGRAMME. The body is one actor: a second admitted node - the first node
+            // of a plan submitted while another plan is mid-action, or an independent branch of the same graph - collides
+            // with the one already running and the collision is spent from BOTH sides. Measured `round73`: `plan_311`
+            // still had nodes when `plan_327` was submitted, the two programmes' nodes fought for one farmhand, and a
+            // node of the first was dropped by the outbound queue while the second's nodes re-routed underneath it.
+            //
+            // WHAT WAITING IS HERE: the node stays `Pending` and NOTHING IS MINTED for it. That is the only wait this
+            // vocabulary has that costs nothing: a durable admission starts the node's watchdog, so a node admitted into
+            // a busy body is a node that will later be settled `deadline_expired` for a wait it never got to start -
+            // a wait published as an outcome, one layer up. The gate therefore runs BEFORE the mint, exactly as the
+            // modal start gate above it does, and for the same reason.
+            if (this.ProgramWithNodeInFlight() is { } occupying)
+            {
+                this.DiagnoseStartHeldBehindProgram(programId, occupying);
+                return;
+            }
             // THE START GATE RUNS BEFORE THE MINT, and that ordering is the whole fix.
             //
             // A node whose action needs a free body must not be admitted while a modal holds the actor. The admission
@@ -300,9 +329,67 @@ public sealed class FarmhandBodyProgramController
             string attemptKey = AttemptKey(programId, started.Value!.NodeId, started.Value!.NodeAttempt);
             this.admissionAttachmentGenerations[attemptKey] = this.admission!.AttachmentGeneration;
             this.admissionChallenges[attemptKey] = started.Value!;
-            this.admission!.Send(started.Value!);
+            if (this.admission!.Send(started.Value!) is { } refusal)
+            {
+                // THE QUEUE'S REFUSAL IS THE NODE'S OUTCOME. The frame never left this process, so no answer can ever
+                // arrive for this attempt - and a node left `AwaitingHostAdmission` for that is a node dropped in
+                // silence: measured `round73`, `send_skipped; reason=enqueue_failed; program=plan_311; node=n15` in the
+                // SMAPI console, with nothing in the programme's settlement to count it.
+                this.SettleRefusedSend(programId, started.Value!, refusal);
+                if (!this.authority.IsLifecycleOpen) return;
+                continue;
+            }
             if (!this.authority.IsLifecycleOpen) return;
         }
+    }
+
+    /// <summary>
+    /// Settles one node whose admission challenge the transport refused to take, as `rejected/&lt;the transport's own
+    /// code&gt;` naming what happened, so the programme's settlement counts the node and the plan never claims work it
+    /// never queued.
+    ///
+    /// <para>
+    /// The code is the TRANSPORT's, not a word chosen here: only the transport knows whether the outbound queue was full,
+    /// whether there was no authenticated attachment to send on, or whether the frame could not be built at all. What the
+    /// controller contributes is the exact challenge - the rejection may only be recorded for the tuple it minted - and
+    /// the evidence sentence that says the frame never reached the Host.
+    /// </para>
+    /// </summary>
+    private void SettleRefusedSend(string programId, NodeAdmissionChallenge asked, string refusalCode)
+    {
+        string key = AttemptKey(programId, asked.NodeId, asked.NodeAttempt);
+        this.admissionChallenges.Remove(key);
+        this.admissionAttachmentGenerations.Remove(key);
+        this.Diagnose($"send_refused;program={programId};node={asked.NodeId};code={refusalCode}");
+        this.authority.TryRejectAdmission(
+            asked,
+            refusalCode,
+            $"transport={refusalCode};phases=send;delivered=false;node_attempt={asked.NodeAttempt}");
+    }
+
+    /// <summary>
+    /// The programme that already has a node in flight - awaiting its admission answer, or running its native effect -
+    /// or null when no node is in flight anywhere. Its own state is the answer to "may another node start": the farmhand
+    /// is one actor, so a second node would collide with this one rather than work beside it.
+    /// </summary>
+    private string? ProgramWithNodeInFlight()
+    {
+        foreach (BodyProgramJournalProgram program in this.authority.Snapshot.Programs)
+        {
+            if (program.State != BodyProgramState.Active) continue;
+            if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.Running))
+                return program.Program.ProgramId;
+        }
+        return null;
+    }
+
+    private void DiagnoseStartHeldBehindProgram(string programId, string occupying)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"state=pending;program={programId};held_by=body_program:{occupying};next_step=wait_for_that_node_to_settle";
+        if (this.diagnosticsLastStartHold.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastStartHold[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] node_waiting;{detail}");
     }
 
     /// <summary>
@@ -447,7 +534,8 @@ public sealed class FarmhandBodyProgramController
         }
         this.Diagnose($"admission_reasked;program={programId};node={node.NodeId};generation={current};askedOn={askedOn}");
         this.admissionAttachmentGenerations[key] = current;
-        this.admission!.Send(asked);
+        if (this.admission!.Send(asked) is { } refusedAgain)
+            this.SettleRefusedSend(programId, asked, refusedAgain);
     }
 
     /// <summary>

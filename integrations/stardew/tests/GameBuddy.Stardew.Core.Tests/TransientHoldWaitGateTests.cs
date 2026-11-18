@@ -325,8 +325,11 @@ public sealed class TransientHoldWaitGateTests
     {
         private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), HostAdmissionGrant> grants = new();
         public long AttachmentGeneration => 1;
-        public void Send(NodeAdmissionChallenge challenge) =>
+        public string? Send(NodeAdmissionChallenge challenge)
+        {
             this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = GrantFor(challenge);
+            return null;
+        }
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
             this.grants.TryGetValue((programId, nodeId, nodeAttempt, admissionAttempt), out HostAdmissionGrant? grant);

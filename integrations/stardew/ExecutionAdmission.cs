@@ -112,9 +112,9 @@ internal abstract class DispatchEnvelope
 /// <summary>
 /// What an admission ruling asks of the type that owns the terminal commit, the world revision and the accepted
 /// night's slot. None of it can happen inside the admission, and none of it is a second authority:
-/// <see cref="RememberTerminal"/> is the one terminal seam, <see cref="RefuseHeldRequest"/> is the one hand-rolled
-/// commit the terminal-seam gate still records against the manager, and <see cref="SupersedeNightThatHasNotBegun"/>
-/// moves the shared revision counter.
+/// <see cref="RememberTerminal"/> is the one terminal seam, <see cref="NoteUndeliveredHeldRequest"/> is the one report a
+/// wait makes when nothing was left to take it, and <see cref="SupersedeNightThatHasNotBegun"/> moves the shared
+/// revision counter.
 /// </summary>
 internal interface IAdmissionCommit
 {
@@ -123,18 +123,44 @@ internal interface IAdmissionCommit
 
     LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence);
 
-    LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence);
+    /// <summary>
+    /// A wait ended with no bridge left to take either its dispatch or its refusal: nothing to answer, nothing to
+    /// publish, and no receipt to mint. Reported rather than swallowed so the park's drain is a line in the log instead
+    /// of an absence.
+    /// </summary>
+    void NoteUndeliveredHeldRequest(string requestId, HeldRequest held, string because);
 
     void SupersedeNightThatHasNotBegun(string incomingExecutionId);
 }
 
 /// <summary>
-/// Answers one request the admission parked while the actor was Transiently held. <paramref name="refusal"/>
-/// is null when the body is free and the request must be dispatched now through the normal path, and is
-/// the named refusal when the bounded wait passed without the body freeing. Registered by the bridge,
-/// which owns the request as received and produces its response; the admission owns only the wait.
+/// The end of a wait that never became a dispatch: the hold code the wait names and the hold's own evidence.
+///
+/// <para>
+/// IT IS NOT A RECEIPT, AND THAT IS THE WHOLE POINT. A parked request has not started, so it has no execution state to
+/// publish - the park's own marker is deliberately never stored or published ("the Host never sees a transition for an
+/// action that has not started"). So the end of the wait is answered on the bridge's refusal channel
+/// (<c>bridge_rejected:&lt;code&gt;</c>), the same answer every other pre-dispatch refusal gives, and the request's
+/// identity stays unspent: whatever it does later - this same request re-dispatched, or the pump catching the body as
+/// it frees - mints the execution's FIRST receipt, which is legal, instead of rewriting one the wait had claimed.
+/// </para>
+/// <para>
+/// MEASURED, TWICE, AS A SESSION DEATH. `round66` (`cut_weeds`, execution <c>6a9da5e0…-exec-r1c3</c>): a park expired
+/// into <c>rejected/waiting_for_body:body_owned_by_movement</c> at revision 840, the walk underneath it settled
+/// <c>succeeded</c> under the SAME executionId, and the Host's receipt-order audit ended the run with
+/// <c>execution_receipt_replay_rejected:terminal_state_rewritten</c>. `round73` repeated it at 252 s with the same pair,
+/// 1.4 s apart. The Host was right both times: one execution has one outcome, and a wait is not an outcome.
+/// </para>
 /// </summary>
-internal delegate void HeldRequestResolver(string requestId, LocalExecutionReceipt? refusal);
+internal sealed record HeldRequestRefusal(string ReasonCode, string Evidence);
+
+/// <summary>
+/// Answers one request the admission parked while the actor was Transiently held. <paramref name="refusal"/> is null
+/// when the body is free and the request must be dispatched now through the normal path, and names the hold when the
+/// bounded wait passed without the body freeing. Registered by the bridge, which owns the request as received and
+/// produces its response; the admission owns only the wait.
+/// </summary>
+internal delegate void HeldRequestResolver(string requestId, HeldRequestRefusal? refusal);
 
 /// <summary>
 /// One parked request: the action identity the request was dispatched with, the execution the admission minted for
@@ -668,13 +694,13 @@ internal sealed class ExecutionAdmission
     /// free the request goes back to the bridge, which dispatches it through the path it arrived on - every revision,
     /// deadline, profile and ownership check runs again at THAT moment, because this is a wait and not a replay. Past
     /// the wait's own bound (<see cref="HeldRequest.WaitUntilUnixMs"/>) the wait ends in the named hold the admission
-    /// captured on arrival.
+    /// captured on arrival, answered as a REFUSAL (<see cref="HeldRequestRefusal"/>) rather than as an outcome.
     ///
     /// <para>
     /// That bound is enforced whether or not a bridge is left to take the answer. A park exists only while a bridge
     /// does, so a missing resolver means the bridge that parked it went away mid-wait - and the park must still end,
-    /// in the same bound every other park ends in. It is not a second, shorter deadline: the one branch that mints
-    /// <see cref="ExecutionManager.HeldRequestNeverAnsweredPrefix"/> differs in the CODE it names, never in the bound.
+    /// in the same bound every other park ends in: it is drained and reported, never left to be dispatched into a
+    /// session that is gone.
     /// </para>
     /// </summary>
     internal void PumpHeld()
@@ -686,13 +712,23 @@ internal sealed class ExecutionAdmission
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             (string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
             HeldRequestResolver? resolver = this.heldRequestResolver;
-            if (hold is null && resolver is not null)
+            if (hold is null)
             {
                 this.heldRequestsByRequestId.Remove(requestId);
+                if (resolver is null)
+                {
+                    // The bridge that parked this request is gone: there is nobody to dispatch it to. The park is still
+                    // drained - a bounded collection with no drain is a leak - and the fact that it ended nowhere is
+                    // reported, so the wait's end is visible instead of inferred.
+                    this.commit.NoteUndeliveredHeldRequest(requestId, held, "body_freed_with_no_bridge");
+                    continue;
+                }
                 this.store.RecordHoldWait(requestId, nowMs - held.ParkedAtUnixMs);
                 resolver(requestId, null);
                 continue;
             }
+            // The bound is the hold's own and it is the SAME with or without a bridge to answer it: losing the bridge
+            // is not a shorter deadline.
             if (nowMs <= held.WaitUntilUnixMs)
                 continue;
             // The wait ended in a hold that is still in force. While it is the parked hold, the code and
@@ -707,10 +743,10 @@ internal sealed class ExecutionAdmission
             this.heldRequestsByRequestId.Remove(requestId);
             if (resolver is null)
             {
-                this.commit.RefuseHeldRequest(requestId, held, $"{ExecutionManager.HeldRequestNeverAnsweredPrefix}{holdCode}", holdEvidence);
+                this.commit.NoteUndeliveredHeldRequest(requestId, held, "wait_ended_with_no_bridge");
                 continue;
             }
-            resolver(requestId, this.commit.RefuseHeldRequest(requestId, held, holdCode, holdEvidence));
+            resolver(requestId, new HeldRequestRefusal(holdCode, holdEvidence));
         }
     }
 
@@ -750,9 +786,9 @@ internal sealed class ExecutionAdmission
         foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
         {
             this.heldRequestsByRequestId.Remove(requestId);
-            if (this.heldRequestResolver is null)
+            if (this.heldRequestResolver is not { } resolver)
                 continue;
-            this.heldRequestResolver(requestId, this.commit.RefuseHeldRequest(requestId, held, held.HoldCode, held.HoldEvidence));
+            resolver(requestId, new HeldRequestRefusal(held.HoldCode, held.HoldEvidence));
         }
     }
 

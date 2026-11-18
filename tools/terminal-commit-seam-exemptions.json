@@ -3,15 +3,6 @@
   "exemptions": [
     {
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "RefuseHeldRequest",
-      "line": 1263,
-      "sites": 1,
-      "family": "controller",
-      "kind": "missing_idle",
-      "reason": "terminal commit that never publishes PublishIdleAfterRelease, so converting it would ADD a body_idle fact - a behaviour change"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
       "member": "SettleNavigationTerminal",
       "line": 5828,
       "sites": 1,

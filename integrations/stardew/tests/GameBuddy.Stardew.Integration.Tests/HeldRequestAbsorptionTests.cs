@@ -71,6 +71,10 @@ public sealed class HeldRequestAbsorptionTests
         absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse();
     }
 
+    /// <summary>
+    /// An expired hold answers the SAME named refusal an arrival would have carried - the code the one WorldModel
+    /// authority produces - and it answers it on the refusal channel, because nothing was dispatched.
+    /// </summary>
     [Fact]
     public void AnExpiredHold_AnswersTheSameNamedRefusalAsOnArrival()
     {
@@ -82,17 +86,18 @@ public sealed class HeldRequestAbsorptionTests
         absorption.Executions.PumpHeldRequests();
 
         absorption.Handler.Invocations.Should().Be(0, "an expired hold never dispatches: the window is the whole promise");
-        BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
-        answer.CorrelationId.Should().Be(absorption.Request.CorrelationId);
-        answer.Payload.State.Should().Be("rejected");
-        // The SAME named refusal as today, byte for byte: the code and the evidence the one WorldModel
-        // authority produces for this very hold on arrival.
+        (string type, string reasonCode, string correlationId) = absorption.TakeRefusal();
+        type.Should().Be("error", "the wait is answered as a refusal; a receipt would claim an execution that never started");
+        correlationId.Should().Be(absorption.Request.CorrelationId);
+        // The SAME named refusal as on arrival, in the one vocabulary: the code the WorldModel authority produces for
+        // this very hold.
         ActorWorldFacts facts = WorldModel.ReadFacts(absorption.Actor);
-        (string holdCode, string holdEvidence) =
+        (string holdCode, string _) =
             WorldModel.DescribeCurrentBodyHold(WorldModel.Classify(facts), facts, absorption.Actor.CanMove);
-        answer.Payload.ReasonCode.Should().Be("transient_busy");
-        answer.Payload.ReasonCode.Should().Be(holdCode);
-        answer.Payload.Evidence!["detail"].Should().Be(holdEvidence);
+        reasonCode.Should().Be("transient_busy");
+        reasonCode.Should().Be(holdCode);
+        absorption.Executions.TryGetReceipt(absorption.Request.Payload.RequestId, out _)
+            .Should().BeFalse("nothing ran, so nothing is stated about an execution");
     }
 
     /// <summary>
@@ -160,8 +165,8 @@ public sealed class HeldRequestAbsorptionTests
     }
 
     /// <summary>
-    /// THE WAIT IS BOUNDED BY THE REQUEST'S OWN DEADLINE, and when that runs out the request gets the refusal it would
-    /// have had on arrival - the same code, the same evidence, byte for byte.
+    /// THE WAIT IS BOUNDED BY THE REQUEST'S OWN DEADLINE, and when that runs out the request is answered with the hold
+    /// it waited on - as a refusal of its dispatch, never as a receipt for an execution that never started.
     ///
     /// <para>
     /// This is the half that keeps the park from becoming a strand: an event that outlives the deadline the caller
@@ -188,14 +193,16 @@ public sealed class HeldRequestAbsorptionTests
             absorption.Executions.PumpHeldRequests();
 
             absorption.Handler.Invocations.Should().Be(0, "a deadline that ran out is not a licence to dispatch into the hold");
-            BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
-            answer.Payload.State.Should().Be("rejected");
-            answer.Payload.ReasonCode.Should().Be(
+            (string type, string reasonCode, string correlationId) = absorption.TakeRefusal();
+            type.Should().Be("error", "the request is answered on the bridge's refusal channel, not with a receipt");
+            reasonCode.Should().Be(
                 "cutscene_active",
-                "the wait ends in the same named refusal an arrival would have carried; it is the world's statement, not the Mod's");
-            answer.Payload.Evidence!["detail"].Should().Be(
-                ArrivalHold(absorption.Actor).HoldEvidence,
-                "the evidence is the hold's own - the same one WorldModel produces for this cutscene - not a second story");
+                "the wait ends in the same named hold an arrival would have carried; it is the world's statement, not the Mod's");
+            correlationId.Should().Be(
+                absorption.Request.CorrelationId,
+                "a wait that never dispatched owes an answer to the request it held, and that answer is a refusal");
+            absorption.Executions.TryGetReceipt(absorption.Request.Payload.RequestId, out _)
+                .Should().BeFalse("a request that never started has no execution state to state");
         }
         finally
         {
@@ -231,6 +238,17 @@ public sealed class HeldRequestAbsorptionTests
         answer.Payload.Evidence!["detail"].Should().MatchRegex(@"(^|;)held_ms=\d+$");
     }
 
+    /// <summary>
+    /// The wait NAMES what it waited for, and it does so with the one code the admission derives from the owner - 
+    /// `waiting_for_body:body_owned_by_activity` - delivered as a refusal rather than as a receipt.
+    ///
+    /// <para>
+    /// The owner's own action id used to ride the refusal receipt's evidence. It does not ride the refusal channel: an
+    /// error frame carries a code and nothing else, and a receipt would have to claim an execution state for a request
+    /// that never started. The owner CLASS survives in the code, which is what the host's remedy turns into "re-issue the
+    /// same request", and that is the trade this line records.
+    /// </para>
+    /// </summary>
     [Fact]
     public void AnActivityHoldThatOutlivesTheWindow_AnswersTheNamedWaitCarryingItsOwner()
     {
@@ -244,14 +262,11 @@ public sealed class HeldRequestAbsorptionTests
         absorption.Executions.PumpHeldRequests();
 
         absorption.Handler.Invocations.Should().Be(0, "the owner never finished inside the window");
-        BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
-        answer.Payload.State.Should().Be("rejected");
-        // The wait NAMES what it waited for, so the Agent reads a hold rather than an unexplained failure.
-        answer.Payload.ReasonCode.Should().Be("waiting_for_body:body_owned_by_activity");
-        // ...and the owner's own action id travels on the receipt's existing evidence, not on a new wire field.
-        answer.Payload.Evidence!["detail"].Should()
-            .Contain("owner_execution_id=exec_pickup")
-            .And.Contain("owner_action=pickup_item");
+        (string type, string reasonCode, _) = absorption.TakeRefusal();
+        type.Should().Be("error", "nothing was started, so the answer is a refusal and not a receipt");
+        reasonCode.Should().Be("waiting_for_body:body_owned_by_activity");
+        absorption.Executions.TryGetReceipt(absorption.Request.Payload.RequestId, out _)
+            .Should().BeFalse("the request's identity stays unspent, so whatever it does later is its first outcome");
     }
 
     [Fact]
@@ -383,6 +398,22 @@ public sealed class HeldRequestAbsorptionTests
             BridgeProtocol.TryDeserializeExecutionReceipt(json, out BridgeEnvelope<BridgeReceipt>? envelope, out string reason)
                 .Should().BeTrue(reason);
             return envelope!;
+        }
+
+        /// <summary>
+        /// The refusal a wait ends in: the bridge's error channel, carrying the hold's code and the correlation of the
+        /// request it answers. Read as JSON because the payload IS the refusal - there is no receipt to deserialize.
+        /// </summary>
+        internal (string Type, string ReasonCode, string CorrelationId) TakeRefusal()
+        {
+            this.Session.TryDequeueHeldExecutionResponse(out _, out string json)
+                .Should().BeTrue("a wait that ended still answers the request it was waiting for");
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            System.Text.Json.JsonElement root = document.RootElement;
+            return (
+                root.GetProperty("type").GetString()!,
+                root.GetProperty("payload").GetProperty("reasonCode").GetString()!,
+                root.GetProperty("correlationId").GetString()!);
         }
     }
 
