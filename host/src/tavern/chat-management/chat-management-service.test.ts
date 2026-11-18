@@ -7,7 +7,7 @@ import type { MountedChatRuntimeLease } from "../../continuity-semantic-producti
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { readSourceShape } from "../../test-support/source-shape.test-support.js";
-import { composeTavernProfile } from "../browser-contract/index.js";
+import { ChatListV1Schema, composeTavernProfile } from "../browser-contract/index.js";
 import { createChatManagementService } from "./chat-management-service.js";
 
 const principal = Object.freeze({ playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" });
@@ -521,4 +521,272 @@ test("two removals issued in one tick cannot leave the companion with no active 
     "the losing removal was refused as something other than the empty list",
   );
   assert.equal(results.live, 1, "the active list did not end with exactly one Chat");
+});
+
+/**
+ * THE GATE: no removal the library offers can leave the companion with no live Chat.
+ *
+ * The population is DERIVED, not listed. Every operation the service itself exports is invoked with a
+ * removal command and observed against the durable lifecycle row that command names; an operation that
+ * moves that row is a removal path, whatever it is called, so one added tomorrow joins the population
+ * without anyone remembering to add it here. Each discovered path is then crossed with the states a
+ * removal can be issued from - the last live Chat, a live sibling, an archived sibling, a trashed
+ * sibling, an illegal transition - and every case must either leave at least one live Chat or be
+ * refused under a code the caller can act on. Two passes of the whole population are compared, because
+ * a gate standing on an unrepeatable harness is a gate that will flake later.
+ *
+ * `mountable` here is an active row of the transcript authority, which is the authority the removal's
+ * own transaction can read. The next start's successor rule additionally requires the semantic catalog
+ * to hold that Chat as verified, so a survivor the transcript authority holds and the semantic
+ * authority never verified passes this guard and fails closed at the next start. That condition is
+ * PRINTED (`semantically-unverified survivors`) rather than failed: the refusal is correct at its own
+ * layer, and `resettleChatSuccessorFromDurableAuthority` is the later layer that owns mountability.
+ */
+test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live Chat or is refused by name", async (t) => {
+  const results = await mounted(`
+    const apiVersion = 1;
+    const companionId = "companion_01";
+    const continuityId = "continuity_01";
+    const mountedThreadId = lease.chatThreadId;
+    const mountedHandle = lease.browserProjection.chatHandle;
+    const threads = store();
+    const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+    const threadIdOf = new Map([[mountedHandle, mountedThreadId]]);
+    let made = 0;
+
+    const rows = async () => (await threads.listThreads()).filter((thread) => thread.companionId === companionId && thread.continuityId === continuityId);
+    const rowOf = async (chatHandle) => (await rows()).find((thread) => thread.chatThreadId === threadIdOf.get(chatHandle));
+    const liveThreadIds = async () => (await rows()).filter((thread) => (thread.lifecycleStatus ?? "active") === "active").map((thread) => thread.chatThreadId);
+    const archived = async (chatThreadId, operation) => {
+      const row = (await rows()).find((thread) => thread.chatThreadId === chatThreadId);
+      await threads.transitionLifecycle({ chatThreadId, chatSurfaceSessionId: row.chatSurfaceSessionId, companionId, continuityId, expectedManagementRevision: row.managementRevision ?? 1, operation });
+    };
+
+    const makeSibling = async (kind) => {
+      made += 1;
+      const suffix = String(made).padStart(3, "0");
+      const chatThreadId = "gate_thread_" + suffix;
+      const chatSurfaceSessionId = "gate_surface_" + suffix;
+      await creation.createExplicit({
+        chatThreadId, companionId, continuityId, chatSurfaceSessionId,
+        profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64),
+        opening: { messageId: "gate_opening_" + suffix, text: "Chat " + suffix, source: { greetingSetId: "greetings_01", sourceRevision: 2, canonicalHash: "a".repeat(64), variantId: "default_01", profileRevision: 3, scenarioRevision: null } },
+      });
+      const handle = lease.browserProjection.projectChatHandle(chatThreadId, chatSurfaceSessionId);
+      threadIdOf.set(handle, chatThreadId);
+      if (kind !== "active") await archived(chatThreadId, kind === "archived" ? "archive" : "trash");
+      return { handle, chatThreadId, chatSurfaceSessionId };
+    };
+
+    const issue = async (operationName, chatHandle, operation) => {
+      const row = await rowOf(chatHandle);
+      const expectedManagementRevision = row === undefined ? 1 : (row.managementRevision ?? 1);
+      try {
+        await service[operationName]({ apiVersion, chatHandle, expectedManagementRevision, operation });
+        return { outcome: "ok", code: null };
+      } catch (error) {
+        return { outcome: "refused", code: error instanceof Error ? error.message : String(error) };
+      }
+    };
+
+    const read = async (operationName, caseId, outcome) => {
+      const live = await liveThreadIds();
+      return {
+        path: operationName,
+        case: caseId,
+        outcome: outcome.outcome,
+        code: outcome.code,
+        live: live.length,
+        survivors: live.map((chatThreadId) => (chatThreadId === mountedThreadId ? "mounted" : "created")),
+      };
+    };
+
+    // Discovery: the service's own exported operations, each asked to perform a removal.
+    const probe = createChatManagementService({ manifest, lease, profile });
+    const operations = Object.keys(probe);
+    const removalPaths = [];
+    const discovery = [];
+    for (const operationName of operations) {
+      const target = await makeSibling("active");
+      const before = (await rowOf(target.handle)).lifecycleStatus ?? "active";
+      let outcome;
+      try {
+        await probe[operationName]({ apiVersion, chatHandle: target.handle, expectedManagementRevision: 1, operation: "archive" });
+        outcome = "ok";
+      } catch (error) {
+        outcome = error instanceof Error ? error.message : String(error);
+      }
+      const after = (await rowOf(target.handle)).lifecycleStatus ?? "active";
+      if (after !== before) removalPaths.push(operationName);
+      else if (after === "active") await archived(target.chatThreadId, "archive");
+      discovery.push({ operation: operationName, outcome, lifecycle: before + "->" + after });
+    }
+
+    const cases = [
+      { id: "last_live:archive", run: async (path) => read(path, "last_live:archive", await issue(path, mountedHandle, "archive")) },
+      { id: "last_live:trash", run: async (path) => read(path, "last_live:trash", await issue(path, mountedHandle, "trash")) },
+      {
+        id: "last_live_with_archived_sibling:archive",
+        run: async (path) => {
+          await makeSibling("archived");
+          return read(path, "last_live_with_archived_sibling:archive", await issue(path, mountedHandle, "archive"));
+        },
+      },
+      {
+        id: "last_live_with_trashed_sibling:trash",
+        run: async (path) => {
+          await makeSibling("trashed");
+          return read(path, "last_live_with_trashed_sibling:trash", await issue(path, mountedHandle, "trash"));
+        },
+      },
+      {
+        id: "two_live:archive_mounted",
+        run: async (path) => {
+          const sibling = await makeSibling("active");
+          const outcome = await issue(path, mountedHandle, "archive");
+          const result = await read(path, "two_live:archive_mounted", outcome);
+          if (outcome.outcome === "ok") {
+            await issue(path, mountedHandle, "restore");
+            await issue(path, sibling.handle, "archive");
+          }
+          return result;
+        },
+      },
+      {
+        id: "two_live:archive_sibling",
+        run: async (path) => {
+          const sibling = await makeSibling("active");
+          return read(path, "two_live:archive_sibling", await issue(path, sibling.handle, "archive"));
+        },
+      },
+      {
+        id: "archived_sibling:trash",
+        run: async (path) => {
+          const sibling = await makeSibling("archived");
+          return read(path, "archived_sibling:trash", await issue(path, sibling.handle, "trash"));
+        },
+      },
+      {
+        id: "archived_sibling:restore",
+        run: async (path) => {
+          const sibling = await makeSibling("archived");
+          const result = await read(path, "archived_sibling:restore", await issue(path, sibling.handle, "restore"));
+          await archived(sibling.chatThreadId, "archive");
+          return result;
+        },
+      },
+      {
+        id: "trashed_sibling:restore",
+        run: async (path) => {
+          const sibling = await makeSibling("trashed");
+          const outcome = await issue(path, sibling.handle, "restore");
+          const result = await read(path, "trashed_sibling:restore", outcome);
+          if (outcome.outcome === "ok") await archived(sibling.chatThreadId, "archive");
+          return result;
+        },
+      },
+      {
+        id: "archived_sibling:archive",
+        run: async (path) => {
+          const sibling = await makeSibling("archived");
+          return read(path, "archived_sibling:archive", await issue(path, sibling.handle, "archive"));
+        },
+      },
+    ];
+
+    const population = async () => {
+      const readings = [];
+      for (const entry of cases) for (const operationName of removalPaths) readings.push(await entry.run(operationName));
+      return readings;
+    };
+    const first = await population();
+    const second = await population();
+
+    process.stdout.write(JSON.stringify({ operations, removalPaths, discovery, first, second }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+
+  const operations = results.operations as string[];
+  const removalPaths = results.removalPaths as string[];
+  const readings = results.first as ReadonlyArray<{
+    path: string;
+    case: string;
+    outcome: "ok" | "refused";
+    code: string | null;
+    live: number;
+    survivors: readonly string[];
+  }>;
+  const name = (reading: { path: string; case: string }): string => `${reading.path}:${reading.case}`;
+
+  // A population that discovered nothing agrees with itself, so it is blocked rather than passed.
+  assert.ok(
+    operations.length > 0,
+    "a_removal_leaves_the_companion_no_chat: the service exported no operation to examine",
+  );
+  assert.ok(
+    removalPaths.length > 0,
+    `a_removal_leaves_the_companion_no_chat: no operation of ${operations.join(", ")} moved a Chat out of the active list`,
+  );
+  // A gate on an unrepeatable harness is a gate that flakes later, so the two passes are compared -
+  // after the substance, so that a red names the defect rather than this.
+
+  const offenders = readings.filter((reading) => reading.outcome === "ok" && reading.live === 0).map(name);
+  assert.deepEqual(
+    offenders,
+    [],
+    `a_removal_leaves_the_companion_no_chat: ${offenders.join(", ")} left the companion with no live Chat`,
+  );
+  const unnamed = readings
+    .filter(
+      (reading) =>
+        reading.outcome === "refused" &&
+        reading.code !== "chat_active_list_empty" &&
+        reading.code !== "chat_management_lifecycle_invalid",
+    )
+    .map((reading) => `${name(reading)}=${reading.code}`);
+  assert.deepEqual(
+    unnamed,
+    [],
+    `a_removal_leaves_the_companion_no_chat: ${unnamed.join(", ")} was refused as a service outage instead of by rule`,
+  );
+  // The rule must be witnessed, and it must refuse only the removal that would empty the list.
+  const refused = readings.filter((reading) => reading.code === "chat_active_list_empty").length;
+  assert.ok(refused > 0, "a_removal_leaves_the_companion_no_chat: the population never reached the empty-list rule");
+  assert.ok(
+    readings.some((reading) => reading.outcome === "ok"),
+    "a_removal_leaves_the_companion_no_chat: every removal was refused, so the guard refuses the batch rather than the one removal",
+  );
+  const unverified = readings.filter((reading) => reading.outcome === "ok" && !reading.survivors.includes("mounted"));
+  assert.deepEqual(
+    results.second,
+    results.first,
+    "a_removal_leaves_the_companion_no_chat: the two population passes disagreed",
+  );
+  t.diagnostic(
+    `a_removal_leaves_the_companion_no_chat: removals examined ${readings.length} · refused ${refused} · leaves-none ${offenders.length} · semantically-unverified survivors ${unverified.length}`,
+  );
+
+  // The list read is the only way the surface reaches a Chat, so its ceiling is read from the contract
+  // that carries it and its truncation sites from the projection that builds it. "It holds by
+  // construction" stops being true the day someone adds a cap, and this is what would notice.
+  const listBound = (ChatListV1Schema.properties.chats as unknown as { readonly maxItems?: number }).maxItems ?? null;
+  const { shape: serviceSource } = readSourceShape(new URL("./chat-management-service.js", import.meta.url));
+  const listReadStart = serviceSource.indexOf("const listChats = async");
+  const listReadEnd = serviceSource.indexOf("const readDraft = async");
+  assert.ok(
+    listReadStart >= 0 && listReadEnd > listReadStart,
+    "a_removal_leaves_the_companion_no_chat: the list read is not where this gate reads it, so its truncation sites were not measured",
+  );
+  const truncationSites =
+    serviceSource.slice(listReadStart, listReadEnd).match(/\.(?:slice|splice|toSpliced)\s*\(/gu) ?? [];
+  t.diagnostic(
+    `a_removal_leaves_the_companion_no_chat: list bound: ${listBound === null ? "none" : String(listBound)} · truncation sites: ${truncationSites.length}`,
+  );
+  assert.deepEqual(
+    truncationSites,
+    [],
+    "a_removal_leaves_the_companion_no_chat: the list read truncates instead of refusing a list it cannot return whole",
+  );
 });
