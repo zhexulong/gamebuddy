@@ -68,6 +68,16 @@
  *        `withheld receipts examined S · stated T · journaled J · seam W`; anything short of N or S fails, naming
  *        the state or the receipt and the half that is missing.
  *
+ *   8 `a_listener_failure_does_not_name_its_fact:<site>`
+ *        population: every dispatch loop in `host/src` that hands a fact to listeners - derived from the source, by the
+ *        shape a fact-listener dispatch has (`for (const listener of …factListeners…)`), never from a list of the two
+ *        sites that existed when this was written.
+ *        property: a listener that throws closes the bridge, and the reason it publishes says WHICH fact was in flight
+ *        and WHY it threw - through the ONE composer (`factListenerFailureReasonCode`), so the bridge's own listeners
+ *        and the launcher's event source cannot drift into two vocabularies.
+ *        print: `wrappers examined N · names the fact F · names only the failure S`; `S > 0` fails, naming
+ *        `file:line` and the bare code it publishes instead.
+ *
  * ZERO POPULATION IS BLOCKED, NEVER GREEN. A derivation that finds no wire union and no transition call site agrees
  * with itself over a source tree it never opened, so an empty population prints `fact_authority_no_population: <what
  * could not be derived>` and exits 2.
@@ -448,6 +458,30 @@ if (checkSeven.withheldExamined === 0)
   );
 if (unfolded.length > 0) findings.push(...unfolded);
 if (unstated.length > 0) findings.push(...unstated);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Check 8 · a_listener_failure_does_not_name_its_fact
+// ---------------------------------------------------------------------------------------------------------------
+const wrappers = readFactListenerWrappers();
+const unnamedWrappers = wrappers.filter((wrapper) => !wrapper.namesTheFact);
+const checkEight = {
+  examined: wrappers.length,
+  namesTheFact: wrappers.length - unnamedWrappers.length,
+  namesOnlyFailure: unnamedWrappers.length,
+};
+report.checks.a_listener_failure_does_not_name_its_fact = checkEight;
+if (checkEight.examined === 0)
+  blocked("no fact-listener dispatch was found in host/src, so no wrapper's failure reason was read");
+for (const wrapper of unnamedWrappers)
+  findings.push(
+    finding(
+      "a_listener_failure_does_not_name_its_fact",
+      wrapper.site,
+      `${wrapper.site} closes on \`${wrapper.publishes}\` - the fact that was being delivered and the error's own token are ` +
+        "discarded at the throw site, so every occurrence of this fault reads as the same unattributable close. Compose the " +
+        "reason with `factListenerFailureReasonCode(fact, error)` (host/src/local-stardew-bridge.ts) and publish THAT.",
+    ),
+  );
 
 // ---------------------------------------------------------------------------------------------------------------
 // Verdict
@@ -872,6 +906,83 @@ function readProgressConcepts() {
   return [...concepts.values()].filter((entry) => entry.test.length > 0 || entry.production.length > 0);
 }
 
+/**
+ * Every place in `host/src` that hands a fact to listeners, and whether the reason it closes on names that fact.
+ *
+ * <p>
+ * The population is the SOURCE's own shape rather than a list of the sites that existed when this was written: a
+ * `for (const listener of …factListeners…)` loop is what delivering a fact looks like, so a third wrapper written
+ * tomorrow is measured without anyone remembering to add it here. A loop counts as a WRAPPER only when a `try` opens
+ * before it and a `catch` closes after it - the `catch` that closes the bridge is exactly the block that has to say
+ * WHICH fact was in flight and WHY it threw.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-17: two runs (one of them the best of the night) published `fact_listener_failed` and nothing else,
+ * so an artifact could not say whether a projection, the pump, a receipt fold or a serialization fault had thrown. The
+ * composer (`factListenerFailureReasonCode`) is the one spelling; a wrapper that closes on a literal instead of on the
+ * composer is what this check refuses.
+ * </p>
+ */
+function readFactListenerWrappers() {
+  const files = walkProductionFiles("host/src", (name) => /\.ts$|\.mts$/u.test(name)).filter(
+    (file) => !isTestFile(file),
+  );
+  const wrappers = [];
+  for (const file of files) {
+    const text = readFileSync(join(ROOT, file), "utf8");
+    for (const match of text.matchAll(/for \(const \w+ of [^)]*[Ff]actListeners[^)]*\)/gu)) {
+      const catchBody = listenerCatchAfter(text, match.index + match[0].length);
+      // A dispatch with no enclosing `try` publishes no reason of its own: its throw belongs to whatever owns the
+      // loop, and this check is about what a WRAPPER says when it closes the bridge.
+      if (catchBody === null) continue;
+      const site = `${file}:${lineOf(text, match.index)}`;
+      const namesTheFact = catchBody.includes("factListenerFailureReasonCode(");
+      wrappers.push({ site, namesTheFact, publishes: publishedCode(catchBody) });
+    }
+  }
+  return wrappers;
+}
+
+/** The text of the `catch` body that follows a listener dispatch inside its own `try`, or `null` when there is none. */
+function listenerCatchAfter(text, afterDispatch) {
+  // The dispatch has to sit inside a `try {`: look back to the nearest statement boundary and require one there.
+  const before = text.slice(0, afterDispatch);
+  if (!/try \{/u.test(before.slice(Math.max(0, before.length - 800)))) return null;
+  const statementEnd = skipStatement(text, afterDispatch);
+  const catchMatch = /\} catch (?:\(\w+(?:: [^)]*)?\) )?\{/u.exec(text.slice(statementEnd, statementEnd + 400));
+  if (catchMatch === null) return null;
+  return bracedBody(text, statementEnd + catchMatch.index + catchMatch[0].length);
+}
+
+/** The index just past a loop's body, whether it is one braced block or a single statement. */
+function skipStatement(text, index) {
+  let cursor = index;
+  while (cursor < text.length && /\s/u.test(text[cursor])) cursor++;
+  if (text[cursor] !== "{") {
+    const semicolon = text.indexOf(";", cursor);
+    return semicolon === -1 ? text.length : semicolon + 1;
+  }
+  return cursor + bracedBody(text, cursor + 1).length + 2;
+}
+
+/** The text between a block's opening brace and its matching one. */
+function bracedBody(text, index) {
+  let depth = 1;
+  for (let cursor = index; cursor < text.length; cursor++) {
+    if (text[cursor] === "{") depth++;
+    else if (text[cursor] === "}") depth--;
+    if (depth === 0) return text.slice(index, cursor);
+  }
+  return text.slice(index);
+}
+
+/** The reason code a wrapper's catch hands to `close`/`disconnect`, as far as it names one. */
+function publishedCode(catchBody) {
+  for (const code of ["fact_listener_failed", "event_pump_event_overflow", "close_reason_unnamed"])
+    if (catchBody.includes(`"${code}"`) || catchBody.includes(`\`${code}`)) return code;
+  return "an unnamed code";
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Plumbing
 // ---------------------------------------------------------------------------------------------------------------
@@ -966,6 +1077,10 @@ function render() {
       `carried ${checkSeven.carried} · bounded ${checkSeven.bounded} · counted ${checkSeven.counted} · ` +
       `withheld receipts examined ${checkSeven.withheldExamined} · stated ${checkSeven.withheldStated} · ` +
       `journaled ${checkSeven.withheldJournaled} · seam ${checkSeven.withheldSeam}`,
+  );
+  lines.push(
+    `a_listener_failure_does_not_name_its_fact: wrappers examined ${checkEight.examined} · ` +
+      `names the fact ${checkEight.namesTheFact} · names only the failure ${checkEight.namesOnlyFailure}`,
   );
   for (const entry of findings) {
     lines.push(`✖ ${entry.code}:${entry.id} - ${entry.detail}`);
