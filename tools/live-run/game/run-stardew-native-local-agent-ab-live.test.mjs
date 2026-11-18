@@ -31,7 +31,13 @@ import {
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
-import { decideDayWake, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
+import {
+  DECIDER_WAKE_REASONS,
+  decideDayWake,
+  WAKE_REASON,
+  WAKE_REASONS,
+  watchRollover,
+} from "../../lib/multiday-loop.mjs";
 import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
@@ -5028,14 +5034,12 @@ test("the day loop measures the facts its objective branch reads, instead of han
   const callAt = loop.indexOf("decideDayWake({");
   assert.ok(callAt >= 0, "the day loop must ask the decider");
   const call = loop.slice(callAt, loop.indexOf("});", callAt) + 3);
-  for (const fact of ["objectiveMet:", "objectiveProgressSinceMs:", "objectiveSpanMs:"]) {
-    assert.ok(
-      call.includes(fact),
-      `the day loop never hands the decider ${fact}: the objective branch that reads it cannot fire in any run`,
-    );
-  }
-  // AND FROM MEASUREMENTS RATHER THAN FROM NUMBERS: the progress is the age of the objective's own published reading,
-  // the span is this run's prompt-turn cadence. A constant here would be a timer wearing the reason's name.
+  // WHICH FACTS MUST BE HANDED OVER IS NOT A LIST HERE. It used to be one - three names typed into this test - and it
+  // could not notice a fact the decider reads that the loop never supplies, which is exactly how `worldStateStale` sat
+  // dead in `round76`'s day loop for a whole night. `wakeReachability` below derives the population from the decider's
+  // own signature and from the reasons its return sites name, so a fact added tomorrow is examined without editing this.
+  // What is asserted here is the SHAPE of the two measurements: the progress is the age of the objective's own published
+  // reading and the span is this run's prompt-turn cadence, so a constant cannot stand in for either.
   assert.match(
     call,
     /objectiveProgressSinceMs:[\s\S]{0,120}?objectiveProgress/u,
@@ -5046,6 +5050,181 @@ test("the day loop measures the facts its objective branch reads, instead of han
     /objectiveSpanMs: medianPromptTurnIntervalMs\(/u,
     "the span handed to the decider must be this run's own measured prompt-turn interval",
   );
+});
+
+/** The decider's own text, where its facts and its return sites are declared. */
+const MULTIDAY_LOOP_SOURCE = await readFile(new URL("../../lib/multiday-loop.mjs", import.meta.url), "utf8");
+
+/**
+ * The facts `decideWake` declares, read off its own destructured parameter list.
+ *
+ * This is the AUTHORITY for "which facts this decision reads": a fact the caller omits keeps its default, and the branch
+ * that reads it can then never fire. `decideDayWake` owns `turnIndex` (the day's opening, which is not a settlement
+ * question), so it is collected from that signature instead.
+ */
+function deciderFactNames(source) {
+  const code = withoutComments(source);
+  const names = [];
+  for (const [headline, tail] of [
+    ["export function decideWake({", "} = {}) {"],
+    ["export function decideDayWake({", "} = {}) {"],
+  ]) {
+    const start = code.indexOf(headline);
+    assert.ok(start >= 0, `the decider's ${headline} must be findable by name`);
+    const end = code.indexOf(tail, start);
+    assert.ok(end > start, `the decider's ${headline} must reach its own parameter object`);
+    for (const match of code
+      .slice(start + headline.length, end)
+      .matchAll(/([A-Za-z_$][\w$]*)\s*(?:=[^,]*)?(?:,|$)/gu)) {
+      // A rest element (`...facts`) is the forwarding slot, not a fact of its own: the facts it carries are the ones
+      // `decideWake` declares, and counting it would invent a fact nothing compares.
+      if (code.slice(0, start + headline.length + match.index).endsWith("...")) continue;
+      if (!names.includes(match[1])) names.push(match[1]);
+    }
+  }
+  return names;
+}
+
+/**
+ * Every reason the decider's OWN return sites name, read from its text.
+ *
+ * `WAKE_SUPPRESSION` returns are a different vocabulary - they answer "why no prompt" rather than "what woke her" - so
+ * only `reason: WAKE_REASON.<name>` counts. A name outside `WAKE_REASON` fails rather than being skipped, because a
+ * reason the decider can answer must be a reason the vocabulary declares.
+ */
+function deciderReturnedReasons(source) {
+  const code = withoutComments(source);
+  const start = code.indexOf("export function decideWake(");
+  const end = code.indexOf("export function wakeReasonReachability(");
+  assert.ok(start >= 0 && end > start, "the decider and its reachability reader must both be findable by name");
+  const reasons = [];
+  for (const match of code.slice(start, end).matchAll(/reason:\s*WAKE_REASON\.([A-Za-z]+)/gu)) {
+    const reason = WAKE_REASON[match[1]];
+    assert.equal(typeof reason, "string", `decider_reason_not_in_the_vocabulary:WAKE_REASON.${match[1]}`);
+    if (!reasons.includes(reason)) reasons.push(reason);
+  }
+  return reasons;
+}
+
+/**
+ * The fact names one call's object literal supplies, at its own member boundaries.
+ *
+ * Both spellings count: `key: value` and the shorthand `key,`. A value that happens to sit after a comma is not a key,
+ * which is why the position - not the text - decides: a member begins after the previous member's comma.
+ */
+function suppliedFactNames(text) {
+  const at = text.indexOf("decideDayWake({");
+  assert.ok(at >= 0, "the day loop must ask the decider with an object literal");
+  const literal = callArguments(text, text.indexOf("(", at)).slice(1, -1).trim();
+  assert.ok(literal.startsWith("{") && literal.endsWith("}"), "the day loop's argument must be one object literal");
+  const body = literal.slice(1, -1);
+  const keys = [];
+  let depth = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      index += 1;
+      while (index < body.length && body[index] !== quote) index += body[index] === "\\" ? 2 : 1;
+      continue;
+    }
+    if (char === "{" || char === "(" || char === "[") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}" || char === ")" || char === "]") {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) continue;
+    const before = body.slice(0, index).replace(/\s+$/u, "");
+    if (!(before === "" || before.endsWith(","))) continue;
+    const match = /^([A-Za-z_$][\w$]*)\s*(?=[:,])/u.exec(body.slice(index));
+    if (match === null) continue;
+    if (!keys.includes(match[1])) keys.push(match[1]);
+    index += match[0].length - 1;
+  }
+  return keys;
+}
+
+/**
+ * The values a probe of one fact can take, read from how the decider itself compares it.
+ *
+ * A fact the decider tests with `=== true` / `!== true` is a boolean, and a fact it hands to `readObjectiveState` is a
+ * measurement: `null` (unmeasured), `0` and a positive number. The domain comes from the comparison in the decider's own
+ * text, so a fact whose comparison changes shape is probed differently without editing this table.
+ */
+function factProbeDomain(source, name) {
+  const booleanComparison = new RegExp(`\\b${name}\\s*[!=]==?\\s*true\\b`, "u");
+  if (booleanComparison.test(source)) return [true, false];
+  return [null, 0, 1_000];
+}
+
+/** Every reason `decideDayWake` answers with over the fact combinations the day loop can actually hand it. */
+function reasonsProbedFrom(source, facts) {
+  const domains = facts.map((name) => factProbeDomain(source, name));
+  const seen = new Set();
+  const walk = (index, supplied) => {
+    if (index === facts.length) {
+      seen.add(decideDayWake(supplied).reason);
+      return;
+    }
+    for (const value of domains[index]) walk(index + 1, { ...supplied, [facts[index]]: value });
+  };
+  walk(0, {});
+  return seen;
+}
+
+/**
+ * A REASON THAT CAN NEVER FIRE IS A REASON THAT LIES ABOUT WHAT CAN WAKE HER.
+ *
+ * Measured 2026-11-18 (`round76`): `multiday.wakes.byReason` read `stall_wake 0`, `stale_world 0`, `day_end_offer 0`,
+ * and the longest silence was 701,970 ms ending on `waiting_for_the_world`. The cause was one missing fact: the day loop
+ * called `decideDayWake({...})` without `worldStateStale`, so `if (worldStateStale === true)` was dead code in the only
+ * loop that runs it - and the cutscene ended at 23:05:58 with `can_move=true` while nothing woke her until the next
+ * in-game evening. Every producer table in this file passed throughout, because a table that hands the decider its facts
+ * says nothing about whether the runner does.
+ *
+ * So the population is the decider's own return sites, and reachability is measured against the fact set the DAY LOOP
+ * supplies - not against the facts the decider declares. `reasons examined R · reachable A · declared D` prints all
+ * three: `D` is a reason the vocabulary declares that these return sites do not name (a call-site reason such as
+ * `player_input`), which is a declaration and not a dead branch.
+ */
+test("a wake reason that can never fire, and a fact the decider reads that the day loop never hands over", () => {
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const declared = deciderFactNames(MULTIDAY_LOOP_SOURCE);
+  const supplied = suppliedFactNames(loop);
+  assert.ok(declared.length > 0, "examined 0 decider facts - a check whose population is empty agrees with itself");
+  for (const fact of supplied) {
+    assert.ok(
+      declared.includes(fact),
+      `a_wake_fact_the_decider_does_not_read:${fact} - the day loop hands over a fact no branch of the decision asks for`,
+    );
+  }
+  for (const fact of declared) {
+    assert.ok(
+      supplied.includes(fact),
+      `a_wake_fact_the_day_loop_never_hands_over:${fact} - the branch that reads it cannot fire in any run`,
+    );
+  }
+  const examined = deciderReturnedReasons(MULTIDAY_LOOP_SOURCE);
+  assert.ok(examined.length > 0, "examined 0 wake reasons - a check whose population is empty agrees with itself");
+  const reachable = reasonsProbedFrom(MULTIDAY_LOOP_SOURCE, supplied);
+  const declaredElsewhere = DECIDER_WAKE_REASONS.filter((reason) => !examined.includes(reason));
+  const reachableExamined = examined.filter((reason) => reachable.has(reason));
+  console.log(
+    `wake reachability gate: reasons examined ${String(examined.length)} · reachable ${String(
+      reachableExamined.length,
+    )} · declared ${String(declaredElsewhere.length)} (facts supplied ${String(supplied.length)} of ${String(
+      declared.length,
+    )})`,
+  );
+  for (const reason of examined) {
+    if (reachable.has(reason) || declaredElsewhere.includes(reason)) continue;
+    assert.fail(
+      `a_wake_reason_that_can_never_fire:${reason} - the decision names it, and the day loop's own facts can never reach it`,
+    );
+  }
 });
 
 test("the run's prompt-turn span is measured from its own turns, and an unmeasured cadence is not a span", () => {

@@ -5221,6 +5221,13 @@ try {
             // the facts below say whether that stop left her anything to decide.
             const body = bodyWorkNow();
             const stallFacts = newStallFacts();
+            // THE WORLD'S OWN READING OF HER PICTURE, read where the two other fact-answered reasons are read. It was
+            // declared beside `newStallFacts` and never called from the one loop that decides a wake, so
+            // `if (worldStateStale === true)` was dead in the only place it runs: measured 2026-11-18 (`round76`), the
+            // town cutscene released her at 23:05:58 with `can_move=true`, no turn opened until the next in-game
+            // evening, and the account read `noWakeForMs: 701970` / `noWakeLastReason: waiting_for_the_world` beside
+            // `stale_world: 0` - a reason nobody could have produced.
+            const staleFacts = newWorldStateStaleFacts();
             // ONE read of the purpose per poll: what it says is both the answer to "achieved" and the progress facts
             // whose age is the stall, and two reads could disagree.
             const purpose = judgeTaskPurpose(dayTask, receiptsSince(factsBefore));
@@ -5239,6 +5246,7 @@ try {
               lateDay: clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES,
               dayEndOffered,
               stalled: stallFacts.length > 0,
+              worldStateStale: staleFacts.length > 0,
             });
             if (wake.wake !== true) {
               // The Mod's own pass continues, the day's question has been asked and not answered, or nothing has happened

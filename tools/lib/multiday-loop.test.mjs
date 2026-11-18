@@ -1153,11 +1153,12 @@ test("a stale world is asked about before a still objective, because seeing come
 // WHAT THE RUN SAYS IT ISSUED, JUDGED AGAINST THE REASONS THE DECIDER OWNS.
 //
 // `round45`'s own wake account, verbatim from `multiday.wakes.byReason` of
-// `2026-11-10T22-13-25-922Z-multiday_routine`. It is the red proof for the gate below: two of the reasons the decider
-// declares were issued zero times in a run that lasted 41.9 minutes.
+// `2026-11-10T22-13-25-922Z-multiday_routine`. It is the red proof for the reading below: two of the reasons the decider
+// owns were issued zero times in a run that lasted 41.9 minutes - the line that would have said "she was never asked
+// whether to end the day", and the one that would have said "the body stopped and nobody told her".
 const ROUND45_WAKE_ACCOUNT = Object.freeze({ day_start: 2, continuation: 60, stall_wake: 0, day_end_offer: 0 });
 
-test("wake_reason_never_reachable: a run's own wake account names every reason it never produced", () => {
+test("a run's own wake account names every reason it never issued, and claims nothing about whether it could", () => {
   const reading = wakeReasonReachability({ byReason: ROUND45_WAKE_ACCOUNT });
   console.log(
     `wake gate: examined ${String(reading.examined.length)} declared reason(s): ${reading.examined.join(", ")}`,
@@ -1172,17 +1173,17 @@ test("wake_reason_never_reachable: a run's own wake account names every reason i
   assert.ok(!reading.examined.includes("continuation"));
   assert.equal(reading.issued.continuation, undefined);
   assert.ok(
-    reading.violations.includes("wake_reason_never_reachable:day_end_offer"),
-    "round45 never asked her whether to end the day: the offer branch was unreachable while the objective was not achieved",
+    reading.neverIssued.includes("day_end_offer"),
+    "round45 never asked her whether to end the day, and the reading names the silence instead of printing a quiet 0",
   );
-  assert.ok(
-    reading.violations.includes("wake_reason_never_reachable:objective_unreachable_for_today"),
-    "and the reason for exactly that case did not exist when the run was made",
-  );
-  assert.ok(!reading.violations.includes("wake_reason_never_reachable:continuation"));
+  assert.ok(reading.neverIssued.includes("objective_unreachable_for_today"));
+  assert.ok(!reading.neverIssued.includes("continuation"));
+  // A RUN'S COVERAGE IS NOT A CLAIM ABOUT THE VOCABULARY. `round76` printed `wake_reason_never_reachable` from exactly
+  // this reading for three reasons, of which only one was actually dead, so the field a reader could mistake for a
+  // reachability verdict is gone: reachability is decided against the facts the day loop hands the decider.
+  assert.equal(reading.violations, undefined, "a run's account cannot say a reason is unreachable");
   // A run that published no wake account is NOT a run that issued nothing.
   const unmeasured = wakeReasonReachability({ byReason: null });
   assert.ok(unmeasured.unmeasured !== null, "an unread account names itself unmeasured rather than counting zero");
-  assert.deepEqual(unmeasured.violations, []);
   assert.deepEqual(unmeasured.neverIssued, []);
 });

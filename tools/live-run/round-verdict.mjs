@@ -1171,9 +1171,10 @@ function formatEfficiency(report) {
         : `${report.wakes.dayEndOffers} of ${report.turns} prompt turns - the day's work was done and the day was nearly over, so the offer asks and never dispatches`
     }`,
   );
-  // EVERY REASON THE DECIDER OWNS, AGAINST WHAT THIS RUN ISSUED. `round45` published `day_end_offer 0` and
-  // `stall_wake 0` with nothing beside them to say the loop had never produced either reason; the population comes from
-  // `DECIDER_WAKE_REASONS`, so a reason added tomorrow is examined here without editing this line.
+  // EVERY REASON THE DECIDER OWNS, AGAINST WHAT THIS RUN ISSUED. A zero here is COVERAGE, not reachability: whether a
+  // reason can fire at all is decided against the facts the day loop hands the decider
+  // (`a_wake_reason_that_can_never_fire`), and `round76` is why the two must not share a name - this line used to print
+  // `wake_reason_never_reachable` for three reasons, of which exactly one was dead.
   const reachability = wakeReasonReachability({ byReason: report.wakes?.byReason ?? null });
   push(
     `  ${label("wake_reasons")} ${
@@ -1184,8 +1185,11 @@ function formatEfficiency(report) {
         : notMeasured(reachability.unmeasured)
     }`,
   );
-  for (const violation of reachability.violations)
-    push(`  ${label("")} ${violation} - this run never produced it, so nothing here says it works`);
+  for (const reason of reachability.neverIssued)
+    push(
+      `  ${label("")} wake_reason_not_issued:${reason} - this run never issued it, which is a fact about the run and not " +
+        "about the vocabulary; whether it can fire is decided against the day loop's own facts`,
+    );
   push(
     `  ${label("floor_turns")} ${
       report.floorTurns === null

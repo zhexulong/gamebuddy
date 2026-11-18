@@ -917,18 +917,19 @@ export function decideDayWake({ turnIndex, ...facts } = {}) {
 /**
  * Every reason the day loop's decider can answer, against what ONE run actually issued.
  *
- * WHY A RUN IS JUDGED HERE AT ALL. `round45` published `wakes.byReason { day_start 2, continuation 60, stall_wake 0,
- * day_end_offer 0 }`, and a reader had no way to see that half of the reasons the decider owns had never been produced by
- * the loop it was reading - the line that would have said "she was never asked whether to end the day", and the one that
- * would have said "the body stopped and nobody told her". The population comes from `DECIDER_WAKE_REASONS`, which is
- * derived from `WAKE_REASON`, so a reason added tomorrow is examined without editing this function; a zero is named
- * `wake_reason_never_reachable:<reason>` rather than printed as a quiet `0`.
+ * WHAT A ZERO HERE MEANS, AND WHAT IT DOES NOT. It means this run never issued the reason. It does NOT mean the reason
+ * can never fire: reachability is a property of the DECIDER and of the facts its caller hands it, and that question has
+ * its own gate - `a_wake_reason_that_can_never_fire` in `run-stardew-native-local-agent-ab-live.test.mjs`, which probes
+ * the decider over exactly the fact set the day loop supplies. Measured 2026-11-18 (`round76`): this reading printed
+ * `wake_reason_never_reachable: stall_wake, stale_world, day_end_offer`, and its own name turned a run's coverage into a
+ * claim about the vocabulary - so only one of the three (`stale_world`, whose fact the loop never handed over) was
+ * actually dead, and the other two read as broken when the run had simply had no stall and no finished day.
  *
- * A ZERO IS A COVERAGE READING, NOT A VERDICT. A run with no stall publishes `stall_wake 0` and is not thereby wrong:
- * the fact the pump owns simply never armed. What the reading refuses is silence - a reason declared and never produced
- * is a claim about the run nobody checked. `unmeasured` is separate from `neverIssued` for the same reason `null` is
- * separate from an empty list everywhere else in this module: a run that published no wake account has not been
- * measured, and is not a run that issued nothing.
+ * The population comes from `DECIDER_WAKE_REASONS`, which is derived from `WAKE_REASON`, so a reason added tomorrow is
+ * examined without editing this function.
+ *
+ * `unmeasured` is separate from `neverIssued` for the same reason `null` is separate from an empty list everywhere else in
+ * this module: a run that published no wake account has not been measured, and is not a run that issued nothing.
  */
 export function wakeReasonReachability({ byReason = null } = {}) {
   const examined = DECIDER_WAKE_REASONS;
@@ -938,7 +939,6 @@ export function wakeReasonReachability({ byReason = null } = {}) {
       issued: Object.freeze({}),
       neverIssued: Object.freeze([]),
       unmeasured: "result.json multiday.wakes.byReason was not published by this run",
-      violations: Object.freeze([]),
     });
   }
   const issued = Object.freeze(
@@ -950,11 +950,5 @@ export function wakeReasonReachability({ byReason = null } = {}) {
     ),
   );
   const neverIssued = Object.freeze(examined.filter((reason) => issued[reason] === 0));
-  return Object.freeze({
-    examined,
-    issued,
-    neverIssued,
-    unmeasured: null,
-    violations: Object.freeze(neverIssued.map((reason) => `wake_reason_never_reachable:${reason}`)),
-  });
+  return Object.freeze({ examined, issued, neverIssued, unmeasured: null });
 }
