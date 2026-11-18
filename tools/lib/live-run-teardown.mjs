@@ -86,6 +86,36 @@ export function installLiveRunInterrupt({
 }
 
 /**
+ * THE ENDING, FOR EVERY WAY OUT, installed beside the trap and for the same reason.
+ *
+ * <p>
+ * A signal is one exit; the ordinary tail is another. So are a throw, a `process.exit` deep in a helper, and a rejected
+ * top-level await - and those are exactly the exits that no `finally` in the caller reaches. Measured 2026-11-17: a Host
+ * died at a turn boundary, its launcher survived another 641.4 s with nothing left to do, and no artifact said the run had
+ * ended at all. The handler below is the one site that turns "this process left" into "and this is how the run ended".
+ * </p>
+ * <p>
+ * IT LIVES HERE, not in the launcher, because the launcher must own no process-level listening of its own: one module owns
+ * the signals and the exit, so a new exit path is a change in one file rather than a third hand-rolled `process.on` in a
+ * harness that already had two (`launch-kill-teardown.test.mjs` is the gate for that).
+ * </p>
+ */
+export function installRunExitHook({ onExit, log = (line) => process.stderr.write(`${line}\n`) }) {
+  if (typeof onExit !== "function") throw new Error("run_exit_hook_needs_a_handler");
+  // `exit` handlers cannot be async and their return value is discarded: the write must be synchronous and a failure in it
+  // must not change the exit status of the process it is describing.
+  const handler = () => {
+    try {
+      onExit();
+    } catch (error) {
+      log(`[exit] the run's ending could not be written: ${String(error?.message ?? error).slice(0, 200)}`);
+    }
+  };
+  process.on("exit", handler);
+  return Object.freeze({ dispose: () => process.off("exit", handler) });
+}
+
+/**
  * The ONE restore both exits run: the fixture transaction is released here, which is what frees the lock for the next
  * lane. `run` is the caller's own command runner, so the harness layer keeps owning how a child is spawned.
  */

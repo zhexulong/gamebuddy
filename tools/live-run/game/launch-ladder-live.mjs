@@ -33,6 +33,7 @@ import path from "node:path";
 import { killProcessTree, listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
 import {
   installLiveRunInterrupt,
+  installRunExitHook,
   killedReasonCode,
   launcherReclamationSteps,
   missingReclamationSteps,
@@ -328,7 +329,6 @@ function closeRunRecord() {
     takenOver: closureFacts.tookOver || takenOver,
   });
 }
-process.on("exit", closeRunRecord);
 
 /**
  * What a killed run runs: settle the runner, reap the game, restore the fixture, and leave a record only if the runner
@@ -388,6 +388,9 @@ function restoreFixtureTransaction() {
 }
 
 installLiveRunInterrupt({ onInterrupt: killedTeardown });
+// The same module owns the exit: an ordinary tail, a throw, a `process.exit` in a helper and a rejected top-level await all
+// leave the process without passing a `finally`, and every one of them is an ending the run owes a record of.
+installRunExitHook({ onExit: closeRunRecord });
 
 await waitForFreeFixture();
 markPhase("fixture_free");

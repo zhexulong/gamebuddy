@@ -4,6 +4,7 @@
 // run directory holding `launch.json` alone, because nothing trapped the signal. These are the falsifiers for the two
 // halves that fix it: the trap (first signal owns the unwind, second exits immediately) and the teardown steps it runs.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import test from "node:test";
 
 import {
   installLiveRunInterrupt,
+  installRunExitHook,
   killedReasonCode,
   launcherReclamationSteps,
   missingReclamationSteps,
@@ -354,4 +356,64 @@ test("the launcher's steps say what it reaped and by which pid, and what it rest
   assert.equal(notRestored[1].state, "failed");
   assert.equal(notRestored[1].detail, "native_local_fixture_restore_failed");
   assert.equal(reclamationRecord({ steps: notRestored }).state, "failed");
+});
+
+// THE ENDING, FOR THE EXITS NO `finally` REACHES.
+//
+// Measured 2026-11-17: a Host died at a turn boundary, its launcher survived another 641.4 s with nothing left to do, and
+// no artifact said the run had ended - the run directory held `launch.json` and nothing else. The launcher's ordinary tail
+// cannot cover a throw, a `process.exit` inside a helper, or a rejected top-level await, so the shared module owns an exit
+// hook for all three. The child below THROWS: the falsifier is a launcher-shaped process whose only ending record would
+// have been a `finally` at the bottom of its own file, and that file's tail never runs.
+test("a process that throws still writes its ending: the exit hook is the last writer", () => {
+  const area = mkdtempSync(join(tmpdir(), "run-exit-hook-"));
+  const marker = join(area, "ending.json");
+  try {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+        const { installRunExitHook } = await import(${JSON.stringify(new URL("./live-run-teardown.mjs", import.meta.url).href)});
+        import { writeFileSync } from "node:fs";
+        installRunExitHook({ onExit: () => writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ state: "died" })), log: () => {} });
+        throw new Error("the run died where no finally can reach");
+
+        `,
+      ],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    assert.notEqual(child.status, 0, "the child must really fail");
+    assert.match(child.stderr, /no finally can reach/u, "the failure is the throw, not the hook");
+    assert.deepEqual(JSON.parse(readFileSync(marker, "utf8")), { state: "died" });
+  } finally {
+    rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test("an ending that cannot be written does not change how the process leaves", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const { installRunExitHook } = await import(${JSON.stringify(new URL("./live-run-teardown.mjs", import.meta.url).href)});
+      const said = [];
+      installRunExitHook({ onExit: () => { throw new Error("disk gone"); }, log: (line) => said.push(line) });
+      process.exitCode = 7;
+      process.on("exit", () => { if (said.length !== 1) process.exitCode = 99; });
+      `,
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  assert.equal(child.status, 7, "a diagnostic write may never become the process's verdict");
+});
+
+test("the exit hook needs a handler, and dispose leaves no listener behind", () => {
+  assert.throws(() => installRunExitHook({}), /run_exit_hook_needs_a_handler/u);
+  const before = process.listenerCount("exit");
+  const hook = installRunExitHook({ onExit: () => {}, log: () => {} });
+  assert.equal(process.listenerCount("exit"), before + 1);
+  hook.dispose();
+  assert.equal(process.listenerCount("exit"), before);
 });
