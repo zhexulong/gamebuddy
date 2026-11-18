@@ -14,7 +14,7 @@
  * beneath `host/src`. The listing is the git index, so a lane's half-written directory is not repository content; a
  * walk that finds nothing is blocked rather than passed.
  *
- * TWO PROPERTIES, both read from the directory's own bytes rather than from a list here:
+ * THREE PROPERTIES, read from the tree's own bytes rather than from a list here:
  *
  *   1. A directory holds at least one source module at or beneath it. Documentation is not content. The finding is
  *      `a_directory_whose_only_content_is_a_claim:<dir>`, and it names the documents that carry the claim and - when
@@ -25,6 +25,28 @@
  *      `document_claim_names_missing_source:<file>:<name>`. This is the same defect one hop later: a README that
  *      survives a move and keeps naming the old location is a claim about a file that is not there.
  *
+ *   3. A game's own module lives in the game tree. Population: every tracked `host/src/**<game>-*.internal.ts` whose
+ *      NAME says it owns the game's lifecycle or its coordinator - the game identities are read from `host/src/games/`
+ *      itself, so a second game is covered the day its directory exists, and the words are the predicate while the
+ *      population stays a directory scan. The finding is `a_game_module_lives_in_the_game_tree:<file>`.
+ *
+ *      WHY A STATED REASON RATHER THAN AN EXEMPTION LIST (measured 2026-11-19, this tree). The rule names two members
+ *      today, and one of them cannot move: `stardew-production-lifecycle-coordinator.internal.ts` imports
+ *      `composition/stardew/stardew-guardian-platform`, `composition/stardew/stardew-guardian-object-presence`,
+ *      `stardew-game-install/desktop-entry-mod-deployment`, `windows-reparse-inspector`,
+ *      `windows-stardew-folder-picker` and `windows-stardew-installation-discovery` - and
+ *      `tools/check-host-game-physical-seam.mjs` blocks every one of those edges for a `games/**` importer. Moving it
+ *      there does not relocate a module; it moves a composition root into the layer forbidden to assemble anything, and
+ *      the placement rule and the seam rule disagree about a category neither named: a game-specific COMPOSITION
+ *      module. The row below is that measurement, and the gate re-proves it on every run by asking whether those
+ *      imports are still in the file. When someone inverts them (a capability injected instead), the row expires and
+ *      the gate says so - `stated_placement_reason_expired`.
+ *
+ *      The rule is only worth having if it can still fail, so it is proven on `stardew-game-lifecycle-state.internal.ts`
+ *      and `stardew-role-lifecycle-projection.internal.ts`, which moved into `host/src/games/stardew/lifecycle/` under
+ *      it. Both are pure game logic with no such edge; the `selfCheck` below drives the same predicate over a scratch
+ *      tree in both directions on every verdict.
+ *
  *     node tools/check-host-source-directories.mjs          # the verdict; exit 1 on a gap, 2 on a blocked reading
  *     node tools/check-host-source-directories.mjs --list   # the population and what each directory holds
  *
@@ -32,6 +54,10 @@
  *                    `a_directory_whose_only_content_is_a_claim` plus `document_claim_names_missing_source` for the
  *                    module the README quotes and the tree does not carry, while the same tree with both files added
  *                    is silent (tools/check-host-source-directories.mjs)
+ * red-proof: self-check  a scratch tree holding `host/src/other-game-lifecycle-widget.internal.ts` flat ->
+ *                    `a_game_module_lives_in_the_game_tree:host/src/other-game-lifecycle-widget.internal.ts`, while
+ *                    the same file under `host/src/games/other/lifecycle/` is silent; and a stated row whose claimed
+ *                    import is gone -> `stated_placement_reason_expired` (tools/check-host-source-directories.mjs)
  */
 
 export const gateDeclaration = {
@@ -55,8 +81,148 @@ const DOCUMENT_EXTENSION = ".md";
 // URL or an absolute path belongs to another authority - none of them promise a module here.
 const QUOTED_MODULE = /`([A-Za-z0-9_./-]+\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs))`/gu;
 
+const GAMES_ROOT = `${SOURCE_ROOT}/games`;
+const PRIVATE_MODULE_SUFFIX = ".internal.ts";
+// A module's name says which part of the game it owns. `internal` already means "private to its layer"; the words
+// below are the parts of a game that belong beside the game rather than beside the Host that runs it.
+const GAME_OWNED_NAME = /(?:^|[-.])(?:lifecycle|coordinator)(?:[-.]|$)/u;
+
+/**
+ * The one stated reason, as data rather than prose: the gate reads the imports back out of the file on every run, so
+ * the reason cannot drift into "known exception" while the code underneath it changes.
+ */
+export const STATED_GAME_MODULE_PLACEMENT = new Map([
+  [
+    `${SOURCE_ROOT}/stardew-production-lifecycle-coordinator.internal.ts`,
+    {
+      reason:
+        "a composition root, not game logic: it assembles the Stardew guardian platform and the desktop/native seams, " +
+        "and `tools/check-host-game-physical-seam.mjs` blocks those imports under `host/src/games/`",
+      blockedBy: [
+        "./stardew-game-install/desktop-entry-mod-deployment.js",
+        "./windows-reparse-inspector/index.js",
+        "./composition/stardew/stardew-guardian-object-presence.js",
+        "./windows-stardew-folder-picker/index.js",
+        "./windows-stardew-installation-discovery/index.js",
+        "./composition/stardew/stardew-guardian-platform.js",
+      ],
+    },
+  ],
+]);
+
 const isSource = (path) => SOURCE_EXTENSIONS.some((extension) => path.endsWith(extension));
 const isDocument = (path) => path.endsWith(DOCUMENT_EXTENSION);
+const basenameOf = (path) => path.split("/").at(-1) ?? "";
+const directoryOf = (path) => path.split("/").slice(0, -1).join("/");
+
+/** Every game identity the tree ships, read from `host/src/games/` rather than from a list here. */
+export function gameIdentities({ trackedFiles }) {
+  const found = new Set();
+  for (const path of trackedFiles) {
+    if (!path.startsWith(`${GAMES_ROOT}/`)) continue;
+    const segments = path.split("/");
+    if (segments.length < 5) continue;
+    found.add(segments[3]);
+  }
+  return [...found].sort();
+}
+
+/**
+ * The population: a game's own `*.internal.ts` module whose name owns its lifecycle or its coordinator, wherever it
+ * currently sits under `host/src`. A flat module and a module already in the tree are the same member of the same
+ * class, which is what lets the gate count how many are in the tree rather than only how many are not.
+ */
+export function gameModules({ trackedFiles }) {
+  const identities = gameIdentities({ trackedFiles });
+  return trackedFiles
+    .filter((path) => path.startsWith(`${SOURCE_ROOT}/`) && path.endsWith(PRIVATE_MODULE_SUFFIX))
+    .filter((path) => {
+      const name = basenameOf(path);
+      return identities.some((game) => name.startsWith(`${game}-`)) && GAME_OWNED_NAME.test(name);
+    })
+    .sort();
+}
+
+const importsOf = (text) => [...text.matchAll(/(?:from|import)\s*"([^"]+)"/gu)].map((match) => match[1]);
+
+/**
+ * One placement verdict over one tree.
+ *
+ * `read` is injected so the falsifier drives the same rule over a scratch tree instead of a second copy of it.
+ */
+export function checkGameModulePlacement({ trackedFiles, read = () => null }) {
+  const modules = gameModules({ trackedFiles });
+  const identities = gameIdentities({ trackedFiles });
+  const findings = [];
+  const statements = [];
+  let inTree = 0;
+  let stated = 0;
+  for (const path of modules) {
+    const game = identities.find((identity) => basenameOf(path).startsWith(`${identity}-`));
+    const directory = directoryOf(path);
+    if (directory === `${GAMES_ROOT}/${game}` || directory.startsWith(`${GAMES_ROOT}/${game}/`)) {
+      inTree += 1;
+      continue;
+    }
+    const statement = STATED_GAME_MODULE_PLACEMENT.get(path);
+    if (statement === undefined) {
+      findings.push({ kind: "a_game_module_lives_in_the_game_tree", module: path, game });
+      continue;
+    }
+    const text = read(path);
+    if (text === null || text === undefined) {
+      findings.push({
+        kind: "stated_placement_reason_expired",
+        module: path,
+        detail: "the module the reason is about is not in this tree",
+        missing: [],
+      });
+      continue;
+    }
+    const present = new Set(importsOf(text));
+    const missing = statement.blockedBy.filter((specifier) => !present.has(specifier));
+    if (missing.length > 0) {
+      findings.push({
+        kind: "stated_placement_reason_expired",
+        module: path,
+        detail: "the reason names imports this module no longer makes, so the placement rule now applies to it",
+        missing,
+      });
+      continue;
+    }
+    stated += 1;
+    statements.push({ module: path, reason: statement.reason, blockedBy: statement.blockedBy });
+  }
+  // An exemption must expire: a row that names a module this tree carries but no longer flat - moved into the tree,
+  // or no longer a member - is a claim about nothing, and the next reader would read it as a standing permission.
+  // A row about a file the tree does not carry at all is measured by the tree that carries it, not by this one.
+  for (const path of STATED_GAME_MODULE_PLACEMENT.keys()) {
+    if (modules.includes(path)) continue;
+    const name = basenameOf(path);
+    const movedTo = trackedFiles.find((file) => file !== path && basenameOf(file) === name);
+    if (!trackedFiles.includes(path) && movedTo === undefined) continue;
+    findings.push({
+      kind: "stated_placement_reason_expired",
+      module: path,
+      detail:
+        movedTo === undefined
+          ? "no longer a flat game module, so the row must be deleted"
+          : `it now lives at ${movedTo}, so the row must be deleted`,
+      missing: [],
+    });
+  }
+  return {
+    examined: modules.length,
+    inTree,
+    stated,
+    findings,
+    statements,
+    blocked:
+      identities.length > 0 && modules.length === 0
+        ? [`game_module_placement_read_nothing: examined 0 module(s) in a tree that ships game identities`]
+        : [],
+  };
+}
 
 /**
  * The directories under `host/src` and the tracked files that give them content.
@@ -142,6 +308,16 @@ export function checkHostSourceDirectories({
       findings.push({ kind: "document_claim_names_missing_source", document: path, name: match });
     }
   }
+  const placement = checkGameModulePlacement({
+    trackedFiles,
+    read: (path) => {
+      try {
+        return read(path);
+      } catch {
+        return null;
+      }
+    },
+  });
   return {
     examined: directoryRecords.length,
     examinedDocuments: directoryRecords.reduce((total, record) => total + record.documents.length, 0),
@@ -150,11 +326,14 @@ export function checkHostSourceDirectories({
       sources: record.sources.length,
       documents: record.documents.length,
     })),
-    findings,
-    blocked:
-      directoryRecords.length === 0
+    placement,
+    findings: [...findings, ...placement.findings],
+    blocked: [
+      ...(directoryRecords.length === 0
         ? [`host_source_directories_read_nothing: examined 0 directory(ies) under ${SOURCE_ROOT}`]
-        : [],
+        : []),
+      ...placement.blocked,
+    ],
   };
 }
 
@@ -178,6 +357,17 @@ function describeFinding(finding) {
       `composition and keep platform primitives where they are implemented).`
     );
   }
+  if (finding.kind === "a_game_module_lives_in_the_game_tree") {
+    return (
+      `${finding.kind}:${finding.module} - this is ${finding.game} lifecycle logic sitting flat beside the Host that ` +
+      `runs it. Move it under ${GAMES_ROOT}/${finding.game}/, or add a stated row to ` +
+      "STATED_GAME_MODULE_PLACEMENT whose imports the gate can re-read and find."
+    );
+  }
+  if (finding.kind === "stated_placement_reason_expired") {
+    const names = finding.missing.length === 0 ? "" : ` Missing: ${finding.missing.join(", ")}.`;
+    return `${finding.kind}:${finding.module} - ${finding.detail}.${names}`;
+  }
   return (
     `${finding.kind}:${finding.document}:${finding.name} - no tracked file in this tree has that name, ` +
     "so the document points at a module that does not exist."
@@ -199,6 +389,21 @@ function main(
     for (const record of hostSourceDirectories({ trackedFiles })) {
       write(`directory\t${record.directory}\tsources=${record.sources.length}\tdocuments=${record.documents.length}\n`);
     }
+    const placement = checkGameModulePlacement({
+      trackedFiles,
+      read: (path) => {
+        try {
+          return readFileSync(resolve(root, path), "utf8");
+        } catch {
+          return null;
+        }
+      },
+    });
+    for (const path of gameModules({ trackedFiles })) write(`module\t${path}\n`);
+    write(
+      `modules examined ${placement.examined} \u00b7 in-tree ${placement.inTree} \u00b7 ` +
+        `stated ${placement.stated} \u00b7 findings ${placement.findings.length}\n`,
+    );
     return 0;
   }
   const report = checkHostSourceDirectories({ root, trackedFiles });
@@ -211,11 +416,20 @@ function main(
         report.blocked.length === 0 && report.findings.length === 0 && failedChecks.length === 0 ? "passed" : "failed",
       examined: report.examined,
       examinedDocuments: report.examinedDocuments,
+      modulesExamined: report.placement.examined,
+      modulesInTree: report.placement.inTree,
+      modulesStated: report.placement.stated,
       findings: report.findings.length,
       ...(report.blocked.length === 0 ? {} : { blocked: report.blocked }),
       ...(checks.length === 0 ? {} : { checks }),
     })}\n`,
   );
+  // The stated rows print their imports, so the reason cannot drift into "known exception": a reader of the verdict
+  // sees exactly which edges keep the module out of the game tree.
+  for (const statement of report.placement.statements) {
+    write(`stated\t${statement.module}\t${statement.reason}\n`);
+    for (const specifier of statement.blockedBy) write(`stated-blocked-by\t${statement.module}\t${specifier}\n`);
+  }
   if (failedChecks.length > 0) {
     writeError(
       `host_source_directories_self_check_failed: ${failedChecks
@@ -229,6 +443,10 @@ function main(
   write(
     `host_source_directories examined ${report.examined} directory(ies) and ${report.examinedDocuments} ` +
       `document(s); findings ${report.findings.length}\n`,
+  );
+  write(
+    `modules examined ${report.placement.examined} \u00b7 in-tree ${report.placement.inTree} \u00b7 ` +
+      `stated ${report.placement.stated} \u00b7 findings ${report.placement.findings.length}\n`,
   );
   return report.blocked.length === 0 && report.findings.length === 0 ? 0 : 1;
 }
@@ -273,6 +491,11 @@ function runVerdict(root) {
   return { exitCode, stdout: printed.join(""), stderr: errors.join("") };
 }
 
+/** A file body that makes every import the one stated row claims, built from the row rather than copied beside it. */
+const INTACT_STATEMENT = [...STATED_GAME_MODULE_PLACEMENT.values()][0].blockedBy
+  .map((specifier) => `import "${specifier}";`)
+  .join("\n");
+
 export function selfCheck() {
   const checks = [];
   const record = (id, ok, detail) => checks.push({ id, status: ok ? "passed" : "failed", detail });
@@ -297,6 +520,56 @@ export function selfCheck() {
       "the_same_tree_with_its_module_is_silent",
       silent,
       silent ? "exit 0, no finding" : `exit ${passed.exitCode}, printed ${JSON.stringify(passed.stderr.slice(0, 400))}`,
+    );
+
+    // A game's own module, in both directions. The member is a name the predicate derives, not a file this checkout
+    // happens to hold, so the rule can be shown red after the two modules it names today are where they belong.
+    const flatModule = `${SOURCE_ROOT}/other-game-lifecycle-widget.internal.ts`;
+    const movedModule = `${SOURCE_ROOT}/games/other/lifecycle/other-game-lifecycle-widget.internal.ts`;
+    const gameTree = [`${GAMES_ROOT}/other/README.md`, `${GAMES_ROOT}/stardew/README.md`];
+    const flat = checkGameModulePlacement({ trackedFiles: [...gameTree, flatModule], read: () => 'import "x.js";\n' });
+    const flatNamed =
+      flat.findings.length === 1 &&
+      flat.findings[0].kind === "a_game_module_lives_in_the_game_tree" &&
+      flat.findings[0].module === flatModule &&
+      flat.examined === 1 &&
+      flat.inTree === 0 &&
+      flat.stated === 0;
+    record(
+      "a_game_module_left_flat_is_named_by_its_path",
+      flatNamed,
+      flatNamed ? `examined 1 \u00b7 in-tree 0 \u00b7 stated 0, naming ${flatModule}` : JSON.stringify(flat),
+    );
+    const moved = checkGameModulePlacement({ trackedFiles: [...gameTree, movedModule], read: () => null });
+    const movedSilent = moved.findings.length === 0 && moved.inTree === 1 && moved.examined === 1;
+    record(
+      "the_same_module_in_the_game_tree_is_silent",
+      movedSilent,
+      movedSilent ? "examined 1 \u00b7 in-tree 1 \u00b7 stated 0, no finding" : JSON.stringify(moved),
+    );
+    // The stated row is a claim about the file's imports, so it expires where those imports stop being made.
+    const statedPath = [...STATED_GAME_MODULE_PLACEMENT.keys()][0];
+    const intact = checkGameModulePlacement({ trackedFiles: [...gameTree, statedPath], read: () => INTACT_STATEMENT });
+    const intactStated = intact.findings.length === 0 && intact.stated === 1 && intact.statements.length === 1;
+    record(
+      "a_stated_row_whose_imports_are_present_is_accepted_and_printed",
+      intactStated,
+      intactStated
+        ? `stated 1 with ${intact.statements[0].blockedBy.length} printed import(s)`
+        : JSON.stringify(intact),
+    );
+    const expired = checkGameModulePlacement({
+      trackedFiles: [...gameTree, statedPath],
+      read: () => 'import "x.js";\n',
+    });
+    const expiredNamed =
+      expired.findings.length === 1 && expired.findings[0].kind === "stated_placement_reason_expired";
+    record(
+      "a_stated_row_whose_imports_are_gone_expires",
+      expiredNamed,
+      expiredNamed
+        ? `${expired.findings[0].kind} naming ${expired.findings[0].missing.length} absent import(s)`
+        : JSON.stringify(expired),
     );
   } finally {
     rmSync(defect, { recursive: true, force: true });

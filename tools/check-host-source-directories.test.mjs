@@ -17,7 +17,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { checkHostSourceDirectories, hostSourceDirectories, selfCheck } from "./check-host-source-directories.mjs";
+import {
+  STATED_GAME_MODULE_PLACEMENT,
+  checkGameModulePlacement,
+  checkHostSourceDirectories,
+  gameModules,
+  hostSourceDirectories,
+  selfCheck,
+} from "./check-host-source-directories.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const gate = resolve(repositoryRoot, "tools", "check-host-source-directories.mjs");
@@ -176,6 +183,78 @@ test("the gate's own falsifier passes and the command exits on the tree it belon
 
   const red = spawnSync(process.execPath, [gate], { cwd: tmpdir(), encoding: "utf8", windowsHide: true });
   assert.equal(red.status, 0, "a different cwd must not change which tree is judged");
+});
+
+test("a game module left flat is named, and the same module in the game tree is silent", () => {
+  const game = "host/src/games/demo/README.md";
+  const flat = "host/src/demo-hero-lifecycle-widget.internal.ts";
+  const moved = "host/src/games/demo/lifecycle/demo-hero-lifecycle-widget.internal.ts";
+  const flatVerdict = checkGameModulePlacement({ trackedFiles: [game, flat], read: () => null });
+  assert.deepEqual(
+    flatVerdict.findings.map((finding) => [finding.kind, finding.module]),
+    [["a_game_module_lives_in_the_game_tree", flat]],
+  );
+  assert.equal(flatVerdict.examined, 1);
+  assert.equal(flatVerdict.inTree, 0);
+  const movedVerdict = checkGameModulePlacement({ trackedFiles: [game, moved], read: () => null });
+  assert.deepEqual(movedVerdict.findings, []);
+  assert.equal(movedVerdict.inTree, 1);
+  // The identity comes from `host/src/games/`, so a module named for a game the tree does not ship is not a member:
+  // a name alone is not an identity, and a hand list here would silently stop covering the second game.
+  assert.deepEqual(gameModules({ trackedFiles: [game, "host/src/elsewhere-hero-lifecycle.internal.ts"] }), []);
+});
+
+test("the stated row is a claim about the file's imports, and it expires when they go", () => {
+  const [statedPath] = [...STATED_GAME_MODULE_PLACEMENT.keys()];
+  const identities = ["host/src/games/stardew/README.md"];
+  const source = readFileSync(resolve(repositoryRoot, statedPath), "utf8");
+  // Every import the row claims is read back out of the module as it stands: the reason cannot drift into a standing
+  // exception while the imports underneath it are inverted.
+  for (const specifier of STATED_GAME_MODULE_PLACEMENT.get(statedPath).blockedBy) {
+    assert.ok(source.includes(`"${specifier}"`), `${statedPath} no longer imports ${specifier}`);
+  }
+  const stated = checkGameModulePlacement({ trackedFiles: [...identities, statedPath], read: () => source });
+  assert.equal(stated.stated, 1);
+  assert.deepEqual(stated.findings, []);
+  const expired = checkGameModulePlacement({
+    trackedFiles: [...identities, statedPath],
+    read: () => 'import "./only-one.js";\n',
+  });
+  assert.deepEqual(
+    expired.findings.map((finding) => finding.kind),
+    ["stated_placement_reason_expired"],
+  );
+  // An exemption about a module that has moved must be deleted rather than left as a permission nobody re-reads.
+  const movedAway = checkGameModulePlacement({
+    trackedFiles: [...identities, statedPath.replace("host/src/", "host/src/games/stardew/lifecycle/")],
+    read: () => null,
+  });
+  assert.deepEqual(
+    movedAway.findings.map((finding) => finding.kind),
+    ["stated_placement_reason_expired"],
+  );
+});
+
+test("the shipped tree has game modules in the tree, and not every member is stated", () => {
+  const tracked = spawnSync("git", ["ls-files", "-z"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .stdout.split("\0")
+    .filter((path) => path !== "");
+  const placement = checkGameModulePlacement({ trackedFiles: tracked, read: readFrom(repositoryRoot) });
+  assert.deepEqual(placement.findings, []);
+  // A population whose every member is stated agrees with itself. The rule is worth having only while some member is
+  // in the tree because the rule put it there.
+  assert.ok(placement.examined > 0, `examined ${placement.examined} game module(s)`);
+  assert.ok(placement.inTree > 0, "no game module is in the game tree");
+  assert.ok(placement.stated < placement.examined, "every game module is stated");
+  const green = spawnSync(process.execPath, [gate], { cwd: repositoryRoot, encoding: "utf8", windowsHide: true });
+  assert.equal(green.status, 0, green.stderr);
+  assert.match(green.stdout, /modules examined \d+ · in-tree \d+ · stated \d+ · findings 0/);
+  // The stated row prints the imports that justify it, so a reader sees why rather than "known exception".
+  assert.match(green.stdout, /stated-blocked-by\thost\/src\/stardew-production-lifecycle-coordinator\.internal\.ts\t/);
 });
 
 test("the gate's source names the finding it produces", () => {
