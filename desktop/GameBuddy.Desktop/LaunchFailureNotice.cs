@@ -55,14 +55,44 @@ internal sealed class LaunchFailureNotice
     /// </summary>
     internal static LaunchFailureNotice For(DesktopLaunchResult result, string? stage, string? reportedCode)
     {
-        var whatFailed = WhatFailedFor(result);
+        var code = DesktopLaunchFailureRecord.Bounded(reportedCode);
+        // A cause the child named and this launch's own result cannot: the Host composed everything
+        // except a conversation to open. Both of these are the Chat root's own refusals, and for both
+        // "start it again" is the sentence that was measured to be wrong - the same authority answers
+        // the same question.
+        (string WhatFailed, string WhatYouCanDo)? named = null;
+        if (code is not null && ChatRootCauses.TryGetValue(code, out var cause)) named = cause;
+        var whatFailed = named?.WhatFailed ?? WhatFailedFor(result);
         if (stage is not null) whatFailed = $"{whatFailed} It stopped at the step \"{stage}\".";
         return new LaunchFailureNotice(
             whatFailed,
-            DesktopLaunchFailureRecord.Bounded(reportedCode),
-            WhatYouCanDoFor(result),
+            code,
+            named?.WhatYouCanDo ?? WhatYouCanDoFor(result),
             recordPath: null);
     }
+
+    /// <summary>
+    /// The Chat root's two refusals, stated from the child's own code.
+    ///
+    /// <c>semantic_chat_liveness_unrecoverable</c> is the Host's answer when the durable transcript
+    /// authority holds no live conversation to mount: no product writer leaves that list empty (the
+    /// store refuses the last removal by name), so it is a root an older build or a hand-repaired file
+    /// left behind, and no gesture inside the product changes it. <c>semantic_chat_liveness_unreadable</c>
+    /// is the same root when that list could not be read at all - a damaged or locked file.
+    ///
+    /// What a player can do is the same for both and it is not "again": the report below is the only
+    /// thing that names the conversation list this launch could not open.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string WhatFailed, string WhatYouCanDo)> ChatRootCauses =
+        new Dictionary<string, (string WhatFailed, string WhatYouCanDo)>(StringComparer.Ordinal)
+        {
+            ["semantic_chat_liveness_unrecoverable"] = (
+                "GameBuddy has no conversation it can open in this installation.",
+                "Its list of conversations holds nothing GameBuddy can open, so starting it again stops at the same point. Send the report below to support: it names this launch and the code on this line."),
+            ["semantic_chat_liveness_unreadable"] = (
+                "GameBuddy could not read this installation's list of conversations.",
+                "Starting it again reads the same file. Send the report below to support: it names this launch and the code on this line."),
+        };
 
     /// <summary>The same statement, now naming the record that was written for it.</summary>
     internal LaunchFailureNotice WithRecord(string? recordPath) =>

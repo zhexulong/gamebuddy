@@ -54,13 +54,16 @@ public sealed class LaunchFailureSurfaceTests
         Assert.Equal(CompositionFailureCode, step.GetProperty("failure").GetString());
 
         // The copy: what stopped, what the Host itself said, what the player can do, and where the
-        // record is.
+        // record is. The child named the cause this launch's own result cannot - a Chat root with no
+        // conversation to open - so the sentence names that instead of sending the player back to the
+        // same refusal.
         Assert.Equal("GameBuddy could not start", LaunchFailureNotice.Title);
         var body = LaunchFailureWindow.BodyText(notice);
-        Assert.Contains("background service stopped before it was ready", body, StringComparison.Ordinal);
+        Assert.Contains("no conversation it can open", body, StringComparison.Ordinal);
         Assert.Contains($"\"{AnnouncedStage}\"", body, StringComparison.Ordinal);
         Assert.Contains(CompositionFailureCode, body, StringComparison.Ordinal);
-        Assert.Contains("Start GameBuddy again", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Start GameBuddy again", body, StringComparison.Ordinal);
+        Assert.Contains("Send the report below to support", body, StringComparison.Ordinal);
         Assert.Contains(path, body, StringComparison.Ordinal);
         Assert.Equal(path, notice.RecordPath);
 
@@ -242,6 +245,32 @@ public sealed class LaunchFailureSurfaceTests
         // The window shows the record's own statement: one statement, so the window cannot name a code
         // the record does not carry.
         Assert.Contains("Record(", main[told..], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Both Chat root refusals, one test: the two codes say which fact is missing (a conversation to
+    /// open, or the list itself) and neither offers the retry that was measured to return the same
+    /// answer. What they do name is the record, because that record is the only thing that carries the
+    /// conversation list this launch could not open.
+    /// </summary>
+    [Theory]
+    [InlineData("semantic_chat_liveness_unrecoverable", "no conversation it can open")]
+    [InlineData("semantic_chat_liveness_unreadable", "could not read this installation's list of conversations")]
+    public void A_chat_root_refusal_names_what_is_missing_and_not_a_retry(string code, string sentence)
+    {
+        var notice = Program.Record(
+            DesktopLaunchResult.GuardianLaunchUnavailable,
+            ChildCategory,
+            stage: null,
+            childCode: code,
+            operationalRoot: null);
+
+        Assert.Equal(code, notice.ReportedCode);
+        var body = LaunchFailureWindow.BodyText(notice);
+        Assert.Contains(sentence, body, StringComparison.Ordinal);
+        Assert.Contains(code, body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Start GameBuddy again", body, StringComparison.Ordinal);
+        Assert.Contains("Send the report below to support", body, StringComparison.Ordinal);
     }
 
     /// <summary>One well-formed status frame, exactly as the child's own writer emits it.</summary>
