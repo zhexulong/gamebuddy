@@ -1033,10 +1033,16 @@ function decisionCode(deciding, sourceFile) {
  * What a decision does with the comparison: refuse the operation, or narrow the value.
  *
  * A refusal is a `throw`, a `send*Problem`/`refuse*` call, or a helper that does one - the branch that stops the
- * operation, and the only place a bounded code belongs. A bound is a `break`, a `slice`/`filter`, or a `return` of
- * nothing: the payload is trimmed or dropped instead of the operation being refused. That is a truncation defect of
- * its own, not a limit the player meets as a generic failure, and this class reports it as a bound rather than as a
- * missing code.
+ * operation, and the only place a bounded code belongs. A bound is a `break`, a `slice`/`filter`, a `push`/`unshift`
+ * under the cap, or a `return` of nothing: the payload is trimmed, dropped or stopped at the cap instead of the
+ * operation being refused. That is a truncation defect of its own, not a limit the player meets as a generic failure,
+ * and this class reports it as a bound rather than as a missing code.
+ *
+ * The append shape is in this list because of a measured site (`host/src/game-world-vocabulary.ts:2095`, 2026-11-19):
+ * `if (unreadableNamed.length < MAX_COUNTED_FAMILIES_NAMED) unreadableNamed.push(key)` stops NAMING tiles once eight
+ * are named while `tiles.unreadable` keeps the exact count, so the answer prints "N 格没读到（…）" with the true number
+ * beside the eight it could name. Nothing is refused and no code is owed; without `push` here the reader called it a
+ * nameless refusal and the whole audit exited 1 over a limit the player never meets.
  */
 function decisionKind(deciding, sourceFile) {
   let narrows = false;
@@ -1047,7 +1053,7 @@ function decisionKind(deciding, sourceFile) {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      /^(?:filter|slice)$/u.test(node.expression.name.text)
+      /^(?:filter|slice|push|unshift)$/u.test(node.expression.name.text)
     )
       narrows = true;
   });
@@ -1135,7 +1141,7 @@ function runRefusal(sources) {
     const stillOpen = sites.filter((site) => site.category !== "decided");
     const reading =
       kind === "narrows"
-        ? "capacity comparison(s) that trim the collection (break/slice/filter) instead of refusing"
+        ? "capacity comparison(s) that trim or stop the collection (break/slice/filter/push) instead of refusing"
         : "capacity comparison(s) that discard the value (return null/undefined) instead of refusing";
     unproven.push({
       count: stillOpen.length,

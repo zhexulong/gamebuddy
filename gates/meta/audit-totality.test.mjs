@@ -422,6 +422,41 @@ test("refusal: a const-bound predicate answers the question its caller names, an
   }
 });
 
+test("refusal: a cap that stops a list growing bounds the value instead of refusing it", (t) => {
+  // The measured site (`host/src/game-world-vocabulary.ts:2095`, 2026-11-19): eight tile names are listed and the
+  // ninth is not, while `tiles.unreadable` keeps the exact count. Nothing is refused, so no bounded code is owed -
+  // and before `push` was a recognised bound this comparison was the one blocking violation in the whole audit.
+  const root = fixture();
+  const file = "host/src/note-store.ts";
+  try {
+    const original = read(root, file);
+    write(
+      root,
+      file,
+      `${original}\nexport function collectNotes(notes: readonly string[]): readonly string[] {\n  const named: string[] = [];\n  for (const note of notes) if (named.length < MAX_NOTES) named.push(note);\n  return named;\n}\n`,
+    );
+    try {
+      const reading = violationsOf(root, "refusal");
+      assert.deepEqual(
+        reading.violations,
+        [],
+        `a list that stops growing at its cap refuses nothing:\n${reading.notes.join("\n")}`,
+      );
+      assert.match(
+        reading.notes.join("\n"),
+        /narrows - 1 comparison/u,
+        "the comparison is reported as a bound, not swallowed",
+      );
+      t.diagnostic(reading.notes.join("\n"));
+    } finally {
+      write(root, file, original);
+    }
+    assert.deepEqual(violationsOf(root, "refusal").violations, [], "green again once the injection is removed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("refusal: a capacity enforced without a named code is a generic failure", (t) => {
   const root = fixture();
   try {
