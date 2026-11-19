@@ -20,16 +20,18 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// must look the item up in the live pack, instead of reading the slot the plan's snapshot named.
 ///
 /// <para>
-/// WHY THE POPULATION IS "slot AND expected item", and not "any action with a slot". A slot in a request is one of two
-/// things and they are decided differently. A slot the caller SAW is a pack index into <c>Game1.player.Items</c>: the
-/// plan observed it, a sibling node of the same plan may have emptied or shortened that stack since, and the item the
-/// request also names is the fact that survives the re-packing - so the executor re-resolves it
-/// (<see cref="ExecutionManager.ResolveLiveSlot"/>). A slot the caller MEANS is part of the request itself (a chest's own
-/// index, a body slot, a crank's slot) and re-resolving it would silently redirect the action somewhere else, so a member
-/// of that kind is recorded with its reason in <see cref="SlotIsAnAddress"/> and printed, never "fixed". An action that
-/// declares a slot and NO expected item is the third case: nobody wrote down what should be there, so a stale index is
-/// undetectable - printed as <c>declares-only-a-slot</c>, because that is a fact about the catalogue worth seeing.
-/// </para>
+/// WHY THE POPULATION IS "slot AND expected item", and not "any action with a slot". A slot in a request is decided one
+/// of FOUR ways, and the census prints one number for each. A slot the caller SAW is a pack index into
+/// <c>Game1.player.Items</c>: the plan observed it, a sibling node of the same plan may have emptied or shortened that
+/// stack since, and the item the request also names is the fact that survives the re-packing - so the executor
+/// re-resolves it (<see cref="ExecutionManager.ResolveLiveSlot"/>, printed as <c>migrated</c>). A slot the caller MEANS is
+/// part of the request itself, and it can be meant in two DIFFERENT ways - which is why there are two tables and not one:
+/// as an ADDRESS (<see cref="SlotIsAnAddress"/>: a chest's own index, a body slot, a crank's slot), where the slot names a
+/// container cell; or as part of the action's own PUBLISHED IDENTITY (<see cref="SlotIsInTheIdentity"/>), where the id the
+/// receipt must match is BUILT FROM the slot, so re-resolving it does not repair a stale index - it changes what the
+/// receipt is about. Both kinds are recorded with their reason and printed, never "fixed". An action that declares a slot
+/// and NO expected item is the fourth case: nobody wrote down what should be there, so a stale index is undetectable -
+/// printed as <c>declares-only-a-slot</c>, because that is a fact about the catalogue worth seeing.
 ///
 /// <para>
 /// MEASURED 2026-11-19 (`round77`): 40 planned plantings, 6 done, <c>seed_not_owned_in_slot</c> 22 times. The planting
@@ -51,11 +53,22 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
+/// WHY <see cref="SlotIsInTheIdentity"/> IS NOT EMPTY, and why that is a measurement rather than a debt.
+/// <c>place_owned_object</c> hands out an id built from `{location}:{slot}:{qualifiedItemId}:owned-object`
+/// (<c>BuildOwnedObjectPlacementTargetId</c>), and the request has to echo that id back; re-resolving the slot therefore
+/// produces an id the request can no longer match, which is not a stale index repaired but a different receipt. Its tile
+/// is the part the game thread re-decides; its SOURCE is the identity. Each row here names the builder it rests on, and
+/// the gate re-reads that builder - so the exemption expires the moment the id stops carrying the slot instead of
+/// outliving its reason.
+/// </para>
+///
+/// <para>
 /// WHAT IT READS, and therefore what it can miss: it is a source-shape gate over the action's whole request path (its
 /// handler arm, the request half, and every Mod method that half calls). It proves each member resolves through the ONE
 /// helper that asks the live pack; that the helper answers with the live slot is driven against a real world in
-/// <c>PlantSeedStaleSlotTests</c> and <c>SaplingApproachWiringTests</c>. An action that re-resolved inline, without the
-/// helper, would be reported here - which is the intent: one seat for that decision.
+/// <c>PlantSeedStaleSlotTests</c> and <c>SaplingApproachWiringTests</c>, and the builders the in-the-identity rows rest
+/// on are re-read in the Mod's source, so an exemption there fails once its id stops carrying the slot. An action that
+/// re-resolved inline, without the helper, would be reported here - which is the intent: one seat for that decision.
 /// </para>
 /// </summary>
 public sealed class StaleIndexIsNotAMissingItemGateTests
@@ -70,9 +83,37 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
 
     /// <summary>
     /// The population members whose slot is an ADDRESS rather than something the caller saw, with the reason. Recorded
-    /// here rather than asserted, because the gate has no business deciding that an address is a stale index.
+    /// here rather than asserted, because the gate has no business deciding that an address is a stale index. A member
+    /// whose slot is part of its own published identity goes in <see cref="SlotIsInTheIdentity"/> instead: both are "the
+    /// caller means it", but they are different facts and the census prints them apart.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> SlotIsAnAddress = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The members whose slot is part of the action's own PUBLISHED IDENTITY - the id the request must echo is built from
+    /// the slot, so re-resolving it does not fix a stale index, it changes what the receipt is about. Each row names the
+    /// builder it rests on.
+    ///
+    /// <para>
+    /// EVERY ROW EXPIRES, and the gate checks it rather than trusting the sentence: it re-reads the named builder and
+    /// fails when that builder's id no longer interpolates the slot. That is the whole expiry test, and it is one grep for
+    /// a reader - `{slot}` in <c>BuildOwnedObjectPlacementTargetId</c>. When it fires, the slot has stopped being what the
+    /// request is about: delete the row and put the member back in <see cref="PendingWalk"/>, because a slot the id does
+    /// not carry is an ordinary stale index again.
+    /// </para>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, SlotCarriesTheIdentity> SlotIsInTheIdentity =
+        new Dictionary<string, SlotCarriesTheIdentity>(StringComparer.Ordinal)
+        {
+            ["place_owned_object"] = new SlotCarriesTheIdentity(
+                "BuildOwnedObjectPlacementTargetId",
+                "the id this request has to echo IS the carried source: the build hashes "
+                    + "`{location}:{slot}:{qualifiedItemId}:owned-object`, so the slot is what the receipt is ABOUT. The "
+                    + "TILE is the half the game thread re-decides (`Utility.playerCanPlaceItemHere`); the source is the "
+                    + "identity, and re-resolving it answers `place_owned_object_target_changed` against the caller's own "
+                    + "published id. DELETE THIS ROW if BuildOwnedObjectPlacementTargetId no longer includes the slot - the "
+                    + "gate reads that builder and fails first, and the member then belongs back in PendingWalk."),
+        };
 
     /// <summary>
     /// The members that still trust the index, each with the reason it has not been walked yet. EVERY ENTRY EXPIRES: the
@@ -84,7 +125,6 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
         ["equip_wearable"] = "the pack side of a wearable move is a slot the caller saw; the walk has not reached it",
         ["interact_npc_with_item"] = "not walked yet",
         ["machine_load"] = "not walked yet",
-        ["place_owned_object"] = "not walked yet: the furniture identity change landed in the same file first",
         ["use_item"] = "not walked yet",
     };
 
@@ -106,21 +146,40 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
             "an action whose handler arm resolves to no request half is an action this gate cannot read, and the census "
                 + "below would shrink while still reporting nothing:\n  " + string.Join("\n  ", measured.Unresolved));
 
-        List<Row> trusting = measured.Rows.Where(row => row.DeclaresSlotAndItem && !row.SlotIsAnAddress && !row.ReResolves).ToList();
+        List<Row> trusting = measured.Rows
+            .Where(row => row.DeclaresSlotAndItem && !row.SlotIsAnAddress && !row.SlotIsInTheIdentity && !row.ReResolves)
+            .ToList();
         List<Row> unwalked = trusting.Where(row => !row.PendingWalk).ToList();
+        List<Row> population = measured.Rows.Where(row => row.DeclaresSlotAndItem).ToList();
+        HashSet<string> trustingIds = trusting.Select(row => row.ActionId).ToHashSet(StringComparer.Ordinal);
+        List<string> pendingThatLeftTheWalk = PendingWalk.Keys.Where(actionId => !trustingIds.Contains(actionId)).ToList();
+        List<string> expiredIdentityExemptions = ExpiredIdentityExemptions();
+        List<Row> conflicting = population
+            .Where(row => (row.SlotIsAnAddress && row.SlotIsInTheIdentity)
+                || (row.SlotIsInTheIdentity && row.ReResolves)
+                || (row.SlotIsAnAddress && row.ReResolves))
+            .ToList();
 
         this.output.WriteLine(
-            $"actions examined {measured.Rows.Count} · re-resolves {measured.Rows.Count(row => row.ReResolves)}"
-                + $" · trusts-the-index {trusting.Count} · slot-is-an-address {measured.Rows.Count(row => row.SlotIsAnAddress)}"
+            $"actions examined {measured.Rows.Count} · trusting {trusting.Count}"
+                + $" · address {measured.Rows.Count(row => row.SlotIsAnAddress)}"
+                + $" · in-the-identity {measured.Rows.Count(row => row.SlotIsInTheIdentity)}"
+                + $" · migrated {measured.Rows.Count(row => row.ReResolves)}"
                 + $" · declares-only-a-slot {measured.Rows.Count(row => row.DeclaresOnlySlot)}");
-        this.output.WriteLine($"  re-resolves: {string.Join(", ", measured.Rows.Where(row => row.ReResolves).Select(row => row.ActionId))}");
+        this.output.WriteLine(
+            $"  migrated: {string.Join(", ", measured.Rows.Where(row => row.ReResolves).Select(row => row.ActionId))}");
+        this.output.WriteLine(
+            $"  slot is an address: {string.Join(", ", measured.Rows.Where(row => row.SlotIsAnAddress).Select(row => row.ActionId))}");
+        this.output.WriteLine(
+            "  slot is part of the published identity: "
+                + string.Join(", ", measured.Rows.Where(row => row.SlotIsInTheIdentity)
+                    .Select(row => $"{row.ActionId} ({SlotIsInTheIdentity[row.ActionId].Builder})")));
         this.output.WriteLine($"  awaiting the walk (each entry expires): {string.Join(", ", trusting.Select(row => row.ActionId))}");
         this.output.WriteLine(
             "  declares only a slot, so a stale index is undetectable there: "
                 + string.Join(", ", measured.Rows.Where(row => row.DeclaresOnlySlot).Select(row => row.ActionId)));
 
-        measured.Rows.Count(row => row.DeclaresSlotAndItem).Should().NotBe(
-            0,
+        population.Should().NotBeEmpty(
             "the population is derived from the catalogue's own argument declarations, so an empty one means the "
                 + $"derivation broke, not that nothing needs re-resolving (examined {measured.Rows.Count} registered actions)");
 
@@ -134,13 +193,28 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
                 + "named as if it were the item - so a pack that re-ordered reads to the caller as a missing item:\n  "
                 + string.Join("\n  ", unwalked.Select(row => $"{row.ActionId}: {row.Site} - resolve the item through {ResolutionSeam}) against the live pack")));
 
-        PendingWalk.Keys.Should().BeSubsetOf(trusting.Select(row => row.ActionId),
-            "an entry here claims an action still trusts the index; once it re-resolves the entry has expired and must be "
-                + "deleted, or the census keeps counting a walk that already happened");
+        pendingThatLeftTheWalk.Should().BeEmpty(
+            "an entry in the pending walk claims the action still trusts the plan's index, and this census reads that "
+                + "claim being false. A slot is exempt for exactly one reason and neither reason is a debt:\n  "
+                + string.Join("\n  ", pendingThatLeftTheWalk.Select(WhyItIsNotPending)));
 
-        SlotIsAnAddress.Keys.Should().BeSubsetOf(measured.Rows.Where(row => row.DeclaresSlotAndItem).Select(row => row.ActionId),
+        expiredIdentityExemptions.Should().BeEmpty(
+            "an in-the-identity exemption is true only while the id the request has to echo is built from the slot. The "
+                + "moment that builder stops carrying it, re-resolving the slot no longer changes what the receipt is "
+                + "about and the member is an ordinary stale index:\n  " + string.Join("\n  ", expiredIdentityExemptions));
+
+        conflicting.Select(row => row.ActionId).Should().BeEmpty(
+            "a slot is exempt for one reason, and each of the three answers excludes the other two: an address or an "
+                + "identity cannot also be re-resolved through the live pack, and one slot cannot be both. One of the rows "
+                + "below is wrong about what the request means:\n  " + string.Join("\n  ", conflicting.Select(row => row.Site)));
+
+        SlotIsAnAddress.Keys.Should().BeSubsetOf(population.Select(row => row.ActionId),
             "the address table is read against the population, so an entry for an action that no longer declares both "
                 + "arguments is stale");
+
+        SlotIsInTheIdentity.Keys.Should().BeSubsetOf(population.Select(row => row.ActionId),
+            "the identity table is read against the same population, so an entry for an action that no longer declares "
+                + "both arguments is stale");
     }
 
     // -----------------------------------------------------------------------------------------------------------
@@ -178,10 +252,69 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
                 declaresItem,
                 path.Contains(ResolutionSeam, StringComparison.Ordinal),
                 SlotIsAnAddress.ContainsKey(registration.ActionId),
+                SlotIsInTheIdentity.ContainsKey(registration.ActionId),
                 PendingWalk.ContainsKey(registration.ActionId)));
         }
 
         return new Measurement(rows, unresolved);
+    }
+
+    /// <summary>
+    /// Where an action that claims to still trust the index in <see cref="PendingWalk"/> actually belongs. Read from the two
+    /// exemption tables, so the failure names the reason the census disagrees instead of only the id.
+    /// </summary>
+    private static string WhyItIsNotPending(string actionId) =>
+        SlotIsInTheIdentity.TryGetValue(actionId, out SlotCarriesTheIdentity? identity)
+            ? $"{actionId}: in-the-identity - {identity.Builder} builds the id this request must echo out of its slot, so "
+                + "re-resolving the slot answers a different id instead of repairing a stale one; exempt for good, never a pending walk"
+            : SlotIsAnAddress.TryGetValue(actionId, out string? address)
+                ? $"{actionId}: address - {address}; exempt for good, never a pending walk"
+                : $"{actionId}: migrated - it resolves the item through {ResolutionSeam} already; the walk happened, delete the entry";
+
+    /// <summary>
+    /// The in-the-identity rows whose reason has gone. The gate re-reads, in the Mod's own source, the builder each row
+    /// rests on and asks only whether that id still interpolates the slot - which is the same one grep the declaration
+    /// tells a reader to make, run for them and made to fail.
+    /// </summary>
+    private static List<string> ExpiredIdentityExemptions()
+    {
+        Dictionary<string, string> builders = IdentityBuilderBodies();
+        List<string> expired = new();
+        foreach (KeyValuePair<string, SlotCarriesTheIdentity> exemption in SlotIsInTheIdentity)
+        {
+            if (!builders.TryGetValue(exemption.Value.Builder, out string? body))
+            {
+                expired.Add($"{exemption.Key}: {exemption.Value.Builder} is not a builder in the Mod any more");
+                continue;
+            }
+
+            if (!body.Contains("{slot}", StringComparison.Ordinal))
+                expired.Add($"{exemption.Key}: {exemption.Value.Builder} no longer puts the slot in the id");
+        }
+
+        return expired;
+    }
+
+    /// <summary>
+    /// Every <c>Build*TargetId</c> in the Mod, by name, with its declaration slice: the same "to the next declaration in the
+    /// same file" reading <see cref="MethodBodies"/> makes, applied to the identity builders.
+    /// </summary>
+    private static Dictionary<string, string> IdentityBuilderBodies()
+    {
+        Dictionary<string, string> bodies = new(StringComparer.Ordinal);
+        Regex declaration = new(@"static\s+string\s+(?<method>Build\w+TargetId)\s*\(", RegexOptions.CultureInvariant);
+        foreach (string file in Directory.EnumerateFiles(RepositoryDirectory(ModDirectory), "farmhandexecutioncontroller*.cs"))
+        {
+            string source = File.ReadAllText(file);
+            MatchCollection declarations = declaration.Matches(source);
+            for (int index = 0; index < declarations.Count; index++)
+            {
+                int end = index + 1 < declarations.Count ? declarations[index + 1].Index : source.Length;
+                bodies.TryAdd(declarations[index].Groups["method"].Value, source[declarations[index].Index..end]);
+            }
+        }
+
+        return bodies;
     }
 
     /// <summary>Action id to the request half its own handler arm names, read from the production switch arms.</summary>
@@ -277,10 +410,17 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
         bool DeclaresSlotAndItem,
         bool ReResolves,
         bool SlotIsAnAddress,
+        bool SlotIsInTheIdentity,
         bool PendingWalk)
     {
         public bool DeclaresOnlySlot => !this.DeclaresSlotAndItem;
     }
+
+    /// <summary>
+    /// One in-the-identity exemption: the builder whose id carries the slot, and the reason a reader can re-check. See
+    /// <see cref="SlotIsInTheIdentity"/>.
+    /// </summary>
+    private sealed record SlotCarriesTheIdentity(string Builder, string Reason);
 
     private sealed record Measurement(IReadOnlyList<Row> Rows, IReadOnlyList<string> Unresolved);
 }
