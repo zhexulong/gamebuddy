@@ -1696,7 +1696,7 @@ internal sealed class StardewBodyController
     /// keeps the engine's own layer token (`clump:ResourceClump@x,y`, `buildings_tile:blocked@x,y`), which the
     /// `blocked_by` field has published since the layer probe was written.
     /// </summary>
-    private static string? ClearableRingName(GameLocation location, Farmer? actor, Vector2 tile)
+    internal static string? ClearableRingName(GameLocation location, Farmer? actor, Vector2 tile)
     {
         if (actor is null)
             return null;

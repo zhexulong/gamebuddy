@@ -98,6 +98,14 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         return projected.ToArray();
     }
 
+    /// <summary>
+    /// The DOOR legs of one location's own topology: the population a door-approach gate must examine, taken from the
+    /// enumeration <see cref="EnumerateEdges"/> owns rather than from a list here. A door that stops being an edge
+    /// leaves this set on its own, and a door the engine starts declaring appears in it without anyone editing a test.
+    /// </summary>
+    internal static IReadOnlyList<NavigationTransitionLeg> DoorLegs(GameLocation location) =>
+        ProjectTopologyLegs(location).Where(leg => leg.IsDoor).ToArray();
+
     public bool TryCreateCurrentOrdinaryWarpTopology(
         NavigationDestinationBinding acceptedBinding,
         out NavigationOrdinaryWarpTopology? topology,

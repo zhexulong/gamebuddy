@@ -1278,7 +1278,7 @@ internal sealed partial class ExecutionManager
         Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
         if (approachTarget is null)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", $"phase=approved;approach=unavailable{DescribeApproachRing(approachRing)}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", $"phase=approved;approach=unavailable{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}");
         }
 
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));

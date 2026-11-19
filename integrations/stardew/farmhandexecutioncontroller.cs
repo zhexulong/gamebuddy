@@ -3204,7 +3204,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
         if (approachTarget is null)
         {
-            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{DescribeApproachRing(approachRing)}");
+            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}");
             return;
         }
 
@@ -3297,8 +3297,67 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return null;
         }
 
-        ring = StardewBodyController.RingAroundGoal(Game1.player, Game1.player?.currentLocation, sourceTile);
-        return ring.Approach;
+        Farmer? actor = Game1.player;
+        GameLocation? location = actor?.currentLocation;
+        ring = StardewBodyController.RingAroundGoal(actor, location, sourceTile);
+        if (location is null)
+            return ring.Approach;
+
+        // THE TRANSITION'S OWN ENTRY CELL, when it has one, and it decides before the probe. A door stands in a wall
+        // and an edge exit stands outside the map: in both the source cell is not a place a body stands, so the four
+        // tiles around it are three wall or off-map faces and one guessed face. The engine already answers which face
+        // is the way in (see TransitionEntryCell), and a transition the planner has chosen is entered from there.
+        if (TransitionEntryCell(location, leg) is not { } entry)
+            return ring.Approach;
+        // Standability is the planner's own admission, the question the ring asks of every candidate. The component
+        // flood is NOT asked of this cell: the flood ranks four interchangeable approaches to a goal the body cannot
+        // stand on, while this cell is the single way into a transition the plan already committed to - the walk is
+        // what decides whether it is walkable this frame, and it answers `no_native_path` with its own hint when it is
+        // not. Asked here instead, a farm animal standing in a corridor refused the whole navigation (`round77`: a
+        // Bush and a transient occupant were both reported as `approach=unavailable`).
+        return StardewBodyController.IsStandableTile(location, actor, entry) ? entry : ring.Approach;
+    }
+
+    /// <summary>
+    /// The cell a transition is entered FROM, derived from the transition's own data - or <c>null</c> when the
+    /// transition is an ordinary in-map tile whose four neighbours are all faces a body can stand on.
+    ///
+    /// <para>
+    /// A DOOR'S APPROACH IS THE SIDE IT FACES, and the engine writes that cell down: <c>Building.updateInteriorWarps</c>
+    /// sets the interior exit warp's arrival to <c>getPointForHumanDoor() + (0, 1)</c> (Building.cs:1812-1813) - the tile
+    /// the player steps onto before entering - and every door in every map is drawn on that south façade. Taking it from
+    /// the door's own point rather than from a four-way probe is what makes the answer one tile instead of a race between
+    /// whatever of the four happens to be free; the ring remains the answer for an interior exit whose door is in the
+    /// bottom wall of its own room, where this cell is the wall behind the player.
+    /// </para>
+    /// <para>
+    /// AN EDGE EXIT'S SOURCE CELL IS OUTSIDE THE MAP BY CONSTRUCTION - <c>y = -1</c> walking north and <c>x = -1</c>
+    /// walking west (<see cref="FarmhandWarpCoordinateRange"/>), <c>x = width</c> east and <c>y = height</c> south - so
+    /// the cell it is entered from is the one step back inside, on the same column or row. Measured `round77`: the
+    /// Farm's north exit (`40,-1`) and the Backwoods' east exit (`50,10` on a 50-wide map) were both refused with
+    /// <c>approaches=north:off_map,east:off_map,south:…,west:…</c>, because the probe was asked about a cell no body can
+    /// stand on.
+    /// </para>
+    /// </summary>
+    internal static Vector2? TransitionEntryCell(GameLocation location, NavigationTransitionLeg leg)
+    {
+        Vector2 source = new(leg.SourceX, leg.SourceY);
+        if (leg.IsDoor)
+            return new Vector2(source.X, source.Y + 1);
+
+        if (location.map?.Layers is not { Count: > 0 } layers)
+            return null;
+        int width = layers[0].LayerWidth;
+        int height = layers[0].LayerHeight;
+        if (leg.SourceY < 0)
+            return new Vector2(source.X, 0);
+        if (leg.SourceX < 0)
+            return new Vector2(0, source.Y);
+        if (leg.SourceX >= width)
+            return new Vector2(width - 1, source.Y);
+        if (leg.SourceY >= height)
+            return new Vector2(source.X, height - 1);
+        return null;
     }
 
     /// <summary>
@@ -3308,6 +3367,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal static string DescribeApproachRing(StardewBodyController.CardinalRing? ring) =>
         ring is null ? string.Empty : $";approaches={ring.Evidence};approach_blocked_by:{ring.BlockedBy}";
+
+    /// <summary>
+    /// The transition's OWN entry cell in a refusal: the tile, and the occupant that keeps a body off it when one does.
+    ///
+    /// <para>
+    /// <c>entry_blocked_by:large:Bush@49,10</c> is the shape `round77` was missing: the receipt said which of the four
+    /// probe directions was blocked, not which tile this transition is entered from and what stands on it. The occupant
+    /// is named by the same probe the ring and `blocked_by=` use, so a clearable one carries the word the clearing
+    /// vocabulary already publishes and the reason code's own next step (<c>clear_the_approach_or_choose_another_target</c>)
+    /// is the action it implies.
+    /// </para>
+    /// </summary>
+    internal static string DescribeTransitionEntry(NavigationTransitionLeg leg)
+    {
+        Farmer? actor = Game1.player;
+        GameLocation? location = actor?.currentLocation;
+        if (location is null || TransitionEntryCell(location, leg) is not { } entry)
+            return string.Empty;
+
+        string tile = $"{(int)entry.X},{(int)entry.Y}";
+        if (!location.isTileOnMap(entry))
+            return $";entry={tile};entry_blocked_by:off_map@{tile}";
+        if (StardewBodyController.IsStandableTile(location, actor, entry))
+            return $";entry={tile}";
+        string occupant = StardewBodyController.ClearableRingName(location, actor, entry)
+            ?? StardewBodyController.DescribeTargetOccupant(location, entry, actor).Format();
+        return $";entry={tile};entry_blocked_by:{occupant}";
+    }
 
     /// <summary>
     /// One execution's terminal receipt. <paramref name="publish"/> is the producer's answer to "is this NEWS":
