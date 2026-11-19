@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import test from "node:test";
-
-import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
+import { fileURLToPath } from "node:url";
 import { readHostCompletionContracts } from "../check-stardew-postcondition-delta.mjs";
+import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
 import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION } from "./multiday-daily-tasks.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
@@ -26,9 +27,11 @@ import { judgeTaskPurpose, purposeReceipts, TASK_PURPOSE_CRITERIA } from "./task
  *            falsifiers red - `a rock broken with no mine entered is not a mine delved` (got `achieved`) and
  *            `a criterion of one step can be satisfied by a single action's success`;
  *            re-ordering `clear_and_cultivate` (dropping `ordered: false`) turns its day-1 replay red, because
- *            `round76`'s day 1 did the four kinds of work in an order that criterion forbade; and dropping a `because`
- *            from an ordered row turns `a_criterion_requires_an_order_the_world_does_not` red, naming that row
- *            (tools/lib/task-purpose.test.mjs)
+ *            `round76`'s day 1 did the four kinds of work in an order that criterion forbade; dropping a `because`
+ *            from an ordered row turns `a_criterion_requires_an_order_the_world_does_not` red, naming that row;
+ *            and asking for a fact nobody publishes - a gap without its `unpublishedFact`, or a tile field the Host's
+ *            contract does not carry - turns `a_criterion_asks_for_a_fact_the_product_does_not_publish` red, naming the
+ *            criterion and the fact (tools/lib/task-purpose.test.mjs)
  */
 
 const ROTATION = [...DAILY_TASK_ROTATION];
@@ -250,6 +253,27 @@ test("no purpose is declared for a task the rotation never asks for", () => {
   assert.deepEqual(orphans, [], `these criteria describe tasks no run asks for: ${orphans.join(", ")}`);
 });
 
+/**
+ * A gap's declaration, checked where it is read: a gap names the fact AND the producer that would have to publish it.
+ *
+ * Separate from the loop so that the third kind of criterion does not push one function past the complexity ceiling by
+ * growing two assertions - the rule has its own name either way.
+ */
+function assertGapDeclaresItsFact(task, entry) {
+  // The sentence and the fact are ONE declaration with two spellings, and the second is the one a gate can read: what
+  // the fact IS, and who would have to publish it (`null` when nothing in this tree is even the right place).
+  assert.ok(
+    typeof entry.unpublishedFact?.name === "string" && entry.unpublishedFact.name.trim().length > 0,
+    `${task}: a gap has to NAME the fact it needs, not only describe it in a sentence`,
+  );
+  const producer = entry.unpublishedFact.producer;
+  assert.ok(
+    producer === null ||
+      (typeof producer?.path === "string" && typeof producer?.anchor === "string" && producer.anchor.length > 0),
+    `${task}: a gap declares either the producer that would have to publish its fact, or \`null\` when no file in this tree is the right place - never neither`,
+  );
+}
+
 test("a purpose is either a criterion of more than one fact, a declared shape, or a named gap", () => {
   for (const [task, entry] of Object.entries(TASK_PURPOSE_CRITERIA)) {
     if (entry.missingFact !== undefined) {
@@ -266,6 +290,7 @@ test("a purpose is either a criterion of more than one fact, a declared shape, o
         typeof entry.purpose === "string" && entry.purpose.length > 0,
         `${task}: a gap states the purpose it cannot decide`,
       );
+      assertGapDeclaresItsFact(task, entry);
       continue;
     }
     // A SHAPE is the third kind, and it declares the rectangle rather than a step list: the criterion is not "these
@@ -370,6 +395,162 @@ test("a_criterion_requires_an_order_the_world_does_not", (t) => {
   assert.ok(
     table.length > 0 && ordered > 0,
     `${reading} - this table holds no ordered criterion, so nothing here was examined and the gate cannot fail`,
+  );
+  assert.deepEqual(violations, [], `${reading}\n${violations.join("\n")}`);
+});
+
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const HOST_CONTRACT_PATH = relative(REPO_ROOT, fileURLToPath(HOST_COMPLETION_CONTRACT)).replaceAll("\\", "/");
+
+/** The producer files this gate has read, so one file is read once however many facts cite it. */
+const producerSources = new Map();
+function producerSource(path) {
+  const cached = producerSources.get(path);
+  if (cached !== undefined) return cached;
+  let text = null;
+  try {
+    text = readFileSync(resolve(REPO_ROOT, path), "utf8");
+  } catch {
+    text = null;
+  }
+  producerSources.set(path, text);
+  return text;
+}
+
+/**
+ * The line a producer's anchor sits on TODAY, or null when the file no longer holds it.
+ *
+ * This is what lets a declaration name an IDENTIFIER instead of a line: `tools/check-stardew-task-gap-reasons.mjs`
+ * refuses a `file.cs:270` in a reason because the line outlived its claim (`mine_ladder_to_depth`), and the answer is
+ * not to stop citing the producer - it is to cite a token the producer writes and let the gate print the line.
+ */
+function producerLineOf(producer) {
+  const text = producerSource(producer.path);
+  if (text === null) return null;
+  const index = text.split(/\r?\n/u).findIndex((line) => line.includes(producer.anchor));
+  return index < 0 ? null : index + 1;
+}
+
+/** The producer line as the reading prints it, or the reason it could not be printed. */
+function producerReading(producer) {
+  const line = producerLineOf(producer);
+  return line === null ? `${producer.path} no longer holds \`${producer.anchor}\`` : `${producer.path}:${String(line)}`;
+}
+
+/**
+ * The facts a receipt-reading criterion requires, each with the producer that publishes it.
+ *
+ * Derived from the entry's own shape rather than listed here: a step list reads one action's postcondition per step (one
+ * per alternative), and a declared shape reads a tile field AND the map it is on out of each tile proof's receipt. The
+ * name is what a failure prints, so it says WHICH fact and not merely that one is missing.
+ */
+function receiptFactsOf(entry) {
+  const facts = [];
+  for (const candidate of entry.steps ?? []) {
+    for (const actionId of candidate.actionId === undefined ? candidate.anyOf : [candidate.actionId]) {
+      facts.push({
+        name: `\`${actionId}\`'s own postcondition`,
+        producer: { path: HOST_CONTRACT_PATH, anchor: `${actionId}: (claim) =>` },
+      });
+    }
+  }
+  for (const proof of [...(entry.tilledBy ?? []), ...(entry.croppedBy ?? [])]) {
+    // The keys come from the row the Host folds over (`declaredEvidenceKeys`), so "the receipt cannot carry this" is
+    // read from the declaration instead of remembered.
+    const keys = declaredEvidenceKeys(proof.actionId);
+    const missing = [proof.tileField, "location"].filter((key) => !keys.includes(key));
+    facts.push({
+      name:
+        missing.length === 0
+          ? `\`${proof.actionId}\`'s \`${proof.tileField}\` tile, and the \`location\` it is on`
+          : `\`${proof.actionId}\`'s \`${missing.join("` and `")}\`, which its own completion contract does not carry`,
+      producer: missing.length === 0 ? { path: HOST_CONTRACT_PATH, anchor: `${proof.actionId}: (claim) =>` } : null,
+    });
+  }
+  return facts;
+}
+
+/** The gate's own name, written once: the test is named with it and so is every failure line. */
+const GATE = "a_criterion_asks_for_a_fact_the_product_does_not_publish";
+
+/**
+ * A gap's reading: the line it prints, or the fact it fails on.
+ *
+ * A gap declares the fact unjudgeable; its `producer` is the place that would have to publish it (`null` when no file in
+ * this tree is even the right place). Both halves are the declaration - neither is the fact being there, which is why a
+ * gap never counts as `satisfied-by-a-producer`.
+ */
+function gapFactReadingOf(entry) {
+  const declared = entry.unpublishedFact;
+  const reason = typeof entry.missingFact === "string" ? entry.missingFact.trim() : "";
+  if (declared === undefined || typeof declared.name !== "string" || declared.name.trim().length === 0)
+    return { fact: `what its purpose \`${entry.purpose}\` needs`, producer: "undeclared" };
+  const producer = declared.producer === null ? "none" : producerReading(declared.producer);
+  if (declared.producer !== null && producerLineOf(declared.producer) === null)
+    return { fact: declared.name, producer };
+  if (reason.length <= 40) return { fact: declared.name, producer: `${producer}, and no reason is declared for it` };
+  return { line: `missing fact: ${declared.name} · expected producer: ${producer}` };
+}
+
+/** A criterion that reads receipts: no fact may be one the product fails to publish. */
+function receiptFactsReading(entry) {
+  const facts = receiptFactsOf(entry);
+  const unpublished = facts
+    .filter((fact) => fact.producer === null || producerLineOf(fact.producer) === null)
+    .map((fact) => ({
+      fact: fact.name,
+      producer: fact.producer === null ? "none" : producerReading(fact.producer),
+    }));
+  if (facts.length === 0) unpublished.push({ fact: "not one fact: this criterion reads nothing", producer: "none" });
+  if (unpublished.length === 0) return {};
+  return {
+    fact: [...new Set(unpublished.map((entry) => entry.fact))].join(", "),
+    producer: [...new Set(unpublished.map((entry) => entry.producer))].join(", "),
+  };
+}
+
+/**
+ * THE FACT GATE: `a_criterion_asks_for_a_fact_the_product_does_not_publish:<task>`.
+ *
+ * A criterion is a statement about the world, and this judge reads facts the product PUBLISHES. Two of round77's three
+ * days (2026-11-19) answered `task_purpose_needs_an_unpublished_fact` while the gameplay itself was healthy - 500
+ * actions, two nights, `violations []` - which is a judge asking for a fact nobody writes down. The table declared those
+ * gaps, but nothing stopped the next criterion from being written against a fact nobody publishes, and nothing re-read
+ * the declaration.
+ *
+ * POPULATION: every entry of `TASK_PURPOSE_CRITERIA`, never a list here; the facts each requires are derived from the
+ * entry's own shape, so a gap added tomorrow is covered by existing. PROPERTY: every required fact is either published
+ * by a named producer - a file whose own ANCHOR this gate resolves today, so the reading carries a `file:line` that is
+ * derived rather than typed - or declared "the criterion cannot be judged from the product's facts" with the reason it
+ * cannot. A fact with neither is `asks-the-unpublishable`, and the failure names the criterion and the fact.
+ *
+ * The declared gaps are PRINTED, one `missing fact: ... · expected producer: ...` line each, because that sentence is
+ * the answer a reader came for: which fact, and who would have to publish it.
+ *
+ * red-proof: inject  dropping `unpublishedFact` from `furnish_and_arrange`, or declaring a patch tile field the Host's
+ *                   contract does not carry (`tileProof("till_soil", "hoe_dirt_after")`), turns this red naming that
+ *                   criterion and the fact; and renaming a step action's contract row breaks the producer's anchor
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+test(GATE, (t) => {
+  const table = Object.entries(TASK_PURPOSE_CRITERIA);
+  const violations = [];
+  const declaredFacts = [];
+  let satisfied = 0;
+  for (const [task, entry] of table) {
+    // A gap DECLARES its fact unjudgeable; a criterion that reads receipts must have a producer for every fact.
+    const reading = entry.missingFact === undefined ? receiptFactsReading(entry) : gapFactReadingOf(entry);
+    if (reading.line !== undefined) declaredFacts.push(reading.line);
+    else if (reading.fact === undefined) satisfied += 1;
+    else violations.push(`${GATE}:${task} - missing fact: ${reading.fact} · expected producer: ${reading.producer}`);
+  }
+  const reading = `criteria examined ${String(table.length)} · satisfied-by-a-producer ${String(satisfied)} · asks-the-unpublishable ${String(violations.length)}`;
+  t.diagnostic(reading);
+  for (const line of declaredFacts) t.diagnostic(line);
+  // Zero is not green: a gate that examined no criterion, or found no fact a producer publishes, agrees with itself.
+  assert.ok(
+    table.length > 0 && satisfied > 0,
+    `${reading} - nothing in this table was satisfied by a producer, so the reading cannot fail and measures nothing`,
   );
   assert.deepEqual(violations, [], `${reading}\n${violations.join("\n")}`);
 });
@@ -523,6 +704,9 @@ test("a task with a named gap answers unproven for every receipt set, however co
     const judged = judgeTaskPurpose(task, complete);
     assert.equal(judged.state, "unproven", `${task}: a purpose with no decidable fact must not be reported either way`);
     assert.equal(judged.missingFact, entry.missingFact, `${task}: the gap has to travel with the verdict`);
+    // And so does the FACT, as data: the run's artifact then names the fact and the producer that does not publish it
+    // rather than only describing the absence in a sentence.
+    assert.deepEqual(judged.unpublishedFact, entry.unpublishedFact, `${task}: the verdict must carry the named fact`);
   }
 });
 
@@ -874,4 +1058,83 @@ test("clear_and_cultivate: clearing alone, and the day minus any one kind, is no
   );
   assert.equal(clearedOnly.state, "not_achieved");
   assert.deepEqual(clearedOnly.admittedActionIds, ["chop_tree"], "the clearing is proved and is not the purpose");
+});
+
+/**
+ * ROUND77'S THREE DAYS, AND THE TWO WAYS THE JUDGE SAID "I CANNOT TELL" WHEN IT COULD.
+ *
+ * Measured 2026-11-19 on `tools/_multiday_routine-round77.result.json` and re-read from the same run's
+ * `timeline.jsonl` (`.live-runs/game-ladder/2026-11-19T04-46-54-502Z-multiday_routine/`, whose `index` is the fact log's
+ * index). The run did 500 real actions over three days and two nights with `violations []` - the gameplay was healthy -
+ * and all three days came back `unproven`:
+ *
+ *   day 1 `home_upgrade`          `task_purpose_needs_an_unpublished_fact`        admitted 11, refused 7
+ *   day 2 `mine_ladder_to_depth`  `task_purpose_evidence_without_postcondition`   admitted 13, refused 8
+ *   day 3 `furnish_and_arrange`   `task_purpose_needs_an_unpublished_fact`        admitted 15, refused 3
+ *
+ * The day windows are the slices the runner took (`factsBefore` at each day's start): [0,264), [275,469), [469,612). The
+ * receipts between 264 and 275 arrived during the FIRST night, after day 1's verdict had been taken, which is why day 1
+ * ends at the level-up menus and not at day 2's `day_started`.
+ *
+ * Days 1 and 3 want a fact no producer writes. They now SAY which fact and who would have to publish it - the entry's
+ * `unpublishedFact`, printed by `a_criterion_asks_for_a_fact_the_product_does_not_publish` and carried by the verdict.
+ * Day 2 is a different defect, and this is its test: its eight refused receipts are `move_to_tile`'s adjacency arrival
+ * (seven of them) and one `dismiss_modal` that said `modal=none`, and `mine_ladder_to_depth` reads NEITHER action - so
+ * the run was complete evidence that no mine was entered, and the judge answered "cannot tell" instead.
+ *
+ * red-proof: inject  `if (refused.length > 0)` in place of the scoped test in `judgeTaskPurpose` -> the first test below
+ *                   reads `unproven` for a day that never went underground
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+
+/** The Mod's `target_reached` in its ADJACENT shape: a substituted approach, not the requested tile. */
+const ROUND77_MOVE_ARRIVED_ADJACENT = receipt("move_to_tile", {
+  reasonCode: "target_reached",
+  evidence: { detail: "reached=adjacent;requested=3,12;actor=3,11;within_range_of_request=true" },
+});
+/** A `dismiss_modal` that found nothing to dismiss: a success whose postcondition is that NO modal left. */
+const ROUND77_NOTHING_TO_DISMISS = receipt("dismiss_modal", {
+  reasonCode: "nothing_to_dismiss",
+  evidence: { detail: "modal=none" },
+});
+
+test("round77 day 2: a refusal of an action the criterion does not read is not `the run cannot tell`", () => {
+  const receipts = [ROUND77_MOVE_ARRIVED_ADJACENT, ROUND77_NOTHING_TO_DISMISS];
+  // The premise, read from the criterion rather than asserted about round77: neither refused action is one of its steps.
+  const steps = new Set(
+    TASK_PURPOSE_CRITERIA.mine_ladder_to_depth.steps.flatMap((candidate) =>
+      candidate.actionId === undefined ? [...candidate.anyOf] : [candidate.actionId],
+    ),
+  );
+  for (const refused of receipts)
+    assert.ok(
+      !steps.has(refused.actionId),
+      `${refused.actionId} IS a step of mine_ladder_to_depth, so this fixture no longer describes round77's day 2`,
+    );
+  // Both shapes are refused by the Host, and both are right to be: `reached=adjacent` does not claim the requested tile,
+  // and `modal=none` is nothing dismissed. A refusal is about its own action and says nothing about the purpose.
+  assert.deepEqual(
+    purposeReceipts(receipts)
+      .refused.map((entry) => entry.actionId)
+      .sort(),
+    ["dismiss_modal", "move_to_tile"],
+  );
+  const judged = judgeTaskPurpose("mine_ladder_to_depth", receipts);
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "the day dispatched neither enter_mine nor use_mine_ladder, so the receipts are complete evidence that no level was worked - `unproven` told the player the opposite",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+});
+
+test("round77 day 2: a refusal of an action the criterion DOES read still leaves the purpose unreadable", () => {
+  // The boundary of the exemption. `enter_mine` came back succeeded and carried no postcondition of its own, so the run
+  // cannot say whether a mine was entered - and it must not say the purpose did not hold either.
+  const judged = judgeTaskPurpose("mine_ladder_to_depth", [
+    Object.freeze({ ...ENTERED_MINE, evidence: null }),
+    ROUND77_MOVE_ARRIVED_ADJACENT,
+  ]);
+  assert.equal(judged.state, "unproven");
+  assert.equal(judged.reasonCode, "task_purpose_evidence_without_postcondition");
 });
