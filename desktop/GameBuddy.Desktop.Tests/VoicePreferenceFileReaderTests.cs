@@ -137,7 +137,7 @@ public sealed class VoicePreferenceFileReaderTests
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""", "persona")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","outputDevice":null,"persona":null}""", "decidedAtMs")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"persona":null}""", "outputDevice")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"decidedAtMs":null,"outputDevice":null,"persona":null}""", "consent")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"decidedAtMs":null,"outputDevice":null,"persona":null}""", "consent")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided"}""", "decidedAtMs")]
     [InlineData("""{"consent":"undecided"}""", "schemaVersion")]
     [InlineData("""{}""", "schemaVersion")]

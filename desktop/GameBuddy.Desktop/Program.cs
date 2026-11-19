@@ -485,16 +485,22 @@ internal static class Program
             // resident Guardian that attaches to its authenticated broker.
             stage = LaunchStage.ChildLaunch;
 
-            // Voice is an optional capability: the coordinator resolves null
-            // (no admitted artifact, consent not accepted, or unreadable
-            // preference) and the composition stays on pure-text Chat. When it
-            // resolves, the same loopback port/token pair goes into both the
-            // Voice child and the exact Host child so the Host wire can reach it.
-            var voiceLaunch = VoiceLaunchCoordinator.Resolve(
+            // Voice is an optional capability: the coordinator declines (no admitted
+            // artifact, consent not accepted, or a preference record it refuses) and the
+            // composition stays on pure-text Chat. When it resolves, the same loopback
+            // port/token pair goes into both the Voice child and the exact Host child so
+            // the Host wire can reach it.
+            //
+            // A refused preference record is the one decline nobody would ever see: Voice
+            // absent looks the same as Voice never consented to, so the code goes where the
+            // launcher's other refusals already go (`VoiceLaunchVerdictRecord`).
+            var voiceDecision = VoiceLaunchCoordinator.Resolve(
                 selection.GenerationRoot,
                 selection.Generation,
                 selection.InventoryDigest,
                 Path.Combine(layout.DataRoot, "settings", "player-preference.json"));
+            if (voiceDecision.Refusal is { } voiceRefusal) VoiceLaunchVerdictRecord.Write(layout.OperationalRoot, voiceRefusal);
+            var voiceLaunch = voiceDecision.Launch;
             await using var voiceSupervisor = voiceLaunch is null ? null : new VoiceGatewaySupervisor();
             VoiceGatewayLease? voiceLease = null;
             try

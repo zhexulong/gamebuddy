@@ -28,7 +28,7 @@ public sealed class VoicePreferenceFileReaderRecordShapeTests
         // A key the launcher demands that the writer never writes refuses every record
         // the Host produces; a key the writer stores that the launcher does not consume
         // is ignored, and is not this test's business.
-        var consumedButNeverWritten = VoicePreferenceFileReader.StoredKeys
+        var consumedButNeverWritten = VoicePreferenceFileReader.ConsumedKeys
             .Except(writerKeys, StringComparer.Ordinal)
             .ToArray();
         Assert.True(

@@ -51,7 +51,7 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
             generation.GenerationRoot,
             generation.GenerationId,
             selection.InventoryDigest,
-            preferencePath);
+            preferencePath).Launch;
 
         Assert.NotNull(launch);
         Assert.InRange(launch.Port, 1, 65_535);
@@ -77,10 +77,10 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
         var preferencePath = Path.Combine(generation.LocalApplicationData, "GameBuddy", "data", "settings", "player-preference.json");
         Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);
         // No preference file at all (undecided): must stay pure-text.
-        Assert.Null(VoiceLaunchCoordinator.Resolve(generation.GenerationRoot, generation.GenerationId, selection.InventoryDigest, preferencePath));
+        Assert.Null(VoiceLaunchCoordinator.Resolve(generation.GenerationRoot, generation.GenerationId, selection.InventoryDigest, preferencePath).Launch);
         // Explic itly revoked keeps Voice off even with the artifact present.
         WritePreference(preferencePath, "revoked", null, 1);
-        Assert.Null(VoiceLaunchCoordinator.Resolve(generation.GenerationRoot, generation.GenerationId, selection.InventoryDigest, preferencePath));
+        Assert.Null(VoiceLaunchCoordinator.Resolve(generation.GenerationRoot, generation.GenerationId, selection.InventoryDigest, preferencePath).Launch);
     }
 
     private static void WriteAcceptedPreference(string path, string? disclosureVersion = "mimo-cloud-tts-v1")

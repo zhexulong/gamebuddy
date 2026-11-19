@@ -7,7 +7,7 @@ namespace GameBuddy.Desktop;
 /// that are injected into both the Voice child and the exact Host child so the
 /// Host wire (connectOptionalVoiceSurface) can reach the Voice child. Any
 /// unavailable input (no artifact, missing/invalid preference, revoked or
-/// undecided consent) resolves to null, which the production composition turns
+/// undecided consent) declines the launch, which the production composition turns
 /// into pure-text Chat with no Voice environment injected. The coordinator
 /// never starts a child itself: it only derives the launch facts the
 /// composition binds into the supervisor.
@@ -21,17 +21,32 @@ internal static class VoiceLaunchCoordinator
     internal sealed record VoiceLaunch(AdmittedVoiceGateway Gateway, int Port, string Token, string OutputDevice, string? Persona);
 
     /// <summary>
+    /// What one launch decided about Voice, and - when the record it reads was refused -
+    /// the code that says why. The decision carries the refusal instead of writing it,
+    /// because the operational root a refusal belongs in is the launch entry's, and
+    /// because a declined Voice is otherwise indistinguishable from an accepted one that
+    /// never started.
+    /// </summary>
+    internal sealed record VoiceLaunchDecision(VoiceLaunch? Launch, string? Refusal)
+    {
+        internal static VoiceLaunchDecision Admitted(VoiceLaunch launch) => new(launch, null);
+
+        internal static VoiceLaunchDecision Declined(string? refusal = null) => new(null, refusal);
+    }
+
+    /// <summary>
     /// Pure decision: admits the Voice artifact in the selected generation,
-    /// reads the Host-owned preference file, and computes the per-launch
+    /// reads the Host-owned preference record, and computes the per-launch
     /// port/token pair only when the artifact is present and consent is
     /// accepted. Any unavailable input (no artifact sidecar, missing or
-    /// unreadable preference, revoked or undecided consent) resolves to null:
-    /// Voice is an optional capability and its absence must leave the Host on
+    /// unreadable preference, revoked or undecided consent) declines Voice:
+    /// it is an optional capability and its absence must leave the Host on
     /// pure-text Chat. The reader layer stays strictly fail-closed (a corrupt
-    /// preference is never projected as accepted); this composition simply
-    /// declines to enable Voice when admission cannot be proven.
+    /// preference is never projected as accepted); this composition declines to
+    /// enable Voice when admission cannot be proven, and reports the reader's
+    /// refusal so the launch entry can record it.
     /// </summary>
-    internal static VoiceLaunch? Resolve(
+    internal static VoiceLaunchDecision Resolve(
         string generationRoot,
         string expectedGeneration,
         string expectedInventoryDigest,
@@ -51,25 +66,27 @@ internal static class VoiceLaunchCoordinator
         }
         catch (GuardianLaunchUnavailableException)
         {
-            return null;
+            return VoiceLaunchDecision.Declined();
         }
 
         // Consent must be provable: missing file (undecided), revoked, or a
-        // corrupt file that the strict reader refuses all decline Voice.
+        // record the strict reader refuses all decline Voice. Only the last of
+        // those is a refusal in the product's sense - the player's own answers are
+        // not - so only that one carries a code out of here.
         VoicePreference preference;
         try
         {
             preference = new VoicePreferenceFileReader(preferencePath).Read();
         }
-        catch (InvalidVoicePreferenceException)
+        catch (InvalidVoicePreferenceException refusal)
         {
-            return null;
+            return VoiceLaunchDecision.Declined(refusal.Message);
         }
         if (preference.Consent != VoiceCloudTtsConsent.Accepted)
-            return null;
+            return VoiceLaunchDecision.Declined();
 
         var port = PickFreeLoopbackPort();
-        return Compose(gateway, port, preference);
+        return VoiceLaunchDecision.Admitted(Compose(gateway, port, preference));
     }
 
     /// <param name="preference">The strict reader already proved consent; its stored endpoint and persona are projected verbatim. A null endpoint means the platform default; a null persona is the player's "System default", which the launch plan resolves to the product's own default persona (VoicePersonaCatalogue) rather than leaving the child with no voice at all.</param>

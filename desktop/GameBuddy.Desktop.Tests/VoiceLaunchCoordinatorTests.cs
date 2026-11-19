@@ -39,7 +39,7 @@ public sealed class VoiceLaunchCoordinatorTests
         using var root = TemporaryRoot.Create();
         WriteAcceptedPreference(root);
         // No voice-gateway-admission.json in the generation root.
-        Assert.Null(VoiceLaunchCoordinator.Resolve(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
+        Assert.Null(ResolveLaunch(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
     }
     [Fact]
     public void Resolve_returns_null_for_undecided_or_revoked_consent()
@@ -47,10 +47,10 @@ public sealed class VoiceLaunchCoordinatorTests
         using var root = TemporaryRoot.Create();
         var gateway = WriteSidecar(root);
         // Undecided default (no preference file).
-        Assert.Null(VoiceLaunchCoordinator.Resolve(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
+        Assert.Null(ResolveLaunch(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
         // Revoked.
         WritePreference(root, "revoked", null, 1);
-        Assert.Null(VoiceLaunchCoordinator.Resolve(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
+        Assert.Null(ResolveLaunch(root.Path, "g-voice-1-00000000000000000000000000000000", "a".PadLeft(64, 'a'), root.PreferencePath));
         Assert.NotNull(gateway);
     }
 
@@ -63,7 +63,7 @@ public sealed class VoiceLaunchCoordinatorTests
         var generation = "g-voice-1-00000000000000000000000000000000";
         var digest = "a".PadLeft(64, 'a');
 
-        var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, digest, root.PreferencePath);
+        var launch = ResolveLaunch(root.Path, generation, digest, root.PreferencePath);
 
         Assert.NotNull(launch);
         Assert.InRange(launch.Port, 1, 65_535);
@@ -82,7 +82,7 @@ public sealed class VoiceLaunchCoordinatorTests
         WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3, outputDevice: "waveout:3");
         const string generation = "g-voice-1-00000000000000000000000000000000";
 
-        var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        var launch = ResolveLaunch(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
 
         // The stored endpoint is projected verbatim once consent is provable; there is no
         // device probe on this path, so a test host without audio hardware reads the same value.
@@ -101,13 +101,13 @@ public sealed class VoiceLaunchCoordinatorTests
         // and the launch plan resolves that to the product's default persona rather
         // than leaving the child with neither a voice nor a persona.
         WriteAcceptedPreference(root);
-        var withoutPersona = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        var withoutPersona = ResolveLaunch(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
         Assert.NotNull(withoutPersona);
         Assert.Null(withoutPersona.Persona);
 
         // A stored persona is projected verbatim.
         WritePreference(root, "accepted", "mimo-cloud-tts-v1", 4, outputDevice: null, persona: "soft_maid");
-        var withPersona = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        var withPersona = ResolveLaunch(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
         Assert.NotNull(withPersona);
         Assert.Equal("soft_maid", withPersona.Persona);
     }
@@ -123,7 +123,7 @@ public sealed class VoiceLaunchCoordinatorTests
         // The strict reader refuses the corrupt file; the composition declines
         // Voice (pure text) instead of letting the optional capability break
         // Chat. The reader itself remains fail-closed on its own contract.
-        Assert.Null(VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath));
+        Assert.Null(ResolveLaunch(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath));
     }
 
     [Fact]
@@ -139,10 +139,32 @@ public sealed class VoiceLaunchCoordinatorTests
         WriteAcceptedPreference(root, ("aFieldAddedAfterThisGateWasWritten", (object?)true));
         const string generation = "g-voice-1-00000000000000000000000000000000";
 
-        var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        var launch = ResolveLaunch(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
 
         Assert.NotNull(launch);
     }
+
+    [Fact]
+    public void Resolve_reports_the_field_a_refused_record_is_missing_and_still_declines_voice()
+    {
+        // A record the reader refuses is the one decline nobody sees: Voice absent looks
+        // exactly like Voice never consented to. The decision carries the reader's named
+        // code, which is what the launch entry records.
+        using var root = TemporaryRoot.Create();
+        WriteSidecar(root);
+        File.WriteAllText(
+            root.PreferencePath,
+            """{"schemaVersion":1,"revision":3,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null}""");
+        const string generation = "g-voice-1-00000000000000000000000000000000";
+
+        var decision = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+
+        Assert.Null(decision.Launch);
+        Assert.Equal("invalid_player_preference_store:missing_field:persona", decision.Refusal);
+    }
+
+    private static VoiceLaunchCoordinator.VoiceLaunch? ResolveLaunch(string generationRoot, string generation, string digest, string preferencePath) =>
+        VoiceLaunchCoordinator.Resolve(generationRoot, generation, digest, preferencePath).Launch;
 
     private static AdmittedVoiceGateway WriteSidecar(TemporaryRoot root)
     {

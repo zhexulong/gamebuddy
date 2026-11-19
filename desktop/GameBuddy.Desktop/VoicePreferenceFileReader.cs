@@ -26,22 +26,33 @@ internal enum VoiceCloudTtsConsent
 }
 
 /// <summary>
-/// Pure read-only seam over the one Host-owned player preference record (schema
-/// frozen by host/src/settings/player-preference-store.ts). A missing file is the
-/// undecided default; any existing file that is not an exact valid record fails
-/// closed so a bad file can never be projected as accepted. The record also
-/// carries the companion language; this launch gate consumes only its own Voice
-/// fields. No CAS, no writes, no token or key material is read and no Host
-/// composition surface is referenced.
+/// Pure read-only seam over the one Host-owned player preference record (written by
+/// host/src/settings/player-preference-store.ts). A missing file is the undecided
+/// default; an existing file is projected onto the fields this launch gate consumes
+/// and refused when one of them is absent or holds something it may not hold, so a bad
+/// record can never be projected as accepted. Fields the record carries for other
+/// settings surfaces are not read here and not required. No CAS, no writes, no token or
+/// key material is read and no Host composition surface is referenced.
 /// </summary>
 internal sealed class VoicePreferenceFileReader
 {
     private const int SchemaVersion = 1;
     private const string DisclosureContract = "mimo-cloud-tts-v1";
 
-    // The stored record's complete key set, in the writing Host's own order.
-    internal static readonly string[] StoredKeys =
-        { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice", "persona", "paced" };
+    /// <summary>
+    /// The fields this launch gate consumes, in the writing Host's own order.
+    ///
+    /// **A projection, not the record's shape.** The Host owns this record and writes it
+    /// for every settings surface at once, so a field added there - for Chat, for the
+    /// appearance, for anything - is a change Voice has no opinion about. Demanding the
+    /// record's exact key set made every such addition a refusal here, and because Voice
+    /// is optional that refusal left no trace: the launch went out on pure-text Chat with
+    /// nothing saying why. The keys named here are the ones this gate reads; every other
+    /// key in the document is ignored; a key named here that the record does not carry is
+    /// refused by name rather than skipped.
+    /// </summary>
+    internal static readonly string[] ConsumedKeys =
+        { "schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice", "persona" };
 
     private readonly string path;
 
@@ -65,51 +76,45 @@ internal sealed class VoicePreferenceFileReader
         catch (InvalidVoicePreferenceException) { throw; }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
         {
-            throw new InvalidVoicePreferenceException(innerException: exception);
+            throw new InvalidVoicePreferenceException("unreadable_document", exception);
         }
     }
 
     private static VoicePreference Project(JsonElement value)
     {
-        // The record's exact key set IS the frozen shape, and it now carries the
-        // companion language, so a record written before that field existed is
-        // refused rather than half-read. One entry per field the writing Host
-        // stores (host/src/settings/player-preference-store.ts); the cross-language
-        // guard test compares this list against the writer's, so a preference added
-        // on one side alone fails there instead of in a player's voice pipeline.
-        if (!InstalledGenerationPaths.ExactProperties(value, StoredKeys) ||
-            !value.GetProperty("schemaVersion").TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion ||
-            !value.GetProperty("revision").TryGetInt64(out var revision) || revision < 0)
-            throw new InvalidVoicePreferenceException();
+        if (value.ValueKind != JsonValueKind.Object) throw new InvalidVoicePreferenceException("not_an_object");
 
-        // The language a player speaks is the Host's business, not this launch
-        // gate's: only the declared null-or-string kind is required here. Naming
-        // the languages would let a newly added one silently switch Voice off.
-        if (value.GetProperty("locale").ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
-            throw new InvalidVoicePreferenceException();
+        var schemaElement = Required(value, "schemaVersion");
+        if (schemaElement.ValueKind != JsonValueKind.Number || !schemaElement.TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion)
+            throw new InvalidVoicePreferenceException("unsupported_schema_version");
 
-        var disclosureElement = value.GetProperty("disclosureVersion");
+        var revisionElement = Required(value, "revision");
+        if (revisionElement.ValueKind != JsonValueKind.Number || !revisionElement.TryGetInt64(out var revision) || revision < 0)
+            throw new InvalidVoicePreferenceException("invalid_revision");
+
+        var disclosureElement = Required(value, "disclosureVersion");
         if (disclosureElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("invalid_disclosure_version");
         var disclosureVersion = disclosureElement.ValueKind == JsonValueKind.Null ? null : disclosureElement.GetString();
         if (disclosureVersion is not null && disclosureVersion != DisclosureContract)
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("invalid_disclosure_version");
 
-        var consentElement = value.GetProperty("consent");
+        var consentElement = Required(value, "consent");
         var consentText = consentElement.ValueKind == JsonValueKind.String ? consentElement.GetString() : null;
         if (consentText is not ("undecided" or "accepted" or "revoked"))
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("invalid_consent");
 
+        var decidedElement = Required(value, "decidedAtMs");
         long? decidedAtMs = null;
-        switch (value.GetProperty("decidedAtMs").ValueKind)
+        switch (decidedElement.ValueKind)
         {
             case JsonValueKind.Null:
                 break;
-            case JsonValueKind.Number when value.GetProperty("decidedAtMs").TryGetInt64(out var decided) && decided >= 0:
+            case JsonValueKind.Number when decidedElement.TryGetInt64(out var decided) && decided >= 0:
                 decidedAtMs = decided;
                 break;
             default:
-                throw new InvalidVoicePreferenceException();
+                throw new InvalidVoicePreferenceException("invalid_decided_at_ms");
         }
 
         var consent = consentText switch
@@ -119,42 +124,43 @@ internal sealed class VoicePreferenceFileReader
             _ => VoiceCloudTtsConsent.Undecided,
         };
         if (consent == VoiceCloudTtsConsent.Undecided && (disclosureVersion is not null || decidedAtMs is not null))
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("consent_evidence_mismatch");
         if (consent == VoiceCloudTtsConsent.Accepted && disclosureVersion != DisclosureContract)
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("consent_evidence_mismatch");
         if (consent != VoiceCloudTtsConsent.Undecided && decidedAtMs is null)
-            throw new InvalidVoicePreferenceException();
-
-        // Whether Chat replies arrive as short paced pieces. Chat's business, not
-        // this launch gate's: only the boolean kind is required, never the value.
-        // Every Settings write rewrites the whole record, so knowing the key is
-        // what keeps a pacing choice from looking like a corrupt record here.
-        if (value.GetProperty("paced").ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-            throw new InvalidVoicePreferenceException();
+            throw new InvalidVoicePreferenceException("consent_evidence_mismatch");
 
         // Output endpoint: null selects the Windows default at each open; a
         // pinned value is the frozen `waveout:N` endpoint shape only.
-        var outputElement = value.GetProperty("outputDevice");
+        var outputElement = Required(value, "outputDevice");
         string? outputDevice = outputElement.ValueKind switch
         {
             JsonValueKind.Null => null,
             JsonValueKind.String when OutputDeviceRegex.IsMatch(outputElement.GetString() ?? string.Empty) => outputElement.GetString(),
-            _ => throw new InvalidVoicePreferenceException(),
+            _ => throw new InvalidVoicePreferenceException("invalid_output_device"),
         };
 
         // Voice persona: null is the player's "System default" - the launch plan
         // resolves it to the product's default persona rather than sending none;
         // a pinned value is the frozen lowercase-snake id shape only.
-        var personaElement = value.GetProperty("persona");
+        var personaElement = Required(value, "persona");
         string? persona = personaElement.ValueKind switch
         {
             JsonValueKind.Null => null,
             JsonValueKind.String when VoicePersonaRegex.IsMatch(personaElement.GetString() ?? string.Empty) => personaElement.GetString(),
-            _ => throw new InvalidVoicePreferenceException(),
+            _ => throw new InvalidVoicePreferenceException("invalid_persona"),
         };
 
         return new VoicePreference(consent, disclosureVersion, revision, outputDevice, persona);
     }
+
+    /// <summary>
+    /// One consumed field, or the refusal that names it. A record missing a field this
+    /// gate reads is not the same fact as a corrupt document, and the two are told apart
+    /// by name because the launch outcome - Voice does not start - is identical.
+    /// </summary>
+    private static JsonElement Required(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var element) ? element : throw new InvalidVoicePreferenceException($"missing_field:{name}");
 
     // The preference file only ever stores the frozen `waveout:N` endpoint shape
     // (never a device name or path), so a stale/edited value fails closed.
@@ -170,6 +176,18 @@ internal sealed class VoicePreferenceFileReader
 
 internal sealed class InvalidVoicePreferenceException : Exception
 {
-    internal InvalidVoicePreferenceException(string message = "invalid_player_preference_store", Exception? innerException = null)
-        : base(message, innerException) { }
+    /// <summary>The prefix every refusal carries; the reason after it names the rule that refused.</summary>
+    internal const string Code = "invalid_player_preference_store";
+
+    internal InvalidVoicePreferenceException(string reason, Exception? innerException = null)
+        : base($"{Code}:{reason}", innerException) => Reason = reason;
+
+    /// <summary>
+    /// Which rule refused the record - <c>missing_field:persona</c>,
+    /// <c>invalid_consent</c>, <c>unreadable_document</c> and so on. A refused record
+    /// and an unreadable one both leave the player on pure-text Chat, so this string is
+    /// the only thing that says which happened; the launcher records the message in the
+    /// operational root so the refusal survives the launch that made it.
+    /// </summary>
+    internal string Reason { get; }
 }
