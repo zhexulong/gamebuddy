@@ -188,5 +188,22 @@ public sealed class GuardianBrokerTests
         Assert.True(settle >= 0 && wait > settle && record > wait);
     }
 
+    [Fact]
+    public void Broker_releases_the_one_instance_pipe_before_it_settles_the_attempt_it_still_owns()
+    {
+        var source = File.ReadAllText(Source("DesktopHostBootstrapBroker.cs"));
+        var loop = source.IndexOf("private async Task ServeSessionsAsync(WindowsNative.SafeProcessHandle host, CancellationToken cancellationToken)", StringComparison.Ordinal);
+        var session = source.IndexOf("await ServeSessionAsync(attemptClosing, cancellationToken)", loop, StringComparison.Ordinal);
+        var disconnect = source.IndexOf("server.Disconnect();", session, StringComparison.Ordinal);
+        var settle = source.IndexOf("await SettleAttemptAsync()", session, StringComparison.Ordinal);
+        var accept = source.IndexOf("await AcceptSessionAsync(cancellationToken)", session, StringComparison.Ordinal);
+
+        // A reconnect inside the settlement window must reach a listening instance: the pipe carries one
+        // instance, and a busy one leaves the Host waiting out the transport's retry and then reporting
+        // the pipe unreachable. The exclusion is not the busy pipe - it is that nothing is READ from the
+        // next connection until this attempt is settled, which is why the accept stays after the settle.
+        Assert.True(session > loop && disconnect > session && settle > disconnect && accept > settle);
+    }
+
     private static string Source(string file) => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", file));
 }

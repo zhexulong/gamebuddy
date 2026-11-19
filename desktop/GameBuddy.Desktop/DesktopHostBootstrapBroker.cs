@@ -145,13 +145,16 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
 
     /// <summary>
     /// Serves the Host one session at a time, and settles the attempt each session was driving before it
-    /// accepts the next one.
+    /// will read anything from the next one.
     ///
     /// A session that ends - the Host closed control - ends that session's attempt: its Guardian is settled
-    /// here, its pid proven gone, its record retired. Only then is the pipe offered to the Host again, so a
-    /// settled attempt can never be reachable from the next one and two Guardians are never resident at
-    /// once. Nothing of a session's correlation survives it: the next arm arrives on a connection that was
-    /// authenticated again (ADR-0015 §3, §4.2).
+    /// here, its pid proven gone, its record retired. The pipe is released from that session at once, so a
+    /// Host that reconnects in this window connects instead of waiting out the pipe-busy retry and then
+    /// reporting the pipe unreachable; nothing is READ from that connection until the attempt above is
+    /// settled, which is where the exclusion lives. A settled attempt can therefore never be reachable from
+    /// the next one, no command is served while two Guardians could be resident, and nothing of a session's
+    /// correlation survives it: the next arm arrives on a connection that was authenticated again
+    /// (ADR-0015 §3, §4.2).
     /// </summary>
     private async Task ServeSessionsAsync(WindowsNative.SafeProcessHandle host, CancellationToken cancellationToken)
     {
@@ -165,11 +168,11 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                     try { await ServeSessionAsync(attemptClosing, cancellationToken).ConfigureAwait(false); }
                     finally { sessionClosing = null; }
                 }
+                // Everything the finished attempt held is still being settled; the pipe itself is not one
+                // of those things. It is one instance, so a client finds it busy until this releases it.
+                server.Disconnect();
                 await SettleAttemptAsync().ConfigureAwait(false);
                 if (closed) return;
-                // Everything the finished attempt held is gone and this is the same one-instance pipe: the
-                // Host re-hellos on it for its next attempt, and is authenticated again from scratch.
-                server.Disconnect();
                 await AcceptSessionAsync(cancellationToken).ConfigureAwait(false);
             }
         }
