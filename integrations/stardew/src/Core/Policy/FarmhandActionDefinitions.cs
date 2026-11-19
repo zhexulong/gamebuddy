@@ -1131,6 +1131,45 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// <summary>Whether an action's handler acts on a RUNNING event. Unknown ids, and ids with no event path, are not.</summary>
     public static bool IsEventActing(string? actionId) => actionId is not null && EventActingActionIds.Contains(actionId);
 
+    /// <summary>
+    /// The actions whose execution changes nothing about the world, each with the reason it cannot.
+    ///
+    /// <para>
+    /// WHY ANYONE ASKS. The durable journal exists so that a response-loss retry cannot become a SECOND native execution
+    /// of something that already happened. For an action that changed the world, a terminal receipt the journal could not
+    /// record is a real loss: the receipt funnel must refuse rather than report a change it cannot recover. For an action
+    /// that changed nothing the journal row buys replay convenience and nothing else, and refusing on it takes away the
+    /// only thing the action did. Measured `round78`, game time 12:10, the instant a warp into `Mine` landed: an
+    /// `express_emote` came back `execution_receipt_persistence_failed` and `MarkDurabilityFailure` circuit-broke the
+    /// run, for an emote that touched no world state at all.
+    /// </para>
+    /// <para>
+    /// EACH ENTRY IS A DECISION WITH ITS EVIDENCE, not an omission. Membership must EQUAL the catalogue's own
+    /// `Expression` handler group: `DurabilityAlarmScopeGateTests` asserts the equality in both directions, so a new
+    /// expression action cannot be exempted by accident and an action that writes the world cannot be smuggled in here.
+    /// An action this table does not name - including one this build has never heard of - keeps the alarm.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> ActionsThatChangeNothing =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["express_emote"] =
+                "`Farmer.doEmote` arms an animation on the actor and nothing else: no object, tile, terrain, inventory, "
+                + "container or NPC state is written, and a repeat re-arms the same animation",
+            ["send_multiplayer_chat"] =
+                "`Game1.multiplayer.sendChatMessage` posts a line to the other players' chat box: no game state is "
+                + "written, and refusing its receipt cannot unsend the line",
+        };
+
+    /// <summary>
+    /// Whether an execution of this action can change the world - which is whether its receipt has to be journalled
+    /// before the caller is answered. The durability alarm is scoped by THIS answer and no other (the Mod's receipt
+    /// funnel), so `execution_receipt_persistence_failed` can never mean "a world change we did not record" for an action
+    /// listed in <see cref="ActionsThatChangeNothing"/>.
+    /// </summary>
+    public static bool ChangesTheWorld(string? actionId) =>
+        actionId is null || !ActionsThatChangeNothing.ContainsKey(actionId);
+
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });
 

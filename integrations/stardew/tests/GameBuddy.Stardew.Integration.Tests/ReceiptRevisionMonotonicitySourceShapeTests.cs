@@ -73,7 +73,36 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
         PublishFunnelBody().Should().EndWith("return published;", "the funnel hands back what it published");
         // The durability-failure early returns keep answering with the minted receipt on purpose: nothing was
         // published on that path, so there is no published copy to hand back.
-        PublishFunnelBody().Should().Contain("if (ModEntry.IsUnconfirmedTerminal(receipt.State))");
+        PublishFunnelBody().Should().Contain("if (unconfirmedTerminal && FarmhandActionCatalog.ChangesTheWorld(admission.ActionId))");
+    }
+
+    /// <summary>
+    /// WHICH FAILURES ARE THE ALARM IS THE CATALOGUE'S DECLARATION, read here and nowhere else.
+    ///
+    /// The funnel answers one code for four different refusals (a payload it could not read, a tuple or a transition
+    /// that did not match, a write that did not land), and every one of them is the same alarm for an action that
+    /// changed the world - the journalled receipt is the only record the mutation happened - and a missing row for an
+    /// action that changed nothing. Measured `round78`, game time 12:10, a warp into `Mine` landing: a pure
+    /// `express_emote` came back `execution_receipt_persistence_failed` and `MarkDurabilityFailure` circuit-broke the
+    /// run. A second hand-written list inside the funnel would let the two answers drift, so the split is asserted to
+    /// be the catalogue's single predicate.
+    /// </summary>
+    [Fact]
+    public void TheDurabilityAlarmsScopeIsTheCataloguesDeclarationAndNotAListInTheFunnel()
+    {
+        string body = PublishFunnelBody();
+        body.Should().Contain(
+            "FarmhandActionCatalog.ChangesTheWorld(admission.ActionId)",
+            "the alarm's scope is the catalogue's declaration, read from the admission's own action id");
+        body.Should().Contain(
+            "this.ledger.MarkDurabilityFailure(receipt.RequestId);",
+            "a world change the journal could not record still quarantines the request");
+        body.Should().Contain(
+            "ignored={ignored}",
+            "and the expression/observational miss keeps its own name in the marker, so a missing row is observable");
+        body.Should().Contain(
+            "expression_changes_nothing",
+            "the expression miss is distinguishable from a progress transition's observational miss");
     }
 
     [Fact]

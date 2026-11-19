@@ -74,6 +74,7 @@ DirectionalRadiusCensusTests.cs	game	EngineParityCandidateScan@EngineParityCandi
 DispatchEnvelopeTests.cs	mod-assembly	ExecutionManager
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 DoorTargetsInteriorExitTests.cs	game	Xna, Netcode, StardewValley, GameLocation
+DurabilityAlarmScopeGateTests.cs	mod-assembly	ExecutionManager, BridgeSession, FarmhandExecutionJournal, IModGlobalDataPersistence, BridgeHello
 EdgeExitWarpSourceTests.cs	game	StardewValley
 EmbeddedWorldFactPayload.cs	mod-assembly	WireJson (declared in integrations/stardew/WireJson.cs, outside src/Core)
 EnterExitAdjacentExitRefusalTests.cs	game	Xna, Netcode, StardewModdingAPI, StardewValley, Game1, Farmer, LocationRequest, GameLocation
