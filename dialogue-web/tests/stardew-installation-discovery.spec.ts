@@ -347,12 +347,16 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(setup).toHaveAttribute("data-state", "not-stardew-installation");
 
     // A registration that named no cause: `source-unavailable` stays reserved for a source
-    // the scan could not read, and the panel says only what it knows.
+    // the scan could not read, and the panel says only what it knows - it does not tell the
+    // player to choose another folder, because the Host never refused that one (`c3524d49`:
+    // the folder was registered and fine).
     await page.unroute(CONFIRM_ROUTE);
     await page.route(PICKER_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "unavailable" })));
     await browse.click();
     await expect(setup).toHaveAttribute("data-state", "selection-unavailable");
-    await expect(sentenceOf(page)).toHaveText("That folder could not be used. Choose another game folder.");
+    await expect(sentenceOf(page)).toHaveText(
+      "GameBuddy could not finish registering that folder. Try again; the folder itself was not refused.",
+    );
     await expect(setup).not.toContainText("The installation search is unavailable right now.");
   });
 
