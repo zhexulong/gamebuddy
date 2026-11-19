@@ -2684,8 +2684,8 @@ function prosePairOverBudget(description: string, floorChars: number): string | 
  * measurement of the same text. The reading is required to be a SIZE: `undefined` here is a blocked reading, never a zero,
  * because a side that silently became 0 would turn the pair into the description alone and pass.
  */
-function recordedFloorChars(): number | undefined {
-  const conduct = (READING as { conductBlock?: { readonly chars?: unknown } }).conductBlock;
+function floorCharsOf(reading: unknown): number | undefined {
+  const conduct = (reading as { conductBlock?: { readonly chars?: unknown } }).conductBlock;
   const chars = conduct?.chars;
   return typeof chars === "number" && chars > 0 ? chars : undefined;
 }
@@ -2789,10 +2789,19 @@ test("the precondition gate names `sleep` and the lost precondition when the mov
   );
 });
 
+test("the pair's floor side is a size or it is blocked, never a zero that quietly halves the budget", () => {
+  assert.equal(floorCharsOf(READING), READING.conductBlock.chars, "the gate reads the floor's own recorded size");
+  // The three shapes a missing reading takes: renamed away, never stated, and stated as zero. All three are BLOCKED by the
+  // gate (`pair_budget_not_measured:...`), and none of them may be read as "the floor contributes nothing".
+  assert.equal(floorCharsOf({}), undefined, "a renamed reading is not a size");
+  assert.equal(floorCharsOf({ conductBlock: {} }), undefined, "a reading that states no characters is not a size");
+  assert.equal(floorCharsOf({ conductBlock: { chars: 0 } }), undefined, "zero is the one value that must never pass");
+});
+
 test("the plan description and the Game floor fit the pair budget their own constant declares", () => {
   assert.ok(GAME_PROSE_PAIR_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
   const description = planWorkDescription(CATALOG_ACTIONS);
-  const floor = recordedFloorChars();
+  const floor = floorCharsOf(READING);
   // BLOCKED, never green and never zero: the floor's size is the pair's other half, and a reading that went missing would
   // make "the pair fits" agree with a pair that is the description alone.
   assert.ok(
@@ -2824,7 +2833,7 @@ test("the plan description and the Game floor fit the pair budget their own cons
  */
 test("the pair gate turns red on added prose, and on a sentence that moved without leaving its old home", () => {
   const description = planWorkDescription(CATALOG_ACTIONS);
-  const floor = recordedFloorChars();
+  const floor = floorCharsOf(READING);
   assert.ok(
     floor !== undefined,
     "pair_budget_not_measured:game-surface-prompt-floor.test-support.ts:GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars - " +
