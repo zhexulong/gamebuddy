@@ -69,6 +69,10 @@ public sealed class RockSourceAlreadyGoneTests
             receipt.Evidence.Should().Contain($"target={row.TargetId}");
             receipt.Evidence.Should().Contain($"named_tile={row.X},{row.Y}", "the receipt prints the tile the caller named");
             receipt.Evidence.Should().Contain("tile=none", "and the one it acted on, which is no tile at all");
+            receipt.Evidence.Should().Contain(
+                $"settled_by={TileTargetSettledBy.Consumes}",
+                "the receipt says WHY the absence is the outcome: `break_rock`'s own success takes the addressed row out of "
+                    + "`rockSourceTargets`, which is the catalogue's declaration rather than this branch's opinion");
         }
     }
 

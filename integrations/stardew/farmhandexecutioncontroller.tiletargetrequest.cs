@@ -35,6 +35,12 @@ internal sealed partial class ExecutionManager
     /// already done. The gate mints the terminal because it is the only half that can read the live world, and the seam
     /// mints no walk to a tile there is nothing left to do on.
     /// </para>
+    ///
+    /// <para>
+    /// AN ABSENCE IS NOT THE EVIDENCE FOR ITSELF. "The thing is not there" is a success only when something says the
+    /// action is what took it away, or that the engine's own finished state is the one the request asked for - so
+    /// <see cref="Settled"/> takes the warrant in <see cref="TileTargetSettledBy"/> and prints it in the receipt.
+    /// </para>
     /// </summary>
     /// <param name="Footprint">
     /// Every tile the resolved target occupies, when its gate knows them. `<see cref="X"/>, <see cref="Y"/>` stays the
@@ -61,10 +67,11 @@ internal sealed partial class ExecutionManager
         internal static TileTargetGate Refused(TileTargetRefusal refusal) => new(0, 0, refusal);
 
         /// <summary>
-        /// The target is already in the state the request asked for: this terminal, and no refusal and no walk.
+        /// The target is already in the state the request asked for: this terminal, no refusal and no walk, and the
+        /// evidence carries the warrant <paramref name="settledBy"/> that says what makes it one.
         /// </summary>
-        internal static TileTargetGate Settled(ExecutionState state, string reasonCode, string evidence) =>
-            new(0, 0, null, new TileTargetSettlement(state, reasonCode, evidence));
+        internal static TileTargetGate Settled(ExecutionState state, string reasonCode, string evidence, string settledBy) =>
+            new(0, 0, null, new TileTargetSettlement(state, reasonCode, $"{evidence};{TileTargetSettledBy.EvidenceField}{settledBy}"));
     }
 
     /// <summary>One gate's answer that the request's own outcome already holds, ready to be minted as the terminal.</summary>
@@ -152,4 +159,47 @@ internal sealed partial class ExecutionManager
     }
 
     private static bool IsTileWithinNativeReach(Farmer actor, int x, int y) => IsTileWithinChebyshevRadius(actor, x, y, 1);
+}
+
+/// <summary>
+/// The forms a settlement's evidence may use to say WHAT MAKES IT ONE, and the one field it prints them in.
+///
+/// <para>
+/// WHY THIS EXISTS. "The target is not there" is a success only when something says the request's own outcome already
+/// holds - otherwise the absence is being used as the evidence for itself, and a real missing precondition (a machine
+/// that was never in this room, a piece of furniture that never stood here) would be reported as work done. The design
+/// admits exactly three sources: the catalogue declaring that this action's success takes the addressed row out of the
+/// world (<see cref="FarmhandChoreDeclaration.Consumes"/>), the engine's own finished state, and a terminal already
+/// recorded for the same action and subject
+/// (<c>design/domains/stardew/action-execution-standardization.md</c>, L2).
+/// </para>
+///
+/// <para>
+/// ONE FORM HAS A PRODUCER TODAY, and that is a measurement rather than a gap: <c>break_rock</c>'s absent stone is the
+/// row its own work takes out of the world, so <see cref="Consumes"/> is the warrant its receipt prints. The other two
+/// are spelled here so the day a site mints one it uses this vocabulary instead of inventing a token a gate would have
+/// to be taught; no producer exists for either, and none is written ahead of the site that needs it.
+/// </para>
+/// </summary>
+internal static class TileTargetSettledBy
+{
+    /// <summary>
+    /// The catalogue's own claim: this action's success takes the addressed row out of the world, so a world that no
+    /// longer holds it is the state the request asked for.
+    /// </summary>
+    internal const string Consumes = "consumes";
+
+    /// <summary>
+    /// The engine's own completion state - a machine's <c>heldObject</c> empty, a gate's <c>gatePosition</c> at the
+    /// requested value, a menu closed - printed as <c>engine_flag:&lt;field&gt;=&lt;value&gt;</c>.
+    /// </summary>
+    internal const string EngineFlagPrefix = "engine_flag:";
+
+    /// <summary>
+    /// A terminal already recorded for the same action and subject, printed as <c>prior_receipt:&lt;requestId&gt;</c>.
+    /// </summary>
+    internal const string PriorReceiptPrefix = "prior_receipt:";
+
+    /// <summary>The evidence field a settlement writes the warrant under, so the receipt and the gates spell it once.</summary>
+    internal const string EvidenceField = "settled_by=";
 }

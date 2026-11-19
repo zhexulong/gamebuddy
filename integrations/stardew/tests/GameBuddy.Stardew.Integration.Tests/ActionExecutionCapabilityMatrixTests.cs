@@ -32,29 +32,40 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// to own. It accepts EVERY legitimate path - the `RequestLocalTileTarget` funnel, the `TryBeginToolApproach` leg a
 /// controller enters directly when its own half already answered the target, and `TryBeginBuildingApproach` for a target
 /// that is a building rather than a tile inside one - and prints which one each action takes. An action whose descriptor
-/// declares `Adjacent` is exempt BY THAT DECLARATION (the caller stands beside it), so it needs no reason typed; the
+/// declares `Adjacent` is exempt BY THAT DECLARATION (the caller stands beside the target), so it needs no reason typed; the
 /// remnant - a reach leg that names none of the three and is not `Adjacent`-declared - must state why, in a table whose
-/// every entry dies the moment its action gains a leg. `SelfWalked` is the descriptor's own declaration and is reported,
-/// not judged. `slot-remap` applies to an action that declares both a `slot` and the `expectedQualifiedItemId` it expects
-/// in that slot - the population `StaleIndexIsNotAMissingItemGateTests` opened - and asks the same question it asks, of
-/// the same source text. `ordered` applies to an action whose declared `TargetFamily` is published by a discovery that
-/// TRUNCATES; it asks whether that truncation is downstream of a nearest-first helper, because a truncated list published
-/// in enumeration order is a set of targets the caller cannot reach in the order it received them. None of the four is a
-/// runtime behaviour: they are source-shape readings of the handler arm, the request half and every half it delegates to,
-/// which is the only shape a headless runner can read.
+/// every entry dies the moment its action gains a leg. `SelfWalked` is the descriptor's own declaration, and the column now
+/// JUDGES it against the whole request path: the catalogue may not say an action closes the distance when nothing in its
+/// handler chain walks. `slot-remap` applies to an action that declares both a `slot` and the `expectedQualifiedItemId` it
+/// expects in that slot - the population `StaleIndexIsNotAMissingItemGateTests` opened - and now judges the same question
+/// that gate asks, of the same source text; the one case it excludes is an action whose own published id is BUILT FROM the
+/// slot, read from the builder its request path names, because there re-resolving the pack answers a different id than the
+/// request has to echo rather than repairing a stale index. `ordered` applies to an action whose declared `TargetFamily` is
+/// published by a discovery that TRUNCATES; it asks whether that truncation is downstream of a nearest-first helper,
+/// because a truncated list published in enumeration order is a set of targets the caller cannot reach in the order it
+/// received them. None of the four is a runtime behaviour: they are source-shape readings of the handler arm, the request
+/// half and every half it delegates to, which is the only shape a headless runner can read.
 /// </para>
 ///
 /// <para>
-/// THE GATE'S OWN TEETH, stated plainly, because a matrix that only prints is a report. Four things fail here: a
+/// THE GATE'S OWN TEETH, stated plainly, because a matrix that only prints is a report. Six things fail here: a
 /// non-tile action with no stated reason (the first unexplained exception becomes the precedent every later one is
 /// measured against), a reason that has outlived the action it explains, a reach-leg action whose request path names
-/// NEITHER approach leg - the shape that owns its reach by hand - and a reach-leg action whose request half this gate
-/// cannot read, because a row scored `neither` by a broken reader would be a population that shrank while still
-/// printing a total. The remaining cells are reported rather than failed: `selfWalked=no`, `slot-remap=no` and
-/// `ordered=no` are each a place the product is healthy enough to converge when touched, and a gate that failed on
-/// them would prescribe the blanket refactor this work exists to avoid. What makes the columns trustworthy is <see cref="AColumnGoesRedWhenTheFactItReadsLeavesTheSource"/>: each
-/// column is shown flipping on a scratch copy of the source it reads, so a green run means the numbers were measured
-/// rather than remembered.
+/// NEITHER approach leg - the shape that owns its reach by hand -, an action whose row is in one of the measured
+/// columns but whose request half this gate cannot read (a row scored `neither` by a broken reader would be a
+/// population that shrank while still printing a total), a `selfWalked=yes` action whose whole request path names no
+/// approach leg at all, and a `slot-remap=no` action - one that names a slot AND the item it expects in it and never
+/// asks the live pack which slot holds it.
+///
+/// <para>
+/// WHY THE LAST TWO ARE FAILURES AND `ordered=no` IS NOT. The plan asks for each of these columns by name, and a
+/// column that prints and cannot fail is a report: `self_walked` is the declaration that the handler closes the
+/// distance itself, and `ResolveLiveSlot` is the one seat that turns an item name into the slot the pack holds it in,
+/// so both are claims the catalogue makes about every member and neither is a place to converge when touched. The
+/// ordering column is different in kind: a truncated list published in enumeration order is reachable, just not in the
+/// order it was received, so failing on it would prescribe the blanket refactor this work exists to avoid. What makes
+/// every column trustworthy is <see cref="AColumnGoesRedWhenTheFactItReadsLeavesTheSource"/>: each is shown flipping on a
+/// scratch copy of the source it reads, so a green run means the numbers were measured rather than remembered.
 /// </para>
 /// </summary>
 public sealed class ActionExecutionCapabilityMatrixTests
@@ -106,6 +117,16 @@ public sealed class ActionExecutionCapabilityMatrixTests
         RegexOptions.CultureInvariant);
 
     private static readonly Regex RequestHalfCall = new(@"this\.(?<method>\w+)\(", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The builder that turns an action's inputs into the id its request has to echo, and therefore the one place to ask
+    /// whether the SLOT is part of what the receipt is about rather than the index the plan happened to see.
+    /// </summary>
+    private static readonly Regex IdentityBuilderDeclaration = new(
+        @"static\s+string\s+(?<method>Build\w+TargetId)\s*\(",
+        RegexOptions.CultureInvariant);
+
+    private static readonly Regex IdentityBuilderCall = new(@"\b(?<method>Build\w+TargetId)\s*\(", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The actions that address NO world tile, each with the reason - the half of the inventory that is a decision rather
@@ -267,6 +288,8 @@ public sealed class ActionExecutionCapabilityMatrixTests
         List<Row> neither = measured.Rows.Where(row => row.Leg == ApproachLeg.Neither).ToList();
         List<Row> adjacentDeclared = measured.Rows.Where(row => row.Leg == ApproachLeg.AdjacentDeclared).ToList();
         List<Row> unexplained = neither.Where(row => row.LegReason is null).ToList();
+        List<Row> leglessSelfWalked = measured.Rows.Where(row => row.SelfWalked && !row.ApproachPath).ToList();
+        List<Row> unresolvedSlot = measured.Rows.Where(row => row.SlotRemap == false).ToList();
 
         this.output.WriteLine(
             $"actions examined {measured.Rows.Count} · tile/world {measured.Rows.Count - nonTile.Count} · non-tile {nonTile.Count}");
@@ -279,7 +302,11 @@ public sealed class ActionExecutionCapabilityMatrixTests
                 + $" · adjacent-declared {adjacentDeclared.Count}"
                 + $" · reasoned {neither.Count - unexplained.Count}"
                 + $" · unexplained {unexplained.Count}"
+                + $" · self-walked-legless {leglessSelfWalked.Count}"
+                + $" · slot-declared {measured.Rows.Count(row => row.SlotRemap is not null)}"
+                + $" · slot-in-the-identity {measured.Rows.Count(row => row.IdentityBuilder is not null)}"
                 + $" · slot-remapped {measured.Rows.Count(row => row.SlotRemap == true)}"
+                + $" · slot-unresolved {unresolvedSlot.Count}"
                 + $" · ordered {measured.Rows.Count(row => row.Ordered == true)}");
 
         this.output.WriteLine(
@@ -288,6 +315,13 @@ public sealed class ActionExecutionCapabilityMatrixTests
         foreach (Row row in neither)
             this.output.WriteLine($"  no leg {row.ActionId}: {row.LegReason ?? "<no reason>"}");
 
+        this.output.WriteLine(
+            $"  selfWalked but no approach leg anywhere in the request path: {string.Join(", ", leglessSelfWalked.Select(row => row.ActionId))}");
+        this.output.WriteLine(
+            $"  names a slot and its expected item but never asks the live pack: {string.Join(", ", unresolvedSlot.Select(row => row.ActionId))}");
+        this.output.WriteLine(
+            "  names a slot its own published id is BUILT FROM and never re-resolves it, so the slot is what the receipt is about: "
+                + string.Join(", ", measured.Rows.Where(row => row.IdentityBuilder is not null).Select(row => $"{row.ActionId} ({row.IdentityBuilder})")));
         this.output.WriteLine(
             $"  via TryBeginToolApproach: {string.Join(", ", measured.Rows.Where(row => row.Leg == ApproachLeg.DirectLeg).Select(row => row.ActionId))}");
         this.output.WriteLine(
@@ -321,6 +355,9 @@ public sealed class ActionExecutionCapabilityMatrixTests
         measured.Rows.Count(row => row.SlotRemap == true).Should().BeGreaterThan(
             0,
             $"nothing reaching `{SlotResolutionSeam}` means the live-pack resolution was removed");
+        measured.Rows.Count(row => row.SlotRemap is not null).Should().BeGreaterThan(
+            0,
+            "no action declares both a slot and the item it expects in it, so the slot column would agree with itself");
         measured.Rows.Count(row => row.Ordered == true).Should().BeGreaterThan(
             0,
             "nothing ordered means the nearest-first helpers left every discovery, or this gate stopped reading them");
@@ -329,6 +366,21 @@ public sealed class ActionExecutionCapabilityMatrixTests
             "a reach-leg action that names none of the three approach legs owns its reach by hand, so it has to SAY why - "
                 + "otherwise the first unexplained one becomes the precedent every later one is measured against. Each is "
                 + "named here rather than counted:\n  " + string.Join("\n  ", unexplained.Select(row => row.ActionId)));
+
+        leglessSelfWalked.Select(row => $"{row.ActionId} ({row.Arguments}): {row.ArmNote ?? $"its request path names no approach leg ({row.Leg})"}").Should().BeEmpty(
+            "selfWalked=yes is the catalogue saying this action closes the distance itself, and that column now judges the "
+                + "claim instead of printing it: the whole request path has to name an approach leg - the funnel, the "
+                + "direct tool leg, the building leg, or one of the other three seams `HandlerApproachFacts` declares, "
+                + "which is where `pickup_item`'s own `LocalMoveSpec` walk is read as the leg it is. A row here declares "
+                + "that it walks and nothing in its handler chain walks:\n  "
+                + string.Join("\n  ", leglessSelfWalked.Select(row => $"{row.ActionId} ({row.Arguments}): {row.ArmNote ?? $"its request path names no approach leg ({row.Leg})"}")));
+
+        unresolvedSlot.Select(row => $"{row.ActionId} ({row.Arguments}): {row.ArmNote ?? $"its request path never names {SlotResolutionSeam}"}").Should().BeEmpty(
+            "slot-remap=no is the plan's second bullet, judged here instead of counted: an action that names a slot AND "
+                + "the item it expects in it is naming a position the plan OBSERVED, and a sibling node may have re-packed "
+                + "the bag since, so the executor asks the live pack which slot holds that item rather than reading the "
+                + "index the snapshot wrote down:\n  "
+                + string.Join("\n  ", unresolvedSlot.Select(row => $"{row.ActionId} ({row.Arguments}): {row.ArmNote ?? $"its request path never names {SlotResolutionSeam}"}")));
 
         NoApproachLegReasons.Keys.Should().BeSubsetOf(
             neither.Select(row => row.ActionId),
@@ -345,8 +397,9 @@ public sealed class ActionExecutionCapabilityMatrixTests
                     + "one of them can appear here, and it would be a change to the declaration rather than to this gate");
 
         measured.Unreadable.Should().BeEmpty(
-            "these actions act on a target at a tile and this gate found no request half to read, so their row would "
-                + "score `neither` because the READER failed rather than because the handler does:\n  "
+            "these actions are in one of the columns this gate measures - a reach leg, a `self_walked` declaration, or a "
+                + "slot with the item it expects - and their request half could not be read, so their row would fail or "
+                + "pass because the READER broke rather than because the handler did:\n  "
                 + string.Join("\n  ", measured.Unreadable));
     }
 
@@ -357,20 +410,15 @@ public sealed class ActionExecutionCapabilityMatrixTests
     ///
     /// <para>
     /// The subject is chosen from the measurement rather than named here, so the falsifier follows the population: the
-    /// first action this run shows as compliant on the column under test. The mutation is the one fact the column reads -
-    /// the seam call, or the nearest-first helper - removed from the text, which is exactly the regression the column
-    /// exists to catch.
+    /// first action this run shows as compliant on the column under test. The mutation is the one fact that column reads
+    /// - the seam call, the direct or building leg, every approach seam at once, the live-pack resolution, or the
+    /// nearest-first helper - removed from the text, which is exactly the regression the column exists to catch.
     /// </para>
     /// </summary>
     [Fact]
     public void AColumnGoesRedWhenTheFactItReadsLeavesTheSource()
     {
-        Dictionary<string, string> sources = HandlerSourceFacts.HandlerSources().ToDictionary(
-            pair => pair.Key,
-            pair => pair.Value,
-            StringComparer.Ordinal);
-        Dictionary<string, string> arms = new(HandlerSourceFacts.HandlerMethods(), StringComparer.Ordinal);
-        Dictionary<string, string> discoveries = DiscoveryBodies(sources);
+        Sheet sheet = Sheet.Of(HandlerSourceFacts.HandlerSources());
         var ignoreUnreadable = new List<string>();
         var ignoreFamilies = new HashSet<string>(StringComparer.Ordinal);
 
@@ -379,11 +427,11 @@ public sealed class ActionExecutionCapabilityMatrixTests
                 "no action is self-walked AND funnel-routed, so the approach column has nothing to go red on and cannot "
                 + "be shown to read the handler at all");
         FarmhandActionRegistration seamRegistration = Registration(seamSubject.ActionId);
-        Row seamRow = RowFor(seamRegistration, sources, arms, discoveries, ignoreUnreadable, ignoreFamilies);
+        Row seamRow = RowFor(seamRegistration, sheet, ignoreUnreadable, ignoreFamilies);
         seamRow.Leg.Should().Be(ApproachLeg.Funnel, "the subject of this case is chosen because it reaches the funnel today");
 
-        Dictionary<string, string> noSeam = Mutate(sources, text => text.Replace(SeamCall, "this.RequestLocalNotTheSeam(", StringComparison.Ordinal));
-        Row flippedSeam = RowFor(seamRegistration, noSeam, arms, discoveries, ignoreUnreadable, ignoreFamilies);
+        Dictionary<string, string> noSeam = Mutate(sheet.Sources, text => text.Replace(SeamCall, "this.RequestLocalNotTheSeam(", StringComparison.Ordinal));
+        Row flippedSeam = RowFor(seamRegistration, Sheet.Of(noSeam), ignoreUnreadable, ignoreFamilies);
         flippedSeam.Leg.Should().Be(
             ApproachLeg.Neither,
             $"`{seamSubject.ActionId}` reaches the funnel through `{SeamCall}`, and that call is the only approach leg it "
@@ -394,23 +442,54 @@ public sealed class ActionExecutionCapabilityMatrixTests
                 $"no action reaches `{ApproachLegCall}` directly, so the union this column stands on cannot be shown to "
                 + "read the leg the controllers enter themselves");
         FarmhandActionRegistration directRegistration = Registration(directSubject.ActionId);
-        Dictionary<string, string> noLeg = Mutate(sources, text => text.Replace(ApproachLegCall, "this.BeginSomethingElse(", StringComparison.Ordinal));
-        Row flippedDirect = RowFor(directRegistration, noLeg, arms, discoveries, ignoreUnreadable, ignoreFamilies);
+        Dictionary<string, string> noLeg = Mutate(sheet.Sources, text => text.Replace(ApproachLegCall, "this.BeginSomethingElse(", StringComparison.Ordinal));
+        Row flippedDirect = RowFor(directRegistration, Sheet.Of(noLeg), ignoreUnreadable, ignoreFamilies);
         flippedDirect.Leg.Should().Be(
             ApproachLeg.Neither,
             $"`{directSubject.ActionId}` reaches its target through `{ApproachLegCall}`, and with that call gone the action "
                 + "owns its reach by hand - the shape the column fails");
+
+        Row walkSubject = Measured.Value.Rows.FirstOrDefault(row => row.SelfWalked && row.ApproachPath)
+            ?? throw new InvalidOperationException(
+                "no declared self-walking action names an approach leg, so the `selfWalked` column cannot be shown to "
+                + "read the handler at all");
+        FarmhandActionRegistration walkRegistration = Registration(walkSubject.ActionId);
+        Dictionary<string, string> noWalk = Mutate(
+            sheet.Sources,
+            text => HandlerApproachFacts.ApproachLegMarkers.Aggregate(
+                text,
+                (current, marker) => current.Replace(marker, "NotAnApproachLeg(", StringComparison.Ordinal)));
+        Row flippedWalk = RowFor(walkRegistration, Sheet.Of(noWalk), ignoreUnreadable, ignoreFamilies);
+        flippedWalk.ApproachPath.Should().BeFalse(
+            $"`{walkSubject.ActionId}` declares `self_walked` on a request path that names one of the six approach seams "
+                + "`HandlerApproachFacts` declares; with every one of them gone nothing in its chain walks, and that is the "
+                + "state the `selfWalked` column fails");
+
+        Row slotSubject = Measured.Value.Rows.FirstOrDefault(row => row.SlotRemap == true)
+            ?? throw new InvalidOperationException(
+                $"no action names a slot and its expected item, so the slot column cannot be shown to read "
+                + $"`{SlotResolutionSeam}` at all");
+        FarmhandActionRegistration slotRegistration = Registration(slotSubject.ActionId);
+        Dictionary<string, string> noResolution = Mutate(
+            sheet.Sources,
+            text => text.Replace(SlotResolutionSeam, "ResolveNamedSlot(", StringComparison.Ordinal));
+        Row flippedSlot = RowFor(slotRegistration, Sheet.Of(noResolution), ignoreUnreadable, ignoreFamilies);
+        flippedSlot.SlotRemap.Should().Be(
+            false,
+            $"`{slotSubject.ActionId}` asks the live pack which slot holds the item it names, and with "
+                + $"`{SlotResolutionSeam}` gone it reads the index the plan's snapshot wrote down - the shape that column "
+                + "fails");
 
         Row orderedSubject = Measured.Value.Rows.FirstOrDefault(row => row.Ordered == true && row.Discovery is not null)
             ?? throw new InvalidOperationException(
                 "no action's family is published by an ordered, truncating discovery, so the ordering column cannot be "
                 + "shown to read the discovery at all");
         FarmhandActionRegistration orderedRegistration = Registration(orderedSubject.ActionId);
-        Row orderedRow = RowFor(orderedRegistration, sources, arms, discoveries, ignoreUnreadable, ignoreFamilies);
+        Row orderedRow = RowFor(orderedRegistration, sheet, ignoreUnreadable, ignoreFamilies);
         orderedRow.Ordered.Should().BeTrue("the subject of this case is chosen because its family is ordered today");
 
-        Dictionary<string, string> noOrder = Mutate(sources, text => OrderingHelper.Replace(text, "UnorderedPublish("));
-        Row flippedOrder = RowFor(orderedRegistration, noOrder, arms, DiscoveryBodies(noOrder), ignoreUnreadable, ignoreFamilies);
+        Dictionary<string, string> noOrder = Mutate(sheet.Sources, text => OrderingHelper.Replace(text, "UnorderedPublish("));
+        Row flippedOrder = RowFor(orderedRegistration, Sheet.Of(noOrder), ignoreUnreadable, ignoreFamilies);
         flippedOrder.Ordered.Should().BeFalse(
             $"`{orderedSubject.Discovery}` truncates its list and is ordered by the nearest-first helper today; removing "
                 + "that helper is the regression the column exists to catch");
@@ -420,14 +499,13 @@ public sealed class ActionExecutionCapabilityMatrixTests
 
     private static Measurement Measure(IReadOnlyDictionary<string, string> sources)
     {
-        Dictionary<string, string> arms = new(HandlerSourceFacts.HandlerMethods(), StringComparer.Ordinal);
-        Dictionary<string, string> discoveries = DiscoveryBodies(sources);
+        Sheet sheet = Sheet.Of(sources);
         var rows = new List<Row>();
         var unreadable = new List<string>();
         var familiesWithoutDiscovery = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
-            rows.Add(RowFor(registration, sources, arms, discoveries, unreadable, familiesWithoutDiscovery));
+            rows.Add(RowFor(registration, sheet, unreadable, familiesWithoutDiscovery));
 
         return new Measurement(rows, unreadable, familiesWithoutDiscovery);
     }
@@ -438,9 +516,7 @@ public sealed class ActionExecutionCapabilityMatrixTests
     /// </summary>
     private static Row RowFor(
         FarmhandActionRegistration registration,
-        IReadOnlyDictionary<string, string> sources,
-        IReadOnlyDictionary<string, string> arms,
-        IReadOnlyDictionary<string, string> discoveryBodies,
+        Sheet sheet,
         List<string> unreadable,
         HashSet<string> familiesWithoutDiscovery)
     {
@@ -448,6 +524,9 @@ public sealed class ActionExecutionCapabilityMatrixTests
         bool tileAddressed = arguments.Contains(TileXArgument, StringComparer.Ordinal)
             && arguments.Contains(TileYArgument, StringComparer.Ordinal);
         bool reachLeg = tileAddressed && arguments.Contains(TargetIdentityArgument, StringComparer.Ordinal);
+        bool selfWalked = registration.Descriptor?.Approach == FarmhandActionApproachRequirement.SelfWalked;
+        bool declaresSlotAndItem = arguments.Contains(SlotArgument, StringComparer.Ordinal)
+            && arguments.Contains(ExpectedItemArgument, StringComparer.Ordinal);
 
         string? armNote = null;
         string path = string.Empty;
@@ -455,17 +534,18 @@ public sealed class ActionExecutionCapabilityMatrixTests
         {
             armNote = "read-only registration: it answers an observation and has no request path";
         }
-        else if (!arms.TryGetValue(registration.ActionId, out string? arm))
+        else if (!sheet.Arms.TryGetValue(registration.ActionId, out string? arm))
         {
             armNote = "no handler arm";
         }
         else
         {
-            path = RequestPath(sources, arm);
+            path = RequestPath(sheet.Sources, arm);
             if (path.Length == 0) armNote = $"no request half readable behind {arm}(";
         }
 
-        if (armNote is not null && reachLeg) unreadable.Add($"{registration.ActionId} -> {armNote}");
+        if (armNote is not null && (reachLeg || selfWalked || declaresSlotAndItem))
+            unreadable.Add($"{registration.ActionId} -> {armNote}");
 
         ApproachLeg leg = !reachLeg || path.Length == 0
             ? ApproachLeg.NotApplicable
@@ -479,22 +559,29 @@ public sealed class ActionExecutionCapabilityMatrixTests
                             ? ApproachLeg.AdjacentDeclared
                             : ApproachLeg.Neither;
 
-        bool? slotRemap = null;
-        bool declaresSlotAndItem = arguments.Contains(SlotArgument, StringComparer.Ordinal)
-            && arguments.Contains(ExpectedItemArgument, StringComparer.Ordinal);
-        if (declaresSlotAndItem && path.Length > 0)
-            slotRemap = path.Contains(SlotResolutionSeam, StringComparison.Ordinal);
+        // A SLOT THE ACTION'S OWN PUBLISHED IDENTITY IS BUILT FROM IS NOT IN THIS COLUMN: the id the request has to echo
+        // is a function of the slot, so re-resolving the pack answers a DIFFERENT id rather than repairing a stale index.
+        // The exclusion needs BOTH halves read from the source - the builder interpolates the slot AND the request path
+        // never asks the live pack - because four actions whose ids also carry the slot do resolve it, and there the
+        // resolution is the answer rather than the defect.
+        bool resolvesLive = path.Contains(SlotResolutionSeam, StringComparison.Ordinal);
+        string? identityBuilder = declaresSlotAndItem && path.Length > 0 && !resolvesLive
+            ? SlotCarriesThePublishedIdentity(sheet.IdentityBuilders, path)
+            : null;
+        bool? slotRemap = declaresSlotAndItem && path.Length > 0 && identityBuilder is null
+            ? resolvesLive
+            : null;
 
         string? family = registration.Descriptor?.TargetFamily;
-        string? discovery = DiscoveryFor(family, discoveryBodies);
+        string? discovery = DiscoveryFor(family, sheet.Discoveries);
         bool? ordered = null;
         if (!string.IsNullOrEmpty(family) && discovery is null)
         {
             familiesWithoutDiscovery.Add(family);
         }
-        else if (discovery is not null && Truncation.IsMatch(discoveryBodies[discovery]))
+        else if (discovery is not null && Truncation.IsMatch(sheet.Discoveries[discovery]))
         {
-            ordered = OrderingHelper.IsMatch(discoveryBodies[discovery]);
+            ordered = OrderingHelper.IsMatch(sheet.Discoveries[discovery]);
         }
 
         return new Row(
@@ -502,10 +589,12 @@ public sealed class ActionExecutionCapabilityMatrixTests
             string.Join(",", arguments),
             tileAddressed,
             reachLeg,
-            registration.Descriptor?.Approach == FarmhandActionApproachRequirement.SelfWalked,
+            selfWalked,
+            HandlerApproachFacts.BeginsAnApproachLeg(path),
             leg,
             leg == ApproachLeg.Neither ? NoApproachLegReasons.GetValueOrDefault(registration.ActionId) : null,
             slotRemap,
+            identityBuilder,
             ordered,
             discovery,
             tileAddressed ? null : NonTileReasons.GetValueOrDefault(registration.ActionId),
@@ -569,6 +658,61 @@ public sealed class ActionExecutionCapabilityMatrixTests
     }
 
     /// <summary>
+    /// Every <c>Build*TargetId</c> in the Mod, by name, with its declaration slice: the identity builders are where
+    /// "is the slot something the plan saw" is answered in source, and the slice ends at the next declaration so a
+    /// builder that stops interpolating the slot stops being the reason a member is exempt.
+    /// </summary>
+    private static Dictionary<string, string> IdentityBuilderBodies(IReadOnlyDictionary<string, string> sources)
+    {
+        var bodies = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string source in sources.Values)
+        {
+            MatchCollection declarations = IdentityBuilderDeclaration.Matches(source);
+            for (int index = 0; index < declarations.Count; index++)
+            {
+                int end = index + 1 < declarations.Count ? declarations[index + 1].Index : source.Length;
+                bodies.TryAdd(declarations[index].Groups["method"].Value, source[declarations[index].Index..end]);
+            }
+        }
+
+        return bodies;
+    }
+
+    /// <summary>
+    /// The builder a request path names whose id INTERPOLATES the slot, or null: the action's published identity is built
+    /// from the slot, so re-resolving the pack would answer an id the request can no longer match.
+    /// </summary>
+    private static string? SlotCarriesThePublishedIdentity(IReadOnlyDictionary<string, string> identityBuilders, string path)
+    {
+        foreach (Match call in IdentityBuilderCall.Matches(path))
+        {
+            string builder = call.Groups["method"].Value;
+            if (identityBuilders.TryGetValue(builder, out string? body) && body.Contains("{slot}", StringComparison.Ordinal))
+                return builder;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The four readings every row is built from, over ONE source tree: the partials and handlers, the action-to-arm
+    /// mapping, the discovery bodies, and the identity builders. Bundled so a row is read from the same tree in one call
+    /// and the falsifier can hand the whole machine a scratch copy instead of threading four arguments to remember.
+    /// </summary>
+    private sealed record Sheet(
+        IReadOnlyDictionary<string, string> Sources,
+        IReadOnlyDictionary<string, string> Arms,
+        IReadOnlyDictionary<string, string> Discoveries,
+        IReadOnlyDictionary<string, string> IdentityBuilders)
+    {
+        internal static Sheet Of(IReadOnlyDictionary<string, string> sources) => new(
+            sources,
+            new Dictionary<string, string>(HandlerSourceFacts.HandlerMethods(), StringComparer.Ordinal),
+            DiscoveryBodies(sources),
+            IdentityBuilderBodies(sources));
+    }
+
+    /// <summary>
     /// The discovery that publishes a declared family, by the one naming rule the Mod already follows: a family is the
     /// wire spelling of the list its own `Discover&lt;Family&gt;` returns (<c>cropTargets</c> -&gt;
     /// <c>DiscoverCropTargets</c>). A family this rule cannot spell is named in the gate's output rather than guessed at,
@@ -621,9 +765,11 @@ public sealed class ActionExecutionCapabilityMatrixTests
         bool TileAddressed,
         bool ReachLeg,
         bool SelfWalked,
+        bool ApproachPath,
         ApproachLeg Leg,
         string? LegReason,
         bool? SlotRemap,
+        string? IdentityBuilder,
         bool? Ordered,
         string? Discovery,
         string? NonTileReason,
