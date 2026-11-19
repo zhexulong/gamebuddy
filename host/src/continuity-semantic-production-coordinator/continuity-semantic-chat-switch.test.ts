@@ -89,7 +89,7 @@ const switchScript = `
   // provisioned: it opens the known authority (and reconciles the terminal
   // teardown the first process left) instead of provisioning a fresh one.
   const authority =
-    scenario === "select-created-after-restart" || scenario === "archive-selected-after-restart"
+    scenario.endsWith("-after-restart")
       ? await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest)
       : await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const first = await authority.startMountedChatRuntime();
@@ -356,6 +356,82 @@ const switchScript = `
     const after = readDurable();
     out.afterThreads = after.threads;
     out.afterActive = after.active;
+  } else if (scenario === "unmounted-successor-create-only" || scenario === "no-live-chat-create-only") {
+    // THE BRICK. A Chat is durable from the moment chat.create writes tavern.sqlite, and the semantic
+    // catalog learns one only when the settlement selects it - so a removal of the Chat this start was
+    // serving, through a writer that never moves the selection, leaves a durable list whose only
+    // survivor the semantic authority has no thread for. This scenario stops before the next start,
+    // which is the reading under test.
+    const survivor = await createSecondChat();
+    const served = (await store.listThreads()).find((thread) => thread.chatThreadId === firstThread);
+    const archiveChat = (chatThreadId, chatSurfaceSessionId, expectedManagementRevision) =>
+      store.transitionLifecycle({
+        chatThreadId,
+        chatSurfaceSessionId,
+        companionId: manifest.principal.companionId,
+        continuityId: manifest.principal.continuityId,
+        expectedManagementRevision,
+        operation: "archive",
+      });
+    await archiveChat(firstThread, firstSurface, served.managementRevision ?? 1);
+    out.survivorThread = survivor.chatThreadId;
+    out.survivorSurface = survivor.chatSurfaceSessionId;
+    out.servedLifecycle = (await store.resumeThread(firstThread, firstSurface)).thread.lifecycleStatus;
+    if (scenario === "no-live-chat-create-only") {
+      // No product writer leaves the list empty: the store refuses the last removal with
+      // chat_active_list_empty. So this arm writes the one state that is still reachable - a transcript
+      // authority that answers "nothing live" - through its own file, which is what an older build or a
+      // hand-repaired root leaves behind.
+      const tavernDb = (() => {
+        const pending = [manifest.runtimeRoot];
+        while (pending.length > 0) {
+          const current = pending.pop();
+          for (const entry of readdirSync(current, { withFileTypes: true })) {
+            if (entry.isDirectory()) pending.push(join(current, entry.name));
+            else if (entry.name === "tavern.sqlite") return join(current, entry.name);
+          }
+        }
+        throw new Error("tavern_db_not_found");
+      })();
+      const raw = new DatabaseSync(tavernDb);
+      try {
+        raw
+          .prepare("UPDATE tavern_threads SET lifecycle_status='archived' WHERE companion_id=? AND continuity_id=?")
+          .run(manifest.principal.companionId, manifest.principal.continuityId);
+      } finally {
+        raw.close();
+      }
+      out.survivorLifecycle = "archived";
+    }
+    const before = readDurable();
+    out.beforeThreads = before.threads;
+    out.beforeActive = before.active;
+    out.durable = (await store.listThreads()).map((thread) =>
+      Object.freeze({
+        thread: thread.chatThreadId,
+        surface: thread.chatSurfaceSessionId,
+        lifecycle: thread.lifecycleStatus,
+      }),
+    );
+  } else if (scenario === "unmounted-successor-after-restart") {
+    // The mount at the top of this script is the next start over the bricked root: it had to reach a
+    // Chat the durable authority still holds while the catalog holds no verified thread for it.
+    const survivor = Object.freeze({
+      chatThreadId: "chat-" + "9".repeat(16),
+      chatSurfaceSessionId: "surface-" + "9".repeat(16),
+    });
+    out.mountedThread = firstThread;
+    out.mountedSurface = firstSurface;
+    const after = readDurable();
+    out.afterThreads = after.threads;
+    out.afterActive = after.active;
+    out.survivorReadable =
+      (await store.resumeThread(survivor.chatThreadId, survivor.chatSurfaceSessionId)).thread.chatThreadId ===
+      survivor.chatThreadId;
+  } else if (scenario === "no-live-chat-after-restart") {
+    // Reached only when the construction above mounted a root it had to refuse: the arm exists so the
+    // refusal that test asserts is a real child exit and not a test that never ran.
+    out.mountedThread = firstThread;
   } else if (scenario === "archive-selected-through-route") {
     // Item 1 of the double-authority settlement: the production management route's own
     // service archives the Chat the player is looking at, and both authorities are then
@@ -778,23 +854,34 @@ const switchScript = `
   await authority.close();
 `;
 
-async function runSwitchScenario(
+type SwitchScenario =
+  | "switch"
+  | "in-flight"
+  | "in-flight-created"
+  | "in-flight-armed"
+  | "in-flight-running"
+  | "durable-unstarted"
+  | "durable-not-started"
+  | "select-created"
+  | "select-created-create-only"
+  | "select-created-after-restart"
+  | "archive-selected-create-only"
+  | "archive-selected-after-restart"
+  | "archive-selected-through-route"
+  | "unmounted-successor-create-only"
+  | "unmounted-successor-after-restart"
+  | "no-live-chat-create-only"
+  | "no-live-chat-after-restart";
+
+/**
+ * One child, its exit status and both of its channels. The refusal cases need the child's own
+ * bounded code, so the status is returned rather than asserted here: a child that refused is a
+ * reading, not a harness failure.
+ */
+async function runSwitchChild(
   root: string,
-  scenario:
-    | "switch"
-    | "in-flight"
-    | "in-flight-created"
-    | "in-flight-armed"
-    | "in-flight-running"
-    | "durable-unstarted"
-    | "durable-not-started"
-    | "select-created"
-    | "select-created-create-only"
-    | "select-created-after-restart"
-    | "archive-selected-create-only"
-    | "archive-selected-after-restart"
-    | "archive-selected-through-route",
-): Promise<Record<string, unknown>> {
+  scenario: SwitchScenario,
+): Promise<Readonly<{ code: number | null; stdout: string; stderr: string }>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
     manifestPath,
@@ -838,8 +925,17 @@ async function runSwitchScenario(
   child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
   const [code] = (await once(child, "exit")) as [number | null];
-  assert.equal(code, 0, Buffer.concat(errors).toString("utf8"));
-  return JSON.parse(Buffer.concat(output).toString("utf8")) as Record<string, unknown>;
+  return Object.freeze({
+    code,
+    stdout: Buffer.concat(output).toString("utf8"),
+    stderr: Buffer.concat(errors).toString("utf8"),
+  });
+}
+
+async function runSwitchScenario(root: string, scenario: SwitchScenario): Promise<Record<string, unknown>> {
+  const child = await runSwitchChild(root, scenario);
+  assert.equal(child.code, 0, child.stderr);
+  return JSON.parse(child.stdout) as Record<string, unknown>;
 }
 
 test(
@@ -1414,6 +1510,110 @@ test(
 
       // (c) No list offers it, so no player gesture can press it.
       assert.equal((observed.listedAfterArchive as readonly string[]).includes(handle), false);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * THE HEAL, RED FIRST. A Chat created through New Chat is durable from the moment `chat.create`
+ * writes `tavern.sqlite`, and the semantic catalog learns a Chat only when the settlement selects it.
+ * Removing the Chat a start was serving, through a writer that never moves the selection, therefore
+ * leaves a durable list whose only survivor the catalog holds no thread for - and the next start used
+ * to die at `resettleChatSuccessorFromDurableAuthority` with `semantic_chat_liveness_unrecoverable`,
+ * which is the first statement of the desktop composition: no browser, no tray, no shell, nothing the
+ * player can press.
+ *
+ * Red before this lane's change: the restart child exits non-zero carrying that code. Green after it:
+ * the second start records the one settlement the mount already knows how to run (a `create`-shaped
+ * expectation, no vector advance), the mount's own register -> verify -> select settles it, and the
+ * player's conversation is what the mount serves.
+ */
+test(
+  "a root whose only live Chat the catalog never learned is mounted on the next start",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-unmounted-successor-");
+    try {
+      const bricked = await runSwitchScenario(root, "unmounted-successor-create-only");
+      const survivorThread = String(bricked.survivorThread);
+      const survivorSurface = String(bricked.survivorSurface);
+      // The state the archive-time guard now refuses to create, reached by a writer that predates it:
+      // the served Chat is gone from the durable list and the catalog still names it.
+      assert.equal(bricked.servedLifecycle, "archived");
+      const durable = bricked.durable as readonly Readonly<Record<string, unknown>>[];
+      assert.deepEqual(
+        durable.map((row) => `${String(row.thread)}:${String(row.lifecycle)}`).sort(),
+        [`${String(bricked.firstThread)}:archived`, `${survivorThread}:active`].sort(),
+        "the bricked root does not hold exactly one live Chat, the one the catalog never learned",
+      );
+      // The semantic catalog holds the removed Chat and no thread at all for the survivor: that
+      // absence is the whole defect, and `select_chat` may only name a Chat that carries a receipt.
+      assert.deepEqual(
+        (bricked.beforeThreads as readonly Readonly<Record<string, unknown>>[]).map((thread) => thread.chat_thread_id),
+        [String(bricked.firstThread)],
+      );
+      assert.equal(
+        (bricked.beforeActive as Readonly<Record<string, unknown>>).chat_thread_id,
+        String(bricked.firstThread),
+        "the bricked root's selection no longer names the removed Chat, so it is not the state under test",
+      );
+
+      const restarted = await runSwitchScenario(root, "unmounted-successor-after-restart");
+      // The start mounted the survivor - the Chat the durable transcript authority still holds.
+      assert.equal(restarted.mountedThread, survivorThread);
+      assert.equal(restarted.mountedSurface, survivorSurface);
+      // The settlement did the whole ordinary chain: the survivor now carries a verified receipt...
+      const afterThreads = restarted.afterThreads as readonly Readonly<Record<string, unknown>>[];
+      const settled = afterThreads.find((thread) => thread.chat_thread_id === survivorThread);
+      assert.equal(settled?.verified, 1, "the settlement selected the survivor without verifying its content");
+      // ...its select_chat is the selection, and the expectation the start recorded is spent rather
+      // than left for the start after that.
+      const afterActive = restarted.afterActive as Readonly<Record<string, unknown>>;
+      assert.equal(afterActive.chat_thread_id, survivorThread);
+      assert.equal(afterActive.expected_selection_json, null, "the recorded settlement was left pending");
+      // The conversation itself is intact: the player's Chat, not an empty shell.
+      assert.equal(restarted.survivorReadable, true);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * THE OTHER SIDE OF THE SAME READING: a root the durable authority holds no live Chat for. There is
+ * nothing to settle and no successor to name, so the composition must still fail closed - and it must
+ * fail with the code it already names, because that code is what the launch window quotes and what an
+ * operator searches for. This arm exists so the heal above cannot have been "the start invents a Chat".
+ */
+test(
+  "a root the durable authority holds no live Chat for refuses the next start by name",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-no-live-chat-");
+    try {
+      const emptied = await runSwitchScenario(root, "no-live-chat-create-only");
+      assert.equal(emptied.servedLifecycle, "archived");
+      assert.equal(emptied.survivorLifecycle, "archived");
+      assert.deepEqual(
+        (emptied.durable as readonly Readonly<Record<string, unknown>>[]).map((row) => row.lifecycle).sort(),
+        ["archived", "archived"],
+        "the emptied root still holds a live durable Chat, so it is not the state under test",
+      );
+
+      const refused = await runSwitchChild(root, "no-live-chat-after-restart");
+      assert.notEqual(refused.code, 0, "a root with no live Chat started anyway");
+      assert.match(
+        refused.stderr,
+        /semantic_chat_liveness_unrecoverable/u,
+        `the refusal did not name itself, so nothing downstream can classify it: ${refused.stderr}`,
+      );
+      assert.doesNotMatch(
+        refused.stdout,
+        /mountedThread/u,
+        "the start mounted a Chat the durable authority says does not exist",
+      );
     } finally {
       cleanup(root);
     }

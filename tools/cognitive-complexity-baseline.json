@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4607, largest ExecutionManager at 25293 lines / 864 members across 52 partial(s).",
-  "revision": "3657a8e1",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4621, largest ExecutionManager at 25416 lines / 867 members across 52 partial(s).",
+  "revision": "0e9d1db2",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -700,8 +700,8 @@
       "language": "ts",
       "name": "host/src/native-companion-content.ts#onEvent",
       "file": "host/src/native-companion-content.ts",
-      "line": 667,
-      "value": 125
+      "line": 728,
+      "value": 129
     },
     {
       "id": "ts:host/src/protocol.ts#diagnoseSnapshot",
@@ -1138,7 +1138,7 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4607,
+      "value": 4621,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
     },
     {
@@ -1248,7 +1248,7 @@
       "files": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "lines": 1754,
+      "lines": 1767,
       "methods": 82,
       "reason": "recorded at 11e7cc9b: methods 86 -> 82 and lines 1767 -> 1732, all of it in `04598eda` (the executor stops narrating its body). The four members that left are the body-trace channel, measured one by one: `TryCreateBodyTraceEvent`, `TryCreateSemanticEvent`, `IsBodyTraceCategory`, `IsNavigationTrace`. `parts` stays 1 and the type's value fell 329 -> 326 with them. `git log 04598eda..11e7cc9b -- integrations/stardew/BridgeSession.cs` is empty, so nothing has touched it since."
     },
@@ -1259,8 +1259,8 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 25293,
-      "methods": 864,
+      "lines": 25416,
+      "methods": 867,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
     },
     {
@@ -1401,8 +1401,8 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 35,
-      "lines": 1777,
-      "methods": 16,
+      "lines": 1904,
+      "methods": 19,
       "reason": "lines 1547 -> 1590 in `664224bb` (+45/-2 in the file) at the same 12 methods and the same one part: the enclosing test type grew with the nested `TargetFamilyWorld` fixture it builds, whose own five new helpers are the row below. Length is the whole fact - the type declares cases, not branches."
     },
     {
@@ -1411,7 +1411,7 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
-      "line": 503,
+      "line": 630,
       "lines": 1308,
       "methods": 72,
       "reason": "methods 65 -> 70 and lines 1228 -> 1271 in `664224bb`, which added five fixture helpers: `TileSheet()`, `MakeWater(int,int)`, `MakeWall(int,int)`, `ClearWall(int,int)` and `RemoveResourceClump(int,int)`. `TileSheet()` is the tile-sheet setup extracted out of `MakeDiggable`, so it is a move plus four new fixture verbs; the nested type's complexity is unchanged at 82."

@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AcceptDailyQuestActionTests.cs" Link="AcceptDailyQuestActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActionDeadlineAuthoritySourceShapeTests.cs" Link="ActionDeadlineAuthoritySourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActionExecutionCapabilityMatrixTests.cs" Link="ActionExecutionCapabilityMatrixTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActiveExecutionProjectionSourceShapeTests.cs" Link="ActiveExecutionProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" Link="AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AssemblyInfo.cs" Link="AssemblyInfo.cs" />

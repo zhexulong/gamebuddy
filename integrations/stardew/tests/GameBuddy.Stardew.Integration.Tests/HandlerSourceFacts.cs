@@ -94,6 +94,14 @@ internal static class HandlerSourceFacts
         return null;
     }
 
+    /// <summary>
+    /// The body of the member whose declaration begins at <paramref name="declarationStart"/>: the brace-balanced block,
+    /// or an expression body up to its own semicolon. The same reader as <see cref="MethodSite"/>, for a caller whose
+    /// subject is a member that returns a list rather than a receipt (the discovery layer), so that gate does not carry
+    /// a second brace matcher that can disagree with this one.
+    /// </summary>
+    internal static string? MemberBody(string source, int declarationStart) => BodyOf(source, declarationStart)?.Body;
+
     /// <summary>The 1-based line an index sits on.</summary>
     internal static int LineOf(string source, int index) =>
         source.Take(index).Count(character => character == '\n') + 1;

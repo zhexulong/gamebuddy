@@ -259,6 +259,12 @@ export type ChatSuccessorResettlement = Readonly<{
   catalog: ProductionChatCatalog;
   /** The selection moved onto the successor: the move's own `select_chat` is the bridge. */
   movedSelection: boolean;
+  /**
+   * The successor is live and the catalog holds no verified thread for it, so this start recorded the
+   * one settlement that can mount it. The mount's own register/verify/select is the bridge, and the
+   * caller must write no other: a second one would fork the chain the admission counts on.
+   */
+  settlementRecorded: boolean;
 }>;
 type MountedChatRuntimeLeaseRecord = {
   active: boolean;
@@ -2383,8 +2389,9 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // with it before the successor bridge is derived from the selection it mirrors.
     const resettled = await semantic.resettleChatSuccessorFromDurableAuthority(await readDurableChatLiveness(manifest));
     // A moved selection's own `select_chat` is the successor bridge; writing a second
-    // one for the same Chat would fork the runtime chain the admission counts on.
-    if (!resettled.movedSelection) await semantic.reselectTerminalChatRuntimeSuccessor();
+    // one for the same Chat would fork the runtime chain the admission counts on. A recorded
+    // settlement is the same statement one start later: its register/verify/select is the bridge.
+    if (!resettled.movedSelection && !resettled.settlementRecorded) await semantic.reselectTerminalChatRuntimeSuccessor();
     return createFreshChatRuntimeAuthority(
       provision,
       semantic,
@@ -2541,7 +2548,8 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
       const resettled = await semantic.resettleChatSuccessorFromDurableAuthority(
         await readDurableChatLiveness(manifest),
       );
-      if (!resettled.movedSelection) await semantic.reselectTerminalChatRuntimeSuccessor();
+      if (!resettled.movedSelection && !resettled.settlementRecorded)
+        await semantic.reselectTerminalChatRuntimeSuccessor();
     }
     // The real mounted runtime projection shares the provision/mutex/broker;
     // its own close tears down the runtime and closes its Chat binding and
@@ -3826,7 +3834,16 @@ async function openProvisionWithAdmission(
  * exists yet at this point, so it cannot shadow a live turn's own cancel path.
  */
 async function readDurableChatLiveness(manifest: HostDeploymentManifest): Promise<readonly DurableChatLiveness[]> {
-  const threads = createChatThreadStore(manifest.runtimeRoot, identityKey(Object.freeze({ ...manifest.principal })));
+  const threads = (() => {
+    try {
+      return createChatThreadStore(manifest.runtimeRoot, identityKey(Object.freeze({ ...manifest.principal })));
+    } catch {
+      // The transcript authority could not even be opened. That is a bounded, named answer rather
+      // than the store's own message: it is what the launch window quotes to the player, and the
+      // message of a failed open carries a path onto a channel that may not have one.
+      throw new SemanticProductionCoordinatorError("semantic_chat_liveness_unreadable");
+    }
+  })();
   try {
     const rows = (await threads.listThreads?.()) ?? [];
     return Object.freeze(
@@ -3841,6 +3858,9 @@ async function readDurableChatLiveness(manifest: HostDeploymentManifest): Promis
         });
       }),
     );
+  } catch (error) {
+    if (error instanceof SemanticProductionCoordinatorError) throw error;
+    throw new SemanticProductionCoordinatorError("semantic_chat_liveness_unreadable");
   } finally {
     threads.close?.();
   }
@@ -4053,7 +4073,7 @@ function create(
           // ADR 0009: a recorded expectation is the player's own request and is honoured
           // by the next mount's settlement. Reconciling across it would race the choice
           // the player already made, so the durable authority's answer waits one mount.
-          if (catalog.expectedSelection !== null) return { catalog, movedSelection: false };
+          if (catalog.expectedSelection !== null) return { catalog, movedSelection: false, settlementRecorded: false };
           const selected = catalog.activeSelection;
           const selectedDurable =
             selected === null
@@ -4065,7 +4085,7 @@ function create(
           // tip of the recorded command chain. The selection is therefore the only thing a start
           // may move, and this method's whole job is that move.
           if (selected === null || (selectedDurable !== undefined && selectedDurable.lifecycle === "active"))
-            return { catalog, movedSelection: false };
+            return { catalog, movedSelection: false, settlementRecorded: false };
           // The durable authority owns "is this Chat live" and it has orphaned the
           // selection: the successor is the Chat that authority still holds, most recently
           // updated first - never a Chat invented here, and never an empty selection (a
@@ -4087,8 +4107,36 @@ function create(
                     thread.chatSurfaceSessionId === successor.chatSurfaceSessionId &&
                     thread.contentState === "verified",
                 );
-          if (successor === undefined || successorThread === undefined)
+          // The durable authority holds no live Chat at all: there is no successor to name, and a
+          // selection invented here would mount a conversation the player does not have.
+          if (successor === undefined)
             throw new SemanticProductionCoordinatorError("semantic_chat_liveness_unrecoverable");
+          if (successorThread === undefined) {
+            // The successor is live and the catalog has never been taught it - the one state a
+            // removal through a writer that does not move the selection leaves behind, because a
+            // Chat created by `chat.create` becomes durable in `tavern.sqlite` and is learned by the
+            // catalog only when it is selected. No single command can mount it (`select_chat` may
+            // only name a Chat that carries a receipt), so this start records the settlement the
+            // mount already knows how to run: the same `create`-shaped expectation a player's New
+            // Chat records, which the pre-mount settlement registers, verifies against the Chat's
+            // own Tavern content, selects, and clears. It writes no vector and no Chat command, so
+            // the mount's settling `select_chat` is still the tip of the chain it is proved against.
+            provision.store.recordChatSelectionIntent(
+              Object.freeze({
+                intent: Object.freeze({
+                  kind: "create" as const,
+                  chatThreadId: successor.chatThreadId,
+                  chatSurfaceSessionId: successor.chatSurfaceSessionId,
+                }),
+                expected: { ...catalog.vector },
+              }),
+            );
+            return {
+              catalog: provision.store.readChatCatalog(),
+              movedSelection: false,
+              settlementRecorded: true,
+            };
+          }
           // One ordinary `select_chat` for a Chat the durable authority still holds: it both
           // moves the selection and is the successor bridge the mount consumes, and because it
           // is written last it is the chain tip the mount is proved against.
@@ -4100,7 +4148,7 @@ function create(
               expected: { ...catalog.vector },
             }),
           );
-          return { catalog: provision.store.readChatCatalog(), movedSelection: true };
+          return { catalog: provision.store.readChatCatalog(), movedSelection: true, settlementRecorded: false };
         }),
       ),
     startInitialChat: () => step(0),
