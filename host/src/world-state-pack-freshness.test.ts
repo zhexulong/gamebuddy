@@ -145,10 +145,14 @@ test("pack_contradiction: a delivery that proves the seed count changed does not
   assert.match(line, /0/u, `the seed line states the proof's own count: ${line}`);
 });
 
-test("pack_proof_is_named: the re-emitted count says which action counted it, so it is not a second silent reading", () => {
+test("pack_proof_is_named: the re-emitted count says a step counted it, so it is not a second silent reading", () => {
   const line = seedLine(briefWith([receiptFact(plantedOne(2, 0))]));
   assert.match(line, /0 花椰菜种子/u, `the seed line states the proof's own count: ${line}`);
-  assert.match(line, /plant_seed/u, `a count that replaced the reading names its source: ${line}`);
+  // THE CLAIM, NOT THE ACTION ID. `（plant_seed 之后数的）` put a handle in the middle of a sentence, and a run taught by
+  // that line answers with action ids instead of work. The claim is what makes the number a statement about a MOMENT;
+  // which action took the count is the receipt's own statement, printed beside it by `receiptLine`.
+  assert.match(line, /（刚做完那一步之后数的）/u, `a count that replaced the reading says it was re-counted: ${line}`);
+  assert.doesNotMatch(line, /plant_seed|_seed/u, `and it names no action id: ${line}`);
 });
 
 test("pack_age_is_stated: a pack count with no proof carries the age of the reading it came from", () => {
@@ -210,7 +214,8 @@ test("pack_line_population: every pack-count line the block emits obeys the prop
   assert.notEqual(pack, "", "the pack line is composed at all");
   assert.doesNotMatch(pack, /47 份/u, `the pack line states the proof's own count: ${pack}`);
   assert.match(pack, /48 份/u, `and it is the proven count, in the pack line's own words: ${pack}`);
-  assert.match(pack, /pickup_item/u, `named as the receipt's count, not a second silent reading: ${pack}`);
+  assert.match(pack, /（刚做完那一步之后数的）/u, `said to be a receipt's count, not a second silent reading: ${pack}`);
+  assert.doesNotMatch(pack, /pickup_item/u, `and with no action id in the sentence: ${pack}`);
 });
 
 test("pack_composition_without_a_delivery_is_unchanged", () => {

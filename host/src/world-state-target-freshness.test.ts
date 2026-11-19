@@ -13,7 +13,7 @@
  * `rock_source_broken`. The reading was `revision 108`; the world was at 123, and the line printed no age and no proof -
  * the block's header even said `刚刚更新`. Her next plan wrote `snapshot.rockSourceTargets.slice(0, 4)` - the first four
  * rows of that same stale array - and the Mod answered `rock_source_gone` four times: four empty nodes and a wasted
- * round. The count beside it in the same block already carried the fix (`30 份 石头 (O)390（pickup_item 之后数的）`).
+ * round. The count beside it in the same block already carried the fix (`30 份 石头（刚做完那一步之后数的）`).
  * </p>
  *
  * <p>
@@ -169,9 +169,13 @@ test("target_the_four_plan_124_resubmitted_are_the_four_the_line_no_longer_offer
   assert.match(line, /\(3,6\)/u, `and so is the other one: ${line}`);
 });
 
-test("target_proof_is_named: the line says which action took the rows out, and how many", () => {
+test("target_proof_is_named: the line says a step took the rows out, and how many", () => {
   const line = rockLine(briefWith(PLAN_108_RECEIPTS));
-  assert.match(line, /break_rock/u, `a row list that replaced the reading's own names its source: ${line}`);
+  // THE CLAIM IS A SENTENCE, AND THE ACTION ID IS NOT IN IT. `（break_rock 之后数的，少了 6 格）` put a handle inside a
+  // Chinese sentence and a run answered with handles; the receipt that broke the six stones is printed in the same
+  // delivery by `receiptLine`, with its own action id, so nothing is lost by not saying it twice.
+  assert.match(line, /（刚做完那一步之后数的/u, `a row list that replaced the reading's own says it was re-counted: ${line}`);
+  assert.doesNotMatch(line, /break_rock/u, `and names no action id: ${line}`);
   assert.match(line, /少了 6 格/u, `and how many rows left, so the subtraction is a fact: ${line}`);
   assert.doesNotMatch(line, /其余/u, `the six are not counted as the cap's omission: ${line}`);
 });

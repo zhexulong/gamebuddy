@@ -124,9 +124,10 @@ const WEATHER_NAMES_EN: Record<string, string> = {
  * plan compares against, and `toolSlots[].category` is the Mod's own tool word (`FarmhandActionCatalog.ToolEnum`),
  * which is the word the `tool:<category>` claims and `equip_tool` use. A spoken turn needs the second: measured on
  * a live session, the companion said "我们带着 (T)Hoe 去 Town" because the turn's fact line handed it the identity.
- * English keeps the category word, snake_case turned back into words; Chinese names the tool. A category the
- * tables do not have (an older Mod's `unknown`) keeps the identity, because dropping the fact would hide what she
- * is holding. See `formatHeldTool`.
+ * English keeps the category word, snake_case turned back into words; Chinese names the tool. A category the tables do
+ * not have (an older Mod's `unknown`) names no tool at all - `一件工具` - rather than falling back to the identity: the
+ * identity is a handle an argument copies, and a sentence that prints it is the line that taught her to say it. Nothing
+ * addressable is lost, because a handle with no category is one `equip_tool` refuses anyway. See `formatHeldTool`.
  */
 const TOOL_NAMES_ZH: Record<string, string> = {
   axe: "斧头",
@@ -318,10 +319,9 @@ function formatGameTile(tile: { readonly x: number; readonly y: number } | undef
  *
  * `currentTool` is the native item identity (`(T)Hoe`), which is the handle a plan compares against and which a
  * spoken turn must never repeat; the same slot's `category` is the Mod's tool word, so the fact reads "hoe" /
- * "锄头". The identity is kept only when no slot publishes a word for it, because an absent name is still better
- * than an absent fact. The upgrade level is only on the wire beside the slot that holds the tool, so it is read
- * from there and only when the two agree - an unmatched slot costs the level and never the name. A basic tool
- * renders no marker: the handlers require the basic one, so a marker is what an upgrade is.
+ * "锄头". The identity prints NOWHERE, not even as a fallback. The upgrade level is only on the wire beside the slot
+ * that holds the tool, so it is read from there and only when the two agree - an unmatched slot costs the level and
+ * never the name. A basic tool renders no marker: the handlers require the basic one, so a marker is what an upgrade is.
  */
 function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string {
   const tool = source.currentTool;
@@ -335,7 +335,8 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
   const upgrade = Number.isSafeInteger(upgradeLevel) ? (upgradeLevel as number) : 0;
   const level = upgrade > 0 ? (zh ? `（+${upgrade}）` : ` (+${upgrade})`) : "";
   const category = occupant?.category;
-  const name = (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ?? tool;
+  const name =
+    (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ?? (zh ? "一件工具" : "a tool");
   return `${zh ? "手持" : "holding"}: ${name}${level}`;
 }
 
@@ -1122,50 +1123,39 @@ export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string;
 });
 
 /**
- * One target row THIS DELIVERY's receipts proved is out of the world, and the action whose receipt proved it.
- *
- * <p>
- * WHY A ROW NEEDS ITS OWN PROOF. A row is an opaque id the caller copies into an action (`expectedTargetId`), and the
- * reading it comes from is not the world. Measured `round78` (2026-11-19, the mine window): six `break_rock` receipts at
- * revisions 112-123 broke six stones while the reading she held was `revision 108`, so the block printed all eight stones
- * - every broken one among them - directly under an `<execution-result>` that named those same stones as
- * `rock_source_broken`. The next delivery's plan took `snapshot.rockSourceTargets.slice(0, 4)` - the first four rows of
- * the same stale array - and the Mod answered `rock_source_gone` four times: four empty nodes, and a turn spent re-aiming
- * at stone that was already gone.
- * </p>
- *
- * <p>
- * THE PROOF IS THE MOD'S OWN, never a second reading of the world. The receipt that took the row out names it (a
- * `target=` pair, or `expected=` for `item_target_gone`) and says so in one of the two spellings the Mod publishes:
- * `removed=true` (`farmhandexecutioncontroller.resourcetoolactions.cs:310`), or a reason code ending in `_gone` - the seven
- * the Mod declares (`rock_source_gone`, `item_target_gone`, `animal_product_target_gone`, `pet_target_gone`,
- * `farm_animal_target_gone`, `npc_relationship_target_gone`, `npc_interaction_target_gone`), each meaning "the row this
- * request named is out of the world". A code that ends `_gone` without naming a row in its evidence (`clear_blocker_gone`)
- * proves nothing here, which is why the row's id is required rather than the suffix alone. So the line is RE-DERIVED from
- * what the delivery already proved, which is the seeds line's precedent (`provedPackCounts` in `fact-brief.ts`), not the
- * reading's rows printed as the present tense.
- * </p>
- */
-export type ProvedGoneTarget = Readonly<{ actionId: string }>;
-
-/**
  * What THIS DELIVERY already knows about the target rows, and how old the reading is.
  *
  * The two halves of the freshness question for a row list, kept beside each other because a renderer that took one
- * without the other could print a row with neither a source nor an age. `gone` is the map `fact-brief.ts`
+ * without the other could print a row with neither a source nor an age. `gone` is the set `fact-brief.ts`
  * (`provedGoneTargets`) derives from the delivery's receipts; `ageTurns` is the reading's own age, the same number the
  * block's first line states.
  */
 export type TargetFreshness = Readonly<{
-  /** Rows a receipt in this delivery took out of the world, keyed by the row's own opaque id. */
-  gone: ReadonlyMap<string, ProvedGoneTarget>;
+  /**
+   * Rows a receipt in THIS delivery took out of the world, by the row's own opaque id.
+   *
+   * <p>
+   * WHY A ROW NEEDS ITS OWN PROOF. A row is an opaque id the caller copies into an action (`expectedTargetId`), and the
+   * reading it comes from is not the world. Measured `round78` (2026-11-19, the mine window): six `break_rock` receipts
+   * broke six stones while the reading she held was `revision 108`, so the block printed all eight rows - every broken one
+   * among them - directly under an `<execution-result>` that named those same stones as broken, and the next plan pointed
+   * four steps at stone that was already gone (`provedGoneTargets` in `fact-brief.ts` carries the full reading).
+   * </p>
+   *
+   * <p>
+   * THE SET IS IDS AND NOTHING ELSE. The proof, and the action that produced it, are the receipt's own statements; a row
+   * list that also spelled the action gave one fact two vocabularies, and the copy in a sentence is the one a run learned
+   * to answer with.
+   * </p>
+   */
+  gone: ReadonlySet<string>;
   /** How many delivered turns ago this reading arrived: `0` is the turn it arrived in. */
   ageTurns: number;
 }>;
 
 /** No delivery to trust: every published row stands, and the age is the caller's own. */
 export const NO_TARGET_FRESHNESS: TargetFreshness = Object.freeze({
-  gone: new Map<string, ProvedGoneTarget>(),
+  gone: new Set<string>(),
   ageTurns: 0,
 });
 
@@ -1212,10 +1202,11 @@ export type NearbyTargetFamily = Readonly<{
  * replacing a piece she could not name. The name is not interpolated blind: a row with no readable `displayName` prints
  * its tile alone, never the word `undefined`.
  *
- * A ROW A RECEIPT PROVED GONE IS NOT PRINTED. `freshness.gone` is this delivery's own proof (see `ProvedGoneTarget`),
+ * A ROW A RECEIPT PROVED GONE IS NOT PRINTED. `freshness.gone` is this delivery's own proof (see `provedGoneTargets`),
  * and a row it names is subtracted before the cap is applied - because an id the Mod has already answered `_gone` for is
- * an id any plan written from this line would point at a thing that is not there. What was subtracted, and by which
- * action, is stated on the line itself (`renderTargetFamily`), so the subtraction is a fact rather than a silence.
+ * an id any plan written from this line would point at a thing that is not there. How many were subtracted is stated on
+ * the line itself (`renderTargetFamily`), and WHICH action took them out is stated by that action's own receipt in the
+ * same delivery, so the subtraction is a fact rather than a silence and not a second spelling either.
  *
  * A FAMILY WHOSE ROWS IT CANNOT PLACE STILL PRINTS. The tile is read through `ROW_TILE_FIELD_PAIRS`, so a `doorTargets`
  * row is placed at its `sourceX`/`sourceY` exactly as an `animalDoorTargets` row is placed at its `x`/`y` - `round62`'s
@@ -1236,7 +1227,7 @@ export function nearbyTargetFamilies(
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const { standing, removed, actions } = splitProvedGone(value, freshness.gone);
+    const { standing, removed } = splitProvedGone(value, freshness.gone);
     const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family]);
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
@@ -1244,7 +1235,7 @@ export function nearbyTargetFamilies(
     const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
     const omitted = standing.length - shown.length;
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
-    const proved: TargetLineProof = Object.freeze({ removed, actions, ageTurns: freshness.ageTurns });
+    const proved: TargetLineProof = Object.freeze({ removed, ageTurns: freshness.ageTurns });
     families.push(
       Object.freeze({
         family,
@@ -1262,27 +1253,24 @@ export function nearbyTargetFamilies(
 /**
  * One family's published rows, split by what this delivery proved about them.
  *
- * `standing` keeps the wire's order, which the cap's sort then re-ranks; `removed` and `actions` are the two numbers the
- * line's proof sentence is composed from, so the arithmetic and the sentence cannot disagree about how many rows left.
+ * `standing` keeps the wire's order, which the cap's sort then re-ranks; `removed` is the one number the line's proof
+ * sentence is composed from, so the arithmetic and the sentence cannot disagree about how many rows left.
  */
 function splitProvedGone(
   value: readonly unknown[],
-  gone: ReadonlyMap<string, ProvedGoneTarget>,
-): Readonly<{ standing: readonly unknown[]; removed: number; actions: readonly string[] }> {
+  gone: ReadonlySet<string>,
+): Readonly<{ standing: readonly unknown[]; removed: number }> {
   const standing: unknown[] = [];
-  const actions = new Set<string>();
   let removed = 0;
   for (const row of value) {
     const id = rowTargetId(row);
-    const proved = id === undefined ? undefined : gone.get(id);
-    if (proved === undefined) {
+    if (id === undefined || !gone.has(id)) {
       standing.push(row);
       continue;
     }
     removed += 1;
-    actions.add(proved.actionId);
   }
-  return { standing, removed, actions: Object.freeze([...actions].sort()) };
+  return { standing, removed };
 }
 
 /**
@@ -1341,10 +1329,29 @@ function rowDisplayName(candidate: Record<string, unknown>): string | undefined 
  * Separate from `TargetFreshness` because it is a different fact: the delivery proves ids out of the world for every
  * family at once, and each family's sentence states only its own share of that.
  */
-type TargetLineProof = Readonly<{ removed: number; actions: readonly string[]; ageTurns: number }>;
+type TargetLineProof = Readonly<{ removed: number; ageTurns: number }>;
+
+/**
+ * THE PROVENANCE CLAIM A COUNT CARRIES WHEN A RECEIPT IN THIS DELIVERY RE-COUNTED IT, in words.
+ *
+ * <p>
+ * One constant, two lines read it: `fact-brief.ts`'s pack and seed counts and this module's target rows. It exists because
+ * the claim belongs in a sentence and the ACTION ID does not: `<world-state>` used to print `5 份 防风草种子 (O)472 [槽 2]
+ * （plant_seed 之后数的）`, and a run taught by that line reads ids and slot markers aloud, which is what the prompt floor
+ * would have had to forbid - a second spelling of a rule this input can keep by itself.
+ * </p>
+ *
+ * <p>
+ * WHAT IT STILL SAYS, and what it no longer names. The claim's job is that a number is a statement about a MOMENT rather
+ * than about the reading, which is the defect (`round75`: `种子: 2` for fourteen turns while the deliveries it arrived in
+ * carried `inventory_after=0`). The action that took the count is not lost by this: the receipt that proves it is printed
+ * by `receiptLine` in the same delivery, with its own `actionId` and its own evidence.
+ * </p>
+ */
+export const COUNTED_AFTER_THE_STEP = "刚做完那一步之后数的";
 
 /** Nothing proved and nothing aged: the sentence a caller with no delivery (the Chat surface's own reader) gets. */
-const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, actions: [], ageTurns: 0 });
+const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, ageTurns: 0 });
 
 /**
  * The sentence one family prints, or `undefined` for a family the Mod published as empty.
@@ -1369,7 +1376,7 @@ function renderTargetFamily(
 ): string | undefined {
   if (total === 0) return undefined;
   if (proved.removed >= total)
-    return `${label} 全部 ${String(proved.removed)} 格已不在（${proved.actions.join("、")} 之后数的）`;
+    return `${label} 全部 ${String(proved.removed)} 格已不在（${COUNTED_AFTER_THE_STEP}）`;
   if (shown.length === 0)
     return `${label} 其余 ${String(total - proved.removed)} 格未列出（这些行没有坐标）${targetLineFreshness(proved)}`;
   const tiles = shown
@@ -1384,13 +1391,13 @@ function renderTargetFamily(
 /**
  * The tail a row list carries: which action proved rows out of the world, and how old the rows that are left are.
  *
- * The wording mirrors the seeds line's `（plant_seed 之后数的）` deliberately - a row list that replaced the reading's own
- * names the receipt that replaced it - and the age is stated once, for the line, only when a receipt did not account for
- * every row on it.
+ * The wording is the seeds line's own (`COUNTED_AFTER_THE_STEP`) rather than a second sentence saying the same thing - a
+ * row list that replaced the reading's own says the receipt replaced it, in the same words - and the age is stated once,
+ * for the line, only when a receipt did not account for every row on it.
  */
 function targetLineFreshness(proved: TargetLineProof): string {
   const source =
-    proved.removed < 1 ? "" : `（${proved.actions.join("、")} 之后数的，少了 ${String(proved.removed)} 格）`;
+    proved.removed < 1 ? "" : `（${COUNTED_AFTER_THE_STEP}，少了 ${String(proved.removed)} 格）`;
   if (proved.ageTurns < 1) return source;
   const aged =
     proved.removed > 0 ? `（其余是 ${String(proved.ageTurns)} 轮前数的）` : `（${String(proved.ageTurns)} 轮前数的）`;

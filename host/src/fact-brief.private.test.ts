@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { FACT_PRODUCER, CompanionEventPump, MAX_BATCH_BYTES, type WorldFact } from "./event-pump.js";
 import { assertReportsWithoutInstructing } from "./fact-block-prose.test-support.js";
 import {
+  ADDRESSABLE_ROWS_HEAD,
   composeFactBrief,
   composeWorldState,
   FACT_BRIEF_BLOCKS,
@@ -416,7 +417,7 @@ test("can_water_beside_the_held_tool: the can's own water reaches the prose, and
   assert.equal(/壶里的水/u.test(ambiguous), false, `two unheld cans print no figure: ${ambiguous}`);
 });
 
-test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
+test("pack_rows_are_addressable_and_the_sentence_stays_a_sentence", () => {
   // THE POPULATION IS TWO AUTHORITIES CROSSED, never today's line. The row's fields are the wire document's own
   // (`$defs.inventoryItemFact.properties`) and the names an action DEMANDS are the Host validator's own
   // (`EXECUTION_REQUEST_ARGUMENT_RULES`, whose `exactArgs` rows carry `argumentNames` as data). `expected<Field>` counts
@@ -434,42 +435,72 @@ test("pack_rows_name_the_slot_and_the_id_an_action_argument_demands", () => {
       .flatMap((line) => line.split("；"))
       .find((part) => part.includes("身上带着")) ?? "";
 
-  const withSlot = (slot: number): string =>
-    packSentence({
+  /** The one field of the block that carries an address rather than a sentence. */
+  const addressLine = (snapshot: Snapshot): string =>
+    composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0, contentAgeMs: 0 })
+      .split("\n")
+      .find((line) => line.startsWith(ADDRESSABLE_ROWS_HEAD)) ?? "";
+
+  const withSlot = (slot: number): Snapshot =>
+    ({
       ...world,
       inventoryItemFacts: [{ slot, qualifiedItemId: "(O)378", displayName: "铜矿石", stack: 5 }],
-    } as unknown as Snapshot);
+    }) as unknown as Snapshot;
 
   // THE ROW'S OWN VALUES, one per demanded field, chosen so no one of them contains another: 23 is not inside
   // `(O)378`, `铜矿石` carries no digit, and the stack is a single digit the slot cannot hide behind.
+  const SLOT = "23";
+  const QUALIFIED_ITEM_ID = "(O)378";
+  const DISPLAY_NAME = "铜矿石";
+  const STACK = "5";
   const values: Readonly<Record<string, string>> = Object.freeze({
-    slot: "23",
-    qualifiedItemId: "(O)378",
-    displayName: "铜矿石",
-    stack: "5",
+    slot: SLOT,
+    qualifiedItemId: QUALIFIED_ITEM_ID,
+    displayName: DISPLAY_NAME,
+    stack: STACK,
   });
-  const sentence = withSlot(23);
-  const dropped = demanded.filter((field) => !sentence.includes(values[field] ?? "\u0000"));
+  const sentence = packSentence(withSlot(23));
+  const address = addressLine(withSlot(23));
+  // A FIELD AN ARGUMENT DEMANDS IS REACHABLE FROM THIS BLOCK. It is not required to be in the sentence: what makes it
+  // reachable is that it is printed, in this block, this turn, spelled as the wire spells it.
+  const block = `${sentence}${address === "" ? "" : `\n${address}`}`;
+  const dropped = demanded.filter((field) => !block.includes(values[field] ?? "\u0000"));
   assert.deepEqual(
     dropped,
     [],
-    `these row fields are demanded by an action argument and do not reach the pack line: ${dropped.join(", ")} | ${sentence}`,
+    `these row fields are demanded by an action argument and do not reach the block: ${dropped.join(", ")} | ${block}`,
   );
+
+  // AND THE SENTENCE CARRIES NONE OF THEM. `5 份 防风草种子 (O)472 [槽 2]` reads as a machine's report: the qualified id
+  // and the slot marker belong to the address field, and a line that welds them into its spine is the input a run learns
+  // to answer with ids from.
+  assert.equal(
+    sentence.includes(QUALIFIED_ITEM_ID),
+    false,
+    `the qualified item id must not be in the sentence: ${sentence}`,
+  );
+  assert.equal(/\[槽/u.test(sentence), false, `and no slot marker either: ${sentence}`);
+  assert.equal(new RegExp(`(?<!\\d)${SLOT}(?!\\d)`, "u").test(sentence), false, `and not the slot as a bare number: ${sentence}`);
+  assert.match(sentence, new RegExp(`${STACK} 份 ${DISPLAY_NAME}`, "u"), `the count and the name are the sentence: ${sentence}`);
+
+  // THE ADDRESS IS THE PAIR THE ARGUMENT TAKES.
+  assert.match(address, /\(O\)378/u, `the address field carries the qualified id: ${address}`);
+  assert.match(address, /(?<!\d)23(?!\d)/u, `and the slot: ${address}`);
 
   // A PRINTED CONSTANT IS NOT THE ROW'S SLOT. The same pack at another slot must read differently and must not still
   // say 23: a renderer that printed the first slot it ever saw, or a `0` default, passes the assertion above and fails
   // this one.
-  const elsewhere = withSlot(41);
-  assert.notEqual(elsewhere, sentence, `two different slots render the same pack line: ${elsewhere}`);
+  const elsewhere = addressLine(withSlot(41));
+  assert.notEqual(elsewhere, address, `two different slots render the same address: ${elsewhere}`);
   assert.equal(
     /(?<!\d)23(?!\d)/u.test(elsewhere),
     false,
-    `the pack line still names the slot it was not given: ${elsewhere}`,
+    `the address field still names the slot it was not given: ${elsewhere}`,
   );
   assert.match(elsewhere, /(?<!\d)41(?!\d)/u, `and it names the one it was: ${elsewhere}`);
 
   // A TRUNCATED LIST STILL SAYS WHERE THE SLOTS ARE. The bound drops rows, and a dropped row cannot be addressed from
-  // this sentence at all, so the sentence has to name the reading that carries the whole family.
+  // this block at all, so the sentence has to name the reading that carries the whole family.
   const crowded = packSentence({
     ...world,
     inventoryItemFacts: Array.from({ length: 12 }, (_, index) => ({
@@ -893,11 +924,14 @@ test("seed_held: the seeds she can plant print their own count, once", () => {
  * </p>
  */
 test("seed_affordability: the seed line names the money the observation does not carry, and only when it measured seeds", () => {
-  const gap = /买种子的钱: 未观察 affordability_unknown/u;
+  // THE GAP IS A SENTENCE, NOT A CODE. It read `（买种子的钱: 未观察 affordability_unknown）`, and a bare `*_unknown`
+  // token in the middle of Chinese is the kind of word a run repeats back instead of the fact.
+  const gap = /买种子的钱: 未观察/u;
   const held = seedText(
     seedWorld({ seedSupplyTargets: [{ qualifiedItemId: "(O)472", displayName: "防风草种子", heldCount: 3 }] }),
   );
   assert.match(held, gap, `the seed line must name the missing balance; it read:\n${held}`);
+  assert.doesNotMatch(held, /affordability_unknown/u, `and it names no machine token: \n${held}`);
 
   // The measured zero names it too: with no seed in the pack, what one COSTS is the whole question.
   assert.match(seedText(seedWorld({ seedSupplyTargets: [] })), gap);
@@ -905,7 +939,7 @@ test("seed_affordability: the seed line names the money the observation does not
   // And a family nobody published makes no claim at all: absent is not zero, and it is not "she can afford it" either.
   const nothingMeasured = seedText(seedWorld());
   assert.ok(
-    !nothingMeasured.includes("affordability_unknown"),
+    !nothingMeasured.includes("买种子的钱"),
     `an unmeasured seed family must leave the block byte-identical:\n${nothingMeasured}`,
   );
 });

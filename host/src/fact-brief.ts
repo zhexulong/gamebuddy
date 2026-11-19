@@ -51,6 +51,7 @@
 import type { PlayerInput, WorldFact } from "./event-pump.js";
 import { CARRIED_BACKLOG_SEMANTIC_KIND, type HeldWorldDeclaration, heldWorldOf } from "./event-pump.js";
 import {
+  COUNTED_AFTER_THE_STEP,
   formatBodyState,
   formatGameClock,
   formatGameEnvironmentFacts,
@@ -59,7 +60,6 @@ import {
   MAX_TARGET_FAMILIES_SHOWN,
   NO_TARGET_FRESHNESS,
   nearbyTargetFamilies,
-  type ProvedGoneTarget,
   ROW_TILE_FIELD_PAIRS,
   TARGET_FAMILY_LABELS,
   type TargetFreshness,
@@ -87,6 +87,34 @@ import type { Snapshot } from "./protocol.js";
 export const FACT_BRIEF_BLOCKS = Object.freeze(["world-state", "world-facts", "execution-result"] as const);
 
 export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
+
+/**
+ * THE HEAD OF THE FIELD IN `<world-state>` THAT CARRIES AN ADDRESS RATHER THAN A SENTENCE.
+ *
+ * <p>
+ * A narration line must read as a sentence. `5 份 防风草种子 (O)472 [槽 2]` does not: the qualified id and the slot marker
+ * are the machine's spelling of where a row lives, welded into the middle of a Chinese sentence - and an input that prints
+ * them in that position is the only teacher the model has, now that the floor no longer says "do not read ids aloud".
+ * </p>
+ *
+ * <p>
+ * WHY THIS PLACE IS REACHABLE WHEN SHE NEEDS TO PASS AN ID. `open_geode` refuses a request without
+ * `slot` + `expectedQualifiedItemId` (`host/src/protocol.ts:3748`), `deposit_silo_hay` and `put_item_in_fish_tank` demand
+ * `slot` alone - and every one of those numbers is on this field, in the same block, on the same turn, spelled exactly as
+ * the wire spells it. Nothing has to be read out of a sentence and no observation call is owed to recover it.
+ * </p>
+ */
+export const ADDRESSABLE_ROWS_HEAD = "可指代的行：";
+
+/**
+ * Every field of this block whose content is the machine's rather than a sentence, so a reader - and the gate
+ * `a_line_the_model_reads_is_not_a_machine_token` - can tell a report from an address.
+ *
+ * THE LIST IS THE COMPOSER'S OWN: `composeWorldState` emits a line under each of these heads and nothing else does, so the
+ * gate reads this declaration instead of retyping the heads it has to skip.
+ */
+export const MACHINE_FIELD_HEADS: readonly string[] = Object.freeze([ADDRESSABLE_ROWS_HEAD]);
+
 
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
@@ -308,8 +336,8 @@ function playerSpeech(inputs: readonly PlayerInput[]): string {
  */
 export function composeWorldState(
   reading: WorldStateReading | undefined,
-  provedPack: ReadonlyMap<string, ProvedPackCount> = NO_PACK_FRESHNESS.proved,
-  provedGone: ReadonlyMap<string, ProvedGoneTarget> = NO_TARGET_FRESHNESS.gone,
+  provedPack: ReadonlyMap<string, number> = NO_PACK_FRESHNESS.proved,
+  provedGone: ReadonlySet<string> = NO_TARGET_FRESHNESS.gone,
 ): string {
   if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
   const world = reading.snapshot;
@@ -333,13 +361,17 @@ export function composeWorldState(
   const canWater = formatCarriedCanWater(world);
   if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world, freshness);
-  if (carrying !== "") parts.push(carrying);
+  if (carrying.prose !== "") parts.push(carrying.prose);
   const seeds = formatHeldSeeds(world, freshness);
   if (seeds !== "") parts.push(seeds);
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
   lines.push(...composeNearbyTargets(world, targetFreshness));
+  // THE ADDRESS GOES LAST, UNDER ITS OWN HEAD. A reader who wants an id or a slot reads this line; a reader who wants the
+  // world reads the paragraph above it, and the two never share a line - which is what stops a sentence from having a
+  // machine token in its spine.
+  if (carrying.addressable.length > 0) lines.push(`${ADDRESSABLE_ROWS_HEAD}${carrying.addressable.join("；")}`);
   return block("world-state", lines.join("\n"));
 }
 
@@ -380,19 +412,27 @@ const MAX_CARRYING_ROWS = 8;
  * sow nothing. One count in two sentences would be two readings of one fact, and the seed half has a consumer (the tilled
  * ground waiting for it) this list does not serve.
  *
- * THE SLOT AND THE ID ARE THE ADDRESS, AND BOTH ARE PRINTED. `slot` and `expectedQualifiedItemId` are the pair
- * `open_geode` demands (`host/src/protocol.ts:3748`), `slot` alone is what `deposit_silo_hay` and
- * `put_item_in_fish_tank` demand - and this line used to drop the slot it was handed, so the number she is asked for was
- * a number she was never shown. The row's `displayName` is the label and cannot substitute: two stacks of the same item
- * share a name, and no action accepts a name. Both are the wire's own values, printed unmodified.
+ * THE SLOT AND THE ID ARE THE ADDRESS, AND THEY MOVE TO `ADDRESSABLE_ROWS_HEAD`. `slot` and
+ * `expectedQualifiedItemId` are the pair `open_geode` demands (`host/src/protocol.ts:3748`), `slot` alone is what
+ * `deposit_silo_hay` and `put_item_in_fish_tank` demand - and this line used to drop the slot it was handed, so the number
+ * she is asked for was a number she was never shown. They are still printed, one line per row under the head that says they
+ * are an address, in the same block and the same turn. WHAT DOES NOT COME BACK is their place inside the sentence: `5 份
+ * 防风草种子 (O)472 [槽 2]` is not a sentence, and it is the shape a run learned to answer with ids from. The row's
+ * `displayName` is the name and cannot substitute for the id - two stacks of the same item share a name, and no action
+ * accepts a name - which is exactly why the two are split rather than merged.
  *
  * THE CAP NAMES WHERE THE REST IS. A truncated row cannot be addressed from here, so the sentence says which reading
  * carries the slots this bound dropped (`stardew_observe` publishes the whole family) rather than counting them into a
  * silence.
  */
-function formatCarrying(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): string {
+type CarriedPack = Readonly<{ prose: string; addressable: readonly string[] }>;
+
+/** No `inventoryItemFacts` family at all: neither a sentence nor an address, which is not the same as an empty pack. */
+const NO_CARRIED_PACK: CarriedPack = Object.freeze({ prose: "", addressable: Object.freeze([]) });
+
+function formatCarrying(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): CarriedPack {
   const rows = world.inventoryItemFacts;
-  if (!Array.isArray(rows)) return "";
+  if (!Array.isArray(rows)) return NO_CARRIED_PACK;
   const seeds = plantableSeedIds(world);
   const named = rows
     .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
@@ -406,26 +446,28 @@ function formatCarrying(world: Snapshot, freshness: PackFreshness = NO_PACK_FRES
         displayName: row.displayName.trim(),
         qualifiedItemId: row.qualifiedItemId,
         slot: row.slot,
-        stack: proved?.count ?? (Number.isFinite(row.stack) ? Number(row.stack) : 1),
+        stack: proved ?? (Number.isFinite(row.stack) ? Number(row.stack) : 1),
         source: packCountSource(proved),
         proved: proved !== undefined,
       };
     });
-  if (named.length === 0) return "身上没有别的东西";
-  const shown = named
-    .slice(0, MAX_CARRYING_ROWS)
-    .map(
-      (row) =>
-        `${String(row.stack)} 份 ${row.displayName} ${row.qualifiedItemId} [槽 ${String(row.slot)}]${row.source}`,
-    );
+  if (named.length === 0) return Object.freeze({ prose: "身上没有别的东西", addressable: Object.freeze([]) });
+  const shown = named.slice(0, MAX_CARRYING_ROWS);
+  const sentences = shown.map((row) => `${String(row.stack)} 份 ${row.displayName}${row.source}`);
+  // THE ADDRESS IS THE PAIR AN ARGUMENT TAKES, under the name the sentence calls the row, so the two halves can be joined
+  // without a second read of the world.
+  const addressable = shown.map((row) => `${row.displayName} 槽 ${String(row.slot)} ${row.qualifiedItemId}`);
   const rest = named.length - shown.length;
   // The age covers the rows this line PRINTS: a row the bound dropped is not a count she was handed.
   const aged = packCountsAge(
-    named.slice(0, MAX_CARRYING_ROWS).filter((row) => row.proved).length,
+    shown.filter((row) => row.proved).length,
     shown.length,
     freshness.ageTurns,
   );
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}${aged}`;
+  return Object.freeze({
+    prose: `身上带着 ${sentences.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}${aged}`,
+    addressable: Object.freeze(addressable),
+  });
 }
 
 /**
@@ -442,11 +484,12 @@ function plantableSeedIds(world: Snapshot): ReadonlySet<string> {
   return new Set(rows.map((row) => row.qualifiedItemId));
 }
 
-/** One pack count the DELIVERY ITSELF proved, and the action whose receipt proves it. */
-export type ProvedPackCount = Readonly<{ count: number; actionId: string }>;
-
 /**
  * The pack counts THIS DELIVERY has already counted, from the Mod's own receipts.
+ *
+ * <p>
+ * THE VALUE IS A COUNT, keyed by the row's `qualifiedItemId`: the Mod's own post-action sum, never a derived one.
+ * </p>
  *
  * <p>
  * WHY. Measured `round75`: `<world-state>` printed `种子: 2 花椰菜种子` on all fourteen refusal turns of a stretch in
@@ -470,27 +513,25 @@ export type ProvedPackCount = Readonly<{ count: number; actionId: string }>;
  * events win, because events are ordered oldest first and the last count is the one that is still true.
  * </p>
  */
-export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<string, ProvedPackCount> {
-  const proved = new Map<string, ProvedPackCount>();
-  const record = (actionId: string, detail: unknown): void => {
+export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<string, number> {
+  const proved = new Map<string, number>();
+  const record = (detail: unknown): void => {
     if (typeof detail !== "string" || detail === "") return;
     const pairs = evidencePairs(detail);
     const item = pairs.get("item");
     if (item === undefined || item === "") return;
     const raw = pairs.get("inventory_after");
     if (raw === undefined || !/^\d+$/u.test(raw)) return;
-    proved.set(item, Object.freeze({ count: Number(raw), actionId: actionId === "" ? "动作" : actionId }));
+    proved.set(item, Number(raw));
   };
   for (const fact of events) {
-    const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "";
     if (fact.kind === "execution_receipt") {
-      record(actionId, (fact.payload.evidence as { detail?: unknown } | undefined)?.detail);
+      record((fact.payload.evidence as { detail?: unknown } | undefined)?.detail);
       continue;
     }
     if (fact.semanticKind !== PROGRAM_SETTLED) continue;
     if (!Array.isArray(fact.payload.nodes)) continue;
-    for (const node of fact.payload.nodes as readonly SettledNode[])
-      record(typeof node.actionId === "string" ? node.actionId : actionId, node.evidence);
+    for (const node of fact.payload.nodes as readonly SettledNode[]) record(node.evidence);
   }
   return proved;
 }
@@ -524,12 +565,18 @@ export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<stri
  * proves nothing, and a refusal that names another row does not touch this one.
  * </p>
  *
+ * <p>
+ * THE RESULT IS IDS AND NOTHING ELSE. Which action took a row out is the receipt's own statement, printed by `receiptLine`
+ * in the same delivery with its own action id and evidence; a row list that also spelled the action gave one fact two
+ * vocabularies, and the copy in a sentence is the one a run learned to answer with.
+ * </p>
+ *
  * BOTH SHAPES REACH HER, for the same reason `provedPackCounts` reads both: a bare `execution_receipt` and the nodes of a
  * settled body programme carry the same Mod detail. Later events win.
  */
-export function provedGoneTargets(events: readonly WorldFact[]): ReadonlyMap<string, ProvedGoneTarget> {
-  const gone = new Map<string, ProvedGoneTarget>();
-  const record = (actionId: string, detail: unknown, reasonCode: unknown): void => {
+export function provedGoneTargets(events: readonly WorldFact[]): ReadonlySet<string> {
+  const gone = new Set<string>();
+  const record = (detail: unknown, reasonCode: unknown): void => {
     if (typeof detail !== "string" || detail === "") return;
     const pairs = evidencePairs(detail);
     const target = pairs.get("target") ?? pairs.get("expected");
@@ -537,18 +584,16 @@ export function provedGoneTargets(events: readonly WorldFact[]): ReadonlyMap<str
     const removed = pairs.get("removed") === "true";
     const settled = typeof reasonCode === "string" && reasonCode.endsWith(GONE_REASON_SUFFIX);
     if (!(removed || settled)) return;
-    gone.set(target, Object.freeze({ actionId: actionId === "" ? "动作" : actionId }));
+    gone.add(target);
   };
   for (const fact of events) {
-    const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "";
     if (fact.kind === "execution_receipt") {
-      record(actionId, (fact.payload.evidence as { detail?: unknown } | undefined)?.detail, fact.payload.reasonCode);
+      record((fact.payload.evidence as { detail?: unknown } | undefined)?.detail, fact.payload.reasonCode);
       continue;
     }
     if (fact.semanticKind !== PROGRAM_SETTLED) continue;
     if (!Array.isArray(fact.payload.nodes)) continue;
-    for (const node of fact.payload.nodes as readonly SettledNode[])
-      record(typeof node.actionId === "string" ? node.actionId : actionId, node.evidence, node.reasonCode);
+    for (const node of fact.payload.nodes as readonly SettledNode[]) record(node.evidence, node.reasonCode);
   }
   return gone;
 }
@@ -576,23 +621,25 @@ function evidencePairs(detail: string): ReadonlyMap<string, string> {
  * </p>
  */
 type PackFreshness = Readonly<{
-  proved: ReadonlyMap<string, ProvedPackCount>;
+  proved: ReadonlyMap<string, number>;
   ageTurns: number;
 }>;
 
-const NO_PACK_FRESHNESS: PackFreshness = Object.freeze({ proved: new Map<string, ProvedPackCount>(), ageTurns: 0 });
+const NO_PACK_FRESHNESS: PackFreshness = Object.freeze({ proved: new Map<string, number>(), ageTurns: 0 });
 
 /**
  * The qualifier a count carries when a receipt in THIS delivery re-counted it, or `""`.
  *
  * <p>
  * A count with no qualifier reads as the present tense, which is the defect: `<world-state>` printed `种子: 2` for fifty
- * turns while the deliveries it arrived in carried `inventory_after=0`. Naming the action is what makes "0" a statement
- * about a moment rather than a guess - and it is derived, never written: `proved` is the Mod's own post-action sum.
+ * turns while the deliveries it arrived in carried `inventory_after=0`. Saying that a step re-counted it is what makes
+ * "0" a statement about a moment rather than a guess - and it is derived, never written: `proved` is the Mod's own
+ * post-action sum. WHICH STEP is not named, and that is deliberate: the receipt that took the count is printed by
+ * `receiptLine` with its own action id in the same delivery, so naming it here would be one fact in two vocabularies.
  * </p>
  */
-function packCountSource(proved: ProvedPackCount | undefined): string {
-  return proved === undefined ? "" : `（${proved.actionId} 之后数的）`;
+function packCountSource(proved: number | undefined): string {
+  return proved === undefined ? "" : `（${COUNTED_AFTER_THE_STEP}）`;
 }
 
 /**
@@ -609,7 +656,7 @@ function packCountsAge(provedRows: number, totalRows: number, ageTurns: number):
   return provedRows > 0 ? `（其余是 ${String(ageTurns)} 轮前数的计数）` : `（${String(ageTurns)} 轮前数的计数）`;
 }
 /** The seed line's own name for the one question the observation cannot answer (`round67`'s 80 g shop). */
-const AFFORDABILITY_GAP = "（买种子的钱: 未观察 affordability_unknown）";
+const AFFORDABILITY_GAP = "（买种子的钱: 未观察）";
 
 /**
  * The seeds she can actually plant, and how many of each.
@@ -662,10 +709,10 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
     const name =
       typeof row.displayName === "string" && row.displayName.trim() !== ""
         ? row.displayName.trim()
-        : row.qualifiedItemId;
+        : "未命名的种子";
     const proved = freshness.proved.get(row.qualifiedItemId);
     if (proved !== undefined) provedSeeds += 1;
-    const count = proved?.count ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
+    const count = proved ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
     seeds.push(count === null ? `${name}（数量未测）` : `${String(count)} ${name}${packCountSource(proved)}`);
   }
   return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}${AFFORDABILITY_GAP}`;
@@ -1492,3 +1539,7 @@ function clockOf(fact: WorldFact): string {
 function block(name: FactBriefBlock, body: string): string {
   return `<${name}>\n${body}\n</${name}>`;
 }
+
+
+
+
