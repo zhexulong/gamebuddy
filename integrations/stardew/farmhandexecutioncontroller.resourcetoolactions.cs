@@ -239,6 +239,12 @@ internal sealed partial class ExecutionManager
     /// The pre-approach half of <see cref="ResolveRockSource"/>: the tile the swing must reach, the refusal the caller is
     /// owed, or the outcome that already holds. The BODY asks the same resolver after its approach walk, so a stone that
     /// left while the actor walked is answered by the same three-way rule rather than by a second reading of the tile.
+    ///
+    /// <para>
+    /// THE SETTLEMENT'S WARRANT IS THE CATALOGUE'S OWN CLAIM, not this branch's: `break_rock` is declared `Finishes` -
+    /// its success takes the addressed row out of `rockSourceTargets` - so an empty tile at an identity built from the
+    /// location, the tile and the item is that success, rather than a target that moved.
+    /// </para>
     /// </summary>
     private static TileTargetGate AnswerRockSource(GameLocation location, int targetX, int targetY, string expectedTargetId)
     {
@@ -249,7 +255,8 @@ internal sealed partial class ExecutionManager
             RockSourceAnswer.Settled => TileTargetGate.Settled(
                 ExecutionState.Succeeded,
                 RockSourceAlreadySettled,
-                $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none"),
+                $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none",
+                TileTargetSettledBy.Consumes),
             _ => TileTargetGate.Refused(new TileTargetRefusal(
                 "rock_target_changed",
                 $"target={expectedTargetId};named_tile={targetX},{targetY};actual={live.LiveTargetId};occupant={live.Occupant}")),
