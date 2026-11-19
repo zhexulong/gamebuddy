@@ -1883,15 +1883,16 @@ export class CompanionEventPump {
   /** Re-statements delivered inside a turn something else had already opened. */
   #restatementCarried = 0;
   /**
-   * Deliveries that STATED a world block, and steers that withheld one because the turn already had it.
+   * Deliveries that STATED a world block, and steers whose block was withheld, with the reading it withheld.
    *
    * The pair is what `worldStateDelivery` answers, and it exists because a block that is not printed is indistinguishable
-   * from a block that was lost unless the delivery counts say which happened. `withheld` is keyed by the reason it was
-   * withheld (`restated`: byte-identical to the reading she was last handed), so a reader can tell this from a steer that
-   * had no reading at all.
+   * from a block that was lost unless the delivery counts say which happened. `older` is the ONE reason a steer withholds
+   * (see `takeSteerableOnly`), and `#worldStateWithheldOlderHeld` is the reading it withheld - `world_state_withheld:
+   * older:<held>` - so a reader can tell a withheld block from a steer that had no reading at all.
    */
   #worldStateStated = 0;
-  #worldStateWithheldRestated = 0;
+  #worldStateWithheldOlder = 0;
+  #worldStateWithheldOlderHeld: number | undefined;
   /**
    * The world as LAST HEARD, for rendering `<world-state>` on every batch.
    *
@@ -1924,15 +1925,6 @@ export class CompanionEventPump {
    * </p>
    */
   #lastSnapshotDeliveredIdentity: string | undefined;
-  /**
-   * The reading a STEER has already stated inside the running turn.
-   *
-   * Kept apart from `#lastSnapshotDeliveredIdentity` because the two answer different questions: that one is what a TURN
-   * was handed (and decides `本轮无新观察` and `broughtObservation`), while this one only says a steer in THIS turn has
-   * already printed the picture. Writing the turn's field from a steer made the next turn's own block claim the reading was
-   * old - the steer states the world it joins, it does not take the reading.
-   */
-  #lastSteerStatedIdentity: string | undefined;
   /** `#deliveredBatches` when that content was composed into a batch; the difference is the age `<world-state>` states. */
   #lastSnapshotDeliveredBatch = 0;
   /**
@@ -2474,11 +2466,11 @@ export class CompanionEventPump {
     this.#restatementOpened = 0;
     this.#restatementCarried = 0;
     this.#worldStateStated = 0;
-    this.#worldStateWithheldRestated = 0;
+    this.#worldStateWithheldOlder = 0;
+    this.#worldStateWithheldOlderHeld = undefined;
     this.#snapshotProducedBy = undefined;
     this.#lastSnapshot = undefined;
     this.#lastSnapshotDeliveredIdentity = undefined;
-    this.#lastSteerStatedIdentity = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
     this.#lastSnapshotArrivedAtMs = 0;
     this.#lastSnapshotChangedAtMs = 0;
@@ -3797,29 +3789,35 @@ export class CompanionEventPump {
     // A steer hands these to a turn that is already running, so they are delivered content like any other - and a
     // milestone published again later must not be a reason to open a new turn for what she has already been told.
     this.#rememberDelivered(steerable);
-    // THE BLOCK A STEER MUST NOT RE-STATE, and the ONE case it still does.
+    // THE BLOCK A STEER MUST NOT STATE, and after `round77` that is every steer.
     //
     // <p>
-    // A steer lands INTO a turn that is already running, so it arrives after everything that turn has already been shown -
-    // including her own `stardew_observe` answer, which reads the bridge's live cache. Composed in the microtask after a
-    // preempting receipt, the steer's block is the reading of THAT instant; when an observation lands in the same window the
-    // message arrives two milliseconds later stating an older world than the one in the tool result above it. Measured
-    // 2026-11-18 (`round76`): `15:02:20.870 toolResult revision 325 (20:20, 农舍 3,11)` and `15:02:20.872 steer revision 321
-    // (20:10, 农场 63,15)` - she then read the farm from inside the house and concluded the floor "won't take a foot".
+    // A steer lands INTO a turn that is already running, and the moment it is READ is not the moment it is COMPOSED. It
+    // travels with Pi's `deliverAs: "steer"` (`companion-loop.ts`), which enters the conversation after the current
+    // assistant turn AND its tool calls - so the running turn's own `stardew_observe` can answer a NEWER world inside that
+    // gap, and the steer then states an older one beneath it. Measured 2026-11-19 (`round77`, her own session): composed
+    // `04:48:46.391` stating `revision 110`, appended `04:48:48.691`, with `revision 111` answered at `04:48:48.689` in
+    // between; and again composed `04:48:58.034` stating `111`, appended `04:49:00.472`, with `112` answered at
+    // `04:49:00.469`. Both blocks were labelled `刚刚更新`, which is a claim about currency that a message the pump cannot
+    // re-read does not earn.
     // </p>
     // <p>
-    // SO A RE-STATED READING IS WITHHELD AND A MOVED ONE IS STATED. The comparison is against the reading she was last
-    // HANDED (`#lastSnapshotDeliveredIdentity`, written by every delivery that rendered a block): a steer carrying the same
-    // content adds a second copy of a picture she already has in the same turn, so the block is dropped and the count says
-    // so by name (`worldStateDelivery.withheld.restated`) rather than going missing. A steer whose reading has MOVED since
-    // that delivery is the one case where the copy is news, and it is stated in full.
+    // SO EVERY STEER WITHHOLDS THE BLOCK - not only one whose reading the turn already carries. The comparison that would
+    // decide it cannot be made from here: at composition the steer's reading IS the newest this pump holds in both of
+    // round77's pairs, and it is between composition and the append that the world moves. A rule keyed on "the reading
+    // has not moved since the last delivery" would have stated BOTH of them: 88 -> 110 and 110 -> 111 are exactly the
+    // moved case `bdbfd955` kept, and the moved case is the one that fired. Text already handed to the sink cannot be
+    // recomposed, so the only guarantee available is to state no world in a steer at all.
+    // </p>
+    // <p>
+    // NOTHING IS LOST BY WITHHOLDING. A reading is standing state: `#lastSnapshot` is never consumed by a delivery, and
+    // the next turn this pump composes states it (`HostService.#restateWorldSnapshot`) - a MOVED reading opens that turn
+    // rather than waiting for one (`NOT_OWED.observationMoved`). What the model loses is a second copy of a picture it
+    // may already have; what it no longer gets is a picture older than the one above it. The withholding is counted by
+    // name, with the reading it withheld (`worldStateDelivery.withheld.older`), so a block that is not printed is never a
+    // block that went missing.
     // </p>
     const reading = this.#worldStateReading();
-    const identity = this.#lastSnapshot === undefined ? undefined : readingContentIdentity(this.#lastSnapshot);
-    const restated =
-      reading !== undefined &&
-      identity !== undefined &&
-      (identity === this.#lastSnapshotDeliveredIdentity || identity === this.#lastSteerStatedIdentity);
     const composed = composeFactBrief({
       inputs: [],
       snapshot: reading,
@@ -3828,10 +3826,9 @@ export class CompanionEventPump {
       events: steerable.filter((fact) => this.#owesTurn(fact)),
       locale: DEFAULT_BRIEF_LOCALE,
     });
-    if (restated) this.#worldStateWithheldRestated += 1;
-    else if (identity !== undefined) {
-      this.#worldStateStated += 1;
-      this.#lastSteerStatedIdentity = identity;
+    if (reading !== undefined) {
+      this.#worldStateWithheldOlder += 1;
+      this.#worldStateWithheldOlderHeld = reading.revision;
     }
     return Object.freeze({
       batchId: randomUUID(),
@@ -3840,10 +3837,9 @@ export class CompanionEventPump {
       inputs: Object.freeze([]),
       facts: Object.freeze(deliveredFacts),
       events: Object.freeze([]),
-      // A steer that states a reading states the one it is carrying; one that withholds it opened no turn and lost nothing -
-      // the batch that DID open the turn is the one the settlement counts.
+      // A steer states no reading, so it neither brought one nor took the age of the turn's own block.
       broughtObservation: false,
-      text: restated ? withoutWorldStateBlock(composed) : composed,
+      text: reading === undefined ? composed : withoutWorldStateBlock(composed),
     });
   }
 
@@ -4048,9 +4044,6 @@ export class CompanionEventPump {
     // this exact text has been re-stated - so the parenthetical beside a re-stated reading grows while the reading does not.
     if (this.#lastSnapshot !== undefined) {
       this.#lastSnapshotDeliveredIdentity = readingContentIdentity(this.#lastSnapshot);
-      // A NEW TURN'S BLOCK SUPERSEDES WHAT A STEER SAID IN THE PREVIOUS ONE: the next steer must be allowed to state the
-      // reading it carries, because this delivery is the one that now owns it.
-      this.#lastSteerStatedIdentity = undefined;
       this.#worldStateStated += 1;
       if (broughtObservation) this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
     }
@@ -4271,7 +4264,8 @@ export class CompanionEventPump {
   }
 
   /** Whether a stale reading can be refreshed at all here, and what asking has done (`WorldStateRefreshReading`). */
-  public get worldStateRefresh(): WorldStateRefreshReading {    return Object.freeze({
+  public get worldStateRefresh(): WorldStateRefreshReading {
+    return Object.freeze({
       attached: this.#worldStateRefreshPort !== undefined,
       probes: this.#worldStateRefreshProbes,
       refusals: this.#worldStateRefreshRefusals,
@@ -4281,18 +4275,21 @@ export class CompanionEventPump {
   /**
    * What the deliveries of this session have said about the world, and what they withheld instead.
    *
-   * `stated` counts the blocks a delivery rendered, `withheld.restated` the steers whose block was dropped because the turn
-   * already carried that exact reading (`takeSteerableOnly`). Nothing is silently missing: a delivery that says no world is
-   * either one that had no reading yet or one counted here.
+   * `stated` counts the blocks a delivery rendered, `withheld.older` the steers whose block was dropped because a steer
+   * cannot promise its reading is still the newest by the time it is read (`takeSteerableOnly`), with the reading it
+   * withheld (`held`). Nothing is silently missing: a delivery that says no world is either one that had no reading yet
+   * or one counted here.
    */
   public get worldStateDelivery(): Readonly<{
     stated: number;
-    withheld: Readonly<{ restated: number }>;
+    withheld: Readonly<{ older: Readonly<{ count: number; held: number | undefined }> }>;
     newest: number | undefined;
   }> {
     return Object.freeze({
       stated: this.#worldStateStated,
-      withheld: Object.freeze({ restated: this.#worldStateWithheldRestated }),
+      withheld: Object.freeze({
+        older: Object.freeze({ count: this.#worldStateWithheldOlder, held: this.#worldStateWithheldOlderHeld }),
+      }),
       newest: this.#lastSnapshot?.revision,
     });
   }
@@ -5299,19 +5296,21 @@ export function readingContentIdentity(fact: WorldFact): string {
 }
 
 /**
- * A delivery's text with its `<world-state>` block removed, for the one delivery that must not re-state a reading.
+ * A delivery's text with its `<world-state>` block removed, for the one delivery that must not state a reading.
  *
  * <p>
- * ONE CALLER. `takeSteerableOnly` drops the block of a steer whose reading the running turn already carries, and the block
- * is a paragraph inside the composed text, so the text is composed by the product's one composer and the block is taken out
- * by its own markup. That is a strip, which this repository generally refuses - and it is here because the alternative was
- * worse: passing `snapshot: undefined` makes the composer print "世界：尚未收到观察", which is a claim about the Host rather
- * than about the world, and a steer is the last place that lie should appear.
+ * ONE CALLER. `takeSteerableOnly` drops the block of every steer it hands over, because a steer is read at a moment the
+ * pump does not choose (`round77`: composed at `04:48:46.391`, appended at `04:48:48.691`, with a fresh observation of a
+ * newer revision answered in between). The block is a paragraph inside the composed text, so the text is composed by the
+ * product's one composer and the block is taken out by its own markup. That is a strip, which this repository generally
+ * refuses - and it is here because the alternatives were worse: passing `snapshot: undefined` makes the composer print
+ * "世界：尚未收到观察", which is a claim about the Host rather than about the world, and a steer is the last place that
+ * lie should appear.
  * </p>
  * <p>
  * The block is the only part removed. Speech, `<world-facts>` and `<execution-result>` are the steer's own content and stay
- * byte-identical, which is what the gate `a_prompt_states_an_older_world_than_it_knows` reads: a withheld block leaves no
- * revision in the text at all rather than a smaller one.
+ * byte-identical, and a withheld block leaves no revision in the text at all rather than a smaller one - which is what
+ * lets `a_prompt_states_an_older_world_than_it_knows` read the verdict off the text the model actually receives.
  * </p>
  */
 function withoutWorldStateBlock(text: string): string {
