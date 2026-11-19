@@ -183,13 +183,25 @@ async function ageLockPastStaleWindow(lockPath: string, pid: number, offsetMs = 
 type LockHolder = Readonly<{
   pid: number;
   release(): Promise<void>;
-  exited: Promise<void>;
+  exited: Promise<number | null>;
   stderr(): string;
 }>;
 
-/** Spawns a real second process that holds the registration lock until released. */
+/**
+ * Spawns a real second process that holds the registration lock until released.
+ *
+ * This worker RELEASES a path lock - it takes the registration lock through the production seam and the release runs
+ * `releaseOwnedPathLock` on the way out - so it binds the Windows stale-lock reclaimer for itself, at its own entry,
+ * before any durable work: `spawn(process.execPath, [script])` passes no `--import`, so the compiled-test bootstrap's
+ * binding never reaches it. Measured before this binding existed: the child answered
+ * `durable_path_lock_release_failed:windows_reclaimer_unavailable` and exited 1 while every assertion below still
+ * passed, because the parent reclaimed the orphaned lock as a dead owner's residue.
+ */
 async function spawnLockHolder(root: string): Promise<LockHolder> {
   const lockModuleUrl = pathToFileURL(join(moduleDirectory, "..", "..", "..", "path-lock.js")).href;
+  const reclaimerHelperUrl = pathToFileURL(
+    join(moduleDirectory, "..", "..", "..", "test-support", "windows-lock-reclaimer.test-support.js"),
+  ).href;
   const registrationPath = join(root, REGISTRATION_RELATIVE);
   const workerPath = join(root, "lock-holder-worker.mjs");
   // The worker takes the lock through the production seam and holds it for as
@@ -198,8 +210,9 @@ async function spawnLockHolder(root: string): Promise<LockHolder> {
   await writeFile(
     workerPath,
     [
-      `import { withPathLock, bindWindowsStaleLockReclaimer } from ${JSON.stringify(lockModuleUrl)};`,
-      `bindWindowsStaleLockReclaimer(undefined);`,
+      `import { withPathLock } from ${JSON.stringify(lockModuleUrl)};`,
+      `import { bindVerifiedWindowsLockReclaimerForTest } from ${JSON.stringify(reclaimerHelperUrl)};`,
+      `await bindVerifiedWindowsLockReclaimerForTest("stardew-installation-registration-lock:lock-holder-worker");`,
       `const release = new Promise((resolveRelease) => {`,
       `  process.stdin.on("data", (chunk) => { if (chunk.toString("utf8").includes("release")) resolveRelease(); });`,
       `  process.stdin.on("end", resolveRelease);`,
@@ -214,22 +227,24 @@ async function spawnLockHolder(root: string): Promise<LockHolder> {
   );
 
   const child = spawn(process.execPath, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
   let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+  });
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString("utf8")).slice(-4096);
   });
-  const exited = new Promise<void>((resolveExit) => {
-    child.once("exit", () => resolveExit());
+  const exited = new Promise<number | null>((resolveExit) => {
+    child.once("exit", (code) => resolveExit(code));
   });
   await new Promise<void>((resolveLocked, rejectLocked) => {
     const timer = setTimeout(
       () => rejectLocked(new Error(`lock holder never acquired; stderr=${stderr || "<empty>"}`)),
       10_000,
     );
-    let buffer = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      if (buffer.includes("LOCKED")) {
+    child.stdout.on("data", () => {
+      if (stdout.includes("LOCKED")) {
         clearTimeout(timer);
         resolveLocked();
       }
@@ -243,7 +258,20 @@ async function spawnLockHolder(root: string): Promise<LockHolder> {
     pid: child.pid!,
     async release() {
       child.stdin.end("release\n");
-      await exited;
+      const code = await exited;
+      // The release is the worker's own durable work, so it is read from the worker: a release that failed used to exit
+      // 1 with the capability code on stderr while this file stayed green, because the parent then reclaimed the
+      // orphaned lock as a dead owner's residue and never looked at how the child ended.
+      assert.match(
+        stdout,
+        /RELEASED/u,
+        `the lock holder never printed RELEASED: its release of ${registrationPath}.lock did not complete; exit ${String(code)}, stderr=${stderr || "<empty>"}`,
+      );
+      assert.equal(
+        code,
+        0,
+        `the lock holder released ${registrationPath}.lock and exited ${String(code)}: stderr=${stderr || "<empty>"}`,
+      );
     },
     exited,
     stderr: () => stderr,
