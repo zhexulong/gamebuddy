@@ -8,6 +8,7 @@
 // is proven twice: the panel's own card for the created Chat, and the transcript's first row after
 // switching to that Chat — read from the row the panel itself previews with the chosen text.
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanel, conversationShown } = require("./common.cjs");
+const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
 
 const NEW_CHAT = '[data-testid="new-chat"]';
 // The opening editor mounts with its section before its card read lands, so every read of it waits for
@@ -137,6 +138,19 @@ const clickOption = (index) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("m-opening-picker.txt");
+  /*
+   * The claims this driver makes, counted the way `t` and `u` count theirs. Both facts below were
+   * printed and neither moved the exit code, so a run could say `the opening the player chose is the
+   * one the Chat opened on: false` and still be counted as a pass (`reconciliation-verdict.mjs`).
+   * Proving that a chosen opening lands is this driver's own purpose (its header), so the false is
+   * what it exists to report - as a failure, not as a line beside a green run.
+   */
+  const claims = { assertions: 0, failures: 0 };
+  const claim = (name, held, detail) => {
+    claims.assertions += 1;
+    if (!held) claims.failures += 1;
+    say(`ASSERT ${name}: ${held ? "PASS" : "FAIL"} — ${detail}`);
+  };
   const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
@@ -187,7 +201,8 @@ const clickOption = (index) => {
     }
     say("=== ITEM: the new Chat's first line (the transcript's own row 0) ===");
     say(JSON.stringify(rows.slice(0, 2), null, 1));
-    say(`the surface the shell left us on: chat-surface=${await page.evaluate(conversationShown)}`);
+    const landedInCreated = await page.evaluate(conversationShown);
+    say(`the surface the shell left us on: chat-surface=${landedInCreated}`);
     // The chosen opening is the one the Chat opened on, compared as rendered structure: the chooser's
     // own option (its action line and its line) against the row's beat element and its spoken text.
     const first = rows[0] ?? null;
@@ -200,6 +215,18 @@ const clickOption = (index) => {
     say(`the row's own beat(s), as em.message-action: ${JSON.stringify(rowBeats)}`);
     say(`the row's spoken text, its beat's element excluded: ${JSON.stringify(first?.spoken ?? null)}`);
     say(`the opening the player chose is the one the Chat opened on: ${beatMatches && spokenMatches}`);
+    /*
+     * The one thing the product promises unconditionally when a chosen opening is committed:
+     * "A refused commit leaves the Chat durable on the opening it was created with - the player
+     * still lands in it" (`ComposedReferenceGameApp.handleChatSwitched`). Whether the opening itself
+     * was applied is a separate fact the line above records, and a refused commit with the surface's
+     * own sentence is a legal outcome, so it is not asserted here; the landing is.
+     */
+    claim(
+      "committing-a-chosen-opening-lands-in-the-created-chat",
+      landedInCreated === true,
+      `chosen line=${JSON.stringify(chosen.line)}; shell's surface route showed the conversation=${landedInCreated}`,
+    );
     await shot(page, "85-chosen-opening-chat-1440x900.png");
     await page.setViewportSize({ width: 400, height: 800 });
     await page.waitForTimeout(1200);
@@ -223,9 +250,20 @@ const clickOption = (index) => {
   let removed = 0;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const state = await page.evaluate(openingEditorFacts);
+    /*
+     * The editor can leave the surface after the wait that saw it settled, and reading through an
+     * element that is gone turned that into `TypeError: Cannot read properties of null` (measured
+     * D:/gb-modcheck/frontend--r8). Whether the panel is still there is a fact this driver reads, so
+     * it says it and stops the loop rather than crashing on the way to saying it.
+     */
+    if (state.present !== true) {
+      say("the opening editor the wait saw is gone before it could be read; nothing was discarded");
+      break;
+    }
     if (state.variantCount <= 1) break;
     const dropped = await page.evaluate(() => {
       const editor = document.querySelector("[data-opening-editor]");
+      if (editor === null) return "editor_gone";
       const rows = [...editor.querySelectorAll(".opening-variant-row")];
       const last = rows[rows.length - 1];
       const button = last === null ? null : last.querySelector("button");
@@ -233,7 +271,10 @@ const clickOption = (index) => {
       button.click();
       return "dropped";
     });
-    if (dropped !== "dropped") break;
+    if (dropped !== "dropped") {
+      if (dropped === "editor_gone") say("the opening editor left the surface mid-discard; nothing was discarded");
+      break;
+    }
     removed += 1;
     await page.waitForTimeout(500);
   }
@@ -258,7 +299,11 @@ const clickOption = (index) => {
   const singlePicker = await page.evaluate(pickerFacts);
   const landed = await page.evaluate(conversationShown);
   say(`picker present: ${singlePicker.present}; options=${singlePicker.optionCount ?? 0}`);
-  say(`the New Chat created the conversation outright (the shell landed in it): ${landed}`);
+  claim(
+    "new-chat-with-one-opening-lands-in-the-conversation",
+    landed === true,
+    `the shell's own surface route after the press: chat-surface shown=${landed}`,
+  );
   await shot(page, "85-new-chat-single-opening-1440x900.png");
   await activateSurface(page, "会话");
   await page.waitForTimeout(1600);
@@ -268,6 +313,7 @@ const clickOption = (index) => {
   say(`the panel's card for the created Chat: ${JSON.stringify(createdSingle)}`);
 
   await observe(page, say, "m", { sinceMs: observationFrom });
+  say(reconciliationVerdict({ assertions: claims.assertions, failures: claims.failures }));
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-M");
