@@ -202,6 +202,12 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
   if (reclaimerHash !== null)
     L.push(`  windows-stale-lock-reclaimer sha256 ${/reclaimer sha256=(\w+)/u.exec(reclaimerHash)?.[1]}`);
   if (genElapsed !== null) L.push(`  generation build         ${genElapsed}`);
+  // Whether the NuGet audit could run is a fact this build MEASURED, and it belongs in the record: a
+  // build that proceeded unaudited without saying so reads exactly like one that was checked.
+  const nugetAudit = lineMatching(buildLog ?? "", /NUGET-AUDIT: .+$/mu);
+  L.push(
+    `  ${nugetAudit === null ? "nuget audit              no NUGET-AUDIT line in the build log (the build did not reach that reading)" : nugetAudit.replace(/^NUGET-AUDIT: /u, "nuget audit              ")}`,
+  );
   L.push("");
 
   section(L, "ENTRY (the single formal Host entry, through the product's own composition launcher)");
