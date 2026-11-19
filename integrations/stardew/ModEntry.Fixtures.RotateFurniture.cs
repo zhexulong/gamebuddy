@@ -44,8 +44,8 @@ public sealed partial class ModEntry
     /// <para>
     /// THE GIVEN IS ASSERTED THROUGH THE PRODUCT'S OWN PREDICATES, after the warp: both pieces are in
     /// <c>location.furniture</c>, both are inside <c>Furniture.IsCloseEnoughToFarmer</c> (the reach the
-    /// handler refuses with <c>furniture_rotation_out_of_range</c>), and both ids are what
-    /// <c>BuildPlacedFurnitureTargetId</c> mints for the tiles they stand on. A fixture that broke any
+    /// handler admits through, and re-reads at the arrival with <c>furniture_rotation_out_of_range</c>), and both
+    /// ids are what <c>BuildPlacedFurnitureTargetId</c> mints for the tiles they stand on. A fixture that broke any
     /// of these would look like a product refusal later, which is exactly what this assertion prevents.
     /// </para>
     /// </summary>

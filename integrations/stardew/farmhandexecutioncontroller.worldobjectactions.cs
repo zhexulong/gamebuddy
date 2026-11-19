@@ -531,40 +531,53 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
+        // THE REACH IS THE PIECE'S OWN AND THE WALK IS HOW THE BODY GETS INSIDE IT. `Furniture.IsCloseEnoughToFarmer`
+        // (Furniture.cs:1295-1308) - the footprint inflated by 96 px - is what `LowPriorityLeftClick` gates the pickup on
+        // (GameLocation.cs:8002), so a tile distance would be a second, invented spelling of it. What changed is what the
+        // action does with a NO: `RequestLocalTileTarget` is handed the piece's footprint and walks to a tile BESIDE it,
+        // which is also the only way a whole-room decoration becomes reachable at all.
+        Furniture? piece = null;
+        return this.RequestLocalTileTarget(
+            "move_placed_furniture",
+            requestId,
+            expectedTargetId,
+            requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            gate: location =>
+            {
+                if (!TryDescribePlacedFurniture(location, targetX, targetY, expectedTargetId, out Furniture? resolved, out string refusalCode, out string refusalEvidence))
+                    return TileTargetGate.Refused(new TileTargetRefusal(refusalCode, refusalEvidence));
+                piece = resolved;
+                return TileTargetGate.Resolved(targetX, targetY, FurnitureFootprint(resolved!));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteMovePlacedFurniture(executionId, admittedRequestId, targetX, targetY, expectedTargetId),
+            authorize: this.AuthorizeActorOnReadyWorld,
+            inReach: (actor, _, _) => piece?.IsCloseEnoughToFarmer(actor) == true);
+    }
 
+    private LocalExecutionReceipt ExecuteMovePlacedFurniture(
+        string executionId,
+        string requestId,
+        int targetX,
+        int targetY,
+        string expectedTargetId)
+    {
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
-        if (piece is null)
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "move_placed_furniture_target_not_found",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count}");
-        string liveTargetId = BuildPlacedFurnitureTargetId(location, targetX, targetY, piece);
-        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "move_placed_furniture_target_changed",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={liveTargetId};item={piece.QualifiedItemId}");
-        // The game's own furniture reach, which is what `LowPriorityLeftClick` gates the pickup on
-        // (GameLocation.cs:8002): `Furniture.IsCloseEnoughToFarmer` (Furniture.cs:1295-1308) tests the
-        // piece's own footprint inflated by 96 px against the actor's standing pixel. The action therefore
-        // publishes no `approach` requirement - a tile distance would be a second, invented spelling of
-        // this predicate, and a whole-room decoration is reachable from a tile the eight-neighbour ring
-        // does not contain.
+        // THE WALK CAN TAKE SEVERAL TICKS, so the piece is proved again from the collection: the id is what says it is
+        // still the piece the caller saw.
+        if (!TryDescribePlacedFurniture(location, targetX, targetY, expectedTargetId, out Furniture? resolved, out string refusalCode, out string refusalEvidence))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
+        Furniture piece = resolved!;
+        // The pickup's own guard, re-asked at the moment of the write: a body that is entered with the piece still outside
+        // this box has walked and not arrived. A walk that merely fell short is the shared leg's `target_out_of_reach`.
         if (!piece.IsCloseEnoughToFarmer(Game1.player))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "move_placed_furniture_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tile)};{DescribeFurnitureReach(piece)}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tile)};{DescribeFurnitureReach(piece)};approach=arrived");
 
         string itemId = piece.QualifiedItemId;
         Vector2 placedTile = piece.TileLocation;
@@ -620,6 +633,41 @@ internal sealed partial class ExecutionManager
         return gone && carried
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "placed_furniture_picked_up", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "move_placed_furniture_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
+    /// The piece standing on the named tile, when it is still the one the caller saw. One reading for the request and for
+    /// the body that runs after the walk, so the pairing no walk is started for and the pairing an arrival re-proves cannot
+    /// name different facts.
+    /// </summary>
+    private static bool TryDescribePlacedFurniture(
+        GameLocation location,
+        int x,
+        int y,
+        string expectedTargetId,
+        out Furniture? piece,
+        out string reasonCode,
+        out string evidence)
+    {
+        piece = null;
+        reasonCode = "accepted";
+        evidence = string.Empty;
+        Furniture? candidate = FindPlacedFurniture(location, x, y);
+        if (candidate is null)
+        {
+            reasonCode = "move_placed_furniture_target_not_found";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count}";
+            return false;
+        }
+        string liveTargetId = BuildPlacedFurnitureTargetId(location, x, y, candidate);
+        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
+        {
+            reasonCode = "move_placed_furniture_target_changed";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={liveTargetId};item={candidate.QualifiedItemId}";
+            return false;
+        }
+        piece = candidate;
+        return true;
     }
 
     private static bool RestoreFurniturePiece(GameLocation location, Furniture piece, Vector2 tile, int rotation, bool flipped)

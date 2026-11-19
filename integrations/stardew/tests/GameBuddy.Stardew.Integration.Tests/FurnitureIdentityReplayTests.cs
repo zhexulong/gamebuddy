@@ -103,12 +103,13 @@ public sealed class FurnitureIdentityReplayTests
     }
 
     /// <summary>
-    /// The furniture reach is the engine's own predicate, and it exposes neither of the two values it compares
-    /// (<c>Furniture.IsCloseEnoughToFarmer</c>, Furniture.cs:1295-1308: the piece's footprint inflated by 96 px against
-    /// <c>Game1.player.StandingPixel</c>). A refusal that only said "out of range" told the caller nothing it could act on.
+    /// The furniture reach is the engine's own predicate (<c>Furniture.IsCloseEnoughToFarmer</c>, Furniture.cs:1295-1308),
+    /// and the request half ANSWERS IT WITH A STEP rather than with the bound it measured: measured `round79`, four
+    /// refusals in a row named a pixel box nobody could turn into a tile. The bound is still printed - by the arrival that
+    /// finds the piece outside it - but the request's answer is the walk the seam arms.
     /// </summary>
     [Fact]
-    public void RotationOutOfRange_NamesTheBoundItChecked()
+    public void RotationOutOfRange_IsAWalkRatherThanARefusal()
     {
         using var world = FurnitureIdentityWorld.Create();
         world.PlaceFurniture(x: 2, y: 2, rotations: 4);
@@ -116,12 +117,10 @@ public sealed class FurnitureIdentityReplayTests
 
         LocalExecutionReceipt receipt = world.RequestRotation(2, 2);
 
-        receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("furniture_rotation_out_of_range");
-        receipt.Evidence.Should().Contain("reach_inflate_px=96", "the bound the predicate inflates the footprint by");
-        receipt.Evidence.Should().Contain("reach_box=", "the rectangle the actor's standing pixel was tested against");
-        receipt.Evidence.Should().Contain("actor_standing_pixel=", "the other side of the comparison");
-        receipt.Evidence.Should().Contain("furniture_reach");
+        receipt.State.Should().Be(ExecutionState.Accepted, receipt.Evidence);
+        receipt.ReasonCode.Should().NotBe("furniture_rotation_out_of_range");
+        receipt.Evidence.Should().Contain("approach=adjacent", "the answer is the step, not the distance");
+        receipt.Evidence.Should().Contain("stand_at=", "the step names the tile it walks to");
     }
 
     /// <summary>

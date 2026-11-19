@@ -201,39 +201,14 @@ public sealed class MovePlacedFurnitureActionTests
     }
 
     /// <summary>
-    /// The reach is the game's own furniture predicate (`Furniture.IsCloseEnoughToFarmer`, Furniture.cs:1295-1308),
-    /// which `GameLocation.LowPriorityLeftClick` gates the pickup on - not a tile distance invented here.
+    /// THE REQUEST ANSWERS A DISTANCE WITH A STEP. ROUND 79's OWN DETAIL, replayed: the actor at tile 4,6 naming a piece
+    /// at tile 4,4, with the standing pixel the live run printed. Every one of those four requests was answered
+    /// <c>move_placed_furniture_out_of_range</c> - honest, complete, and silent about the one thing she needed, which is a
+    /// tile she could walk to. The claim this test holds the answer to is therefore doubled: it names a tile, and standing
+    /// there makes the engine's own predicate accept her.
     /// </summary>
     [Fact]
-    public void OutOfReach_IsRefusedByNameAndLeavesThePieceStanding()
-    {
-        using var world = FurnitureWorld.Create();
-        Furniture piece = world.PlaceFurniture(x: 2, y: 2);
-        world.StandAt(14, 14);
-
-        LocalExecutionReceipt receipt = world.Request(2, 2);
-
-        receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("move_placed_furniture_out_of_range");
-        world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(piece);
-    }
-
-    /// <summary>
-    /// ROUND 79'S OWN DETAIL, replayed: the actor at tile 4,6 naming a piece at tile 4,4, with the standing pixel the
-    /// live run printed. The refusal must not stop at the box it measured - it must NAME the tile that closes the gap,
-    /// and that tile must actually work.
-    ///
-    /// <para>
-    /// WHY THIS IS THE FALSIFIER. `actor_tile=4,6;furniture_tile=4,4;reach_box=160,160:256x256;actor_standing_pixel=291,444`
-    /// is a complete description of a gap nobody can close by reading it: 444 is 28 px below the box's last row, and the
-    /// step from there is a TILE, which the box does not name. The claim this test holds the refusal to is therefore
-    /// doubled: the tile it names lies inside the box it printed, and standing there makes the engine's own predicate
-    /// (`Furniture.IsCloseEnoughToFarmer`) accept her. A named tile that fails either half is the same useless sentence
-    /// with an extra coordinate.
-    /// </para>
-    /// </summary>
-    [Fact]
-    public void OutOfReach_NamesATileInsideTheBoxItPrintsAndThatTileReachesThePiece()
+    public void OutOfReach_WalksToATileBesideThePieceAndThatTileReachesIt()
     {
         using var world = FurnitureWorld.Create();
         Furniture piece = world.PlaceFurniture(x: 4, y: 4);
@@ -244,36 +219,18 @@ public sealed class MovePlacedFurnitureActionTests
 
         LocalExecutionReceipt receipt = world.Request(4, 4);
 
-        receipt.State.Should().Be(ExecutionState.Rejected, receipt.Evidence);
-        receipt.ReasonCode.Should().Be("move_placed_furniture_out_of_range");
-        string evidence = receipt.Evidence ?? string.Empty;
-        evidence.Should().Contain("actor_tile=4,6");
-        evidence.Should().Contain("furniture_tile=4,4");
-        evidence.Should().Contain("reach_inflate_px=96");
-        evidence.Should().Contain("actor_standing_pixel=291,444", "the live run's own readings must be reproducible here");
-        Rectangle box = EvidenceRectangle(evidence, "reach_box");
-        box.Should().Be(new Rectangle(160, 160, 256, 256), "the box round79 printed, to the pixel");
-        Point standing = EvidencePoint(evidence, "actor_standing_pixel");
-        box.Contains(standing).Should().BeFalse("round79's refusal was honest: her standing pixel is 28 px below the box");
+        receipt.State.Should().Be(ExecutionState.Accepted, "the piece is one walk away, so the answer is a walk");
+        receipt.ReasonCode.Should().Be("accepted");
+        receipt.Evidence.Should().Contain("approach=adjacent");
+        receipt.Evidence.Should().Contain("tile=4,4", "the walk is aimed at the tile the request named");
+        world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(piece, "a walk lifts nothing");
 
-        // (1) THE REFUSAL NAMES A TILE, and the tile it names is inside the box it printed.
-        (int X, int Y) stand = EvidenceTile(evidence, "stand_at");
-        evidence.Should().Contain(
-            $"next_steps=move_to_tile@{stand.X},{stand.Y}",
-            "a tile the caller cannot dispatch is a coordinate, not a step");
-        // The body keeps its own sub-tile offset, so a candidate's standing pixel is her own reading moved by whole
-        // tiles - the same derivation the magnet's stand-tile selector makes.
-        Point there = new(stand.X * 64 + (standing.X - 4 * 64), stand.Y * 64 + (standing.Y - 6 * 64));
-        box.Contains(there).Should().BeTrue(
-            $"the tile the refusal names ({stand.X},{stand.Y}) must be inside the box it printed; its pixel would be {there}");
-
-        // (2) AND THE ENGINE AGREES, through the production path rather than through that arithmetic.
+        // (1) THE ANSWER NAMES A TILE. (2) AND THE ENGINE AGREES, through the production path rather than through
+        // arithmetic: standing there satisfies the very predicate the old refusal cited.
+        (int X, int Y) stand = EvidenceTile(receipt.Evidence!, "stand_at");
         world.StandAtPosition(stand.X * 64 + 8, stand.Y * 64);
         piece.IsCloseEnoughToFarmer(Game1.player).Should().BeTrue(
-            "the named tile must satisfy the very predicate the refusal cited");
-        world.Request(4, 4).ReasonCode.Should().NotBe(
-            "move_placed_furniture_out_of_range",
-            "walking to the named tile is the step that answers the refusal");
+            $"the tile the walk names ({stand.X},{stand.Y}) must satisfy the reach the action is gated on");
     }
 
     [Fact]
@@ -289,18 +246,19 @@ public sealed class MovePlacedFurnitureActionTests
     }
 
     /// <summary>
-    /// The ORDER the body must keep, pinned because it is an order and not an outcome: every check that can refuse
-    /// runs before the first mutation, the native sequence runs in the native order
-    /// (GameLocation.cs:8081-8093), and the restore is inside the delivery-failure branch rather than after an
-    /// unconditional success.
+    /// The ORDER the body must keep, pinned because it is an order and not an outcome: the identity the walk is aimed at is
+    /// proved in the describer both halves call, and inside the body the reach is admitted before the first mutation, the
+    /// native sequence runs in the native order (GameLocation.cs:8081-8093), and the restore is inside the
+    /// delivery-failure branch rather than after an unconditional success.
     /// </summary>
     [Fact]
     public void SourceShape_ValidatesFirstThenRunsTheNativeSequenceThenRestoresOnDeliveryFailure()
     {
         string source = File.ReadAllText(RepositoryFile("integrations", "stardew", HandlerFile));
-        string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalMovePlacedFurniture(");
+        string describe = MethodBody(source, "private static bool TryDescribePlacedFurniture(");
+        string body = MethodBody(source, "private LocalExecutionReceipt ExecuteMovePlacedFurniture(");
 
-        int targetCheck = body.IndexOf("move_placed_furniture_target_changed", StringComparison.Ordinal);
+        int targetCheck = describe.IndexOf("move_placed_furniture_target_changed", StringComparison.Ordinal);
         int reach = body.IndexOf("piece.IsCloseEnoughToFarmer(Game1.player)", StringComparison.Ordinal);
         int performRemove = body.IndexOf("piece.performRemoveAction()", StringComparison.Ordinal);
         int collectionRemove = body.IndexOf("location.furniture.Remove(piece)", StringComparison.Ordinal);
@@ -321,7 +279,6 @@ public sealed class MovePlacedFurnitureActionTests
         {
             index.Should().BeGreaterThanOrEqualTo(0, $"{step} must exist in the body");
         }
-        targetCheck.Should().BeLessThan(reach, "the id proves the piece before the reach is measured");
         reach.Should().BeLessThan(performRemove, "no mutation may happen before the reach is admitted");
         performRemove.Should().BeLessThan(collectionRemove, "the native order is performRemoveAction then Remove");
         collectionRemove.Should().BeLessThan(deliver, "the piece is delivered only after it left the collection");
@@ -337,28 +294,6 @@ public sealed class MovePlacedFurnitureActionTests
         code.Should().Be("ok", $"the refusal must carry a `{field}=` the caller can act on: {evidence}");
         string[] parts = value.Split(',');
         return (int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture));
-    }
-
-    private static Point EvidencePoint(string evidence, string field)
-    {
-        string value = EvidenceField(evidence, field, out string code);
-        code.Should().Be("ok", $"the refusal must carry a `{field}=` reading: {evidence}");
-        string[] parts = value.Split(',');
-        return new Point(int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture));
-    }
-
-    private static Rectangle EvidenceRectangle(string evidence, string field)
-    {
-        string value = EvidenceField(evidence, field, out string code);
-        code.Should().Be("ok", $"the refusal must carry a `{field}=` bound: {evidence}");
-        string[] originAndSize = value.Split(':');
-        string[] origin = originAndSize[0].Split(',');
-        string[] size = originAndSize[1].Split('x');
-        return new Rectangle(
-            int.Parse(origin[0], CultureInfo.InvariantCulture),
-            int.Parse(origin[1], CultureInfo.InvariantCulture),
-            int.Parse(size[0], CultureInfo.InvariantCulture),
-            int.Parse(size[1], CultureInfo.InvariantCulture));
     }
 
     /// <summary>The value of one `key=value` field of a receipt's `;`-joined evidence.</summary>

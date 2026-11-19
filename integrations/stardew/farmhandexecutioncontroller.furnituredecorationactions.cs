@@ -68,12 +68,19 @@ namespace GameBuddy.Stardew;
 //
 // REFUSALS name the fact they read: nothing at the tile (`furniture_rotation_target_not_found`), a different
 // piece (`furniture_rotation_target_changed`), a piece the engine will not turn
-// (`furniture_rotation_unsupported`), out of the game's own furniture reach
-// (`furniture_rotation_out_of_range`), a footprint that would land on a neighbour
+// (`furniture_rotation_unsupported`), a footprint that would land on a neighbour
 // (`furniture_rotation_blocked_by_occupant`), a footprint the location will not accept for a reason that is
 // not an occupant (`furniture_rotation_not_placeable_here`), a native call that threw
 // (`furniture_rotation_native_exception`). The shared admission supplies `native_local_player_required` /
 // `player_not_actionable` / `invalid_deadline` / `body_owned_*`.
+//
+// THE REACH IS ASKED ONCE, BY THE REQUEST SEAM, AND A "NO" IS A WALK. `Furniture.IsCloseEnoughToFarmer`
+// (Furniture.cs:1295-1308) - the piece's own footprint inflated by 96 px against the actor's standing pixel - is the
+// predicate this lane answers with, and `RequestLocalTileTarget` is handed the piece's footprint so a body outside it
+// walks to a tile BESIDE the piece rather than being told a distance it cannot turn into a step. The anchor (the tile
+// the request named) stays the tile the result is reported against; only the standing tile comes from the footprint.
+// A body that arrives and is STILL outside the box refuses under the piece's own `*_out_of_range` code with
+// `approach=arrived`, because that is the engine's answer at the moment of the write.
 //
 // POSTCONDITION is a fresh read of the piece AFTER the call: `currentRotation` differs from the value read
 // before it, equals the value the native call produced, and the piece is still in `location.furniture` on
@@ -92,47 +99,54 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
+        // ONE LOOKUP, TWO QUESTIONS. The gate resolves the piece the request names and hands the seam its footprint; the
+        // reach the seam then asks is the same piece's own predicate, so a body outside it walks to a tile beside the
+        // footprint instead of being answered with a distance. `piece` is read by `inReach` a moment after the gate
+        // writes it, which is why it is a captured local rather than a second lookup: the two questions are about one
+        // resolution of one piece.
+        Furniture? piece = null;
+        return this.RequestLocalTileTarget(
+            "rotate_furniture",
+            requestId,
+            expectedTargetId,
+            requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            gate: location =>
+            {
+                if (!TryDescribeTurnableFurniture(location, targetX, targetY, expectedTargetId, out Furniture? resolved, out string refusalCode, out string refusalEvidence))
+                    return TileTargetGate.Refused(new TileTargetRefusal(refusalCode, refusalEvidence));
+                piece = resolved;
+                return TileTargetGate.Resolved(targetX, targetY, FurnitureFootprint(resolved!));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecuteRotateFurniture(executionId, admittedRequestId, targetX, targetY, expectedTargetId),
+            authorize: this.AuthorizeActorOnReadyWorld,
+            inReach: (actor, _, _) => piece?.IsCloseEnoughToFarmer(actor) == true);
+    }
 
+    private LocalExecutionReceipt ExecuteRotateFurniture(
+        string executionId,
+        string requestId,
+        int targetX,
+        int targetY,
+        string expectedTargetId)
+    {
         GameLocation location = Game1.player.currentLocation;
-        Furniture? piece = FindPlacedFurniture(location, targetX, targetY);
-        if (piece is null)
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "furniture_rotation_target_not_found",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}");
-        if (!string.Equals(BuildPlacedFurnitureTargetId(location, targetX, targetY, piece), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "furniture_rotation_target_changed",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, piece)};item={piece.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        // The engine's own guard, read from the piece: `rotate()` is a no-op below two rotations (Furniture.cs:1155), so a
-        // request for one would otherwise be a silent nothing that the postcondition could only report as uncertain.
-        // Naming it here is what lets the companion tell "this piece cannot turn" from "the turn failed" - and the bound is
-        // the piece's own Data/Furniture `rotations` value (`Furniture.cs:320`), not a number this file invents.
-        if (piece.rotations.Value < 2)
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "furniture_rotation_unsupported",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={piece.QualifiedItemId};rotations={piece.rotations.Value};rotations_required=2;rotation={piece.currentRotation.Value};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        // The game's own furniture reach - `Furniture.IsCloseEnoughToFarmer` (Furniture.cs:1295-1308), the same
-        // predicate the pickup is gated on. No approach leg and no tile distance: the reach is the piece's own
-        // footprint inflated by 96 px, so a tile ring would be a second, invented spelling of it and a
-        // whole-room piece is reachable from a tile that ring does not contain.
+        // THE WALK CAN TAKE SEVERAL TICKS, so the piece is resolved again from the collection: the id is what proves it is
+        // still the piece the caller saw, and the engine's own rotation guard is read from it again rather than trusted
+        // from the request that armed the walk.
+        if (!TryDescribeTurnableFurniture(location, targetX, targetY, expectedTargetId, out Furniture? resolved, out string refusalCode, out string refusalEvidence))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
+        Furniture piece = resolved!;
+        // THE ARRIVAL RE-ASKS THE ENGINE'S GUARD, and `approach=arrived` is the fact that separates it from the request's
+        // own question: the body was entered and the piece is still outside the box it stands in front of. A walk that
+        // merely fell short is the shared leg's `target_out_of_reach`; this is the piece's reach, asked of the piece.
         if (!piece.IsCloseEnoughToFarmer(Game1.player))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "furniture_rotation_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(piece.TileLocation)};{DescribeFurnitureReach(piece)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(piece.TileLocation)};{DescribeFurnitureReach(piece)};approach=arrived;blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
 
         string itemId = piece.QualifiedItemId;
         Vector2 placedTile = piece.TileLocation;
@@ -209,6 +223,51 @@ internal sealed partial class ExecutionManager
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "furniture_rotated", succeededEvidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "furniture_rotation_postcondition_not_observed", succeededEvidence);
     }
+
+    /// <summary>
+    /// The piece standing on the named tile, when it is still the one the caller saw AND the engine can turn it - the three
+    /// facts a rotation owes before the actor is sent walking and again when the body arrives. One reading for both halves,
+    /// so the refusal a walk is not started for and the refusal an arrival reports cannot name different facts.
+    /// </summary>
+    private static bool TryDescribeTurnableFurniture(
+        GameLocation location,
+        int x,
+        int y,
+        string expectedTargetId,
+        out Furniture? piece,
+        out string reasonCode,
+        out string evidence)
+    {
+        piece = null;
+        reasonCode = "accepted";
+        evidence = string.Empty;
+        Furniture? candidate = FindPlacedFurniture(location, x, y);
+        if (candidate is null)
+        {
+            reasonCode = "furniture_rotation_target_not_found";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}";
+            return false;
+        }
+        if (!string.Equals(BuildPlacedFurnitureTargetId(location, x, y, candidate), expectedTargetId, StringComparison.Ordinal))
+        {
+            reasonCode = "furniture_rotation_target_changed";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, x, y, candidate)};item={candidate.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            return false;
+        }
+        // The engine's own guard, read from the piece: `rotate()` is a no-op below two rotations (Furniture.cs:1155), so a
+        // request for one would otherwise be a silent nothing that the postcondition could only report as uncertain.
+        // Naming it here is what lets the companion tell "this piece cannot turn" from "the turn failed" - and the bound is
+        // the piece's own Data/Furniture `rotations` value (`Furniture.cs:320`), not a number this file invents.
+        if (candidate.rotations.Value < 2)
+        {
+            reasonCode = "furniture_rotation_unsupported";
+            evidence = $"target={expectedTargetId};tile={x},{y};location={location.NameOrUniqueName};item={candidate.QualifiedItemId};rotations={candidate.rotations.Value};rotations_required=2;rotation={candidate.currentRotation.Value};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            return false;
+        }
+        piece = candidate;
+        return true;
+    }
+
 
     private static Furniture? FindPlacedFurniture(GameLocation location, int x, int y)
     {
@@ -401,34 +460,21 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// THE BOUND the furniture reach compares, printed with both values it compares - and the tile that puts the actor
-    /// inside it.
+    /// THE BOUND the furniture reach compares, printed with both values it compares.
     ///
     /// <para>
     /// <c>Furniture.IsCloseEnoughToFarmer</c> (Furniture.cs:1295-1308) builds the piece's footprint rectangle from its own
     /// <c>tileLocation</c> and <c>getTilesWide()</c>/<c>getTilesHigh()</c>, inflates it by <b>96 px on every side</b>
     /// (<c>rectangle.Inflate(96, 96)</c>, :1306) and answers whether it contains <c>Game1.player.StandingPixel</c>. The
-    /// predicate exposes none of that, so a refusal that only said "out of range" left the caller without the distance it
-    /// would have to close: measured 2026-11-19 (Turn 130-138), <c>furniture_rotation_out_of_range</c> said nothing a
-    /// reader could act on. The arithmetic is restated here ONLY for evidence - the decision is the engine's predicate,
-    /// never this rectangle.
+    /// predicate exposes none of that, so a refusal that only said "out of range" left the caller without the bound it
+    /// read. The arithmetic is restated here ONLY for evidence - the decision is the engine's predicate, never this
+    /// rectangle.
     /// </para>
     /// <para>
-    /// WHERE TO STAND. Printed with it because a box is not a step: measured `round79`, an actor at tile 4,6 named a piece
-    /// at tile 4,4 four times and every refusal answered
-    /// <c>reach_inflate_px=96;reach_box=160,160:256x256;actor_standing_pixel=291,444</c> - honest, complete, and silent
-    /// about the one thing she needed, which is that the box ends at y=416 and her standing pixel is 28 px below it. A
-    /// caller cannot turn a pixel box into a tile, so this helper does it: <see cref="ApproachTileSelector"/> picks the
-    /// nearest tile beside the piece that the actor may stand on AND walk to (<see cref="StardewBodyController.IsStandableTile"/>
-    /// and the actor's own walkable component - the same two questions the shared approach leg asks).
-    /// </para>
-    /// <para>
-    /// THE RING IS INSIDE THE BOX, which is why naming it cannot overstate the reach. A standing pixel is its tile's
-    /// origin plus the actor's own sub-tile offset, which is smaller than one tile on each axis, and the box reaches 96 px
-    /// past every footprint edge - so a tile beside the footprint is inside it for ANY offset or footprint size. That is
-    /// also the whole of what this helper decides: it never widens the reach, and the refusal is still the engine's
-    /// predicate answering. <c>stand_at=none</c> is the honest answer when no such tile exists (a piece walled in on every
-    /// side), and it is the same word <see cref="ClearingEvidence.NoNextSteps"/> uses for a step nobody can take.
+    /// WHICH REFUSAL CARRIES IT. The ARRIVAL one (`approach=arrived`), not the request's: the request now answers a piece
+    /// outside this box by sending the actor to a tile beside the footprint, and printing a pixel box for a distance the
+    /// action was about to close by itself was measured `round79` as an answer nobody could act on. A body that is entered
+    /// with the piece still outside it is a different fact, and there the box is exactly the reading the reader needs.
     /// </para>
     /// </summary>
     internal static string DescribeFurnitureReach(Furniture piece)
@@ -442,41 +488,20 @@ internal sealed partial class ExecutionManager
         Point standing = Game1.player.StandingPixel;
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"reach_inflate_px=96;reach_box={reach.X},{reach.Y}:{reach.Width}x{reach.Height};actor_standing_pixel={standing.X},{standing.Y};{DescribeFurnitureStandTile(piece)}");
+            $"reach_inflate_px=96;reach_box={reach.X},{reach.Y}:{reach.Width}x{reach.Height};actor_standing_pixel={standing.X},{standing.Y}");
     }
 
     /// <summary>
-    /// The tile the actor should walk to, as the two words a caller can dispatch: where to stand, and the published
-    /// action that takes her there (<see cref="ClearingEvidence.WalkAction"/>, so the step names this Mod's own id and
-    /// not a verb invented here).
+    /// The tiles a piece occupies, from its own <c>tileLocation</c> and the footprint the engine derives - the extent the
+    /// approach leg chooses a standing tile beside, and nothing else.
     /// </summary>
-    private static string DescribeFurnitureStandTile(Furniture piece)
+    private static (int X, int Y)[] FurnitureFootprint(Furniture piece)
     {
-        GameLocation? location = Game1.player.currentLocation;
-        if (location?.map is null)
-            return $"stand_at={ClearingEvidence.NoNextSteps};next_steps={ClearingEvidence.NoNextSteps}";
-        Func<Vector2, bool>? walkable = StardewBodyController.BuildWalkableComponent(location, Game1.player);
-        (int X, int Y)? stand = ApproachTileSelector.Select(
-            FurnitureFootprint(piece),
-            ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y),
-            tile => StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y)),
-            // A component that exceeded its probe budget claims nothing, which is the shared leg's own reading
-            // (`TryBeginToolApproach`) rather than a refusal invented here.
-            tile => walkable is null || walkable(new Vector2(tile.X, tile.Y)));
-        if (stand is not { } tile)
-            return $"stand_at={ClearingEvidence.NoNextSteps};next_steps={ClearingEvidence.NoNextSteps}";
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"stand_at={tile.X},{tile.Y};next_steps={ClearingEvidence.WalkAction}@{tile.X},{tile.Y}");
-    }
-
-    /// <summary>The tiles a piece occupies, from its own <c>tileLocation</c> and the footprint the engine derives.</summary>
-    private static IReadOnlyList<(int X, int Y)> FurnitureFootprint(Furniture piece)
-    {
-        List<(int X, int Y)> tiles = new();
+        (int X, int Y)[] tiles = new (int X, int Y)[piece.getTilesWide() * piece.getTilesHigh()];
+        int index = 0;
         for (int width = 0; width < piece.getTilesWide(); width++)
             for (int height = 0; height < piece.getTilesHigh(); height++)
-                tiles.Add(((int)piece.TileLocation.X + width, (int)piece.TileLocation.Y + height));
+                tiles[index++] = ((int)piece.TileLocation.X + width, (int)piece.TileLocation.Y + height);
         return tiles;
     }
 
@@ -576,38 +601,43 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         long requestedDeadlineMs)
     {
-        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
-            return admissionRejection;
+        // THE TANK THE REACH IS ASKED OF is the one the gate resolves, and the footprint it hands the seam is what decides
+        // where the actor stands. A body outside the tank's own 96 px box walks to a tile beside it; see the file header.
+        FishTankFurniture? tank = null;
+        return this.RequestLocalTileTarget(
+            "put_item_in_fish_tank",
+            requestId,
+            expectedTargetId,
+            requestedDeadlineMs,
+            AdmissionActionabilityProfile.General,
+            gate: location =>
+            {
+                if (!TryDescribeFishTank(location, targetX, targetY, expectedTargetId, out FishTankFurniture? resolved, out string refusalCode, out string refusalEvidence))
+                    return TileTargetGate.Refused(new TileTargetRefusal(refusalCode, refusalEvidence));
+                tank = resolved;
+                return TileTargetGate.Resolved(targetX, targetY, FurnitureFootprint(resolved!));
+            },
+            execute: (executionId, admittedRequestId) => this.ExecutePutItemInFishTank(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+            authorize: this.AuthorizeActorOnReadyWorld,
+            inReach: (actor, _, _) => tank?.IsCloseEnoughToFarmer(actor) == true);
+    }
 
+    private LocalExecutionReceipt ExecutePutItemInFishTank(
+        string executionId,
+        string requestId,
+        int slot,
+        int targetX,
+        int targetY,
+        string expectedQualifiedItemId,
+        string expectedTargetId)
+    {
         GameLocation location = Game1.player.currentLocation;
         // THE TANK IS RE-RESOLVED FROM THE COLLECTION, not from the id: a fish tank is `Furniture` and therefore lives
         // in `location.furniture`, never in `location.objects` (GameLocation.cs:452). The id is what proves it is still
         // the piece the caller saw.
-        FishTankFurniture? tank = FindPlacedFurniture(location, targetX, targetY) as FishTankFurniture;
-        if (tank is null)
-        {
-            Furniture? other = FindPlacedFurniture(location, targetX, targetY);
-            return other is null
-                ? this.RememberTerminal(
-                    requestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "fish_tank_target_not_found",
-                    $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}")
-                : this.RememberTerminal(
-                    requestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "fish_tank_target_is_not_a_tank",
-                    $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};item={other.QualifiedItemId};furniture_type={other.GetType().Name};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        }
-        if (!string.Equals(BuildPlacedFurnitureTargetId(location, targetX, targetY, tank), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "fish_tank_target_changed",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, tank)};item={tank.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
+        if (!TryDescribeFishTank(location, targetX, targetY, expectedTargetId, out FishTankFurniture? resolved, out string refusalCode, out string refusalEvidence))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
+        FishTankFurniture tank = resolved!;
         int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
             ? slot
             : ResolveLiveSlot(Game1.player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
@@ -618,15 +648,16 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "fish_tank_item_not_owned_in_slot",
                 $"named_slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
-        // The game's own furniture reach, the same predicate the pickup and the rotation are gated on
-        // (Furniture.IsCloseEnoughToFarmer, Furniture.cs:1295-1308): the tank's footprint inflated by 96 px.
+        // The game's own furniture reach, re-asked at the moment of the write: the tank's footprint inflated by 96 px.
+        // `approach=arrived` is the fact that separates it from the request's own question, which the seam answered by
+        // walking; a body that is entered with the tank still outside this box has walked and not arrived.
         if (!tank.IsCloseEnoughToFarmer(Game1.player))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "fish_tank_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tank.TileLocation)};{DescribeFurnitureReach(tank)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tank.TileLocation)};{DescribeFurnitureReach(tank)};approach=arrived;blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
         if (tank.mutex.IsLocked())
             return this.RememberTerminal(
                 requestId,
@@ -720,8 +751,44 @@ internal sealed partial class ExecutionManager
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "fish_tank_item_deposited", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "fish_tank_postcondition_not_observed", evidence);
     }
-
-
+    /// <summary>
+    /// The fish tank standing on the named tile, when it is still the one the caller saw - the three facts the deposit
+    /// owes before the actor is sent walking and again when the body arrives.
+    /// </summary>
+    private static bool TryDescribeFishTank(
+        GameLocation location,
+        int x,
+        int y,
+        string expectedTargetId,
+        out FishTankFurniture? tank,
+        out string reasonCode,
+        out string evidence)
+    {
+        tank = null;
+        reasonCode = "accepted";
+        evidence = string.Empty;
+        Furniture? piece = FindPlacedFurniture(location, x, y);
+        if (piece is null)
+        {
+            reasonCode = "fish_tank_target_not_found";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}";
+            return false;
+        }
+        if (piece is not FishTankFurniture candidate)
+        {
+            reasonCode = "fish_tank_target_is_not_a_tank";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};item={piece.QualifiedItemId};furniture_type={piece.GetType().Name};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            return false;
+        }
+        if (!string.Equals(BuildPlacedFurnitureTargetId(location, x, y, candidate), expectedTargetId, StringComparison.Ordinal))
+        {
+            reasonCode = "fish_tank_target_changed";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, x, y, candidate)};item={candidate.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            return false;
+        }
+        tank = candidate;
+        return true;
+    }
     /// <summary>
     /// Puts one carried item onto a placed item pedestal, through the pedestal's own
     /// <c>ItemPedestal.performObjectDropInAction</c> (ItemPedestal.cs:82-124). See the section of the file header below

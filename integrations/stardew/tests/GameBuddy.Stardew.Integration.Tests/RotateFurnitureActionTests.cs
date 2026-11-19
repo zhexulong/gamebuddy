@@ -195,11 +195,12 @@ public sealed class RotateFurnitureActionTests
     }
 
     /// <summary>
-    /// The reach is the game's own furniture predicate (<c>Furniture.IsCloseEnoughToFarmer</c>, Furniture.cs:1295-1308),
-    /// which the pickup is gated on - not a tile distance invented here.
+    /// THE REQUEST ANSWERS A DISTANCE WITH A STEP. The reach is still the game's own furniture predicate
+    /// (<c>Furniture.IsCloseEnoughToFarmer</c>, Furniture.cs:1295-1308), but the actor outside it is now sent to a tile
+    /// beside the piece's footprint instead of being refused - which is the whole of what `round79` lost.
     /// </summary>
     [Fact]
-    public void OutOfReach_IsRefusedByNameAndLeavesThePieceStanding()
+    public void OutOfReach_WalksToATileBesideThePieceInsteadOfRefusing()
     {
         using var world = FurnitureRotationWorld.Create();
         Furniture piece = world.PlaceFurniture(x: 2, y: 2, rotations: 4);
@@ -207,9 +208,73 @@ public sealed class RotateFurnitureActionTests
 
         LocalExecutionReceipt receipt = world.Request(2, 2);
 
-        receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("furniture_rotation_out_of_range");
-        piece.currentRotation.Value.Should().Be(0);
+        receipt.State.Should().Be(ExecutionState.Accepted, "being far from a piece you can walk to is a walk, not a refusal");
+        receipt.ReasonCode.Should().Be("accepted");
+        receipt.Evidence.Should().Contain("approach=adjacent");
+        receipt.Evidence.Should().Contain("anchor=2,2", "the anchor stays the tile the request named");
+        receipt.Evidence.Should().Contain("reached=footprint", "the walk aims at a footprint tile, not at the anchor alone");
+        receipt.Evidence.Should().Contain("stand_at=");
+        piece.currentRotation.Value.Should().Be(0, "nothing is turned while the body is walking");
+        world.ArmedApproach().ActionId.Should().Be(ActionId, "the snapshot must publish the real action id");
+    }
+
+    /// <summary>
+    /// THE OTHER FACT, and it is a different one: the body is entered with the piece still outside its own 96 px box, so
+    /// the engine's predicate is asked again at the moment of the write and its bound is printed. `approach=arrived` is
+    /// what separates this from the request's own question - a walk that merely fell short is the shared leg's
+    /// `target_out_of_reach`.
+    /// </summary>
+    [Fact]
+    public void TheArrival_RefusesByNameWhenTheBodyDidNotReachThePiece()
+    {
+        using var world = FurnitureRotationWorld.Create();
+        Furniture piece = world.PlaceFurniture(x: 2, y: 2, rotations: 4);
+        world.StandAt(14, 14);
+        world.Request(2, 2).State.Should().Be(ExecutionState.Accepted);
+
+        LocalExecutionReceipt arrival = world.RunArrival();
+
+        arrival.State.Should().Be(ExecutionState.Rejected);
+        arrival.ReasonCode.Should().Be("furniture_rotation_out_of_range");
+        arrival.Evidence.Should().Contain("approach=arrived");
+        arrival.Evidence.Should().Contain("reach_inflate_px=96", "the bound the predicate inflates the footprint by");
+        arrival.Evidence.Should().Contain("reach_box=", "the rectangle the actor's standing pixel was tested against");
+        arrival.Evidence.Should().Contain("actor_standing_pixel=", "the other side of the comparison");
+        arrival.Evidence.Should().Contain("furniture_reach");
+        piece.currentRotation.Value.Should().Be(0, "an arrival that never reached the piece turns nothing");
+    }
+
+    /// <summary>
+    /// THE ONE CASE A REFUSAL IS HONEST, kept as a NAMED one. A piece whose every adjacent tile the body may not stop on has
+    /// no walk to make, so the shared leg refuses <c>no_reachable_approach:&lt;x&gt;:&lt;y&gt;</c> and says which
+    /// impossibility it is (<c>standable_neighbour=none</c>) - it does not answer with a distance and does not fall silent.
+    /// Before this unit the same fact came out as <c>stand_at=none;next_steps=none</c> appended to a pixel box; the name is
+    /// now the approach leg's, which is the one place that knows why no tile could be taken.
+    /// </summary>
+    [Fact]
+    public void APieceWithNowhereToStand_RefusesByNameInsteadOfWalkingOrFallingSilent()
+    {
+        using var world = FurnitureRotationWorld.Create();
+        Furniture piece = world.PlaceFurniture(x: 2, y: 2, rotations: 4);
+        world.StandAt(14, 14);
+        world.BufferEveryNeighbourOf(piece);
+
+        LocalExecutionReceipt receipt = world.Request(2, 2);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "with nowhere to stand there is no walk to dispatch");
+        // THE NAME IS THE SHARED LEG'S, and it has two for this shape: the placement's own
+        // `no_reachable_approach:<x>:<y>`, or `no_cuttable_blocker:<kind>` when the refusal could also say what stands on
+        // the rim of her own pocket. Both mean "no walk was dispatched"; this test owns the fact that one of them is
+        // published instead of silence.
+        receipt.ReasonCode.Should().MatchRegex(
+            "^(no_reachable_approach:[0-9]+:[0-9]+|no_cuttable_blocker:[a-z_]+)$",
+            "a piece with nowhere to stand is refused by the leg's own name, never silently");
+        receipt.Evidence.Should().Contain("standable_neighbour=none", "geometry, not a wall")
+            .And.Contain("standable_tiles=0", "and the count says the same thing in numbers");
+        receipt.Hint.Should().Contain(
+            "standable_neighbour=none",
+            "a refusal whose evidence is withheld still carries this much into the node");
+        piece.currentRotation.Value.Should().Be(0, "a refusal turns nothing");
     }
 
     [Fact]
@@ -225,18 +290,20 @@ public sealed class RotateFurnitureActionTests
     }
 
     /// <summary>
-    /// The ORDER the body must keep, pinned because it is an order and not an outcome: every check that can refuse
-    /// runs before the first mutation, the native turn runs before the occupancy probe, and the revert lives inside
-    /// the not-placeable branch rather than after an unconditional success.
+    /// The ORDER the body must keep, pinned because it is an order and not an outcome: the proof of the piece (its
+    /// identity and the engine's own rotation guard) lives in the shared describer both halves call, and inside the body
+    /// the reach is admitted before the first mutation, the native turn runs before the occupancy probe, and the revert
+    /// lives inside the not-placeable branch rather than after an unconditional success.
     /// </summary>
     [Fact]
     public void SourceShape_ValidatesFirstThenTurnsThenProbesThenReverts()
     {
         string source = File.ReadAllText(RepositoryFile("integrations", "stardew", HandlerFile));
-        string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalRotateFurniture(");
+        string describe = MethodBody(source, "private static bool TryDescribeTurnableFurniture(");
+        string body = MethodBody(source, "private LocalExecutionReceipt ExecuteRotateFurniture(");
 
-        int targetCheck = body.IndexOf("furniture_rotation_target_changed", StringComparison.Ordinal);
-        int unsupported = body.IndexOf("furniture_rotation_unsupported", StringComparison.Ordinal);
+        int targetCheck = describe.IndexOf("furniture_rotation_target_changed", StringComparison.Ordinal);
+        int unsupported = describe.IndexOf("furniture_rotation_unsupported", StringComparison.Ordinal);
         int reach = body.IndexOf("piece.IsCloseEnoughToFarmer(Game1.player)", StringComparison.Ordinal);
         int turn = body.IndexOf("piece.rotate();", StringComparison.Ordinal);
         int probe = body.IndexOf("piece.canBePlacedHere(location, placedTile)", StringComparison.Ordinal);
@@ -259,7 +326,6 @@ public sealed class RotateFurnitureActionTests
             index.Should().BeGreaterThanOrEqualTo(0, $"{step} must exist in the body");
         }
         targetCheck.Should().BeLessThan(unsupported, "the id proves the piece before its own data is read");
-        unsupported.Should().BeLessThan(reach, "a piece the engine will not turn is refused before the reach is measured");
         reach.Should().BeLessThan(turn, "no mutation may happen before the reach is admitted");
         turn.Should().BeLessThan(probe, "the footprint is judged AFTER the turn produced it");
         probe.Should().BeLessThan(blocked, "the engine answers before the refusal names a reason");
@@ -480,6 +546,27 @@ public sealed class RotateFurnitureActionTests
 
         internal void StandAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
 
+        /// <summary>
+        /// Makes every tile beside the piece's own footprint a warp buffer, which is this harness's way of saying "nowhere to
+        /// stand": the approach leg asks <c>IsStandableTile &amp;&amp; !IsWarpBufferTile</c>, and the second half is a fact
+        /// about the location's own warp table. The whole footprint is walked, not its anchor - a tall piece has standing
+        /// tiles beside its far row that the anchor's own ring does not contain.
+        /// </summary>
+        internal void BufferEveryNeighbourOf(Furniture piece)
+        {
+            for (int width = 0; width < piece.getTilesWide(); width++)
+            for (int height = 0; height < piece.getTilesHigh(); height++)
+            for (int offsetX = -1; offsetX <= 1; offsetX++)
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+                this.Location.warps.Add(new Warp(
+                    (int)piece.TileLocation.X + width + offsetX,
+                    (int)piece.TileLocation.Y + height + offsetY,
+                    "Elsewhere",
+                    0,
+                    0,
+                    false));
+        }
+
         /// <summary>The target id the snapshot publishes for this tile, read off the production builder.</summary>
         internal string TargetIdAt(int x, int y) => ExecutionManager.BuildPlacedFurnitureTargetId(
             this.Location,
@@ -501,6 +588,22 @@ public sealed class RotateFurnitureActionTests
                 expectedTargetId ?? this.TargetIdOrSynthetic(x, y),
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
 
+        /// <summary>The walk the request path armed.</summary>
+        internal LocalApproachSpec ArmedApproach() =>
+            (LocalApproachSpec?)BodySlotSeeding.Peek(this.Manager(), "activeToolApproach")
+                ?? throw new InvalidOperationException("the request path armed no approach, so there is no arriving body to run");
+
+        /// <summary>
+        /// The action's OWN arrival body - the delegate the request path handed the approach - run where it stands. This
+        /// bypasses <c>CompleteToolApproach</c>'s shared location/radius gate on purpose: the case is what the body itself
+        /// does when it is entered without the walk having moved anybody.
+        /// </summary>
+        internal LocalExecutionReceipt RunArrival()
+        {
+            LocalApproachSpec approach = this.ArmedApproach();
+            return approach.Execute($"{approach.ExecutionId}_arrival", $"{approach.RequestId}_arrival");
+        }
+
         /// <summary>The same request through the dispatch handler the production router registers for the group.</summary>
         internal LocalExecutionReceipt DispatchThroughTheResourceToolHandler(int x, int y)
         {
@@ -515,11 +618,16 @@ public sealed class RotateFurnitureActionTests
             return new ResourceToolActionHandler(executions).Execute(request, executions);
         }
 
+        private ExecutionManager? manager;
+
         private ExecutionManager Manager()
         {
+            if (this.manager is not null) return this.manager;
             var publication = FarmhandCapabilityPublication.Initial(
                 new HashSet<string>(StringComparer.Ordinal) { ActionId });
-            return new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
+            // ONE manager per world, so a request and the arrival body it armed are the same execution's.
+            this.manager = new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
+            return this.manager;
         }
 
         public void Dispose()

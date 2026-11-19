@@ -34,8 +34,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <para>
 /// WHAT IT DOES NOT COVER, printed on every run rather than left to a query: the actions whose handlers neither walk
 /// nor measure a tile distance (<c>craft_item</c>, <c>shop_purchase</c>, the actor's own attachment state, ...).
-/// Silence is the truth for them, and naming a relation would be an invented precondition - <c>move_placed_furniture</c>
-/// answers the question with the engine's own whole-room furniture reach, which a tile distance would misstate.
+/// Silence is the truth for them, and naming a relation would be an invented precondition. A handler that answered a
+/// reach through the engine's own predicate instead of a tile distance (<c>Furniture.IsCloseEnoughToFarmer</c>) is no
+/// longer one of them: the furniture trio walks in, and what it walks into is still the piece's own footprint inflated
+/// by 96 px rather than a tile ring.
 /// </para>
 /// </summary>
 public sealed class ApproachDeclarationCoverageTests
@@ -55,6 +57,19 @@ public sealed class ApproachDeclarationCoverageTests
         "IsTileWithinChebyshevRadius(",
         "tileWithinRadiusOfPlayer(",
     };
+
+    /// <summary>
+    /// The one spelling a REQUEST HALF answers a caller's distance with: a reason code ending in <c>_out_of_range</c>.
+    ///
+    /// <para>
+    /// It is the code shape rather than a list of codes, and the boundary is the request half rather than the whole path,
+    /// because the two halves answer different questions: a request half that names <c>_out_of_range</c> is telling the
+    /// CALLER to close the distance by hand, while the body that runs after a walk may legitimately name the ARRIVAL fact
+    /// (<c>ship_item</c>, <c>place_item_on_pedestal</c> and the furniture trio all keep theirs). Widening this to the whole
+    /// path would fail those, which are exactly the shape being asked for.
+    /// </para>
+    /// </summary>
+    private const string OutOfRangeRefusalMarker = "_out_of_range";
 
     /// <summary>
     /// The one action whose handler measures a tile distance and whose registration declares nothing.
@@ -77,7 +92,7 @@ public sealed class ApproachDeclarationCoverageTests
     /// One reading of the repository per test run: the rows, the size of the handler population, and the two things the
     /// reading drops (read-only registrations, handler arms with no registration).
     /// </summary>
-    private static readonly Lazy<Measurement> Measured = new(Measure);
+    private static readonly Lazy<Measurement> Measured = new(() => Measure(HandlerSourceFacts.HandlerSources()));
 
     private readonly ITestOutputHelper output;
 
@@ -187,6 +202,106 @@ public sealed class ApproachDeclarationCoverageTests
                 + "declaration is a false precondition:\n  " + string.Join("\n  ", unbacked));
     }
 
+    /// <summary>
+    /// <c>an_action_that_can_walk_does_not_refuse_for_distance:&lt;action&gt;</c> - the population is every action the
+    /// catalogue declares <see cref="FarmhandActionApproachRequirement.SelfWalked"/>, and no member of it may answer a
+    /// caller's distance with a refusal.
+    ///
+    /// <para>
+    /// WHY. Measured `round79`: the companion named one piece of furniture at tile 4,4 from tile 4,6 four times and every
+    /// answer was <c>move_placed_furniture_out_of_range</c> with an honest pixel box and no step. `496d2a71` made that
+    /// refusal name the standing tile, which was step one; the action then still could not take it. The declaration that
+    /// says an action closes the distance itself (<c>self_walked</c>) and a request half that refuses for distance are two
+    /// statements about one action that cannot both be true, so this gate reads them against each other.
+    /// </para>
+    /// <para>
+    /// THE BOUNDARY IS THE REQUEST HALF, and it is what makes the gate mean what its name says. A body entered AFTER a walk
+    /// may name the arrival fact - <c>ship_item</c>, <c>place_item_on_pedestal</c> and the furniture trio all keep that
+    /// code - because "I walked and the target is still outside the reach" is not a distance the caller was told to close.
+    /// The request half is the only place a distance is answered with "not my job".
+    /// </para>
+    /// <para>
+    /// <c>walks</c> is PRINTED rather than asserted: an action that declares <c>self_walked</c> and has no approach leg is
+    /// <see cref="ASelfWalkedDeclarationIsBackedByAnApproachLeg"/>'s finding, and failing for it here as well would name one
+    /// defect twice.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnActionThatCanWalkDoesNotRefuseForDistance()
+    {
+        Measurement measured = Measured.Value;
+        List<CoverageRow> population = measured.Rows
+            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked)
+            .ToList();
+        List<CoverageRow> walks = population.Where(row => row.Walks).ToList();
+        List<CoverageRow> refuses = population.Where(row => row.RefusesForDistance).ToList();
+
+        this.output.WriteLine(
+            $"actions examined {population.Count} · walks {walks.Count} · refuses-for-distance {refuses.Count}");
+
+        // Zero population agrees with itself: a catalogue that stopped declaring the relation would otherwise report a
+        // clean run for the rest of its life.
+        population.Should().NotBeEmpty(
+            "no action declares `self_walked`, so this gate examined nothing - the derivation is reading the wrong place");
+        walks.Should().NotBeEmpty("the population is the actions that walk their own body into reach");
+
+        refuses.Select(row => row.Site).Should().BeEmpty(
+            "an_action_that_can_walk_does_not_refuse_for_distance: these actions declare that they close the distance and "
+                + "their request half answers it with a refusal instead, which is the `round79` shape - a companion told a "
+                + "bound it cannot turn into a step. Either give the request half the approach leg, or delete the "
+                + "declaration that promises one:\n  " + string.Join("\n  ", refuses.Select(row => row.Site)));
+    }
+
+    /// <summary>
+    /// The falsifier, on the request half this unit replaced: `rotate_furniture`'s own reach refusal is put back where it
+    /// stood before the action was rewired to the seam, and the gate must name that action.
+    ///
+    /// <para>
+    /// The replayed text is the code that SHIPPED (`496d2a71`'s <c>furniture_rotation_out_of_range</c> branch), copied
+    /// rather than invented, and it is spliced into the shipped request half beside everything else - which is the point:
+    /// the row still walks, so a gate that only asked "does this action have an approach leg" would stay green.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void FALSIFIER_TheGateIsRedOnTheDistanceRefusalThisUnitDeleted()
+    {
+        Measured.Value.Rows
+            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && row.RefusesForDistance)
+            .Should()
+            .BeEmpty("the shipped tree has to be green first, or this replay proves nothing about the gate");
+
+        const string relativePath = "farmhandexecutioncontroller.furnituredecorationactions.cs";
+        const string shipped = "        Furniture? piece = null;\n        return this.RequestLocalTileTarget(";
+        const string recorded =
+            "        Furniture? piece = null;\n"
+            + "        if (!piece!.IsCloseEnoughToFarmer(Game1.player))\n"
+            + "            return this.RememberTerminal(\n"
+            + "                requestId,\n"
+            + "                executionId,\n"
+            + "                ExecutionState.Rejected,\n"
+            + "                \"furniture_rotation_out_of_range\",\n"
+            + "                $\"target={targetX},{targetY};furniture_tile={FormatTile(piece.TileLocation)};{DescribeFurnitureReach(piece)}\");\n"
+            + "        return this.RequestLocalTileTarget(";
+
+        Dictionary<string, string> sources = HandlerSourceFacts.HandlerSources()
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        string replayed = sources[relativePath].Replace(shipped, recorded, StringComparison.Ordinal);
+        replayed.Should().NotBe(
+            sources[relativePath],
+            $"the request half must still hand the seam its target through `{shipped.Trim()}` for this replay to mean anything");
+        sources[relativePath] = replayed;
+
+        List<string> refusing = Measure(sources).Rows
+            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && row.RefusesForDistance)
+            .Select(row => row.ActionId)
+            .ToList();
+
+        refusing.Should().Contain(
+            "rotate_furniture",
+            "the action this unit rewired must be named the moment its request half answers a distance again");
+        refusing.Should().HaveCount(1, "the replay touches exactly one request half, so it can only name one action");
+    }
+
     [Fact]
     public void EveryDeclaredRelationIsOneTheWireVocabularyNames()
     {
@@ -214,10 +329,9 @@ public sealed class ApproachDeclarationCoverageTests
     /// a target family - because the declaration is a property of the row, and a row the Agent surface has not admitted
     /// yet is exactly the row that goes wrong when it finally is.
     /// </summary>
-    private static Measurement Measure()
+    private static Measurement Measure(IReadOnlyDictionary<string, string> sources)
     {
         IReadOnlyDictionary<string, string> handlers = HandlerSourceFacts.HandlerMethods();
-        IReadOnlyDictionary<string, string> sources = HandlerSourceFacts.HandlerSources();
         IReadOnlyDictionary<string, int> registrationLines = RegistrationLines();
 
         var rows = new List<CoverageRow>();
@@ -261,7 +375,8 @@ public sealed class ApproachDeclarationCoverageTests
                 registrationLines.TryGetValue(registration.ActionId, out int rowLine) ? rowLine : null,
                 body,
                 leg.Marker is not null,
-                TileDistanceMarkers.Any(marker => body.Contains(marker, StringComparison.Ordinal))));
+                TileDistanceMarkers.Any(marker => body.Contains(marker, StringComparison.Ordinal)),
+                body.Contains(OutOfRangeRefusalMarker, StringComparison.Ordinal)));
         }
 
         rows.Should().NotBeEmpty("the catalog registers execution actions, or this gate reads nothing");
@@ -305,7 +420,8 @@ public sealed class ApproachDeclarationCoverageTests
         int? RowLine,
         string Body,
         bool Walks,
-        bool MeasuresTileDistance)
+        bool MeasuresTileDistance,
+        bool RefusesForDistance)
     {
         /// <summary>The pair a reader needs: where the leg is, and where the silence is.</summary>
         public string Site =>

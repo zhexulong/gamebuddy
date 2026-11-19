@@ -41,8 +41,17 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <para>
 /// The three counts answer the three ways a row can satisfy it, and `mute` is the defect: a handler that neither begins
 /// an approach leg nor names a stand tile leaves the caller holding a distance it cannot close, which is exactly what
-/// `round79` did four times. A fourth state - `stand_at=none` at runtime, when no tile beside the piece is standable and
-/// walkable - is the honest answer for a walled-in target and is the shared leg's own word for it.
+/// `round79` did four times. A fourth state - no tile beside the piece is standable and walkable - is now answered by the
+/// SHARED approach leg (<c>no_reachable_approach:&lt;x&gt;:&lt;y&gt;</c> with <c>standable_neighbour=none</c>), because the
+/// three furniture actions walk: their request half no longer prints a distance at all.
+/// </para>
+///
+/// <para>
+/// THE COMPOSER PREMISE IS ASSERTED ONLY WHILE A ROW RELIES ON IT. <c>names-the-stand-tile</c> is counted off a
+/// <c>stand_at=</c> field (or the furniture reach helper that printed one), and that count is only honest while the
+/// helper really composes a dispatchable step. Measured 2026-11-19, that branch has no member left: all four pixel-reach
+/// rows walk, so the composer this file guarded was deleted with the refusal it served. The premise is kept, but it is
+/// read where it applies - a returned consumer brings both assertions back with it.
 /// </para>
 /// </summary>
 public sealed class RefusalNamesWhereReachIsTests
@@ -116,14 +125,24 @@ public sealed class RefusalNamesWhereReachIsTests
             $"the furniture reach names its stand tile through ONE helper: names_the_tile={measured.FurnitureReachNamesTheTile} "
                 + $"composes_the_step={measured.FurnitureStandTileNamesTheStep} ({measured.FurnitureReachFile})");
 
-        // The helper is the single owner of that geometry, so a helper that stopped naming the tile would make every
-        // `names-the-stand-tile` count above a false one. Asserted separately for exactly that reason.
-        measured.FurnitureReachNamesTheTile.Should().BeTrue(
-            $"{FurnitureReachHelper} no longer composes {FurnitureStandTileCall} in {measured.FurnitureReachFile}, so "
-                + "the furniture refusals that call it name the box and not the step - the round79 shape");
-        measured.FurnitureStandTileNamesTheStep.Should().BeTrue(
-            $"{FurnitureStandTileComposer} in {measured.FurnitureReachFile} no longer composes `{StandTileField}` and "
-                + $"`{NextStepField}` together, so the tile it chooses is not dispatchable by the caller");
+        // The helper was the single owner of that geometry, so a row counted `names-the-stand-tile` off a
+        // `DescribeFurnitureReach(` mention would have made every count above a false one. Read where it still applies: a
+        // row that names the stand tile without walking is the only reason the composer exists.
+        if (naming.Count > 0)
+        {
+            measured.FurnitureReachNamesTheTile.Should().BeTrue(
+                $"{FurnitureReachHelper} no longer composes {FurnitureStandTileCall} in {measured.FurnitureReachFile}, so "
+                    + "the furniture refusals that call it name the box and not the step - the round79 shape");
+            measured.FurnitureStandTileNamesTheStep.Should().BeTrue(
+                $"{FurnitureStandTileComposer} in {measured.FurnitureReachFile} no longer composes `{StandTileField}` and "
+                    + $"`{NextStepField}` together, so the tile it chooses is not dispatchable by the caller");
+        }
+        else
+        {
+            // Printing this keeps the empty branch a MEASURED zero rather than a silent one.
+            this.output.WriteLine(
+                $"no row names the stand tile without walking, so {FurnitureStandTileComposer} is asserted only if one returns");
+        }
 
         mute.Select(row => row.Site).Should().BeEmpty(
             "a_refusal_about_reach_says_where_reach_is: these handlers refuse the actor for a reach measured in PIXELS, "

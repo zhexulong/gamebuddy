@@ -1331,6 +1331,9 @@
           "postcondition": {
             "name": "placed_furniture_picked_up"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "worldObjectTargets",
           "nativeBinding": "GameLocation.removeQueuedFurniture"
         },
@@ -1420,6 +1423,9 @@
           "effect": "write",
           "postcondition": {
             "name": "furniture_rotated"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets",
           "nativeBinding": "Furniture.rotate"
@@ -1514,6 +1520,9 @@
           "effect": "write",
           "postcondition": {
             "name": "fish_tank_item_deposited"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets",
           "nativeBinding": "FishTankFurniture.checkForAction"

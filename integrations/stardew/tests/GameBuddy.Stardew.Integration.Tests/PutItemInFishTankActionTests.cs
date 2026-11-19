@@ -210,8 +210,13 @@ public sealed class PutItemInFishTankActionTests
         receipt.ReasonCode.Should().Be("fish_tank_item_not_owned_in_slot");
     }
 
+    /// <summary>
+    /// THE REQUEST ANSWERS A DISTANCE WITH A STEP. The reach is still the tank's own footprint inflated by 96 px, but a body
+    /// outside it is sent to a tile beside that footprint instead of being refused - and nothing is deposited until it
+    /// arrives.
+    /// </summary>
     [Fact]
-    public void OutOfReach_IsRefusedByName()
+    public void OutOfReach_WalksToATileBesideTheTankInsteadOfRefusing()
     {
         using var world = TankWorld.Create();
         world.PlaceTank(x: 2, y: 2);
@@ -220,8 +225,12 @@ public sealed class PutItemInFishTankActionTests
 
         LocalExecutionReceipt receipt = world.Request(2, 2);
 
-        receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("fish_tank_out_of_range");
+        receipt.State.Should().Be(ExecutionState.Accepted, "a tank one walk away is a walk, not a refusal");
+        receipt.ReasonCode.Should().Be("accepted");
+        receipt.Evidence.Should().Contain("approach=adjacent");
+        receipt.Evidence.Should().Contain("anchor=2,2", "the anchor stays the tile the request named");
+        receipt.Evidence.Should().Contain("reached=footprint", "the walk aims at a tank tile, not at the anchor alone");
+        receipt.Evidence.Should().Contain("stand_at=");
     }
 
     /// <summary>
@@ -284,9 +293,10 @@ public sealed class PutItemInFishTankActionTests
     public void SourceShape_ValidatesBeforeSwappingTheHeldSlotAndRestoresItInAFinally()
     {
         string source = File.ReadAllText(RepositoryFile("integrations", "stardew", HandlerFile));
-        string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalPutItemInFishTank(");
+        string body = MethodBody(source, "private LocalExecutionReceipt ExecutePutItemInFishTank(");
+        string describe = MethodBody(source, "private static bool TryDescribeFishTank(");
 
-        int tankCheck = body.IndexOf("fish_tank_target_changed", StringComparison.Ordinal);
+        int tankCheck = describe.IndexOf("fish_tank_target_changed", StringComparison.Ordinal);
         int itemCheck = body.IndexOf("fish_tank_item_not_owned_in_slot", StringComparison.Ordinal);
         int reach = body.IndexOf("tank.IsCloseEnoughToFarmer(Game1.player)", StringComparison.Ordinal);
         int busy = body.IndexOf("fish_tank_busy", StringComparison.Ordinal);
@@ -315,7 +325,9 @@ public sealed class PutItemInFishTankActionTests
         {
             index.Should().BeGreaterThanOrEqualTo(0, $"{step} must exist in the body");
         }
-        tankCheck.Should().BeLessThan(itemCheck, "the tank is resolved before the item it would receive");
+        describe.IndexOf("fish_tank_target_is_not_a_tank", StringComparison.Ordinal).Should().BeLessThan(
+            tankCheck,
+            "the tank's kind is proved from the tile before the identity that names it is hashed");
         itemCheck.Should().BeLessThan(reach, "a request that carries nothing is refused before the reach is measured");
         reach.Should().BeLessThan(busy, "the actor has to be there before the tank's own lock matters");
         busy.Should().BeLessThan(swap, "a held tank is refused before anything is written");

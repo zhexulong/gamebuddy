@@ -186,12 +186,6 @@ public sealed class ActionExecutionCapabilityMatrixTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> NoApproachLegReasons = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        // The furniture trio reach through the PIECE's own predicate - `Furniture.IsCloseEnoughToFarmer` (Furniture.cs:1295),
-        // the footprint inflated by 96 px - because a tile ring would be a second, invented spelling of a reach that a
-        // whole-room piece has from a tile the ring does not contain. Task 1 gives each of them the approach leg.
-        ["move_placed_furniture"] = "reaches through `Furniture.IsCloseEnoughToFarmer` and refuses in place; Task 1 gives it the approach leg",
-        ["rotate_furniture"] = "reaches through `Furniture.IsCloseEnoughToFarmer` and refuses in place; Task 1 gives it the approach leg",
-        ["put_item_in_fish_tank"] = "reaches through `Furniture.IsCloseEnoughToFarmer` and refuses in place; Task 1 gives it the approach leg",
         // A FINDING, not a debt: the walk is real but bespoke - the magnet's own stand tile is chosen by
         // `MagneticPickupReach` and driven through `LocalMoveSpec` + `controller.TryStart(approach, ...)`, because where a
         // ground chunk can be collected from is the magnet's geometry rather than a tile ring. Whether that is legitimate

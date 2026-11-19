@@ -153,8 +153,8 @@ export async function runMovePlacedFurnitureSmoke(client, receipts, { terminalTi
  *
  * "Nearest" is the only choice this runner makes: the pickup's reach is the game's own furniture
  * predicate on the game thread (`Furniture.IsCloseEnoughToFarmer`), so a tile distance here is
- * selection, not a second spelling of the reach check - an out-of-reach piece comes back as the
- * Mod's own `move_placed_furniture_out_of_range` refusal.
+ * selection, not a second spelling of the reach check - a piece out of reach is walked to by the
+ * Mod itself (`approach=adjacent` on the receipt), and the pickup settles when the body arrives.
  */
 function choosePublishedPiece(snapshot) {
   const entries = snapshot.worldObjectTargets;
