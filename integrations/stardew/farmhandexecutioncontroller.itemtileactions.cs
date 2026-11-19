@@ -421,13 +421,13 @@ internal sealed partial class ExecutionManager
     /// something left in it, and the very id the caller sent.
     ///
     /// <para>
-    /// THE FIRST OF TWO QUESTIONS, and they are not the same one. This asks the caller's own answer, and asks it first
-    /// because it is the only question that can see a <see cref="Item"/> which is not a
-    /// <see cref="StardewValley.Object"/>: a hat sits in the pack, and an action whose container carries an exact-type
-    /// rule of its own (the pedestal's <c>dropInItem.GetType() == typeof(Object)</c>, ItemPedestal.cs:102) has to reach
-    /// that rule rather than a pack refusal that restates it. The second question is
-    /// <see cref="ResolveLiveSlot"/>, asked only when this answers false: where the LIVE pack holds the item the caller
-    /// NAMED.
+    /// THE FIRST OF TWO QUESTIONS, and they are not the same one. This asks the caller's own answer: the slot it named
+    /// still holds the very id it sent, which needs no search and keeps a request that is already pointing at the right
+    /// cell out of the pack walk. The second question is <see cref="ResolveLiveSlot"/>, asked only when this answers
+    /// false: where the LIVE pack holds the item the caller NAMED. Both questions see every <see cref="Item"/> - a hat
+    /// sits in the pack and is not a <see cref="StardewValley.Object"/> - and the kind rule an action owns (the
+    /// pedestal's <c>dropInItem.GetType() == typeof(Object)</c>, ItemPedestal.cs:102) stays at that action's own use site
+    /// rather than being folded into the lookup.
     /// </para>
     /// <para>
     /// A plan's node is written from an observation, so its index is a position recorded then - a sibling node of the

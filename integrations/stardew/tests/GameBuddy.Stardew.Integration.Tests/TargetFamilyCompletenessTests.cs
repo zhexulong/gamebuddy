@@ -959,6 +959,34 @@ public sealed class TargetFamilyCompletenessTests
         }
 
         /// <summary>
+        /// A real WEARABLE in a pack slot. `PutInPackSlot` mints a <see cref="StardewValley.Object"/>, and a wearable is
+        /// not one: `Hat`/`Boots`/`Ring`/`Clothing` all derive from <see cref="Item"/> directly (probed against the
+        /// shipped assembly: `is StardewValley.Object` false for all four). `new Hat()` is no way in either - its
+        /// constructor loads `Data/hats`, which this process has not loaded - so the state is seeded exactly the way
+        /// <see cref="PutToolInPackSlot"/> seeds a tool: the identity through `Item.ItemId` and `_qualifiedItemId`, and
+        /// the `NetFields` an uninitialized instance never initialized.
+        /// </summary>
+        internal void PutWearableInPackSlot(int slot, Type wearableType, string qualifiedItemId)
+        {
+            var wearable = (Item)FormatterServices.GetUninitializedObject(wearableType);
+            SeedMissingNetFields(wearable);
+            typeof(Item)
+                .GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(wearable, new NetFields("Item"));
+            // `ItemId` before `_qualifiedItemId`: the property setter clears the qualified cache (Item.cs:178-182), so
+            // writing them the other way round leaves the first read to migrate a legacy id.
+            typeof(Item)
+                .GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!
+                .SetValue(wearable, qualifiedItemId[3..]);
+            typeof(Item)
+                .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(wearable, qualifiedItemId);
+            wearable.Stack = 1;
+            while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);
+            this.Actor.Items[slot] = wearable;
+        }
+
+        /// <summary>
         /// Gives every `Netcode` field an uninitialized instance the value its own field initializer would have.
         ///
         /// A tool's constructor is where `Item.itemId`, `Tool.initialParentTileIndex` and `WateringCan.isBottomless`

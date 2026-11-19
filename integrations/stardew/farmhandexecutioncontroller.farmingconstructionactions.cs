@@ -351,10 +351,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecutePlantSeed(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held
+            || held.Item is not StardewValley.Object seed)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object seed = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -394,16 +394,19 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>The kind `Object.placementAction`'s seed branch plants: a stack in the engine's own seeds category.</summary>
-    private static bool IsPlantableSeed(StardewValley.Object candidate) => candidate.Category == StardewValley.Object.SeedsCategory;
+    private static bool IsPlantableSeed(Item candidate) =>
+        candidate is StardewValley.Object seed && seed.Category == StardewValley.Object.SeedsCategory;
 
     /// <summary>The kind the wild-tree branch plants: a seed `Data/WildTrees` knows (<see cref="StardewValley.Object.isWildTreeSeed"/>).</summary>
-    private static bool IsWildTreeSeedItem(StardewValley.Object candidate) => StardewValley.Object.isWildTreeSeed(candidate.ItemId);
+    private static bool IsWildTreeSeedItem(Item candidate) =>
+        candidate is StardewValley.Object seed && StardewValley.Object.isWildTreeSeed(seed.ItemId);
 
     /// <summary>The kind the fence branch places: a stack the engine itself calls a fence (<c>Object.IsFenceItem</c>).</summary>
-    private static bool IsWoodFenceItem(StardewValley.Object candidate) => candidate.IsFenceItem();
+    private static bool IsWoodFenceItem(Item candidate) => candidate is StardewValley.Object fence && fence.IsFenceItem();
 
     /// <summary>The kind <c>fertilize_tile</c> applies: a stack in the engine's own fertilizer category.</summary>
-    private static bool IsFertilizerItem(StardewValley.Object candidate) => candidate.Category == StardewValley.Object.fertilizerCategory;
+    private static bool IsFertilizerItem(Item candidate) =>
+        candidate is StardewValley.Object fertilizer && fertilizer.Category == StardewValley.Object.fertilizerCategory;
 
     /// <summary>
     /// NO KIND TEST, deliberately, for the two big craftables and for bait. The kind of a crab pot is its own item id,
@@ -413,7 +416,7 @@ internal sealed partial class ExecutionManager
     /// that test, and a category or item-id test here would be the second, narrower answer that once refused a vanilla
     /// bait.
     /// </summary>
-    private static bool AnyObject(StardewValley.Object candidate) => true;
+    private static bool AnyObject(Item candidate) => candidate is StardewValley.Object;
 
     /// <summary>
     /// Plant exactly one wild-tree sapling item (Acorn/Maple Seed/Pine Cone or
@@ -447,10 +450,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecutePlantSapling(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWildTreeSeedItem) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWildTreeSeedItem) is not { } held
+            || held.Item is not StardewValley.Object sapling)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object sapling = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
@@ -502,10 +505,10 @@ internal sealed partial class ExecutionManager
     {
         if (expectedQualifiedItemId != "(O)322")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWoodFenceItem) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWoodFenceItem) is not { } held
+            || held.Item is not StardewValley.Object source)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object source = held.Item;
         GameLocation fenceLocation = Game1.player.currentLocation;
         if (fenceLocation is not Farm farm)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
@@ -573,10 +576,10 @@ internal sealed partial class ExecutionManager
     {
         if (expectedQualifiedItemId != "(O)710")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held
+            || held.Item is not StardewValley.Object source)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object source = held.Item;
         GameLocation crabPotLocation = Game1.player.currentLocation;
         if (crabPotLocation is not Farm farm)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
@@ -639,10 +642,10 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         Farmer player = Game1.player;
-        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held)
+        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held
+            || held.Item is not StardewValley.Object bait)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object bait = held.Item;
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
@@ -671,10 +674,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsFertilizerItem) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsFertilizerItem) is not { } held
+            || held.Item is not StardewValley.Object fertilizer)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object fertilizer = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);

@@ -51,7 +51,6 @@ public sealed class ActorStateActionTests
         "wearable_target_not_found",
         "wearable_target_changed",
         "item_not_owned_in_slot",
-        "wearable_item_mismatch",
         "wearable_item_not_wearable",
         "wearable_body_slot_mismatch",
         "wearable_native_exception",
@@ -121,8 +120,9 @@ public sealed class ActorStateActionTests
         success.Should().BeGreaterThan(decision, "success must be decided after the re-read");
 
         // The seam runs BEFORE the backpack is touched, so a throwing native call cannot lose the
-        // item; the swapped-out item then lands in the slot the new one came from.
-        int packWrite = equip.IndexOf("player.Items[slot] = displaced;", StringComparison.Ordinal);
+        // item; the swapped-out item then lands in the slot the new one came from - the LIVE slot,
+        // because that is where the pack answered it, not the index the plan wrote down.
+        int packWrite = equip.IndexOf("player.Items[liveSlot] = displaced;", StringComparison.Ordinal);
         packWrite.Should().BeGreaterThan(seamCall, "the pack must only be written after the seam returned");
         equip.Should().Contain("pack_slot_after=");
         equip.Should().Contain("displaced=");
@@ -139,7 +139,7 @@ public sealed class ActorStateActionTests
         code.Should().NotContain("addItemToInventory");
         code.Should().NotContain("addItemToInventoryBool");
         code.Should().NotContain("createItemDebris");
-        foreach (string field in new[] { "occupant_before=", "occupant_after=", "source_slot=", "requested=" })
+        foreach (string field in new[] { "occupant_before=", "occupant_after=", "slot=", "named_slot=", "requested=" })
             equip.Should().Contain(field, $"the equip receipt must carry {field}");
     }
 

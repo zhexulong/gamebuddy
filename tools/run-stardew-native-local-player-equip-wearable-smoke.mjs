@@ -125,7 +125,11 @@ export async function runEquipWearableSmoke(client, receipts, _config, { termina
 
     const evidence = parseEvidence(terminal.evidence);
     assertEvidence(evidence, "body_slot", candidate.bodySlot);
-    assertEvidence(evidence, "source_slot", String(candidate.slot));
+    // The bag slot travels twice, because it is two different facts: `named_slot` is the index the snapshot wrote and
+    // `slot` is the one the live pack answered. This runner's own step is the first request after that observation, so
+    // no sibling has re-packed the pack in between and the two agree here.
+    assertEvidence(evidence, "named_slot", String(candidate.slot));
+    assertEvidence(evidence, "slot", String(candidate.slot));
     assertEvidence(evidence, "requested", candidate.qualifiedItemId);
     assertEvidence(evidence, "occupant_before", "none");
     assertEvidence(evidence, "occupant_after", candidate.qualifiedItemId);

@@ -62,6 +62,19 @@ namespace GameBuddy.Stardew;
 //     slot the removed wearable must land in. That asymmetry is what makes the native
 //     `isInventoryFull()` refusal meaningful, and it is why unequip needs no item id: the item is
 //     whatever the named body slot already holds.
+//
+// THE TWO SIDES OF AN EQUIP ARE NOT THE SAME KIND OF THING. `slot` is a BAG index the plan SAW: an
+// observation recorded a position, a sibling node of the same plan may have re-packed the pack
+// since, and `expectedQualifiedItemId` is the fact that survives that re-packing - so the source
+// is resolved live (`NamedSlotStillHolds`, then `ResolveLiveSlot`, the one seam the rest of this
+// walk resolves through) and the receipt prints `slot=` (the slot the pack answered) beside
+// `named_slot=` (the one the plan wrote). `expectedTargetId` is an ADDRESS instead: it names one
+// of the actor's own body slots, and a ring slot is not "some ring slot" - re-resolving it would
+// change what the receipt is ABOUT rather than repair a stale index, so the body slot is taken
+// from the id alone and the only question asked of it is whether its OCCUPANT moved
+// (`wearable_target_changed`). The refusal that used to answer "the named bag slot holds
+// something else" (`wearable_item_mismatch`) is gone with the read it described: the bag slot is
+// no longer the thing the item is looked for in.
 //   * `expectedTargetId` is an opaque id per BODY SLOT of the actor, published by discovery as
 //     `wearable_<body_slot>_<16 hex>`; see `BuildWearableTargetId`.
 //
@@ -124,9 +137,9 @@ namespace GameBuddy.Stardew;
 //
 // FAILURE MODES, each with its own terminal code. equip_wearable: an id that names no body slot of
 // this actor (`wearable_target_not_found`), a body slot whose occupant moved since discovery
-// (`wearable_target_changed`), an out-of-range or empty source slot (`item_not_owned_in_slot`), a
-// source slot holding a different item (`wearable_item_mismatch`), a source item that is not
-// wearable at all (`wearable_item_not_wearable`), a wearable aimed at the wrong body slot
+// (`wearable_target_changed`), a pack that holds no item of that id AT ALL
+// (`item_not_owned_in_slot`), a resolved item that is not wearable at all
+// (`wearable_item_not_wearable`), a wearable aimed at the wrong body slot
 // (`wearable_body_slot_mismatch`), the native call throwing (`wearable_native_exception`), the
 // call completing without the slot holding the item (`wearable_postcondition_unavailable`),
 // already satisfied (`wearable_already_equipped`), and success (`wearable_equipped`).
@@ -166,9 +179,9 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "wearable_target_not_found",
-                $"published={expectedTargetId};body_slots={string.Join("|", WearableBodySlots)}");
+                $"published={expectedTargetId};body_slots={string.Join("|", WearableBodySlots)};named_slot={slot}");
 
-        string identity = $"body_slot={bodySlot};source_slot={slot};requested={expectedQualifiedItemId}";
+        string identity = $"body_slot={bodySlot};requested={expectedQualifiedItemId}";
 
         TryReadWearableBodySlot(player, bodySlot, out Item? occupantBefore);
         if (occupantBefore is not null && string.Equals(occupantBefore.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
@@ -177,7 +190,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Succeeded,
                 "wearable_already_equipped",
-                $"{identity};occupant={occupantBefore.QualifiedItemId};moved=false");
+                $"{identity};named_slot={slot};occupant={occupantBefore.QualifiedItemId};moved=false");
 
         string liveTargetId = BuildWearableTargetId(player, bodySlot);
         if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
@@ -186,36 +199,38 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "wearable_target_changed",
-                $"{identity};published={expectedTargetId};live={liveTargetId};occupant_before={DescribeWearableOccupant(occupantBefore)}");
+                $"{identity};named_slot={slot};published={expectedTargetId};live={liveTargetId};occupant_before={DescribeWearableOccupant(occupantBefore)}");
 
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not Item source)
+        // THE BAG SIDE IS A SLOT THE CALLER SAW, THE EQUIPMENT SIDE IS AN ADDRESS. `slot` is where the plan observed the
+        // wearable in `Game1.player.Items`, a position a sibling node of the same plan may have re-packed - so it is
+        // re-resolved against the live pack exactly as the other twelve members of this walk are. `expectedTargetId`
+        // names one of the actor's OWN body slots, and a ring slot is not "some ring slot": re-resolving that would change
+        // what the receipt is about instead of repairing a stale index, so it is not re-resolved and its occupant is
+        // checked above by `wearable_target_changed`.
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        if (liveSlot < 0 || player.Items[liveSlot] is not Item source)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "item_not_owned_in_slot",
-                $"{identity};inventory_slots={player.Items.Count};slot_item=none");
-        if (!string.Equals(source.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "wearable_item_mismatch",
-                $"{identity};slot_item={source.QualifiedItemId}");
+                $"item={expectedQualifiedItemId};named_slot={slot};inventory_slots={player.Items.Count};named_slot_item={DescribeWearableOccupant(slot >= 0 && slot < player.Items.Count ? player.Items[slot] : null)}");
         if (!IsWearableItem(source))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "wearable_item_not_wearable",
-                $"{identity};slot_item={source.QualifiedItemId};item_type={source.GetType().Name}");
+                $"{identity};slot={liveSlot};named_slot={slot};slot_item={source.QualifiedItemId};item_type={source.GetType().Name}");
         if (!IsWearableForBodySlot(source, bodySlot))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "wearable_body_slot_mismatch",
-                $"{identity};slot_item={source.QualifiedItemId};item_type={source.GetType().Name}");
+                $"{identity};slot={liveSlot};named_slot={slot};slot_item={source.QualifiedItemId};item_type={source.GetType().Name}");
 
         Item? displaced;
         try
@@ -230,18 +245,19 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "wearable_native_exception",
-                $"{identity};occupant_before={DescribeWearableOccupant(occupantBefore)};occupant_after={DescribeWearableOccupant(occupantAfterThrow)};"
-                + $"pack_slot_untouched={PackSlotHolds(player, slot, expectedQualifiedItemId).ToString().ToLowerInvariant()};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"{identity};slot={liveSlot};named_slot={slot};occupant_before={DescribeWearableOccupant(occupantBefore)};"
+                + $"occupant_after={DescribeWearableOccupant(occupantAfterThrow)};pack_slot_untouched={PackSlotHolds(player, liveSlot, expectedQualifiedItemId).ToString().ToLowerInvariant()};"
+                + $"native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
-        player.Items[slot] = displaced;
+        player.Items[liveSlot] = displaced;
 
         TryReadWearableBodySlot(player, bodySlot, out Item? occupantAfter);
         bool equipped = occupantAfter is not null
             && string.Equals(occupantAfter.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal);
         string evidence =
-            $"{identity};occupant_before={DescribeWearableOccupant(occupantBefore)};occupant_after={DescribeWearableOccupant(occupantAfter)};"
-            + $"displaced={displaced?.QualifiedItemId ?? "none"};pack_slot_after={player.Items[slot]?.QualifiedItemId ?? "none"}";
+            $"{identity};slot={liveSlot};named_slot={slot};occupant_before={DescribeWearableOccupant(occupantBefore)};"
+            + $"occupant_after={DescribeWearableOccupant(occupantAfter)};displaced={displaced?.QualifiedItemId ?? "none"};pack_slot_after={player.Items[liveSlot]?.QualifiedItemId ?? "none"}";
         return equipped
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "wearable_equipped", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "wearable_postcondition_unavailable", evidence);

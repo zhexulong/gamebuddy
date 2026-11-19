@@ -283,7 +283,8 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     reasonCode: "wearable_equipped",
     fields: [
       ["body_slot", "hat"],
-      ["source_slot", "4"],
+      ["slot", "5"],
+      ["named_slot", "4"],
       ["requested", "(H)9"],
       ["occupant_before", "(H)8"],
       ["occupant_after", "(H)9"],

@@ -9,6 +9,7 @@ using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Netcode;
 using StardewValley;
+using StardewValley.Objects;
 using Xunit;
 using Xunit.Abstractions;
 using static GameBuddy.Stardew.Integration.Tests.TargetFamilyCompletenessTests;
@@ -38,9 +39,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// family was the first walked and the four farming members - <c>fertilize_tile</c>, <c>place_wood_fence</c>,
 /// <c>place_crab_pot</c>, <c>bait_crab_pot</c> - the second, driven rather than only declared by
 /// <see cref="StaleSlotWalkTests"/> below, and <c>use_item</c>, <c>machine_load</c> and <c>interact_npc_with_item</c> the
-/// third. The rest of the population is named in <see cref="PendingWalk"/> and every
-/// entry there EXPIRES - the gate fails the moment one of them starts re-resolving, so the list cannot outlive its
-/// reason.
+/// third. <c>equip_wearable</c> was the last, and it is the reason the resolution seam is typed to an
+/// <see cref="Item"/> rather than to a <see cref="StardewValley.Object"/>: a hat is not an Object, so the seam as it was
+/// signed could not see one at all. The walk is now complete - <see cref="PendingWalk"/> is empty - and that table stays
+/// as the gate's refusal direction rather than as a record of work outstanding.
 /// </para>
 ///
 /// <para>
@@ -120,11 +122,15 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
     /// The members that still trust the index, each with the reason it has not been walked yet. EVERY ENTRY EXPIRES: the
     /// gate fails on one that has become a re-resolution, so this list can only shrink, and cannot silently outlive the
     /// walk it records.
+    ///
+    /// <para>
+    /// EMPTY, and that is the finished state rather than an unmeasured one: the last member, <c>equip_wearable</c>, now
+    /// re-resolves its bag side like the other twelve. The table stays because it is the gate's refusal DIRECTION - a
+    /// member that starts trusting the index again is reported by name as <c>unwalked</c>, so the only ways to pass are to
+    /// walk it or to explain it here.
+    /// </para>
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> PendingWalk = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["equip_wearable"] = "the pack side of a wearable move is a slot the caller saw; the walk has not reached it",
-    };
+    private static readonly IReadOnlyDictionary<string, string> PendingWalk = new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly Lazy<Measurement> Measured = new(Measure);
 
@@ -462,6 +468,7 @@ public sealed class StaleSlotWalkTests
     private const string CrabPotItem = "(O)710";
     private const string CarryableItem = "(O)24";
     private const string CoffeeBeanItem = "(O)433";
+    private const string WearableItem = "(H)0";
 
     [Fact]
     public void AFertilizerThatMovedInThePackIsFoundWhereThePackHoldsIt()
@@ -623,6 +630,38 @@ public sealed class StaleSlotWalkTests
             "npc_interaction_target_gone",
             $"the pack holds the gift the request named, so the villager is the layer that answers (evidence: {receipt.Evidence})");
         receipt.Evidence.Should().Contain("target=npc_relationship_0000000000000000");
+    }
+
+    /// <summary>
+    /// <c>equip_wearable</c>, the thirteenth member and the one the walk opened its last row for: the plan saw the hat in
+    /// slot 0, the pack re-packed it into slot 5, and the request names both. The BAG side is the slot the caller SAW, so
+    /// it is re-resolved against the live pack; the EQUIPMENT side - the hat slot inside `expectedTargetId` - is an
+    /// address and is NOT re-resolved, because a hat slot is not "some hat slot".
+    ///
+    /// <para>
+    /// This is the one member whose item is not a <c>StardewValley.Object</c>: a <c>Hat</c> derives from <c>Item</c>
+    /// directly, which is why the live-pack seam had to widen before this case could pass.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AWearableThatMovedInThePackIsEquippedFromWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.PutWearableInPackSlot(LiveSlot, typeof(Hat), WearableItem);
+        string targetId = ExecutionManager.BuildWearableTargetId(world.Actor, "hat");
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("equip_wearable")
+            .RequestLocalEquipWearable("req_wearable_moved", NamedSlot, WearableItem, targetId, Deadline());
+
+        receipt.State.Should().Be(
+            ExecutionState.Succeeded,
+            $"the pack holds the hat the request named, so the equipment side of the move is what answers (evidence: {receipt.Evidence})");
+        receipt.ReasonCode.Should().Be("wearable_equipped");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.hat.Value!.QualifiedItemId.Should().Be(WearableItem, "the hat went onto the body slot the id named");
+        world.Actor.Items[LiveSlot].Should().BeNull("the hat left the slot the pack answered");
     }
 
     /// <summary>

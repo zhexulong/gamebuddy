@@ -147,7 +147,7 @@ function makeClient({ initialWorld = world(), hooks = {} } = {}) {
           revision: current.revision + 1,
           evidence: {
             detail:
-              `body_slot=hat;source_slot=${request.args.slot};requested=${request.args.expectedQualifiedItemId};` +
+              `body_slot=hat;named_slot=${request.args.slot};requested=${request.args.expectedQualifiedItemId};` +
               `occupant=${live.occupantQualifiedItemId};moved=false`,
           },
         };
@@ -168,7 +168,7 @@ function makeClient({ initialWorld = world(), hooks = {} } = {}) {
           revision: current.revision + 1,
           evidence: {
             detail:
-              `body_slot=hat;source_slot=${request.args.slot};requested=${request.args.expectedQualifiedItemId};` +
+              `body_slot=hat;slot=${request.args.slot};named_slot=${request.args.slot};requested=${request.args.expectedQualifiedItemId};` +
               `occupant_before=none;occupant_after=${request.args.expectedQualifiedItemId};displaced=none;pack_slot_after=none`,
           },
         };
@@ -291,7 +291,9 @@ test("equip_wearable: evidence that omits the observed slot contents fails the r
   session.client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.reasonCode === "wearable_equipped")
-      receipt.evidence = { detail: "body_slot=hat;source_slot=5;requested=(H)0;occupant_before=none" };
+      receipt.evidence = {
+        detail: `body_slot=hat;slot=${SOURCE_SLOT};named_slot=${SOURCE_SLOT};requested=${HAT_ITEM};occupant_before=none`,
+      };
     return receipt;
   };
   const result = await session.result();

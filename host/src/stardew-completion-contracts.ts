@@ -3425,17 +3425,20 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     );
   },
   equip_wearable: (claim) => {
-    // farmhandexecutioncontroller.actorstateactions.cs:185-190 (a repeat of an already
-    // satisfied request) and :257-262 (the swap landed). Both are deterministic
-    // successes: append-only `slot/target id` identity plus the body slot's occupant.
+    // farmhandexecutioncontroller.actorstateactions.cs, RequestLocalEquipWearable: `wearable_already_equipped` is the
+    // repeat of a satisfied request (answered BEFORE the staleness check, because a repeat describes the pre-state) and
+    // `wearable_equipped` is the swap that landed. Both are deterministic successes. The bag slot travels as TWO facts
+    // because it is two: `named_slot` is the index the plan observed and `slot` is the one the live pack answered, since
+    // a sibling node of the same plan may have re-packed the pack in between. `body_slot` is the equipment ADDRESS - it
+    // comes from the request's target id and is never re-resolved.
     return (
       (claim.reasonCode === "wearable_already_equipped" &&
         declaredCompletionEvidence(
           claim.detail,
-          ["body_slot", "source_slot", "requested", "occupant", "moved"],
+          ["body_slot", "named_slot", "requested", "occupant", "moved"],
           (e) =>
             isWearableBodySlot(e.body_slot) &&
-            validSlot(e.source_slot) &&
+            validSlot(e.named_slot) &&
             hasOpaqueEvidenceValue(e.requested) &&
             e.occupant === e.requested &&
             e.moved === "false",
@@ -3445,7 +3448,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           claim.detail,
           [
             "body_slot",
-            "source_slot",
+            "slot",
+            "named_slot",
             "requested",
             "occupant_before",
             "occupant_after",
@@ -3454,7 +3458,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           ],
           (e) =>
             isWearableBodySlot(e.body_slot) &&
-            validSlot(e.source_slot) &&
+            validSlot(e.slot) &&
+            validSlot(e.named_slot) &&
             hasOpaqueEvidenceValue(e.requested) &&
             isNoneOrOpaqueEvidenceValue(e.occupant_before) &&
             e.occupant_after === e.requested &&

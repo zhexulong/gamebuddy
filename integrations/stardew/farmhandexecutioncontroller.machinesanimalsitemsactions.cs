@@ -18,9 +18,10 @@ internal sealed partial class ExecutionManager
             authorize: null,
             gate: _ =>
             {
-                if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+                if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held
+                    || held.Item is not StardewValley.Object input)
                     return new TileTargetRefusal("machine_load_input_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
-                return MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, held) is { } machineRefusal
+                return MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, held.Slot, input) is { } machineRefusal
                     ? new TileTargetRefusal(machineRefusal.ReasonCode, machineRefusal.Detail)
                     : null;
             },
@@ -45,10 +46,9 @@ internal sealed partial class ExecutionManager
     /// for the INPUT comes from the probe, and it names the inputs the machine's data does accept.
     /// </para>
     /// </summary>
-    private static (string ReasonCode, string Detail)? MachineLoadRefusal(int targetX, int targetY, string expectedTargetId, int namedSlot, LiveSlot held)
+    private static (string ReasonCode, string Detail)? MachineLoadRefusal(int targetX, int targetY, string expectedTargetId, int namedSlot, int liveSlot, StardewValley.Object input)
     {
-        StardewValley.Object input = held.Item;
-        string slots = $"slot={held.Slot};named_slot={namedSlot}";
+        string slots = $"slot={liveSlot};named_slot={namedSlot}";
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
@@ -122,11 +122,11 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteMachineLoad(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } liveInput)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } liveInput
+            || liveInput.Item is not StardewValley.Object input)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = liveInput.Slot;
-        StardewValley.Object input = liveInput.Item;
-        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, liveInput) is { } machineRefusal)
+        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, liveSlot, input) is { } machineRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, machineRefusal.ReasonCode, machineRefusal.Detail);
 
         GameLocation location = Game1.player.currentLocation;
@@ -306,10 +306,10 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held
+            || held.Item is not StardewValley.Object food)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object food = held.Item;
         bool isDrink = Game1.objectData.TryGetValue(food.ItemId, out var objectData) && objectData.IsDrink;
         if (food.QualifiedItemId == "(O)434" || (!isDrink && food.Edibility == -300))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_consumable", $"item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
@@ -770,10 +770,10 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteInteractNpcWithItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         Farmer player = Game1.player;
-        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held)
+        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held
+            || held.Item is not StardewValley.Object offered)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
         int liveSlot = held.Slot;
-        StardewValley.Object offered = held.Item;
         StardewValley.GameLocation location = player.currentLocation;
         StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)

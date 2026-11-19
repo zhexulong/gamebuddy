@@ -2413,7 +2413,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>The live pack slot holding the item a request named, and that item.</summary>
-    internal readonly record struct LiveSlot(int Slot, StardewValley.Object Item);
+    internal readonly record struct LiveSlot(int Slot, Item Item);
 
     /// <summary>
     /// The slot the pack HOLDS <paramref name="qualifiedItemId"/> in, resolved live against the pack, or null when the
@@ -2439,12 +2439,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// no such item at all, which is the refusal a caller can act on. Nothing here searches by KIND alone - the caller's
     /// qualified id is required - so a request can never spend a different item than the one it named.
     /// </para>
+    /// <para>
+    /// WHY THE ITEM IS AN <see cref="Item"/> AND NOT A <see cref="StardewValley.Object"/>. The pack holds TWO families, and
+    /// only one of them is an <see cref="StardewValley.Object"/>: a <c>Hat</c>, <c>Boots</c>, <c>Ring</c> or <c>Clothing</c>
+    /// derives from <see cref="Item"/> directly (probed against the shipped assembly: `is StardewValley.Object` is false for
+    /// all four). Signed as an Object, this seat could not see a wearable AT ALL and answered "the pack holds none of that"
+    /// for a hat lying in the next slot - the stale-index defect wearing a different mask. The kind predicate is therefore
+    /// typed to the family it is asked about, and an action whose rule needs an Object narrows by pattern at its own use
+    /// site (the qualified id is family-tagged - `(O)`, `(H)`, `(R)`, `(B)`, `(C)` - so narrowing there can never turn one
+    /// family into another).
+    /// </para>
     /// </summary>
-    internal static LiveSlot? ResolveLiveSlot(Farmer player, string qualifiedItemId, Func<StardewValley.Object, bool> isKind)
+    internal static LiveSlot? ResolveLiveSlot(Farmer player, string qualifiedItemId, Func<Item, bool> isKind)
     {
         for (int index = 0; index < player.Items.Count; index++)
         {
-            if (player.Items[index] is StardewValley.Object candidate
+            if (player.Items[index] is Item candidate
                 && candidate.Stack > 0
                 && string.Equals(candidate.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)
                 && isKind(candidate))
