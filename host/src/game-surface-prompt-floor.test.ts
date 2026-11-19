@@ -1265,17 +1265,14 @@ const ENFORCED_ELSEWHERE: readonly SurfaceSentenceOwner[] = Object.freeze([]);
 /**
  * Sentences no other layer can carry yet. Each is debt with the change that ends it, and the gate prints the count
  * rather than folding it into `enforced-elsewhere`.
+ *
+ * EMPTY SINCE 2026-11-19, and that is the reading rather than an omission: the last entry was the line ordering her to
+ * translate a refusal's reason code, and it left the day the renderers translated it - `fact-brief.ts` states the step in
+ * `RECEIPT_STATE_ZH` and appends the instruction `stardew-action-remedy.ts` owes that code, with the code and its evidence
+ * on the block's address line. Its owner record was deleted with the sentence, which is what this gate requires: a record
+ * that outlives its sentence is an exemption over nothing.
  */
-const CANNOT_BE_MOVED: readonly SurfaceSentenceOwner[] = Object.freeze([
-  Object.freeze({
-    id: "machine_vocabulary_translated",
-    reads: /\bgift_given\b|原因码|reason code/u,
-    owner:
-      "the two renderers: `fact-brief.ts` prints a receipt's reasonCode and evidence.detail as the Mod published them, and " +
-      "`game-world-vocabulary.ts` falls back to the native tool identity when a slot publishes no tool word. The day both " +
-      "translate, this line is deleted - there is no other home for it, which is why it is debt rather than a duplicate",
-  }),
-]);
+const CANNOT_BE_MOVED: readonly SurfaceSentenceOwner[] = Object.freeze([]);
 
 /** The recorded pair before this unit: the assembled Game prompt and the surface block, as `remeasured_2026_11_24` took them. */
 const BEFORE_THIS_UNIT = Object.freeze({ systemChars: 5_553, surfaceChars: 3_226 });

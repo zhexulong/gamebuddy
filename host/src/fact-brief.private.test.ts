@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { FACT_PRODUCER, CompanionEventPump, MAX_BATCH_BYTES, type WorldFact } from "./event-pump.js";
 import { assertReportsWithoutInstructing } from "./fact-block-prose.test-support.js";
 import {
+  ADDRESSABLE_FACTS_HEAD,
   ADDRESSABLE_ROWS_HEAD,
   composeFactBrief,
   composeWorldState,
@@ -1817,10 +1818,22 @@ function nameOf(entry: string): string {
   return at <= 0 ? entry : entry.slice(0, at);
 }
 
-/** What the receipt line shows of one evidence detail, as the model reads it. */
+/**
+ * What the receipt line shows of one evidence detail, as the model reads it.
+ *
+ * THE DETAIL PRINTS ON THE ADDRESS LINE, after the fact's own label and its `reasonCode=`, joined to the rest of the
+ * address with a FULL-WIDTH separator (`ADDRESSABLE_FACTS_HEAD`). It used to print inside the sentence's parentheses, which
+ * is why this helper sliced between `（` and `）`; the sentence stopped carrying it on 2026-11-19 and the slice moved with
+ * it. The detail's own separators stay ASCII `;`, so `keptFields` still splits it into the Mod's fields.
+ */
 function renderedEvidence(detail: string): string {
   const text = composedField("evidence", detail);
-  return text.slice(text.indexOf("（") + 1, text.lastIndexOf("）"));
+  const head = text.indexOf(ADDRESSABLE_FACTS_HEAD);
+  assert.ok(head >= 0, `the delivery printed no address line, so the detail is not in the message at all: ${text}`);
+  const line = text.slice(head + ADDRESSABLE_FACTS_HEAD.length).split("\n")[0] ?? "";
+  const marker = line.indexOf("reasonCode=");
+  assert.ok(marker >= 0, `the address line carries no reasonCode, so this reader is looking at the wrong field: ${line}`);
+  return line.slice(line.indexOf("；", marker) + 1);
 }
 
 /** The whole fields a rendered detail keeps, with any notice already removed. */

@@ -12,8 +12,16 @@ import {
   readAuthoredContextRegistry,
 } from "./test-support/authored-context-catalog.test-support.js";
 
+import {
+  hasRuntimeEnvironmentFactsProvider,
+  injectRuntimeEnvironmentFacts,
+  renderRuntimeEnvironmentBlock,
+  setRuntimeEnvironmentFacts,
+} from "@cortexkit/pi-magic-context/memory";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { composeFactBrief } from "./fact-brief.js";
+import { formatGameEnvironmentFacts } from "./game-world-vocabulary.js";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
@@ -37,6 +45,7 @@ import {
   resolveRuntimePaths,
   RUNTIME_PACKAGE_VERSIONS,
 } from "./runtime.js";
+import { createRenderedEnvironmentFactsProvider } from "./runtime-core.internal.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
 import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
@@ -659,6 +668,97 @@ test("generic runtime keeps an explicit game surface when the Host construction 
         );
         assert.equal(runtime.paths.surfaceSessionId, "game_surface_01");
       } finally {
+        runtime.session.dispose();
+      }
+    },
+  );
+});
+
+test("a Game runtime registers no environment-facts provider: the facts reach the turn once, in <world-state>", async () => {
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-game-environment-facts-"));
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      // The state before this mount must be known: the vendored registration is one process-global, and a dozen other
+      // cases in this file mount a Game runtime.
+      setRuntimeEnvironmentFacts(undefined);
+      const runtime = await createCompanionRuntime(
+        { ...identity, continuityId: "continuity_game_environment_facts_01" },
+        root,
+        mod.connection,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        "game_environment_facts_01",
+        undefined,
+        "game",
+      );
+      try {
+        // 1. THE DECISION: the mount registered nothing, so the transform's own guard (`hasRuntimeEnvironmentFactsProvider`)
+        //    is false and there is no block to inject. Before this unit the Game mount registered a provider here and the
+        //    transform wrote the same facts a second time into the oldest player message.
+        assert.equal(
+          hasRuntimeEnvironmentFactsProvider(),
+          false,
+          "a Game runtime registered an environment-facts provider: the facts it renders are already this turn's <world-state>",
+        );
+        assert.equal(renderRuntimeEnvironmentBlock(), undefined, "there is no block for the transform to inject");
+
+        // 2. AND THE COVERAGE IS UNTOUCHED: the whole environment line the block used to carry is inside the <world-state>
+        //    of the turn the model reads, composed by the same function, over the world the Mod actually served.
+        const observe = mod.connection.observe;
+        assert.ok(observe !== undefined, "the fixture bridge answers an observation request");
+        const world = await observe.call(mod.connection);
+        const brief = composeFactBrief({
+          inputs: [],
+          snapshot: Object.freeze({ snapshot: world, revision: world.revision, ageTurns: 0, ageMs: 0, contentAgeMs: 0 }),
+          events: [],
+          locale: "zh-CN",
+        });
+        const worldState = /<world-state>\n([\s\S]*?)\n<\/world-state>/.exec(brief);
+        assert.ok(worldState !== null, `the turn opens with a <world-state> block: ${brief}`);
+        const environment = formatGameEnvironmentFacts(world, true);
+        assert.notEqual(environment, "", "the fixture world renders an environment line at all");
+        assert.ok(
+          worldState[1]!.includes(environment),
+          `the environment line is not inside <world-state>, so dropping the block lost it: ${environment}`,
+        );
+
+        // 3. WHAT THE SECOND COPY COST, measured from the producer the mount used to register, and the control that makes
+        //    the zero above a measurement: with a provider registered the pass does reach the first player turn.
+        const provider = createRenderedEnvironmentFactsProvider(mod.connection, join(root, "environment-facts.jsonl"));
+        setRuntimeEnvironmentFacts(provider);
+        const block = renderRuntimeEnvironmentBlock();
+        assert.ok(block !== undefined, "the control: a registered provider renders a block");
+        const zh = (world.presentationLocale ?? "").toLowerCase().startsWith("zh");
+        assert.equal(
+          block.split("\n")[1],
+          formatGameEnvironmentFacts(world, zh),
+          "the block's text is the same environment line <world-state> carries, in this run's own locale",
+        );
+        const turn = () => ({ info: { role: "user" as const }, parts: [{ type: "text", text: "早。" }] });
+        const withBlock = turn();
+        assert.equal(injectRuntimeEnvironmentFacts([withBlock]), 1, "the control: the pass reaches the turn");
+        setRuntimeEnvironmentFacts(undefined);
+        const withoutBlock = turn();
+        assert.equal(injectRuntimeEnvironmentFacts([withoutBlock]), 0, "after the removal the pass modifies nothing");
+        assert.equal(withoutBlock.parts[0]!.text, "早。", "the player's own turn is byte-for-byte what it was");
+        const cost = withBlock.parts[0]!.text.length - withoutBlock.parts[0]!.text.length;
+        assert.equal(cost, block.length + 2, "the block plus the separator is the whole cost of a second copy");
+        process.stderr.write(
+          `[runtime-environment] one Game turn: ${String(withBlock.parts[0]!.text.length)} chars with the block, ` +
+            `${String(withoutBlock.parts[0]!.text.length)} without -> ${String(cost)} chars saved ` +
+            `(${String(block.length)} block + 2 separator; ${String(Buffer.byteLength(block, "utf8"))} B block)\n`,
+        );
+      } finally {
+        setRuntimeEnvironmentFacts(undefined);
         runtime.session.dispose();
       }
     },

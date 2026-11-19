@@ -973,9 +973,10 @@ test("the block the transform injects is recorded per request, with the snapshot
       }),
     );
     const firstSnapshot = connection.state.snapshot as GameEnvironmentFactsSource;
-    // The REAL seam: the vendored transform's own registration, called the way the runtime calls it, so
-    // the test proves the provider the transform reaches is the one that records. Registration is
-    // process-global and locked (a second provider throws), so this file registers exactly once here.
+    // The factory's own contract, driven through the vendored registration the transform reads, so the test proves
+    // the provider the transform would reach is the one that records. Nothing in production registers it any more
+    // (the facts are `<world-state>`'s now); registration is process-global and locked, so this file registers
+    // exactly once here.
     setRuntimeEnvironmentFacts(
       createRenderedEnvironmentFactsProvider(connection as unknown as GameConnection, recordPath),
     );

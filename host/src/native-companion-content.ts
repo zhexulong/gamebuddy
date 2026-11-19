@@ -231,27 +231,88 @@ export type NativeAssistantStopReason = "pending" | "stop" | "length" | "toolUse
 export type NativeProviderFailureClass = ProviderFailureClass;
 
 /**
- * Why one assistant message's text parts produced no piece, when the message carried some.
+ * The characters a model types when it has no channel for silence: a pause, never a word.
  *
- * One member per reason the projection deliberately withholds text, so an absent piece is a fact
- * with a name rather than a silence. The population each reason counts is the message's own text
- * parts (`textParts` on `onMessageText`), never a hand-kept list of messages.
+ * <p>
+ * WHAT THE LIST IS FOR. A bubble is committed whole and cannot be retracted, so a turn with nothing to say has exactly
+ * one way to end without speaking: deliver no bubble (`deliverTurn` answers `nothing_to_say`). A model does not know
+ * that, and a turn that wanted to be quiet arrives as marks - `…………`, `。。。`, `· · ·` - so the surface presents a line
+ * the player reads as something she said. MEASURED 2026-11-19 (`round79`): one turn carried one real line and three
+ * deliveries of `chars 5 / 5 / 2`, every one of them ellipses - the owner's reading of that, "… is almost everything
+ * she says", was correct.
+ * </p>
  *
- * `blank_text` and `empty_after_projection` are the surface refusing to draw something a player
- * cannot read; `unstreamed_text` is the paragraph lane meeting a message whose deltas never came;
- * `undrawable_text` is the turn lane meeting text its own guard refuses (unprintable control
- * characters, or more bytes than one message may carry); `intermediate_message` is a surface whose
- * single-shot contract has nowhere to put a message that is not the turn's answer; `provider_error`
- * and `aborted` are Pi's own ending of the message.
+ * <p>
+ * THIS IS A REGISTER, NOT A LIST OF SHORT REPLIES. A text is silence only when EVERY character is one of these or
+ * whitespace; one character outside the set makes it speech, which is why `？` `?` `！` `!` are deliberately absent - a
+ * lone question mark IS an utterance in Chinese chat ("what?"), and a rule that swallowed it would delete a real reply
+ * to the player. Adding a marker says "a model writes this instead of being quiet"; it never says "this may be dropped".
+ * </p>
  */
+export const SILENCE_MARKERS: ReadonlySet<string> = Object.freeze(new Set(["…", ".", "。", "·"]));
+
+/**
+ * Whether a presented paragraph is nothing but silence markers: every character is a `SILENCE_MARKERS` member or space.
+ *
+ * A blank or all-whitespace text is not this answer - it never became a paragraph at all (`blank_text`).
+ */
+export function isSilenceOnly(text: string): boolean {
+  let sawMarker = false;
+  for (const character of text) {
+    if (SILENCE_MARKERS.has(character)) {
+      sawMarker = true;
+      continue;
+    }
+    if (/\s/u.test(character)) continue;
+    return false;
+  }
+  return sawMarker;
+}
+
+/**
+ * The name a bubble's own text is withheld under when it carries no word: `punctuation_only:<chars>`.
+ *
+ * The character count is part of the name because it is the only thing that distinguishes the three deliveries `round79`
+ * recorded (`5 / 5 / 2`): a run's account has to be able to say how much of that register was in the turn.
+ */
+export const PUNCTUATION_ONLY = "punctuation_only" as const;
+
+export type PunctuationOnlySuppression = `${typeof PUNCTUATION_ONLY}:${number}`;
+
+/** One spelling for the name, its count and any reader that has to recognise the family. */
+export function punctuationOnlyReason(chars: number): PunctuationOnlySuppression {
+  return `${PUNCTUATION_ONLY}:${chars}`;
+}
+
+/**
+ * Every name one assistant message's text parts can be withheld under, as a VALUE list.
+ *
+ * One member per reason the projection deliberately withholds text, so an absent piece is a fact with a name rather
+ * than a silence. The population each reason counts is the message's own text parts (`textParts` on
+ * `onMessageText`), never a hand-kept list of messages - and it is a value list so the readers and gates over it derive
+ * their population instead of retyping it.
+ *
+ * `blank_text` and `empty_after_projection` are the surface refusing to draw something a player cannot read;
+ * `unstreamed_text` is the paragraph lane meeting a message whose deltas never came; `undrawable_text` is the turn lane
+ * meeting text its own guard refuses (unprintable control characters, or more bytes than one message may carry);
+ * `intermediate_message` is a surface whose single-shot contract has nowhere to put a message that is not the turn's
+ * answer; `provider_error` and `aborted` are Pi's own ending of the message.
+ *
+ * `punctuation_only` is not in this list because it carries a count: `PunctuationOnlySuppression` joins it to the union.
+ */
+export const NATIVE_COMPANION_PART_SUPPRESSIONS = Object.freeze([
+  "blank_text",
+  "empty_after_projection",
+  "unstreamed_text",
+  "undrawable_text",
+  "intermediate_message",
+  "provider_error",
+  "aborted",
+] as const);
+
 export type NativeCompanionPartSuppression =
-  | "blank_text"
-  | "empty_after_projection"
-  | "unstreamed_text"
-  | "undrawable_text"
-  | "intermediate_message"
-  | "provider_error"
-  | "aborted";
+  | (typeof NATIVE_COMPANION_PART_SUPPRESSIONS)[number]
+  | PunctuationOnlySuppression;
 
 /**
  * What became of one assistant message's text parts.
@@ -803,6 +864,17 @@ export function attachNativeCompanionContent(
         const paragraph = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
         if (paragraph === null) {
           reportMessageText(finalMessage, bubbleSuppressionFor(finalMessage));
+          return;
+        }
+        // A PARAGRAPH OF NOTHING BUT SILENCE MARKS IS NOT SPEECH, so it never joins the bubble - and the drop is named,
+        // because a part that vanishes without a count reads exactly like a companion who said nothing (`round79`'s
+        // `chars 5 / 5 / 2`). A turn whose every message was one of these delivers no bubble at all
+        // (`nothing_to_say`), which is the ending the model had no channel for and typed dots to fake.
+        //
+        // The rules this parameter is not: it is not a length rule and not a filter over punctuation inside a sentence.
+        // `…… 好吧` carries a word, so it is speech; `？` alone carries none of `SILENCE_MARKERS`, so it is speech too.
+        if (isSilenceOnly(paragraph)) {
+          reportMessageText(finalMessage, punctuationOnlyReason(paragraph.length));
           return;
         }
         reportMessageText(finalMessage, null);

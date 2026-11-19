@@ -207,14 +207,13 @@ public sealed class CandidateActionLifecycleFixTests
         var request = CreateExecEnvelope(scope, "req_emote_unproven", "idemp_emote_unproven", "express_emote", new BridgeExecutionArgs { Emote = "happy" }, deadlineMs);
         session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? response, out string reason).Should().BeTrue(reason);
         response.Should().NotBeNull();
-        // Whatever the non-virtual Farmer.doEmote does on this uninitialized
-        // actor — arm the animation (isEmoting=true -> succeeded/emote_started),
-        // throw (-> uncertain/emote_native_exception) or leave the emote unarmed
-        // (-> uncertain/emote_postcondition_unavailable) — the action must always
-        // produce exactly one durable terminal and never invent a success that
-        // was not proven through the descriptor postcondition (emote_started).
-        response!.Payload.State.Should().BeOneOf("succeeded", "uncertain");
-        response.Payload.ReasonCode.Should().BeOneOf("emote_started", "emote_native_exception", "emote_postcondition_unavailable");
+        // ONE terminal, and it is PROVEN rather than guessed: `Farmer.doEmote` is a field write behind
+        // `!Game1.eventUp && !isEmoting`, and the handler reads both guards before dispatching, so this uninitialized
+        // actor (no event, not emoting) arms the animation and the receipt says exactly that. The two `Uncertain`
+        // answers this used to accept - `emote_native_exception` and `emote_postcondition_unavailable` - are gone
+        // because neither was a fact: the call cannot throw and an emote that did not arm is a certain `Rejected`.
+        response!.Payload.State.Should().Be("succeeded");
+        response.Payload.ReasonCode.Should().Be("emote_started");
         response.Payload.ExecutionId.Should().NotBeNullOrEmpty();
 
         // A reopened session over the same journal replays the exact tuple as the

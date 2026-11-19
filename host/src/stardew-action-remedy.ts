@@ -13,6 +13,25 @@
  * code and its facts instead (`no_safe_clear:<occupant>:<action>`), and the sentence a reader needs - what she
  * can do about it - is composed here, next to the run's own prompt.
  *
+ * <p>
+ * AND ITS KEY SPACE IS THE MOD'S WHOLE DECLARED REFUSAL VOCABULARY, not one family of it. It began as the body holds,
+ * because `player_not_actionable` was the code that cost a run its turn; measured `round78` (2026-11-19, read back from
+ * the live-runner log this unit keeps as `REFUSED_IN_A_REAL_RUN` in its suite) the codes she ACTUALLY read were
+ * `no_native_path` 8, `navigation_approach_unavailable` 6, `native_path_ended` 2, `clear_step_blocked` 1,
+ * `actor_moving` 1, `warp_out_of_range` 1 and `destination_locked` 1 - and this table knew none of them, so the Game
+ * floor carried a temporary second line ordering her to translate the machine's words herself. That line is gone
+ * (`game-surface-prompt-floor.ts`), and what replaced it is the movement, pathing, clearing, programme and navigation
+ * families below; `stardew-action-remedy.test.ts`'s `a_refusal_she_reads_is_a_sentence` holds the population to the
+ * Mod's declarations rather than to this paragraph.
+ * </p>
+ *
+ * <p>
+ * ONE SENTENCE PER ANSWER, NOT PER CODE. Nine navigation terminals all mean "read the world before acting"; one sentence
+ * says that once, and the code keeps its own spelling in the reference line the renderer prints beside it
+ * (`fact-brief.ts`). What must not be shared is the ANSWER: two codes with different countermeasures may not read the
+ * same, which is why the body holds below are each their own case.
+ * </p>
+ *
  * It never promises a remedy it cannot deliver: a modal the audited whitelist will not close reports that
  * honestly rather than pointing at a tool that will refuse, and every route it names is one the Game surface
  * actually hands over - a mounted tool, or a step the plan builder admits (`stardew-action-remedy.test.ts`
@@ -41,14 +60,377 @@ const NO_PUBLISHED_CLEAR_PREFIX = "no_published_action_clears:";
  * The refusal families this module renders, keyed by the Mod's own code, with the reason a family that names no sentence is
  * still honest to leave bare.
  *
- * EMPTY TODAY, and that is the claim: every refusal family the Mod's clearing join can publish has a sentence below. An
- * entry added here is a decision a reader can see and argue with, and `a_refusal_the_model_reads_is_a_sentence` refuses an
- * entry that carries no reason.
+ * EMPTY TODAY, and that is the claim: every family the Mod DECLARES as a refusal has a sentence below - the body holds, the
+ * movement and pathing outcomes, the clearing family's own verdicts, the programme's, and the navigation terminals.
+ * `a_refusal_she_reads_is_a_sentence` derives that population from the Mod's declarations and from the codes a real run
+ * delivered, so an entry added here is a decision a reader can see and argue with, and an entry that carries no reason is
+ * refused.
  */
 export const MACHINE_ONLY_REFUSAL_CODES: ReadonlyMap<string, string> = Object.freeze(new Map());
 
-/** One `code:parameter` split into its parts, in the order the code carries them. */
-function codeParts(reasonCode: string, prefix: string): readonly string[] {
+/**
+ * ONE ANSWER, ONE ENTRY, and the table is the table rather than a switch.
+ *
+ * <p>
+ * The families below are the movement and pathing outcomes, where the target is, the clearing family's own verdicts, the
+ * programme's, and the navigation terminals. Until 2026-11-19 none of them was here, and the codes a live run ACTUALLY
+ * read arrived with their facts and no instruction - measured `round78`, read back from its live-runner log:
+ * `no_native_path` 8, `navigation_approach_unavailable` 6, `native_path_ended` 2, `clear_step_blocked` 1, `actor_moving` 1,
+ * `warp_out_of_range` 1, `destination_locked` 1.
+ * </p>
+ *
+ * <p>
+ * WHY IT IS A TABLE AND NOT SIXTY `case` LABELS. The measured cost of the switch shape was a cognitive complexity of 64 in
+ * one function - one increment per label - for a body of code that is a lookup and nothing else
+ * (`tools/check-cognitive-complexity.mjs`). A table makes the same statement as data: `codes` is the answer's population and
+ * `guidance` is its sentence, so a reader can see which codes share an answer without reading a hundred lines of switch.
+ * </p>
+ *
+ * <p>
+ * ONE SENTENCE PER ANSWER, NOT PER CODE. Nine navigation terminals all mean "read the world before acting", and one
+ * sentence says that once; the code keeps its own spelling in the reference line `fact-brief.ts` prints beside it. What is
+ * NOT shared is the ANSWER: codes whose countermeasures differ are separate entries, which is why the body holds above
+ * stayed in the switch where each one is its own case and its own test.
+ * </p>
+ */
+type RefusalAnswer = Readonly<{
+  /** The codes this answer is for. Several where the answer is the same, one where it is not. */
+  codes: readonly string[];
+  /** The tool to call next, or null when nothing can be called and the reader must wait, read or stop. */
+  action: string | null;
+  /** The sentence, reading the Mod's own evidence where the evidence changes what she should do. */
+  guidance: (detail: string | null) => string;
+}>;
+
+const REFUSAL_ANSWERS: readonly RefusalAnswer[] = Object.freeze([
+  Object.freeze({
+    codes: Object.freeze(["no_native_path"]),
+    action: "stardew_plan_work",
+    guidance: (detail: string | null) => {
+      // The ONE refusal whose evidence changed most (`StardewBodyController`): it names the nearest tile the flood did
+      // reach (`closest=`), whether the target is walled in (`target_enclosed=`), and - when a single swing would open a
+      // route - the clear step and the action that takes it (`clear_step=weed@40,9`, `clears_with=cut_weeds(...)`).
+      // A sentence that said only "no route" is what sent a run to hand-plan detours with guessed coordinates.
+      const closest = tileOf(evidenceField(detail, "closest"));
+      const clearStep = evidenceField(detail, "clear_step");
+      const clearsWith = evidenceField(detail, "clears_with");
+      const enclosed = evidenceField(detail, "target_enclosed") === "true";
+      const opens =
+        clearStep === null
+          ? ""
+          : `, unless you clear it first: ${clearStep}${clearsWith === null ? "" : ` with ${clearsWith}`} is one step you can dispatch with stardew_plan_work`;
+      return (
+        `Nothing walks from where she stands to the tile that request named: the map has no road to it${enclosed ? ", and the tile is walled in on every side" : ""}. ` +
+        `Name a tile the walk does reach${closest === null ? " (read the world first: the world block names the nearest ones)" : ` - the nearest one this refusal measured is ${closest}`}${opens}. ` +
+        `Re-issuing the same tile answers the same refusal.`
+      );
+    },
+  }),
+  Object.freeze({
+    codes: Object.freeze(["navigation_approach_unavailable"]),
+    action: "stardew_plan_work",
+    guidance: (detail: string | null) => {
+      const blocked = evidenceField(detail, "approach_blocked_by") ?? evidenceField(detail, "entry_blocked_by");
+      return (
+        `The destination is reachable but there is nowhere to stand beside the way into it${blocked === null ? "" : `: ${blocked} holds the only approach`}. ` +
+        `Either clear that or name another destination, as a step of its own with stardew_plan_work; the navigation will not re-plan this leg by itself` +
+        `${evidenceField(detail, "never_retry") === "true" ? ", and this request is finished either way" : ""}.`
+      );
+    },
+  }),
+  Object.freeze({
+    codes: Object.freeze(["native_path_ended"]),
+    action: null,
+    // The walk STARTED and then stopped making progress (`stalled_ticks=`), which is a different fact from "no road": the
+    // road exists, so the honest next step is one more attempt or a nearer tile - not a different destination.
+    guidance: (detail: string | null) => {
+      const stalled = evidenceField(detail, "stalled_ticks");
+      const target = tileOf(evidenceField(detail, "target"));
+      const stoppedBy = evidenceField(detail, "stopped_by");
+      return (
+        `The walk to ${target ?? "the tile that request named"} started and then stopped advancing${stalled === null ? "" : ` for ${stalled} ticks`}` +
+        `${stoppedBy === null || stoppedBy === "unknown" ? "" : `, held by ${stoppedBy}`}. ` +
+        `Re-issue it once, or name a tile one step closer${target === null ? "" : ` than ${target}`}: nothing in the world was changed by the attempt, so either is safe.`
+      );
+    },
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_step_blocked"]),
+    action: "stardew_plan_work",
+    guidance: (detail: string | null) => {
+      const blocker = evidenceField(detail, "blocker_occupant") ?? evidenceField(detail, "clear_step");
+      const clearsWith = evidenceField(detail, "clears_with");
+      const remaining = evidenceField(detail, "remaining_clears");
+      return (
+        `She walked up to the way in and it is still blocked by ${blocker ?? "the tile the refusal names"}. ` +
+        `That block is one step, not an obstruction: dispatch ${clearsWith === null ? "the clear the refusal names" : clearsWith} with stardew_plan_work` +
+        `${remaining === null ? "" : ` - the pass stopped with ${remaining} clear(s) left`} - and the walk resumes from where she is standing.`
+      );
+    },
+  }),
+  Object.freeze({
+    // Retired at the mint site (`farmhandexecutioncontroller.movementactions.cs`: a flat expression does not need the body
+    // to be still), and kept because a receipt minted before that change can still be replayed into a turn - `round78`
+    // read one - and a replayed code must not be a dead end.
+    codes: Object.freeze(["actor_moving"]),
+    action: null,
+    guidance: () =>
+      "She was mid-step when that request arrived, which this action used to refuse. " +
+      "The body settles on its own: send the request again now, and do not change its arguments - nothing was changed by the attempt.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["warp_out_of_range", "door_out_of_range"]),
+    action: "stardew_plan_work",
+    guidance: (detail: string | null) => {
+      const distance = evidenceField(detail, "distance");
+      const source = tileOf(evidenceField(detail, "source"));
+      return (
+        `She is too far from the door or warp that leads there${distance === null ? "" : ` (${distance} tiles)`}: the game only opens one when she is standing on it` +
+        `${source === null ? "" : `, at ${source}`}. ` +
+        `Walk to that tile as a step of its own with stardew_plan_work, then make this request again from there.`
+      );
+    },
+  }),
+  Object.freeze({
+    codes: Object.freeze(["destination_locked"]),
+    action: null,
+    guidance: (detail: string | null) => {
+      const held = evidenceField(detail, "held_by");
+      const destination = evidenceField(detail, "destination");
+      return (
+        `The way to ${destination ?? "the named destination"} exists and cannot be taken this instant: ${held === null ? "the game is holding the body" : `${held} holds it`}. ` +
+        `This clears by itself when that hold ends, so make the same request again then; retrying now answers the same lock.`
+      );
+    },
+  }),
+  Object.freeze({
+    codes: Object.freeze(["destination_temporarily_unavailable"]),
+    action: null,
+    guidance: () =>
+      "The game itself says this destination is closed right now (its own accessibility check refused it), so nothing she can dispatch opens it. " +
+      "Make the same request again later; if it must be sooner, name another destination.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["target_not_addressable"]),
+    action: null,
+    guidance: () =>
+      "The id that request named is not in the world any more, so nothing was attempted. Read the world again and copy the id from that reading - " +
+      "an id that has left the snapshot addresses nothing, and re-sending it answers the same refusal.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["target_tile_occupied"]),
+    action: null,
+    guidance: () =>
+      "A person is standing on the tile, and there is no tile beside it to work from. The road exists and the body is on the end of it: " +
+      "wait for them to move, or work the target from the other side rather than re-planning a route.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["path_blocked_by_character"]),
+    action: null,
+    guidance: () =>
+      "A person stands in the middle of the walk, and the refusal names which one. It is not a map verdict: wait for them to move or aim at a different tile - " +
+      "a detour planned around them is a guess.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["out_of_map", "tile_outside_farm_map"]),
+    action: null,
+    guidance: () =>
+      "The tile that request named is not a place. Nothing can stand there and no route can end there: name a tile inside the map the world block publishes, " +
+      "rather than one the arithmetic produced.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["approach_out_of_reach"]),
+    action: "stardew_plan_work",
+    guidance: () =>
+      "She is not standing within the reach this action needs. Walk to a tile beside the target as a step of its own with stardew_plan_work, " +
+      "then make this request again - the action does not walk for you.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["no_reachable_approach"]),
+    action: null,
+    guidance: () =>
+      "There is no tile she could stand on from which this action reaches the target. Nothing about re-issuing changes that: " +
+      "name a different target, or clear whatever holds the tiles beside it.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["no_cuttable_blocker"]),
+    action: null,
+    guidance: () =>
+      "The way in is blocked by something none of the tools can cut. Do not swing at it: name a different target or work elsewhere, " +
+      "because every clear this surface publishes refuses this block.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_blocker_gone", "clear_blocker_changed", "target_reachable_after_one_clear"]),
+    action: null,
+    guidance: () =>
+      "The block that step was for is no longer what the request expected - it is gone, or it changed. The path this was opening may already be open: " +
+      "make the walk you wanted again, and re-observe rather than re-clearing.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_blocker_out_of_reach"]),
+    action: "stardew_plan_work",
+    guidance: () =>
+      "The block is real and she is not within reach of it. Walk to the tile beside it as a step of its own with stardew_plan_work, " +
+      "then take the clear - a swing from here refuses again.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_stopped_before_swing"]),
+    action: null,
+    guidance: () =>
+      "The clear stopped before the swing landed, so nothing was destroyed and the block still stands. The refusal carries why: " +
+      "send the same clear again once that condition has changed, and do not walk around it.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_already_executed"]),
+    action: null,
+    guidance: () =>
+      "That clearance already ran for this request, and running it twice would destroy what the first one left. Continue with the step that came after it " +
+      "instead of repeating the clear.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["clear_executed_replan_required", "target_still_blocked_after_one_clear"]),
+    action: null,
+    guidance: () =>
+      "One clear ran and the way is still blocked. The clear did its work; what is left is a decision - read the world again and plan from what is there now, " +
+      "rather than repeating the same clear.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["blocker_outside_lease", "clearance_lease_expired", "clearance_lease_invalidated"]),
+    action: null,
+    guidance: () =>
+      "The clearance this step belongs to no longer holds the world it was granted over - it expired, or something else changed the tile. " +
+      "No swing is safe under a lease that is gone: read the world again and start a fresh clear.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["for_each_no_rows", "for_each_pass_incomplete"]),
+    action: null,
+    guidance: () =>
+      "The pass had nothing to work on: the rows it addresses were not in the observation it ran against. This is an empty job, not a failure - " +
+      "read the world and submit a pass over the rows that reading publishes.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["for_each_stopped", "stopped", "step_stopped_without_reason"]),
+    action: null,
+    guidance: () =>
+      "The pass was stopped before it finished, and the remaining rows were not attempted. Nothing was lost and nothing is running: " +
+      "re-submit the remainder over the rows that are still there.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["for_each_dispatch_refused"]),
+    action: null,
+    guidance: () =>
+      "The pass built its rows and the dispatch of one of them was refused, so the loop ended where that row was. The refusal beside this names the row's own reason: " +
+      "fix that one condition and submit the pass again.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["journal_open_stale_dispatch"]),
+    action: null,
+    guidance: () =>
+      "An older programme's journal was still open when this one tried to start, so this one was not admitted. It is a bookkeeping hold, not a world condition: " +
+      "the previous programme has to settle first, then submit this again.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["body_program_journal_scope_contended"]),
+    action: null,
+    guidance: () =>
+      "Another writer held the programme journal while this step tried to record itself, so the step did not run. Nothing was changed: " +
+      "submit it again once the in-flight programme has finished.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["model_stop_requested"]),
+    action: null,
+    guidance: () =>
+      "The player's own stop ended this step, and it stopped where it was asked to. Do not resume it: wait for what they say next.",
+  }),
+  // THE NAVIGATION TERMINALS, GROUPED BY THE ANSWER RATHER THAN BY THE CODE. `NavigationNextStep`
+  // (`integrations/stardew/navigation/navigationnextstep.cs`) is the Mod's own classification of these and already publishes
+  // `next_step=` / `permanent=` in the evidence; the groups below are that classification said once each.
+  Object.freeze({
+    codes: Object.freeze([
+      "destination_access_indeterminate",
+      "native_transition_uncertain",
+      "navigation_warp_postcondition_mismatch",
+      "navigation_warp_source_mismatch",
+      "navigation_commit_exception",
+      "navigation_deadline_expired_after_warp",
+      "navigation_cancelled_after_warp_child",
+      "navigation_invalidated_after_warp_child",
+      "door_transition_not_started",
+    ]),
+    action: null,
+    guidance: () =>
+      "This step could not read what the world did - a native transition may have happened and is uncorrelated. Do not re-issue it: " +
+      "read the world first, and act on what it says now, because a second attempt could move her twice.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["destination_unreachable", "path_not_found"]),
+    action: null,
+    guidance: () =>
+      "No route the published topology knows reaches that destination, so nothing will walk there. Pick a destination the world block lists instead of this one; " +
+      "the walk itself is not what failed.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["destination_selector_invalid", "destination_selector_ambiguous", "destination_selector_stale"]),
+    action: null,
+    guidance: () =>
+      "The destination that request named is not one the world currently publishes - it was spelled wrongly, matches more than one, or the list changed under it. " +
+      "Read the world and copy a destination from that reading.",
+  }),
+  Object.freeze({
+    codes: Object.freeze([
+      "navigation_admission_required",
+      "navigation_deadline_expired",
+      "invalid_deadline",
+      "navigation_source_mismatch",
+      "navigation_commit_revalidation_state_mismatch",
+      "navigation_approach_state_revalidated_mismatch",
+      "navigation_transition_revalidated_mismatch",
+      "navigation_warp_unavailable",
+      "navigation_multi_hop_arm_failed",
+    ]),
+    action: null,
+    guidance: () =>
+      "The world no longer matched what this navigation was admitted against, so it stopped before committing, and nothing was moved. " +
+      "Read the world as it is now and make the same request again from it.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["navigation_commit_body_still_owned", "door_gate_refused"]),
+    action: null,
+    guidance: () =>
+      "The walk reached the door and the game's own gate did not open: something still holds the body or the door. Wait for that to clear, " +
+      "then make the same request again - retrying now answers the same hold.",
+  }),
+  Object.freeze({
+    codes: Object.freeze(["navigation_scope_unavailable"]),
+    action: null,
+    guidance: () =>
+      "The session this navigation belonged to has ended, so nothing inside it can resume the walk. This request will never finish: " +
+      "stop waiting on it, and plan afresh if she is still meant to go there.",
+  }),
+  Object.freeze({
+    // The one code in these families that is NOT about the world: the Mod could not write its own receipt, so what it is
+    // about to say may not reflect what happened. The honest instruction is the one it costs least to obey.
+    codes: Object.freeze(["execution_receipt_persistence_failed"]),
+    action: null,
+    guidance: () =>
+      "The game could not record what this step did, so its outcome is unproven - the work may or may not have happened. " +
+      "Read the world before acting again: re-issuing a step the world already took is how a tile gets worked twice.",
+  }),
+]);
+
+/**
+ * The answer this table owes a code, or null when the code is not one of its families.
+ *
+ * A table rather than cases: the population is data, and a code that appears in two entries is caught by the coverage gate's
+ * count rather than by a fall-through nobody reads.
+ */
+function answeredRefusal(reasonCode: string, detail: string | null): StardewActionRemedy | null {
+  for (const answer of REFUSAL_ANSWERS)
+    if (answer.codes.includes(reasonCode)) return { action: answer.action, guidance: answer.guidance(detail) };
+  return null;
+}
+
+/** One `code:parameter` split into its parts, in the order the code carries them. */function codeParts(reasonCode: string, prefix: string): readonly string[] {
   return reasonCode.slice(prefix.length).split(":");
 }
 
@@ -73,12 +455,27 @@ export function evidenceField(detail: string | null, key: string): string | null
 }
 
 /**
+ * One tile out of the Mod's evidence, in the spelling the world block uses - or null when the field is not a tile.
+ *
+ * The refusal families carry their coordinates as `closest=34,6` / `source=9,-1` / `target=9,1`, and the sentence has to
+ * print them the way `<world-state>` prints every other tile (`(34,6)`), or the reader is given two spellings of one place.
+ * A field that is not a pair is NOT printed as one: `target=Railroad:29,59` and `target=stardew_native` both occur.
+ */
+function tileOf(value: string | null): string | null {
+  if (value === null) return null;
+  const pair = /^(-?\d+),(-?\d+)$/u.exec(value);
+  return pair === null ? null : `(${pair[1]},${pair[2]})`;
+}
+
+/**
  * The countermeasure for a refusal, or null when this reason code is not one this module knows.
  *
  * Returning null matters: a remedy attached to a code it does not understand would tell the Agent to close a
  * dialogue that is not open.
  */
 export function remedyForRefusal(reasonCode: string | null, detail: string | null): StardewActionRemedy | null {
+  const answered = reasonCode === null ? null : answeredRefusal(reasonCode, detail);
+  if (answered !== null) return answered;
   switch (reasonCode) {
     case "actor_held_by_modal": {
       const modalType = evidenceField(detail, "modal_type") ?? "a menu";

@@ -1111,6 +1111,10 @@ test("the gate refuses to pass on a zero population", () => {
     "a missing source is blocked by name rather than dropped from the population",
   );
   const rules = floorRules();
-  assert.ok(rules.length >= 2, "the floor declares at least its own rules and a game module's");
+  assert.ok(
+    rules.length >= 1,
+    "the floor's population is the header's own lines and the header is one line since 2026-11-19 - zero lines would be a " +
+      "gate over nothing, one is what runs",
+  );
   assert.deepEqual(personaStance(""), []);
 });

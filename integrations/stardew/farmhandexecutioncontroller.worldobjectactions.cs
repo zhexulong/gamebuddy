@@ -1051,47 +1051,59 @@ internal sealed partial class ExecutionManager
         if (location is null) return Array.Empty<BridgeWorldObjectTarget>();
         List<BridgeWorldObjectTarget> result = new();
         HashSet<string> publishedTargetIds = new(StringComparer.Ordinal);
-        int placementCount = 0;
+        int actorX = (int)player.Tile.X;
+        int actorY = (int)player.Tile.Y;
+        List<BridgeWorldObjectTarget> placements = new();
+        for (int slot = 0; slot < player.Items.Count; slot++)
+        {
+            if (player.Items[slot] is not StardewValley.Object owned
+                || owned.Stack <= 0
+                || !(owned.bigCraftable.Value || owned is Furniture))
+                continue;
+            for (int x = Math.Max(0, actorX - TargetDiscoveryRadius); x <= actorX + TargetDiscoveryRadius; x++)
+            for (int y = Math.Max(0, actorY - TargetDiscoveryRadius); y <= actorY + TargetDiscoveryRadius; y++)
+            {
+                Vector2 tile = new(x, y);
+                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)) continue;
+                if (!location.isTileOnMap(tile) || location.objects.ContainsKey(tile)) continue;
+                if (!Utility.playerCanPlaceItemHere(location, owned, x * 64 + 32, y * 64 + 32, player) || !owned.canBePlacedHere(location, tile)) continue;
+                // ONE IDENTITY, MANY TILES: the id names the piece in this slot (see `BuildOwnedObjectPlacementTargetId`),
+                // so every tile the piece may lawfully go to is its own ROW carrying the same id. The dedupe key is
+                // therefore the row - id and tile - not the id alone, or the first placeable tile would be the only one
+                // ever advertised.
+                string placementTargetId = BuildOwnedObjectPlacementTargetId(location, slot, owned.QualifiedItemId);
+                if (!publishedTargetIds.Add($"{placementTargetId}@{x},{y}")) continue;
+                placements.Add(new BridgeWorldObjectTarget(
+                    placementTargetId,
+                    "placement_candidate",
+                    location.NameOrUniqueName,
+                    x,
+                    y,
+                    slot,
+                    owned.QualifiedItemId,
+                    RequireDisplayName(owned.QualifiedItemId),
+                    null,
+                    null,
+                    // The object does not exist yet: the row names a TILE it may be put on, so the extent is the tile.
+                    1,
+                    1));
+            }
+        }
+        // ORDER FIRST, THEN TRIM. The scan above reaches tiles west-to-east from the map's own corner, so truncating while
+        // it walks published whichever tiles the loops hit first: with three placeable machines over the same nine tiles -
+        // the engine offers no more than the radius-1 ring (`Utility.playerCanPlaceItemHere` -> `isWithinTileWithLeeway`,
+        // Utility.cs:5718-5750) - the sixteen-row budget held every tile of the first machine, six of the second and none
+        // of the third. Distance from the actor decides now, and the two tie-breaks make one unchanged world publish one
+        // order: the backpack slot first (the one fact that tells two machines' rows on the SAME tile apart), then the
+        // tile itself. Ordering removes nothing; it decides which sixteen of the rows survive the budget.
+        result.AddRange(TargetOrdering.NearestFirstByChebyshev(
+            placements,
+            actorX,
+            actorY,
+            placement => new TargetCandidate(placement.X, placement.Y, placement.Slot)).Take(WorldObjectTargetLimit));
         int objectCount = 0;
         for (int slot = 0; slot < player.Items.Count; slot++)
         {
-            if (placementCount >= WorldObjectTargetLimit && objectCount >= WorldObjectTargetLimit)
-                break;
-            if (placementCount < WorldObjectTargetLimit
-                && player.Items[slot] is StardewValley.Object owned
-                && owned.Stack > 0
-                && (owned.bigCraftable.Value || owned is Furniture))
-            {
-                for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && placementCount < WorldObjectTargetLimit; x++)
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && placementCount < WorldObjectTargetLimit; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)) continue;
-                    if (!location.isTileOnMap(tile) || location.objects.ContainsKey(tile)) continue;
-                    if (!Utility.playerCanPlaceItemHere(location, owned, x * 64 + 32, y * 64 + 32, player) || !owned.canBePlacedHere(location, tile)) continue;
-                    // ONE IDENTITY, MANY TILES: the id names the piece in this slot (see `BuildOwnedObjectPlacementTargetId`),
-                    // so every tile the piece may lawfully go to is its own ROW carrying the same id. The dedupe key is
-                    // therefore the row - id and tile - not the id alone, or the first placeable tile would be the only one
-                    // ever advertised.
-                    string placementTargetId = BuildOwnedObjectPlacementTargetId(location, slot, owned.QualifiedItemId);
-                    if (!publishedTargetIds.Add($"{placementTargetId}@{x},{y}")) continue;
-                    result.Add(new BridgeWorldObjectTarget(
-                        placementTargetId,
-                        "placement_candidate",
-                        location.NameOrUniqueName,
-                        x,
-                        y,
-                        slot,
-                        owned.QualifiedItemId,
-                        RequireDisplayName(owned.QualifiedItemId),
-                        null,
-                        null,
-                        // The object does not exist yet: the row names a TILE it may be put on, so the extent is the tile.
-                        1,
-                        1));
-                    placementCount++;
-                }
-            }
             Tool? ownedTool = player.Items[slot] as Tool;
             if (objectCount >= WorldObjectTargetLimit || !(ownedTool?.isHeavyHitter() ?? false))
                 continue;

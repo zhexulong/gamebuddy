@@ -30,10 +30,13 @@ import type { Snapshot } from "./protocol.js";
  * </p>
  *
  * <p>
- * WHAT IS DEFERRED AND PRINTED RATHER THAN FAILED. A raw `reasonCode` (`gift_given`, `not_home`, `no_native_path`, and
- * `affordability_unknown` until this lane removed it) is the Mod's word for a fact and turning it into a sentence is
- * authoring, which is a later unit. So its count is printed on every run: the line shows the deferred work instead of
- * hiding it. The structural half - a qualified item id, a slot marker, an action id in parentheses - fails.
+ * WHAT IS DEFERRED AND PRINTED RATHER THAN FAILED: nothing, since 2026-11-19. A raw `reasonCode` (`gift_given`, `not_home`,
+ * `no_native_path`, and `affordability_unknown` until this lane removed it) used to be counted on every run because turning
+ * it into a sentence was authoring and a later unit. That unit landed: `stardew-action-remedy.ts` is the one table that
+ * answers "what can she do about this code", `fact-brief.ts` renders the state in Chinese and appends that instruction, and
+ * the code and its evidence print verbatim under `ADDRESSABLE_FACTS_HEAD`. So the code is now a machine token in the
+ * ADDRESS position rather than in a sentence, and this gate skips address fields by reading `MACHINE_FIELD_HEADS` - the
+ * composer's own declaration - instead of needing a new special case.
  * </p>
  */
 
@@ -285,23 +288,74 @@ test("round78_replay: the affordability gap is a sentence, and the seed line car
 });
 
 /**
- * THE DEFERRED HALF, MEASURED RATHER THAN FORGOTTEN.
+ * THE DEFERRED HALF, PAID AND MEASURED - it was deferred until 2026-11-19.
  *
- * A `reasonCode` is the Mod's word for a fact. Turning `not_home` into a sentence is authoring and is a later unit, so
- * this gate counts what still reaches her instead of failing on it - and the count is asserted so the number shrinking is
- * visible on the day the translation lands.
+ * A raw `reasonCode` (`gift_given`, `not_home`, `no_native_path`) is the Mod's word for a fact, and this gate used to count
+ * how many still reached her instead of failing on them. The renderers paid that debt: a refusal reads as `<action> 没做成`
+ * plus the instruction `stardew-action-remedy.ts` composes for the code, and the code itself prints verbatim on the block's
+ * address line (`ADDRESSABLE_FACTS_HEAD`). So the claim is now in both directions, and the second one is the point: the code
+ * must NOT be in the prose (it was the thing she was being told to translate) and must STILL be in the delivery (a run audit
+ * greps it, and the next tool argument may copy the ids beside it).
  */
-test("reason_codes_still_reach_her_as_tokens, and this run says how many", () => {
+test("reason_codes_no_longer_reach_her_as_tokens, and stay addressable in the delivery", () => {
   const events = [refusedReceipt()];
   const state = reading();
   const text = composeFactBrief({ inputs: [], snapshot: state, events, locale: "zh-CN" });
   const codes = new Set(machineTokens(state, events).filter((entry) => entry.kind === "code").map((e) => e.token));
   const reaching = [...codes].filter((code) => narrationLines(text).some((line) => line.includes(code)));
+  const addresses = text
+    .split("\n")
+    .filter((line) => MACHINE_FIELD_HEADS.some((head) => line.startsWith(head)))
+    .join("\n");
 
   assert.ok(codes.size > 0, "the delivery carried no reason code, so the deferred count would be a zero it did not measure");
-  assert.deepEqual(
-    reaching,
-    ["gift_given"],
-    `the deferred set is the Mod's codes, printed verbatim and counted: ${reaching.join(", ")}`,
+  assert.deepEqual(reaching, [], `no refusal code may stay in the prose she reads: ${reaching.join(", ")}`);
+  for (const code of codes)
+    assert.ok(
+      addresses.includes(`reasonCode=${code}`),
+      `the code left the sentence and must be on the address line - an id a reader cannot reach is a step they cannot take:\n${text}`,
+    );
+  // AND THE VALUES A TOOL ARGUMENT COPIES ARE THERE, verbatim: `open_geode` refuses a request without the slot and the
+  // qualified id, and both are in the detail the Mod published.
+  assert.match(addresses, /location=Farm;item=\(O\)472;inventory_after=5/u, `the detail is verbatim: ${addresses}`);
+  // The sentence is not empty in its place: the block says what the step did, in the words the state table owns.
+  assert.match(text, /pickup_item 没做成/u, `the state is a sentence: ${text}`);
+});
+
+/**
+ * THE OTHER BLOCK, ON THE SAME PATTERN: a settled programme's failed node reads as a sentence + a remedy, and its code and
+ * detail print on the block's own address line.
+ */
+test("a settled failure reads as a sentence, and its code and detail stay addressable", () => {
+  const settlement = fact({
+    kind: "execution_settled",
+    semanticKind: "program_settled",
+    gameTime: "620",
+    payload: {
+      total: 2,
+      counts: { succeeded: 1, failed: 1 },
+      omitted: 0,
+      nodes: [
+        { nodeId: "n01", actionId: "move_to_tile", state: "failed", reasonCode: "no_native_path", reasonDetail: "closest=34,6;closest_distance=6" },
+      ],
+    },
+  } as never);
+  const state = reading();
+  const text = composeFactBrief({ inputs: [], snapshot: state, events: [settlement], locale: "zh-CN" });
+  const prose = narrationLines(text);
+  const addresses = text.split("\n").filter((line) => MACHINE_FIELD_HEADS.some((head) => line.startsWith(head)));
+
+  assert.ok(
+    prose.some((line) => line.includes("move_to_tile 没做成")),
+    `the step is a sentence: ${text}`,
+  );
+  assert.equal(
+    prose.some((line) => line.includes("no_native_path")),
+    false,
+    `and the code is not in the prose: ${text}`,
+  );
+  assert.ok(
+    addresses.some((line) => line.includes("n01 reasonCode=no_native_path；closest=34,6;closest_distance=6")),
+    `the node's address names which node, which code, and the Mod's own detail verbatim: ${text}`,
   );
 });

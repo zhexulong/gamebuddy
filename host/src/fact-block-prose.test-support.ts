@@ -5,6 +5,15 @@ import assert from "node:assert/strict";
  * way-forward labels and rectangle answers, and `fact-brief`'s own world-state note.
  *
  * <p>
+ * THE ONE INSTRUCTING TEXT THE DELIVERY CARRIES IS A REFUSAL'S REMEDY, and it is not this detector's subject. Since
+ * 2026-11-19 `<world-facts>` and `<execution-result>` append the sentence `stardew-action-remedy.ts` composes for a refused
+ * code ("Re-issue the same request", "retrying now answers the same lock"), because a refusal that only reports leaves the
+ * reader with nothing to do - which is the defect the table exists for. So this detector stays on the prose that STATES a
+ * reading (`<world-state>`, a family's way-forward label), and a suite that ran it over a block carrying a refusal would be
+ * measuring the refusal's instruction as if it were a report.
+ * </p>
+ *
+ * <p>
  * The closed classes are what separates a report from an order: `重试可行` states a feasibility and `retry now` sets a
  * moment she is told to act on — the same claim, one of them as a command. A block that says `没读到的格子...没有人回答`
  * reports the third zero; the sentence that shipped beside it (`别当成空地`) was that fact said a second way, as an order.

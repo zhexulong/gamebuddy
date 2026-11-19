@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -206,17 +206,11 @@ test("a queued request that outlived its wait names the owner it waited for", ()
   assert.match(withoutDetail?.guidance ?? "", /body_owned_by_movement/);
 });
 
-test("a reason code that is not a body hold gets no remedy", () => {
-  // Attaching a remedy here would tell the Agent to close a dialogue that is not open.
-  for (const code of [
-    "player_not_actionable",
-    "invalid_target_tile",
-    "no_native_path",
-    "body_owned",
-    "accepted",
-    null,
-  ]) {
-    assert.equal(remedyForRefusal(code, "modal_type=DialogueBox"), null, `${String(code)} is not a body hold`);
+test("a code outside every refusal family still gets no remedy", () => {
+  // Attaching a remedy here would tell the Agent to close a dialogue that is not open. `no_native_path` used to sit in
+  // this list; it has a sentence now (the movement family), which is the change this suite's coverage gate measures.
+  for (const code of ["player_not_actionable", "invalid_target_tile", "body_owned", "accepted", null]) {
+    assert.equal(remedyForRefusal(code, "modal_type=DialogueBox"), null, `${String(code)} is not a refusal this owns`);
   }
 });
 
@@ -374,19 +368,169 @@ const HEALING_SOURCE = join(
 );
 
 /**
- * The refusal codes the Mod can carry to the model, read from the Mod's OWN declaration.
+ * Every shipped `.cs` file of the Mod: the population below is read from declarations rather than from a list, so a
+ * declaration added tomorrow enrols itself and one deleted leaves. `obj`/`bin` are build output, `tests` is not shipped,
+ * and `action-development` is the offline devkit.
  *
- * The population is `FarmhandForEachHealing.RefusalCodes` - an array the Mod compiles from the same constants its join
- * returns - so a producer added there enrols itself here without an edit, and a code the Mod stops publishing leaves the
- * population rather than lingering in this file. A declaration that cannot be read is a BLOCKED reading, never an empty
- * set that agrees with itself.
+ * A directory that cannot be read is NOT skipped silently: it is a BLOCKED reading of a population this gate claims to
+ * have counted, so it throws.
  */
-function modPublishedRefusalCodes(): readonly string[] {
+function shippedModSources(): readonly string[] {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "integrations", "stardew");
+  const skip = new Set(["obj", "bin", "tests", "action-development", "node_modules"]);
+  const files: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) walk(join(directory, entry.name));
+        continue;
+      }
+      if (entry.name.endsWith(".cs")) files.push(join(directory, entry.name));
+    }
+  };
+  walk(root);
+  return files;
+}
+
+/**
+ * The codes the Mod DECLARES as refusals, from the declarations themselves.
+ *
+ * A code is declared when the Mod gives it a NAME THAT SAYS WHAT IT IS: `internal const string
+ * NoNativePathReasonCode = "no_native_path";`. That convention is what makes this derivable at all.
+ *
+ * THE THREE THAT ARE STILL BARE LITERALS AT THEIR MINT SITES, named here rather than left to be discovered - a declaration
+ * population that quietly omits them is how the ninth code goes unseen:
+ *
+ *   - `native_path_ended` - `integrations/stardew/StardewBodyController.cs:180`, returned by `StallRefusalCode`;
+ *   - `warp_out_of_range` and its sibling `door_out_of_range` - `integrations/stardew/farmhandexecutioncontroller.movementactions.cs:793`,
+ *     a conditional expression whose every sibling in that file is a declared constant.
+ *
+ * They are DEBT, not coverage: both live codes reach this gate through the recorded run below (which is why they are
+ * rendered rather than missing), and the fix is one `internal const string …ReasonCode` per site - not this test's to
+ * make, because declaring them lands in the Mod and the class-size record those files carry is re-recorded by its own lane.
+ * A fourth code, `actor_moving`, was retired at its mint site and is named in the same printed line.
+ */
+function declaredReasonCodes(files: readonly string[]): readonly string[] {
+  const codes = new Set<string>();
+  for (const file of files) {
+    for (const match of readFileSync(file, "utf8").matchAll(
+      /(?:internal|public|private) const string \w*Reason\w* = "([a-z][a-z0-9_]{2,})";/gu,
+    ))
+      if (match[1] !== undefined) codes.add(match[1]);
+  }
+  return [...codes].sort();
+}
+
+const NAVIGATION_SOURCE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "integrations",
+  "stardew",
+  "navigation",
+  "navigationnextstep.cs",
+);
+
+/**
+ * The navigation terminals, minus the ones that are not refusals.
+ *
+ * `NavigationNextStep.Of` is the Mod's own closed vocabulary of navigation endings, and it CLASSIFIES each label
+ * (`Action(...)`, `Permanent(...)`, `Progress`). The progress entries are the navigation still running or having arrived, so
+ * they are excluded by reading the Mod's classification rather than by naming three labels here - which is the same reason
+ * the population is declarations instead of a list.
+ */
+function navigationRefusalCodes(): readonly string[] {
+  const source = readFileSync(NAVIGATION_SOURCE, "utf8");
+  const entries = [...source.matchAll(/^\s*"([a-z][a-z0-9_]+)"\s*=>\s*(\w+)/gmu)];
+  assert.ok(
+    entries.length > 0,
+    `blocked: no navigation terminal classified in ${NAVIGATION_SOURCE}, so this source contributes nothing and would agree with itself`,
+  );
+  return entries
+    .filter((entry) => entry[2] !== "Progress")
+    .map((entry) => entry[1] ?? "")
+    .filter((code) => code !== "")
+    .sort();
+}
+
+/**
+ * The codes a REAL run delivered, counted from its own record - and `null` when the record is not on this tree.
+ *
+ * <p>
+ * THE RECORD. `tools/_multiday_routine-round78-live-runner.log` is the live runner's own log for `round78` (2026-11-19,
+ * the mine window): every `BRIDGE_FACT` it received, which is the delivery path itself rather than a transcription of it.
+ * The file is gitignored (`/tools/_*`), so a fresh checkout does not carry it - and the three zeroes are kept apart
+ * instead of collapsed: absent is `not_measured` and says so on the printed line, an empty result is a BLOCKED reading,
+ * and a real read prints its codes with their counts.
+ * </p>
+ *
+ * <p>
+ * WHY THIS HALF EXISTS AT ALL. The declared catalogues are what the Mod SAYS it can refuse with; this is what it DID, and
+ * the two disagreed: `round78` read eight codes, and the delivery had no sentence for any of them. A population built only
+ * from declarations cannot see that, because the codes she read arrived as settlement-node reasons rather than as
+ * `ExecutionState.Rejected` receipts - the other family, printed below, whose 345 codes contain none of these eight.
+ * </p>
+ */
+function codesARealRunDelivered(): readonly Readonly<{ code: string; count: number }>[] | null {
+  const path = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "tools",
+    "_multiday_routine-round78-live-runner.log",
+  );
+  if (!existsSync(path)) return null;
+  const counts = new Map<string, number>();
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const at = line.indexOf("BRIDGE_FACT ");
+    if (at < 0) continue;
+    let fact: unknown;
+    try {
+      fact = JSON.parse(line.slice(at + "BRIDGE_FACT ".length));
+    } catch {
+      continue;
+    }
+    const payload = (fact as { worldFactPayload?: unknown }).worldFactPayload ?? fact;
+    if (payload === null || typeof payload !== "object") continue;
+    const record = payload as { state?: unknown; reasonCode?: unknown };
+    if (!REFUSED_RECEIPT_STATES.has(String(record.state))) continue;
+    if (typeof record.reasonCode !== "string" || record.reasonCode === "") continue;
+    counts.set(record.reasonCode, (counts.get(record.reasonCode) ?? 0) + 1);
+  }
+  return [...counts].map(([code, count]) => ({ code, count })).sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
+}
+
+/** The receipt states in which a fact is a refusal rather than a step that happened. */
+const REFUSED_RECEIPT_STATES: ReadonlySet<string> = new Set(["rejected", "failed", "blocked", "uncertain"]);
+
+/**
+ * The receipt-path family this gate does NOT take its population from, recorded with the command that measured it.
+ *
+ * It is printed beside the verdict so a reader sees the larger set exists and why it is not this gate's: those codes are
+ * `ExecutionState.Rejected` receipt reasons, and NONE of the eight a real run delivered is among them - a population that
+ * excludes every code she read cannot be the population for "a refusal she reads is a sentence". They are not unrendered
+ * either: a refused receipt is exactly what `receiptLine` renders, through this same table.
+ *
+ * `node tools/check-refusal-informativeness.mjs`, 2026-11-19: `actions=106 reasonFamilies=344 reasonCodes=345
+ * receiptSites=521`. A reading, not a gate input: it is a report, and the day it changes this line is stale prose rather
+ * than a false pass.
+ */
+const REFUSED_AS_RECEIPT_MEASURED = 345;
+
+/**
+ * The codes the Mod's clearing join publishes, from ITS OWN closed set.
+ *
+ * `FarmhandForEachHealing.RefusalCodes` is an array the Mod compiles from the same constants its join returns, and it is
+ * the one family whose codes are minted with a parameterisation (`no_safe_clear:crop:scythe_crop`), so it cannot be read
+ * out of a `const string` name convention: those constants are `NoSafeClear` and `NoPublishedActionClears`, and neither
+ * says "reason". A declaration that cannot be read is a BLOCKED reading, never an empty set that agrees with itself.
+ */
+function clearingRefusalCodes(): readonly string[] {
   const source = readFileSync(HEALING_SOURCE, "utf8");
   const declared = /RefusalCodes\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([^}]*)\}\)/u.exec(source);
   assert.ok(
     declared !== null,
-    `blocked: the Mod declares no RefusalCodes array in ${HEALING_SOURCE}, so this gate has no population to read`,
+    `blocked: the Mod declares no RefusalCodes array in ${HEALING_SOURCE}, so this source contributes nothing`,
   );
   const constants = new Map(
     [...source.matchAll(/public const string (\w+) = "([a-z0-9_]+)";/gu)].map((match) => [
@@ -394,15 +538,37 @@ function modPublishedRefusalCodes(): readonly string[] {
       match[2] ?? "",
     ]),
   );
-  const names = (declared[1] ?? "")
+  return (declared[1] ?? "")
     .split(",")
     .map((name) => name.trim())
-    .filter((name) => name.length > 0);
-  return names.map((name) => {
-    const value = constants.get(name);
-    assert.ok(value !== undefined, `blocked: ${name} is in RefusalCodes and this file declares no literal for it`);
-    return value;
-  });
+    .filter((name) => name.length > 0)
+    .map((name) => {
+      const value = constants.get(name);
+      assert.ok(value !== undefined, `blocked: ${name} is in RefusalCodes and this file declares no literal for it`);
+      return value;
+    });
+}
+
+/** One code in the population, and where it came from. */
+type RefusalSource = "declared" | "navigation" | "clearing" | "delivered";
+
+/**
+ * The population: every declared code, every navigation terminal that is a refusal, and every code a recorded run
+ * actually delivered.
+ *
+ * The third source is what keeps the first two honest - a declaration set is a claim about the Mod, and the delivery is
+ * the fact.
+ */
+function refusalPopulation(delivered: readonly Readonly<{ code: string; count: number }>[] | null): readonly Readonly<{
+  code: string;
+  source: RefusalSource;
+}>[] {
+  const byCode = new Map<string, RefusalSource>();
+  for (const code of navigationRefusalCodes()) byCode.set(code, "navigation");
+  for (const code of clearingRefusalCodes()) if (!byCode.has(code)) byCode.set(code, "clearing");
+  for (const code of declaredReasonCodes(shippedModSources())) if (!byCode.has(code)) byCode.set(code, "declared");
+  for (const entry of delivered ?? []) if (!byCode.has(entry.code)) byCode.set(entry.code, "delivered");
+  return [...byCode].map(([code, source]) => ({ code, source })).sort((left, right) => left.code.localeCompare(right.code));
 }
 
 type RefusalCoverage = Readonly<{
@@ -417,6 +583,11 @@ type RefusalCoverage = Readonly<{
  *
  * A code passes when this module composes a sentence for it, or when it is declared machine-only WITH a reason. Anything
  * else is a code the model would read bare, which is the defect: a code names the fact and never what to do about it.
+ *
+ * A TOKEN IS NOT A SENTENCE, so a guidance string with no spaces and no full stop is a finding rather than a pass - the
+ * cheapest way to make a coverage gate green is to hand the token back. The check is a SHAPE (`sentenceShape`) rather than
+ * a ban on the code's spelling: `stopped` is a code AND an ordinary English word, and a rule that refused the word would
+ * refuse the sentence that explains it.
  */
 function judgeRefusalCoverage(codes: readonly string[], render: (code: string) => string | null): RefusalCoverage {
   const findings: string[] = [];
@@ -425,7 +596,7 @@ function judgeRefusalCoverage(codes: readonly string[], render: (code: string) =
   for (const code of codes) {
     const guidance = render(code);
     if (guidance !== null) {
-      if (!guidance.includes("occupant")) findings.push(`sentence_does_not_name_the_thing:${code}`);
+      if (!sentenceShape(guidance)) findings.push(`sentence_is_a_token:${code}`);
       else rendered += 1;
       continue;
     }
@@ -439,21 +610,66 @@ function judgeRefusalCoverage(codes: readonly string[], render: (code: string) =
   return { examined: codes.length, rendered, machineOnly, findings };
 }
 
-/** The sentence this module composes for one code, with a parameterisation that puts both of its facts in the text. */
+/**
+ * Whether a guidance string is a sentence a reader can act on rather than the code printed back.
+ *
+ * Words and a full stop, which a reason code never has: every code in this population is one `snake_case` token. Six words
+ * is below the shortest sentence this table composes and far above a token, so the reading is about the SHAPE and not about
+ * how long the author happened to be.
+ */
+function sentenceShape(guidance: string): boolean {
+  const trimmed = guidance.trim();
+  return trimmed.split(/\s+/u).length > 6 && /[.!?]/u.test(trimmed);
+}
+
+/**
+ * The sentence this module composes for one code.
+ *
+ * A clearing code is parameterised (`no_safe_clear:<occupant>:<action>`) because the Mod publishes it that way, and the
+ * bare code alone is not a shape it mints; every other family is minted as the code itself.
+ */
 function sentenceFor(code: string): string | null {
+  const direct = remedyForRefusal(code, null)?.guidance ?? null;
+  if (direct !== null) return direct;
   return remedyForRefusal(`${code}:occupant:action`, null)?.guidance ?? null;
 }
 
-test("a_refusal_the_model_reads_is_a_sentence: every code the Mod publishes has words, or a stated reason it does not", (t) => {
-  const codes = modPublishedRefusalCodes();
-  assert.ok(codes.length > 0, "blocked: the Mod publishes no refusal code, so this gate examines nothing");
+test("a_refusal_she_reads_is_a_sentence: every code the Mod declares or a real run delivered has words", (t) => {
+  const delivered = codesARealRunDelivered();
+  const population = refusalPopulation(delivered);
+  assert.ok(population.length > 0, "blocked: the population is empty, so this gate would agree with itself");
   for (const [code, reason] of MACHINE_ONLY_REFUSAL_CODES)
     assert.ok(reason.trim().length > 0, `a machine-only exemption carries its reason or it is a silent drop: ${code}`);
 
-  const verdict = judgeRefusalCoverage(codes, sentenceFor);
-  t.diagnostic(
-    `codes examined ${String(verdict.examined)} · rendered ${String(verdict.rendered)} · machine-only ${String(verdict.machineOnly)}; ${verdict.findings.length} bare`,
+  const verdict = judgeRefusalCoverage(
+    population.map((entry) => entry.code),
+    sentenceFor,
   );
+  const seen = delivered ?? [];
+  const declared = new Set(population.filter((entry) => entry.source !== "delivered").map((entry) => entry.code));
+  const deliveredOnly = seen.filter((entry) => !declared.has(entry.code)).map((entry) => entry.code);
+  const uncovered = seen.filter((entry) => sentenceFor(entry.code) === null).map((entry) => entry.code);
+  const bySource = (source: RefusalSource): number => population.filter((entry) => entry.source === source).length;
+
+  process.stdout.write(
+    `\na_refusal_she_reads_is_a_sentence: codes examined ${String(verdict.examined)} · rendered ${String(verdict.rendered)}` +
+      ` · machine-only ${String(verdict.machineOnly)} (declared ${String(bySource("declared"))} + navigation ${String(
+        bySource("navigation"),
+      )} + clearing ${String(bySource("clearing"))} + delivered-only ${String(bySource("delivered"))})\n`,
+  );
+  process.stdout.write(
+    delivered === null
+      ? "  seen in a real run: not_measured (tools/_multiday_routine-round78-live-runner.log is not on this tree)\n"
+      : `  seen in round78: ${String(seen.length)} (${seen.map((entry) => `${entry.code} ${String(entry.count)}`).join(", ")})` +
+          ` · declared ${String(seen.length - deliveredOnly.length)} · seen-only ${String(deliveredOnly.length)}${
+            deliveredOnly.length === 0 ? "" : ` (${deliveredOnly.join(", ")})`
+          } · covered ${String(seen.length - uncovered.length)} · uncovered ${String(uncovered.length)}\n`,
+  );
+  process.stdout.write(
+    `  refused-as-receipt ${String(REFUSED_AS_RECEIPT_MEASURED)} (a different family, rendered by the receipt line)\n`,
+  );
+  t.diagnostic(`codes examined ${String(verdict.examined)} · rendered ${String(verdict.rendered)} · machine-only ${String(verdict.machineOnly)}`);
+
   assert.deepEqual(
     verdict.findings,
     [],
@@ -463,15 +679,22 @@ test("a_refusal_the_model_reads_is_a_sentence: every code the Mod publishes has 
 
 test("the coverage judgement is red for a code whose sentence is deleted", () => {
   // THE FALSIFIER: withhold exactly one code's sentence - what deleting its branch does - and the judgement names that code
-  // rather than passing because the rest of the table still answers. The population is still the Mod's own.
-  const codes = modPublishedRefusalCodes();
-  const deleted = codes[0] ?? "";
-  assert.ok(deleted.length > 0, "blocked: the Mod publishes no refusal code to withhold");
+  // rather than passing because the rest of the table still answers. The population is still the Mod's own, and the code
+  // withheld is the one a real run read most often.
+  const codes = refusalPopulation(codesARealRunDelivered()).map((entry) => entry.code);
+  const deleted = "no_native_path";
+  assert.ok(codes.includes(deleted), `blocked: ${deleted} is not in the population, so withholding it proves nothing`);
   const verdict = judgeRefusalCoverage(codes, (code) => (code === deleted ? null : sentenceFor(code)));
 
   assert.ok(
     verdict.findings.includes(`code_reads_bare:${deleted}`),
     `withholding ${deleted}'s sentence must be named, got ${verdict.findings.join(" ")}`,
+  );
+  // And a sentence that prints the code back is not a sentence: the cheapest way to make the count look right.
+  const restated = judgeRefusalCoverage([deleted], (code) => code);
+  assert.ok(
+    restated.findings.includes(`sentence_is_a_token:${deleted}`),
+    "a guidance string that is the code itself must be refused as a token, not counted as a sentence",
   );
 });
 

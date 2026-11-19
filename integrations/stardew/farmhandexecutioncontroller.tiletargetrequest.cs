@@ -36,10 +36,26 @@ internal sealed partial class ExecutionManager
     /// mints no walk to a tile there is nothing left to do on.
     /// </para>
     /// </summary>
-    private readonly record struct TileTargetGate(int X, int Y, TileTargetRefusal? Refusal, TileTargetSettlement? Settlement = null)
+    /// <param name="Footprint">
+    /// Every tile the resolved target occupies, when its gate knows them. `<see cref="X"/>, <see cref="Y"/>` stays the
+    /// anchor the action's own reach predicate is asked about, so a multi-tile subject answers both questions and the
+    /// approach leg can stand beside the face it can work. Null means the target is the one tile the anchor names.
+    /// </param>
+    private readonly record struct TileTargetGate(
+        int X,
+        int Y,
+        TileTargetRefusal? Refusal,
+        TileTargetSettlement? Settlement = null,
+        (int X, int Y)[]? Footprint = null)
     {
         /// <summary>The target resolved: the actor must reach this tile to act on it.</summary>
         internal static TileTargetGate Resolved(int x, int y) => new(x, y, null);
+
+        /// <summary>
+        /// The target resolved as a piece covering <paramref name="footprint"/> tiles, of which <paramref name="x"/>,
+        /// <paramref name="y"/> is the anchor.
+        /// </summary>
+        internal static TileTargetGate Resolved(int x, int y, (int X, int Y)[] footprint) => new(x, y, null, null, footprint);
 
         /// <summary>The target cannot be acted on: this is the refusal the action owes, and no tile is walked to.</summary>
         internal static TileTargetGate Refused(TileTargetRefusal refusal) => new(0, 0, refusal);
@@ -78,7 +94,7 @@ internal sealed partial class ExecutionManager
         if (answer.Refusal is TileTargetRefusal refusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
         if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))
-            return this.TryBeginToolApproach(requestId, executionId, actionId, location, answer.X, answer.Y, expectedTargetId, execute, nowMs, requestedDeadlineMs);
+            return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);
         return execute(executionId, requestId);
     }
 

@@ -3,14 +3,19 @@ import test from "node:test";
 
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
 import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
-import { CompanionLoop, NO_PRESENTATION_LEASE } from "./companion-loop.js";
-import { FACT_PRODUCER } from "./event-pump.js";
+import { CompanionLoop, NO_PRESENTATION_LEASE, SILENT_TERMINATOR, silentTerminatorReason } from "./companion-loop.js";
+import { FACT_PRODUCER, TURN_OPENINGS } from "./event-pump.js";
 import {
   attachNativeCompanionContent,
   CHAT_TRANSCRIPT_DELIVERY_UNIT,
+  isSilenceOnly,
   NATIVE_BUBBLE_DELIVERY_UNIT,
   NATIVE_BUBBLE_SCAFFOLDING,
   NATIVE_BUBBLE_STAGE_DIRECTION,
+  NATIVE_COMPANION_PART_SUPPRESSIONS,
+  PUNCTUATION_ONLY,
+  punctuationOnlyReason,
+  SILENCE_MARKERS,
   TURN_WITHHELD,
   TURN_WITHHELD_REASONS,
   type NativeCompanionContentEvent,
@@ -689,4 +694,354 @@ test("turn_withheld_entirely_never_settles: every delivery names what reached th
   ]);
   assert.equal(falsifier.hung, 3, `the checker must call all three nameless answers hung: ${falsifier.line}`);
   assert.equal(falsifier.withheld, 0);
+});
+
+/**
+ * A BUBBLE IS A THING SAID, and the two halves of that sentence are measured here together.
+ *
+ * <p>
+ * MEASURED 2026-11-19 (`round79`): one turn carried one real line and THREE deliveries of `chars 5 / 5 / 2`, every one of
+ * them ellipses - and the owner's reading of it was exact: "… is almost everything she says". The delivery had no way to
+ * end a turn without speaking, so a model that wanted to be quiet typed dots, and the bubble presented them as speech. The
+ * surface's answer is now a name (`punctuation_only:<chars>`) beside `blank_text`, and a turn with nothing to say delivers
+ * no bubble at all.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS EVERY NAME THE DELIVERY PATH CAN RECORD, derived from the code's own lists and never retyped here:
+ * the projection's per-part names (`NATIVE_COMPANION_PART_SUPPRESSIONS`), the turn's own withholdings
+ * (`TURN_WITHHELD_REASONS`), the family that carries a count (`PUNCTUATION_ONLY`), and the two this layer only names
+ * (`NO_PRESENTATION_LEASE`, `SILENT_TERMINATOR`). `WITHHELD_CASES` is a `Record` over that union, so a member added to any
+ * of those lists is a compile error here rather than a name nothing examines.
+ * </p>
+ *
+ * <p>
+ * THE PROPERTY: no delivered bubble is text with no word in it - `D > 0` fails naming the reason that produced it. The
+ * silence markers are derived too (`SILENCE_MARKERS`), and the texts that must still be DELIVERED are the boundary that
+ * makes the rule safe: `？` alone is an utterance, `…… 好吧` is a sentence with dots in it.
+ * </p>
+ */
+
+/** What one driven turn recorded, from both channels the projection answers on. */
+type BubbleObservation = Readonly<{
+  site: string;
+  /** The names the turn recorded: each message's part suppression, then the turn's own withholding. */
+  names: readonly string[];
+  /** What reached `onFinalText`: the player's whole delivery, sound and all. */
+  bubbles: readonly string[];
+}>;
+
+/** The sinks' own ledger for one driven turn. `rejected` is a list because two cases end in a refusal by design. */
+type GateRecord = {
+  bubbles: string[];
+  messages: NativeCompanionMessageText[];
+  rejected: string[];
+  incremental: string[];
+};
+
+/** One turn as the cases below need to shape it: the message it carried, and the frame around it. */
+type DrivenTurn = Readonly<{
+  site: string;
+  /** The text parts of the turn's one assistant message, in order. */
+  said: readonly string[];
+  stopReason?: "stop" | "toolUse" | "error" | "aborted";
+  /** Whether the text also arrived as deltas; `false` is the paragraph lane's `unstreamed_text` shape. */
+  deltas?: boolean;
+  /** How many `deliverTurn()` calls the turn gets: two is the `already_delivered` shape. */
+  deliveries?: number;
+  revoke?: boolean;
+  unit?: "bubble" | "message";
+  /** Whether this surface has the mid-message channel, which decides the message unit's intermediate branch. */
+  incremental?: boolean;
+}>;
+
+/** One real turn, driven through the product's own observer with the surface's own pacing. */
+async function driveTurn(turn: DrivenTurn): Promise<BubbleObservation> {
+  const listeners = new Set<Listener>();
+  const record: GateRecord = { bubbles: [], messages: [], rejected: [], incremental: [] };
+  const sinks: NativeCompanionContentSinks = Object.freeze({
+    onPreviewDelta: async () => undefined,
+    onFinalText: async (value: string) => {
+      record.bubbles.push(value);
+    },
+    onRejected: async (reason) => {
+      record.rejected.push(reason);
+    },
+    onMessageText: async (outcome: NativeCompanionMessageText) => {
+      record.messages.push(outcome);
+    },
+    ...(turn.incremental === true
+      ? {
+          onIncrementalText: async (value: string) => {
+            record.incremental.push(value);
+          },
+        }
+      : {}),
+  });
+  const observer = attachNativeCompanionContent(
+    {
+      subscribe(listener: Listener): () => void {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    sinks,
+    {
+      deliveryUnit: turn.unit === "message" ? CHAT_TRANSCRIPT_DELIVERY_UNIT : NATIVE_BUBBLE_DELIVERY_UNIT,
+      stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
+      scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
+      pacing: GAME_DELIVERY_PACING,
+      turn: { id: "player_source_1", locale: "zh-CN" },
+    },
+  );
+  observer.open();
+  if (turn.incremental === true) observer.openPreviews();
+  const emit = (event: NativeCompanionContentEvent): void => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const start = assistant([], turn.stopReason === "toolUse" ? "toolUse" : "stop");
+  emit({ type: "message_start", message: start });
+  if (turn.deltas !== false)
+    turn.said.forEach((part, index) => {
+      emit({
+        type: "message_update",
+        message: start,
+        assistantMessageEvent: { type: "text_start", contentIndex: index, partial: start },
+      });
+      emit({
+        type: "message_update",
+        message: start,
+        assistantMessageEvent: { type: "text_delta", contentIndex: index, delta: part, partial: start },
+      });
+    });
+  emit({
+    type: "message_end",
+    message: Object.freeze({
+      role: "assistant" as const,
+      content: turn.said.map((part) => text(part)),
+      stopReason: turn.stopReason ?? "stop",
+      responseId: "response-1",
+    }),
+  });
+  if (turn.revoke === true) observer.revoke();
+  const answers: NativeCompanionTurnDelivery[] = [];
+  for (let call = 0; call < (turn.deliveries ?? 1); call += 1) answers.push(observer.deliverTurn());
+  await observer.close();
+  const names = [
+    ...record.messages.flatMap((message) => (message.suppression === null ? [] : [message.suppression])),
+    ...answers.flatMap((answer) => (answer.delivered === 0 ? [answer.reason] : [])),
+  ];
+  return Object.freeze({ site: turn.site, names: Object.freeze(names), bubbles: Object.freeze([...record.bubbles]) });
+}
+
+/** Every name a turn's bubble can be withheld under, as KINDS - each list is the product's own declaration. */
+const WITHHELD_KINDS = Object.freeze([
+  ...NATIVE_COMPANION_PART_SUPPRESSIONS,
+  ...TURN_WITHHELD_REASONS,
+  PUNCTUATION_ONLY,
+  NO_PRESENTATION_LEASE,
+  SILENT_TERMINATOR,
+] as const);
+
+type WithheldKind = (typeof WITHHELD_KINDS)[number];
+
+/**
+ * One kind is either driven here, or named with the suite that drives it - never silently omitted.
+ *
+ * The two that are named elsewhere need a whole loop turn (a presentation lease, an expression-only tool result), and the
+ * suites named are the ones that already build that frame.
+ */
+type KindCase = Readonly<{ drives: DrivenTurn | readonly DrivenTurn[] }> | Readonly<{ drivenElsewhere: string }>;
+
+const WITHHELD_CASES: Record<WithheldKind, KindCase> = Object.freeze({
+  // THE PROJECTION'S PER-PART NAMES.
+  blank_text: { drives: { site: "blank_text", said: ["   "] } },
+  empty_after_projection: { drives: { site: "empty_after_projection", said: ["*转过身微笑*"] } },
+  undrawable_text: { drives: { site: "undrawable_text", said: ["嗯\u0007"] } },
+  unstreamed_text: { drives: { site: "unstreamed_text", said: ["我回来了。"], deltas: false, unit: "message", incremental: true } },
+  intermediate_message: { drives: { site: "intermediate_message", said: ["先出门。"], stopReason: "toolUse", unit: "message" } },
+  provider_error: { drives: { site: "provider_error", said: ["我回来了。"], stopReason: "error" } },
+  aborted: { drives: { site: "aborted", said: ["我回来了。"], stopReason: "aborted" } },
+  // THE TURN'S OWN ANSWERS.
+  nothing_to_say: { drives: { site: "nothing_to_say", said: ["*转过身微笑*"] } },
+  already_delivered: { drives: { site: "already_delivered", said: ["我回来了。"], deliveries: 2 } },
+  stopped: { drives: { site: "stopped", said: ["我回来了。"], revoke: true } },
+  message_unit: { drives: { site: "message_unit", said: ["我回来了。"], unit: "message" } },
+  // THE FAMILY THIS UNIT ADDED: `round79`'s own three deliveries, replayed.
+  punctuation_only: {
+    drives: [
+      { site: "round79_line_1", said: ["…… ……"] },
+      { site: "round79_line_2", said: ["…… ……"] },
+      { site: "round79_line_3", said: ["……"] },
+    ],
+  },
+  // THE TWO THAT NEED A WHOLE LOOP TURN, with the suite that builds it.
+  no_presentation_lease: {
+    drivenElsewhere:
+      "`native-companion-turn-delivery.test.ts` `turn_withheld_entirely_never_settles` is the only case that reaches this " +
+      "name, and it is RED for a reason upstream of this unit: measured 2026-11-19, `loop.pump.flush()` answers `not_owed " +
+      "· no_surface_for` for the facts that case enqueues (`{kind:'warped'}`, `{kind:'day_started'}`), so no turn is ever " +
+      "composed for the loop to name. The delivery layer still records this name (`companion-loop.ts`); what the pump no " +
+      "longer does is invite a turn whose answer nothing could show",
+  },
+  silent_terminator: {
+    drivenElsewhere: `\`companion-loop.silent-terminator.test.ts\` \`a_silent_terminator_does_not_speak\` drives both openers: ${TURN_OPENINGS.map(
+      (opener) => silentTerminatorReason(opener),
+    ).join(", ")}`,
+  },
+});
+
+/** Every text made only of silence markers, derived from the register itself: each marker, doubled, and spaced. */
+function markerOnlyTexts(): readonly string[] {
+  return Object.freeze(
+    [...SILENCE_MARKERS].flatMap((marker) => [marker, marker.repeat(2), `${marker} ${marker}`]),
+  );
+}
+
+/**
+ * The texts that must still be DELIVERED, because they carry something a player can read.
+ *
+ * `？` and `？？` are the boundary the rule is built around: a lone question mark is an utterance in Chinese chat, and a
+ * rule that swallowed it would delete a real reply. `…… 好吧` is the dotted sentence the rule must not touch, `。嗯` is the
+ * one full stop plus one word, and `嗯。` is the two-character answer `round79`'s owner wanted to hear instead of dots.
+ */
+const SPOKEN_TEXTS = Object.freeze(["嗯。", "？", "？？", "。嗯", "…… 好吧", "我回来了。"]);
+
+/** The bubble's speech, with the turn's own opening sound removed: the sound is a word, so leaving it in hides the defect. */
+function speechOf(bubble: string, sound: string): string {
+  return bubble.startsWith(`${sound} `) ? bubble.slice(sound.length + 1) : bubble;
+}
+
+test("a bubble is a thing said: a turn of dots delivers nothing and says why, and a dotted sentence still speaks", async () => {
+  // `round79`'s own three deliveries, replayed: `chars 5 / 5 / 2`, every one of them ellipses.
+  const replayed = [];
+  for (const said of ["…… ……", "…… ……", "……"]) replayed.push(await driveTurn({ site: `round79:${said}`, said: [said] }));
+
+  for (const [index, turn] of replayed.entries()) {
+    const said = ["…… ……", "…… ……", "……"][index]!;
+    assert.deepEqual(turn.bubbles, [], `${turn.site}: a turn of nothing but ${JSON.stringify(said)} must not speak`);
+    assert.equal(
+      turn.names[0],
+      punctuationOnlyReason(said.length),
+      `${turn.site}: the withheld part is named, and the name carries the count the log recorded (${String(said.length)})`,
+    );
+    assert.equal(
+      turn.names.at(-1),
+      TURN_WITHHELD.nothingToSay,
+      `${turn.site}: with every paragraph withheld, the turn itself answers \`nothing_to_say\``,
+    );
+  }
+
+  // THE BOUNDARY, BOTH WAYS: every marker-only text is withheld by name, and every readable text still arrives.
+  for (const marker of markerOnlyTexts()) {
+    const turn = await driveTurn({ site: `marker:${marker}`, said: [marker] });
+    assert.deepEqual(turn.bubbles, [], `${turn.site}: a bubble of silence markers reached the player`);
+    assert.equal(turn.names[0], punctuationOnlyReason(marker.length), `${turn.site}: the silence is not named`);
+  }
+  for (const said of SPOKEN_TEXTS) {
+    const turn = await driveTurn({ site: `spoken:${said}`, said: [said] });
+    assert.equal(turn.bubbles.length, 1, `${turn.site}: a readable answer must still be delivered, and once`);
+    assert.ok(turn.bubbles[0]!.includes(said), `${turn.site}: the bubble lost the words it was given`);
+    assert.deepEqual(turn.names, [], `${turn.site}: nothing was withheld from a turn that spoke`);
+  }
+
+  // A DOTS-ONLY MESSAGE INSIDE A TURN THAT SPEAKS: the line arrives and the dots do not, which is `round79`'s shape.
+  const mixed = fakeSession();
+  const mixedRecord = record();
+  const mixedObserver = attachBubble(mixed, mixedRecord.sinks);
+  streamSaid(mixed.emit, ["……"]);
+  streamSaid(mixed.emit, ["我回来了。"]);
+  const mixedBubble = deliveredBubble(mixedObserver.deliverTurn());
+  await mixedObserver.close();
+  assert.deepEqual(mixedRecord.bubbles, [`${soundOf()} 我回来了。`], "the turn delivers its line and nothing else");
+  assert.equal(mixedBubble.chars, mixedRecord.bubbles[0]!.length);
+  assert.deepEqual(mixedRecord.messages, [
+    { textParts: 1, suppression: punctuationOnlyReason(2) },
+    { textParts: 1, suppression: null },
+  ]);
+});
+
+test("a_bubble_is_a_thing_said: every withheld name is examined, and no delivered bubble lacks a word", async () => {
+  const sound = soundOf();
+  const observations: BubbleObservation[] = [];
+  const findings: string[] = [];
+  const examined: string[] = [];
+  const elsewhere: string[] = [];
+  let named = 0;
+  let punctuationCaught = 0;
+
+  for (const [kind, entry] of Object.entries(WITHHELD_CASES) as [WithheldKind, KindCase][]) {
+    if ("drivenElsewhere" in entry) {
+      elsewhere.push(`${kind}: ${entry.drivenElsewhere}`);
+      continue;
+    }
+    examined.push(kind);
+    const turns = Array.isArray(entry.drives) ? entry.drives : [entry.drives as DrivenTurn];
+    const names: string[] = [];
+    for (const turn of turns) {
+      const observation = await driveTurn(turn);
+      observations.push(observation);
+      names.push(...observation.names);
+      if (observation.names.some((name) => name === kind || name.startsWith(`${kind}:`))) named += 1;
+      else findings.push(`reason_not_recorded:${kind}:${turn.site}:names=${JSON.stringify(observation.names)}`);
+    }
+    punctuationCaught += names.filter((name) => name.startsWith(`${PUNCTUATION_ONLY}:`)).length;
+  }
+
+  // THE POPULATION IS THE AUTHORITY. Every derived kind is either driven above or named with its suite, and the count of
+  // the two must be the whole list - a member that drifted out of this table would otherwise pass as "not examined".
+  const unaccounted = WITHHELD_KINDS.filter(
+    (kind) => !examined.includes(kind) && !elsewhere.some((line) => line.startsWith(`${kind}:`)),
+  );
+  for (const kind of unaccounted) findings.push(`reason_not_examined:${kind}`);
+
+  // THE SILENCE MARKERS, derived from the register: every one of them must be caught by name, and none may reach the player.
+  let markersExamined = 0;
+  for (const marker of markerOnlyTexts()) {
+    markersExamined += 1;
+    const observation = await driveTurn({ site: `marker:${marker}`, said: [marker] });
+    observations.push(observation);
+    const caught = observation.names.filter((name) => name.startsWith(`${PUNCTUATION_ONLY}:`));
+    punctuationCaught += caught.length;
+    if (caught.length !== 1)
+      findings.push(`silence_marker_not_named:${JSON.stringify(marker)}:names=${JSON.stringify(observation.names)}`);
+  }
+
+  // AND THE TEXTS THAT ARE SPEECH: delivered, once, with the words in them.
+  for (const said of SPOKEN_TEXTS) {
+    const observation = await driveTurn({ site: `spoken:${said}`, said: [said] });
+    observations.push(observation);
+    if (observation.bubbles.length !== 1)
+      findings.push(`speech_not_delivered:${JSON.stringify(said)}:bubbles=${String(observation.bubbles.length)}`);
+    else if (!observation.bubbles[0]!.includes(said))
+      findings.push(`speech_altered:${JSON.stringify(said)}:${JSON.stringify(observation.bubbles[0])}`);
+  }
+
+  // D, OVER EVERY DELIVERED BUBBLE THE RUNS ABOVE PRODUCED, named by the turn that produced it.
+  let deliveredWithoutWords = 0;
+  for (const observation of observations)
+    for (const bubble of observation.bubbles)
+      if (isSilenceOnly(speechOf(bubble, sound))) {
+        deliveredWithoutWords += 1;
+        findings.push(`a_bubble_is_a_thing_said:${observation.site}:${JSON.stringify(speechOf(bubble, sound))}`);
+      }
+
+  assert.ok(
+    markersExamined > 0 && examined.length > 0 && SPOKEN_TEXTS.length > 0,
+    "blocked: one of this gate's populations is empty, so its verdict is a statement about nothing",
+  );
+  // THE READERS ARE PROVEN LIVE, so a green line is not a blind detector's silence.
+  assert.equal(isSilenceOnly("……"), true, "the silence reader does not fire on the text `round79` delivered");
+  assert.equal(isSilenceOnly("？"), false, "the silence reader would swallow a lone question mark, which is speech");
+  assert.ok(
+    isSilenceOnly(speechOf(`${sound} ……`, sound)),
+    "the bubble's own speech is not read: with the sound left in, a dots bubble would pass as a word",
+  );
+
+  process.stdout.write(
+    `\na_bubble_is_a_thing_said: reasons examined ${String(WITHHELD_KINDS.length)} · named ${String(named)} · ` +
+      `punctuation-caught ${String(punctuationCaught)} · delivered-without-words ${String(deliveredWithoutWords)}\n`,
+  );
+  for (const line of elsewhere) process.stdout.write(`  examined elsewhere ${line}\n`);
+  assert.deepEqual(findings, [], "every bubble the delivery can withhold names itself, and none of them is silence");
 });

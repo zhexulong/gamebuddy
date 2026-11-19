@@ -924,15 +924,15 @@ test("the classifier reds a restated card fact of every claim, and blocks when t
     ["framework_restates_the_card:continuity"],
     "the identity block's own sentence is not a Host rule",
   );
-  const machineVocabularyLine = GAME_SURFACE_INPUT_HEADER.split("\n").find((line) => line.includes("gift_given"));
+  const surfaceSyntaxLine = GAME_SURFACE_INPUT_HEADER.split("\n")[0] ?? "";
   assert.ok(
-    machineVocabularyLine !== undefined,
-    "blocked: the surface header carries no machine-vocabulary line, so the control below examined nothing",
+    surfaceSyntaxLine.length > 0,
+    "blocked: the surface header carries no line, so the control below examined nothing",
   );
   assert.deepEqual(
-    claimsOf([machineVocabularyLine]),
+    claimsOf([surfaceSyntaxLine]),
     [],
-    "how a receipt's machine vocabulary is translated is the surface's, and the card states nothing about it",
+    "the message's own syntax is the surface's, and the card states nothing about it - a classifier that fired here would be reading the block as a restatement of her",
   );
   // The premise itself must be able to fail: a directive that states no form blocks the reading instead of passing.
   const form = facts.find((fact) => fact.claim === "form");

@@ -14,6 +14,15 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager
 {
     /// <summary>
+    /// The rows one radius-window family publishes when its candidate set is larger than the budget: the wood fence and
+    /// crab pot lists.
+    /// </summary>
+    private const int RadiusWindowRowBudget = 16;
+
+    /// <summary>The same budget for the fertilizer list, which names four times as many candidates per tile.</summary>
+    private const int FertilizerRowBudget = 64;
+
+    /// <summary>
     /// WHETHER A TILE IS A PLACE a published target row may name - the one admission every family's tile passes
     /// before it becomes a row.
     ///
@@ -1241,21 +1250,28 @@ internal sealed partial class ExecutionManager
     private static IReadOnlyList<BridgeWoodFenceTarget> DiscoverWoodFenceTargets(Farmer player)
     {
         if (player.currentLocation is not Farm farm) return Array.Empty<BridgeWoodFenceTarget>();
-        List<BridgeWoodFenceTarget> result = new();
+        List<BridgeWoodFenceTarget> candidates = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
             if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)322" || source.Stack <= 0)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
             {
                 Vector2 tile = new(x, y);
                 if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
                     continue;
-                result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
+                candidates.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
             }
         }
-        return result;
+        // ORDER FIRST, THEN TRIM: the scan walks the radius window west-to-east from the map's own corner, so truncating
+        // while it walks publishes whichever tiles the loops reach first - the two westernmost columns of the window - and
+        // the tiles a fence could actually be built on from where the actor stands are dropped without a word.
+        return TargetOrdering.NearestFirstByChebyshev(
+            candidates,
+            (int)player.Tile.X,
+            (int)player.Tile.Y,
+            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(RadiusWindowRowBudget).ToArray();
     }
 
     private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
@@ -1318,35 +1334,41 @@ internal sealed partial class ExecutionManager
     private static IReadOnlyList<BridgeCrabPotTarget> DiscoverCrabPotTargets(Farmer player)
     {
         if (player.currentLocation is not Farm farm) return Array.Empty<BridgeCrabPotTarget>();
-        List<BridgeCrabPotTarget> result = new();
+        List<BridgeCrabPotTarget> candidates = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
             if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
             {
                 if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
                     || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
                     continue;
-                result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
+                candidates.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
             }
         }
-        return result;
+        // ORDER FIRST, THEN TRIM, for the same reason `DiscoverWoodFenceTargets` does: the water tiles a pot may go in are
+        // scattered through the window, and the westmost would otherwise fill the budget by being scanned first.
+        return TargetOrdering.NearestFirstByChebyshev(
+            candidates,
+            (int)player.Tile.X,
+            (int)player.Tile.Y,
+            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(RadiusWindowRowBudget).ToArray();
     }
 
     private static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeFertilizerTarget>();
-        List<BridgeFertilizerTarget> result = new();
+        List<BridgeFertilizerTarget> candidates = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
             if (item is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
                 {
                     Vector2 tile = new(x, y);
                     if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
@@ -1357,11 +1379,17 @@ internal sealed partial class ExecutionManager
                     bool canApplyFertilizer = dirt.CanApplyFertilizer(fertilizer.QualifiedItemId);
                     if (!canApplyFertilizer)
                         continue;
-                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId), canApplyFertilizer));
+                    candidates.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId), canApplyFertilizer));
                 }
             }
         }
-        return result;
+        // ORDER FIRST, THEN TRIM: a tilled field is a solid block of candidates, so the westmost columns of the window
+        // would otherwise fill all sixty-four rows and the soil she is standing in would never be named.
+        return TargetOrdering.NearestFirstByChebyshev(
+            candidates,
+            (int)player.Tile.X,
+            (int)player.Tile.Y,
+            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(FertilizerRowBudget).ToArray();
     }
 
     private static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)

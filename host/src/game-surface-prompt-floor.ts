@@ -15,9 +15,17 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * WHAT IS LEFT IS SYNTAX, AND IT IS WRITTEN LIKE SYNTAX: two lines in the run's own locale, naming the blocks the
- * delivery sends and the one positional fact that speech has no markup of its own (`2026-11-14`: the player's words are
- * the head, unlabelled). Nothing here tells her what to feel, how long a turn is, or when to speak.
+ * WHAT IS LEFT IS SYNTAX, AND IT IS WRITTEN LIKE SYNTAX: one line in the run's own locale, naming the blocks the delivery
+ * sends, the one positional fact that speech has no markup of its own (`2026-11-14`: the player's words are the head,
+ * unlabelled), and the one fact about the turn's OTHER end - a turn may deliver no bubble at all. Nothing here tells her
+ * what to feel, how long a turn is, or when to speak.
+ * </p>
+ *
+ * <p>
+ * THE NO-BUBBLE CLAUSE IS SYNTAX AND NOT CONDUCT, which is why it is here rather than in the card: a turn that says
+ * nothing is not a refusal or a failure, it is a shape the delivery already has (`deliverTurn` answers `nothing_to_say`),
+ * and the model cannot use it unless the surface's own syntax says so. Where the persona draws the line between speaking
+ * and being quiet is the card's business; what a delivered turn may CONTAIN is this header's.
  * </p>
  *
  * <p>
@@ -28,12 +36,15 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * ONE LINE THAT IS TEMPORARY SAYS SO. `formatHeldTool` falls back to the native identity when a slot publishes no tool
- * word (`game-world-vocabulary.ts`), and `fact-brief.ts` prints a receipt's `reasonCode` and `evidence.detail` as the Mod
- * published them, so a machine word can still reach her. That line is debt with a named owner - the two renderers - and it
- * leaves the day they translate. The archive claim LEFT on 2026-11-24 rather than staying here: the two mounted readers'
- * own descriptions now say whose memory they open (`companion-archive-tool-descriptions.ts`), which is the layer that
- * hands her the call.
+ * THE DEBT LINE LEFT ON 2026-11-19, THE DAY IT WAS PAID, exactly as it said it would. It read "receipts and refusals still
+ * carry the machine's own vocabulary (a reason code such as `gift_given`, fields such as `location=Farm;item=(O)472`), so
+ * say what they mean to a person" - a floor telling her to do the translating that the two renderers owed. Both renderers
+ * now do it (`fact-brief.ts`: a refusal reads as `<action> 没做成` plus the instruction `stardew-action-remedy.ts` composes
+ * for that code, and the code and its evidence print verbatim on the address line the block declares) and the remaining
+ * third of the debt - `game-world-vocabulary.ts`'s `formatHeldTool` falling back to the native identity when a slot
+ * publishes no tool word - is reachable only in that block's own address field, where an id is what a later argument
+ * copies. The archive claim LEFT on 2026-11-24 for the same reason: the two mounted readers' own descriptions now say
+ * whose memory they open (`companion-archive-tool-descriptions.ts`), which is the layer that hands her the call.
  * </p>
  *
  * <p>
@@ -63,8 +74,8 @@ function readsChinese(locale: string | undefined): boolean {
 }
 
 /**
- * The header's two lines for one locale: the blocks and where speech sits, and the machine vocabulary still arriving in
- * receipts.
+ * The header's one line for one locale: which blocks the delivery sends, where speech sits, and that a turn may carry no
+ * bubble at all.
  */
 export function gameSurfaceInputHeader(locale?: string): string {
   const zh = readsChinese(locale);
@@ -74,14 +85,9 @@ export function gameSurfaceInputHeader(locale?: string): string {
     return `<${block}> ${zh ? gloss.zh : gloss.en}`;
   }).join(zh ? "、" : ", ");
   const blockCount = String(FACT_BRIEF_BLOCKS.length);
-  return [
-    zh
-      ? `【消息格式】这条消息是机器的报告，${blockCount} 段：${blocks}。三段都是机器写的；三段外面的字是你搭档说的，原样放在最前面，他没开口消息就从 <world-state> 开始。`
-      : `[Message format] This message is the machine's report, in ${blockCount} blocks: ${blocks}. Every block is written by the machine; text outside them is your partner's own words, verbatim and first, and a turn that carries none opens with <world-state> instead.`,
-    zh
-      ? "回执和拒绝里还带着机器写法（gift_given 这样的原因码、location=Farm;item=(O)472 这样的字段），说的时候翻成人话；物件名字偶尔只有 id（手持: (T)Hoe），说的时候用词，id 只拿去填动作参数。"
-      : "Receipts and refusals still carry the machine's own vocabulary (a reason code such as gift_given, fields such as location=Farm;item=(O)472), so say what they mean to a person, and a name that arrives as an id alone (holding: (T)Hoe) is said as the word it stands for while the id is kept for an action argument.",
-  ].join("\n");
+  return zh
+    ? `【消息格式】机器报告，${blockCount} 段：${blocks}。段内机器写的，段外是你搭档的原话、在最前；他没开口就从 <world-state> 起。你的话变成一个气泡，可以没有。`
+    : `[Message format] The machine's report, in ${blockCount} blocks: ${blocks}. The blocks are written by the machine; text outside them is your partner's own words, put first, and a turn with none opens with <world-state> instead. Your own words become one bubble, and a turn may deliver none at all.`;
 }
 
 /** The header the shipped configuration installs: the locale a player's Game session runs under (measured 2026-10-31). */

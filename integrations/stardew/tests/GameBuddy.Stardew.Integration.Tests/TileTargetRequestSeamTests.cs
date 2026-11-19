@@ -31,10 +31,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// location, or that grows an admission or an authorization of its own, fails here and names itself.
 /// </para>
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the five pins read the seam's own source because the collapse they guard against compiles and only misbehaves on a live game thread (another action's wire identity, another executor, arguments in the wrong order), while the one behaviour test drives the real catalogue to prove every authorizing site names one of the seam's proofs.
+// MIXED SHAPE AND BEHAVIOUR: the six pins read the seam's own source because the collapse they guard against compiles and only misbehaves on a live game thread (another action's wire identity, another executor, arguments in the wrong order), while the one behaviour test drives the real catalogue to prove every authorizing site names one of the seam's proofs.
 public sealed class TileTargetRequestSeamTests
 {
     private const string SeamFile = "farmhandexecutioncontroller.tiletargetrequest.cs";
+
+    private const string ApproachFile = "farmhandexecutioncontroller.resourcetoolactions.cs";
 
     /// <summary>
     /// The action ids a site hands the seam that the catalogue does not publish, with the id the action really is.
@@ -186,8 +188,9 @@ public sealed class TileTargetRequestSeamTests
         seam.Should().Contain("if (answer.Refusal is TileTargetRefusal refusal)");
         seam.Should().Contain("if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))", "the reach test reads the action's own predicate, or the native radius when it declares none");
         seam.Should().Contain(
-            "return this.TryBeginToolApproach(requestId, executionId, actionId, location, answer.X, answer.Y, expectedTargetId, execute, nowMs, requestedDeadlineMs);",
-            "the approach leg takes the admitted execution, the action's own wire identity, the resolved tile and the delegate in the order the leg declares");
+            "return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);",
+            "the approach leg takes the admitted execution, the action's own wire identity, the resolved anchor, the tiles the"
+                + " target occupies and the delegate in the order the leg declares");
         seam.Should().Contain("return execute(executionId, requestId);", "a target already in reach runs the body with the admitted identity");
 
         int identity = seam.IndexOf("BeginLocalExecution(", StringComparison.Ordinal);
@@ -245,6 +248,43 @@ public sealed class TileTargetRequestSeamTests
         seam.Should().Contain("TileTargetGate.Resolved(targetX, targetY)", "an accepted target is the tile the caller named");
         seam.Should().Contain("inReach);", "the action's own reach predicate is handed on to the one pipeline");
         seam.Should().Contain("authorize,", "the action's own authorization step is handed on with it");
+    }
+
+    /// <summary>
+    /// The resolved answer carries a FOOTPRINT beside its anchor, and the approach leg already knew what to do with more
+    /// than one tile: a piece standing on several tiles is worked from a tile beside any of them, while a target whose
+    /// gate named no footprint is still the single tile the anchor names, walked to exactly as before.
+    /// </summary>
+    [Fact]
+    public void TheResolvedAnswerCarriesTheFootprintTheApproachLegAlreadyAccepts()
+    {
+        string seam = File.ReadAllText(RepositoryFile("integrations", "stardew", SeamFile));
+        string gate = MethodBody(seam, "private readonly record struct TileTargetGate(");
+
+        gate.Should().Contain(
+            "(int X, int Y)[]? Footprint = null",
+            "the resolved answer may name every tile the target occupies");
+        gate.Should().Contain(
+            "internal static TileTargetGate Resolved(int x, int y) => new(x, y, null);",
+            "a gate that knows one tile keeps answering one tile");
+        gate.Should().Contain(
+            "internal static TileTargetGate Resolved(int x, int y, (int X, int Y)[] footprint) => new(x, y, null, null, footprint);",
+            "a gate that knows the whole extent answers it beside the anchor its own reach predicate is asked about");
+
+        seam.Should().Contain(
+            "answer.Footprint ?? new[] { (answer.X, answer.Y) }",
+            "a target whose gate named no footprint is the one tile the anchor names, so the leg walks where it always walked");
+
+        string approach = MethodBody(
+            File.ReadAllText(RepositoryFile("integrations", "stardew", ApproachFile)),
+            "private LocalExecutionReceipt TryBeginToolApproach(");
+        approach.Should().Contain(
+            "System.Collections.Generic.IReadOnlyList<(int X, int Y)> footprint,",
+            "the footprint overload the seam hands to is the leg's own; a second one beside it would be a second authority "
+                + "over which tile is worked");
+        approach.Should().Contain(
+            "SelectToolApproachTile(",
+            "the standing tile is chosen from the whole footprint, not from the anchor alone");
     }
 
     /// <summary>

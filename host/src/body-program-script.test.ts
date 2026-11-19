@@ -2852,8 +2852,15 @@ test("the pair gate turns red on added prose, and on a sentence that moved witho
       "this falsifier reads the same recorded size the gate does, and a zero would make both reds unreachable",
   );
 
-  // Direction one: a hundred characters nobody removed from anywhere else.
-  const planned = `${description} ${"x".repeat(100)}`;
+  // THE PADDING IS DERIVED FROM THE BUDGET, one character past it, because a fixed hundred assumed the pair had no
+  // headroom - true from `remeasured_2026_11_24_b` to `_c` (7,514 of 7,517) and false since `_d`, where the floor lost the
+  // machine-vocabulary line and the pair fell to 7,396. A falsifier that assumed a full budget would have stopped being a
+  // falsifier without saying so.
+  const pastBudget = (text: string, floorChars: number): string =>
+    `${text}${"x".repeat(Math.max(0, GAME_PROSE_PAIR_BUDGET_CHARS + 1 - (text.length + floorChars)))}`;
+
+  // Direction one: prose nobody removed from anywhere else.
+  const planned = pastBudget(description, floor);
   assert.equal(
     prosePairOverBudget(planned, floor),
     `game_prose_pair_exceeds_budget:${String(planned.length + floor)}:${String(GAME_PROSE_PAIR_BUDGET_CHARS)}:plan_${String(planned.length)}:floor_${String(floor)}`,
@@ -2868,12 +2875,12 @@ test("the pair gate turns red on added prose, and on a sentence that moved witho
     "blocked: the moved clause is not in the description as this falsifier copies it back to its old home",
   );
   const halfway = floor + 1 + movedClause.length;
-  assert.ok(
-    (prosePairOverBudget(description, halfway) ?? "").startsWith(
-      `game_prose_pair_exceeds_budget:${String(description.length + halfway)}:`,
-    ),
-    "the same sentence in both places is refused by the pair: the floor keeping it is what makes this a duplicated fact " +
-      "rather than a move, and the floor's own claim reader names it there too",
+  const duplicated = pastBudget(description, halfway);
+  assert.equal(
+    prosePairOverBudget(duplicated, halfway),
+    `game_prose_pair_exceeds_budget:${String(duplicated.length + halfway)}:${String(GAME_PROSE_PAIR_BUDGET_CHARS)}:plan_${String(duplicated.length)}:floor_${String(halfway)}`,
+    "the same sentence in both places is refused by the pair - the `floor_` side is what counts the duplicate - because a " +
+      "floor keeping it makes this a duplicated fact rather than a move, and the floor's own claim reader names it there too",
   );
   // The control: the pair as the tree really composes it fits, so the two reds above are the shapes and not the reading.
   assert.equal(prosePairOverBudget(description, floor), undefined);

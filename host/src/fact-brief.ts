@@ -66,6 +66,7 @@ import {
 } from "./game-world-vocabulary.js";
 import { boundedField, MAX_WORLD_FACT_LINES } from "./model-field-budget.js";
 import type { Snapshot } from "./protocol.js";
+import { describeRefusalRemedy } from "./stardew-action-remedy.js";
 
 /**
  * The closed set of block names a delivery may use.
@@ -107,13 +108,31 @@ export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
 export const ADDRESSABLE_ROWS_HEAD = "可指代的行：";
 
 /**
+ * THE HEAD OF THE FIELD IN `<world-facts>` AND `<execution-result>` THAT CARRIES AN ADDRESS RATHER THAN A SENTENCE.
+ *
+ * <p>
+ * The same split `<world-state>` made, one block over. A refusal's sentence says what she can do about it, and the
+ * machine's half - `reasonCode=gift_given`, `location=Farm;item=(O)472`, `slot=`, `target=` - is what a LATER tool
+ * argument copies, so it prints verbatim, under a head that says it is an address. Both halves are in one delivery, one
+ * block, one line apart: nothing has to be read out of a sentence, and no id is lost to the prose that carries it.
+ * </p>
+ *
+ * <p>
+ * WHY THE IDS MAY NOT SIMPLY LEAVE. `open_geode` refuses a request without `slot` + `expectedQualifiedItemId`
+ * (`host/src/protocol.ts:3748`), and `rockSourceTargets` rows are addressed by the `target=` an id names. A report that
+ * dropped them would read better and leave her unable to take the step it just described.
+ * </p>
+ */
+export const ADDRESSABLE_FACTS_HEAD = "可指代的字段：";
+
+/**
  * Every field of this block whose content is the machine's rather than a sentence, so a reader - and the gate
  * `a_line_the_model_reads_is_not_a_machine_token` - can tell a report from an address.
  *
  * THE LIST IS THE COMPOSER'S OWN: `composeWorldState` emits a line under each of these heads and nothing else does, so the
  * gate reads this declaration instead of retyping the heads it has to skip.
  */
-export const MACHINE_FIELD_HEADS: readonly string[] = Object.freeze([ADDRESSABLE_ROWS_HEAD]);
+export const MACHINE_FIELD_HEADS: readonly string[] = Object.freeze([ADDRESSABLE_ROWS_HEAD, ADDRESSABLE_FACTS_HEAD]);
 
 
 /**
@@ -886,32 +905,35 @@ export const HELD_WORLD_ZH: Readonly<Record<HeldWorldDeclaration, string>> = Obj
   blocksTimePass: "时间停住了",
 });
 
-/** `<world-facts>`: one line per event, the oldest first, the remainder counted. */
+/** `<world-facts>`: one line per event, the oldest first, the remainder counted, and every address on one line at the end. */
 function composeWorldFacts(events: readonly WorldFact[]): string {
-  const lines = events.map(factLine).filter((line): line is string => line !== "");
-  if (lines.length === 0) return "";
-  const shown = lines.slice(0, MAX_WORLD_FACT_LINES);
-  const rest = lines.length - shown.length;
-  if (rest > 0) shown.push(`其余 ${rest} 条未列出`);
-  return block("world-facts", shown.join("\n"));
+  const rendered = events.map(factLine).filter((entry): entry is FactRendering => entry !== null);
+  if (rendered.length === 0) return "";
+  const shown = rendered.slice(0, MAX_WORLD_FACT_LINES);
+  const rest = rendered.length - shown.length;
+  const lines = shown.map((entry) => entry.narration);
+  if (rest > 0) lines.push(`其余 ${rest} 条未列出`);
+  const addresses = shown.map((entry) => entry.address).filter((address): address is string => address !== null);
+  if (addresses.length > 0) lines.push(`${ADDRESSABLE_FACTS_HEAD}${addresses.join("；")}`);
+  return block("world-facts", lines.join("\n"));
 }
 
-function factLine(fact: WorldFact): string {
+function factLine(fact: WorldFact): FactRendering | null {
   const at = clockOf(fact);
   switch (fact.kind) {
     case "snapshot":
       // The snapshot is the state block, not news; printing it twice is the duplication this whole change removes.
-      return "";
+      return null;
     case "execution_receipt":
       return receiptLine(fact, at);
     case "semantic_event": {
       const kind = typeof fact.payload.kind === "string" ? fact.payload.kind : "semantic_event";
       // THE ONE SEMANTIC EVENT THAT IS A STATEMENT OF ITS OWN, because it says what is UNREAD rather than what happened:
       // it is long enough to need the counts, and `- carried_backlog` told the model nothing (`round72`'s five facts).
-      if (kind === CARRIED_BACKLOG_SEMANTIC_KIND) return carriedBacklogLine(fact, at);
+      if (kind === CARRIED_BACKLOG_SEMANTIC_KIND) return sentence(carriedBacklogLine(fact, at));
       const words = SEMANTIC_KIND_ZH[kind] ?? kind;
       const reason = typeof fact.payload.reasonCode === "string" ? `（${fact.payload.reasonCode}）` : "";
-      return `- ${at}${words}${reason}`;
+      return sentence(`- ${at}${words}${reason}`);
     }
     case "lifecycle": {
       // `state` is what the adapter's own lifecycle event carries; `kind` is what the Mod's day-start lifecycle notice
@@ -924,27 +946,66 @@ function factLine(fact: WorldFact): string {
             ? fact.payload.kind
             : "lifecycle";
       const reason = typeof fact.payload.reasonCode === "string" ? `：${fact.payload.reasonCode}` : "";
-      return `- ${at}${state}${reason}`;
+      return sentence(`- ${at}${state}${reason}`);
     }
     case "world_fact":
-      return worldFactLine(fact, at);
+      return sentence(worldFactLine(fact, at));
   }
+}
+
+/**
+ * One fact's rendering: the sentence a reader hears, and the address it may need in order to act on it.
+ *
+ * The two halves are separate fields rather than one string because they are printed under two heads - the sentence in the
+ * block's prose, the address on the line that says it is an address - and a renderer that could return only one string
+ * would have to choose which of the two facts to drop.
+ */
+type FactRendering = Readonly<{ narration: string; address: string | null }>;
+
+/** A fact that is prose only, or nothing at all. */
+function sentence(narration: string): FactRendering | null {
+  return narration === "" ? null : { narration, address: null };
+}
+
+/**
+ * One fact's address: the Mod's own code and its own evidence, verbatim, prefixed by the same clock and action the
+ * sentence carries so a reader can join the two lines without guessing which refusal is which.
+ *
+ * NOTHING IS REFORMATTED. `detail` is the producer's `key=value;...` string exactly as it arrived, and the separators this
+ * function adds are FULL-WIDTH (`；`) for that reason: a detail may contain ASCII `;` between its own fields, and a reader
+ * splitting on the ASCII one would break a value the Mod wrote. The prefix repeats the sentence's leading spelling
+ * (`08:12 pickup_item`) because two refusals in one turn would otherwise be two unlabelled token runs.
+ */
+function addressOf(label: string, reasonCode: string | null, detail: string): string | null {
+  const parts = [...(reasonCode === null || reasonCode === "" ? [] : [`reasonCode=${reasonCode}`]), ...(detail === "" ? [] : [detail])];
+  return parts.length === 0 ? null : `${label} ${parts.join("；")}`;
 }
 
 /**
  * One action receipt.
  *
- * A refusal prints the Mod's own `reasonCode` and, when it published one, its `evidence.detail` - the refusal text the
- * Mod already produces, reused rather than rephrased here. "够不到 (74,22)，那块地不可耕" is the shape this line is for:
- * the code names the rule, the detail names the tile, and neither is invented by the Host.
+ * THE SENTENCE IS THE MODE AND THE REMEDY, and the code is not in it. `RECEIPT_STATE_ZH` says what the step did
+ * (`没做成`, `做成了`), and `stardew-action-remedy.ts` - the one table that answers "what can she do about this code" -
+ * appends the instruction when it knows the code. Measured `round78`: the line was `pickup_item 没做成：gift_given
+ * （location=Farm;item=(O)472;inventory_after=5）`, and the Game floor carried a second line ordering her to translate
+ * `gift_given` herself. The code has not left the delivery: it is on the address line, verbatim.
+ *
+ * WHY THE REMEDY SENTENCE IS ENGLISH INSIDE A CHINESE BLOCK. It is the same sentence `game-tools.ts` appends to a refused
+ * tool result, from the same function - one authority, and a Chinese copy here would be the second spelling of every
+ * countermeasure in the product. The model reads both languages on this surface already.
  */
-function receiptLine(fact: WorldFact, at: string): string {
+function receiptLine(fact: WorldFact, at: string): FactRendering {
   const action = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "动作";
   const state = typeof fact.payload.state === "string" ? fact.payload.state : "";
   const words = RECEIPT_STATE_ZH[state] ?? state;
-  const reason = typeof fact.payload.reasonCode === "string" ? `：${fact.payload.reasonCode}` : "";
+  const reasonCode = typeof fact.payload.reasonCode === "string" ? fact.payload.reasonCode : null;
   const detail = evidenceDetail(fact.payload);
-  return `- ${at}${action} ${words}${reason}${detail === "" ? "" : `（${detail}）`}`;
+  const remedy = describeRefusalRemedy(reasonCode, fact.payload.evidence);
+  const said = words === "" ? "" : ` ${words}`;
+  return {
+    narration: `- ${at}${action}${said}${remedy === null ? "" : `。${remedy.guidance}`}`,
+    address: addressOf(`${at}${action}`, reasonCode, detail),
+  };
 }
 
 /** The Mod's own evidence detail for a receipt, bounded; never a Host paraphrase of it. */
@@ -1123,21 +1184,34 @@ function genericWorldFactLine(fact: WorldFact, at: string, kind: string): string
   return `- ${at}${words}${code}`;
 }
 
-/** `<execution-result>`: what a submitted programme did, in sentences, one per settlement. */
+/** `<execution-result>`: what a submitted programme did, in sentences, one per settlement, and one line of addresses. */
 function composeExecutionResult(settlements: readonly WorldFact[], reading: WorldStateReading | undefined): string {
-  const lines = settlements.map((settlement) => settlementLine(settlement, reading)).filter((line) => line !== "");
-  return lines.length === 0 ? "" : block("execution-result", lines.join("\n"));
+  const lines: string[] = [];
+  const addresses: string[] = [];
+  for (const settlement of settlements) {
+    const rendered = settlementLine(settlement, reading);
+    if (rendered === null) continue;
+    lines.push(rendered.narration);
+    addresses.push(...rendered.addresses);
+  }
+  if (lines.length === 0) return "";
+  if (addresses.length > 0) lines.push(`${ADDRESSABLE_FACTS_HEAD}${addresses.join("；")}`);
+  return block("execution-result", lines.join("\n"));
 }
+
+/** One settlement's rendering: its sentence, and the addresses its own failed nodes need in order to be acted on. */
+type SettlementRendering = Readonly<{ narration: string; addresses: readonly string[] }>;
 
 /**
  * One settled programme.
  *
  * The counts and the rows come from `program-settlement-digest.ts`'s own payload (`total`, `counts`, `nodes`), so this
- * sentence and a `stardew_action_program_status` answer cannot disagree. A failure is said in WORDS: the node's own
- * `hint` and its own `reasonDetail`, each bounded, with its `reasonCode` beside them - never a Host paraphrase, and never
- * a bare count.
+ * sentence and a `stardew_action_program_status` answer cannot disagree. A failure is said in WORDS, with the remedy that
+ * code owes (§ `stardew-action-remedy.ts`) and its own `hint` when the Mod wrote one; the node's `reasonCode` and its
+ * `reasonDetail` - `owner=Pierre;owner_tile=4,17` - are what a later argument copies, so they print verbatim on the
+ * block's address line instead of inside the sentence.
  */
-function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined): string {
+function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined): SettlementRendering | null {
   const total = Number(fact.payload.total);
   const counts = fact.payload.counts;
   const done =
@@ -1151,14 +1225,27 @@ function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined)
     .filter((node) => node.state === "succeeded")
     .map((node) => proofLine(node))
     .filter((words): words is string => words !== "");
-  const failures = nodes
-    .filter((node) => typeof node.state === "string" && node.state !== "succeeded")
-    .map((node) => failureWords(node))
-    .filter((words): words is string => words !== "");
+  const failed = nodes.filter((node) => typeof node.state === "string" && node.state !== "succeeded");
+  const failures = failed.map((node) => failureWords(node)).filter((words): words is string => words !== "");
+  const addresses = failed.map((node) => nodeAddress(node)).filter((address): address is string => address !== null);
   const said = [...proofs, ...failures];
   const omitted = Number(fact.payload.omitted);
   const more = Number.isFinite(omitted) && omitted > 0 ? `（另有 ${omitted} 步未列出）` : "";
-  return `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}；${remainderSentence(nodes, reading)}`;
+  return {
+    narration: `- ${head}${more}${said.length === 0 ? "" : `：${said.join("；")}`}；${remainderSentence(nodes, reading)}`,
+    addresses,
+  };
+}
+
+/**
+ * One failed node's address: which node it was, the Mod's code for it, and the Mod's own detail - verbatim.
+ *
+ * THE NODE ID IS THE JOIN. A settlement of twenty rows may fail four of them for three different reasons, so a line of
+ * unlabelled token runs would be four addresses and no way to tell which step each belongs to.
+ */
+function nodeAddress(node: SettledNode): string | null {
+  const label = typeof node.nodeId === "string" ? node.nodeId : typeof node.actionId === "string" ? node.actionId : "一步";
+  return addressOf(label, typeof node.reasonCode === "string" ? node.reasonCode : null, boundedField("reasonDetail", node.reasonDetail) ?? "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1475,35 +1562,33 @@ function proofLine(node: SettledNode): string {
 }
 
 /**
- * One failed node in words: the Mod's own hint AND its own detail, each bounded, never one instead of the other.
+ * One failed node in words: the Mod's own hint, and the remedy the code owes - never a bare code.
  *
  * <p>
- * The hint is the SENTENCE that says what would fix it; `reasonDetail` is the EVIDENCE that makes the sentence
- * actionable (`owner=Pierre;owner_tile=4,17;actor_tile=5,19;radius=1`). Measured at `516e2559`, this function printed
- * `hint ?? detail`, so a node carrying both reached her with the sentence alone and the coordinates - the one part of the
- * refusal a guess cannot reconstruct - were dropped. A refusal she cannot decode is a refusal she answers by inventing a
- * world fact.
+ * The hint is the SENTENCE that says what would fix it and it is printed as the Mod wrote it. What left this line on
+ * 2026-11-19 is the `reasonCode` and the `reasonDetail`: measured at `516e2559` this function printed `hint ?? detail`, so
+ * a node carrying both reached her with the sentence alone and the coordinates - the one part of the refusal a guess
+ * cannot reconstruct - were dropped, and the fix put the code in front of both. The code was then the first thing she read
+ * (`no_native_path：closest=49,14;closest_distance=1`) and the Game floor carried a line telling her to translate it. Both
+ * now travel on the block's address line (`nodeAddress`): a run audit still greps the code out of the delivery, and the
+ * sentence she reads names the next step through `stardew-action-remedy.ts` - the same table a refused tool result uses.
  * </p>
  *
  * <p>
- * The node's `reasonCode` is printed BESIDE both, never replaced by either - a run audit greps for
- * `shop_counter_out_of_reach`, and a sentence that only said the counter was out of reach would be a second vocabulary
- * for the same refusal (`round41`: six of those refusals reached the model as a bare code, which is why the sentence
- * exists; neither half may cost the other).
+ * A NODE THE TABLE DOES NOT KNOW still reads as a sentence: `没做成` plus its hint, with no instruction appended rather
+ * than an invented one. `a_refusal_she_reads_is_a_sentence` is what keeps that set empty for the codes the Mod declares.
  * </p>
  */
 function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
-  const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
-  // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
-  // introduces the code, so the two halves stay distinguishable in the line. A node that ALSO carries a row table - the
-  // `partially_succeeded` half of a batch - keeps it beside its reason, because the rows that did happen and the reason
-  // for the ones that did not are one answer about one node.
-  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail), proofTail(node)]
-    .filter((part): part is string => part !== undefined)
+  const remedy = describeRefusalRemedy(typeof node.reasonCode === "string" ? node.reasonCode : null, null);
+  // The Mod's hint first, then the proof half a `partially_succeeded` node keeps - the rows that DID happen and the
+  // reason for the ones that did not are one answer about one node.
+  const words = [boundedField("hint", node.hint), proofTail(node)]
+    .filter((part): part is string => part !== undefined && part !== "")
     .join("｜");
-  const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
-  return reason === undefined ? `${action} 没做成` : `${action} 没做成（${reason}）`;
+  const said = words === "" ? "" : `（${words}）`;
+  return `${action} 没做成${said}${remedy === null ? "" : `。${remedy.guidance}`}`;
 }
 
 /**

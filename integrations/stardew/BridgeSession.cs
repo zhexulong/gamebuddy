@@ -1535,7 +1535,20 @@ string? bodyProgramUnavailableReason = null,
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
+        // THE REVISION IS A PRECONDITION ONLY FOR AN ACTION THAT CAN ACT ON THE WORLD. `stale_snapshot` exists because
+        // a mutation dispatched against a reading that has moved can write the WRONG THING - a tile another action
+        // just planted, a machine another execution just filled. An action that changes nothing has nothing to get
+        // wrong (the worst case is a balloon aimed at a world one tick older), so refusing it on a reading it cannot
+        // act on spends the caller's request on a fact that costs it nothing: measured day 1 at the sleep transition,
+        // an `express_emote(sleep)` arriving as the `ShippingMenu` opened was answered `stale_snapshot` and then
+        // `emote_busy`, two refusals for one race.
+        //
+        // The predicate is NOT new and it is not spelled here: `FarmhandActionCatalog.ChangesTheWorld` is the same
+        // declaration that scopes the durability alarm (`ActionsThatChangeNothing`), so one table decides both what
+        // must be journalled and what must be fresh. The relaxation leaves a trace: a side-effect-free handler says in
+        // its own receipt when the reading it was accepted against had moved.
+        if (FarmhandActionCatalog.ChangesTheWorld(request.Action)
+            && request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
         // The bound is the ACTION'S OWN published window and it is not computed here: `FarmhandActionDeadlineAdmission`
         // owns it, the same declaration the senders are held against. The hard-coded split that used to live here -
         // ten minutes for `navigate_to_destination`, one minute for everything else - could not accept `advance_day`

@@ -123,21 +123,21 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported,
   );
   // A third live run answered that instruction by reading the receipt's wire
   // format to the player ("（gift_given）…quest_25_completed 还是 false"), so the
-  // surface must also say what to do with that vocabulary. The sentence is the input
-  // header's one conduct line now (`gameSurfaceInputHeader`), and it renders in the
-  // run's own locale - read in both, because a half that exists in one language only
-  // is a rule half the product never delivers.
+  // surface had to say what to do with that vocabulary. UNTIL 2026-11-19 it said so
+  // HERE, in a second line ordering her to translate a reason code she should never
+  // have been handed - which was a floor doing the renderers' work. The renderers paid
+  // it instead: a refusal now reads as `<action> 没做成` plus the instruction
+  // `stardew-action-remedy.ts` composes for that code, and the code prints verbatim on
+  // the block's address line (`fact-brief.ts`, `ADDRESSABLE_FACTS_HEAD`). So the
+  // property this header has to hold is the OPPOSITE one, and it is read in both
+  // locales: no machine identifier appears in it at all, because one appearing here is
+  // the thing that made her repeat it.
   for (const locale of [undefined, "zh-CN"] as const) {
     const block = gameSurfaceInputHeader(locale);
-    assert.match(
+    assert.doesNotMatch(
       block,
-      /gift_given/u,
-      `${locale ?? "en-US"}: the block names no machine identifier, so its translation rule has no instance to apply to`,
-    );
-    assert.match(
-      block,
-      /reason code|原因码/u,
-      `${locale ?? "en-US"}: the block does not say what a value like gift_given IS, so nothing tells her it is the game's vocabulary rather than the world's`,
+      /gift_given|reason code|原因码|\(T\)Hoe|\(O\)472/u,
+      `${locale ?? "en-US"}: the header hands her a machine identifier, which is the defect the renderers now own - a code belongs on the address line, not in a sentence she is told to translate`,
     );
   }
 });
@@ -477,28 +477,29 @@ test("the Game floor states no bubble ceiling, because it describes no surface",
     assert.doesNotMatch(game, gone, `${String(gone)} states the shape of a reply, and this block is the message's syntax`);
 });
 
-test("the Game surface names the ids she may not say out loud, and keeps them where they do work", () => {
-  // Measured on a live session: the companion said "我们带着 (T)Hoe 去 Town". The fact line was the source and is
-  // fixed beside this (`formatGameEnvironmentFacts`, runtime-core.internal.ts), but the other half is speech: an id
-  // is a handle for an action argument, never a word the player hears. A bare "do not use ids" did not stop that one,
-  // because the machine-vocabulary line beside it already said it in the abstract - so the rule carried the instance.
+test("the Game surface hands her no id at all, so there is nothing for her to say out loud", () => {
+  // Measured on a live session: the companion said "我们带着 (T)Hoe 去 Town". The fact line that carried it was fixed at
+  // its own renderer (`formatHeldTool` prints the tool's own word and no identity at all,
+  // `game-world-vocabulary.ts`), and until 2026-11-19 the header ALSO carried the abstract rule - "a name that arrives as
+  // an id alone is said as its word, and the id is kept for an action argument".
   //
-  // THE STARDES MODULE'S COPY LEFT ON 2026-11-24 with the rest of the conduct, and the two halves that survive are the
-  // input header's own sentence: a name that arrives as an id alone is SAID AS ITS WORD, and the id is KEPT for an action
-  // argument. The mine's internal map name went with the module - a Stardew place is the world's now, and
-  // `game-world-vocabulary.ts` is what names one.
+  // THE RULE LEFT WITH THE ID. A prompt sentence telling her what to do with a handle is only worth its tokens while a
+  // handle reaches her in prose; every id the delivery carries now sits under one of the two address heads
+  // (`ADDRESSABLE_ROWS_HEAD`, `ADDRESSABLE_FACTS_HEAD`), and the shape is the teacher - which is the claim
+  // `a-line-the-model-reads-is-not-a-machine-token.test.ts` holds on the renderer side. What is left for this test is the
+  // prompt's half: the header must not hand her an instance to repeat, in either locale.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   for (const locale of [undefined, "zh-CN"] as const) {
     const block = gameSurfaceInputHeader(locale);
-    assert.match(block, /\(T\)Hoe/u, `${locale ?? "en-US"}: the id she was measured saying is the example, or the rule has no instance`);
-    assert.match(
+    assert.doesNotMatch(
       block,
-      /kept for an action argument|拿去填动作参数/u,
-      `${locale ?? "en-US"}: the other half - an id is a handle for an argument, never a word the player hears`,
+      /\(T\)Hoe|\(O\)472|\(BC\)\d/u,
+      `${locale ?? "en-US"}: the id she was measured saying is in the header, so the rule has an instance - and an instance in the input is what she repeats`,
     );
+    assert.doesNotMatch(block, /kept for an action argument|拿去填动作参数/u);
   }
-  assert.match(game, /\(T\)Hoe/u, "and that sentence reaches the prompt the player's Game runs on");
-  // Chat has no world and no such ids, so the rule stays on the Game surface.
+  assert.doesNotMatch(game, /\(T\)Hoe/u, "and no id reaches the prompt the player's Game runs on");
+  // Chat has no world and no such ids, so the absence holds there too rather than being a Game-only claim.
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
 });
 

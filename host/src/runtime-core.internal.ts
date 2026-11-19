@@ -294,7 +294,14 @@ export function environmentFactsRecordPath(paths: RuntimePaths): string {
 }
 
 /**
- * The provider Magic Context mounts: render the CURRENT snapshot, then record what was rendered.
+ * The record around one environment render: render the CURRENT snapshot, then record what was rendered.
+ *
+ * NOTHING MOUNTS THIS. The Game runtime stopped registering an environment-facts provider because the line it
+ * rendered is already the `<world-state>` paragraph of that same turn (see the registration site in
+ * `createRuntimeWithFixedToolsCore`), so `environment-facts.jsonl` no longer has a producer. The record itself is
+ * kept, together with this factory, for the unit that re-points it at the render that now feeds the model:
+ * `tools/live-run/round-verdict.mjs` rows 2 and 5 answer from those lines, and until it is written from
+ * `<world-state>`'s own composition they answer "cannot answer from this run".
  *
  * ORDER MATTERS. The render happens first and outside every `try`, so a formatter that throws throws
  * exactly as it did before this record existed - the request path's behaviour is unchanged. Only the
@@ -1387,35 +1394,14 @@ export async function createRuntimeWithFixedToolsCore(
       memoryHooks.setDeclaredProjectIdentity(renderPartition);
     }
 
-    // Non-durable runtime environment facts (game clock, date, weather): the
-    // host registers one provider per runtime; the Magic Context transform
-    // pass injects its CURRENT value as an idempotent <runtime-environment>
-    // block so the companion sees live world state on the next turn without
-    // ever writing it to player memory. Facts are read straight from the
-    // authenticated Mod snapshot (the same numbers the native game reads).
-    // Absent a usable snapshot the provider renders nothing; the block is
-    // then stripped by the same pass and the companion sees no stale state.
-    if (integration !== undefined && identity.continuityId !== undefined) {
-      // The vendored transform owns exactly ONE process-global provider and
-      // throws on a second non-undefined registration. A Host process legally
-      // mounts a fresh Game runtime after a disconnect/resume: the production
-      // lifecycle coordinator closes the previous facade and re-enters
-      // (`consumeOwnedFarmhandBridgeConnection` -> `runEnter`), so the later
-      // mount must replace the previous runtime's provider with its own
-      // authenticated connection instead of failing the boot with
-      // `runtime_environment_facts_provider_already_registered`. `undefined` is
-      // the vendored module's own removal path: the block is stripped until the
-      // replacement provider renders.
-      //
-      // The provider is built by `createRenderedEnvironmentFactsProvider`, which renders exactly what
-      // this closure used to return AND records it beside this run's manifest: the transform calls it
-      // once per assembled request, and that call is the only moment the rendered block exists anywhere
-      // a later reader could look. Nothing here writes the block into the session or player memory.
-      memoryHooks.setRuntimeEnvironmentFacts(undefined);
-      memoryHooks.setRuntimeEnvironmentFacts(
-        createRenderedEnvironmentFactsProvider(integration, environmentFactsRecordPath(paths)),
-      );
-    }
+    // NO environment-facts provider is registered, on either surface.
+    //
+    // The Game turn already carries the same line - the clock, the date, the weather, the map, her tile, the kitchen,
+    // the held tool, the neighbours, the thirsty crops, the chests and her stamina - inside the `<world-state>` block
+    // `fact-brief.ts` composes for it every turn, and that block says how old its reading is. A provider here made the
+    // transform inject a SECOND rendering of those facts into the oldest user message, read live at assembly time and
+    // labelled with no age at all: the same facts at two different moments, one of them claiming to be the present.
+    // Chat has never had either block, so nothing on that surface wanted this one.
   }
 
   // Resolve the declared runtime dependency rather than a source-relative
