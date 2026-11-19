@@ -161,8 +161,14 @@ public class MoveApproachSubstitutionTests
         controller.Should().Contain("probe_says_reachable=");
         // The refusal must also publish WHERE the actor CAN go. Mutation evidence: dropping this call left every
         // test green, because the formatter's own test never proved the refusal called it -- a formatter test is
-        // not a wiring test.
-        controller.Should().Contain("FormatReachableHint(assessed.ClosestToTarget");
+        // not a wiring test. The ONE call is `DescribeWalkTarget`, which is what decides whether a tile is worth
+        // naming at all (`closest=` when a walk ARRIVES from it, `progress=none` when nothing does), so the wiring
+        // assertion follows the claim rather than the formatter that renders half of it. Both mint sites are named
+        // here because the flood branch had no such pin, and that is the branch that published a literal verdict.
+        controller.Should().Contain("DescribeWalkTarget(unreachable",
+            "the flood branch must publish where the actor can go, through the one claim that decides if it helps");
+        controller.Should().Contain("DescribeWalkTarget(assessed",
+            "and so must the engine branch: a refusal that computes the answer and files it where nobody reads has computed nothing");
         // And a refusal must NAME what blocks a tile it refuses: resource clumps, large terrain features and
         // buildings live outside objects/terrainFeatures, so asking only those answered "none" about a real wall
         // (measured: live refusals read blocked_by=none for tiles the planner would not enter). The name is now a

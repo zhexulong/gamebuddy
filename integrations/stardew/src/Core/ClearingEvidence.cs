@@ -245,6 +245,19 @@ public static class ClearingEvidence
     /// <summary>What `next_steps` says when no tile the caller can walk to brings the blocker inside its family's radius.</summary>
     public const string NoNextSteps = "none";
 
+    /// <summary>
+    /// What a refusal says where it used to name a `closest=` tile: no tile the walk reaches opens the route the caller
+    /// asked for.
+    ///
+    /// <para>
+    /// The flood's nearest reachable tile is a measurement, and a refusal published it as `closest=` whatever the verdict
+    /// said. Measured `round78`: `closest=34,6;closest_distance=6` beside `stand_at=40,10`, and the closer-looking tile was
+    /// the end of a dead end - the run spent its day arriving at them. The measurement keeps its own name (`reachable=`,
+    /// beside `walk_limit_steps=`), and the tile is only called something to walk to when a walk ARRIVES from it.
+    /// </para>
+    /// </summary>
+    public const string NoProgress = "progress=none";
+
     /// <summary>The occupant token both shapes share: the engine's name AND the tile it stands on.</summary>
     private static string Occupant(string occupant, (int X, int Y) tile) =>
         $"blocker_occupant={occupant}@{tile.X.ToString(CultureInfo.InvariantCulture)},{tile.Y.ToString(CultureInfo.InvariantCulture)}";
@@ -345,7 +358,7 @@ public static class ClearingEvidence
     private static readonly string[] RouteHintFields =
     {
         "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "next_steps",
-        "stand_at", "detour_steps", "walk_limit_steps", "remaining_clears", "no_cuttable_blocker",
+        "progress", "stand_at", "detour_steps", "walk_limit_steps", "remaining_clears", "no_cuttable_blocker",
     };
 
     private static string DescribeCost(FarmhandClearingCost cost, int? staminaCharge) =>

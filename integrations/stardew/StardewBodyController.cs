@@ -81,6 +81,16 @@ internal sealed class StardewBodyController
     /// native 60 FPS ticks, measured from the last observed progress tick.</summary>
     private const int StallTimeoutTicks = 300;
 
+    /// <summary>
+    /// The refusal for a target tile that is not a PLACE: the map admits neither the tile itself (the body may stand on
+    /// it) nor any of its four cardinal neighbours (<see cref="ExecutionManager.IsTargetTileAddressable"/>, the admission
+    /// every published target row passes). Nothing can be undone and nothing can be cleared - a Buildings tile is not a
+    /// lock - so it is not a route question, and calling it `no_native_path` told a live companion the road was closed
+    /// about a cell that does not exist as ground (measured `round78`: four `move_to_tile` requests, every one
+    /// `target_standable=false` with its four neighbours `buildings_tile:blocked`).
+    /// </summary>
+    internal const string TargetNotAddressableReasonCode = "target_not_addressable";
+
     /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
     /// (freezePause, tool animation) keeps the execution running while inside it
     /// and only falls through to the regular rulings once it expires.</summary>
@@ -614,8 +624,13 @@ internal sealed class StardewBodyController
         var segments = new List<string>
         {
             // The pinned two answers of `RefusalHint`: the closest tile the flood reached, or the layer that refused
-            // the destination. Everything below is what that answer was missing.
-            RefusalHint(verdict.ClosestToTarget, specification.TargetTile, blockedBy),
+            // the destination - and only the first of them when the verdict says a walk ARRIVES from there. When it does
+            // not, the flood's nearest tile is the end of a dead end, and publishing it as `closest=` is a step a caller
+            // will take (measured `round78`: `closest=34,6;closest_distance=6` beside `stand_at=40,10`, 46 steps to
+            // nowhere). `progress=none` is that answer, and the layer still travels with it.
+            RouteExists(verdict, specification.AllowAdjacentArrival)
+                ? RefusalHint(verdict.ClosestToTarget, specification.TargetTile, blockedBy)
+                : $"{ClearingEvidence.NoProgress};blocked_by={blockedBy}",
             $"component_tiles={verdict.ComponentTiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             $"target_enclosed={verdict.TargetEnclosed.ToString().ToLowerInvariant()}",
         };
@@ -644,7 +659,7 @@ internal sealed class StardewBodyController
         // The other branch of the same decision, in the words the flood's own verdict earns: with the target's
         // neighbourhood outside her component there is no way round, and `detour_steps=46` about a dead end is a route a
         // caller will walk (measured round78).
-        segments.Add(verdict.ComponentContainsTarget
+        segments.Add(RouteExists(verdict, specification.AllowAdjacentArrival)
             ? ClearingEvidence.DescribeDetour(
                 verdict.ClosestToTarget is Point reachable ? (reachable.X, reachable.Y) : null,
                 verdict.ClosestToTargetSteps)
@@ -699,8 +714,18 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
-    /// The named occupant just past the actor's walkable component, nearest <paramref name="goalTile"/> - or null when
-    /// the component's frontier is nothing but unnamed walls.
+    /// The tile just past the actor's walkable component that is nearest <paramref name="goalTile"/>, and what stands on
+    /// it - the named occupant when it holds one, the ENGINE's word for the wall when it does not. Null only when the
+    /// component has no frontier on the map at all.
+    ///
+    /// <para>
+    /// THE NEAREST TILE DECIDES, not the nearest tile that happens to have a name. The read used to skip every wall and
+    /// keep looking for a named entity, so measured `round78` a refusal for `22,31` published
+    /// <c>blocker_occupant=bush@28,16</c> - twenty-one tiles along the rim, closing nothing on the route the caller
+    /// asked about - because the tile actually closing THAT route was map wall and had no name to give. A rim is what the
+    /// nearest tile says it is; a name further along belongs to a different route, and naming it here made the caller walk
+    /// to it.
+    /// </para>
     /// </summary>
     private static FrontierObstruction? FindFrontierObstruction(Farmer localPlayer, Vector2 goalTile)
     {
@@ -730,15 +755,15 @@ internal sealed class StardewBodyController
                     continue;
                 if (!location.isTileOnMap(new Vector2(candidate.X, candidate.Y)))
                     continue;
-                if (OccupantAt(location, localPlayer, new Vector2(candidate.X, candidate.Y)) is not { } occupancy)
-                    continue;
                 int distance = Math.Abs(candidate.X - (int)goalTile.X) + Math.Abs(candidate.Y - (int)goalTile.Y);
                 bool better = best is not { } incumbent
                     || distance < bestDistance
                     || (distance == bestDistance && Before(candidate, incumbent.Tile));
                 if (!better)
                     continue;
-                best = new FrontierObstruction((candidate.X, candidate.Y), occupancy);
+                best = new FrontierObstruction(
+                    (candidate.X, candidate.Y),
+                    FrontierOccupancy(location, localPlayer, new Vector2(candidate.X, candidate.Y)));
                 bestDistance = distance;
             }
         }
@@ -746,11 +771,32 @@ internal sealed class StardewBodyController
         return best;
     }
 
+    /// <summary>
+    /// What one frontier tile is, in the words a refusal publishes: the occupant the walk can price or name, and
+    /// otherwise the engine's own layer for the wall it is (<c>buildings_tile</c>, <c>back_tile</c>,
+    /// <c>location_constraint</c>, <c>water</c>).
+    ///
+    /// <para>
+    /// A wall is an ANSWER and not a reason to keep looking. <see cref="OccupantAt"/> deliberately returns null for
+    /// everything it cannot price or name - an unpriceable clump, a building footprint, the map's own water - so a
+    /// frontier read that only accepted its answers could only ever describe rims built of bushes and boulders, and said
+    /// nothing at all about the far more common rim of map. The layer word is the one <c>blocked_by=</c> and
+    /// <c>approaches=</c> already publish for the same tile, so nothing here is a new vocabulary.
+    /// </para>
+    /// </summary>
+    private static Occupancy FrontierOccupancy(GameLocation location, Farmer localPlayer, Vector2 tile)
+    {
+        if (OccupantAt(location, localPlayer, tile) is { } occupant)
+            return occupant;
+        string wall = DescribeTargetOccupant(location, tile, localPlayer).Layer.ToWireValue();
+        return new Occupancy(wall, null, wall, null);
+    }
+
     /// <summary>The deterministic tie-break between two equally distant frontier obstacles: north-most, then west-most.</summary>
     private static bool Before(Point candidate, (int X, int Y) current) =>
         candidate.Y < current.Y || (candidate.Y == current.Y && candidate.X < current.X);
 
-    /// <summary>A named occupant on the frontier, and the tile it stands on.</summary>
+    /// <summary>What stands on the frontier: an occupant the walk can price or name, or the engine's word for the wall.</summary>
     private readonly record struct FrontierObstruction((int X, int Y) Tile, Occupancy Occupant);
 
     /// <summary>
@@ -813,10 +859,11 @@ internal sealed class StardewBodyController
             // WHERE the walk it just tried could still go. This branch used to carry the layer and nothing a caller could
             // dispatch: the blocker this walk was for is gone and the engine still has no route, so `clear_step=...` (when
             // a fresh plan resolves one) was the only tile in it and `blocked_by=none` read as "nothing is in the way" about
-            // a world it had just failed to walk through. The flood's own nearest reachable tile is the one step this
-            // refusal can honestly name, from the same probe every other reachability claim here uses.
+            // a world it had just failed to walk through. The tile is named only when the verdict says the walk ARRIVES
+            // from it, from the same probe every other reachability claim here uses - here the engine has already refused
+            // the route, so a `closest=` off a dead end would be the strongest kind of misleading.
             string reachable = AssessNativeReachability(localPlayer, arrived.Requested, findClosestReachable: true) is { } afterClear
-                ? $";{FormatReachableHint(afterClear.ClosestToTarget, new Point((int)arrived.Requested.TargetTile.X, (int)arrived.Requested.TargetTile.Y))}"
+                ? $";{DescribeWalkTarget(afterClear, arrived.Requested.TargetTile, arrived.Requested.AllowAdjacentArrival)}"
                 : string.Empty;
             this.Fail(
                 WalkRefusalCode(resumedBlocker, NoNativePathReasonCode),
@@ -912,6 +959,36 @@ internal sealed class StardewBodyController
             return false;
         }
 
+        // A COORDINATE IS NOT A PLACE. Measured `round78`: four `move_to_tile` requests named tiles whose own ground the
+        // map refuses AND whose four neighbours read `buildings_tile:blocked` - no body could ever be there or beside
+        // one of them, so no target family could have published them and they came from the model reading the map. The
+        // walk answered `no_native_path`, which reads as "the road is closed" about a cell that is not a place at all, and
+        // the caller re-aimed at neighbours of a wall. This question needs no flood and no engine: it is the map's own
+        // answer, and it is the same admission every published target row passes
+        // (<see cref="ExecutionManager.IsTargetTileAddressable"/>) widened by the one case a walk to the tile itself needs -
+        // the body may stand ON the tile.
+        //
+        // It does NOT go through <see cref="WalkRefusalCode"/>: that mapping exists so a character standing in the way is
+        // never reported as an absent route, and no character and no wait can make a wall a place. The tile the body is
+        // ALREADY standing on is exempt for the same reason - a body is standing on it, which settles the question.
+        if ((int)localPlayer.Tile.X != (int)specification.TargetTile.X
+            || (int)localPlayer.Tile.Y != (int)specification.TargetTile.Y)
+        {
+            if (!IsAddressableTile(localPlayer.currentLocation, specification.TargetTile))
+            {
+                bool onMap = localPlayer.currentLocation.isTileOnMap(specification.TargetTile);
+                reasonCode = TargetNotAddressableReasonCode;
+                evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;target_on_map={(onMap ? "true" : "false")};target_passable={(onMap && localPlayer.currentLocation.isTilePassable(specification.TargetTile) ? "true" : "false")};approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)};blocked_by={blockedBy}";
+                this.reachabilityHint = JoinWithinHintBound(new[]
+                {
+                    TargetNotAddressableReasonCode,
+                    $"target_on_map={(onMap ? "true" : "false")}",
+                    $"approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}",
+                });
+                return false;
+            }
+        }
+
         // ASK THE CHEAP QUESTION FIRST.
         //
         // The engine finder below searches synchronously on the game thread with a 40 000-node budget, and a target
@@ -923,11 +1000,19 @@ internal sealed class StardewBodyController
         // neighbourhood even in the actor's walkable component - and it is the same probe the refusal evidence below
         // already reports. Asking it first costs a bounded flood and keeps the engine call for the cases that can
         // actually succeed.
-        if (AssessNativeReachability(localPlayer, specification, findClosestReachable: true) is { ComponentContainsTarget: false } unreachable)
+        if (AssessNativeReachability(localPlayer, specification, findClosestReachable: true) is { } unreachable
+            && !RouteExists(unreachable, specification.AllowAdjacentArrival))
         {
+            // The verdict, DERIVED. This branch used to publish the literal `route_exists_cardinal=false`, in a branch that
+            // could only be entered when the flood had not found the target ON the actor's side - so a target whose
+            // walkable neighbour WAS reached and whose own tile was not read exactly like a target twenty tiles away behind
+            // a wall. `DescribeRouteClaim` is the one place those two claims are derived, and the engine branch below uses
+            // it too, so the two mint sites cannot disagree about one verdict.
             reasonCode = WalkRefusalCode(blockedLayer, NoNativePathReasonCode);
-            evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
-                + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
+            evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;{DescribeRouteClaim(unreachable, specification.AllowAdjacentArrival)};component_tiles={unreachable.ComponentTiles};gate=reachability_flood"
+                // ALWAYS, on this branch: it is entered only when the walk cannot end on the target tile, so the four
+                // approaches ARE the answer - and their absence was half of what made the round78 receipt unreadable.
+                + $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}"
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";blocked_by={blockedBy}"
@@ -938,7 +1023,11 @@ internal sealed class StardewBodyController
                 // its session, `no_native_path` 26. The flood had already computed the one tile that would have ended the loop
                 // and `FormatReachableHint` was only wired into the branch below, so this branch published the verdict without
                 // the escape. The hint is now on both branches, from the same `ClosestToTarget` the flood already filled.
-                + $";{FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}"
+                //
+                // `closest=` only when the verdict says a walk ARRIVES from that tile, and `progress=none` when it does
+                // not: the tile this branch computes is the nearest tile of a component that cannot reach the target, and
+                // naming it "closest" is what sent a live companion 46 steps to a dead end (`round78`).
+                + $";{DescribeWalkTarget(unreachable, specification.TargetTile, specification.AllowAdjacentArrival)}"
                 + DescribeClearToReach(localPlayer, specification)
                 // WHAT is in the way, when a clearing plan has no step to offer. Without this branch a bush - which no
                 // published action removes, so the plan is `unreachable` - refused with `blocked_by=none` about a tile
@@ -987,19 +1076,18 @@ internal sealed class StardewBodyController
                 ?? AssessNativeReachability(localPlayer, specification);
             if (verdict is ReachabilityVerdict assessed)
             {
+                bool routeExists = RouteExists(assessed, specification.AllowAdjacentArrival);
                 // `probe_says_reachable` states the disagreement explicitly
                 // instead of leaving a reader to derive it from target_enclosed.
-                evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=cardinal_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
-                evidence += $";route_exists_cardinal={assessed.ComponentContainsTarget.ToString().ToLowerInvariant()};component_tiles={assessed.ComponentTiles}";
-                // A free target inside an enclosed component is only explicable by its own approaches, so name
-                // them: without this the receipt reads as a contradiction and the agent re-aims blindly.
-                if (assessed.TargetEnclosed)
-                {
+                evidence += $";{DescribeRouteClaim(assessed, specification.AllowAdjacentArrival)};derived=true;probe=cardinal_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
+                evidence += $";component_tiles={assessed.ComponentTiles}";
+                // The target's own approaches whenever the walk cannot END on its tile: the verdict and the ring are two
+                // facts about one world, and a receipt that carries only the first reads as a contradiction.
+                if (!assessed.ComponentContainsTarget)
                     evidence += $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}";
-                    // Where it CAN go, not only where it cannot: the flood already found this tile.
-                    evidence += $";{FormatReachableHint(assessed.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}";
-                }
-                searchOutcome = assessed.ComponentContainsTarget
+                // Where it CAN go - when the verdict says the walk arrives from there.
+                evidence += $";{DescribeWalkTarget(assessed, specification.TargetTile, specification.AllowAdjacentArrival)}";
+                searchOutcome = routeExists
                     ? "planner_null_with_cardinal_route"
                     : "no_cardinal_route";
                 // The native API exposes only a null path, not whether its bound was exhausted. Keep the
@@ -1498,6 +1586,25 @@ internal sealed class StardewBodyController
             return false;
         return actor.Tile == tile
             || !location.IsTileOccupiedBy(tile, StopsStanding, ignorePassables: StopsStanding, useFarmerTile: false);
+    }
+
+    /// <summary>
+    /// Whether a body can end up AT <paramref name="tile"/> or BESIDE it: the map admits the tile itself (the body may
+    /// stand on it, which is what an exact-arrival walk needs), or one of its four cardinal neighbours
+    /// (<see cref="ExecutionManager.IsTargetTileAddressable"/>, the admission every published target row passes).
+    ///
+    /// <para>
+    /// Both halves are the map's own reading and not the occupancy list: an entity on a tile is something a caller can
+    /// wait out or clear, while a Buildings tile is not. <paramref name="tile"/> off the map answers false - a coordinate
+    /// nothing can be at.
+    /// </para>
+    /// </summary>
+    internal static bool IsAddressableTile(GameLocation? location, Vector2 tile)
+    {
+        if (location is null || !location.isTileOnMap(tile))
+            return false;
+        return location.isTilePassable(tile)
+            || ExecutionManager.IsTargetTileAddressable(location, (int)tile.X, (int)tile.Y);
     }
 
     /// <summary>
@@ -2133,7 +2240,12 @@ internal sealed class StardewBodyController
                         pathfinding: true,
                         skipCollisionEffects: true),
                 ReachabilityProbeLimit,
-                findClosestReachable);
+                findClosestReachable,
+                // THE WALK'S OWN ARRIVAL RULE. The probe exists to answer "can this walk arrive", so it has to be asked
+                // with the same geometry the engine's goal predicate uses - otherwise it vetoes a walk the engine would
+                // have completed on a diagonal neighbour the request allows (`native=not_attempted` before the engine is
+                // ever asked), and it does so silently, because a veto looks exactly like an unreachable world.
+                specification.AllowAdjacentArrival);
         }
         catch
         {
@@ -2252,6 +2364,59 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
+    /// Whether a CARDINAL walk can satisfy the request a verdict was asked about: the body ends ON the target tile when
+    /// the request wants the exact tile, or on any Chebyshev-1 tile of it when the request allows an adjacent arrival.
+    ///
+    /// <para>
+    /// ONE derivation, because the receipt used to answer this twice and both answers were wrong in one world. The flood
+    /// branch published a HARDCODED <c>route_exists_cardinal=false</c>: the value happened to match its only branch, so
+    /// it read as a measurement while nothing computed it. The engine branch published
+    /// <see cref="ReachabilityVerdict.ComponentContainsTarget"/>, which is the narrower question - can the body STEP
+    /// ONTO the tile. Measured `round78`, over a target whose walkable neighbour WAS reached and whose own tile was not:
+    /// the receipt said <c>route_exists_cardinal=false</c> about a road that exists.
+    /// </para>
+    /// <para>
+    /// <see cref="ReachabilityVerdict.ComponentContainsTarget"/> stays the first disjunct and is not a copy of it: the
+    /// flood's ring is <see cref="IsArrivalDelta"/>'s set, which for an exact request is the target tile alone.
+    /// </para>
+    /// </summary>
+    internal static bool RouteExists(ReachabilityVerdict verdict, bool allowAdjacentArrival) =>
+        verdict.ComponentContainsTarget || (allowAdjacentArrival && !verdict.TargetEnclosed);
+
+    /// <summary>
+    /// The TWO route claims a receipt publishes, derived from one verdict: whether a cardinal walk satisfies the
+    /// request, and whether the target's arrival ring is outside the actor's component.
+    ///
+    /// <para>
+    /// The pair is what tells the two refused worlds apart on the wire. <c>route_exists_cardinal=false</c> beside
+    /// <c>target_enclosed=true</c> says the walk reaches the target's neighbourhood nowhere - no route at all. The same
+    /// <c>false</c> beside <c>target_enclosed=false</c> says the road is there and the TILE refuses: the body can stand
+    /// beside it, and an exact-arrival request cannot be served by any route. Before this one branch published a literal
+    /// and the other published the narrower question, so the second world was reported as the first.
+    /// </para>
+    /// </summary>
+    internal static string DescribeRouteClaim(ReachabilityVerdict verdict, bool allowAdjacentArrival) =>
+        $"route_exists_cardinal={(RouteExists(verdict, allowAdjacentArrival) ? "true" : "false")};"
+        + $"target_enclosed={verdict.TargetEnclosed.ToString().ToLowerInvariant()}";
+
+    /// <summary>
+    /// The tile a refusal tells the caller to WALK to, or <c>progress=none</c> when no tile the walk reaches opens the
+    /// route it asked for.
+    ///
+    /// <para>
+    /// The flood's nearest reachable tile is a measurement, and it was published as <c>closest=</c> whatever the verdict
+    /// said - so a refusal about a route that does not exist named a wilderness tile as the place to go. Measured
+    /// `round78`: <c>closest=34,6;closest_distance=6</c> beside <c>stand_at=40,10</c>, and following the closer-looking one
+    /// cost 46 steps to a dead end. The measurement keeps its own name (<c>reachable=</c>, from the detour facts); what a
+    /// caller reads here is a STEP, so it is published only when the verdict says a walk can arrive from it.
+    /// </para>
+    /// </summary>
+    internal static string DescribeWalkTarget(ReachabilityVerdict verdict, Vector2 targetTile, bool allowAdjacentArrival) =>
+        RouteExists(verdict, allowAdjacentArrival)
+            ? FormatReachableHint(verdict.ClosestToTarget, new Point((int)targetTile.X, (int)targetTile.Y))
+            : ClearingEvidence.NoProgress;
+
+    /// <summary>
     /// Computes the actor's bounded component using the supplied native-planning
     /// walkability predicate. A null result means the component exceeded the hard
     /// probe budget before it could be exhausted, so no enclosure claim is made.
@@ -2261,7 +2426,8 @@ internal sealed class StardewBodyController
         Point targetTile,
         Func<Point, bool> canTraverse,
         int maxVisited,
-        bool findClosestReachable = false)
+        bool findClosestReachable = false,
+        bool allowAdjacentArrival = false)
     {
         if (maxVisited <= 0)
             return null;
@@ -2294,21 +2460,34 @@ internal sealed class StardewBodyController
         // 3,9: the cardinal neighbour 3,10 resolves (2-node path at every limit), while the diagonal-only
         // neighbour 4,8 returns null at 10000, 40000 AND 400000 expansions -- the limit is not the variable.
         Point[] neighbours = CardinalOffsets;
-        // "Contains the target" means the planner can be NEXT TO it (Manhattan 1) or on it, because that is
-        // what makes the target reachable for a cardinal stepper. A Chebyshev ring would count a diagonally
-        // adjacent tile, which the planner cannot step across.
-        bool IsTargetNeighbour(Point tile) =>
-            tile != targetTile
-            && Math.Abs(tile.X - targetTile.X) + Math.Abs(tile.Y - targetTile.Y) == 1;
+        static int Manhattan(Point left, Point right) =>
+            Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
         static int Chebyshev(Point left, Point right) =>
             Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
+        // THE ARRIVAL RULE, not a second one. `IsArrivalDelta` accepts the requested tile, and then either ONLY that tile
+        // (an exact request) or every Chebyshev-1 tile of it (a request that allows an adjacent arrival) - because
+        // `PathFindController` dequeues by `g + manhattan h` and finishes on the first node the predicate accepts, which
+        // is a DIAGONAL tile on 4 of 6 sampled unreachable targets. A Manhattan-only ring here asked a different question
+        // than the engine's own goal, so a world whose only ring tile in the component was diagonal was vetoed before the
+        // engine was ever asked (`native=not_attempted`). The STEP SET stays cardinal - `neighbours` below, and
+        // `PathFindController.Directions` - so four-direction walking is still the engine's law; only "is this tile an
+        // arrival" widened, and only where the request itself allows one.
+        bool IsTargetNeighbour(Point tile) =>
+            tile != targetTile
+            && (allowAdjacentArrival ? Chebyshev(tile, targetTile) == 1 : Manhattan(tile, targetTile) == 1);
+        // The narrower fact `ComponentContainsTarget` has always meant: the planner can step ONTO the target, which needs
+        // a CARDINAL neighbour in the component however wide the arrival ring is - a diagonal neighbour is a place the
+        // walk may END, never a tile the body can stand on the target from.
+        bool IsCardinalNeighbour(Point tile) =>
+            tile != targetTile && Manhattan(tile, targetTile) == 1;
         // Two different facts, deliberately kept apart:
-        //   * `reachesNeighbourhood` -- the flood VISITED a tile adjacent to the target, so the planner can
-        //     stand next to it. This is what `TargetEnclosed` denies, and the original contract's question.
+        //   * `reachesNeighbourhood` -- the flood VISITED a tile the arrival rule accepts, so the walk can end there.
+        //     This is what `TargetEnclosed` denies, and the original contract's question.
         //   * `ComponentContainsTarget` -- the planner can actually STEP ONTO the target, which additionally
         //     requires the target tile itself to be passable. Claiming this without a route is the defect the
         //     live refusal exposed.
         bool reachesNeighbourhood = false;
+        bool reachesStep = false;
         bool targetTraversable = canTraverse(targetTile);
         Point? closest = null;
         int? closestSteps = null;
@@ -2325,8 +2504,9 @@ internal sealed class StardewBodyController
             if (IsTargetNeighbour(current))
             {
                 reachesNeighbourhood = true;
+                reachesStep |= IsCardinalNeighbour(current);
                 if (!findClosestReachable)
-                    return new ReachabilityVerdict(false, targetTraversable, current, visited.Count, steps);
+                    return new ReachabilityVerdict(false, reachesStep && targetTraversable, current, visited.Count, steps);
             }
             foreach (Point offset in neighbours)
             {
@@ -2338,8 +2518,9 @@ internal sealed class StardewBodyController
                 if (IsTargetNeighbour(next))
                 {
                     reachesNeighbourhood = true;
+                    reachesStep |= IsCardinalNeighbour(next);
                     if (!findClosestReachable)
-                        return new ReachabilityVerdict(false, targetTraversable, next, visited.Count, steps + 1);
+                        return new ReachabilityVerdict(false, reachesStep && targetTraversable, next, visited.Count, steps + 1);
                 }
                 if (next != targetTile)
                 {
@@ -2359,7 +2540,7 @@ internal sealed class StardewBodyController
             }
         }
 
-        return new ReachabilityVerdict(!reachesNeighbourhood, reachesNeighbourhood && targetTraversable, closest, visited.Count, closestSteps);
+        return new ReachabilityVerdict(!reachesNeighbourhood, reachesStep && targetTraversable, closest, visited.Count, closestSteps);
     }
 
     /// <summary>
