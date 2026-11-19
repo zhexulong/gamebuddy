@@ -80,8 +80,8 @@ test("a lapsed offer still reaches the game, and the game's refusal is a named a
   await expect(handoff.getByTestId("cabin-choice-list")).toContainText("Cabin 1");
 
   await handoff.getByRole("button", { name: "Confirm cabin" }).click();
-  // The reading of the live defect: this stays at 0 while the page holds the decision, and the only
-  // request the press releases is another read.
+  // The reading of the live defect: this stayed at 0 while the page held the decision, because the
+  // only request a press released was a read.
   await expect
     .poll(() => cabinConfirmRequests, {
       message: "a lapsed offer must still reach the game, which is the party that owns the deadline",
@@ -96,7 +96,12 @@ test("a lapsed offer still reaches the game, and the game's refusal is a named a
   console.log(`[cabin-confirm-stale] ${cabinConfirmRequests} confirm request(s), ${cabinReads} read(s): ${staleText}`);
   expect(staleText, "it says the choice went stale").toMatch(/gone stale|expired/iu);
   expect(staleText, "and that re-reading is the step it took").toMatch(/read again|reading again/iu);
-  await expect.poll(() => cabinReads, "the stale answer reads the cabins again").toBe(2);
+  // Three reads, and each one is named: the mount's own read that drew the row, the read the press
+  // takes to renew the lease before it asks the game to take the offer (`0333f996`, so the handle it
+  // sends is one the Host has just minted rather than the one drawn seconds ago), and the read the
+  // stale refusal is answered with. The number is exact because a press is one renewal and a refusal
+  // is one re-read; a fourth would be a duplicate of one of the three.
+  await expect.poll(() => cabinReads, "the stale answer reads the cabins again").toBe(3);
 
   // And the retry is the list in front of the player: a second press on the fresh offer is admitted.
   await handoff.getByRole("button", { name: "Confirm cabin" }).click();
