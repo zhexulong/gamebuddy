@@ -34,6 +34,7 @@ import {
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
+import type { ExpressionTurnGate } from "../expression-turn-gate.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
@@ -1438,6 +1439,14 @@ export type GameCompanionLoopInput = Readonly<{
   publish: (fact: WorldFact) => void;
   /** This run's span recorder: the loop's delivery and turn-tail spans land in it. */
   runTrace?: RunTrace;
+  /**
+   * The gate the expression action tools already read (`RuntimeSession.expressionTurnGate`).
+   *
+   * It is handed here rather than minted here because the tools were mounted with it before this loop existed: the
+   * boundary that binds the opener has to be the same object the tool result consults, or the hint and the account would
+   * be two different decisions.
+   */
+  expressionTurnGate?: ExpressionTurnGate;
 }>;
 
 /**
@@ -1468,6 +1477,9 @@ export function createGameCompanionLoop(input: GameCompanionLoopInput): Companio
     undefined,
     input.runTrace,
   );
+  // The tools were mounted with this gate before this loop existed, so binding it here is what makes the hint and the
+  // account one decision instead of two.
+  if (input.expressionTurnGate !== undefined) loop.attachExpressionTurnGate(input.expressionTurnGate);
   loop.pump.attachWorldStateRefresh(
     Object.freeze({
       observe: () => {
@@ -1645,6 +1657,7 @@ export function createHostGameRuntimeMaterializer(
           volatileContext: constructed.volatileAuthoredContext,
           connection: execution.connection,
           runTrace,
+          expressionTurnGate: runtime.expressionTurnGate,
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
           publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),

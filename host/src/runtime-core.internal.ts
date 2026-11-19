@@ -26,6 +26,7 @@ import type { CompanionInterruption } from "./companion-interruption.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
+import { createExpressionTurnGate, type ExpressionTurnGate } from "./expression-turn-gate.js";
 import type { GameConnection } from "./game-connection.js";
 import {
   assertIntegrationAdapter,
@@ -644,6 +645,13 @@ export type RuntimeSession = Readonly<{
    * `before_provider_headers`, so the value travels with the session that sends the request.
    */
   providerTurnHeader: ProviderTurnHeaderScope;
+  /**
+   * The one answer to "may an expression result end THIS turn", written by the companion loop and read by the mounted
+   * expression tools (`expression-turn-gate.ts`). It travels with the runtime for the reason `providerTurnHeader` does:
+   * the tool closures are built here and the loop is composed on top of them, so the session that mounts both is the only
+   * place they can meet.
+   */
+  expressionTurnGate: ExpressionTurnGate;
   /**
    * Republish the preset segments the NEXT provider request assembles from, for the Chat surface.
    *
@@ -1509,6 +1517,10 @@ export async function createRuntimeWithFixedToolsCore(
   // per-request seam Pi offers (see `provider-turn-header.internal.ts`), and it survives `noExtensions`,
   // which describes disabled extension PATHS and not an inline factory the Host registers itself.
   const providerTurnHeader = createProviderTurnHeaderScope();
+  // THE TURN'S GATE FOR THE EXPRESSION TOOLS, minted with the runtime because both sides of it are built from here: the
+  // action tools read it per call (`createToolSet` below), and the companion loop the materializer composes next binds the
+  // opener of the turn it is delivering. Closed until a turn opens it, so a tool that runs outside a turn ends nothing.
+  const expressionTurnGate = createExpressionTurnGate();
   const loader = new DefaultResourceLoader({
     cwd: paths.runtimeCwd,
     agentDir: paths.agentDir,
@@ -1615,6 +1627,10 @@ export async function createRuntimeWithFixedToolsCore(
           ...(dispatchController === undefined
             ? {}
             : { dispatchAdmissionFactory: () => dispatchController.createAdmission() }),
+          // The turn boundary that will drive this runtime is built AFTER the tools (the materializer composes the loop
+          // once the session exists), so the gate is minted here - closed - and handed to both: the tools read it per
+          // call, and `createGameCompanionLoop` binds the opener of the turn it is delivering.
+          expressionTurnGate,
         })
       : undefined;
   // A surface that carries the plan builder does not also carry the flat per-action tools: the builder exposes a
@@ -1930,6 +1946,7 @@ export async function createRuntimeWithFixedToolsCore(
       extensions: loader.getExtensions().extensions.map((extension) => extension.path),
       toolSurface,
       providerTurnHeader,
+      expressionTurnGate,
       ...(refreshPresetRequestSegments === undefined ? {} : { refreshPresetRequestSegments }),
       ...(boundPresentation === undefined ? {} : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),

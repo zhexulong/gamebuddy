@@ -1219,6 +1219,17 @@ export const TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT = "turn_settled_with_executio
 export type PendingBatch = Readonly<{
   batchId: string;
   disposition: Exclude<DeliveryDisposition, "hold">;
+  /**
+   * Why this turn exists, decided by `#opening()` before the batch was composed; absent on a STEER, which opens no turn.
+   *
+   * <p>
+   * It rides the batch because the TURN BOUNDARY has to answer one question about it and the pump is the only layer that
+   * decided it: whether a turn the world opened may be ended by her own gesture. A `player_input` turn is owed an answer
+   * and is never ended that way, so the opener is the guard's first clause rather than a second derivation of it
+   * (`expression-turn-gate.ts`).
+   * </p>
+   */
+  opener?: TurnOpening;
   triggerEventIds: readonly string[];
   inputs: readonly PlayerInput[];
   facts: readonly WorldFact[];
@@ -3131,7 +3142,7 @@ export class CompanionEventPump {
       }
       if (opening === undefined) return this.#noteNotOwed(this.#notOwed());
       // FROM HERE A TURN IS OWED, and this is the only branch that composes a batch.
-      pending = retry?.batch ?? this.takeBatch();
+      pending = retry?.batch ?? this.takeBatch(opening.decision);
       this.#retry = undefined;
       this.#openedTurns += 1;
       this.#openedByReason[opening.decision] += 1;
@@ -4056,7 +4067,7 @@ export class CompanionEventPump {
     return !this.#steeredShapes.has(preemptionShapeOf(fact));
   }
 
-  private takeBatch(): PendingBatch {
+  private takeBatch(opener: TurnOpening): PendingBatch {
     // THE ONLY PLACE A BATCH EXISTS. `examined` is counted here rather than derived from the decision histograms, so a
     // batch composed by a path that then decides it owes no turn grows `examined` without growing `opened` - which is
     // exactly the reading `round64` printed as `flushes examined 134 · turns opened 8`.
@@ -4228,6 +4239,7 @@ export class CompanionEventPump {
     return Object.freeze({
       batchId,
       disposition,
+      opener,
       triggerEventIds: composed.triggerEventIds,
       inputs: batchInputs,
       facts: composed.deliveredFacts,

@@ -15,6 +15,7 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import { type ExpressionTurnGate, expressionResultEndsTurn } from "./expression-turn-gate.js";
 import { composeWorldState, unchangedWorldAnswer } from "./fact-brief.js";
 import { MODEL_STOP_REASON_CODE } from "./event-pump.js";
 import {
@@ -117,6 +118,7 @@ function gameActionToolFactory(
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory: IntegrationDispatchAdmissionFactory,
   trace: RunTrace | undefined,
+  expressionTurnGate: ExpressionTurnGate | undefined,
 ) {
   return function createGameActionTool<TSchema extends TObject>(
     definition: GameActionToolDefinition<TSchema>,
@@ -126,8 +128,8 @@ function gameActionToolFactory(
       label: definition.label,
       description: definition.description,
       parameters: definition.parameters,
-      execute: async (_toolCallId, params) =>
-        executeGameAction(
+      execute: async (_toolCallId, params) => {
+        const result = await executeGameAction(
           integration,
           policy,
           dispatchAdmissionFactory,
@@ -135,7 +137,16 @@ function gameActionToolFactory(
           definition.toArgs(params as Static<TSchema>),
           callerRequestIds(params),
           trace,
-        ),
+        );
+        // THE ONE HINT A TOOL MAY GIVE THE AGENT LOOP: stop after this batch. It rides an expression action on a turn the
+        // world opened, and only on a receipt - a refusal is news she has to be able to read, so it leaves the turn
+        // running rather than ending it on a sentence she never saw (`expression-turn-gate.ts`). Every other tool result
+        // leaves the hint unset, which is why a batch of `emote + cut_weeds` cannot end the turn: Pi needs EVERY result in
+        // the batch to carry it.
+        return expressionResultEndsTurn(definition.action, expressionTurnGate) && result.details.receiptJson !== null
+          ? { ...result, terminate: true }
+          : result;
+      },
     });
   };
 }
@@ -1902,6 +1913,7 @@ export function createStardewActionTools(
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory?: IntegrationDispatchAdmissionFactory,
   trace?: RunTrace,
+  expressionTurnGate?: ExpressionTurnGate,
 ) {
   if (!isMoveCapable(integration) || dispatchAdmissionFactory === undefined) return [] as const;
   const state = integration.state;
@@ -1911,7 +1923,7 @@ export function createStardewActionTools(
   // capability snapshots or per-turn permission.
   const modRegistrations = state.catalogRegistrations ?? [];
   const tools: Array<ReturnType<typeof defineTool>> = [];
-  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory, trace);
+  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory, trace, expressionTurnGate);
   // Every action whose tool is a projection of the Mod's own declaration, mounted through the one rule a mount has: the
   // parameters are `buildCandidateToolSchema` over the published descriptor, and the names forwarded to the wire are that
   // same descriptor's. Forty-eight blocks used to spell each of these out by hand - the schema call, the forwarded names

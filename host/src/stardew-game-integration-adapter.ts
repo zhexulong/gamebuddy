@@ -134,6 +134,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       policy,
       dispatchAdmissionFactory,
       trace,
+      expressionTurnGate,
     }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
       requireLiveConnection(connection);
@@ -158,7 +159,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
         actions:
           !executable || dispatchAdmissionFactory === undefined
             ? []
-            : createStardewActionTools(integration, mountedPolicy, dispatchAdmissionFactory, trace),
+            : createStardewActionTools(integration, mountedPolicy, dispatchAdmissionFactory, trace, expressionTurnGate),
         knowledge,
       });
     },

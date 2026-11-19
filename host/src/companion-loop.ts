@@ -8,9 +8,12 @@ import {
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
+  TURN_OPENING,
+  type TurnOpening,
   turnAccountLine,
   turnProductionOf,
 } from "./event-pump.js";
+import { type ExpressionTurnGate, EXPRESSION_ONLY_TOOL_NAMES } from "./expression-turn-gate.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_DELIVERY_UNIT,
@@ -59,13 +62,37 @@ export const NO_PRESENTATION_LEASE = "no_presentation_lease" as const;
  */
 export const NO_SPEECH_SURFACE_BLOCK = "speech-surface" as const;
 
-export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | typeof NO_PRESENTATION_LEASE;
+/**
+ * The name a line swallowed by an expression-only call is accounted under, carrying the opener that allowed it.
+ *
+ * <p>
+ * `silent_terminator:<opener>` is the count a reader watches for the one thing this rule must never do: a turn the PLAYER
+ * opened is owed an answer, so a `player_input` turn whose text was swallowed would be named here - and the account's
+ * delivery-loss braces (`noteDelivery`) print it beside every other reason a bubble never arrived.
+ * </p>
+ */
+export const SILENT_TERMINATOR = "silent_terminator" as const;
+
+export type SilentTerminatorSuppression = `${typeof SILENT_TERMINATOR}:${TurnOpening}`;
+
+/** One spelling for the counter, the withheld reason and any reader that has to name the same swallow. */
+export function silentTerminatorReason(opener: TurnOpening): SilentTerminatorSuppression {
+  return `${SILENT_TERMINATOR}:${opener}`;
+}
+
+export type CompanionTurnPartSuppression =
+  | NativeCompanionPartSuppression
+  | typeof NO_PRESENTATION_LEASE
+  | SilentTerminatorSuppression;
 
 /**
- * Every name a turn's bubble can be withheld under, as this loop can see them: the projection's closed list plus the one
- * cause only this layer knows (a turn that carried no presentation lease).
+ * Every name a turn's bubble can be withheld under, as this loop can see them: the projection's closed list plus the two
+ * causes only this layer knows - a turn that carried no presentation lease, and a line the expression terminator swallowed.
  */
-export type CompanionTurnWithheldReason = TurnWithheldReason | typeof NO_PRESENTATION_LEASE;
+export type CompanionTurnWithheldReason =
+  | TurnWithheldReason
+  | typeof NO_PRESENTATION_LEASE
+  | SilentTerminatorSuppression;
 
 /**
  * What one turn's bubble did, as this loop answers it: the bubble it handed over, or the named reason there was none.
@@ -162,6 +189,15 @@ export class CompanionLoop {
    */
   readonly #activity = createCompanionActivityIndicator();
   #turnObserver: CompanionTurnObserver | undefined;
+  /**
+   * The gate the mounted expression tools read, bound for exactly one turn at a time.
+   *
+   * <p>
+   * It is attached by the composition that owns both sides (`createGameCompanionLoop`), and a loop without one can never
+   * end a turn at a gesture - which is the closed default `expression-turn-gate.ts` declares.
+   * </p>
+   */
+  #expressionTurnGate: ExpressionTurnGate | undefined;
   #inFlight: Promise<CompanionTurnOutcome> | undefined;
   #cancelQueuedDelivery: (() => void) | undefined;
   #queuedPlayerDelivery = false;
@@ -210,6 +246,20 @@ export class CompanionLoop {
 
   public get pump(): CompanionEventPump {
     return this.#pump;
+  }
+
+  /**
+   * Adds the turn-scoped answer the mounted expression tools read, without giving them the turn.
+   *
+   * <p>
+   * One direction only: this loop WRITES `worldOpened` for the turn it is delivering, and a tool only ever asks
+   * `expressionResultEndsTurn`. The gate carries no batch, no text and no opener of its own - just whether the turn in
+   * flight was opened by a fact - so a tool that reads it can decide one thing and learn nothing else about the turn.
+   * </p>
+   */
+  public attachExpressionTurnGate(gate: ExpressionTurnGate): void {
+    if (this.#expressionTurnGate !== undefined) throw new Error("expression_turn_gate_already_attached");
+    this.#expressionTurnGate = gate;
   }
 
   /**
@@ -287,6 +337,7 @@ export class CompanionLoop {
           batchId,
           turnLocale,
           carriedFactKinds(batch),
+          batch.opener,
         );
         this.#inFlight = completion;
         try {
@@ -366,6 +417,7 @@ export class CompanionLoop {
     batchId: string | undefined,
     turnLocale: string | undefined,
     carried: readonly string[],
+    opener: TurnOpening | undefined,
   ): Promise<CompanionTurnOutcome> {
     let accepted = false;
     let settled = false;
@@ -387,6 +439,35 @@ export class CompanionLoop {
     let nativeContentObserver: NativeCompanionContentObserver | undefined;
     let nativeContentFinal: Promise<void> | undefined;
     let voiceFinalized = false;
+    /**
+     * The turn's silent terminator, once an expression-only call has answered it.
+     *
+     * <p>
+     * THE MEASUREMENT THIS RESTS ON (`round78`, 32 consumed batches, 88 assistant rounds): `tool rounds 62 · with text 0`
+     * and `no-tool rounds 26 · with text 25 · chars 322`, 21 of the 25 narration. Every line she wrote sat in a round of
+     * its own AFTER the last tool result, because a tool result asks the model again - so the gesture that carried no words
+     * is the one that can end the turn without them (`expression-turn-gate.ts`).
+     * </p>
+     * <p>
+     * IT IS SET BY A FACT, NOT BY A WISH: the action is one `EXPRESSION_ONLY_ACTION_IDS` declares (read through the
+     * registry's own tool names), and the turn was opened by something other than the person. The gate carries the same
+     * answer to the tool so Pi does not send the extra round at all; this is the account for what still arrives - a tool
+     * hint a Mod or a composition did not carry, a batch that never terminated - and it is why the swallow is a named
+     * number rather than a silence nobody can read.
+     * </p>
+     */
+    let silentTerminator: SilentTerminatorSuppression | undefined;
+    /**
+     * Did any text arrive BEFORE the terminator?
+     *
+     * <p>
+     * It decides whether the turn's one bubble is still owed. A turn that spoke and then gestured has already said what it
+     * had to say, and the bubble carries the whole turn - so that turn presents, and only the turn whose WHOLE answer is
+     * the gesture is swallowed. The direction is deliberate: the cost of being wrong here is one narrated line, and the
+     * cost of the other answer is an answer to the player that nobody ever saw.
+     * </p>
+     */
+    let spokeBeforeTerminator = false;
     const tracksPlayerDelivery = sourceEventId !== undefined;
     let unsubscribe: (() => void) | undefined;
     let resolveStarted!: () => void;
@@ -513,6 +594,11 @@ export class CompanionLoop {
     // below can fail, because a turn that dies in the next statement is exactly the silence the player has to be able
     // to read as an ending rather than as a crash.
     this.#activity.transition("thinking");
+    // THE OPENER REACHES THE TOOLS, for the length of this turn and no longer. A batch with no opener is a STEER into a
+    // turn already running (`takeSteerableOnly`): it opens nothing, so it neither binds nor clears the gate. A turn the
+    // person opened binds it CLOSED, which is the answer the guard depends on - `player_input` is never world-opened.
+    const gateBound = opener !== undefined && this.#expressionTurnGate !== undefined;
+    if (gateBound) this.#expressionTurnGate!.worldOpened = opener !== TURN_OPENING.playerInput;
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
@@ -635,6 +721,10 @@ export class CompanionLoop {
               // lane when a voice sink is attached; without one they stay
               // unprojected at delta granularity.
               onPreviewDelta: async (delta) => {
+                // Text that arrives after the gesture is the narration the gesture exists to replace, so it reaches
+                // neither the activity state nor the voice lane. Voice is a streaming lane with no retraction, which is
+                // why the swallow has to be decided HERE and not at the bubble.
+                if (silentTerminator !== undefined) return;
                 // Her text has started arriving. Published outside the voice branch below, because voice is one
                 // consumer of the preview lane and not the lane itself.
                 noteTextArriving();
@@ -652,6 +742,12 @@ export class CompanionLoop {
                 // nothing never reaches this sink, so absence is silence rather than an empty bubble.
                 // Voice finalizes after this one piece, so cleanup (finally) never cancels an
                 // already-finalized job.
+                //
+                // THE SILENT TURN COMMITS NOTHING. A turn whose whole answer was the gesture has no bubble, and
+                // handing this text over would be the narration the terminator exists to stop. A turn that had
+                // already spoken before the gesture keeps its bubble: `spokeBeforeTerminator` is the guard, and it
+                // leans towards the player hearing her answer.
+                if (silentTerminator !== undefined && !spokeBeforeTerminator) return;
                 if (this.voiceSink !== undefined) {
                   try {
                     await voiceBegin;
@@ -670,8 +766,22 @@ export class CompanionLoop {
                 // The projection's own answer for one message: its text parts, and the reason
                 // none of them reached the player. Counting here is the whole point - a piece
                 // withheld without a count reads exactly like a companion who said nothing.
-                if (outcome.suppression === null) presentedTextParts += outcome.textParts;
-                else
+                //
+                // THE SWALLOW IS COUNTED WHERE THE PRESENTATION IS REFUSED, under the name that says who allowed it
+                // (`silent_terminator:<opener>`). It reaches the run's account through the same delivery-loss reading
+                // every other withheld part uses, so "she spoke when the world opened the turn" is a number someone can
+                // watch rather than a silence nobody can explain.
+                if (silentTerminator !== undefined) {
+                  suppressedByReason.set(
+                    silentTerminator,
+                    (suppressedByReason.get(silentTerminator) ?? 0) + outcome.textParts,
+                  );
+                  return;
+                }
+                if (outcome.suppression === null) {
+                  presentedTextParts += outcome.textParts;
+                  if (outcome.textParts > 0) spokeBeforeTerminator = true;
+                } else
                   suppressedByReason.set(
                     outcome.suppression,
                     (suppressedByReason.get(outcome.suppression) ?? 0) + outcome.textParts,
@@ -741,8 +851,20 @@ export class CompanionLoop {
         // A tool call has returned, and what happens next is decided by what it left behind: an execution this pump
         // still holds an unsettled receipt for is her body working in the world (`busy`), and otherwise she is composing
         // the next step (`thinking`). Staying at `working` would report a tool that is no longer running.
-        if (event.type === "tool_execution_end")
+        if (event.type === "tool_execution_end") {
+          // THE TURN IS ANSWERED BY THE GESTURE. An expression-only action on a turn the WORLD opened ends the turn here:
+          // the tool result carries the hint that stops Pi's next request (`expression-turn-gate.ts`), and this records the
+          // same decision on the boundary that owns the delivery - so a hint that did not take effect is still a swallow
+          // somebody can count, never a line nobody can explain. A turn the person opened is excluded by `opener` itself,
+          // and a steer carries none.
+          if (
+            opener !== undefined &&
+            opener !== TURN_OPENING.playerInput &&
+            EXPRESSION_ONLY_TOOL_NAMES.has(event.toolName)
+          )
+            silentTerminator ??= silentTerminatorReason(opener);
           this.#activity.transition(this.pump.hasExecutionInFlight ? "busy" : "thinking");
+        }
         if (event.type === "message_end") noteAssistantMessage(event.message);
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
           accepted = true;
@@ -827,9 +949,11 @@ export class CompanionLoop {
       // withheld it. A turn with no projection attached at all - no presenter, or no presentation lease for the fact that
       // opened it - is the loop's own case, and it names itself here instead of leaving `undefined` to read as silence.
       turnDelivery =
-        nativeContentObserver === undefined
-          ? Object.freeze({ delivered: 0 as const, reason: NO_PRESENTATION_LEASE })
-          : nativeContentObserver.deliverTurn();
+        silentTerminator !== undefined && !spokeBeforeTerminator
+          ? Object.freeze({ delivered: 0 as const, reason: silentTerminator })
+          : nativeContentObserver === undefined
+            ? Object.freeze({ delivered: 0 as const, reason: NO_PRESENTATION_LEASE })
+            : nativeContentObserver.deliverTurn();
       try {
         await nativeContentObserver?.close();
       } catch (error) {
@@ -879,6 +1003,9 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
+      // The gate answers for ONE turn, so it closes with it: a tool that runs while no turn is in flight (a steer, an
+      // after-settle callback) must never read the previous turn's opener and end something that is not its own.
+      if (gateBound) this.#expressionTurnGate!.worldOpened = false;
       // Both spans close on every ending, including the paths that never reached Pi's settlement, so a turn that was
       // cancelled or refused leaves a measured ending instead of an open span that reads like a frozen stage.
       deliverySpan?.end();

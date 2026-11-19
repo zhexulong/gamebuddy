@@ -121,6 +121,14 @@ export type IntegrationToolContext = Readonly<{
   policy?: IntegrationActionPolicy;
   /** Optional run span recorder for this surface's action path. */
   trace?: import("./run-trace.js").RunTrace;
+  /**
+   * The Host's own turn gate: whether an expression action's result may end the turn it belongs to.
+   *
+   * Absent means no turn boundary is attached, so nothing may end a turn - the closed default. It is Host-owned (the
+   * adapter only hands it to the expression tool) and it carries no turn content: one boolean, written by the boundary
+   * and read by the tool result (`expression-turn-gate.ts`).
+   */
+  expressionTurnGate?: import("./expression-turn-gate.js").ExpressionTurnGate;
 }>;
 
 type IntegrationToolSet = Readonly<{
