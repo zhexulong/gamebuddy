@@ -270,3 +270,7 @@ test("red: a block with no line to judge is blocked, never green", () => {
     assert.equal(status, 2, "an empty population is blocked, not green");
   });
 });
+
+// red-proof: inject  the pre-fix body of each renderer, verbatim from the commit the gate was written in - the count
+//   straight out of the receipt, and `formatSeedPads(world)` pushed beside it - so the violation names that renderer
+//   rather than the shape somebody imagined (tools/check-stale-line-age.test.mjs)

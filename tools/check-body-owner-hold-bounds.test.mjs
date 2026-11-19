@@ -98,3 +98,8 @@ test("falsifier: a tree with no hold-kind declaration is BLOCKED, never green", 
   assert.equal(finding.blocked, "no_hold_kind_declared");
   assert.equal(finding.owners.length, 0, "zero examined agrees with itself, which is why it is blocked");
 });
+
+// red-proof: inject  a hold kind the owner table gives no end -> `silent`; a `CancelSafe: false` row the source does not
+//   support -> `unsupported` naming that row; a declaration for a hold kind the Mod no longer declares ->
+//   `expired: ["body_owned_by_sitting"]`; and a Mod with no hold kind at all -> blocked `no_hold_kind_declared`
+//   (tools/check-body-owner-hold-bounds.test.mjs)

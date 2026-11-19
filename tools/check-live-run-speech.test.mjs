@@ -216,3 +216,8 @@ test("a real run dir: a clean bundle passes, round73's bundle fails, and a bundl
     assert.equal(runDirChecks(root, { root: REPOSITORY_ROOT }).blocked, "result_json_unreadable");
   });
 });
+
+// red-proof: inject  round73's own seven bubbles against the card's `不当对讲机，不报进度` rule -> the check
+//   `a_turn_reports_progress` fails quoting the bubble it read (`in 「掰下来了。这边草和石头我接着往西捋。」`); two
+//   bubbles closer than SHORTEST_BUBBLE_GAP_MS -> `speech_is_not_a_metronome:<gapMs>`; and a run directory whose
+//   bundle presented no bubble -> blocked `run_presented_no_bubble` (tools/check-live-run-speech.test.mjs)

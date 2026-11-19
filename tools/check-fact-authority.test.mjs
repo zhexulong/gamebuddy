@@ -604,3 +604,8 @@ test("the real repository's body-trace union is the wire's own declaration, not 
   for (const kind of bodyTraceKinds)
     assert.ok(eventKinds.includes(kind), `${kind} is a body trace but not an event kind, so the two unions disagree`);
 });
+
+// red-proof: inject  removing the guard that keeps a folded progress state out of the fact stream -> the finding
+//   `a_trace_is_produced_as_its_own_fact` names the receipt state it folded; flipping the document's FACT column into a
+//   held progress state -> the finding `tool_equipped` whose detail says it `does not consult `publish``
+//   (tools/check-fact-authority.test.mjs)

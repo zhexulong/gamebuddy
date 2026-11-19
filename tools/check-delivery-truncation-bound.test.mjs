@@ -205,3 +205,9 @@ test("the transport module is where the delivery's number comes from, so the gat
   assert.equal(reading.wire.value, 4_000, "the wire's ceiling today, read from the producers rather than typed here");
   assert.ok(REAL[TRANSPORT_MODULE].includes(TRANSPORT_CONSTANT));
 });
+
+// red-proof: inject  round62's own `maxChars: 80` beside the transport's real bound, a second budget, a wire whose two
+//   declarations disagree, and a bubble that lost its clamp -> each case builds a throwaway tree at the real
+//   repository-relative paths and the gate names where that ceiling came from; a bound behind a local constant passes,
+//   because the gate forbids an invented number rather than any indirection
+//   (tools/check-delivery-truncation-bound.test.mjs)

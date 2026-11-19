@@ -220,3 +220,8 @@ test("⑨ with no --log it reads the newest run log it can find, and it says whi
   assert.match(stdout, /declared-deleted facts: log .*_multiday_routine-round66-live-runner\.log/u);
   assert.match(stdout, /still produced 3/u);
 });
+
+// red-proof: fixture  the committed round66 fact stream -> the gate names the kinds that survived the deletion with
+//   their counts (`accepted · 46`, `running · 17`, `tool_equipped · 1`); the same log with those lines removed is
+//   green; and a pump that stopped holding `body_idle` while the document still declares it is red by that member
+//   (tools/check-declared-deleted-facts.test.mjs)

@@ -339,3 +339,7 @@ test("⑤ a warp's location-bound position is named, not silently dropped", () =
   assert.equal(warp.placement.counts[0].key, "location-bound position");
   assert.equal(RECORD.placement.counts.find((entry) => entry.key === "location-bound position")?.total, 9);
 });
+
+// red-proof: inject  a log whose events carry no position -> `walking_not_measured`; the empty log ->
+//   `walking_nothing_to_place`; and a detail that names a tile -> that tile reaches the reading's own total instead of
+//   being dropped into the unpositioned remainder (tools/check-run-walking.test.mjs)

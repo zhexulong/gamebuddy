@@ -141,3 +141,7 @@ test("--json is the same reading, machine-readable", (t) => {
   assert.equal(parsed.examined, 1);
   assert.equal(iso(NOW), "2026-11-17T19:09:31.414Z");
 });
+
+// red-proof: fixture  round67's own run directory - a launch receipt with no closure -> `a_run_that_died_leaves_a_record:
+//   <run>` naming the run, where the same directory with its closure recorded is silent
+//   (tools/check-live-run-closures.test.mjs)
