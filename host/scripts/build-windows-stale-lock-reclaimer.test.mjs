@@ -1,3 +1,14 @@
+/**
+ * The Windows helper pair's own regression suite.
+ *
+ * This test moves the shared output root, and it must never leave it absent or empty, and it must never delete an
+ * aside unless a verified real pair is back in place. The pair under `host/native/windows-stale-lock-reclaimer/.dist`
+ * is not this suite's fixture: it is the pair every compiled host test mints its stale-lock reclaimer from, and both
+ * frontend parity suites mint theirs from it too. Measured 2026-11-19, one failed publish here left an empty output
+ * root and no aside, and every compiled host test plus both parity suites went down with
+ * `windows_stale_lock_reclaimer_unavailable` - with the official builder then refusing to heal it, because an
+ * existing output root is a refused pre-existing object.
+ */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
@@ -12,10 +23,12 @@ import {
   manifestFileName,
   outputRoot,
   protocolVersion,
+  readVerifiedPair,
   rid,
 } from "./build-windows-stale-lock-reclaimer.mjs";
 
 const helperPath = resolve(outputRoot, helperFileName);
+const outputRootParent = resolve(outputRoot, "..");
 const staleAgo = () => new Date(Date.now() - 6 * 60_000);
 
 function runHelper(input) {
@@ -375,78 +388,109 @@ async function movePairAside(aside) {
   await rename(outputRoot, aside);
 }
 
-/** Returns the pair the builder had published before the output root was moved
- * aside, so a run that dies between the move and its rebuild still leaves a
- * complete pair behind; every compiled test refuses to load without one. The
- * caller removes whatever the restore did not consume. */
-async function restoreOutputRoot(asides) {
-  if ((await lstat(outputRoot).catch(() => undefined)) !== undefined) return;
-  for (const aside of asides) {
-    if ((await lstat(aside).catch(() => undefined)) === undefined) continue;
-    await rename(aside, outputRoot);
-    return;
+/**
+ * Puts a VERIFIED real pair back at the output root, and only then drops the asides that were holding the copies.
+ *
+ * The acceptance predicate is the builder's own (`readVerifiedPair`), never a second reading of "two files are
+ * there": a hand-written copy of that check is a disagreement scheduled for later. An aside left beside the pair is
+ * itself a refusal that every compiled host test trips over, so this is also where leftovers go - after the pair,
+ * never before it.
+ */
+async function restoreVerifiedPair(asides) {
+  let pair = await readVerifiedPair();
+  if (pair === undefined) {
+    // Whatever occupies the root is the residue of a failed publish, never a pair: it is replaced rather than adopted.
+    await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
+    for (const aside of asides) {
+      if ((await lstat(aside).catch(() => undefined)) === undefined) continue;
+      await rename(aside, outputRoot);
+      pair = await readVerifiedPair();
+      if (pair === undefined) throw new Error("windows_stale_lock_reclaimer_test_restore_left_no_pair");
+      break;
+    }
+  }
+  // A real pair is in place: the asides are redundant copies, and an aside left beside the pair is a refusal of its own.
+  for (const aside of asides) await rm(aside, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/** One block's own arrangement of the shared output root, with the invariant above enforced even when it throws. */
+async function withPairMovedAside(aside, work) {
+  await mkdir(outputRootParent, { recursive: true });
+  await movePairAside(aside);
+  try {
+    return await work();
+  } finally {
+    await restoreVerifiedPair([aside]);
   }
 }
 
-test("production builder rejects an output-root junction before publish and preserves the external sentinel", { skip: process.platform !== "win32" }, async (t) => {
-  const parent = resolve(outputRoot, "..");
-  const aside = resolve(parent, ".build-test-junction-aside");
-  const target = resolve(parent, ".build-test-junction-target");
-  let moved = false;
+/**
+ * The one shape that destroyed the prerequisite, replayed: a publish that died after the builder reserved the output
+ * root. `mkdir(outputRoot)` is precisely what `dotnet publish`'s exclusive reservation leaves behind, and the old
+ * restore read it as "already restored", then deleted the aside that held the only remaining pair.
+ */
+test("a failed publish can never leave the shared output root absent or empty", { skip: process.platform !== "win32" }, async () => {
+  const aside = resolve(outputRootParent, ".build-test-failed-publish-aside");
+  await mkdir(outputRootParent, { recursive: true });
+  // The machine's own pair, not a fixture: this test moves a shared prerequisite and must start from a real one.
+  await buildWindowsStaleLockReclaimer();
+  await movePairAside(aside);
   try {
-    const state = await lstat(outputRoot).catch(() => undefined);
-    if (state !== undefined) {
-      await rm(aside, { recursive: true, force: true });
-      await rename(outputRoot, aside);
-      moved = true;
-    } else {
-      await mkdir(parent, { recursive: true });
-    }
-    await rm(target, { recursive: true, force: true });
-    await mkdir(target);
-    const sentinel = join(target, "sentinel.txt");
-    await writeFile(sentinel, "sentinel must survive", "utf8");
-    try {
-      await symlink(target, outputRoot, "junction");
-      assert.equal((await lstat(outputRoot)).isSymbolicLink(), true);
-    } catch (error) {
-      if (
-        process.platform === "win32" &&
-        error instanceof Error &&
-        "code" in error &&
-        ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
-      ) {
-        t.skip("BLOCKED: junction creation is unavailable; output-root junction closure cannot be claimed");
-        return;
-      }
-      throw error;
-    }
-    // The chain preflight must reject the linked output root before any dotnet
-    // publish can run, without touching the junction target.
-    await assert.rejects(buildWindowsStaleLockReclaimer(), /windows_stale_lock_reclaimer_output_unsafe/);
-    assert.equal(await readFile(sentinel, "utf8"), "sentinel must survive");
-    assert.equal((await lstat(outputRoot)).isSymbolicLink(), true);
+    await mkdir(outputRoot);
+    await restoreVerifiedPair([aside]);
+    assert.deepEqual(
+      (await readdir(outputRoot)).sort(),
+      [helperFileName, manifestFileName].sort(),
+      "the output root holds the real pair again, not the empty reservation the failed publish left",
+    );
+    assert.equal(
+      (await lstat(aside).catch(() => undefined)) === undefined,
+      true,
+      "the aside is dropped only once a verified pair is back in place",
+    );
   } finally {
-    await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
-    await rm(target, { recursive: true, force: true }).catch(() => undefined);
-    if (moved) await rename(aside, outputRoot);
-    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
+    await restoreVerifiedPair([aside]);
   }
 });
 
-test("production builder fails closed on an incomplete published pair without mutating it", { skip: process.platform !== "win32" }, async (t) => {
-  const parent = resolve(outputRoot, "..");
-  const aside = resolve(parent, ".build-test-incomplete-aside");
-  let moved = false;
+test("production builder rejects an output-root junction before publish and preserves the external sentinel", { skip: process.platform !== "win32" }, async (t) => {
+  const target = resolve(outputRootParent, ".build-test-junction-target");
   try {
-    const state = await lstat(outputRoot).catch(() => undefined);
-    if (state !== undefined) {
-      await rm(aside, { recursive: true, force: true });
-      await rename(outputRoot, aside);
-      moved = true;
-    } else {
-      await mkdir(parent, { recursive: true });
-    }
+    await withPairMovedAside(resolve(outputRootParent, ".build-test-junction-aside"), async () => {
+      await rm(target, { recursive: true, force: true });
+      await mkdir(target);
+      const sentinel = join(target, "sentinel.txt");
+      await writeFile(sentinel, "sentinel must survive", "utf8");
+      try {
+        await symlink(target, outputRoot, "junction");
+        assert.equal((await lstat(outputRoot)).isSymbolicLink(), true);
+      } catch (error) {
+        if (
+          process.platform === "win32" &&
+          error instanceof Error &&
+          "code" in error &&
+          ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
+        ) {
+          t.skip("BLOCKED: junction creation is unavailable; output-root junction closure cannot be claimed");
+          return;
+        }
+        throw error;
+      }
+      // The chain preflight must reject the linked output root before any dotnet publish can run, without touching the
+      // junction target. The link itself goes before the shared restore runs: a junction is not an output root to
+      // replace, and `rm` unlinks it rather than descending into what it names.
+      await assert.rejects(buildWindowsStaleLockReclaimer(), /windows_stale_lock_reclaimer_output_unsafe/);
+      assert.equal(await readFile(sentinel, "utf8"), "sentinel must survive");
+      assert.equal((await lstat(outputRoot)).isSymbolicLink(), true);
+      await rm(outputRoot, { recursive: true, force: true });
+    });
+  } finally {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test("production builder fails closed on an incomplete published pair without mutating it", { skip: process.platform !== "win32" }, async () => {
+  await withPairMovedAside(resolve(outputRootParent, ".build-test-incomplete-aside"), async () => {
     await mkdir(outputRoot, { recursive: true });
     const staleHelper = resolve(outputRoot, helperFileName);
     const staleManifest = resolve(outputRoot, manifestFileName);
@@ -461,26 +505,11 @@ test("production builder fails closed on an incomplete published pair without mu
     assert.equal(await readFile(staleHelper, "utf8"), "stale-binary-bytes");
     assert.equal(await readFile(staleManifest, "utf8"), "not-json");
     assert.equal(await readFile(sentinel, "utf8"), "sentinel must survive");
-  } finally {
-    await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
-    if (moved) await rename(aside, outputRoot);
-    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
-  }
+  });
 });
 
-test("production builder rejects a pre-existing empty output root without publishing into it", { skip: process.platform !== "win32" }, async (t) => {
-  const parent = resolve(outputRoot, "..");
-  const aside = resolve(parent, ".build-test-empty-aside");
-  let moved = false;
-  try {
-    const state = await lstat(outputRoot).catch(() => undefined);
-    if (state !== undefined) {
-      await rm(aside, { recursive: true, force: true });
-      await rename(outputRoot, aside);
-      moved = true;
-    } else {
-      await mkdir(parent, { recursive: true });
-    }
+test("production builder rejects a pre-existing empty output root without publishing into it", { skip: process.platform !== "win32" }, async () => {
+  await withPairMovedAside(resolve(outputRootParent, ".build-test-empty-aside"), async () => {
     // A fresh publication reserves a previously absent output using exclusive
     // creation; a pre-existing object of any kind (even an empty directory)
     // fails closed without being adopted, emptied, or overwritten.
@@ -488,26 +517,11 @@ test("production builder rejects a pre-existing empty output root without publis
     await assert.rejects(buildWindowsStaleLockReclaimer(), /windows_stale_lock_reclaimer_output_unsafe/);
     assert.equal((await lstat(outputRoot)).isDirectory(), true);
     assert.deepEqual(await readdir(outputRoot), []);
-  } finally {
-    await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
-    if (moved) await rename(aside, outputRoot);
-    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
-  }
+  });
 });
 
-test("production builder rejects a replaced manifest and never overwrites existing output objects", { skip: process.platform !== "win32" }, async (t) => {
-  const parent = resolve(outputRoot, "..");
-  const aside = resolve(parent, ".build-test-replaced-manifest-aside");
-  let moved = false;
-  try {
-    const state = await lstat(outputRoot).catch(() => undefined);
-    if (state !== undefined) {
-      await rm(aside, { recursive: true, force: true });
-      await rename(outputRoot, aside);
-      moved = true;
-    } else {
-      await mkdir(parent, { recursive: true });
-    }
+test("production builder rejects a replaced manifest and never overwrites existing output objects", { skip: process.platform !== "win32" }, async () => {
+  await withPairMovedAside(resolve(outputRootParent, ".build-test-replaced-manifest-aside"), async () => {
     await mkdir(outputRoot);
     const helperPath = resolve(outputRoot, helperFileName);
     const manifestPath = resolve(outputRoot, manifestFileName);
@@ -526,19 +540,16 @@ test("production builder rejects a replaced manifest and never overwrites existi
     await mkdir(manifestPath);
     await assert.rejects(buildWindowsStaleLockReclaimer(), /windows_stale_lock_reclaimer_output_unsafe/);
     assert.equal((await lstat(manifestPath)).isDirectory(), true);
-  } finally {
-    await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
-    if (moved) await rename(aside, outputRoot);
-    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
-  }
+  });
 });
 
 test("production builder uses the globally locked SDK, reuses a verified pair, and repeated publish is hash reproducible", { skip: process.platform !== "win32" }, async (t) => {
   // The production API intentionally accepts neither a dotnet path nor spawn injection.
   // An SDK drift is a blocked reproducibility result, not permission to publish with a different SDK.
-  const initialAside = resolve(outputRoot, "..", ".build-test-repro-initial-aside");
-  const firstAside = resolve(outputRoot, "..", ".build-test-repro-first-aside");
+  const initialAside = resolve(outputRootParent, ".build-test-repro-initial-aside");
+  const firstAside = resolve(outputRootParent, ".build-test-repro-first-aside");
   try {
+    await mkdir(outputRootParent, { recursive: true });
     // Do not compare a verified pair inherited from an earlier test with a
     // current publish: verify determinism across two fresh publishes instead.
     await movePairAside(initialAside);
@@ -569,8 +580,9 @@ test("production builder uses the globally locked SDK, reuses a verified pair, a
     }
     throw error;
   } finally {
-    await restoreOutputRoot([firstAside, initialAside]).catch(() => undefined);
-    await rm(firstAside, { recursive: true, force: true }).catch(() => undefined);
-    await rm(initialAside, { recursive: true, force: true }).catch(() => undefined);
+    // A publish that died after reserving the output root leaves it present and empty; the restore replaces that
+    // residue from an aside and only then drops the asides. A run that cannot put a real pair back leaves them
+    // aboard, which is the state a human can still recover from.
+    await restoreVerifiedPair([firstAside, initialAside]);
   }
 });

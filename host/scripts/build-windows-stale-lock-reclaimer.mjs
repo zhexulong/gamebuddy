@@ -87,7 +87,7 @@ async function verifyPhysicalPath(path) {
  * paths and the manifest byte-exactly matches the canonical manifest of the
  * helper hash. Any incomplete, mismatched, linked, reparse, or replaced
  * output is not a pair. */
-async function readVerifiedPair() {
+export async function readVerifiedPair() {
   const helperPath = resolve(outputRoot, helperFileName);
   const manifestPath = resolve(outputRoot, manifestFileName);
   const [outputState, helperState, manifestState] = await Promise.all([
