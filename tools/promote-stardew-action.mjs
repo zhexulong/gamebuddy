@@ -136,18 +136,30 @@ const ACTION_ID = /^[a-z][a-z0-9_]{1,127}$/;
 const RUNNER_FILE = /^run-stardew-[a-z0-9-]+\.mjs$/;
 const SCENARIO = /^native_[a-z0-9_]+_v\d+$/;
 
-/** A published row is a `gate(...)` FACTORY CALL, never an object literal. */
+/**
+ * A published row is a `gate(...)` FACTORY CALL, never an object literal.
+ *
+ * A row names where its gate LIVES (`tools/lib/stardew-action-gate-route.mjs`), and one of the two routes carries no
+ * runner filename at all: a `contract` row says `contracts/smoke/<actionId>.json` IS the gate and passes `null` where
+ * the runner used to be, plus the route as a sixth argument. This reader required a runner literal, so it saw the nine
+ * contract rows as NO row - measured 2026-11-22 as `promotion_places_disagree:<id>:catalog=live_verified;gate=absent`
+ * for exactly those nine (`tools/check-stardew-promotion-parity.mjs`), on a table where every one of the nine rows was
+ * present. The row shape is read here rather than spelled by each caller, because the promotion tool and the parity
+ * gate would otherwise disagree about what a row is - which is the half-write the parity gate exists to refuse. The
+ * six argument is matched by SHAPE, not by the word `contract`: the route vocabulary is `gate()`'s to validate at
+ * import, and a reader that hard-coded today's word would make every row of a new route invisible.
+ */
 export function parsePublishedGates(source) {
   const table = /STARDEW_PUBLISHED_ACTION_GATES\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/u.exec(source);
   if (table === null) return null;
   const rows = [];
   const call =
-    /gate\(\s*"([a-z0-9_]+)"\s*,\s*(\d+)\s*,\s*"([a-z0-9-]+\.mjs)"\s*,\s*"([a-z0-9_]+)"(?:\s*,\s*"([a-z0-9_]+)")?\s*,?\s*\)/gu;
+    /gate\(\s*"([a-z0-9_]+)"\s*,\s*(\d+)\s*,\s*(?:"([a-z0-9-]+\.mjs)"|null)\s*,\s*"([a-z0-9_]+)"(?:\s*,\s*"([a-z0-9_]+)")?(?:\s*,\s*"[a-z_]+")?\s*,?\s*\)/gu;
   for (const match of table[1].matchAll(call)) {
     rows.push({
       actionId: match[1],
       identityVersion: Number(match[2]),
-      runner: match[3],
+      runner: match[3] ?? null,
       terminalReasonCode: match[4],
       fixtureScenario: match[5] ?? null,
     });

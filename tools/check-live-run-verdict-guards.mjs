@@ -84,6 +84,20 @@ const MARKER = /absence-as-pass:\s*\S/;
  */
 const DISJUNCT_ABSENCE = /(?:===\s*(?:null|undefined))\s*\|\||\?\?\s*[A-Za-z_$][\w$.]*\.(?:ok|passed|verified)\b/;
 
+/**
+ * A disjunction that re-tests ONE value for absence is a null-or-empty idiom, not a verdict.
+ *
+ * `if (failureCode === null || failureCode.length === 0) return refuse(...)` asks whether a lifted fragment is there:
+ * both arms test the same value, and the branch it guards REFUSES. Measured 2026-11-22: the disjunction rule reported
+ * exactly that line in `tools/migrate-runner-to-template.mjs` - a migration tool that decides no run's verdict - and the
+ * pass-shaped word that made it a finding came from an unrelated neighbouring line (`passedCode === null`).
+ *
+ * The exclusion is on the SHAPE of the right arm, not on a file or a name, so the defect the rule exists for stays red:
+ * `assessment === null || assessment.passed` reads a DIFFERENT, pass-shaped fact, and a right arm that only re-tests the
+ * same value for null, undefined or an empty length cannot be one.
+ */
+const NULL_OR_EMPTY_IDIOM = /([A-Za-z_$][\w$.]*)\s*===\s*(?:null|undefined)\s*\|\|\s*\1\s*(?:===|!==|\.length\b)/u;
+
 function collectModules(root) {
   const files = [];
   const walk = (directory) => {
@@ -109,7 +123,7 @@ export function scanAbsencePass({ root }) {
       // a ternary (the mirror form the first version missed - it early-returned on the
       // narrow rule, so the widened check was dead code until a mutation test caught
       // it: removing a legitimately marked `: true` still reported zero findings).
-      const absentByDisjunction = DISJUNCT_ABSENCE.test(line);
+      const absentByDisjunction = DISJUNCT_ABSENCE.test(line) && !NULL_OR_EMPTY_IDIOM.test(line);
       if (!ABSENCE_PASS.test(line) && !ALT_ABSENCE_PASS.test(line) && !absentByDisjunction) return;
       // The exception must be declared ON the branch or the two lines above it,
       // and it must carry a reason on that same line: a bare marker is not an

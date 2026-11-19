@@ -189,11 +189,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
       "the qualified id in the held slot when it is not a tool. `手持` names the tool in words and the id is the handle an action argument copies, so it belongs in a tool call and not in a sentence.",
     owedBy: "host/src/game-world-vocabulary.ts",
   },
-  activeExecution: {
-    reason:
-      "the Mod's in-flight execution state, which the Host already owns from action receipts and the journal: `<in-flight>` is that fact, composed from the ledger a status read fills.",
-    owedBy: "host/src/fact-brief.ts",
-  },
   pendingLevelUps: {
     reason:
       "the engine's pending level-ups. The night boundary asks her to decide through `respond_level_up`, whose own answer carries the pair; a per-turn line would repeat a menu that only exists at the boundary.",

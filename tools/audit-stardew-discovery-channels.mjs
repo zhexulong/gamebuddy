@@ -49,6 +49,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { frozenStringArray } from "./check-action-surface-parity.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const SURFACE = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
@@ -56,6 +58,7 @@ const MODELS = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
 const PROTOCOL = "host/src/protocol.ts";
 const SCHEMA = "protocol/bridge-v1.schema.json";
 const TOOLS = "host/src/game-tools.ts";
+const ACTION_REGISTRY = "host/src/action-registry.ts";
 const MOD_SOURCE_ROOT = "integrations/stardew";
 const CONTENT_QUERY_FILE = "ContentDataQuery.cs";
 const TILE_AREA_QUERY_FILE = "TileAreaQuery.cs";
@@ -737,6 +740,60 @@ function tileAreaGaps(tileArea, tileAreaSource) {
 function lower(name) {
   return name[0].toLowerCase() + name.slice(1);
 }
+
+/**
+ * The field names a sentence names, in the shapes the wire publishes.
+ *
+ * <p>
+ * Most discovery arrays end in `Targets` or `Slots`, the ore-pan channel is `PanSites`, a backpack row family is
+ * `...Facts`, and an entity-shaped family names the THING (`chests`) because a container is perceived whole instead of
+ * being flattened into one row per (container, item) pair. Extend the SHAPE rather than renaming a wire field to suit
+ * the checker: a name chosen to satisfy a checker is a second spelling of one fact.
+ * </p>
+ */
+function namedTargetFields(text) {
+  return [
+    ...new Set(
+      [
+        ...text.matchAll(/\b([a-zA-Z]+Targets)\b/g),
+        ...text.matchAll(/\b([a-zA-Z]+Slots)\b/g),
+        ...text.matchAll(/\b([a-zA-Z]+Sites)\b/g),
+        ...text.matchAll(/\b([a-zA-Z]+Facts)\b/g),
+        ...text.matchAll(/\b(chests)\b/g),
+      ].map((match) => match[1]),
+    ),
+  ];
+}
+
+/**
+ * The sentence each descriptor-derived tool prints, keyed by action.
+ *
+ * <p>
+ * Those tools are mounted by ONE projection block that passes `description: presentation.description`, so the sentence
+ * is not next to the mount any more - it is a row of `DECLARED_ACTION_TOOL_PRESENTATION`, which is the table the block
+ * reads. Measured 2026-11-22: the audit kept slicing per-mount prose and reported thirty-six mounted actions as naming
+ * no target field, every one of which named it in this table. The population is the table's own keys, so a row added
+ * for a new action is read without this file changing.
+ * </p>
+ */
+export function declaredToolPresentation(source) {
+  const described = new Map();
+  const text = String(source);
+  const at = text.indexOf("const DECLARED_ACTION_TOOL_PRESENTATION");
+  if (at < 0) return described;
+  const end = text.indexOf("\n});", at);
+  if (end < 0) return described;
+  const table = text.slice(at, end);
+  const entries = [...table.matchAll(/^ {2}([a-z0-9_]+): Object\.freeze\(\{/gmu)];
+  for (const [index, entry] of entries.entries()) {
+    const from = entry.index + entry[0].length;
+    const body = table.slice(from, index + 1 < entries.length ? entries[index + 1].index : table.length);
+    const description = body.indexOf("description:");
+    described.set(entry[1], description < 0 ? "" : body.slice(description + "description:".length));
+  }
+  return described;
+}
+
 export function auditDiscoveryChannels({
   surface = JSON.parse(read(SURFACE)),
   models = read(MODELS),
@@ -745,6 +802,7 @@ export function auditDiscoveryChannels({
   schemaText = read(SCHEMA),
   gameTools = read(TOOLS),
   planScript = read(PLAN_SCRIPT),
+  actionRegistry = read(ACTION_REGISTRY),
   // Null means "not measured". A caller injecting a synthetic action surface must not be handed gaps about the real
   // Mod's content tables; the CLI and the committed-tree test pass the real sources, which is where these hops live.
   modSources = null,
@@ -776,6 +834,16 @@ export function auditDiscoveryChannels({
       toolVisible.add(id);
     }
   }
+  // The descriptor-derived projection (39da4ec4): one block mounts all forty-eight ids in
+  // `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` with `action: actionId`, so those ids are in no literal and the population is
+  // the registry's own list. A list this reader cannot read while the loop is there is BLOCKED by name rather than read
+  // as "no tool", which is the same distinction the state semantics below draw for every other hop.
+  const projectsDescriptorDerived =
+    /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\) \{/u.test(gameTools);
+  const descriptorDerivedIds = projectsDescriptorDerived
+    ? frozenStringArray(actionRegistry, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS")
+    : null;
+  for (const id of descriptorDerivedIds ?? []) toolVisible.add(id);
 
   // The snapshot list each tool description actually tells the Agent to read.
   //
@@ -791,24 +859,12 @@ export function auditDiscoveryChannels({
     if (!visible) continue;
     const desc = chunk.match(/description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/);
     const text = desc ? desc[1] : "";
-    // The field names a description may legitimately name. The shape set has to cover every form the Mod
-    // publishes: most discovery arrays end in Targets or Slots, and the ore-pan channel is "PanSites" —
-    // which the original two patterns could never match, so pan_ore was reported as naming no field even
-    // though its description names panSites verbatim. Extend the SHAPE rather than rename the wire field to
-    // suit the checker.
-    const named = [
-      ...text.matchAll(/\b([a-zA-Z]+Targets)\b/g),
-      ...text.matchAll(/\b([a-zA-Z]+Slots)\b/g),
-      ...text.matchAll(/\b([a-zA-Z]+Sites)\b/g),
-      ...text.matchAll(/\b([a-zA-Z]+Facts)\b/g),
-      // Entity-shaped families name the THING rather than a list of addresses: `chests` is a container and its
-      // contents, because a container is perceived whole instead of being flattened into one row per
-      // (container, item) pair. The set is extended rather than the wire field renamed to end in `Targets`, for
-      // the same reason `PanSites` was: a name chosen to satisfy a checker is a second spelling of one fact.
-      ...text.matchAll(/\b(chests)\b/g),
-    ].map((x) => x[1]);
-    describedFields.set(visible[1], [...new Set(named)]);
+    describedFields.set(visible[1], namedTargetFields(text));
   }
+  // The descriptor-derived projection mounts its blocks from the one presentation table, so the sentence for each of
+  // those actions is read from its own row there rather than from a shared `description: presentation.description` line.
+  for (const [id, sentence] of declaredToolPresentation(gameTools))
+    describedFields.set(id, namedTargetFields(sentence));
   // Loop-mounted families mount several tools from one for-of header; the
   // description names the snapshot field through a per-action literal table
   // (labels / targetKey) rather than a literal in the description string. The
@@ -872,6 +928,11 @@ export function auditDiscoveryChannels({
   // A declaration nobody could read is a blocked reading, never a smaller surface: without it the eligibility set is
   // empty and every action would look experimental, which is a green result that measures nothing.
   if (planDeclaration === null) gaps.push({ subject: PLAN_SCRIPT, gap: "plan_vocabulary_declaration_unreadable" });
+  if (projectsDescriptorDerived && (descriptorDerivedIds === null || descriptorDerivedIds.length === 0))
+    gaps.push({
+      subject: ACTION_REGISTRY,
+      gap: "descriptor_derived_action_ids_unreadable:STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS",
+    });
   for (const row of rows) {
     if (row.kind === "read_only") continue;
     if (

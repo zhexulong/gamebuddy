@@ -110,6 +110,31 @@ test("the mirror spelling `A ? B : true` is caught, and an object field named tr
   });
 });
 
+test("a null-or-empty test is not a verdict, and a pass-shaped fact beside it still is", async () => {
+  // The measured false positive (2026-11-22): a migration tool asking whether a lifted fragment is there
+  // (`failureCode === null || failureCode.length === 0` -> `refuse(...)`), flagged because an unrelated neighbouring
+  // line's identifier happens to be pass-shaped. Both arms test ONE value, so the branch cannot pass anything.
+  const idiom = [
+    "const passedCode = unquote(reasonEntry.value);",
+    "if (passedCode === null) return refuse('result_reasonCode_unliftable');",
+    "if (passedCode !== successCode) return refuse('success_code_disagrees');",
+    "if (passVariable !== null && (failureCode === null || failureCode.length === 0)) return refuse('unliftable');",
+    "",
+  ].join("\n");
+  await withFixture(idiom, async (root) => {
+    assert.deepEqual(findAbsencePassBranches({ root }), [], "a null-or-empty check is not an absence-as-pass branch");
+  });
+
+  // The other direction, which is the defect the disjunction rule exists for: the right arm reads a DIFFERENT,
+  // pass-shaped fact, so the boolean is true exactly when nobody assessed anything.
+  const verdict = "const interactionPassed = interactionAssessment === null || interactionAssessment.passed;\n";
+  await withFixture(verdict, async (root) => {
+    const findings = findAbsencePassBranches({ root });
+    assert.equal(findings.length, 1, "a pass-shaped fact read only when the observation is absent stays a finding");
+    assert.equal(findings[0].kind, "absence_by_disjunction");
+  });
+});
+
 test("a camelCase pass identifier is not skipped", async () => {
   // The first version matched `\bpassed`, and camelCase has a word character before
   // `Passed` (`ladderZeroPassed`), so real absence-as-pass branches were silently

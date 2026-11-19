@@ -553,8 +553,7 @@
             "name": "native_action_postcondition"
           },
           "approach": {
-            "relation": "adjacent",
-            "withinTiles": 1
+            "relation": "self_walked"
           },
           "targetFamily": "forageTargets"
         },
@@ -1390,12 +1389,12 @@
       {
         "actionId": "rotate_furniture",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "rotate_furniture",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1430,12 +1429,12 @@
       {
         "actionId": "remove_fence",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "remove_fence",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1465,6 +1464,9 @@
           "effect": "write",
           "postcondition": {
             "name": "fence_removed"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets",
           "nativeBinding": "Fence.performToolAction"
@@ -1559,6 +1561,9 @@
           "effect": "write",
           "postcondition": {
             "name": "pedestal_item_placed"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets",
           "nativeBinding": "ItemPedestal.performObjectDropInAction"
@@ -1957,12 +1962,12 @@
       {
         "actionId": "break_resource_clump",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "break_resource_clump",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1987,6 +1992,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "debrisTargets"
         },
@@ -3328,12 +3336,12 @@
       {
         "actionId": "sweep_scythe",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "sweep_scythe",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -4400,12 +4408,12 @@
       {
         "actionId": "open_geode",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "open_geode",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "slot": {
@@ -4466,6 +4474,8 @@
       "remove_placed_item",
       "move_placed_furniture",
       "break_container",
+      "rotate_furniture",
+      "remove_fence",
       "chop_tree",
       "break_rock",
       "clear_hoedirt",
@@ -4473,6 +4483,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "break_resource_clump",
       "fish_here",
       "npc_relationship",
       "pet_animal",
@@ -4503,6 +4514,7 @@
       "load_building_chest",
       "collect_building_chest_output",
       "scythe_crop",
+      "sweep_scythe",
       "harvest_bush",
       "harvest_fruit_tree",
       "shake_tree",
@@ -4530,7 +4542,8 @@
       "name_entity",
       "redeem_prize_ticket",
       "tailor_clothing",
-      "dye_clothing_with_item"
+      "dye_clothing_with_item",
+      "open_geode"
     ],
     "executableActionIds": [
       "move_to_tile",
@@ -4562,6 +4575,8 @@
       "remove_placed_item",
       "move_placed_furniture",
       "break_container",
+      "rotate_furniture",
+      "remove_fence",
       "chop_tree",
       "break_rock",
       "clear_hoedirt",
@@ -4569,6 +4584,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "break_resource_clump",
       "fish_here",
       "npc_relationship",
       "pet_animal",
@@ -4599,6 +4615,7 @@
       "load_building_chest",
       "collect_building_chest_output",
       "scythe_crop",
+      "sweep_scythe",
       "harvest_bush",
       "harvest_fruit_tree",
       "shake_tree",
@@ -4626,7 +4643,8 @@
       "name_entity",
       "redeem_prize_ticket",
       "tailor_clothing",
-      "dye_clothing_with_item"
+      "dye_clothing_with_item",
+      "open_geode"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -4634,13 +4652,8 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "rotate_furniture",
-      "remove_fence",
       "put_item_in_fish_tank",
-      "place_item_on_pedestal",
-      "break_resource_clump",
-      "sweep_scythe",
-      "open_geode"
+      "place_item_on_pedestal"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -4964,6 +4977,10 @@
       "water_slime_hutch_trough",
       "withdraw_silo_hay"
     ],
+    "toolRouteProvenance": {
+      "namedMounts": 55,
+      "descriptorDerived": 48
+    },
     "requestValidatorActionIds": [
       "accept_daily_quest",
       "accept_special_order",
@@ -5301,6 +5318,7 @@
       "cancel_request",
       "companion_presentation_request",
       "system_notice_request",
+      "farmhand_action_policy_request",
       "system_notice_receipt",
       "companion_presentation_receipt",
       "player_control_receipt",
@@ -5358,6 +5376,7 @@
       "cancel_request",
       "companion_presentation_request",
       "system_notice_request",
+      "farmhand_action_policy_request",
       "system_notice_receipt",
       "companion_presentation_receipt",
       "player_control_receipt",
@@ -5696,7 +5715,7 @@
       },
       {
         "actionId": "clear_fish_pond",
-        "runner": "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_clear_fish_pond_v1"
       },
       {
@@ -5866,7 +5885,7 @@
       },
       {
         "actionId": "toggle_animal_door",
-        "runner": "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_toggle_animal_door_v1"
       },
       {
@@ -5881,27 +5900,27 @@
       },
       {
         "actionId": "harvest_bush",
-        "runner": "run-stardew-native-local-player-harvest-bush-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_harvest_bush_v1"
       },
       {
         "actionId": "harvest_fruit_tree",
-        "runner": "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_harvest_fruit_tree_v1"
       },
       {
         "actionId": "shake_tree",
-        "runner": "run-stardew-native-local-player-shake-tree-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_shake_tree_v1"
       },
       {
         "actionId": "take_pedestal_item",
-        "runner": "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_take_pedestal_item_v1"
       },
       {
         "actionId": "toggle_fence_gate",
-        "runner": "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_toggle_fence_gate_v1"
       },
       {
@@ -5936,7 +5955,7 @@
       },
       {
         "actionId": "mount_transport",
-        "runner": "run-stardew-native-local-player-mount-transport-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_mount_transport_v1"
       },
       {
@@ -6016,7 +6035,7 @@
       },
       {
         "actionId": "accept_daily_quest",
-        "runner": "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
+        "runner": null,
         "fixtureScenario": "native_accept_daily_quest_v1"
       },
       {
@@ -6088,9 +6107,41 @@
         "actionId": "fish_here",
         "runner": "run-stardew-native-local-player-fish-here-smoke.mjs",
         "fixtureScenario": "native_fish_here_v1"
+      },
+      {
+        "actionId": "break_resource_clump",
+        "runner": "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+        "fixtureScenario": "native_clear_debris_resource_clump_v1"
+      },
+      {
+        "actionId": "rotate_furniture",
+        "runner": "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+        "fixtureScenario": "native_rotate_furniture_v1"
+      },
+      {
+        "actionId": "remove_fence",
+        "runner": "run-stardew-native-local-player-remove-fence-smoke.mjs",
+        "fixtureScenario": "native_remove_fence_v1"
+      },
+      {
+        "actionId": "open_geode",
+        "runner": "run-stardew-native-local-player-open-geode-smoke.mjs",
+        "fixtureScenario": "native_open_geode_v1"
+      },
+      {
+        "actionId": "sweep_scythe",
+        "runner": "run-stardew-native-local-player-sweep-scythe-smoke.mjs",
+        "fixtureScenario": "native_cut_weeds_v1"
       }
     ],
-    "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",
+    "sharedHarnessModule": "lib/stardew-native-smoke-harness-v1.mjs",
+    "sharing": {
+      "examined": 100,
+      "runnerFound": 91,
+      "sharesHarness": 91,
+      "missing": 0,
+      "contractRoute": 9
+    },
     "obsoleteRunnerFilenamesAbsent": [
       "run-stardew-move-probe.mjs",
       "run-stardew-clear-debris-smoke.mjs",

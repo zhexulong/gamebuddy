@@ -135,6 +135,29 @@ test("promotion checker rejects a duplicate or missing source-owned projection",
   );
 });
 
+test("the mounted tool population is the registry's list, and an unreadable list is blocked", () => {
+  // The forty-eight hand-written mounts became one projection over `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` (39da4ec4), so
+  // the ids are a loop variable and the population is that declaration. A reader that kept counting literals reported all
+  // forty-eight as having no tool; a reader that cannot find the declaration must say so once instead.
+  const renamed = sources.registry.replace(
+    "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([",
+    "STARDEW_RENAMED_ACTION_IDS = Object.freeze([",
+  );
+  assert.notEqual(renamed, sources.registry, "the mutation must actually apply");
+  assert.ok(
+    failuresFor({ registry: renamed }).includes(
+      "tool_mount_projection_ids_unreadable:STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS",
+    ),
+    "a projection whose id list cannot be read is a blocked reading, not forty-eight unresolved ids",
+  );
+  // The other direction: with the declaration in place, every projection-mounted action really is counted.
+  assert.deepEqual(
+    failuresFor({}).filter((failure) => failure.startsWith("host_tool_count:")),
+    [],
+    "the projection's ids are mounted",
+  );
+});
+
 test("promotion checker preserves transport, schema, and game-thread guard checks", () => {
   // The envelope's action admission is a declaration now (777bc797): `value.action === "…"` comparisons no longer exist
   // in `validateExecutionRequestEnvelope`, so a mutation of that spelling would apply to nothing and the assertion would

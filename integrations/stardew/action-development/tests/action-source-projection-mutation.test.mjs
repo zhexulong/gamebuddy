@@ -34,6 +34,23 @@ function deriveWith(overrides) {
   return deriveActionSourceProjection({ ...sources, ...overrides });
 }
 
+/**
+ * A population finding names the action AND prints the census it came from, so "one action broke" cannot be read as "the
+ * suite has one action". The count after `missing` is the population that failed, and it is what makes the message honest.
+ */
+function expectRejectionNaming(callback, finding, missing) {
+  assert.throws(
+    callback,
+    (error) =>
+      error instanceof Error
+      && error.message.startsWith(`stardew_action_source_projection_${finding} · actions examined `)
+      && new RegExp(`· shares the harness \\d+ · missing ${missing} \\(gate route contract: \\d+\\)$`, "u").test(
+        error.message,
+      ),
+    `expected a finding naming ${finding} with a census`,
+  );
+}
+
 test("in-process derivation from the actual sources binds to the checked artifact", () => {
   const derived = deriveWith({});
   assert.equal(serializeActionSourceProjection(derived), artifactText);
@@ -178,18 +195,55 @@ test("runner and fixture parity drift is rejected from mutated actual sources", 
 
   const missingRunner = structuredClone(runnerSources);
   delete missingRunner.files["run-stardew-native-local-player-equip-tool-smoke.mjs"];
-  expectRejection(
+  expectRejectionNaming(
     () => deriveWith({ runner_sources: JSON.stringify(missingRunner) }),
-    "runner_missing:equip_tool",
+    "a_runner_missing:equip_tool",
+    1,
   );
 
   const wrongImport = structuredClone(runnerSources);
   wrongImport.files["run-stardew-native-local-player-equip-tool-smoke.mjs"] = wrongImport.files[
     "run-stardew-native-local-player-equip-tool-smoke.mjs"
   ].replace("./lib/stardew-native-smoke-harness-v1.mjs", "./lib/wrong-harness.mjs");
-  expectRejection(
+  assert.notEqual(
+    wrongImport.files["run-stardew-native-local-player-equip-tool-smoke.mjs"],
+    runnerSources.files["run-stardew-native-local-player-equip-tool-smoke.mjs"],
+    "harness import anchor must match",
+  );
+  expectRejectionNaming(
     () => deriveWith({ runner_sources: JSON.stringify(wrongImport) }),
-    "runner_shared_harness_import_missing:equip_tool",
+    "a_runner_shares_the_harness:equip_tool",
+    1,
+  );
+
+  // The regression that stopped `prelive` at L0 (2026-11-21): ten runners drive the harness through the shared layer
+  // (`lib/native-local-runner-scaffold.mjs`, whose own imports include `lib/native-local-runner-primitives.mjs`), so the
+  // shared layer's harness edge IS their edge. The expectation is derived from the same source map - the runners that do
+  // not name the harness themselves - rather than from a list of the ten, which would go stale on the next migration.
+  const scaffolded = structuredClone(runnerSources);
+  for (const [modulePath, moduleSource] of Object.entries(scaffolded.shared)) {
+    scaffolded.shared[modulePath] = moduleSource.replaceAll(
+      '"./stardew-native-smoke-harness-v1.mjs"',
+      '"./a-harness-nobody-imports.mjs"',
+    );
+  }
+  const sharedLayerOnlyRunners = new Set(
+    Object.entries(runnerSources.files)
+      .filter(([, source]) => !source.includes('"./lib/stardew-native-smoke-harness-v1.mjs"'))
+      .map(([runner]) => runner),
+  );
+  const expectedNames = deriveWith({}).runnerFixtureParity.actions
+    .filter((action) => action.runner !== null && sharedLayerOnlyRunners.has(action.runner))
+    .map((action) => action.actionId);
+  assert.ok(expectedNames.length > 0, "some declared action must reach the harness only through the shared layer");
+  assert.throws(
+    () => deriveWith({ runner_sources: JSON.stringify(scaffolded) }),
+    (error) =>
+      error instanceof Error
+      && expectedNames.every((actionId) => error.message.includes(`a_runner_shares_the_harness:${actionId}`))
+      && (error.message.match(/a_runner_shares_the_harness:/gu) ?? []).length === expectedNames.length
+      && new RegExp(`· missing ${expectedNames.length} \\(gate route contract: \\d+\\)$`, "u").test(error.message),
+    `the shared layer's harness edge is the runners' edge (${expectedNames.join(",")})`,
   );
 
   const legacyRoute = structuredClone(runnerSources);

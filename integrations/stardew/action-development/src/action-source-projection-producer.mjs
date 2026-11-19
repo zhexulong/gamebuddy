@@ -34,6 +34,16 @@ const ABSENT_ROUTE_TOKENS = Object.freeze([
   "read_repair",
   "withdrawn",
 ]);
+/** The Host declaration the descriptor-derived tool mounts iterate, and the shape those mounts must have. */
+const DESCRIPTOR_DERIVED_DECLARATION = "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS";
+const DESCRIPTOR_DERIVED_MOUNT_MARKERS = Object.freeze([
+  ["tool_pushed", "tools.push("],
+  ["factory_called", "makeGameActionTool({"],
+  ["tool_name_from_the_declaration", "name: STARDEW_ACTION_TOOL_NAMES[actionId],"],
+  ["action_from_the_declaration", "action: actionId,"],
+  ["arguments_from_the_descriptor", "toArgs:"],
+]);
+
 /** The Host declaration the execution-request envelope admits its action ids from. */
 const EXECUTION_REQUEST_DECLARATION = "EXECUTION_REQUEST_ARGUMENT_RULES";
 const ACTION_HANDLER_GROUPS_SCHEMA = "gamebuddy-action-handler-groups/v1";
@@ -52,7 +62,16 @@ const PROJECTED_HANDLER_GROUPS = Object.freeze({
   MachinesAndAnimals: "machines_and_animals",
   ResourceTools: "resource_tools",
 });
-const SHARED_RUNNER_IMPORT = 'from "./lib/stardew-native-smoke-harness-v1.mjs"';
+/**
+ * The shared native-local smoke harness, named ONCE, relative to the directory the runners live in.
+ *
+ * A runner reaches it directly or through the layer it shares with its siblings (`lib/native-local-runner-scaffold.mjs`
+ * for the single-shot executor, `lib/native-local-runner-primitives.mjs` for the parsers), and which of the two a runner
+ * is allowed to do is the runner's own business: what this file holds every action to is that a reach exists. The old
+ * constant spelled the whole runner-side import line, so the day the scaffold took the import over, ten runners stopped
+ * "sharing" a harness they were still driving.
+ */
+const SHARED_HARNESS_MODULE = "lib/stardew-native-smoke-harness-v1.mjs";
 const OBSOLETE_RUNNER_FILENAMES = Object.freeze([
   "run-stardew-move-probe.mjs",
   "run-stardew-clear-debris-smoke.mjs",
@@ -213,7 +232,38 @@ function parseHostToolNames(source) {
   return assertUnique(entries, "tool_name_duplicates");
 }
 
-function parseHostToolRoutes(source) {
+/**
+ * The Host's own declaration of the actions whose tool is a projection of the Mod's descriptor, and the proof it is mounted.
+ *
+ * 39da4ec4 ("forty-eight mounts become one projection of the Mod's declaration") replaced forty-eight hand-written
+ * `makeGameActionTool` blocks with one loop, so those mounts spell no action id at all and the two readers below cannot
+ * see them. The DECLARATION the loop iterates is the authority - not the loop's text - because a reader keyed on the loop
+ * reports a smaller Host surface the day the loop is refactored, and a smaller surface narrows `executableActionIds`
+ * without failing anything: measured 2026-11-21, forty-eight routes went missing and the projection published 53
+ * executable actions while the Host mounted 94.
+ */
+function parseDescriptorDerivedMounts(registry, gameTools) {
+  const body = registry.match(
+    new RegExp(`export const ${DESCRIPTOR_DERIVED_DECLARATION} = Object\\.freeze\\(\\[([\\s\\S]*?)\\] as const\\);`, "u"),
+  )?.[1];
+  if (!body) fail("descriptor_derived_declaration_unreadable");
+  const actionIds = [...body.matchAll(/"([a-z0-9_]+)"/g)].map((match) => match[1]);
+  if (actionIds.length === 0) fail("descriptor_derived_declaration_empty");
+  assertUnique(actionIds, "descriptor_derived_declaration_duplicates");
+  const at = gameTools.indexOf(`for (const actionId of ${DESCRIPTOR_DERIVED_DECLARATION}) {`);
+  if (at < 0) fail("descriptor_derived_mount_missing");
+  const block = gameTools.slice(at, gameTools.indexOf("\n  }\n", at));
+  for (const [name, marker] of DESCRIPTOR_DERIVED_MOUNT_MARKERS) {
+    if (!block.includes(marker)) fail(`descriptor_derived_mount_shape:${name}`);
+  }
+  return actionIds;
+}
+
+/**
+ * The mounted tool routes, as the two things they are: the mounts that name their action, and the projection over the
+ * declaration. Both halves are published, so "the Host mounts N tools" always arrives with how N was reached.
+ */
+function parseHostToolRoutes(source, registry) {
   // Constant mount (36608fa): Host mounts every Game Action tool unconditionally
   // and per-action authority is decided at execution time, so the mounted set is
   // exactly the defined tool set (tool name id == action id). The previous
@@ -237,7 +287,15 @@ function parseHostToolRoutes(source) {
     for (const id of loop[1].matchAll(/"([a-z0-9_]+)"/g)) routes.push(id[1]);
   }
   if (routes.length === 0) fail("tool_routes_empty");
-  return assertUnique(routes, "tool_route_duplicates");
+  const handMounted = assertUnique(routes, "tool_route_duplicates");
+  const descriptorDerived = parseDescriptorDerivedMounts(registry, source);
+  // `assertUnique` over the union fails on an id both halves claim: one action with two mounts is a duplicate tool, and it
+  // would also make the two published counts add up to more than the routes they describe.
+  return Object.freeze({
+    handMounted: Object.freeze([...handMounted]),
+    descriptorDerived: Object.freeze([...descriptorDerived]),
+    actionIds: Object.freeze(assertUnique([...handMounted, ...descriptorDerived], "tool_route_duplicates")),
+  });
 }
 
 /**
@@ -440,25 +498,92 @@ function parseHandlerGroups(source) {
   return ownership;
 }
 
+/**
+ * The row table the live gates are declared in: one row per action, whatever route its gate takes.
+ *
+ * A row names its gate either as a runner in `tools/` or as `contracts/smoke/<actionId>.json` (`null` in the runner
+ * position, `"contract"` in the route position). This reader used to match only rows whose third argument was quoted,
+ * so a row that moved to the contract route fell out of the projection with nothing to see: nine actions left the
+ * population and every assertion around it still passed. The count of `gate(` calls in the table is now the authority on
+ * how many rows there are, and a row this reader cannot account for is refused by name instead of skipped.
+ */
 function parseGateDescriptors(source) {
   const body = source.match(/STARDEW_PUBLISHED_ACTION_GATES\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/)?.[1];
   if (!body) fail("gate_descriptors_unreadable");
   const gates = [...body.matchAll(
-    /gate\(\s*"([a-z0-9_]+)"\s*,\s*(\d+)\s*,\s*"([a-z0-9-]+\.mjs)"\s*,\s*"([a-z0-9_]+)"(?:\s*,\s*"([a-z0-9_]+)")?\s*,?\s*\)/g,
+    /gate\(\s*"([a-z0-9_]+)"\s*,\s*(\d+)\s*,\s*(?:"([a-z0-9-]+\.mjs)"|null)\s*,\s*"([a-z0-9_]+)"(?:\s*,\s*(?:"([a-z0-9_]+)"|null))?(?:\s*,\s*"([a-z]+)")?\s*,?\s*\)/g,
   )].map((match) => Object.freeze({
     actionId: match[1],
-    runner: match[3],
+    runner: match[3] ?? null,
     fixtureScenario: match[5] ?? null,
+    gateRoute: match[6] ?? "runner",
   }));
   if (gates.length === 0) fail("gate_descriptors_empty");
+  const declaredRowCount = (body.match(/\n\s*gate\s*\(/gu) ?? []).length;
+  if (declaredRowCount !== gates.length) fail(`gate_descriptor_row_unreadable:${declaredRowCount - gates.length}`);
   assertUnique(gates.map((gate) => gate.actionId), "gate_descriptor_action_duplicates");
-  // One runner may legitimately prove several actions: the experimental map
-  // already shares a runner between actions that differ only by target surface
-  // (chest/fridge, ship_item/island). Requiring runner uniqueness here would
-  // reject that established shape, so only the action id must be unique.
+  for (const gate of gates) {
+    if (gate.gateRoute !== "runner" && gate.gateRoute !== "contract") fail(`gate_descriptor_route_unknown:${gate.actionId}`);
+    if (gate.gateRoute === "contract" && gate.runner !== null) fail(`gate_descriptor_contract_row_names_a_runner:${gate.actionId}`);
+    if (gate.gateRoute === "runner" && gate.runner === null) fail(`gate_descriptor_runner_row_names_no_runner:${gate.actionId}`);
+  }
+  // One runner may legitimately prove several actions: the experimental map already shares a runner between actions that
+  // differ only by target surface (chest/fridge, ship_item/island). Requiring runner uniqueness here would reject that
+  // established shape, so only the action id must be unique.
   return gates;
 }
 
+/**
+ * The relative module specifiers a source imports, in source order and without repeats.
+ *
+ * Read as SPECIFIERS rather than as one expected line, because a runner's harness edge is an edge in a graph: whether a
+ * module is reached does not depend on which file spells the specifier or how it is indented.
+ */
+function localImportSpecifiers(source) {
+  const specifiers = [];
+  for (const match of source.matchAll(/(?:from|import)\s+["']((?:\.\/|\.\.\/)[^"']+\.mjs)["']/gu)) specifiers.push(match[1]);
+  return [...new Set(specifiers)];
+}
+
+/** A specifier resolved against the importing module's own directory, or `null` when it leaves the runner directory. */
+function resolveLocalImport(fromModule, specifier) {
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(fromModule), specifier));
+  return resolved === ".." || resolved.startsWith("../") ? null : resolved;
+}
+
+/** Whether a runner reaches the shared harness, through its own imports or through the modules it shares with them. */
+function sharesTheHarness(runner, { files, shared }) {
+  const reached = new Set();
+  const pending = [runner];
+  while (pending.length > 0) {
+    const modulePath = pending.pop();
+    if (reached.has(modulePath)) continue;
+    reached.add(modulePath);
+    const moduleSource = modulePath === runner ? files[runner] : (shared[modulePath] ?? files[modulePath]);
+    if (typeof moduleSource !== "string") continue;
+    for (const specifier of localImportSpecifiers(moduleSource)) {
+      const resolved = resolveLocalImport(modulePath, specifier);
+      if (resolved === SHARED_HARNESS_MODULE) return true;
+      if (resolved !== null) pending.push(resolved);
+    }
+  }
+  return false;
+}
+
+/** The census a green run publishes and a red one prints, so "nothing missing" always arrives with what was examined. */
+function describeRunnerSharing({ examined, runnerFound, sharesHarness, missing, contractRoute }) {
+  return `actions examined ${examined} · runner found ${runnerFound} · shares the harness ${sharesHarness}`
+    + ` · missing ${missing} (gate route contract: ${contractRoute})`;
+}
+
+/**
+ * Every action the gate table declares, against the runner that must reach the shared harness on its behalf.
+ *
+ * The population is the TABLE, not a list kept here: a row added tomorrow is examined without this file changing, and a
+ * row whose gate is a contract is counted by route rather than reported as a runner that lost its import. Two findings,
+ * because they are two mistakes with two fixes - a runner that is not there at all, and a runner that is there and no
+ * longer reaches the harness.
+ */
 function parseRunnerSources(source, gates) {
   let runners;
   try {
@@ -468,22 +593,52 @@ function parseRunnerSources(source, gates) {
   }
   if (runners === null || typeof runners !== "object" || Array.isArray(runners)
     || !Array.isArray(runners.entries) || runners.files === null || typeof runners.files !== "object"
-    || Array.isArray(runners.files)) fail("runner_sources_invalid");
+    || Array.isArray(runners.files) || runners.shared === null || typeof runners.shared !== "object"
+    || Array.isArray(runners.shared)) fail("runner_sources_invalid");
   const entries = assertUnique(runners.entries, "runner_directory_entry_duplicates");
   for (const obsolete of OBSOLETE_RUNNER_FILENAMES) {
     if (entries.includes(obsolete)) fail(`obsolete_runner_present:${obsolete}`);
   }
+  // The harness is one file: when it is not there, say so once instead of naming ninety-one actions that suddenly share
+  // nothing.
+  if (typeof runners.shared[SHARED_HARNESS_MODULE] !== "string") fail("shared_harness_missing");
+
+  const actions = [];
+  const problems = [];
+  let runnerFound = 0;
+  let sharesHarness = 0;
   for (const gate of gates) {
-    if (!entries.includes(gate.runner) || typeof runners.files[gate.runner] !== "string") {
-      fail(`runner_missing:${gate.actionId}`);
+    if (gate.gateRoute === "contract") {
+      actions.push(Object.freeze({ actionId: gate.actionId, runner: null, fixtureScenario: gate.fixtureScenario }));
+      continue;
     }
-    const runnerSource = runners.files[gate.runner];
-    if (!runnerSource.includes(SHARED_RUNNER_IMPORT)) fail(`runner_shared_harness_import_missing:${gate.actionId}`);
+    const runnerSource = entries.includes(gate.runner) ? runners.files[gate.runner] : undefined;
+    if (typeof runnerSource !== "string") {
+      problems.push(`a_runner_missing:${gate.actionId}`);
+      continue;
+    }
+    runnerFound += 1;
+    if (!sharesTheHarness(gate.runner, runners)) {
+      problems.push(`a_runner_shares_the_harness:${gate.actionId}`);
+      continue;
+    }
+    sharesHarness += 1;
     if (runnerSource.includes("host-production-module")) fail(`runner_legacy_host_route_present:${gate.actionId}`);
+    actions.push(Object.freeze({ actionId: gate.actionId, runner: gate.runner, fixtureScenario: gate.fixtureScenario }));
   }
+  const contractRoute = actions.filter((action) => action.runner === null).length;
+  const sharing = Object.freeze({
+    examined: gates.length,
+    runnerFound,
+    sharesHarness,
+    missing: gates.length - sharesHarness - contractRoute,
+    contractRoute,
+  });
+  if (problems.length > 0) fail(`${problems.join(", ")} · ${describeRunnerSharing(sharing)}`);
   return Object.freeze({
-    actions: Object.freeze(gates.map((gate) => Object.freeze({ ...gate }))),
-    sharedHarnessImport: SHARED_RUNNER_IMPORT,
+    actions: Object.freeze(actions),
+    sharedHarnessModule: SHARED_HARNESS_MODULE,
+    sharing,
     obsoleteRunnerFilenamesAbsent: Object.freeze([...OBSOLETE_RUNNER_FILENAMES]),
   });
 }
@@ -554,7 +709,18 @@ export function deriveActionSourceProjection(sources) {
   // Host registry / tool / request union
   const adapterActionIds = assertUnique(parseHostAdapters(sources.host_registry), "adapter_duplicates");
   const toolActionIds = assertUnique(parseHostToolNames(sources.host_registry), "tool_name_duplicates");
-  const toolRouteActionIds = parseHostToolRoutes(sources.host_game_tools);
+  const toolRoute = parseHostToolRoutes(sources.host_game_tools, sources.host_registry);
+  const toolRouteActionIds = toolRoute.actionIds;
+  // The declaration and the mount are one fact: an id the projection names has no tool to mount when
+  // `STARDEW_ACTION_TOOL_NAMES` - the table the mount indexes - does not carry it, and the projection would then publish a
+  // Host surface narrower than the one the Host builds. Refused by name, never published as a smaller set.
+  //
+  // NOT the same rule as a mount that really is gone: a route the Host stops building is a fact the projection must report
+  // (it narrows `executableActionIds`, which is the restrictive intersection doing its job), and the surface parity gate
+  // names the action that lost its route. What must never be published is the reader's own blindness.
+  for (const actionId of toolRoute.descriptorDerived) {
+    if (!toolActionIds.includes(actionId)) fail(`descriptor_derived_id_not_projected:${actionId}`);
+  }
   const requestValidatorActionIds = parseExecutionRequestDeclaration(sources.host_protocol);
   const envelopeValidatorActionIds = parseEnvelopeAdmission(sources.host_protocol, requestValidatorActionIds);
   const executionRequestUnionActionIds = assertUnique(
@@ -664,6 +830,13 @@ export function deriveActionSourceProjection(sources) {
       adapterActionIds: Object.freeze(sorted(adapterActionIds)),
       toolActionIds: Object.freeze(sorted(toolActionIds)),
       toolRouteActionIds: Object.freeze(sorted(toolRouteActionIds)),
+      // How the route set was reached, published beside it: the mounts that name their action, and the ones the Host builds
+      // from its own declaration. A reader who only sees the total cannot tell a Host that mounts 103 tools from a reader
+      // that can see 55 of them.
+      toolRouteProvenance: Object.freeze({
+        namedMounts: toolRoute.handMounted.length,
+        descriptorDerived: toolRoute.descriptorDerived.length,
+      }),
       requestValidatorActionIds: Object.freeze(sorted(requestValidatorActionIds)),
       envelopeValidatorActionIds: Object.freeze(sorted(envelopeValidatorActionIds)),
       executionRequestUnionActionIds: Object.freeze(sorted(executionRequestUnionActionIds)),
@@ -703,16 +876,41 @@ export async function loadSources(repositoryRoot) {
       const descriptorSource = sources.gate_descriptors;
       if (typeof descriptorSource !== "string") fail("gate_descriptors_source_order_invalid");
       const gates = parseGateDescriptors(descriptorSource);
+      // The runners AND the modules they share: a runner that reaches the harness through
+      // `lib/native-local-runner-scaffold.mjs` is driven by that harness exactly as one that imports it itself, so the
+      // reader follows the imports instead of expecting one line of text to survive a refactor. Files with a directory
+      // separator are the shared layer, bare names are the runners; the walk is bounded by the runner directory, so a
+      // specifier pointing at `host/` is not read here at all.
       const files = {};
+      const shared = {};
+      const read = new Set();
+      const pending = gates.filter((gate) => gate.runner !== null).map((gate) => gate.runner);
       let totalBytes = 0;
-      for (const runner of gates.map((gate) => gate.runner)) {
-        if (!entries.includes(runner)) continue;
-        const bytes = await readFile(path.join(absolute, runner));
+      while (pending.length > 0) {
+        const modulePath = pending.pop();
+        if (read.has(modulePath)) continue;
+        read.add(modulePath);
+        let bytes;
+        try {
+          bytes = await readFile(path.join(absolute, modulePath));
+        } catch {
+          continue;
+        }
         totalBytes += bytes.length;
-        files[runner] = bytes.toString("utf8");
+        const text = bytes.toString("utf8");
+        if (modulePath.includes("/")) shared[modulePath] = text;
+        else files[modulePath] = text;
+        for (const specifier of localImportSpecifiers(text)) {
+          const resolved = resolveLocalImport(modulePath, specifier);
+          if (resolved !== null) pending.push(resolved);
+        }
       }
       if (totalBytes > entry.maxBytes) fail(`source_too_large:${entry.category}`);
-      sources[entry.category] = JSON.stringify({ entries, files });
+      sources[entry.category] = JSON.stringify({
+        entries,
+        files: Object.fromEntries(Object.entries(files).sort(([left], [right]) => (left < right ? -1 : 1))),
+        shared: Object.fromEntries(Object.entries(shared).sort(([left], [right]) => (left < right ? -1 : 1))),
+      });
       continue;
     }
     const bytes = await readFile(absolute);

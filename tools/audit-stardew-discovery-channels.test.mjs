@@ -49,6 +49,36 @@ function tool(description) {
 function schemaWith(properties) {
   return { $defs: { snapshot: { properties } } };
 }
+/** A projection-mounted tool surface: one declaration list, one presentation table, one mount block. */
+const DERIVED_REGISTRY = [
+  "export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([",
+  '  "harvest_crop",',
+  "] as const);",
+].join("\n");
+function PROJECTION_TOOLS(sentence) {
+  return [
+    "const DECLARED_ACTION_TOOL_PRESENTATION: Readonly<Record<string, Readonly<{ label: string; description: string }>>> =",
+    "  Object.freeze({",
+    "  harvest_crop: Object.freeze({",
+    '    label: "Harvest Stardew Crop",',
+    "    description:",
+    `      "${sentence}",`,
+    "  }),",
+    "});",
+    "for (const actionId of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS) {",
+    "  tools.push(",
+    "    makeGameActionTool({",
+    "      name: STARDEW_ACTION_TOOL_NAMES[actionId],",
+    "      label: presentation.label,",
+    "      description: presentation.description,",
+    "      parameters: buildCandidateToolSchema(actionId, descriptor),",
+    "      action: actionId,",
+    "      toArgs: (params) => declaredArguments(descriptor, params),",
+    "    }),",
+    "  );",
+    "}",
+  ].join("\n");
+}
 /**
  * An action whose subject is raw coordinates and no snapshot family, so the visibility rule can be tested alone: the
  * target-description leg has nothing to say about it, and the lifecycle is the only thing that changes between cases.
@@ -68,11 +98,7 @@ function coordinateSurface(lifecycle) {
 
 test("the committed action surface has a complete discovery chain", () => {
   const report = auditDiscoveryChannels();
-  assert.deepEqual(
-    report.gaps.filter((gap) => gap.gap !== "tool_does_not_name_target_field"),
-    [],
-    "every target-bearing action must have an Agent surface and a real Mod/Host/schema field",
-  );
+  assert.deepEqual(report.gaps, [], "every target-bearing action must name its field to the Agent and have a real Mod/Host/schema field");
   assert.ok(report.actionCount > 0);
   assert.ok(report.targetBearingCount > 0);
   // The population, said out loud: a green run that examined no surface cannot be told from a reader that stopped.
@@ -197,6 +223,34 @@ test("a Building member with no published family is named", () => {
   const report = auditDiscoveryChannels({ modSources: loadModSources(), models: "// no Bridge* family at all" });
   assert.ok(
     report.gaps.some((gap) => gap.gap === "building_member_unpublished:daysOfConstructionLeft:FarmBuildingTargets"),
+  );
+});
+
+test("a descriptor-derived mount's sentence is read from its own presentation row", () => {
+  // The forty-eight hand-written mounts became ONE projection block (39da4ec4): the id comes from the registry's list and
+  // the sentence from `DECLARED_ACTION_TOOL_PRESENTATION`, so a reader that only sliced per-mount prose reported every
+  // one of them as naming no target field. Both halves are driven here, and the blocked reading too.
+  const audit = (gameTools, actionRegistry = DERIVED_REGISTRY) =>
+    auditDiscoveryChannels({
+      surface: surface(),
+      models: MODEL,
+      protocol: PROTOCOL,
+      schema: schemaWith({ [FIELD]: {} }),
+      gameTools,
+      actionRegistry,
+    });
+  const wired = audit(PROJECTION_TOOLS(TOOL_DESC_OK));
+  assert.deepEqual(wired.gaps, [], JSON.stringify(wired.gaps));
+  assert.equal(wired.rows[0].toolVisible, true, "the mounted id is the registry's, not a literal beside the mount");
+  assert.ok(
+    audit(PROJECTION_TOOLS(TOOL_DESC_WRONG)).gaps.some((gap) => gap.gap.startsWith("tool_names_wrong_field:")),
+    "the projection's own sentence is what the field check reads",
+  );
+  assert.ok(
+    audit(PROJECTION_TOOLS(TOOL_DESC_OK), "// the declaration was renamed").gaps.some(
+      (gap) => gap.gap === "descriptor_derived_action_ids_unreadable:STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS",
+    ),
+    "a projection whose id list cannot be read is blocked by name, not read as no tool",
   );
 });
 

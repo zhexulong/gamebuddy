@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 import { namedRunner } from "./lib/stardew-action-gate-route.mjs";
+import { frozenStringArray } from "./check-action-surface-parity.mjs";
 import { TARGET_FIELD as STARDEW_SNAPSHOT_TARGET_FIELD } from "./audit-stardew-discovery-channels.mjs";
 import {
   handlerDispatch,
@@ -335,7 +336,7 @@ export function validatePromotionSources({
         });
   failures.push(...writePostconditions.findings);
   const hostEntries = parseHostEntries(registry);
-  const routes = parseExplicitRoutes(gameTools);
+  const routes = parseExplicitRoutes(gameTools, registry);
   failures.push(...validateHostWrapperFactory(gameTools, routes));
   failures.push(...validateRouterBoundary(bridgeSession, farmhandActionRouter));
   const hostValidators = parseHostRequestValidators(protocol);
@@ -639,12 +640,13 @@ export function executionRequestEnvelopeProblem(source) {
     return "execution_request_envelope_not_declaration_derived";
   return null;
 }
-function parseExplicitRoutes(gameTools) {
+function parseExplicitRoutes(gameTools, actionRegistry = "") {
   // Constant mount (36608fa): every Game Action tool is mounted unconditionally
   // and per-action authority is checked at execution time, so the visible set is
   // exactly the defined tool set (name set == action id). A tool definition
   // counts only when its `action` id is immediately followed by its `toArgs`
   // projector, preserving the old per-tool shape checks.
+  const problems = [];
   const tools = [
     ...gameTools.matchAll(/makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g),
   ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[1] }));
@@ -661,8 +663,20 @@ function parseExplicitRoutes(gameTools) {
       tools.push({ visibleAction: id, adapterAction: id });
     }
   }
+  // The descriptor-derived projection (39da4ec4): ONE block mounts every id in `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS`
+  // with `action: actionId`, so none of those forty-eight ids sits beside its own mount any more. The population is the
+  // registry's own list, read from that declaration instead of re-listed here. Measured 2026-11-22: the reader that only
+  // counted literals reported `host_tool_count:<id>:0` for all forty-eight - a loud report of the wrong fact, since the
+  // tools were mounted and the reader had lost its population. A list this reader cannot read is BLOCKED by name, never
+  // turned into forty-eight missing tools.
+  if (/for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\) \{[\s\S]*?makeGameActionTool\(\{/u.test(gameTools)) {
+    const derived = frozenStringArray(actionRegistry, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS");
+    if (derived === null || derived.length === 0)
+      problems.push("tool_mount_projection_ids_unreadable:STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS");
+    else for (const id of derived) tools.push({ visibleAction: id, adapterAction: id });
+  }
   const visibility = [...new Set(tools.map((entry) => entry.visibleAction))];
-  return { tools: [...tools], visibility };
+  return { tools: [...tools], visibility, problems };
 }
 
 function extractUniqueHostWrapperFactoryBody(gameTools) {
@@ -712,7 +726,7 @@ function extractUniqueMethodBody(source, anchor) {
 }
 
 function validateHostWrapperFactory(gameTools, routes) {
-  const failures = [];
+  const failures = [...(routes.problems ?? [])];
   const factory = extractUniqueHostWrapperFactoryBody(gameTools);
   if (factory === null) failures.push("host_wrapper_factory_boundary_invalid");
   if (
