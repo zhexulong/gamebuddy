@@ -133,6 +133,32 @@ namespace GameBuddy.Stardew;
 // rotation, appended back to `location.furniture` - and the receipt is a REFUSAL, never a
 // success (see `move_placed_furniture_inventory_full`).
 //
+// WHERE THE PIECE REALLY IS decides whether there is anything to put back. The delivery writes
+// the slot FIRST and reports the gain afterwards (`Farmer.cs:4313-4328`), so a frame that
+// throws while reporting leaves the piece in the pack; restoring it as well would hold one
+// piece in two places, which is an item duplication rather than the loss the rollback exists
+// to prevent. `SlotHoldingPiece` is therefore what both branches ask: a piece the pack holds
+// is not restored, and its slot is what the receipt names.
+//
+// THE IDENTITY SEAM, AND WHAT A RECEIPT OWES THE CALLER. An opaque target id is a handle a caller can only echo
+// back: it cannot compute one. So every receipt must name the identity its own write left behind, or the next request
+// has nothing to name but the id of a target that no longer exists. Measured 2026-11-19 (Turn 130-138): she picked a
+// house plant up with `move_placed_furniture`, kept the pre-pickup `placed_furniture_*` id, and `place_owned_object`
+// refused `place_owned_object_target_changed` four times over 66 seconds - the pickup had said neither which slot the
+// game chose nor which identity replaced the one it invalidated. Three facts follow, and this file states all three:
+//   * the placement identity names the SOURCE (location, bag slot, qualified item id) and NOT the destination tile
+//     (`BuildOwnedObjectPlacementTargetId`). The tile is already the request's own argument and is decided on the game
+//     thread by `Utility.playerCanPlaceItemHere` (:6947 -> :5744 -> :5746), so binding it here as well was a second
+//     spelling of one precondition - and the one spelling a pickup CANNOT produce, because the tile does not exist yet.
+//     The identity is still recomputed from the world (`TryDescribePlacementSource` proves the slot holds that item), so
+//     it is verified rather than trusted;
+//   * `move_placed_furniture` names `carried_slot` and `carried_target` - the slot the game chose and the placement
+//     identity that now exists for it - so the piece it lifted can be put down in the very next request;
+//   * `place_owned_object` names `placed_target`, the identity the placement created (`placed_furniture_*` for a piece,
+//     `placed_item_*` for an object), which is what `move_placed_furniture`/`rotate_furniture` accept. `remove_placed_item`
+//     and `put_item_in_fish_tank` name the same field for the piece they left behind, so no action in this cycle can
+//     invalidate an identity in silence (gate: `FurnitureIdentityGateTests`).
+//
 // POSTCONDITIONS, all OBSERVED after the call and none taken from a native return:
 //   place_owned_object      the placed thing, read from the collection its own kind lands in
 //                           (furniture from `location.furniture`, an object from
@@ -142,7 +168,8 @@ namespace GameBuddy.Stardew;
 //                           own identity is reported as debris when the native path
 //                           dropped it (Axe.cs:89-92, Pickaxe.cs:239-242).
 //   move_placed_furniture   the piece is no longer in `location.furniture` and the actor's
-//                           pack now holds one more of its qualified item id.
+//                           pack now holds one more of its qualified item id - in the slot the
+//                           receipt names, under the placement identity it names.
 //   break_container_source  the container is GONE from the tile, and the drops added
 //                           during the swing window are reported.
 //
@@ -176,13 +203,13 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sourceRefusal, sourceEvidence);
 
         Vector2 tile = new(targetX, targetY);
-        if (!string.Equals(BuildOwnedObjectPlacementTargetId(location, slot, targetX, targetY, source!.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+        if (!string.Equals(BuildOwnedObjectPlacementTargetId(location, slot, source!.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "place_owned_object_target_changed",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId};live={BuildOwnedObjectPlacementTargetId(location, slot, source.QualifiedItemId)}");
         if (location.objects.ContainsKey(tile))
             return this.RememberTerminal(
                 requestId,
@@ -219,13 +246,13 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sourceRefusal, sourceEvidence);
 
         Vector2 tile = new(targetX, targetY);
-        if (!string.Equals(BuildOwnedObjectPlacementTargetId(location, slot, targetX, targetY, source!.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+        if (!string.Equals(BuildOwnedObjectPlacementTargetId(location, slot, source!.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "place_owned_object_target_changed",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId};live={BuildOwnedObjectPlacementTargetId(location, slot, source.QualifiedItemId)}");
         if (location.objects.ContainsKey(tile))
             return this.RememberTerminal(
                 requestId,
@@ -304,6 +331,7 @@ internal sealed partial class ExecutionManager
         (ExecutionState state, string reasonCode) = PlacementVerdict(placementHandled, placedPresent, inventoryDecremented);
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={FormatTile(restingTile)};slot={slot};item={source.QualifiedItemId};"
+            + $"{NamePlacedPieceAfterWrite(location, restingTile, placedPresent ? placed : null)};"
             + $"terrain_feature={terrainFeature};terrain_feature_tapped={terrainFeatureTapped};"
             + $"native_placement={placementHandled.ToString().ToLowerInvariant()};object_present={placedPresent.ToString().ToLowerInvariant()};"
             + $"placed_qualified_item_id={(placedPresent ? placed!.QualifiedItemId : "none")};placed_type={(placedPresent ? placed!.Type ?? "none" : "none")};"
@@ -483,6 +511,7 @@ internal sealed partial class ExecutionManager
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};type={target.Type ?? "none"};"
             + $"tool={DescribeTool(tool) ?? "none"};tool_kind={LaneRemovalToolKind(tool)};slot={selection.Slot};swings={swingCount};"
             + $"removed={removed.ToString().ToLowerInvariant()};tile_object_after={(removed ? "none" : after!.QualifiedItemId)};"
+            + $"{NamePlacedPieceAfterWrite(location, tile, null)};"
             + $"drops={string.Join("|", drops)};drop_count={drops.Count};"
             + $"stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)}";
         return removed
@@ -535,7 +564,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "move_placed_furniture_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tile)}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tile)};{DescribeFurnitureReach(piece)}");
 
         string itemId = piece.QualifiedItemId;
         Vector2 placedTile = piece.TileLocation;
@@ -552,13 +581,19 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception nativeException)
         {
-            bool restored = RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
+            // A throw can land AFTER the delivery: `addItemToInventoryBool` writes the piece into the first null slot and
+            // only then reports the gain (`Farmer.cs:4313-4328`), so a frame that throws while reporting it leaves the
+            // piece in the pack. Putting it back as well would hold one piece in two places - an item duplication, which
+            // is worse than the loss this rollback exists for - so the rollback is taken only when the pack does not
+            // already hold it, and the receipt says which slot it really went to.
+            int carriedSlot = SlotHoldingPiece(Game1.player, piece);
+            bool restored = carriedSlot < 0 && RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Uncertain,
                 "move_placed_furniture_native_exception",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_exception={nativeException.GetType().Name};restored={restored.ToString().ToLowerInvariant()};native_call_ran_unknown=true");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_exception={nativeException.GetType().Name};{NameCarriedPieceAfterWrite(location, carriedSlot, itemId)};restored={restored.ToString().ToLowerInvariant()};native_call_ran_unknown=true");
         }
 
         int carriedAfter = CountQualifiedItem(Game1.player, itemId);
@@ -570,15 +605,16 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "move_placed_furniture_inventory_full",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};stored=false;restored={restored.ToString().ToLowerInvariant()};restored_tile={FormatTile(piece.TileLocation)};restored_rotation={piece.currentRotation.Value};inventory_carried={carriedAfter};inventory_slots={Game1.player.Items.Count}");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};stored=false;{NameCarriedPieceAfterWrite(location, SlotHoldingPiece(Game1.player, piece), itemId)};restored={restored.ToString().ToLowerInvariant()};restored_tile={FormatTile(piece.TileLocation)};restored_rotation={piece.currentRotation.Value};inventory_carried={carriedAfter};inventory_slots={Game1.player.Items.Count}");
         }
 
+        int carriedSlotAfter = SlotHoldingPiece(Game1.player, piece);
         bool gone = !location.furniture.Contains(piece);
-        bool carried = carriedAfter == carriedBefore + 1 && CarriesPiece(Game1.player, piece);
+        bool carried = carriedAfter == carriedBefore + 1 && carriedSlotAfter >= 0;
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};"
             + $"native_stored={stored.ToString().ToLowerInvariant()};removed_from_furniture={gone.ToString().ToLowerInvariant()};"
-            + $"carried={carried.ToString().ToLowerInvariant()};inventory_before={carriedBefore};inventory_after={carriedAfter};"
+            + $"carried={carried.ToString().ToLowerInvariant()};{NameCarriedPieceAfterWrite(location, carriedSlotAfter, itemId)};inventory_before={carriedBefore};inventory_after={carriedAfter};"
             + $"carried_tile={FormatTile(placedTile)};carried_rotation={placedRotation};carried_flipped={placedFlipped.ToString().ToLowerInvariant()};"
             + $"furniture_in_location={location.furniture.Count}";
         return gone && carried
@@ -597,14 +633,16 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Whether this actor's pack holds this exact instance. The native delivery stores the piece itself
-    /// (`Items[i] = item`, Farmer.cs:4318), so identity is the reference, not a second derived id.
+    /// The slot this actor's pack holds this exact instance in, or -1. The native delivery stores the piece itself
+    /// (`Items[i] = item`, Farmer.cs:4318), so identity is the reference, not a second derived id - and the SLOT is the
+    /// fact the caller needs to place the piece again: nothing else in the receipt said which slot the game chose, which
+    /// is why the 2026-11-19 run guessed the axe's slot 0 first.
     /// </summary>
-    private static bool CarriesPiece(Farmer player, Item piece)
+    internal static int SlotHoldingPiece(Farmer player, Item piece)
     {
         for (int slot = 0; slot < player.Items.Count; slot++)
-            if (ReferenceEquals(player.Items[slot], piece)) return true;
-        return false;
+            if (ReferenceEquals(player.Items[slot], piece)) return slot;
+        return -1;
     }
 
     /// <summary>
@@ -935,11 +973,58 @@ internal sealed partial class ExecutionManager
         return drops;
     }
 
-    private static string BuildOwnedObjectPlacementTargetId(GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    /// <summary>
+    /// The identity of a placement THIS actor can perform from one bag slot, in one location.
+    ///
+    /// <para>
+    /// It binds the SOURCE - location, bag slot, qualified item id - and deliberately NOT the destination tile. The tile
+    /// is the request's own argument (`x`/`y`) and is decided on the game thread by the game's placement predicate
+    /// (`Utility.playerCanPlaceItemHere`, Utility.cs:5727-5750); binding it here as well would be a second spelling of one
+    /// precondition, and the spelling a pickup cannot produce: a caller that has just lifted a piece
+    /// (<c>move_placed_furniture</c>) can only be handed an identity for the piece it now carries, because the tile it will
+    /// choose does not exist yet. Measured 2026-11-19 (Turn 130-138): she picked a house plant up, kept the pre-pickup
+    /// <c>placed_furniture_*</c> id, and the tile-bound candidate refused her four times (`place_owned_object_target_changed`).
+    /// </para>
+    ///
+    /// <para>
+    /// The source half is not taken on trust: <see cref="TryDescribePlacementSource"/> proves the named slot holds this
+    /// qualified item, so a caller can echo this id but never forge one for an item it does not own.
+    /// </para>
+    /// </summary>
+    internal static string BuildOwnedObjectPlacementTargetId(GameLocation location, int slot, string qualifiedItemId)
     {
-        string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}:owned-object";
+        string raw = $"{location.NameOrUniqueName}:{slot}:{qualifiedItemId}:owned-object";
         return $"place_owned_object_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
+
+    /// <summary>
+    /// The identity of a thing standing on a tile, read from the thing itself: a piece of furniture is named the way
+    /// <c>location.furniture</c> names it and everything else the way <c>location.objects</c> does. ONE decision
+    /// (<see cref="LandsInFurniture"/>), because the native branches fill two different collections (Object.cs:7041, :7046)
+    /// and a caller cannot be told which one to ask.
+    /// </summary>
+    internal static string BuildPlacedThingTargetId(GameLocation location, Vector2 tile, StardewValley.Object placed) =>
+        placed is Furniture piece
+            ? BuildPlacedFurnitureTargetId(location, (int)tile.X, (int)tile.Y, piece)
+            : BuildPlacedItemTargetId(location, (int)tile.X, (int)tile.Y, placed);
+
+    /// <summary>
+    /// The two evidence fields that name the identity a write left in the actor's pack: the slot the game chose
+    /// (<c>carried_slot</c>) and the placement identity that now exists for it (<c>carried_target</c>). A piece the pack does
+    /// not hold has no carried identity, and says so - <c>none</c>, never an id computed for a slot that holds something else.
+    /// </summary>
+    internal static string NameCarriedPieceAfterWrite(GameLocation location, int slot, string qualifiedItemId) =>
+        slot < 0
+            ? "carried_slot=-1;carried_target=none"
+            : $"carried_slot={slot};carried_target={BuildOwnedObjectPlacementTargetId(location, slot, qualifiedItemId)}";
+
+    /// <summary>
+    /// The evidence field that names the identity a write left IN THE WORLD: <c>placed_target</c> is the id the next
+    /// furniture action (`move_placed_furniture`, `rotate_furniture`) and every observation will use for the thing on this
+    /// tile, or <c>none</c> when the write left nothing standing there.
+    /// </summary>
+    internal static string NamePlacedPieceAfterWrite(GameLocation location, Vector2 tile, StardewValley.Object? placed) =>
+        $"placed_target={(placed is null ? "none" : BuildPlacedThingTargetId(location, tile, placed))}";
 
     /// <summary>
     /// Opaque identity of one object occupying a world tile. It binds the object's own
@@ -984,8 +1069,12 @@ internal sealed partial class ExecutionManager
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)) continue;
                     if (!location.isTileOnMap(tile) || location.objects.ContainsKey(tile)) continue;
                     if (!Utility.playerCanPlaceItemHere(location, owned, x * 64 + 32, y * 64 + 32, player) || !owned.canBePlacedHere(location, tile)) continue;
-                    string placementTargetId = BuildOwnedObjectPlacementTargetId(location, slot, x, y, owned.QualifiedItemId);
-                    if (!publishedTargetIds.Add(placementTargetId)) continue;
+                    // ONE IDENTITY, MANY TILES: the id names the piece in this slot (see `BuildOwnedObjectPlacementTargetId`),
+                    // so every tile the piece may lawfully go to is its own ROW carrying the same id. The dedupe key is
+                    // therefore the row - id and tile - not the id alone, or the first placeable tile would be the only one
+                    // ever advertised.
+                    string placementTargetId = BuildOwnedObjectPlacementTargetId(location, slot, owned.QualifiedItemId);
+                    if (!publishedTargetIds.Add($"{placementTargetId}@{x},{y}")) continue;
                     result.Add(new BridgeWorldObjectTarget(
                         placementTargetId,
                         "placement_candidate",

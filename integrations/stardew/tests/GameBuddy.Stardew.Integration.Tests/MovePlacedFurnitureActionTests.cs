@@ -130,16 +130,16 @@ public sealed class MovePlacedFurnitureActionTests
     }
 
     /// <summary>
-    /// The delivery step IS reached, and a piece the engine cannot hand over is put back: the one frame this process
-    /// cannot pass is the game's own "item gained" HUD message, whose text is `Furniture.loadDisplayName` ->
-    /// `ItemRegistry.GetDataOrErrorItem` -> `Data/Furniture` (Farmer.addItemToInventory, Farmer.cs:3897 ->
-    /// ShowItemReceivedHudMessage 4746 -> HUDMessage.ForItemGained 78). Promoting it is a consequence of STORING an
-    /// item, not of anything this action decides, so the receipt must be an honest Uncertain and the piece must come
-    /// back - which is what this asserts. The end-to-end success belongs to the lane's native-local live gate, the
-    /// same place the sibling placement/removal/container actions prove their mutations.
+    /// The delivery step IS reached, and this process cannot pass the game's own "item gained" HUD message, whose text is
+    /// <c>Furniture.loadDisplayName</c> -> <c>ItemRegistry.GetDataOrErrorItem</c> -> <c>Data/Furniture</c>
+    /// (Farmer.addItemToInventory, Farmer.cs:3897 -> ShowItemReceivedHudMessage 4746 -> HUDMessage.ForItemGained 78). The
+    /// write happens FIRST and the report after it (<c>Farmer.cs:4313-4328</c>), so the throw leaves the piece IN THE PACK -
+    /// and the receipt must say so instead of putting a second copy back in the room. Both halves are asserted here: the
+    /// piece is carried exactly once, and the receipt names the slot and the placement identity that now exists for it.
+    /// The end-to-end success (where the HUD message can be built) belongs to the lane's native-local live gate.
     /// </summary>
     [Fact]
-    public void DeliveryIsReachedAndAnUndeliverablePieceIsPutBack()
+    public void DeliveryLandsInThePackBeforeTheThrowAndTheReceiptSaysWhere()
     {
         using var world = FurnitureWorld.Create();
         Furniture piece = world.PlaceFurniture(x: 2, y: 2, rotation: 2);
@@ -150,10 +150,17 @@ public sealed class MovePlacedFurnitureActionTests
         receipt.State.Should().Be(ExecutionState.Uncertain, receipt.Evidence);
         receipt.ReasonCode.Should().Be("move_placed_furniture_native_exception");
         receipt.Evidence.Should().Contain("native_call_ran_unknown=true");
-        receipt.Evidence.Should().Contain("restored=true", "a throw after the piece left the room must not lose it");
-        world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(piece);
-        piece.TileLocation.Should().Be(new Vector2(2, 2));
-        piece.currentRotation.Value.Should().Be(2);
+        int carriedSlot = world.CarriedSlot(piece);
+        carriedSlot.Should().BeGreaterThanOrEqualTo(0, "the delivery writes the slot before it reports the gain");
+        receipt.Evidence.Should().Contain($"carried_slot={carriedSlot}");
+        receipt.Evidence.Should().Contain(
+            $"carried_target={ExecutionManager.BuildOwnedObjectPlacementTargetId(world.Location, carriedSlot, FurnitureItemId)}",
+            "the identity the pickup created is what the next placement must name");
+        receipt.Evidence.Should().Contain(
+            "restored=false",
+            "a piece the pack already holds must not be put back as well - that is one piece in two places");
+        world.Location.furniture.Should().BeEmpty("the piece left the room and did not come back");
+        world.CarriedSlot(piece).Should().Be(carriedSlot, "exactly one copy is in the pack");
     }
 
     /// <summary>
@@ -488,6 +495,9 @@ public sealed class MovePlacedFurnitureActionTests
                 if (ReferenceEquals(Game1.player.Items[slot], piece)) return true;
             return false;
         }
+
+        /// <summary>The slot the pack holds this exact piece in, read off the production lookup.</summary>
+        internal int CarriedSlot(Item piece) => ExecutionManager.SlotHoldingPiece(Game1.player, piece);
 
         /// <summary>The target id the snapshot publishes for this tile, read off the production builder.</summary>
         internal string TargetIdAt(int x, int y) => ExecutionManager.BuildPlacedFurnitureTargetId(

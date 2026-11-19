@@ -111,7 +111,7 @@ public sealed class ApproachArmOwnershipTests
             ["RequestLocalDressMannequin"] = new(PendingInlineResolver, "BuildMannequinTargetId(location, targetX, targetY)"),
             ["RequestLocalSetSignDisplay"] = new(PendingInlineResolver, "BuildSignTargetId(location, targetX, targetY, sign)"),
             ["RequestLocalRefillWateringCan"] = new(PendingInlineResolver, "CanRefillWateringCanOnTile(targetX, targetY)"),
-            ["RequestLocalPlaceOwnedObject"] = new(PendingInlineResolver, "BuildOwnedObjectPlacementTargetId(location, slot, targetX, targetY, source!.QualifiedItemId)"),
+            ["RequestLocalPlaceOwnedObject"] = new(PendingInlineResolver, "BuildOwnedObjectPlacementTargetId(location, slot, source!.QualifiedItemId)"),
             ["RequestLocalRemovePlacedItem"] = new(PendingInlineResolver, "BuildPlacedItemTargetId(location, targetX, targetY, target)"),
             ["RequestLocalBreakContainerSource"] = new(PendingInlineResolver, "BuildBreakableContainerTargetId(location, targetX, targetY, probe)"),
             ["RequestLocalBuildFarmBuilding"] = new(PendingInlineResolver, "ResolveBuildFarmBuildingSite(location, buildingType, targetX, targetY, expectedTargetId)"),

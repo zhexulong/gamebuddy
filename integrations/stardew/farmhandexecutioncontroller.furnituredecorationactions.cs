@@ -111,16 +111,17 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "furniture_rotation_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, piece)};item={piece.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        // The engine's own guard, read from the piece: `rotate()` is a no-op below two rotations (Furniture.cs:1155),
-        // so a request for one would otherwise be a silent nothing that the postcondition could only report as
-        // uncertain. Naming it here is what lets the companion tell "this piece cannot turn" from "the turn failed".
+        // The engine's own guard, read from the piece: `rotate()` is a no-op below two rotations (Furniture.cs:1155), so a
+        // request for one would otherwise be a silent nothing that the postcondition could only report as uncertain.
+        // Naming it here is what lets the companion tell "this piece cannot turn" from "the turn failed" - and the bound is
+        // the piece's own Data/Furniture `rotations` value (`Furniture.cs:320`), not a number this file invents.
         if (piece.rotations.Value < 2)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "furniture_rotation_unsupported",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={piece.QualifiedItemId};rotations={piece.rotations.Value};rotation={piece.currentRotation.Value};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={piece.QualifiedItemId};rotations={piece.rotations.Value};rotations_required=2;rotation={piece.currentRotation.Value};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
         // The game's own furniture reach - `Furniture.IsCloseEnoughToFarmer` (Furniture.cs:1295-1308), the same
         // predicate the pickup is gated on. No approach leg and no tile distance: the reach is the piece's own
         // footprint inflated by 96 px, so a tile ring would be a second, invented spelling of it and a
@@ -131,7 +132,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "furniture_rotation_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(piece.TileLocation)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(piece.TileLocation)};{DescribeFurnitureReach(piece)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
 
         string itemId = piece.QualifiedItemId;
         Vector2 placedTile = piece.TileLocation;
@@ -185,7 +186,7 @@ internal sealed partial class ExecutionManager
                 + $"flipped_before={flippedBefore.ToString().ToLowerInvariant()};flipped_attempted={flippedAfter.ToString().ToLowerInvariant()};"
                 + $"footprint_before={FormatFootprint(footprintBefore)};footprint_attempted={FormatFootprint(footprintAfter)};"
                 + $"placeable=false;occupants={(occupants.Length == 0 ? "none" : occupants)};reverted={reverted.ToString().ToLowerInvariant()};"
-                + $"collection_restored={restoredCollection.ToString().ToLowerInvariant()}";
+                + $"collection_restored={restoredCollection.ToString().ToLowerInvariant()};{NamePlacedPieceAfterWrite(location, placedTile, piece)}";
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -203,7 +204,7 @@ internal sealed partial class ExecutionManager
             + $"flipped_before={flippedBefore.ToString().ToLowerInvariant()};flipped_after={piece.Flipped.ToString().ToLowerInvariant()};"
             + $"footprint_before={FormatFootprint(footprintBefore)};footprint_after={FormatFootprint(piece.GetBoundingBox())};"
             + $"placeable=true;turned={turned.ToString().ToLowerInvariant()};standing={standing.ToString().ToLowerInvariant()};"
-            + $"furniture_in_location={location.furniture.Count}";
+            + $"furniture_in_location={location.furniture.Count};{NamePlacedPieceAfterWrite(location, placedTile, piece)}";
         return turned && standing && holdsTheTurn
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "furniture_rotated", succeededEvidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "furniture_rotation_postcondition_not_observed", succeededEvidence);
@@ -399,6 +400,33 @@ internal sealed partial class ExecutionManager
         return $"blocked_by={new RefusalLayerToken(layer.Layer, layer.Detail).Format()}";
     }
 
+    /// <summary>
+    /// THE BOUND the furniture reach compares, printed with both values it compares.
+    ///
+    /// <para>
+    /// <c>Furniture.IsCloseEnoughToFarmer</c> (Furniture.cs:1295-1308) builds the piece's footprint rectangle from its own
+    /// <c>tileLocation</c> and <c>getTilesWide()</c>/<c>getTilesHigh()</c>, inflates it by <b>96 px on every side</b>
+    /// (<c>rectangle.Inflate(96, 96)</c>, :1306) and answers whether it contains <c>Game1.player.StandingPixel</c>. The
+    /// predicate exposes none of that, so a refusal that only said "out of range" left the caller without the distance it
+    /// would have to close: measured 2026-11-19 (Turn 130-138), <c>furniture_rotation_out_of_range</c> said nothing a
+    /// reader could act on. The arithmetic is restated here ONLY for evidence - the decision is the engine's predicate,
+    /// never this rectangle.
+    /// </para>
+    /// </summary>
+    internal static string DescribeFurnitureReach(Furniture piece)
+    {
+        Rectangle reach = new(
+            (int)piece.TileLocation.X * 64,
+            (int)piece.TileLocation.Y * 64,
+            piece.getTilesWide() * 64,
+            piece.getTilesHigh() * 64);
+        reach.Inflate(96, 96);
+        Point standing = Game1.player.StandingPixel;
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"reach_inflate_px=96;reach_box={reach.X},{reach.Y}:{reach.Width}x{reach.Height};actor_standing_pixel={standing.X},{standing.Y}");
+    }
+
     private static bool TryDescribeFence(
         GameLocation location,
         int x,
@@ -544,7 +572,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "fish_tank_out_of_range",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tank.TileLocation)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tank.TileLocation)};{DescribeFurnitureReach(tank)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "furniture_reach").Format()}");
         if (tank.mutex.IsLocked())
             return this.RememberTerminal(
                 requestId,
@@ -633,7 +661,7 @@ internal sealed partial class ExecutionManager
             $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={slot};"
             + $"native_answered={depositStarted.ToString().ToLowerInvariant()};held_items_before={heldBefore};held_items_after={heldAfter};"
             + $"last_held={lastHeld};carried_before={carriedBefore};carried_after={carriedAfter};"
-            + $"mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()}";
+            + $"mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()};{NamePlacedPieceAfterWrite(location, new Vector2(targetX, targetY), tank)}";
         return deposited && leftThePack
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "fish_tank_item_deposited", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "fish_tank_postcondition_not_observed", evidence);
