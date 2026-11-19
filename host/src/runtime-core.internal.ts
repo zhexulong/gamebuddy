@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -382,45 +382,85 @@ export function createRenderedEnvironmentFactsProvider(integration: GameConnecti
  */
 export const MAGIC_CONTEXT_HISTORIAN_ENABLED = true;
 
-// Magic Context currently discovers its config and SQLite root through Node
-// process globals. Serialize only that extension bootstrap critical section so
-// simultaneous Chat/Game runtimes cannot inherit one another's cwd/data root.
-let magicContextReloadTail: Promise<void> = Promise.resolve();
+/**
+ * What one Magic Context scope pins: the store root the extension resolves inside it, and the paths
+ * that root is derived from.
+ *
+ * Published instead of recomputed by each caller, because `dataHome` IS `XDG_DATA_HOME` and `storageDir`
+ * IS `MAGIC_CONTEXT_STORAGE_DIR` for exactly as long as the scope holds - a caller deriving its own copy
+ * would be keeping a second spelling of a fact this module decides.
+ */
+export type RuntimeMagicContextRoot = Readonly<{
+  runtimeCwd: string;
+  dataHome: string;
+  storageDir: string;
+}>;
 
-export async function reloadMagicContextInRuntimeRoot(
-  loader: DefaultResourceLoader,
+/**
+ * The one lock over the Magic Context process globals. `withRuntimeMagicContextRoot` is its only acquirer,
+ * so a second writer of `MAGIC_CONTEXT_STORAGE_DIR`/cwd/XDG cannot appear beside it without going through
+ * that function, and a second lock over the same global cannot be introduced by accident.
+ */
+let magicContextScopeTail: Promise<void> = Promise.resolve();
+
+/**
+ * Runs `work` with the process pointed at one runtime root's Magic Context store, and only then.
+ *
+ * Magic Context discovers its config and SQLite root through process globals - cwd, `XDG_DATA_HOME`,
+ * `XDG_CONFIG_HOME` and `MAGIC_CONTEXT_STORAGE_DIR` - and resolves them per call rather than once, so a
+ * window that pins them is a window for the whole process. Two owners of this global therefore cannot
+ * have it open at the same time: the runtime's own mount and the session-end reflection each pin a
+ * runtime root, and an unserialised second writer would migrate its store into the other's reads.
+ *
+ * The values are a bus, not a setting. The vendored resolver reads them per call, and Magic Context's own
+ * subagent runner spawns its `pi` children with `{...process.env}`, so a child learns the store from the
+ * environment it inherits at spawn time: anything spawned inside `work` belongs to this root, and nothing
+ * outside the process reads the variable - no file records it, and no child is started outside a scope.
+ *
+ * The window cannot outlive its holder: the values are restored and the lock released in the same
+ * `finally` that ends the callback, so a reader that begins inside the scope resolves this root and a
+ * reader that begins before it can never see it.
+ */
+export async function withRuntimeMagicContextRoot<T>(
   runtimeCwd: string,
-): Promise<void> {
-  const previous = magicContextReloadTail;
+  work: (root: RuntimeMagicContextRoot) => Promise<T>,
+): Promise<T> {
+  const previous = magicContextScopeTail;
   let release: () => void = () => undefined;
-  magicContextReloadTail = new Promise<void>((resolvePromise) => {
-    release = resolvePromise;
+  magicContextScopeTail = new Promise<void>((resolveScope) => {
+    release = resolveScope;
   });
   await previous;
   try {
+    const absoluteRuntimeCwd = resolve(runtimeCwd);
+    const dataHome = join(absoluteRuntimeCwd, "data");
+    const root: RuntimeMagicContextRoot = Object.freeze({
+      runtimeCwd: absoluteRuntimeCwd,
+      dataHome,
+      storageDir: join(dataHome, "cortexkit", "magic-context"),
+    });
     const previousCwd = process.cwd();
     const previousDataDir = process.env.XDG_DATA_HOME;
     const previousConfigDir = process.env.XDG_CONFIG_HOME;
     const previousStorageDir = process.env.MAGIC_CONTEXT_STORAGE_DIR;
     try {
-      process.env.XDG_DATA_HOME = join(runtimeCwd, "data");
+      process.env.XDG_DATA_HOME = root.dataHome;
       // The extension resolves its USER-scope config through XDG_CONFIG_HOME and falls back to
       // `~/.config` (and to a user Pi installation) without it - so an unset variable means this
       // runtime would read a file from the player's home. Point it at the runtime's own config,
       // alongside the data root, so the runtime touches nothing outside its root.
-      process.env.XDG_CONFIG_HOME = join(runtimeCwd, "config");
+      process.env.XDG_CONFIG_HOME = join(root.runtimeCwd, "config");
       // Magic Context's own documentation gives MAGIC_CONTEXT_STORAGE_DIR precedence over the
-      // XDG-derived root, so an inherited value decides this runtime's SQLite root *instead of*
-      // the root above: the extension then opens a store this runtime does not own. Measured on a
-      // live composed turn, that is not merely a misplacement - a store whose migration lane is
-      // ahead of this build's schema fence leaves the extension fail-closed, and its guarded
-      // context hook aborts the operation (`ctx.abort()`), so the provider request dies in-process
-      // with `AbortError: This operation was aborted` and the turn terminalizes `failed` with
-      // `runtime_unavailable`. Pin the same runtime-owned root the XDG path derives, so the store
-      // is the runtime's whatever the surrounding process carries.
-      process.env.MAGIC_CONTEXT_STORAGE_DIR = join(runtimeCwd, "data", "cortexkit", "magic-context");
-      process.chdir(runtimeCwd);
-      await loader.reload();
+      // XDG-derived root, so an inherited value decides this scope's SQLite root *instead of* the root
+      // above: the extension then opens a store this runtime does not own. Measured on a live composed
+      // turn, that is not merely a misplacement - a store whose migration lane is ahead of this build's
+      // schema fence leaves the extension fail-closed, and its guarded context hook aborts the operation
+      // (`ctx.abort()`), so the provider request dies in-process with `AbortError: This operation was
+      // aborted` and the turn terminalizes `failed` with `runtime_unavailable`. Pin the same runtime-owned
+      // root the XDG path derives, so the store is the runtime's whatever the surrounding process carries.
+      process.env.MAGIC_CONTEXT_STORAGE_DIR = root.storageDir;
+      process.chdir(root.runtimeCwd);
+      return await work(root);
     } finally {
       process.chdir(previousCwd);
       if (previousDataDir === undefined) delete process.env.XDG_DATA_HOME;
@@ -433,6 +473,20 @@ export async function reloadMagicContextInRuntimeRoot(
   } finally {
     release();
   }
+}
+
+/**
+ * Mounts the extension at one runtime root: `loader.reload()` is what makes the extension resolve its
+ * store, so it runs inside that root's scope and reads this runtime's own paths whatever the surrounding
+ * process carries.
+ */
+export async function reloadMagicContextInRuntimeRoot(
+  loader: DefaultResourceLoader,
+  runtimeCwd: string,
+): Promise<void> {
+  await withRuntimeMagicContextRoot(runtimeCwd, async () => {
+    await loader.reload();
+  });
 }
 
 /**

@@ -24,6 +24,7 @@ import {
   reloadMagicContextInRuntimeRoot,
   resolveRuntimePaths,
 } from "./runtime-core.internal.js";
+import { reflectCompanionSessionOnce } from "./composition/companion-session-reflection.js";
 import type { GameConnection } from "./game-connection.js";
 import type { Snapshot } from "./protocol.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
@@ -103,6 +104,71 @@ test("the Magic Context bootstrap leaves no storage override behind when none wa
     if (previousStorage !== undefined) process.env.MAGIC_CONTEXT_STORAGE_DIR = previousStorage;
     process.chdir(previousCwd);
     rmSync(runtimeCwd, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ONE GLOBAL, TWO OWNERS.
+ *
+ * `MAGIC_CONTEXT_STORAGE_DIR`, cwd and the two XDG roots are process-wide and Magic Context resolves them per
+ * call, so the window a runtime mount pins them for and the window a session-end reflection pins them for cannot
+ * be open at once. Both readings below come from one run: a reflection starts INSIDE the mount's own window, and
+ * the mount's three reads - before it starts, in the same turn as it starts, and after a real async gap - must all
+ * resolve the mount's root; once both settle the process must carry neither root, because an environment left
+ * holding one is what the next runtime, and every child it spawns, inherits as an override.
+ */
+test("a reflection's window and a runtime mount's window cannot be open at the same time", async () => {
+  const mountRoot = mkdtempSync(join(tmpdir(), "gb-magic-context-mount-"));
+  const reflectionRoot = mkdtempSync(join(tmpdir(), "gb-magic-context-reflection-"));
+  const ambient = {
+    cwd: process.cwd(),
+    storage: process.env.MAGIC_CONTEXT_STORAGE_DIR,
+    data: process.env.XDG_DATA_HOME,
+    config: process.env.XDG_CONFIG_HOME,
+  };
+  const mountStore = join(mountRoot, "data", "cortexkit", "magic-context");
+  const observed: (string | undefined)[] = [];
+  let reflection: Promise<string> | undefined;
+  const loader = {
+    reload: async (): Promise<void> => {
+      observed.push(process.env.MAGIC_CONTEXT_STORAGE_DIR);
+      // Started unawaited, exactly as a launch starts the deferred reflection beside the shell: the reflection
+      // is in flight while this mount is inside its own window.
+      reflection = reflectCompanionSessionOnce({ runtimeCwd: reflectionRoot, timeoutMs: 5_000 });
+      // The third reading is synchronous, in the same turn as the call: a reflection that pins the globals
+      // itself has written them before this line runs, so this is where its write first becomes visible to the
+      // mount that started before it.
+      observed.push(process.env.MAGIC_CONTEXT_STORAGE_DIR);
+      // A real async gap - the mount's load resolves the extension - so a write that landed later in the
+      // reflection's own window would be visible in the read below as well.
+      await new Promise<void>((resolveGap) => setImmediate(resolveGap));
+      observed.push(process.env.MAGIC_CONTEXT_STORAGE_DIR);
+    },
+  };
+  try {
+    await reloadMagicContextInRuntimeRoot(loader as unknown as DefaultResourceLoader, mountRoot);
+    // The reflection is a bounded outcome of its own, and it ran - so the second read above happened while it
+    // was in flight rather than before it started.
+    assert.equal(await reflection, "not_applicable");
+    assert.deepEqual(
+      observed,
+      [mountStore, mountStore, mountStore],
+      `the mount's readers must never resolve the reflection's root (reflection root: ${reflectionRoot})`,
+    );
+    assert.equal(process.env.MAGIC_CONTEXT_STORAGE_DIR, ambient.storage, "neither owner's root is left behind");
+    assert.equal(process.env.XDG_DATA_HOME, ambient.data);
+    assert.equal(process.env.XDG_CONFIG_HOME, ambient.config);
+    assert.equal(process.cwd(), ambient.cwd);
+  } finally {
+    if (ambient.storage === undefined) delete process.env.MAGIC_CONTEXT_STORAGE_DIR;
+    else process.env.MAGIC_CONTEXT_STORAGE_DIR = ambient.storage;
+    if (ambient.data === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = ambient.data;
+    if (ambient.config === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = ambient.config;
+    process.chdir(ambient.cwd);
+    rmSync(mountRoot, { recursive: true, force: true });
+    rmSync(reflectionRoot, { recursive: true, force: true });
   }
 });
 

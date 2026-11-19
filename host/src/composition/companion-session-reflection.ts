@@ -21,6 +21,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
+import { type RuntimeMagicContextRoot, withRuntimeMagicContextRoot } from "../runtime-core.internal.js";
 
 /**
  * The shape this module relies on from the vendored package's `./dreamer` entry.
@@ -65,10 +66,12 @@ export const DEFAULT_REFLECTION_TIMEOUT_MS = 60_000;
  *
  * The store is resolved by the vendored package when its module loads, from the ambient data layout, so the
  * environment is pointed at this runtime root *before* the import - a root passed only as an argument would read
- * whichever store the process happens to default to (measured: another root's rows). The identity to reflect on
- * comes from that store's own meta row rather than from a caller: deriving one from a directory lands on a
- * different partition whenever the run's identity came from a git root, and the task would then reflect on
- * nothing.
+ * whichever store the process happens to default to (measured: another root's rows). That window is taken from
+ * the one owner of those globals (`withRuntimeMagicContextRoot`), never written here: the runtime's own mount
+ * pins the same globals, and a reflection that wrote them beside the mount was a second, unserialised writer of
+ * one process-wide value. The identity to reflect on comes from that store's own meta row rather than from a
+ * caller: deriving one from a directory lands on a different partition whenever the run's identity came from a
+ * git root, and the task would then reflect on nothing.
  *
  * Never throws: every failure is one bounded outcome, because this runs on the exit path and a failure here must
  * not become a second failure of the exit it describes.
@@ -77,22 +80,11 @@ export async function reflectCompanionSessionOnce(
   input: CompanionSessionReflectionInput,
 ): Promise<CompanionSessionReflectionOutcome> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_REFLECTION_TIMEOUT_MS;
-  // Absolute, always: the vendored package refuses a relative storage directory, and a caller that hands one in
-  // would otherwise fail in a way that looks like "the reflection never works".
-  const dataRoot = join(resolve(input.runtimeCwd), "data");
-  const previous = {
-    storage: process.env.MAGIC_CONTEXT_STORAGE_DIR,
-    xdgData: process.env.XDG_DATA_HOME,
-    xdgConfig: process.env.XDG_CONFIG_HOME,
-  };
-  // Point the store and the config at this runtime root, in the same shape the runtime itself uses while it is
-  // mounted, so the reflection reads and writes the store that belongs to this conversation.
-  process.env.MAGIC_CONTEXT_STORAGE_DIR = join(dataRoot, "cortexkit", "magic-context");
-  process.env.XDG_DATA_HOME = dataRoot;
-  process.env.XDG_CONFIG_HOME = join(resolve(input.runtimeCwd), "config");
-
   try {
-    return await withTimeout(timeoutMs, () => runOnce(dataRoot));
+    return await withRuntimeMagicContextRoot(
+      input.runtimeCwd,
+      async (root) => await withTimeout(timeoutMs, () => runOnce(root)),
+    );
   } catch (error) {
     // One bounded outcome, never a throw: this runs on the exit path. The reason is printed for the operator
     // because a reflection that never works and never says why is the failure mode this whole path was written
@@ -101,14 +93,10 @@ export async function reflectCompanionSessionOnce(
       `[reflection] session-end reflection failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
     );
     return "failed";
-  } finally {
-    restore("MAGIC_CONTEXT_STORAGE_DIR", previous.storage);
-    restore("XDG_DATA_HOME", previous.xdgData);
-    restore("XDG_CONFIG_HOME", previous.xdgConfig);
   }
 }
 
-async function runOnce(dataRoot: string): Promise<CompanionSessionReflectionOutcome> {
+async function runOnce(root: RuntimeMagicContextRoot): Promise<CompanionSessionReflectionOutcome> {
   // The specifier is spelled here, as a literal, because the production artifact's external-closure gate declares a
   // dynamic import by its emitted argument text and accepts only a canonical JSON string literal or the frozen
   // magicContext bridge expression. A specifier bound to a constant is emitted as an identifier, so it can never be
@@ -135,7 +123,7 @@ async function runOnce(dataRoot: string): Promise<CompanionSessionReflectionOutc
   const registrationOwner = {};
   dreamer.registerPiDreamerProject({
     db,
-    projectDir: dataRoot,
+    projectDir: root.dataHome,
     projectIdentity,
     registrationOwner,
     harness: "pi",
@@ -157,11 +145,6 @@ async function runOnce(dataRoot: string): Promise<CompanionSessionReflectionOutc
       // An unregistration that fails must not replace the outcome the attempt reported.
     }
   }
-}
-
-function restore(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
 }
 
 async function withTimeout<T>(timeoutMs: number, work: () => Promise<T>): Promise<T> {
