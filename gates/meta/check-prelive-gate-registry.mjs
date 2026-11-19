@@ -32,6 +32,11 @@
  *            gate), `ci:<workflow>` (that workflow must name the path), or `on-demand` (no scheduled home at all -
  *            printed under `no_scheduled_home`, so the gates nothing runs are a line of output rather than an
  *            assumption).
+ *            An `on-demand` row ALSO states `expires`: the condition under which the row dies. A row that names where
+ *            it runs expires mechanically - the script, the suite, the hook or the workflow has to keep naming the gate
+ *            or the row reds - so it needs no second date. A row with nothing to re-check would otherwise be a silence
+ *            kept forever, so it has to say what would end it, which is the rule `tools/check-armed-destructive-actions.mjs`
+ *            applies to its own exemption table.
  *            An `elsewhere` exemption additionally asserts that the script runs on every push, and that assertion is
  *            checked against `gates/meta/check-ci-coverage.mjs`, which owns the fact. An `unrun` exemption asserts the
  *            opposite - that nothing names the gate or its falsifier anywhere - and is checked against both
@@ -56,6 +61,9 @@
  *     crash there (`Cannot read properties of undefined (reading 'startsWith')`), and a gate that dies on a stack
  *     trace has named nothing - the same defect as a register that passes on an empty population. A missing `reason`
  *     is `exempt_unreasoned` for the same reason rather than a second crash;
+ *   - an `on-demand` row with no `expires`, or one too short to name a condition, is `exempt_expiry_unreasoned`: a row
+ *     that says nothing runs this gate and never says what would end that is the silence this register exists to
+ *     remove, moved into the table;
  *   - an `unrun` entry that a script or a workflow does name is `exempt_unrun_but_named`: the row says nothing runs the
  *     gate, and something started to;
  *   - a declared unscanned gate that a population scan now reaches is `unscanned_but_scanned`, and one that is not on
@@ -88,6 +96,10 @@
  *   gate" failed with `exempt_runs_in_unrecognised`, and the real tree with the lockfile row unverifiable
  * red-proof: inject  never retiring an unscanned row -> "a declared unscanned gate is a population member, and the row
  *   retires once a scan reaches it" failed on the path a scan does reach
+ * red-proof: inject  deleting the `expires` requirement -> "a row with no scheduled home states what would end it, and
+ *   a row with a home needs none" failed on the real tree's on-demand rows, which carry no `expires` at all
+ * red-proof: inject  requiring `expires` on EVERY row, not just the ones with no scheduled home -> the same case's
+ *   homed row went red with `exempt_expiry_unreasoned` though its `pnpm` script re-checks it on every run
  * red-proof: inject  a reason class no row uses -> "every declared reason class has a meaning, every exemption uses one,
  *   and no class sits unused" named the class, which is the defect `suite` itself was
  */
@@ -162,9 +174,13 @@ export const UNSCANNED_GATES = Object.freeze([
   {
     path: "tools/live-run/chat/check-post-history-instructions-live.mjs",
     reason:
-      "environment: needs two real Chat turns against a provider, with the card's post_history_instructions edited " +
-      "between them, so no offline rung can run it; nothing runs it on a schedule and an operator types it by hand",
+      "unrun: no package.json script names it or its falsifier and no workflow step does, so an operator types it by " +
+      "hand - and no offline rung could run it anyway, because it needs two real Chat turns against a provider with the " +
+      "card's post_history_instructions edited between them",
     runsIn: "on-demand",
+    expires:
+      "expires when a Chat live run with the card's post_history_instructions edited between two turns can be assembled " +
+      "offline, which would let a rung read the pair the gate compares",
   },
   {
     path: "tools/scripts/check-lockfile-freeze.mjs",
@@ -231,6 +247,9 @@ export const EXEMPTIONS = Object.freeze([
       " (`deliveryAccountClause`), which is what keeps a bundle whose pieces and account disagree from being published as" +
       " passed without anyone remembering to run this entry",
     runsIn: "on-demand",
+    expires:
+      "expires when the runner publishes the delivery account itself, so a checkout holds a bundle to reconcile without " +
+      "a caller passing --run-dir",
   },
   {
     path: "tools/audit-chat-live-run.mjs",
@@ -323,7 +342,7 @@ export const EXEMPTIONS = Object.freeze([
       "report: it is a churn x size ranking and says so in its own header (`--why-not-a-gate` prints the measurement " +
       "that refused to become a gate), so it exits 0 over every ranking it prints; its `hotspots:` script is in neither " +
       "the `check:`/`audit:` namespace the CI gates job derives nor the ladder's, and its falsifiers run in " +
-      "`test:hotspots` on every push",
+      "`test:hotspots` on every push · measured files examined 3530, with a revision in the window 2849 at 2f815e6c",
     runsIn: "suite:test:hotspots",
   },
   {
@@ -335,7 +354,7 @@ export const EXEMPTIONS = Object.freeze([
       "`preset_macro_frequency_no_presets` by design rather than passing; measured 2026-11-09 with the mount: " +
       "`examined 1 preset file(s), 4 macro occurrences` (char 3, user 1, and neither `{{if}}` nor `{{random}}`), 1087 " +
       "json document(s) read and 1033 rejected by the preset shape",
-    runsIn: "on-demand",
+    runsIn: "suite:test:tools-lib",
   },
   {
     path: "tools/audit-run-reading-shape.mjs",
@@ -352,15 +371,18 @@ export const EXEMPTIONS = Object.freeze([
       "would report it green while it is reporting a disagreement · measured 12 ledger rows re-derived, drift printed " +
       "(requestHandlers document 42 vs source 103, revisionIncrements 74 vs 70, executionIds 45 vs 9) at 95dd6efe",
     runsIn: "on-demand",
+    expires:
+      "expires when the ledger's numbers are re-derived by a gate that COMPARES them instead of a report that prints the " +
+      "drift, so a verdict can read it",
   },
   {
     path: "tools/audit-stardew-admission-fork-delta.mjs",
     reason:
-      "elsewhere: static audit of the forked admission sites - a migration decision aid that prints the delta and " +
-      "exits 0, so it is not a gate and no script declares it. Measured 2026-11-11: removing its `audit:` script line " +
-      "was the honest fix, because a gate that cannot fail occupies a covered position while measuring nothing; " +
-      "`test:stardew-admission-fork-delta` still runs its suite",
-    runsIn: "on-demand",
+      "report: static audit of the forked admission sites - a migration decision aid that prints the delta and " +
+      "exits 0, so it is a report rather than a gate and the register removed its `audit:` script for exactly that " +
+      "reason, because a gate that cannot fail occupies a covered position while measuring nothing; its rule is still " +
+      "exercised by `test:stardew-admission-fork-delta` · measured examined 50 file(s), forked 0 at 2f815e6c",
+    runsIn: "suite:test:stardew-admission-fork-delta",
   },
   {
     path: "tools/audit-stardew-open-ground-claims.mjs",
@@ -396,6 +418,8 @@ export const EXEMPTIONS = Object.freeze([
       "arguments: reads `integrations/stardew/` out of a git revision (`git ls-tree -r <rev>`, `git show <rev>:<file>`), " +
       "so it measures a commit's tree, not the worktree the ladder is about to run",
     runsIn: "on-demand",
+    expires:
+      "expires when it reads the worktree instead of a git revision, so a rung can judge the tree it is about to run",
   },
   {
     path: "tools/audit-stardew-native-local-runner-contract.mjs",
@@ -428,9 +452,10 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +
-      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists · measured " +
+      "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists, and no " +
+      "script gives it a rung · measured " +
       "published actions 106, succeeded at least once 40, attempted 46, never attempted 60 at 95dd6efe",
-    runsIn: "on-demand",
+    runsIn: "suite:suite:tools-utilities",
   },
   {
     path: "tools/check-assertion-hooks.mjs",
@@ -500,6 +525,9 @@ export const EXEMPTIONS = Object.freeze([
       "fixup: a committer's preflight over the staged set against the paths the commit names, so it describes a " +
       "commit in flight; bare mode says it cannot see the commit's intent and exits 0",
     runsIn: "on-demand",
+    expires:
+      "expires when a git hook owns the staged-set comparison, because the row describes a commit in flight and no " +
+      "tree-level home can exist for it",
   },
   {
     path: "tools/check-contrast-tokens.mjs",
@@ -514,7 +542,7 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "arguments: requires `--contract <path>` to a provenance contract; without it the gate exits 1 with its own " +
       "usage line, so bare running is not a reading of the tree",
-    runsIn: "on-demand",
+    runsIn: "suite:suite:tools-utilities",
   },
   {
     path: "tools/check-child-output-parsing.mjs",
@@ -522,7 +550,7 @@ export const EXEMPTIONS = Object.freeze([
       "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
       "uncommitted (`tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
       "so adopting it needs their fix, not the wiring · measured examined 135 files, violations 47, exit 1 at 449f0fb0",
-    runsIn: "on-demand",
+    runsIn: "suite:test:child-output-parsing",
   },
   {
     path: "gates/meta/check-gate-population-agreement.mjs",
@@ -616,6 +644,8 @@ export const EXEMPTIONS = Object.freeze([
       "ladder assembles · measured 0 violations, every dist runtime export matching the Host contract, exit 0 with the " +
       "dist present at 449f0fb0",
     runsIn: "on-demand",
+    expires:
+      "expires when the ladder assembles vendor/magic-context/packages/pi-plugin/dist, the build output this gate imports",
   },
   {
     path: "tools/check-draft-declaration-coverage.mjs",
@@ -854,7 +884,7 @@ export const EXEMPTIONS = Object.freeze([
       "the derived corpus, green, through `test:rederivation-parity`. What would make it schedulable is the two parity " +
       "tests, not the wiring · measured rederivations examined 4 · with a parity test 2 · engine members 4 · " +
       "without parity 2 · call sites examined 1 at 1b906910",
-    runsIn: "on-demand",
+    runsIn: "suite:test:rederivation-parity",
   },
   {
     path: "tools/check-refusal-action-names.mjs",
@@ -872,6 +902,9 @@ export const EXEMPTIONS = Object.freeze([
       "would only stop the ladder on a defect this register is meant to report · measured 29 unclassified_reason_code " +
       "findings at 449f0fb0",
     runsIn: "on-demand",
+    expires:
+      "expires with the gate's own debt: when the 29 unclassified_reason_code findings at 449f0fb0 are zero it belongs " +
+      "in a rung, and the row is deleted with its adoption",
   },
   {
     path: "tools/check-release-live-evidence.mjs",
@@ -934,12 +967,12 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "arguments: takes `<ladder-result.json> [--session <file>]` and judges one run's autonomy, so there must be a " +
       "run first",
-    runsIn: "on-demand",
+    runsIn: "suite:test:stardew-dialogue-autonomy",
   },
   {
     path: "tools/check-stardew-dialogue-stream.mjs",
     reason: "arguments: takes `<result.json> [--expect-speaker] [--session]` and judges one run's dialogue stream",
-    runsIn: "on-demand",
+    runsIn: "suite:test:stardew-dialogue-stream",
   },
   {
     path: "tools/check-stardew-discovery-collection-coverage.mjs",
@@ -1083,6 +1116,9 @@ export const EXEMPTIONS = Object.freeze([
       "families derived: `construction_arity_mismatch` (118 arguments against 120 parameters), so no cap is compared " +
       "at all at 449f0fb0",
     runsIn: "on-demand",
+    expires:
+      "expires when `construction_arity_mismatch` is gone and the gate derives families to compare, so its verdict stops " +
+      "being about a parse failure",
   },
   {
     path: "tools/check-stardew-tick-handler-allocation.mjs",
@@ -1101,8 +1137,9 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-wia-agent-loop.mjs",
     reason:
       "arguments: judges ONE ladder-6 run from its result/session artifacts, so it is a post-run verdict with " +
-      "nothing to read before the run",
-    runsIn: "on-demand",
+      "nothing to read before the run; its rule is exercised by `tools/check-stardew-wia-agent-loop.test.mjs`, a member " +
+      "of `suite:stardew-tooling` that ci.yml runs on every push",
+    runsIn: "suite:suite:stardew-tooling",
   },
   {
     path: "tools/check-stub-subject-collision.mjs",
@@ -1307,6 +1344,12 @@ function declaredClass(entry) {
 }
 
 /**
+ * How short a statement is too short to name anything. A `reason` and an `expires` are held to the same floor: each is
+ * prose a later reader has to act on, and "later" or "someday" acts on nothing.
+ */
+const MIN_STATEMENT_CHARS = 40;
+
+/**
  * The register, checked in both directions. Every finding names the file it is about, because the file is the thing
  * the reader has to open. `headScripts` is `HEAD`'s script table, or `null` when git could not read it; passing it
  * is what keeps a stale worktree copy from deciding whether an exemption's `runsIn` resolves.
@@ -1376,7 +1419,7 @@ export function checkRegistry({
       findings.push({ code: "exempt_unreasoned", path: entry.path, detail: `unknown class "${className}"` });
       continue;
     }
-    if (entry.reason.length < 40) {
+    if (entry.reason.length < MIN_STATEMENT_CHARS) {
       findings.push({
         code: "exempt_unreasoned",
         path: entry.path,
@@ -1392,6 +1435,20 @@ export function checkRegistry({
       });
       continue;
     }
+    // A row with a home is re-checked on every run by the script/suite/hook/workflow it names, so it expires by going
+    // red. A row with none has nothing to re-check, and a silence kept forever is what this register exists to name.
+    if (
+      entry.runsIn === "on-demand" &&
+      !(typeof entry.expires === "string" && entry.expires.length >= MIN_STATEMENT_CHARS)
+    )
+      findings.push({
+        code: "exempt_expiry_unreasoned",
+        path: entry.path,
+        detail:
+          typeof entry.expires === "string" && entry.expires.length > 0
+            ? "`expires` is too short to name the condition that ends the row"
+            : "the row says nothing runs this gate, and carries no `expires` saying what would end that",
+      });
     const dangling = verifyRunsIn(entry, { scripts, headScripts, workflow, read });
     if (dangling !== null) findings.push({ ...dangling, path: entry.path });
     // A reason in a measured class states a reading; this is where it says when it was taken, and where a reading too
@@ -1598,6 +1655,12 @@ export function renderRegistry(result) {
         lines.push(
           `prelive_gate_registry_exempt_unreasoned: ${finding.path} - ${finding.detail}; classes are ` +
             `${Object.keys(REASON_CLASSES).join("|")}`,
+        );
+        break;
+      case "exempt_expiry_unreasoned":
+        lines.push(
+          `prelive_gate_registry_exempt_expiry_unreasoned: ${finding.path} - ${finding.detail}; a row with no ` +
+            "scheduled home must say what would end it, the way an expiring exemption does elsewhere in this tree",
         );
         break;
       case "exempt_runs_in_missing":

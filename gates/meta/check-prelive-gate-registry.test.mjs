@@ -316,6 +316,54 @@ test("verifyRunsIn reads on-demand as a claim with no scheduled home, not as a p
   });
 });
 
+test("a row with no scheduled home states what would end it, and a row with a home needs none", () => {
+  const base = {
+    population: ["tools/check-orphan.mjs"],
+    wired: new Map(),
+    scripts: {},
+    workflow: () => "",
+    workflowText: "",
+    ciCoverage: { runs: new Set(), registered: new Map() },
+  };
+  const row = {
+    path: "tools/check-orphan.mjs",
+    reason: "arguments: takes a run directory, so there is nothing to examine before a run has happened",
+  };
+  const missing = checkRegistry({ ...base, exemptions: [{ ...row, runsIn: "on-demand" }] });
+  assert.deepEqual(codesFor(missing), ["exempt_expiry_unreasoned:tools/check-orphan.mjs"]);
+  assert.match(missing.findings[0].detail, /carries no `expires`/u);
+  // FALSIFIER: a word where a condition belongs is not an expiry, the same way a short reason is not a reason.
+  const short = checkRegistry({ ...base, exemptions: [{ ...row, runsIn: "on-demand", expires: "someday" }] });
+  assert.deepEqual(codesFor(short), ["exempt_expiry_unreasoned:tools/check-orphan.mjs"]);
+  assert.match(short.findings[0].detail, /too short/u);
+  const stated = checkRegistry({
+    ...base,
+    exemptions: [
+      {
+        ...row,
+        runsIn: "on-demand",
+        expires: "expires when the ladder writes the run directory itself, so a rung has one to read",
+      },
+    ],
+  });
+  assert.equal(stated.status, "passed");
+  // FALSIFIER: a row that names where it runs expires mechanically - the script has to keep naming the gate - so it is
+  // not asked for a second date. Requiring one on every row would make nine of ten rows state a condition nothing reads.
+  const homed = checkRegistry({
+    ...base,
+    scripts: { "check:orphan": "node tools/check-orphan.mjs" },
+    ciCoverage: { runs: new Set(["check:orphan"]), registered: new Map() },
+    exemptions: [
+      {
+        path: "tools/check-orphan.mjs",
+        reason: "elsewhere: static scan of the tree, runs on every push in the CI gates job",
+        runsIn: "pnpm check:orphan",
+      },
+    ],
+  });
+  assert.deepEqual(codesFor(homed), []);
+});
+
 test("a suite: row is wired by the suite's own case, and a suite that never names the gate is red", () => {
   const base = {
     population: ["tools/check-suite.mjs"],
@@ -348,6 +396,8 @@ test("an unrun row states that nothing runs the gate, and reddens the moment any
     path: "tools/check-orphan.mjs",
     reason: "unrun: no script names it or its falsifier, so its verdict on the real tree has never been produced",
     runsIn: "on-demand",
+    expires:
+      "expires when anything names the file - a script, a suite, a hook or a workflow step - and the row reds there",
   };
   const base = {
     population: ["tools/check-orphan.mjs"],
@@ -420,6 +470,7 @@ test("a declared unscanned gate is a population member, and the row retires once
     path: "tools/scripts/check-hook-gate.mjs",
     reason: "fixup: runs from a git hook, in a directory no population scan reaches, so nothing derives it at all",
     runsIn: "on-demand",
+    expires: "expires when the hook's directory becomes a published gate directory, or the hook stops running it",
   };
   const base = {
     population: [],
@@ -447,7 +498,7 @@ test("a declared unscanned gate is a population member, and the row retires once
     ...base,
     population: ["tools/check-a.mjs"],
     unscanned: ["tools/check-a.mjs"],
-    exemptions: [{ path: "tools/check-a.mjs", reason: entry.reason, runsIn: "on-demand" }],
+    exemptions: [{ path: "tools/check-a.mjs", reason: entry.reason, runsIn: "on-demand", expires: entry.expires }],
     read: () => "export {};",
   });
   assert.deepEqual(codesFor(scanned), ["unscanned_but_scanned:tools/check-a.mjs"]);
@@ -532,5 +583,13 @@ test("the real tree: every withdrawn gate names the input or the measurement tha
     assert.ok(
       [...EXEMPTIONS, ...UNSCANNED_GATES].find((entry) => entry.path === path)?.reason.length > 40,
       `${path} has no scheduled home and must still say why`,
+    );
+  // A row with no scheduled home is not re-checked by anything, so it also states the condition under which it dies.
+  // The rows that DO name a home expire mechanically instead: the script, suite, hook or workflow must keep naming the
+  // gate or the row reds, which is why they are not asked for a second, unverifiable date.
+  for (const path of result.onDemand)
+    assert.ok(
+      [...EXEMPTIONS, ...UNSCANNED_GATES].find((entry) => entry.path === path)?.expires.length > 40,
+      `${path} has no scheduled home and must also say what would end it`,
     );
 });
