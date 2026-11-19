@@ -100,7 +100,7 @@ const survivorEntry = {
 
 test("a shell read that names no survivor still leaves the authority's conversation on screen", async ({ page }) => {
   const listReads: string[] = [];
-  const stateReads: string[] = [];
+  const chatHalfReads: string[] = [];
   const selects: unknown[] = [];
   let removed = false;
 
@@ -125,9 +125,14 @@ test("a shell read that names no survivor still leaves the authority's conversat
       : composedRoot;
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
-    stateReads.push(removed ? "after-removal" : "before-removal");
-    return route.fulfill(jsonOk(projection()));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  /**
+   * The authority a switch reads is the Chat half's own route (`chatHalfPair`): moving to a survivor
+   * is a Chat switch, so "the shell read the authority instead of stopping" is counted here.
+   */
+  await page.route("**/api/tavern/v1/state", (route) => {
+    chatHalfReads.push(removed ? "after-removal" : "before-removal");
+    return route.fulfill(jsonOk(projection().chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
@@ -167,7 +172,7 @@ test("a shell read that names no survivor still leaves the authority's conversat
   await expect.poll(() => listReads.filter((entry) => entry === "after-removal").length).toBeGreaterThan(1);
   expect(selects, "the shell's read named no survivor to select").toEqual([]);
   expect(
-    stateReads.filter((entry) => entry === "after-removal").length,
+    chatHalfReads.filter((entry) => entry === "after-removal").length,
     "the shell stopped at its own list read instead of reading the authority",
   ).toBeGreaterThan(0);
 

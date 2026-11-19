@@ -287,8 +287,12 @@ export function ChatsSurfacePanel({
    * Fires after the Host committed an in-process switch to another Chat. The opening index is the
    * opening a creation asked for, if any - the shell holds the successor mount's generation, so it
    * is where that opening is committed (see `createChat`).
+   *
+   * The answer is whether this window followed the selection: `false` means the Host committed the
+   * switch and the shell could not adopt the successor mount, which the row's own report states
+   * (`chatSwitchFailed`) rather than answering "switched".
    */
-  onChatSwitched?: (openingTargetIndex?: number) => void;
+  onChatSwitched?: (openingTargetIndex?: number) => Promise<boolean>;
   /**
    * Fires when the player chose the Chat that is already mounted. That is not a
    * selection - there is nothing to switch to and no `chat/select` is issued - but
@@ -546,16 +550,16 @@ export function ChatsSurfacePanel({
       const selected = await requestSelection(result.chat.handle, openingTargetIndex);
       // The Chat is durable in every outcome; what a chosen opening adds is a second thing that
       // can fail, and it fails alone: the Chat exists on the default opening, and that is what
-      // the player is told instead of a generic failure.
-      const unset = selected === "in_flight" && openingTargetIndex !== undefined;
-      report({
-        kind: unset ? "failure" : "success",
-        text: unset
-          ? labels.chatCreatedWithDefaultOpening
-          : selected === "in_flight"
-            ? labels.chatSelectTurnNotAbortable
-            : labels.success,
-      });
+      // the player is told instead of a generic failure. A switch this window could not follow is
+      // its own sentence too: the Host selected the Chat, the window stayed where it was, and the
+      // list the player is standing on is where it can be opened again (`chatSwitchFailed`).
+      report(
+        selected === "not_landed"
+          ? { kind: "failure", text: labels.chatSwitchFailed }
+          : selected === "in_flight" && openingTargetIndex !== undefined
+            ? { kind: "failure", text: labels.chatCreatedWithDefaultOpening }
+            : { kind: "success", text: selected === "in_flight" ? labels.chatSelectTurnNotAbortable : labels.success },
+      );
       return true;
     } catch (error) {
       // A rejection may still hide a committed creation, so the authoritative
@@ -609,7 +613,7 @@ export function ChatsSurfacePanel({
   const requestSelection = async (
     handle: string,
     openingTargetIndex?: number,
-  ): Promise<"switched" | "in_flight" | "mounted"> => {
+  ): Promise<"switched" | "in_flight" | "mounted" | "not_landed"> => {
     // The mounted Chat is not a switch: the Host has nothing to switch to and no selection may be
     // admitted. The click is still the player choosing that conversation, so the mount is told to
     // show it - a silent no-op would leave the one gesture the row's title offers unanswered.
@@ -621,9 +625,11 @@ export function ChatsSurfacePanel({
     await reread();
     if (result.status === "turn_in_flight") return "in_flight";
     // The mounted identity itself changed, so the shell must replace its session from the new
-    // snapshot and restart its live cursor on the target conversation.
-    onChatSwitched?.(openingTargetIndex);
-    return "switched";
+    // snapshot and restart its live cursor on the target conversation. Whether it could is the
+    // shell's answer, and it is reported: a switch the Host committed and this window did not
+    // follow is not a switch (`chatSwitchFailed`).
+    const landed = await onChatSwitched?.(openingTargetIndex);
+    return landed === false ? "not_landed" : "switched";
   };
 
   const selectChat = (handle: string): void => {
@@ -634,6 +640,10 @@ export function ChatsSurfacePanel({
         const outcome = await requestSelection(handle);
         if (outcome === "in_flight") {
           report({ kind: "success", text: labels.chatSelectTurnNotAbortable });
+          return;
+        }
+        if (outcome === "not_landed") {
+          report({ kind: "failure", text: labels.chatSwitchFailed });
           return;
         }
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });

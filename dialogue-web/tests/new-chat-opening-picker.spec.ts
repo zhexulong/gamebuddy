@@ -174,6 +174,9 @@ async function mountHost(page: Page, options: Readonly<{ openings?: readonly { l
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(currentRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(currentRoot())));
+  // A switch reads the Chat half on its own route (`chatHalfPair`), so this journey answers both
+  // from one read and the two cannot disagree.
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(currentRoot().chat)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );

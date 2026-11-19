@@ -1128,25 +1128,24 @@ test("creating a Chat lands in it, with its own opening already read", async ({ 
     await route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
   });
   // The adopted snapshot is the created Chat, which is what makes the opening the
-  // conversation's own first message.
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill(
-      jsonOk({
-        ...composedRoot(),
-        chat: {
-          ...composedRoot().chat,
-          selection: { chatHandle: createdHandle, generation: 1, stateRevision: createdHandle },
-          chat: {
-            ...composedRoot().chat.chat,
-            title: null,
-            transcript: [
-              { handle: createdHandle, role: "companion", text: opening, locale: "und", order: 0, revision: 1 },
-            ],
-          },
-        },
-      }),
-    ),
-  );
+  // conversation's own first message. The switch reads the Chat half on its own route
+  // (`chatHalfPair`), so both routes answer from this one document.
+  const createdRoot = () => ({
+    ...composedRoot(),
+    chat: {
+      ...composedRoot().chat,
+      selection: { chatHandle: createdHandle, generation: 1, stateRevision: createdHandle },
+      chat: {
+        ...composedRoot().chat.chat,
+        title: null,
+        transcript: [
+          { handle: createdHandle, role: "companion", text: opening, locale: "und", order: 0, revision: 1 },
+        ],
+      },
+    },
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(createdRoot())));
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(createdRoot().chat)));
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
   await expect(page.getByTestId("chats-surface")).toBeVisible();

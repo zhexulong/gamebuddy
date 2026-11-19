@@ -8,7 +8,7 @@
  */
 import { expect, test } from "./frontend-coverage";
 import type { Locator } from "@playwright/test";
-import { token, handle, csrfToken, draft, chat, root, jsonOk } from "./composed-reference-game-fixtures";
+import { token, handle, csrfToken, draft, chat, root, jsonOk, stubChatHalf } from "./composed-reference-game-fixtures";
 
 /**
  * A point inside the row that lies over its preview text. The row's select control is the title
@@ -70,6 +70,7 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -302,6 +303,7 @@ test("the whole Chats row selects its conversation: the preview and stamp too, n
   const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -418,6 +420,7 @@ test("selecting a chat from the Chats list shows that conversation", async ({ pa
   const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -569,6 +572,7 @@ test("switching chats reseeds the composer from the target chat's own durable dr
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -720,6 +724,7 @@ test("clicking another chat while a turn generates aborts that turn and switches
   const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? firstChat() : targetChat });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );

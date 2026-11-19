@@ -1,5 +1,5 @@
 import { expect, test } from "./frontend-coverage";
-import { chat, jsonOk, root, token } from "./composed-reference-game-fixtures";
+import { chat, jsonOk, root, stubChatHalf, token } from "./composed-reference-game-fixtures";
 
 /**
  * The opening the player cannot change any more, and the one thing the surface owes them at
@@ -91,6 +91,7 @@ async function mount(page: import("playwright").Page, transcript: readonly Retur
   const document = rootWith(transcript);
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(document)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(document)));
+  await stubChatHalf(page, document.chat);
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await expect(page.getByTestId("chat-surface")).toBeVisible();

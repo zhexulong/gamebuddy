@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ChatSnapshotPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import { type ChatSnapshotPair, chatHalfPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
@@ -19,7 +19,7 @@ import {
 } from "../composed-surface-route";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
-import type { BrowserDraftV1 } from "../reference-pipeline-api";
+import type { BrowserDraftV1, TavernStateSnapshotV1 } from "../reference-pipeline-api";
 import { createReferencePipelineSession } from "../reference-pipeline-session";
 import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
 import { AppBar } from "./AppBar";
@@ -849,11 +849,11 @@ export function ComposedReferenceGameApp() {
    * a fact that reached the panel inside these round trips is newer than the photograph
    * (`withChatHalf`), and committing it here would be the switch undoing the game.
    */
-  const adoptMountedChat = (root: ComposedReferenceGameBrowserRootV1, draft: BrowserDraftV1): void => {
+  const adoptMountedChat = (root: ComposedReferenceGameBrowserRootV1, draft: BrowserDraftV1): boolean => {
     const current = viewRef.current;
-    if (current.kind !== "ready") return;
+    if (current.kind !== "ready") return false;
     const chat = root.chat;
-    if (cancelledRef.current || chat.chat === null) return;
+    if (cancelledRef.current || chat.chat === null) return false;
     setPreview(null);
     // The key named a turn in the conversation this mount is leaving, and the conversation it adopts
     // is not that one's successor: its own turn, if any, was started elsewhere and has its own
@@ -868,6 +868,7 @@ export function ComposedReferenceGameApp() {
     const session = chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
     commit({ ...current, root: withChatHalf(current.root, root), session, draft, chatProblem: null });
+    return true;
   };
 
   /**
@@ -899,20 +900,28 @@ export function ComposedReferenceGameApp() {
    * and this read is the only place that generation is known. A refused commit
    * leaves the Chat durable on the opening it was created with - the player still
    * lands in it, and the line the surface shows names exactly what did not happen.
+   *
+   * Every read on this path is the Chat half's own route (`chatHalfPair`): the aggregate refuses
+   * both halves when the Game one cannot be read, and this switch adopts a conversation.
+   * The answer is whether this window followed the selection - `false` is a switch the Host
+   * committed and this window could not land, which the Chats surface says in those words
+   * (`chatSwitchFailed`) instead of reporting the move as done.
    */
-  const handleChatSwitched = (openingTargetIndex?: number): void => {
+  const handleChatSwitched = (openingTargetIndex?: number): Promise<boolean> => {
     const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    void (async () => {
+    if (current.kind !== "ready") return Promise.resolve(false);
+    return (async () => {
       try {
         setOpeningNotice(null);
-        let root = await composedApiRef.current.readState();
-        if (openingTargetIndex !== undefined) root = await commitChosenOpening(root, openingTargetIndex);
-        const pair = await readChatSnapshotPair(composedApiRef.current, root);
-        adoptMountedChat(pair.root, pair.draft);
+        let chat = await tavernApiRef.current.readState();
+        if (openingTargetIndex !== undefined) chat = await commitChosenOpening(chat, openingTargetIndex);
+        const pair = chatHalfPair(current.root, chat);
+        if (!adoptMountedChat(pair.root, pair.draft)) return false;
         openPanelOf(CHAT_PANEL, chatEntryRef)();
+        return true;
       } catch (error) {
         commitChatProblem(error);
+        return false;
       }
     })();
   };
@@ -1014,23 +1023,23 @@ export function ComposedReferenceGameApp() {
    * unchanged and the one fact that did not happen is named on the conversation itself.
    */
   const commitChosenOpening = async (
-    root: ComposedReferenceGameBrowserRootV1,
+    chat: TavernStateSnapshotV1,
     openingTargetIndex: number,
-  ): Promise<ComposedReferenceGameBrowserRootV1> => {
-    const selection = root.chat.selection;
+  ): Promise<TavernStateSnapshotV1> => {
+    const selection = chat.selection;
     if (selection === null) {
       setOpeningNotice(labels().chatCreatedWithDefaultOpening);
-      return root;
+      return chat;
     }
     try {
       await managementPipelineApiRef.current.selectOpeningVariant(
         { apiVersion: 1, selectionGeneration: selection.generation, targetIndex: openingTargetIndex },
-        root.chat.csrfToken,
+        chat.csrfToken,
       );
-      return await composedApiRef.current.readState();
+      return await tavernApiRef.current.readState();
     } catch {
       setOpeningNotice(labels().chatCreatedWithDefaultOpening);
-      return root;
+      return chat;
     }
   };
 
@@ -1066,9 +1075,9 @@ export function ComposedReferenceGameApp() {
           // authority is what this shell shows, so it is read again rather than the dead
           // thread being kept with its cursor shut. The read adopts whatever conversation
           // the Host really holds, and a Host that holds none answers with no Chat half -
-          // which `readChatSnapshotPair` refuses into the problem view and its Retry.
+          // which `chatHalfPair` refuses into the problem view and its Retry.
           closeLiveStream();
-          const pair = await readChatSnapshotPair(composedApiRef.current);
+          const pair = chatHalfPair(current.root, await tavernApiRef.current.readState());
           adoptMountedChat(pair.root, pair.draft);
           return;
         }
@@ -1076,13 +1085,14 @@ export function ComposedReferenceGameApp() {
           { apiVersion: 1, selectionGeneration: selection.generation, chatHandle: next.handle },
           csrfToken,
         );
-        const pair = await readChatSnapshotPair(composedApiRef.current);
-        if (pair.root.chat.selection?.chatHandle === removedHandle) {
+        const chat = await tavernApiRef.current.readState();
+        if (chat.selection?.chatHandle === removedHandle) {
           // The runtime could not leave the archived Chat, so nothing may keep
           // reading its stream.
           closeLiveStream();
           return;
         }
+        const pair = chatHalfPair(current.root, chat);
         adoptMountedChat(pair.root, pair.draft);
       } catch (error) {
         commitChatProblem(error);

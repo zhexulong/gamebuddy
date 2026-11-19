@@ -2,7 +2,7 @@ import type {
   ComposedReferenceGameBrowserApi,
   ComposedReferenceGameBrowserRootV1,
 } from "./composed-reference-game-browser-api";
-import type { BrowserDraftV1 } from "./reference-pipeline-api";
+import type { BrowserDraftV1, TavernStateSnapshotV1 } from "./reference-pipeline-api";
 import { ReferencePipelineSessionError } from "./reference-pipeline-session";
 
 /**
@@ -81,4 +81,32 @@ export async function readChatSnapshotPair(
   const chat = current.chat.chat;
   if (chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
   return { root: current as ChatSnapshotPair["root"], draft: committedDraft(chat) };
+}
+
+/**
+ * The pair a Chat SWITCH adopts, from the route that carries the Chat half on its own.
+ *
+ * `/state` answers the whole aggregate, so a read of it is a read of both halves: the Host composes a
+ * Game projection into the same document and refuses the document when that half cannot be produced
+ * (`state_unavailable`/`game_projection_failed`, `readComposedRoot` in
+ * `host/src/composed-reference-game-browser.ts`). A switch reads the Chat half and nothing else - the
+ * selection it adopts and the snapshot it rebuilds its session from - so going through the aggregate
+ * made a Game fault abort a switch the game has no part in: the Host had already committed the new
+ * selection and made the Chat durable, and the player stayed outside the conversation
+ * (`frontend--r7.stage/logs/capture.log`, driver `m`: `chat-surface=false`).
+ *
+ * The Chat half has a route of its own - `GET /api/tavern/v1/state`, the same
+ * `TavernStateSnapshotV1` the composed root carries under `chat`, served on the composed broker's own
+ * session (`composed-reference-game-static-shell-composition.test.ts` pins both against one Host). A
+ * switch reads that, and takes the Game slice from the view it lands on: the same rule every other
+ * Chat path applies (`withChatHalf`), and the reason a switch cannot decide the game.
+ */
+export function chatHalfPair(
+  current: ComposedReferenceGameBrowserRootV1,
+  chat: TavernStateSnapshotV1,
+): ChatSnapshotPair {
+  const mounted = chat.chat;
+  if (mounted === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
+  const read: ComposedReferenceGameBrowserRootV1 = { ...current, chat };
+  return { root: withChatHalf(current, read) as ChatSnapshotPair["root"], draft: committedDraft(mounted) };
 }

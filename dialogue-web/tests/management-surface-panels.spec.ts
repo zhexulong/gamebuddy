@@ -1381,6 +1381,8 @@ test("archiving the active chat moves the shell to the next chat and restarts th
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(projection())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
+  // The removal's move to a survivor is a Chat switch, so it reads the Chat half on its own route.
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(json200(projection().chat)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
   await page.route("**/api/tavern/v1/chats?*", (route) =>
     route.fulfill(
@@ -1537,6 +1539,8 @@ async function stageEmptyingRemoval(page: Page, operation: "archive" | "trash") 
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(projection())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
+  // The removal's successor switch reads the Chat half on its own route.
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(json200(projection().chat)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200(switched ? { apiVersion: 1, revision: 0, text: null } : composedDraft)),
   );

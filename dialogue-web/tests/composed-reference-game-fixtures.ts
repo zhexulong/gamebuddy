@@ -203,6 +203,31 @@ export async function stubGameRead(
 }
 
 /**
+ * The conversation-only route, answered from the same read the composed root serves.
+ *
+ * A Chat switch reads the Chat half on its own route (`chatHalfPair` in `src/chat-snapshot-pair.ts`):
+ * `/api/tavern/v1/state` is the same `TavernStateSnapshotV1` the composed root carries under `chat`,
+ * served on the composed broker's own session (`host/src/tavern/composed-reference-game-static-shell-
+ * composition.test.ts` pins both against one Host). The aggregate refuses both halves when the Game
+ * one cannot be read, which is why a switch must not read through it - and why a journey that mounts a
+ * root answers both routes from one read, so the two cannot disagree.
+ *
+ * `chatHalf` may be a thunk: a journey whose switch changes the mounted conversation answers the
+ * target's Chat half from that point on.
+ */
+export async function stubChatHalf(
+  page: Page,
+  chatHalf: unknown | (() => unknown) = chat,
+): Promise<Readonly<{ reads(): number }>> {
+  let reads = 0;
+  await page.route("**/api/tavern/v1/state", (route) => {
+    reads += 1;
+    return route.fulfill(jsonOk(typeof chatHalf === "function" ? (chatHalf as () => unknown)() : chatHalf));
+  });
+  return Object.freeze({ reads: () => reads });
+}
+
+/**
  * One player row's own shape, read from the row itself.
  *
  * It exists so the send journey can compare the optimistic row with the settled

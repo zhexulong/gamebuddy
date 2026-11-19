@@ -1372,6 +1372,11 @@ const en = {
 
   // --- chat selection lane: switching the mounted Chat is turn-level ---
   chatSelectSwitchedNotice: "Chat switched.",
+  // Said when the Host committed the switch and this window could not follow it. Two outcomes, one
+  // sentence: the conversation is where the player asked for it, and the list they are standing on
+  // is how they reach it - so the move is not reported as done (`chatForkSwitchFailed` is the fork's
+  // own case, where what exists is a branch).
+  chatSwitchFailed: "The chat switched, but this window could not follow it. Open it again from Chats.",
 
   // --- optimistic send lane: the sent text is visible before the Host answers ---
   chatSending: "Sending...",
@@ -2444,6 +2449,10 @@ const zh: Messages = {
 
   // --- 会话选择 lane：挂载会话的切换是 turn 级的 ---
   chatSelectSwitchedNotice: "已切换会话。",
+  // Host 已经切换、但这个窗口没能跟过去时说的话。两个结果一句话：会话已在玩家选的位置，而玩家
+  // 正站着的列表就是再打开它的地方——因此不把这次移动报成已完成（`chatForkSwitchFailed` 是分支
+  // 自己的那一种，存在的是一个分支）。
+  chatSwitchFailed: "会话已切换，但这个窗口没能跟过去。请到会话列表里再打开它。",
 
   // --- 乐观发送 lane：在 Host 回应前先显示已发送文本 ---
   chatSending: "发送中...",

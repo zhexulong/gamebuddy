@@ -42,9 +42,10 @@ export function ChatsSurface({
   /**
    * Fires after the Host committed an in-process switch to another Chat. The opening index is the
    * opening a creation asked for, if any: only the shell holds the successor mount's selection
-   * generation, so the opening a new Chat starts on is committed there.
+   * generation, so the opening a new Chat starts on is committed there. Its answer is whether this
+   * window followed the switch (see `chatSwitchFailed`).
    */
-  onChatSwitched?: (openingTargetIndex?: number) => void;
+  onChatSwitched?: (openingTargetIndex?: number) => Promise<boolean>;
   /**
    * Fires when the player chose the already-mounted Chat: no selection is admitted,
    * but the shell still shows the conversation the row names.

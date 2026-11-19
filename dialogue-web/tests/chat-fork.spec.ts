@@ -28,7 +28,7 @@
  *    control for both answers). Catches the strip growing a sixth target.
  */
 import { expect, test, type Page, type Route } from "./frontend-coverage";
-import { token, handle, csrfToken, draft, chat, root, jsonOk } from "./composed-reference-game-fixtures";
+import { token, handle, csrfToken, draft, chat, root, jsonOk, stubChatHalf } from "./composed-reference-game-fixtures";
 import { messages } from "../src/i18n";
 
 /** Opaque, canonical unpadded base64url handles - the only shape the document accepts. */
@@ -122,6 +122,8 @@ async function mountShell(
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  // A switch reads the Chat half on its own route, so this journey answers both from one read.
+  await stubChatHalf(page, () => mountedRoot().chat);
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
