@@ -210,8 +210,11 @@ export function GamePlayerSettings({
                       type="checkbox"
                       className="surface-delivery-pacing-input"
                       // Checked means the player LET the companion do it, so the box the
-                      // player unticks is the action they are withholding.
-                      checked={!family.denied}
+                      // player unticks is the action they are withholding - and it reads the
+                      // draft, not the record it was seeded from: a box bound to the record
+                      // flipped straight back under the player's own press, so the choice was
+                      // made in state (`denied`, which Save sends) and never shown.
+                      checked={!denied.has(family.familyId)}
                       disabled={saving}
                       aria-label={familyText}
                       onChange={(event) => toggle(family.familyId, !event.target.checked)}
