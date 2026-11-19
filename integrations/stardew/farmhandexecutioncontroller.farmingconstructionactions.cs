@@ -399,6 +399,22 @@ internal sealed partial class ExecutionManager
     /// <summary>The kind the wild-tree branch plants: a seed `Data/WildTrees` knows (<see cref="StardewValley.Object.isWildTreeSeed"/>).</summary>
     private static bool IsWildTreeSeedItem(StardewValley.Object candidate) => StardewValley.Object.isWildTreeSeed(candidate.ItemId);
 
+    /// <summary>The kind the fence branch places: a stack the engine itself calls a fence (<c>Object.IsFenceItem</c>).</summary>
+    private static bool IsWoodFenceItem(StardewValley.Object candidate) => candidate.IsFenceItem();
+
+    /// <summary>The kind <c>fertilize_tile</c> applies: a stack in the engine's own fertilizer category.</summary>
+    private static bool IsFertilizerItem(StardewValley.Object candidate) => candidate.Category == StardewValley.Object.fertilizerCategory;
+
+    /// <summary>
+    /// NO KIND TEST, deliberately, for the two big craftables and for bait. The kind of a crab pot is its own item id,
+    /// which <see cref="ResolveLiveSlot"/> already pins to the caller's name, and whether a stack is BAIT belongs to the
+    /// pot: <c>CrabPot.performObjectDropInAction</c> takes whatever it accepts while it still needs bait
+    /// (CrabPot.cs:232-255) - Wild Bait, Magnet Bait, and any other row the pot recognises - so the pot's own probe IS
+    /// that test, and a category or item-id test here would be the second, narrower answer that once refused a vanilla
+    /// bait.
+    /// </summary>
+    private static bool AnyObject(StardewValley.Object candidate) => true;
+
     /// <summary>
     /// Plant exactly one wild-tree sapling item (Acorn/Maple Seed/Pine Cone or
     /// other Data/WildTrees seed) onto one open, plantable tile through the
@@ -474,15 +490,11 @@ internal sealed partial class ExecutionManager
             "place_wood_fence", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnFarmstead,
-            gate: _ =>
-            {
-                if (expectedQualifiedItemId != "(O)322")
-                    return new TileTargetRefusal("unsupported_fence_item", $"item={expectedQualifiedItemId}");
-                return slot >= 0 && slot < Game1.player.Items.Count
-                    && Game1.player.Items[slot] is StardewValley.Object source && IsQualifiedWoodFenceSource(source) && source.Stack > 0
-                        ? null
-                        : new TileTargetRefusal("wood_fence_not_owned_in_slot", $"slot={slot}");
-            },
+            // The item the request names is a fact about the REQUEST, so it is refused before a walk; the pack slot is
+            // not, and asking it here would refuse a fence that only moved.
+            gate: _ => expectedQualifiedItemId != "(O)322"
+                ? new TileTargetRefusal("unsupported_fence_item", $"item={expectedQualifiedItemId}")
+                : null,
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecutePlaceWoodFence(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
@@ -490,9 +502,10 @@ internal sealed partial class ExecutionManager
     {
         if (expectedQualifiedItemId != "(O)322")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object executeSource || !IsQualifiedWoodFenceSource(executeSource) || executeSource.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"slot={slot}");
-        StardewValley.Object source = executeSource;
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWoodFenceItem) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object source = held.Item;
         GameLocation fenceLocation = Game1.player.currentLocation;
         if (fenceLocation is not Farm farm)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
@@ -502,15 +515,15 @@ internal sealed partial class ExecutionManager
             || farm.objects.ContainsKey(tile)
             || !Utility.playerCanPlaceItemHere(farm, source, targetX * 64 + 32, targetY * 64 + 32, Game1.player)
             || !source.canBePlacedHere(farm, tile))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_target_unavailable", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
         int beforeCount = CountQualifiedItem(Game1.player, "(O)322");
         bool sourceEmptyBefore = !farm.objects.ContainsKey(tile);
         int previousSlot = Game1.player.CurrentToolIndex;
-        LocalWoodFencePlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, "(O)322", beforeCount, this.revision, requestedDeadlineMs);
+        LocalWoodFencePlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, liveSlot, targetX, targetY, expectedTargetId, "(O)322", beforeCount, this.revision, requestedDeadlineMs);
         bool placementHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             // Target 1.6.15's Object.placementAction has the closed IsFenceItem branch
             // that constructs Fence for this exact source. This private wrapper is not a
             // generic item-action surface: it rechecks the finite (O)322 Fence source.
@@ -534,13 +547,13 @@ internal sealed partial class ExecutionManager
         bool succeeded = placementHandled && sourceEmptyBefore && isFence && !isGate && validFenceHealth && inventoryDecremented;
         if (succeeded)
         {
-            this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", RequireDisplayName("(O)322"), IsFence: true, IsGate: false, health, maxHealth);
+            this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, liveSlot, targetX, targetY, "(O)322", RequireDisplayName("(O)322"), IsFence: true, IsGate: false, health, maxHealth);
             this.woodFenceResultExecutionId = executionId;
             this.woodFenceResultRequestId = requestId;
             this.woodFenceResultRevision = this.revision;
             this.woodFenceResultDay = Game1.Date.TotalDays;
         }
-        string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
+        string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={liveSlot};named_slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
         return this.SettlePostcondition(requestId, executionId, succeeded, "wood_fence_placed", "wood_fence_postcondition_unavailable", evidence);
     }
 
@@ -549,15 +562,10 @@ internal sealed partial class ExecutionManager
             "place_crab_pot", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnFarmstead,
-            gate: _ =>
-            {
-                if (expectedQualifiedItemId != "(O)710")
-                    return new TileTargetRefusal("unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
-                return slot >= 0 && slot < Game1.player.Items.Count
-                    && Game1.player.Items[slot] is StardewValley.Object source && source.QualifiedItemId == "(O)710" && source.Stack > 0
-                        ? null
-                        : new TileTargetRefusal("crab_pot_not_owned_in_slot", $"slot={slot}");
-            },
+            // As for the fence: the item id is a fact about the REQUEST and the pack slot is not.
+            gate: _ => expectedQualifiedItemId != "(O)710"
+                ? new TileTargetRefusal("unsupported_crab_pot_item", $"item={expectedQualifiedItemId}")
+                : null,
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecutePlaceCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
@@ -565,9 +573,10 @@ internal sealed partial class ExecutionManager
     {
         if (expectedQualifiedItemId != "(O)710")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object executeSource || executeSource.QualifiedItemId != "(O)710" || executeSource.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"slot={slot}");
-        StardewValley.Object source = executeSource;
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object source = held.Item;
         GameLocation crabPotLocation = Game1.player.currentLocation;
         if (crabPotLocation is not Farm farm)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
@@ -576,15 +585,15 @@ internal sealed partial class ExecutionManager
         if (!string.Equals(BuildCrabPotTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
             || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, targetX, targetY)
             || farm.objects.ContainsKey(tile))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_unavailable", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
 
         int beforeCount = CountQualifiedItem(Game1.player, "(O)710");
         int previousSlot = Game1.player.CurrentToolIndex;
-        LocalCrabPotPlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, "(O)710", beforeCount, this.revision, requestedDeadlineMs);
+        LocalCrabPotPlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, liveSlot, targetX, targetY, expectedTargetId, "(O)710", beforeCount, this.revision, requestedDeadlineMs);
         bool placementHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             placementHandled = source.placementAction(farm, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
             if (placementHandled)
                 Game1.player.reduceActiveItemByOne();
@@ -605,13 +614,13 @@ internal sealed partial class ExecutionManager
             && crabPot.owner.Value == Game1.player.UniqueMultiplayerID && validOffset && afterCount == beforeCount - 1;
         if (succeeded)
         {
-            this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
+            this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, liveSlot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
             this.crabPotResultExecutionId = executionId;
             this.crabPotResultRequestId = requestId;
             this.crabPotResultRevision = this.revision;
             this.crabPotResultDay = Game1.Date.TotalDays;
         }
-        string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
+        string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={liveSlot};named_slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
         return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_placed", "crab_pot_postcondition_unavailable", evidence);
     }
 
@@ -620,38 +629,34 @@ internal sealed partial class ExecutionManager
             "bait_crab_pot", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            // THE BAIT IS WHATEVER THE POT ACCEPTS, not one item id. `CrabPot.performObjectDropInAction` takes any
-            // `Object` in the bait category while the pot still needs bait (CrabPot.cs:232-255), which covers Wild Bait,
-            // Magnet Bait and every other bait in the game; the request names the item it means and the pot's own probe
-            // decides in the body.
-            gate: _ => slot >= 0 && slot < Game1.player.Items.Count
-                && Game1.player.Items[slot] is StardewValley.Object bait && bait.Stack > 0
-                && string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-                    ? null
-                    : new TileTargetRefusal("bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}"),
+            // No item gate: the name the caller gave is checked against the pack in the body, and whether the item is
+            // BAIT belongs to the pot (see <see cref="AnyObject"/>). A gate that read the snapshot's slot refused a bait
+            // that had only moved.
+            gate: null,
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecuteBaitCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
 
     private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         Farmer player = Game1.player;
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.Stack <= 0
-            || !string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object bait = held.Item;
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY}");
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
         if (!crabPot.performObjectDropInAction(bait, probe: true, player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_accepted_by_pot", $"target={targetX},{targetY};item={expectedQualifiedItemId};pot=(O)710;bait_present={(crabPot.bait.Value is not null).ToString().ToLowerInvariant()}");
         int beforeCount = CountQualifiedItem(player, expectedQualifiedItemId);
         int previousSlot = player.CurrentToolIndex;
         bool handled;
-        try { player.CurrentToolIndex = slot; handled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, player); }
+        try { player.CurrentToolIndex = liveSlot; handled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, player); }
         finally { player.CurrentToolIndex = previousSlot; }
         int afterCount = CountQualifiedItem(player, expectedQualifiedItemId);
         bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == expectedQualifiedItemId && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
-        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
-        string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
+        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, liveSlot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
+        string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={liveSlot};named_slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
         return this.SettlePostcondition(requestId, executionId, succeeded, "crab_pot_baited", "bait_crab_pot_postcondition_unavailable", evidence);
     }
 
@@ -666,10 +671,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(fertilizer.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_slot_changed", $"slot={slot}");
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsFertilizerItem) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object fertilizer = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -678,16 +683,16 @@ internal sealed partial class ExecutionManager
             || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
             || !dirt.CanApplyFertilizer(fertilizer.QualifiedItemId)
             || !string.Equals(BuildFertilizerTargetId(location, slot, targetX, targetY, fertilizer.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_target_unavailable", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         string? beforeFertilizer = dirt.fertilizer.Value;
         int previousSlot = Game1.player.CurrentToolIndex;
-        LocalFertilizerApplicationSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
+        LocalFertilizerApplicationSpec specification = new(executionId, requestId, location.NameOrUniqueName, liveSlot, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
         bool placementHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             placementHandled = fertilizer.placementAction(location, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
             if (placementHandled)
                 Game1.player.reduceActiveItemByOne();
@@ -705,7 +710,7 @@ internal sealed partial class ExecutionManager
         ExecutionState state = placementHandled && fertilizerApplied && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "fertilizer_applied" : "fertilizer_postcondition_unavailable";
         return this.RememberTerminal(requestId, executionId, state, reasonCode,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};fertilizer_before={beforeFertilizer ?? "none"};fertilizer_after={afterFertilizer ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
+            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};fertilizer_before={beforeFertilizer ?? "none"};fertilizer_after={afterFertilizer ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
     }
 
     public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)

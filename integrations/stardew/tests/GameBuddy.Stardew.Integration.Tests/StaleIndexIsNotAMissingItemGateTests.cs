@@ -2,11 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using Netcode;
+using StardewValley;
 using Xunit;
 using Xunit.Abstractions;
+using static GameBuddy.Stardew.Integration.Tests.TargetFamilyCompletenessTests;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -28,8 +33,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// <para>
 /// MEASURED 2026-11-19 (`round77`): 40 planned plantings, 6 done, <c>seed_not_owned_in_slot</c> 22 times. The planting
-/// family is the first walked; the rest of the population is named in <see cref="PendingWalk"/> and every entry there
-/// EXPIRES - the gate fails the moment one of them starts re-resolving, so the list cannot outlive its reason.
+/// family was the first walked and the four farming members - <c>fertilize_tile</c>, <c>place_wood_fence</c>,
+/// <c>place_crab_pot</c>, <c>bait_crab_pot</c> - the second, driven rather than only declared by
+/// <see cref="StaleSlotWalkTests"/> below. The rest of the population is named in <see cref="PendingWalk"/> and every
+/// entry there EXPIRES - the gate fails the moment one of them starts re-resolving, so the list cannot outlive its
+/// reason.
 /// </para>
 ///
 /// <para>
@@ -63,16 +71,12 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> PendingWalk = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["bait_crab_pot"] = "the planting family is the first walk; this member is next in the farming group",
         ["equip_wearable"] = "the pack side of a wearable move is a slot the caller saw; the walk has not reached it",
-        ["fertilize_tile"] = "the planting family is the first walk; this member is next in the farming group",
         ["interact_npc_with_item"] = "not walked yet",
         ["machine_load"] = "not walked yet",
         ["open_geode"] = "not walked yet",
-        ["place_crab_pot"] = "the planting family is the first walk; this member is next in the farming group",
         ["place_item_on_pedestal"] = "not walked yet",
         ["place_owned_object"] = "not walked yet: the furniture identity change landed in the same file first",
-        ["place_wood_fence"] = "the planting family is the first walk; this member is next in the farming group",
         ["put_item_in_fish_tank"] = "not walked yet",
         ["use_item"] = "not walked yet",
         ["use_warp_item"] = "not walked yet",
@@ -192,6 +196,14 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
     /// <summary>
     /// The Mod's request halves and execution bodies, by method name, with their bodies: the two declaration shapes the
     /// request path is made of (<c>LocalExecutionReceipt RequestLocal*</c> and <c>LocalExecutionReceipt Execute*</c>).
+    ///
+    /// <para>
+    /// A body runs from its declaration to the NEXT one in the same file. Counting braces answers a different question:
+    /// the members are expression-bodied, so the first balanced pair of braces can belong to a lambda or to an
+    /// interpolated string (<c>$"item={expectedQualifiedItemId}"</c>), and the slice then ends before the
+    /// <c>this.Execute...</c> call the member really makes - which read <c>place_wood_fence</c> and <c>place_crab_pot</c>
+    /// as members that never resolve while their own bodies did.
+    /// </para>
     /// </summary>
     private static Dictionary<string, string> MethodBodies()
     {
@@ -202,8 +214,12 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
         foreach (string file in Directory.EnumerateFiles(RepositoryDirectory(ModDirectory), "farmhandexecutioncontroller*.cs"))
         {
             string source = File.ReadAllText(file);
-            foreach (Match match in declaration.Matches(source))
-                bodies.TryAdd(match.Groups["method"].Value, BodyOf(source, match.Index));
+            MatchCollection declarations = declaration.Matches(source);
+            for (int index = 0; index < declarations.Count; index++)
+            {
+                int end = index + 1 < declarations.Count ? declarations[index + 1].Index : source.Length;
+                bodies.TryAdd(declarations[index].Groups["method"].Value, source[declarations[index].Index..end]);
+            }
         }
 
         return bodies;
@@ -234,29 +250,6 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
         return string.Join("\n", parts);
     }
 
-    /// <summary>The braced body of the member whose declaration starts at <paramref name="declarationStart"/>.</summary>
-    private static string BodyOf(string source, int declarationStart)
-    {
-        int depth = 0;
-        bool started = false;
-        for (int index = declarationStart; index < source.Length; index++)
-        {
-            char character = source[index];
-            if (character == '{')
-            {
-                depth++;
-                started = true;
-            }
-            else if (character == '}')
-            {
-                depth--;
-                if (started && depth == 0) return source[declarationStart..(index + 1)];
-            }
-        }
-
-        throw new InvalidOperationException($"unbalanced body for the declaration at offset {declarationStart}");
-    }
-
     private static string RepositoryDirectory(string relative)
     {
         foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
@@ -284,4 +277,204 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
     }
 
     private sealed record Measurement(IReadOnlyList<Row> Rows, IReadOnlyList<string> Unresolved);
+}
+
+/// <summary>
+/// THE WALK THE GATE ONLY DECLARES. <see cref="StaleIndexIsNotAMissingItemGateTests"/> proves by shape that a member of
+/// the population resolves the item through the live pack; these cases drive the four farming members through their own
+/// production entry points and read which half answered.
+///
+/// <para>
+/// Each case builds the measured shape: the plan's node named a slot it OBSERVED, and by the time the body armed the pack
+/// had re-packed, so the item the request also names sits in another slot. A body that reads the index answers
+/// <c>fertilizer_not_owned_in_slot</c> - or, for the fertilizer, <c>fertilizer_slot_changed</c> - which is a refusal
+/// telling the companion she owns no bait while five of them lie three slots along. What the receipt must instead say is
+/// the action's own target answer, with the slot the pack answered beside the slot the plan named.
+/// </para>
+///
+/// <para>
+/// WHAT THIS CANNOT PROVE, and says so rather than leaving it inferred: the four native effects cannot be completed in
+/// this process - a fertilizer application, a fence and a crab pot each reach an engine entry that reads content, and bait
+/// is spent by <c>GameLocation.checkAction</c>, which loads item data - so "consumed from the new slot" is read here as
+/// the ITEM gate answering with the live slot, the same reading <c>PlantSeedStaleSlotTests</c> takes of the planting
+/// family. The one place a body hands the slot on is <c>Game1.player.CurrentToolIndex</c>, and each of the four sets it
+/// to the slot the pack answered.
+/// </para>
+/// </summary>
+public sealed class StaleSlotWalkTests
+{
+    /// <summary>One step from the actor, which is the radius these actions use for their native call.</summary>
+    private const int TileX = 3;
+    private const int TileY = 2;
+
+    /// <summary>The slot the plan's node named, and the slot the pack answers after it re-packed.</summary>
+    private const int NamedSlot = 0;
+    private const int LiveSlot = 5;
+
+    private const string FertilizerItem = "(O)368";
+    private const string BaitItem = "(O)685";
+    private const string WoodFenceItem = "(O)322";
+    private const string CrabPotItem = "(O)710";
+
+    [Fact]
+    public void AFertilizerThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutInPackSlot(NamedSlot, "(O)369", 4, StardewValley.Object.fertilizerCategory);
+        world.PutInPackSlot(LiveSlot, FertilizerItem, 3, StardewValley.Object.fertilizerCategory);
+        string targetId = TargetId("BuildFertilizerTargetId", world.Farm, NamedSlot, TileX, TileY, FertilizerItem);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("fertilize_tile")
+            .RequestLocalFertilizeTile("req_fertilize_moved", NamedSlot, TileX, TileY, FertilizerItem, targetId, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "fertilizer_target_unavailable",
+            $"the pack holds the fertilizer the request named, so the tile is the layer that answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.Items[NamedSlot]!.Stack.Should().Be(4, "the named slot's occupant was never the item this request spends");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(3, "and a refused request consumes nothing from the slot it resolved");
+    }
+
+    [Fact]
+    public void ABaitThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutBaitInPackSlot(LiveSlot, BaitItem, 2);
+        string targetId = TargetId("BuildBaitCrabPotTargetId", world.Farm, NamedSlot, TileX, TileY);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("bait_crab_pot")
+            .RequestLocalBaitCrabPot("req_bait_moved", NamedSlot, TileX, TileY, BaitItem, targetId, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "bait_crab_pot_target_unavailable",
+            $"the pack holds the bait the request named, so the pot on the tile is what answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"item={BaitItem};slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the item it resolved, the slot the pack answered and the slot the plan named");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(2, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    [Fact]
+    public void AWoodFenceThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutInPackSlot(LiveSlot, WoodFenceItem, 5);
+        Farm farm = TheFarmTheHarnessLocationIsNot(world);
+        // The tile answers, and it answers BEFORE the native placement: `Utility.playerCanPlaceItemHere` asks
+        // `Object.canBePlacedHere`, whose context tags come from `Data/Objects`, a table this process has not loaded.
+        // An occupied tile is the world fact that keeps the case on the half it is about.
+        farm.objects[new Microsoft.Xna.Framework.Vector2(TileX, TileY)] = TargetFamilyWorld.PlacedObject("(O)324", name: null, category: 0);
+        string targetId = TargetId("BuildWoodFenceTargetId", farm, NamedSlot, TileX, TileY);
+
+        LocalExecutionReceipt receipt = PlaceWoodFence(world, "req_fence_moved", NamedSlot, targetId);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "wood_fence_target_unavailable",
+            $"the pack holds the fence the request named, so the tile is what answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(5, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    [Fact]
+    public void ACrabPotThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutInPackSlot(LiveSlot, CrabPotItem, 2);
+        Farm farm = TheFarmTheHarnessLocationIsNot(world);
+        string targetId = TargetId("BuildCrabPotTargetId", farm, NamedSlot, TileX, TileY);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("place_crab_pot")
+            .RequestLocalPlaceCrabPot("req_pot_moved", NamedSlot, TileX, TileY, CrabPotItem, targetId, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "crab_pot_target_unavailable",
+            $"the pack holds the crab pot the request named, so the water tile is what answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(2, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    private static long Deadline() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;
+
+    /// <summary>
+    /// One <c>place_wood_fence</c> request with the fence row the resolution asks for in place.
+    ///
+    /// <para>
+    /// <c>Object.IsFenceItem</c> answers from <c>Data/Fences</c> (<c>Fence.GetFenceLookup</c> -&gt;
+    /// <c>DataLoader.Fences</c>, Object.cs:6025-6032), which this process never loads. The one row the request names is
+    /// supplied for the length of the call and taken back afterwards, because that lookup is process-wide state the next
+    /// case must not inherit - the same reason <c>SaplingHarness</c> saves and restores <c>Data/WildTrees</c>.
+    /// </para>
+    /// </summary>
+    private static LocalExecutionReceipt PlaceWoodFence(TargetFamilyWorld world, string requestId, int namedSlot, string targetId)
+    {
+        FieldInfo lookup = typeof(StardewValley.Fence).GetField("_FenceLookup", BindingFlags.NonPublic | BindingFlags.Static)!;
+        object? before = lookup.GetValue(null);
+        try
+        {
+            lookup.SetValue(null, new Dictionary<string, StardewValley.GameData.Fences.FenceData>(StringComparer.Ordinal)
+            {
+                ["322"] = new StardewValley.GameData.Fences.FenceData(),
+            });
+            return world.NewExecutionManager("place_wood_fence")
+                .RequestLocalPlaceWoodFence(requestId, namedSlot, TileX, TileY, WoodFenceItem, targetId, Deadline());
+        }
+        finally
+        {
+            lookup.SetValue(null, before);
+        }
+    }
+
+    /// <summary>
+    /// The two farmstead members authorize before they read anything else - <c>currentLocation is Farm</c> - so the
+    /// harness's own <c>GameLocation</c> answers <c>farm_required</c> and never reaches the half under test. This puts a
+    /// real <c>Farm</c>, sharing the harness's map, where the actor stands.
+    ///
+    /// <para>
+    /// The construction follows <c>SaplingApproachWiringTests.SaplingHarness</c>, the existing farm fixture: a plain
+    /// <c>Farm</c> whose map is the harness's own, named the way the target builders read it, with
+    /// <c>Game1._locationLookup</c> present because <c>GameLocation</c>'s own constructor registers into it.
+    /// </para>
+    /// </summary>
+    private static Farm TheFarmTheHarnessLocationIsNot(TargetFamilyWorld world)
+    {
+        if (HeadlessGameWorld.Static("_locationLookup").Get() is null)
+            HeadlessGameWorld.Static("_locationLookup").Set(new Dictionary<string, GameLocation>(StringComparer.OrdinalIgnoreCase));
+
+        var farm = new Farm();
+        farm.map = world.Farm.map;
+        farm.IsFarm = true;
+        farm.IsOutdoors = true;
+        typeof(GameLocation)
+            .GetField("name", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(farm, new NetString("ProbeFarm"));
+        typeof(Game1)
+            .GetField("instanceGameLocation", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(Game1.game1, farm);
+        world.Actor.currentLocation = farm;
+        return farm;
+    }
+
+    /// <summary>
+    /// One target id from the production builder the snapshot publishes with. Read by reflection because the builders are
+    /// private to the partial class: the alternative is a second copy of the hash in the test, which would agree with the
+    /// production id only until one of them changed.
+    /// </summary>
+    private static string TargetId(string builder, params object?[] arguments) =>
+        (string)typeof(ExecutionManager)
+            .GetMethod(builder, BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, arguments)!;
 }
