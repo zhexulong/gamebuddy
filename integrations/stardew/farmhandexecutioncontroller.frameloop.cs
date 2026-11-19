@@ -2,6 +2,7 @@ using System.Globalization;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Navigation;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -38,7 +39,22 @@ internal sealed partial class ExecutionManager
         if (this.navigationWarpReplanDeferred
             && this.activeNavigate is { Phase: LocalNavigatePhase.AwaitingWarp } deferredNavigation)
         {
-            bool graceExpired = this.tick - this.navigationWarpDeferredAtTick > NavigationWarpReplanGraceTicks;
+            // WHICH HOLDS THIS WINDOW MAY END is the waiting vocabulary's answer, not a number chosen here. A
+            // `BodyHoldWait.RetryWindow` hold is an engine lock the world releases inside
+            // `WorldModel.TransientRetryWindowTicks` - a tool swing, an eating pause, the warp's own fade - so the window
+            // is exactly the wait it takes. A `BodyHoldWait.RequestDeadline` hold is ENGINE-OWNED: `Game1.eventUp` stays
+            // up for exactly as long as the world runs the event, and the same navigation is the one it holds
+            // afterwards, so its bound is the request's own deadline and the deadline check below answers then. A hold no
+            // window clears (an open menu, a pass-out) keeps expiring here, because waiting is not what ends those and
+            // the hold's own sentence already names the action that does.
+            //
+            // MEASURED `1795084502755`: the warp into `Mine` had just landed, a cutscene was running, and
+            // `navigate_to_destination(Mine)` settled `destination_locked` with `grace_expired=true;held_by=cutscene_active`
+            // three seconds later, while the event was still running and the destination was still reachable. A holder
+            // that ends by itself is not a deadline that should expire.
+            BodyHoldWait? holdWait = HoldWait(ProjectDispositionKind(this.disposition.Kind));
+            bool graceExpired = holdWait is not BodyHoldWait.RequestDeadline
+                && this.tick - this.navigationWarpDeferredAtTick > NavigationWarpReplanGraceTicks;
             if (!this.controller.HasActiveExecution
                 && this.active is null
                 && this.IsPlayerActionableNow()
@@ -94,7 +110,15 @@ internal sealed partial class ExecutionManager
             this.revision++;
             ExecutionState deadlineState = specification.Phase == LocalNavigatePhase.AwaitingWarp ? ExecutionState.Uncertain : ExecutionState.Expired;
             string reasonCode = specification.Phase == LocalNavigatePhase.AwaitingWarp ? "navigation_deadline_expired_after_warp" : "navigation_deadline_expired";
-            this.RememberTerminal(specification.RequestId, specification.ExecutionId, deadlineState, reasonCode, $"destination={specification.CanonicalDestinationIdentity};phase={specification.Phase}");
+            // A navigation that ran out of time while the world held her says WHO held her, from the one hold vocabulary,
+            // and names the next step through the one terminal table - the same two facts a settled lock owes. Without
+            // the hold this terminal reads `phase=awaiting_warp`, which is a fact about this Mod and not about the world
+            // that spent her deadline.
+            string deadlineEvidence = $"destination={specification.CanonicalDestinationIdentity};phase={specification.Phase}"
+                + (specification.Phase == LocalNavigatePhase.AwaitingWarp && !this.IsPlayerActionableNow()
+                    ? $";{WorldModel.DescribeCurrentNavigationHold(Game1.player)}"
+                    : string.Empty);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, deadlineState, reasonCode, NavigationNextStep.Describe(reasonCode, deadlineEvidence));
         }
         if (this.activeToolApproach is { } settledToolApproach)
         {

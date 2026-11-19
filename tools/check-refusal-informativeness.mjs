@@ -1217,10 +1217,6 @@ export const BARE_REFUSALS_WITH_NOTHING_TO_SAY = Object.freeze([
   }),
   Object.freeze({ code: "emote_busy", why: "the actor is emoting: a single boolean state behind the code" }),
   Object.freeze({
-    code: "actor_moving",
-    why: "the body is already moving: the code names the state, and the ownership slots it also read are the guard's own booleans",
-  }),
-  Object.freeze({
     code: "vault_not_completed",
     why: "the save's own mail flag ccVault is absent, and the code names the missing flag",
   }),

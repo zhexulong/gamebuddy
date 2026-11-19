@@ -1145,7 +1145,7 @@ public sealed partial class ModEntry : Mod
             LogLevel.Info);
     }
 
-    private static FarmhandActionRouter CreateFarmhandActionRouter(ExecutionManager executions)
+    internal static FarmhandActionRouter CreateFarmhandActionRouter(ExecutionManager executions)
     {
         ArgumentNullException.ThrowIfNull(executions);
         FarmingActionHandler farming = new(executions);

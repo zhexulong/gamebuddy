@@ -14,9 +14,13 @@ namespace GameBuddy.Stardew.Navigation;
 /// </para>
 ///
 /// <para>
-/// So every navigation terminal states its next step, from this table and through the one settlement seam
-/// (<c>SettleNavigationTerminal</c>); a site that already published a step - a body hold's own countermeasure, which
-/// names the game's condition - keeps its own, because that sentence is more specific than any word here.
+/// WHERE IT IS APPLIED, one rule and no site list: a site that mints a navigation terminal passes its evidence through
+/// <see cref="NavigationNextStep.Describe"/> at the moment it mints it. The settlement seam
+/// (<c>ExecutionManager.SettleNavigationTerminal</c>) does it once for every terminal it answers, the outcome decider does
+/// it for the lock it mints itself (so a view a test constructed publishes the step as surely as the live one), and the
+/// inline terminals in the movement and tick paths call it where they are written. What the rule protects is read from
+/// the Mod's own code, not from this paragraph: <c>NavigationNextStepNamingTests</c> scans every position that mints a
+/// navigation code and fails on one this table cannot classify.
 /// </para>
 ///
 /// <para>
@@ -70,8 +74,15 @@ internal readonly record struct NavigationNextStep(NavigationExit Exit, string? 
     /// </summary>
     internal static NavigationNextStep Of(string? reasonCode) => reasonCode switch
     {
-        // The body is held, not the destination. The hold's own countermeasure (`held_by=…;admissible_actions=…`) says
-        // the specific thing; this word covers the site that only knows the code.
+        // The body is held, not the destination. The hold's own countermeasure (`held_by=…;admissible_actions=…` or
+        // `held_by=…;next_step=…`) says the specific thing, and this word covers the site that only knows the code.
+        //
+        // A CUTSCENE IS NOT A DEADLINE. `held_by=cutscene_active;next_step=wait_for_event_to_advance` is honest: the
+        // engine raises `Game1.eventUp` for exactly as long as the world runs the event, so nothing in this Mod may
+        // expire that wait on a window of its own choosing (`ExecutionManager.Update` bounds it by the request's own
+        // deadline instead - the `BodyHoldWait.RequestDeadline` wait the flat admission already gives it). This word is
+        // left for the holds that are NOT the world's own - an open menu, a pass-out, a movement lock - and for the site
+        // that publishes no hold of its own.
         "destination_locked" => Action("wait_for_the_hold_to_clear"),
 
         // The game's own gate on the destination (`Game1.isLocationAccessible`), so it opens on a game condition.

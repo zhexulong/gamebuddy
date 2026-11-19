@@ -29,7 +29,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
     private const int AnimalProductActionRadius = 1;
-    private const int NavigationWarpReplanGraceTicks = 60 * 3;
+    /// <summary>
+    /// How long a warp's deferred replan keeps retrying before it stops and answers: the engine's own retry window, not a
+    /// second number that means the same thing. The window may only end a hold whose declared wait IS that window
+    /// (<see cref="BodyHoldWait.RetryWindow" />) - see <c>ExecutionManager.Update</c>.
+    /// </summary>
+    private const int NavigationWarpReplanGraceTicks = WorldModel.TransientRetryWindowTicks;
     private readonly IMonitor monitor;
     private readonly ExecutionReceiptStore ledger;
     private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
@@ -422,18 +427,26 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal static LocalDispositionKind ProjectAdmissionDisposition(ActorDisposition disposition, Farmer actor)
     {
-        LocalDispositionKind projected = disposition.Kind switch
-        {
-            ActorDispositionKind.Event => LocalDispositionKind.Event,
-            ActorDispositionKind.Modal => LocalDispositionKind.Modal,
-            ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
-            ActorDispositionKind.Transient => LocalDispositionKind.Transient,
-            _ => LocalDispositionKind.Idle,
-        };
+        LocalDispositionKind projected = ProjectDispositionKind(disposition.Kind);
         if (projected == LocalDispositionKind.Idle && !actor.CanMove)
             return LocalDispositionKind.Transient;
         return projected;
     }
+
+    /// <summary>
+    /// The disposition's KIND as the admission's closed vocabulary, without the <c>CanMove</c> tail only an actor can
+    /// supply. It is the half of <see cref="ProjectAdmissionDisposition"/> a caller with no actor can still ask - the tick
+    /// loop, which classifies a body hold that the Game1 statics already report (a cutscene, a minigame, the day
+    /// transition) - so the tail is not spelled a second time there.
+    /// </summary>
+    internal static LocalDispositionKind ProjectDispositionKind(ActorDispositionKind kind) => kind switch
+    {
+        ActorDispositionKind.Event => LocalDispositionKind.Event,
+        ActorDispositionKind.Modal => LocalDispositionKind.Modal,
+        ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
+        ActorDispositionKind.Transient => LocalDispositionKind.Transient,
+        _ => LocalDispositionKind.Idle,
+    };
 
     internal const string BodyOwned = "body_owned";
     internal const string BodyOwnedByNavigation = "body_owned_by_navigation";

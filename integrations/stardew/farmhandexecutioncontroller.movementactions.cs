@@ -1224,7 +1224,7 @@ internal sealed partial class ExecutionManager
 
         NavigationRuntimeSnapshot? runtime = this.navigationRuntimeFactory?.Invoke();
         if (runtime is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "destination_access_indeterminate", "navigation_runtime_unavailable");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "destination_access_indeterminate", NavigationNextStep.Describe("destination_access_indeterminate", "navigation_runtime_unavailable"));
 
         AcceptedNavigationExecution coordinator;
         NavigationPlan plan;
@@ -1257,11 +1257,11 @@ internal sealed partial class ExecutionManager
         }
         catch
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "destination_access_indeterminate", "navigation_decision_unavailable");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "destination_access_indeterminate", NavigationNextStep.Describe("destination_access_indeterminate", "navigation_decision_unavailable"));
         }
 
         if (plan.IsTerminal)
-            return this.RememberTerminal(requestId, executionId, plan.Outcome.State, plan.Outcome.TerminalReasonCode, plan.Outcome.Evidence);
+            return this.RememberTerminal(requestId, executionId, plan.Outcome.State, plan.Outcome.TerminalReasonCode, NavigationNextStep.Describe(plan.Outcome.TerminalReasonCode, plan.Outcome.Evidence));
 
         NavigationTransitionLeg? nextLeg = plan.Outcome.NextLeg;
         if (nextLeg is null)
@@ -1271,13 +1271,13 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "destination_access_indeterminate",
-                "phase=approved;transition=none;commit=never_armed");
+                NavigationNextStep.Describe("destination_access_indeterminate", "phase=approved;transition=none;commit=never_armed"));
         }
 
         Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
         if (approachTarget is null)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", $"phase=approved;approach=unavailable{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", NavigationNextStep.Describe("navigation_approach_unavailable", $"phase=approved;approach=unavailable{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}"));
         }
 
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
@@ -1323,6 +1323,14 @@ internal sealed partial class ExecutionManager
         ["left"] = 3,
     };
 
+    /// <summary>
+    /// `face_direction`: the actor's own facing, applied whether she stands or walks.
+    ///
+    /// <para>
+    /// The native call takes no movement precondition, so the only thing this can honestly refuse is another execution
+    /// already writing the same field - see the block below.
+    /// </para>
+    /// </summary>
     public LocalExecutionReceipt RequestLocalFaceDirection(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (this.OpenDispatchEnvelope(request, ledger, out string executionId) is DispatchEnvelope.Answered alreadyAnswered)
@@ -1337,11 +1345,32 @@ internal sealed partial class ExecutionManager
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
+        // AN EXPRESSION DOES NOT NEED THE BODY TO BE STILL. `Character.faceDirection` (Character.cs:713-729: `if
+        // (direction != -3) { FacingDirection = direction; Sprite?.faceDirection(direction); faceTowardFarmer = false; }`)
+        // writes the actor's own facing and asks nothing of her - no `CanMove`, no `isMoving()`, no `Game1.eventUp` - and
+        // it changes nothing about the world either: no object, tile, terrain, inventory, container or NPC state, the same
+        // fact that took `express_emote` out of the durability alarm
+        // (`FarmhandActionCatalog.ActionsThatChangeNothing`). Gating a flat expression on motion therefore refused a
+        // request that touched nothing, with a code (`actor_moving`) that named nothing the caller could wait for
+        // (measured `1795084502755`).
+        //
+        // WHAT A WALK DOES TO IT, because the receipt must not claim more than it proved: `Character.MovePosition` faces
+        // the direction it steps on every movement tick (Character.cs:851, :879, :907, :935), so a facing applied mid-walk
+        // is hers at the instant `actor_facing_matches` is read and is the walk's own on the next step. That is why the
+        // receipt publishes `moving=` beside the direction instead of staying silent about it.
+        //
+        // THE ONE HOLD LEFT is another EXECUTION's ownership, and it is not about motion: that owner writes the same
+        // field on its own next tick, so a facing minted underneath it would be overwritten before anyone could observe
+        // it. It is named by the one describer of body ownership, so the refusal carries the owner's own evidence.
+        bool walking = actor.isMoving();
+        if (this.active is not null || this.activeNavigate is not null || this.controller.HasActiveExecution)
+        {
+            BodyOwner owner = this.admission.Describe();
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence);
+        }
+
         try
         {
-            if (actor.isMoving() || this.active is not null || this.activeNavigate is not null || this.controller.HasActiveExecution)
-                return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "actor_moving", null);
-
             actor.faceDirection(directionInt);
         }
         catch (Exception nativeException)
@@ -1356,6 +1385,7 @@ internal sealed partial class ExecutionManager
         }
 
         BridgeLocalObservation? observation = this.TryCreateLocalObservation(actor);
+        string moving = walking ? "true" : "false";
         if (actor.FacingDirection == directionInt)
         {
             return this.RememberTerminal(
@@ -1363,7 +1393,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Succeeded,
                 "actor_facing_matches",
-                $"direction={request.Args.Direction}",
+                $"direction={request.Args.Direction};moving={moving}",
                 observation);
         }
 
@@ -1372,7 +1402,7 @@ internal sealed partial class ExecutionManager
             executionId,
             ExecutionState.Failed,
             "postcondition_failed",
-            $"expected={directionInt};actual={actor.FacingDirection}",
+            $"expected={directionInt};actual={actor.FacingDirection};moving={moving}",
             observation);
     }
 }

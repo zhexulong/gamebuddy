@@ -328,7 +328,8 @@ test("verified target-version characterization artifact exists, is schema-valid,
   assert.equal(facing.movingCheck.method.name, "isMoving");
   assert.equal(facing.movingCheck.method.declaringType, "StardewValley.Character");
   assert.equal(facing.movingCheck.method.returnType, "System.Boolean");
-  assert.match(facing.movingCheck.semantics, /actor_moving/);
+  assert.match(facing.movingCheck.semantics, /NOT a precondition/);
+  assert.match(facing.movingCheck.semantics, /moving=/);
 
   // Live observation: this evidence file is the target-version CONTRACT surface,
   // not a live run. The reason must not claim the harness is missing -- it

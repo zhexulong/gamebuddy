@@ -863,7 +863,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         harness.PlayerActionableProbe = () => false;
         harness.Armed.Should().HaveCount(1);
 
-        // Drive past the grace window (NavigationWarpReplanGraceTicks = 180).
+        // Drive past the grace window (`NavigationWarpReplanGraceTicks`, the engine's own retry window).
         for (int i = 0; i < 200; i++)
             harness.Manager.Update();
 
@@ -914,7 +914,9 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         // it were an instruction about the world.
         terminal.Evidence.Should().Contain("held_by=", "a refusal has to say WHAT holds the actor");
         terminal.Evidence.Should().Contain("grace_expired=true");
-        terminal.Evidence.Should().Contain("window_ticks=180", "the wait that ended states its own length");
+        terminal.Evidence.Should().Contain(
+            $"window_ticks={WorldModel.TransientRetryWindowTicks}",
+            "the wait that ended states its own length, read from the one declaration of it");
         terminal.Evidence.Should().NotContain("never_retry=true", "nothing was mutated by ending the wait");
         (terminal.Evidence!.Contains("next_step=", StringComparison.Ordinal)
             || terminal.Evidence!.Contains("admissible_actions=", StringComparison.Ordinal))
@@ -926,6 +928,102 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         for (int i = 0; i < 10; i++)
             harness.Manager.Update();
         harness.Stored("req_lock_persist").ReasonCode.Should().Be("destination_locked");
+    }
+
+    [Fact]
+    public void ACutsceneHoldAfterAWarp_IsNotExpiredByTheReplanWindow_BecauseTheWorldEndsItByItself()
+    {
+        // MEASURED `1795084502755`: just after the warp into `Mine` a `navigate_to_destination(Mine)` settled
+        // `destination_locked` with `grace_expired=true;held_by=cutscene_active`. The event was still running and the
+        // destination was still reachable, so the window ended a navigation the world was about to release. A holder that
+        // ends by itself is not a deadline this Mod may expire: `BodyHoldWait.RequestDeadline` - the wait the flat
+        // admission already gives an event - bounds it instead, and that is the navigation's own deadline.
+        NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+        NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+        var harness = new MultiHopHarness(
+            initial: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+            secondView: View(true, true, "Mountain", at: false, new[] { mountainToMine }),
+            arrivalView: View(true, true, "Mine", at: true, Array.Empty<NavigationTransitionLeg>()),
+            topologySources: new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                ["Farm"] = new[] { farmToMountain },
+                ["Mountain"] = new[] { mountainToMine },
+                ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+            },
+            lockedSecondView: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+
+        bool eventWasUp = Game1.eventUp;
+        try
+        {
+            harness.Manager.RequestNavigate("req_cutscene_hold", Label("Mine"), Deadline());
+            harness.EmitApproachSucceeded();
+            harness.Manager.Update();
+            harness.CompleteWarp("Farm", "Mountain", 2, 2);
+            harness.PlayerActionableProbe = () => false;
+            // The hold the world owns: `Classify` reads `Game1.eventUp` and the disposition becomes `Event`, whose declared
+            // wait is the request's deadline.
+            Game1.eventUp = true;
+
+            for (int i = 0; i < 400; i++)
+                harness.Manager.Update();
+
+            harness.Manager.TryGetReceipt("req_cutscene_hold", out LocalExecutionReceipt? held).Should().BeTrue();
+            held!.ReasonCode.Should().NotBe("destination_locked", $"the event ends by itself, so no window of ours may end the walk first ({held.Evidence})");
+            harness.Manager.IsBodySettled.Should().BeFalse("the navigation still owns the body it is waiting to finish with");
+            harness.Armed.Should().HaveCount(1);
+        }
+        finally
+        {
+            Game1.eventUp = eventWasUp;
+        }
+    }
+
+    [Fact]
+    public void ACutsceneHoldThatOutlastsTheNavigation_SettlesAtTheRequestsOwnDeadline_NamingTheHoldAndTheStep()
+    {
+        // The other half of the rule: not expiring the window is not hanging. The request's own deadline still bounds it,
+        // and the terminal it mints then says WHO held her and WHAT the caller can do - the two facts `round68` found
+        // missing when `never_retry=true` was the whole sentence.
+        NavigationTransitionLeg farmToMountain = new("Mountain", 1, 1, 2, 2, IsDoor: false);
+        NavigationTransitionLeg mountainToMine = new("Mine", 3, 3, 4, 4, IsDoor: false);
+        var harness = new MultiHopHarness(
+            initial: View(true, true, "Farm", at: false, new[] { farmToMountain }),
+            secondView: View(true, true, "Mountain", at: false, new[] { mountainToMine }),
+            arrivalView: View(true, true, "Mine", at: true, Array.Empty<NavigationTransitionLeg>()),
+            topologySources: new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+            {
+                ["Farm"] = new[] { farmToMountain },
+                ["Mountain"] = new[] { mountainToMine },
+                ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+            },
+            lockedSecondView: View(true, false, "Mountain", at: false, new[] { mountainToMine }));
+
+        bool eventWasUp = Game1.eventUp;
+        try
+        {
+            long shortDeadline = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 1_500;
+            harness.Manager.RequestNavigate("req_cutscene_deadline", Label("Mine"), shortDeadline);
+            harness.EmitApproachSucceeded();
+            harness.Manager.Update();
+            harness.CompleteWarp("Farm", "Mountain", 2, 2);
+            harness.PlayerActionableProbe = () => false;
+            Game1.eventUp = true;
+
+            Thread.Sleep(1_600);
+            harness.Manager.Update();
+
+            LocalExecutionReceipt terminal = harness.Stored("req_cutscene_deadline");
+            terminal.State.Should().Be(ExecutionState.Uncertain);
+            terminal.ReasonCode.Should().Be("navigation_deadline_expired_after_warp");
+            terminal.Evidence.Should().Contain("held_by=cutscene_active", $"the terminal has to say what held her ({terminal.Evidence})");
+            terminal.Evidence.Should().Contain(
+                "next_step=wait_for_event_to_advance",
+                "and the hold's own countermeasure, which is more specific than the table's generic word");
+        }
+        finally
+        {
+            Game1.eventUp = eventWasUp;
+        }
     }
 
     // ── helpers ──

@@ -1144,10 +1144,19 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// run, for an emote that touched no world state at all.
     /// </para>
     /// <para>
-    /// EACH ENTRY IS A DECISION WITH ITS EVIDENCE, not an omission. Membership must EQUAL the catalogue's own
-    /// `Expression` handler group: `DurabilityAlarmScopeGateTests` asserts the equality in both directions, so a new
-    /// expression action cannot be exempted by accident and an action that writes the world cannot be smuggled in here.
-    /// An action this table does not name - including one this build has never heard of - keeps the alarm.
+    /// EACH ENTRY IS A DECISION WITH ITS EVIDENCE, not an omission, and the evidence is the NATIVE reason the action
+    /// cannot write world state. `DurabilityAlarmScopeGateTests` keeps two things true of this table: every `Expression`
+    /// handler-group action is a member (a new expression action has to be decided, not forgotten), and the behavioural
+    /// half proves that no member's receipt is refused when the journal's write fails while an action that DOES change
+    /// the world still is - so a world-changing action cannot be smuggled in here. An action this table does not name -
+    /// including one this build has never heard of - keeps the alarm.
+    /// </para>
+    /// <para>
+    /// `face_direction` IS A MEMBER AND IS NOT IN THE `Expression` GROUP: it lives in `Movement` because it is a body
+    /// action, and it writes the actor's own facing and nothing else (`Character.faceDirection`), so the exemption is a
+    /// fact about the native call and not about which group the catalogue files it under. The same reading is what
+    /// forbids gating it on the body being still: a request that changes nothing has nothing to lose by being applied
+    /// (`RefusalForANonChangingActionGateTests` reads its population from THIS table).
     /// </para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string> ActionsThatChangeNothing =
@@ -1159,6 +1168,9 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             ["send_multiplayer_chat"] =
                 "`Game1.multiplayer.sendChatMessage` posts a line to the other players' chat box: no game state is "
                 + "written, and refusing its receipt cannot unsend the line",
+            ["face_direction"] =
+                "`Character.faceDirection` writes the actor's own `FacingDirection` and sprite row: no object, tile, "
+                + "terrain, inventory, container or NPC state is written, and a walk re-asserts its own direction",
         };
 
     /// <summary>

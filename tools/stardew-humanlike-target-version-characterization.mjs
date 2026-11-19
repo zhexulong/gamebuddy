@@ -367,7 +367,7 @@ export async function characterizeStardewTargetVersion({ gamePath, out, runner =
         movingCheck: {
           method: reflection.isMovingMethod,
           semantics:
-            "Actor is considered moving when moveUp/moveDown/moveRight/moveLeft or position interpolation is active; candidate face_direction rejects with reasonCode actor_moving.",
+            "Actor is considered moving when moveUp/moveDown/moveRight/moveLeft or position interpolation is active. It is NOT a precondition of an expression: `Character.faceDirection` writes the facing with no movement test, and the walk re-asserts its own direction on every step, so `face_direction` applies and says `moving=` rather than refusing.",
         },
       },
     },

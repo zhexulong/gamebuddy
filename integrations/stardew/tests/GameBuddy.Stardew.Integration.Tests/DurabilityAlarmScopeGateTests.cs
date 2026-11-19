@@ -62,17 +62,22 @@ public sealed class DurabilityAlarmScopeGateTests
         mutating.Should().NotBeEmpty("every catalogued action is classified by one declaration");
         (mutating.Count + expression.Count).Should().Be(population.Count, because: $"every catalogued action is either mutating or expression · {line}");
 
-        // THE DRIFT GATE. The exemption table and the catalogue's own Expression group are two spellings of one fact, so
-        // they must agree in BOTH directions: a new expression action has to be decided here (and its native reason
-        // stated), and an action that writes the world cannot be smuggled into the exemption.
+        // THE DRIFT GATE, in the two directions this tree can still DERIVE. A NEW expression action must be decided: the
+        // whole `Expression` group is a member, and the check below requires each member to state its native reason. The
+        // reverse direction is BEHAVIOURAL rather than declarative, and it is the stronger half: `face_direction` is a
+        // `Movement` action that writes only the actor's own facing (`Character.faceDirection`), so membership can no
+        // longer equal the `Expression` group - that equivalence was a statement about a handler group, not about the
+        // native calls. An action that DOES change the world is still caught the moment it is exempted, by the probe
+        // below: its receipt is journalled, its write fails, and the funnel that must refuse it no longer does, so
+        // `refused` stops equalling `journalledMutating`.
         HashSet<string> exempt = new(FarmhandActionCatalog.ActionsThatChangeNothing.Keys, StringComparer.Ordinal);
         HashSet<string> declaredExpression = population
             .Where(row => row.HandlerGroup == FarmhandActionHandlerGroup.Expression)
             .Select(row => row.ActionId)
             .ToHashSet(StringComparer.Ordinal);
-        exempt.Should().BeEquivalentTo(
-            declaredExpression,
-            because: $"the exemption must be exactly the catalogue's Expression group · {line}");
+        declaredExpression.Should().BeSubsetOf(
+            exempt,
+            because: $"every action in the catalogue's Expression group changes nothing about the world and must be exempt · {line}");
         exempt.Should().BeSubsetOf(population.Select(row => row.ActionId), "an exemption names a catalogued action, never an id nobody serves");
         FarmhandActionCatalog.ActionsThatChangeNothing.Should().OnlyContain(entry => entry.Value.Length > 60, "each exemption states the native reason it cannot change the world");
 
