@@ -149,4 +149,42 @@ public static class TileOccupantKind
                 return reason;
         return null;
     }
+
+    /// <summary>
+    /// The REASON TOKEN a refusal answers with when nothing published clears <paramref name="kind"/>: the same fact as
+    /// <see cref="UnclearableReason"/> in the size the wire takes.
+    ///
+    /// <para>
+    /// WHY IT IS NOT A THIRD MEMBER OF <see cref="Unclearable"/>. That table's `(kind, prose)` shape is what
+    /// `tools/audit-stardew-clearing-vocabulary.mjs` parses, and a middle member would not fail that gate - it would empty
+    /// its population and report five `published_kind_no_action_clears` findings about the catalogue while the reader was
+    /// the broken half, which is the exact shape that gate's own comment records as already paid for. So the tokens are
+    /// declared beside the prose and the two are held together by `a_blocker_is_named_by_the_surface_that_clears_it`,
+    /// which refuses a kind with a reason and no token, a token for a kind with no reason, and a refusal that carries
+    /// neither.
+    /// </para>
+    /// <para>
+    /// WHY THE REFUSAL CARRIES IT AT ALL. A bare `no_published_action_clears:bush` says nothing about whether the bush is
+    /// there for a reason, whether a tool would open it, or whether nobody wrote the answer down - and the three lead to
+    /// different next steps (walk around it, swing at it, file it). Measured `round77`: a sapling plan was refused at three
+    /// nodes by a bush, and the only answer the surface had was that one word.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyList<(string Kind, string Code)> UnclearableCodes = new[]
+    {
+        (OtherObject, "removal_is_not_a_way_through"),
+        (Terrain, "no_clearing_word_for_this_feature"),
+        (FruitTree, "no_action_fells_a_fruit_tree"),
+        (Bush, "engine_keeps_it_standing"),
+        (ResourceClump, "engine_names_no_tool_for_it"),
+    };
+
+    /// <summary>The token for why <paramref name="kind"/> is not clearable, or null when no reason is declared for it.</summary>
+    public static string? UnclearableCode(string kind)
+    {
+        foreach ((string declared, string code) in UnclearableCodes)
+            if (string.Equals(declared, kind, System.StringComparison.Ordinal))
+                return code;
+        return null;
+    }
 }

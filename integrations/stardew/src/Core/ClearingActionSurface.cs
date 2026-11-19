@@ -19,7 +19,27 @@ namespace GameBuddy.Stardew.Core;
 /// a crop she had planted.
 /// </para>
 /// </param>
-public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost, bool Destructive);
+/// <param name="TargetFamily">
+/// The snapshot family this action ADDRESSES its targets by, copied from its own `TargetFamily` declaration.
+///
+/// <para>
+/// It travels with the offer because a refusal that names a clearer has to name what the clearer is aimed at, and the
+/// alternative is a second table of "which family publishes what floor" beside the catalogue - which is how a twig
+/// blocker came to answer `blocker_not_published` while the frame carried its `worldObjectTargets` row: the table
+/// listed five families and `remove_placed_item`'s was not one of them.
+/// </para>
+/// </param>
+public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost, bool Destructive, string TargetFamily)
+{
+    /// <summary>
+    /// The family slot of a declaration that publishes none.
+    ///
+    /// It is spelled rather than left null so the offer answers one shape, and it is unreachable in practice:
+    /// `EveryOccupantDeclarationNamesTheFamilyThatPublishesIt` refuses a `Clears` declaration with no `TargetFamily` by
+    /// name.
+    /// </summary>
+    public const string NoTargetFamily = "none";
+}
 
 /// <summary>
 /// Which of the Mod's own actions can remove the thing standing in a route, read from the published action surface.
@@ -38,9 +58,10 @@ public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost
 /// the declaration's own price, so the caller weighs a dispatch against a route instead of guessing at one.
 /// </para>
 /// <para>
-/// An occupant no row declares answers with an empty list, and the refusal says so in one word
-/// (`no_published_action_clears:&lt;occupant&gt;`). That is the honest answer for a bush: `harvest_bush` HARVES a bush,
-/// it does not clear a way through one, and it therefore declares no `Clears`.
+/// An occupant no row declares answers with an empty list, and the refusal says so together with the reason the
+/// vocabulary declares for it (`no_published_action_clears:&lt;occupant&gt;:&lt;reason&gt;`). That is the honest answer
+/// for a bush: `harvest_bush` HARVES a bush, it does not clear a way through one, it therefore declares no `Clears`, and
+/// `TileOccupantKind.UnclearableCodes` says why the engine keeps the bush standing.
 /// </para>
 /// </summary>
 public static class ClearingActionSurface
@@ -53,7 +74,11 @@ public static class ClearingActionSurface
         return surface
             .Where(registration => registration.Descriptor?.Clears is { } clears
                 && clears.Occupants.Contains(occupant, StringComparer.Ordinal))
-            .Select(registration => new FarmhandClearingOffer(registration.ActionId, registration.Descriptor!.Clears!.Cost, registration.Descriptor.Clears.Destructive))
+            .Select(registration => new FarmhandClearingOffer(
+                registration.ActionId,
+                registration.Descriptor!.Clears!.Cost,
+                registration.Descriptor.Clears.Destructive,
+                registration.Descriptor.TargetFamily ?? FarmhandClearingOffer.NoTargetFamily))
             .ToArray();
     }
 }

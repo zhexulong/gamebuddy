@@ -327,10 +327,21 @@ public sealed class SweepTargetRefusalNamingTests
             const string NoClearer = ClearingEvidence.NoPublishedActionClears + ":";
             if (clears.StartsWith(NoClearer, StringComparison.Ordinal))
             {
-                string unclearable = clears[NoClearer.Length..];
-                return TileOccupantKind.UnclearableReason(unclearable) is null
-                    ? (false, $"says nothing clears {unclearable}, which is not a declared-unclearable kind")
-                    : (true, $"declared unclearable: {unclearable}");
+                string token = clears[NoClearer.Length..];
+                int colon = token.IndexOf(':');
+                string unclearable = colon < 0 ? token : token[..colon];
+                string? reason = colon < 0 ? null : token[(colon + 1)..];
+                if (TileOccupantKind.UnclearableReason(unclearable) is null)
+                    return (false, $"says nothing clears {unclearable}, which is not a declared-unclearable kind");
+                // AND THE REASON HAS TO BE THE DECLARED ONE. A word that names the kind and stops - or names a reason the
+                // vocabulary does not carry - leaves the caller with "nothing of ours does it" and "nothing at all can"
+                // as one sentence, which is the silence this verdict was written to refuse.
+                string? declared = TileOccupantKind.UnclearableCode(unclearable);
+                if (declared is null)
+                    return (false, $"declares {unclearable} unclearable without a reason token");
+                return string.Equals(reason, declared, StringComparison.Ordinal)
+                    ? (true, $"declared unclearable: {unclearable}:{declared}")
+                    : (false, $"says nothing clears {unclearable}:{reason ?? "no_reason"}, and the declared reason is {declared}");
             }
 
             return ClearerListPattern.IsMatch(clears)

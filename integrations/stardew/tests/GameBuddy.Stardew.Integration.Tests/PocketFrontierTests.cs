@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using Microsoft.Xna.Framework;
 using StardewValley;
@@ -98,7 +99,7 @@ public sealed class PocketFrontierTests
         BuildPocket(harness);
         harness.Actor.position.Set(new Vector2(ActorTile.X * 64 + 8, ActorTile.Y * 64));
 
-        string? published = ExecutionManager.PublishedBlockerTargetId(harness.Actor, "weedTargets", 7, 6);
+        string? published = ExecutionManager.PublishedBlockerTargetId(harness.Actor, TileOccupantKind.Weed, 7, 6);
         published.Should().NotBeNull("the weed family publishes the frontier blocker, or the refusal names an id no plan can use");
 
         (_, string? evidence, _) = Refuse(harness, TargetTile);

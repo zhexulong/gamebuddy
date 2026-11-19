@@ -9,8 +9,8 @@ using GameBuddy.Stardew.Core.Policy;
 namespace GameBuddy.Stardew;
 
 /// <summary>
-/// Answers the target id the published frame carries for one occupant of one snapshot family on one tile, or null when
-/// that frame could not have carried a row for it.
+/// Answers the target id the published frame carries for the occupant standing on one tile, or null when that frame
+/// could not have carried a row for it.
 ///
 /// <para>
 /// A delegate rather than a call because the frame is assembled from the `Discover*` projections, which live beside the
@@ -18,8 +18,13 @@ namespace GameBuddy.Stardew;
 /// discovery, no tool and no action dispatcher (see `TheWalkNeverCallsAClearingAction`). What crosses is one answer
 /// about one tile, so an absent lookup is an honest "nothing was published" rather than a second snapshot.
 /// </para>
+/// <para>
+/// The argument is the OCCUPANT and not a family name: which families can carry a row for a weed is a fact about the
+/// clearing declarations that clear weeds, so the producer derives it from them rather than being handed a family by a
+/// second table here. That table is what left a twig's `worldObjectTargets` row unlooked-at.
+/// </para>
 /// </summary>
-internal delegate string? PublishedTargetIdLookup(Farmer localPlayer, string targetFamily, int x, int y);
+internal delegate string? PublishedTargetIdLookup(Farmer localPlayer, string occupant, int x, int y);
 
 /// <summary>
 /// Client-local, game-thread controller for the native Farmhand represented by
@@ -447,12 +452,12 @@ internal sealed class StardewBodyController
         (int X, int Y) tile,
         string? detourFacts)
     {
-        string? targetId = this.publishedTargetId?.Invoke(localPlayer, occupancy.TargetFamily, tile.X, tile.Y);
+        IReadOnlyList<FarmhandClearingOffer> clearers = ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations);
         return ClearingEvidence.DescribeBlocker(
             occupancy.Occupant,
             tile,
-            targetId,
-            ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations),
+            this.publishedTargetId?.Invoke(localPlayer, occupancy.Occupant, tile.X, tile.Y),
+            clearers,
             occupancy.StaminaCharge,
             detourFacts);
     }
@@ -1836,15 +1841,14 @@ internal sealed class StardewBodyController
     /// THE one walk over the engine's occupancy containers, read by four callers that must not drift: the clearing
     /// plan behind <c>clear_to_reach</c>, the name a refusal gives the thing in the way (<c>blocker_occupant=bush</c>),
     /// the frontier read that finds that thing without a clearing plan at all, and the rim of an enclosed actor's own
-    /// component (`ExecutionManager.DescribeFrontierClearance`, which needs the occupant, the family that publishes it
-    /// and which declarations clear it). A second walker here is how the tile that is priced and the tile that is named
-    /// become two different tiles.
+    /// component (`ExecutionManager.DescribeFrontierClearance`, which needs the occupant and which declarations clear
+    /// it). A second walker here is how the tile that is priced and the tile that is named become two different tiles.
     /// </para>
     /// <para>
     /// <see cref="Occupancy.ClearCost"/> is null for an occupant that can be NAMED but not cleared - a bush is the one
     /// that matters, because a bush in a corridor is a route no published action opens and the caller has to be told
-    /// so in words (`no_published_action_clears:bush`) rather than told the tile is a wall. Naming it costs nothing and
-    /// pricing it would be a lie, so the two readings are separate fields of one answer.
+    /// so in words (`no_published_action_clears:bush:engine_keeps_it_standing`) rather than told the tile is a wall.
+    /// Naming it costs nothing and pricing it would be a lie, so the two readings are separate fields of one answer.
     /// </para>
     /// </summary>
     internal static Occupancy? OccupantAt(
@@ -1869,9 +1873,7 @@ internal sealed class StardewBodyController
                 return null;
             if (Price(clumpKind, toolPower, clumpKind == "stump" ? foraging : mining) is not { } clumpPrice)
                 return null;
-            // A clump's row is published by ONE family whichever clump it is, because "which tool removes this" is a
-            // property of the clump and `debrisTargets` carries it as a field rather than as a separate list.
-            return new Occupancy(clumpKind, clumpPrice.Cost, TileOccupancy.ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
+            return new Occupancy(clumpKind, clumpPrice.Cost, TileOccupancy.ClumpOccupant(clump.parentSheetIndex.Value), clumpPrice.Stamina);
         }
 
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
@@ -1885,12 +1887,7 @@ internal sealed class StardewBodyController
             // A twig is AXE work (`Object.cs:1182`) and an axe charges foraging, the way a clump's stump does.
             if (Price(objectKind, toolPower, detail == TileOccupantKind.Twig ? foraging : mining) is not { } objectPrice)
                 return null;
-            return new Occupancy(objectKind, objectPrice.Cost, detail, detail switch
-            {
-                TileOccupantKind.Weed => "weedTargets",
-                TileOccupantKind.Twig => "worldObjectTargets",
-                _ => "rockSourceTargets",
-            }, objectPrice.Stamina);
+            return new Occupancy(objectKind, objectPrice.Cost, detail, objectPrice.Stamina);
         }
 
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -1906,7 +1903,7 @@ internal sealed class StardewBodyController
                 return null;
             if (Price(terrainKind, toolPower, farming) is not { } terrainPrice)
                 return null;
-            return new Occupancy(terrainKind, terrainPrice.Cost, detail, detail == "grass" ? "grassTargets" : "scytheCropTargets", terrainPrice.Stamina);
+            return new Occupancy(terrainKind, terrainPrice.Cost, detail, terrainPrice.Stamina);
         }
 
         // LAST, because a bush is the one occupant that blocks a body and that no priced tool removes. It is named so
@@ -1921,7 +1918,7 @@ internal sealed class StardewBodyController
             if (!large.getBoundingBox().Contains((int)tile.X * 64 + 32, (int)tile.Y * 64 + 32))
                 continue;
             if (large is StardewValley.TerrainFeatures.Bush)
-                return new Occupancy("bush", null, "bush", "bushTargets", null);
+                return new Occupancy("bush", null, "bush", null);
         }
 
         return null;
@@ -1939,14 +1936,20 @@ internal sealed class StardewBodyController
             : null;
 
     /// <summary>
-    /// One tile's named occupant, its clearing price when it has one, and the family that publishes it.
+    /// One tile's named occupant, its clearing price when it has one, and what removing it costs the body in stamina.
     ///
     /// <para>
     /// <c>ClearCost</c> is the search unit and <c>StaminaCharge</c> is the engine's own charge for one swing; both are
     /// null for an occupant nothing published removes.
     /// </para>
+    /// <para>
+    /// There is no `TargetFamily` here. Which snapshot family publishes an occupant is declared by the actions whose
+    /// `Clears` names it (<see cref="FarmhandClearingOffer.TargetFamily"/>), and a copy beside this walk was a second
+    /// spelling that went stale: it listed five families while the catalogue had a sixth (`worldObjectTargets`, for the
+    /// twig `remove_placed_item` clears), so a twig blocker answered as if no target existed.
+    /// </para>
     /// </summary>
-    internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
+    internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, int? StaminaCharge);
 
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {

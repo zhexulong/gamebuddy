@@ -492,6 +492,27 @@ public sealed class ClearStepMoveTests
         }
 
         /// <summary>
+        /// Twig litter in the object layer, from the one id family the engine's own `Object.IsTwig` names (`(O)294`,
+        /// `GameLocation.cs:15351`) and the name a process without a save can carry.
+        ///
+        /// It is its own occupant kind because it is its own TOOL: an axe, through `remove_placed_item`, which addresses
+        /// it in `worldObjectTargets` rather than in `weedTargets`.
+        /// </summary>
+        public void PlaceTwig(int x, int y)
+        {
+            var twig = new StardewValley.Object
+            {
+                Name = "Twig",
+                Category = -999,
+                ItemId = "294",
+            };
+            typeof(Item)
+                .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(twig, "(O)294");
+            this.Location.objects[new Vector2(x, y)] = twig;
+        }
+
+        /// <summary>
         /// A controller with no receipt capture and the PRODUCER's own id lookup - the seam the refusal formatter reads,
         /// without a walk in front of it.
         /// </summary>
@@ -499,7 +520,7 @@ public sealed class ClearStepMoveTests
             new((_, _, _) => { }, ExecutionManager.PublishedBlockerTargetId);
 
         /// <summary>The id `DiscoverWeedTargets` publishes for one tile, read from that discovery rather than rebuilt.</summary>
-        public string WeedTargetId(int x, int y) => ExecutionManager.PublishedBlockerTargetId(this.Actor, "weedTargets", x, y)!;
+        public string WeedTargetId(int x, int y) => ExecutionManager.PublishedBlockerTargetId(this.Actor, "weed", x, y)!;
 
         /// <summary>
         /// The refusal the arrival re-plan answers, with the actor standing where the walk left it. The controller is

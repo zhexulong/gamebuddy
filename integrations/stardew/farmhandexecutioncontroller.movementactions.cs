@@ -364,17 +364,16 @@ internal sealed partial class ExecutionManager
     /// <param name="Tile">The wall to swing at.</param>
     /// <param name="StandAt">The component tile a swing reaches it from - inside the pocket, by construction.</param>
     /// <param name="Occupant">The engine's own name for what stands there (`weed`, `quarry_boulder`, `bush`).</param>
-    /// <param name="TargetFamily">The snapshot family that publishes that occupant, which is where its id comes from.</param>
     /// <param name="Clearers">
     /// Every published action whose own `Clears` declaration accepts the occupant, with its stated price - the SAME
-    /// declarations the `clear_step_blocked` path reads, so no kind-to-action table exists here to drift from them.
+    /// declarations the `clear_step_blocked` path reads, so no kind-to-action table exists here to drift from them. The
+    /// family a blocker's id comes from is read from these too (`TargetFamily`), not from a field beside them.
     /// </param>
     /// <param name="StaminaCharge">The engine's charge for one swing at it, or null when the live tool cannot pay one.</param>
     internal readonly record struct FrontierBlocker(
         (int X, int Y) Tile,
         (int X, int Y) StandAt,
         string Occupant,
-        string TargetFamily,
         System.Collections.Generic.IReadOnlyList<FarmhandClearingOffer> Clearers,
         int? StaminaCharge);
 
@@ -507,7 +506,7 @@ internal sealed partial class ExecutionManager
                         continue;
                     }
 
-                    candidates.Add(new FrontierBlocker(rim, standAt, occupancy.Occupant, occupancy.TargetFamily, clearers, occupancy.StaminaCharge));
+                    candidates.Add(new FrontierBlocker(rim, standAt, occupancy.Occupant, clearers, occupancy.StaminaCharge));
                 }
             }
         }
@@ -588,7 +587,7 @@ internal sealed partial class ExecutionManager
 
     private static string DescribeFrontierBlocker(FrontierBlocker blocker, Farmer player)
     {
-        string? targetId = PublishedBlockerTargetId(player, blocker.TargetFamily, blocker.Tile.X, blocker.Tile.Y);
+        string? targetId = PublishedBlockerTargetId(player, blocker.Occupant, blocker.Tile.X, blocker.Tile.Y);
         string step = ClearingEvidence.DescribeFirstStep(
             new FirstClearStep(true, blocker.Tile, blocker.StandAt, RemainingClears: 1, "frontier"),
             _ => blocker.Occupant) ?? string.Empty;

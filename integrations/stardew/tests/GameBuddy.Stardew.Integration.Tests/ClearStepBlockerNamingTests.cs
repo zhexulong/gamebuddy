@@ -78,6 +78,8 @@ public sealed class ClearStepBlockerNamingTests
             "the thing actually in the way, named from the engine's large terrain feature");
         evidence.Should().Contain("clears_with=no_published_action_clears:bush",
             "harvest_bush harvests a bush rather than clearing a path through one, so nothing we publish removes it");
+        evidence.Should().Contain("engine_keeps_it_standing",
+            "and WHY nothing removes it: the vocabulary's own reason for a bush (`TileOccupantKind.UnclearableCodes`)");
         evidence.Should().NotContain("clears_with=harvest_bush",
             "a harvest advertised as a way through would be advice the action cannot honour");
         evidence.Should().Contain("reachable=5,3;detour_steps=3",
@@ -86,7 +88,8 @@ public sealed class ClearStepBlockerNamingTests
 
     /// <summary>
     /// (c) The id exists only for what a frame published. A boulder no tool in her pack can break is priced by the
-    /// clearing search and never appears in `debrisTargets`, so the refusal must say so rather than fabricate a hash.
+    /// clearing search and never appears in `debrisTargets`, so the refusal must say WHICH family published nothing rather
+    /// than fabricate a hash or deny that the occupant is a catalogue target at all.
     /// </summary>
     [Fact]
     public void ABlockerTheFrameNeverPublishedSaysSoAndNeverInventsAnId()
@@ -100,10 +103,10 @@ public sealed class ClearStepBlockerNamingTests
         code.Should().Be(StardewBodyController.ClearStepBlockedReasonCode);
         evidence!.Should().Contain("blocker_occupant=quarry_boulder",
             "the engine's own constant for resource clump 148 (ResourceClump.quarryBoulderIndex)");
-        evidence.Should().Contain("blocker_target=blocker_not_published",
-            "this actor owns no pickaxe, so `debrisTargets` publishes no row for it and there is no id to hand out");
+        evidence.Should().Contain("blocker_target=unpublished:debrisTargets",
+            "the family that would carry the row is named, so the caller can tell 'look in debrisTargets' from 'no action exists'");
         evidence.Should().NotContain("blocker_target=debris_",
-            "a fabricated id would be an identity the caller can never satisfy");
+            "a fabricated id would be an identity the frame never carried");
     }
 
     /// <summary>
@@ -137,8 +140,52 @@ public sealed class ClearStepBlockerNamingTests
         harness.PlaceRock(6, 3);
 
         harness.BlindController().DescribeBlocker(harness.Actor, (6, 3)).Should().Be(
-            "blocker_occupant=quarry_boulder@6,3;clears_with=clear_debris(stamina:4,tool:target_requirement,turns:1),break_resource_clump(stamina:4,tool:target_requirement,turns:1);blocker_target=blocker_not_published",
-            "both clump actions declare it, at the engine's own pickaxe charge (2 * (power + 1) - MiningLevel * 0.1 = 4 at a bare pickaxe and Mining 0), and neither can address it by an id this frame never published");
+            "blocker_occupant=quarry_boulder@6,3;clears_with=clear_debris(stamina:4,tool:target_requirement,turns:1),break_resource_clump(stamina:4,tool:target_requirement,turns:1);blocker_target=unpublished:debrisTargets",
+            "both clump actions declare it, at the engine's own pickaxe charge (2 * (power + 1) - MiningLevel * 0.1 = 4 at a bare pickaxe and Mining 0), and neither can address it by an id this frame never published - so the family that published nothing is named");
+    }
+
+    /// <summary>
+    /// (2) OF THE ROUND77 READING, IN ONE TILE: the occupant IS a catalogue target (a weed, cleared by `cut_weeds`) and
+    /// the frame carried no row for THIS tile - the family's window is a radius around the actor, and the frontier of a
+    /// walkable component is not. The refusal used to answer `blocker_not_published` for it, which is a second lie stacked
+    /// on the first: the action exists and so does the target.
+    /// </summary>
+    [Fact]
+    public void AWeedWhoseRowTheFrameMissedIsNamedByTheFamilyThatWouldCarryIt()
+    {
+        string described = ClearingEvidence.DescribeBlocker(
+            "weed",
+            (11, 11),
+            targetId: null,
+            clearers: ClearingActionSurface.ClearersOf("weed", FarmhandActionCatalog.Registrations),
+            staminaCharge: 0,
+            detourFacts: null);
+
+        described.Should().Be(
+            "blocker_occupant=weed@11,11;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);blocker_target=unpublished:weedTargets",
+            "the round77 reading, with the second lie removed: the weed has a published clearer AND a published family");
+    }
+
+    /// <summary>
+    /// (2) THE FAMILY THAT WAS NEVER LOOKED UP. A twig is cleared by `remove_placed_item`, whose declared family is
+    /// `worldObjectTargets` - a family the refusal's own list did not carry, so a twig blocker answered as if no target
+    /// could exist for it however complete the frame was. The family is now read from the declaration that clears it.
+    /// </summary>
+    [Fact]
+    public void ATwigBlockerIsLookedUpInTheFamilyItsOwnClearerAddresses()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create();
+        harness.BuildCorridor();
+        harness.PlaceTwig(6, 3);
+
+        string described = harness.BlindController().DescribeBlocker(harness.Actor, (6, 3));
+
+        TileOccupancy.Of(harness.Location, 6, 3).Should().Be(TileOccupantKind.Twig,
+            "the fixture has to be the engine's twig litter, or this case measures nothing");
+        described.Should().Contain("clears_with=remove_placed_item(",
+            "the axe swing whose declaration names the twig");
+        described.Should().Contain("blocker_target=unpublished:worldObjectTargets",
+            "the family `remove_placed_item` addresses, named by the refusal - not a list beside it");
     }
 
     /// <summary>
@@ -187,8 +234,8 @@ public sealed class ClearStepBlockerNamingTests
             detourFacts: ClearingEvidence.DescribeDetour((5, 3), 3));
 
         described.Should().Be(
-            "blocker_occupant=bush@6,3;clears_with=no_published_action_clears:bush;blocker_target=blocker_not_published;reachable=5,3;detour_steps=3",
-            "nothing to swing at, no invented price for it, and the measured walk in its place");
+            "blocker_occupant=bush@6,3;clears_with=no_published_action_clears:bush:engine_keeps_it_standing;blocker_target=no_clearing_action;reachable=5,3;detour_steps=3",
+            "nothing to swing at, no invented price for it, the engine's own reason the bush stays, no target to address, and the measured walk in its place");
     }
 
     /// <summary>

@@ -76,8 +76,9 @@ public static class ClearingEvidence
     /// what the game calls it rather than what the costing table calls it - the two differ exactly where the caller
     /// needs them to (a `quarry_boulder` is priced as a `rock`). <paramref name="targetId"/> is null when the frame the
     /// caller's plan was compiled against carried no row for that tile, and that absence is stated as
-    /// <see cref="BlockerNotPublished"/> rather than filled with a rebuilt hash: an id only exists for what a frame
-    /// published, and an invented one would be an identity the caller can never satisfy.
+    /// <see cref="TargetUnpublished"/> with the family that would have carried the row rather than filled with a rebuilt
+    /// hash: a caller told WHICH family published nothing can look in that family's rows or move into its reach, while
+    /// `blocker_not_published` read as "this tile is nothing" and cost the round77 plan three nodes.
     /// </para>
     /// <para>
     /// EVERY clearer is named with ITS OWN cost - the tool the swing needs, the turns it takes, and the engine's stamina
@@ -87,9 +88,10 @@ public static class ClearingEvidence
     /// </para>
     /// <para>
     /// The absence of a clearing action is stated in the same shape: <c>no_published_action_clears:&lt;kind&gt;</c>, so
-    /// "nothing we have removes this" is one word a caller can branch on instead of a missing key it must guess at. It
-    /// is the right answer for a bush: `harvest_bush` declares no `Clears`, because harvesting a bush is not a way
-    /// through one.
+    /// "nothing we have removes this" is one word a caller can branch on instead of a missing key it must guess at - and
+    /// with the REASON the vocabulary declares for that kind (<c>:engine_keeps_it_standing</c>) beside it, because "nothing
+    /// of ours removes it" and "nothing at all can" are two different next steps. It is the right answer for a bush:
+    /// `harvest_bush` declares no `Clears`, because harvesting a bush is not a way through one.
     /// </para>
     /// </summary>
     /// <param name="occupant">The engine's own name for what stands on the tile.</param>
@@ -115,11 +117,43 @@ public static class ClearingEvidence
         ArgumentNullException.ThrowIfNull(occupant);
         ArgumentNullException.ThrowIfNull(clearers);
         string clears = clearers.Count == 0
-            ? $"{NoPublishedActionClears}:{occupant}"
+            ? NoPublishedClearer(occupant)
             : string.Join(",", clearers.Select(offer => $"{offer.ActionId}({DescribeCost(offer.Cost, staminaCharge)})"));
-        string described = $"{Occupant(occupant, blockerTile)};clears_with={clears};blocker_target={targetId ?? BlockerNotPublished}";
+        string described = $"{Occupant(occupant, blockerTile)};clears_with={clears};blocker_target={TargetText(targetId, clearers)}";
         return string.IsNullOrEmpty(detourFacts) ? described : $"{described};{detourFacts}";
     }
+
+    /// <summary>
+    /// What `clears_with` says when no published action removes the occupant: the occupant, and the reason the vocabulary
+    /// declares for it.
+    ///
+    /// <para>
+    /// The reason is appended and never invented: a kind with no declared token answers with the bare word, which the
+    /// gate `a_blocker_is_named_by_the_surface_that_clears_it` refuses by name. A surface that guessed its own reason
+    /// here would be a second declaration of why a kind cannot be cleared, and the two would drift the first time either
+    /// moved.
+    /// </para>
+    /// </summary>
+    private static string NoPublishedClearer(string occupant) =>
+        TileOccupantKind.UnclearableCode(occupant) is { } reason
+            ? $"{NoPublishedActionClears}:{occupant}:{reason}"
+            : $"{NoPublishedActionClears}:{occupant}";
+
+    /// <summary>
+    /// What `blocker_target` says: the id to dispatch, or WHICH family published none, or that there is nothing to address
+    /// at all.
+    ///
+    /// <para>
+    /// The three answers are three different next steps, so one word cannot carry them: an id is a dispatch, a family with
+    /// no row is a plan that has to look in that family (or its radius) before it can name one, and no clearer at all means
+    /// no step exists however the frame is re-read. `blocker_not_published` said all three at once, and a weed with both a
+    /// published action and a published row count read as unpublished.
+    /// </para>
+    /// </summary>
+    private static string TargetText(string? targetId, IReadOnlyList<FarmhandClearingOffer> clearers) =>
+        targetId is { Length: > 0 } id ? id
+        : clearers.Count == 0 ? NoClearingAction
+        : $"{TargetUnpublished}:{clearers[0].TargetFamily}";
 
     /// <summary>
     /// The SAME two facts in the HINT's size, for the one channel a settled failure keeps.
@@ -138,7 +172,7 @@ public static class ClearingEvidence
         ArgumentNullException.ThrowIfNull(occupant);
         ArgumentNullException.ThrowIfNull(clearers);
         string clears = clearers.Count == 0
-            ? $"{NoPublishedActionClears}:{occupant}"
+            ? NoPublishedClearer(occupant)
             : string.Join(",", clearers.Select(offer => offer.ActionId));
         return $"{Occupant(occupant, blockerTile)};clears_with={clears}";
     }
@@ -232,9 +266,15 @@ public static class ClearingEvidence
     /// <summary>What the evidence says when the engine's stamina charge could not be decided from live state.</summary>
     public const string Undecided = "undecided";
 
-    /// <summary>What the evidence says when the frame published no row for the blocker's tile.</summary>
-    public const string BlockerNotPublished = "blocker_not_published";
-
     /// <summary>What the evidence says when no published action declares it can remove the occupant.</summary>
     public const string NoPublishedActionClears = "no_published_action_clears";
+
+    /// <summary>What `blocker_target` says when the occupant's own clearing family published no row for its tile.</summary>
+    public const string TargetUnpublished = "unpublished";
+
+    /// <summary>
+    /// What `blocker_target` says when nothing published removes the occupant at all - so there is no target to address,
+    /// however the frame is re-read.
+    /// </summary>
+    public const string NoClearingAction = "no_clearing_action";
 }

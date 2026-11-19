@@ -1728,31 +1728,70 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// The target id the published frame carries for one occupant of one family on one tile, or null when that frame
-    /// could not have carried a row for it.
+    /// The target id the published frame carries for the <paramref name="occupant"/> standing on one tile, or null when
+    /// that frame could not have carried a row for it.
     ///
     /// <para>
-    /// It asks the FAMILY's own discovery - the same `Discover*` that publishes the rows the Agent reads - rather than
-    /// rebuilding the hash beside it, so an id it returns is one a caller can satisfy, and an id it withholds is one the
-    /// frame genuinely did not carry: out of the family's radius, past its cap, or filtered by its own admission (a
-    /// resource clump no tool in her pack can break is never published at all). A rebuilt hash in that last case would
-    /// hand out an identity no request can ever match.
+    /// It asks each FAMILY's own discovery - the same `Discover*` that publishes the rows the Agent reads - rather than
+    /// rebuilding the hash beside it, so an id it returns is one a caller can satisfy from the frame it holds, and an id
+    /// it withholds is one the frame genuinely did not carry: out of the family's radius, past its cap, or filtered by its
+    /// own admission (a resource clump no tool in her pack can break is never published at all). A rebuilt hash in that
+    /// last case would hand out an identity the caller has no row for.
     /// </para>
     /// <para>
-    /// Only the families that publish a ROUTE BLOCKER are answered here - the occupants `ClearableAt` prices. A family
-    /// outside the list answers null, which the refusal reports as `blocker_not_published`; that is the honest answer
-    /// for a tile nothing was asked about, never a claim that the frame was empty.
+    /// WHICH FAMILIES ARE ASKED IS NOT A LIST HERE. It is the `TargetFamily` each action that declares it clears the
+    /// occupant addresses its targets by, so an action and the family its refusal names are one edit. The list this
+    /// replaced held five names, and the catalogue had six: a twig is cleared by `remove_placed_item`, whose family is
+    /// `worldObjectTargets`, so the frame carried the twig's `placed_item_...` row while the refusal said no target existed.
+    /// </para>
+    /// <para>
+    /// Null is answered to the caller as `unpublished:&lt;family&gt;` (a clearing action exists and that family published no
+    /// row) or `no_clearing_action` (nothing published removes the occupant), so the two ways of having no id are told
+    /// apart instead of sharing `blocker_not_published`.
     /// </para>
     /// </summary>
-    internal static string? PublishedBlockerTargetId(Farmer player, string targetFamily, int x, int y) => targetFamily switch
+    internal static string? PublishedBlockerTargetId(Farmer player, string occupant, int x, int y)
     {
-        "weedTargets" => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        "grassTargets" => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        "rockSourceTargets" => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        "debrisTargets" => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        "scytheCropTargets" => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        _ => null,
-    };
+        foreach (FarmhandClearingOffer clearer in ClearingActionSurface.ClearersOf(occupant, FarmhandActionCatalog.Registrations))
+        {
+            if (!BlockerTargetRows.TryGetValue(clearer.TargetFamily, out Func<Farmer, int, int, string?>? publish))
+                continue;
+            if (publish(player, x, y) is { } id)
+                return id;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Every snapshot family a blocker's id can come from, and the discovery that publishes its rows.
+    ///
+    /// <para>
+    /// The keys are the families `Clears` declarations name. `a_blocker_is_named_by_the_surface_that_clears_it` holds this
+    /// map and the catalogue together and fails by name for a declaring action whose family is absent here, so a new
+    /// clearing action cannot be published as a force the refusal cannot address - which is what the hand-written switch
+    /// this replaces did to `worldObjectTargets`.
+    /// </para>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, Func<Farmer, int, int, string?>> BlockerTargetRows =
+        new Dictionary<string, Func<Farmer, int, int, string?>>(StringComparer.Ordinal)
+        {
+            ["weedTargets"] = (player, x, y) => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["grassTargets"] = (player, x, y) => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["rockSourceTargets"] = (player, x, y) => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["worldObjectTargets"] = (player, x, y) => DiscoverWorldObjectTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["debrisTargets"] = (player, x, y) => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["scytheCropTargets"] = (player, x, y) => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            // A standing tree and its stump are named by the refusal as occupants (`TileOccupantKind.Tree`), and both are
+            // cleared by an action with a family of its own. `OccupantAt` names no tree today - a chop addresses the
+            // trunk through its own family - so these two answer for the vocabulary the gate holds this map against
+            // rather than for a caller that reaches them: a map total over the declarations is what the gate is FOR.
+            ["treeChopSourceTargets"] = (player, x, y) => DiscoverTreeChopSourceTargets(player, new DiscoveryExclusionRecorder()).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["treeStumpTargets"] = (player, x, y) => DiscoverTreeStumpTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        };
+
+    /// <summary>The families this blocker read can ask, as data, so a gate can compare them with the catalogue's own.</summary>
+    internal static IReadOnlyCollection<string> BlockerTargetFamilies => BlockerTargetRows.Keys.ToArray();
 
     private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
