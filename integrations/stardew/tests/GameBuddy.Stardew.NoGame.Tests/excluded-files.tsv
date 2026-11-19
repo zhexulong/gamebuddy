@@ -75,6 +75,7 @@ DispatchEnvelopeTests.cs	mod-assembly	ExecutionManager
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 DoorTargetsInteriorExitTests.cs	game	Xna, Netcode, StardewValley, GameLocation
 DurabilityAlarmScopeGateTests.cs	mod-assembly	ExecutionManager, BridgeSession, FarmhandExecutionJournal, IModGlobalDataPersistence, BridgeHello
+DurabilityFailureCauseNamingGateTests.cs	mod-assembly	ExecutionManager, BridgeSession, FarmhandExecutionJournal, FarmhandExecutionJournalResultCode, IModGlobalDataPersistence, BridgeHello, BridgeReceipt, BridgeProtocol, FarmhandCapabilityPublication
 EdgeExitWarpSourceTests.cs	game	StardewValley
 EmbeddedWorldFactPayload.cs	mod-assembly	WireJson (declared in integrations/stardew/WireJson.cs, outside src/Core)
 EnterExitAdjacentExitRefusalTests.cs	game	Xna, Netcode, StardewModdingAPI, StardewValley, Game1, Farmer, LocationRequest, GameLocation
@@ -90,6 +91,7 @@ ExecutionTerminalUniquenessTests.cs	mod-assembly	Netcode, StardewValley, Executi
 FacilityActionTests.cs	mod-assembly	Handlers
 FarmAnimalPetActionTests.cs	mod-assembly	FarmhandExecutionJournal, AdmissionActionabilityProfile
 FarmhandExecutionJournalTests.cs	mod-assembly	FarmhandExecutionAdmission, FarmhandExecutionJournalRecord, FarmhandExecutionJournalState, FarmhandExecutionReceipt, IModGlobalDataPersistence
+FarmhandExecutionJournalWriteCostTests.cs	mod-assembly	FarmhandExecutionJournal, FarmhandExecutionAdmission, FarmhandExecutionJournalRecord, FarmhandExecutionJournalState, FarmhandExecutionReceipt, IModGlobalDataPersistence
 FarmhandForEachFamilyDriftTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, TargetFamilyWorld@TargetFamilyCompletenessTests.cs
 FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
 FeedTroughTargetCompositionTests.cs	mod-assembly	Netcode, StardewValley, Farmer, Game1, AnimalHouse, ExecutionManager, xTile
