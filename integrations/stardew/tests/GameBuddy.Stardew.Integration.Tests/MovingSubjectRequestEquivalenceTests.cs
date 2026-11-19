@@ -82,8 +82,8 @@ public sealed class MovingSubjectRequestEquivalenceTests
         ["collect_animal_product/target_changed"] = new Published("Rejected", "animal_product_target_changed", "target=animal_product_68cb774aa01def70", "<null>"),
         ["npc_relationship/gone"] = new Published("Rejected", "npc_relationship_target_gone", "target=npc_relationship_0000000000000000", "<null>"),
         ["npc_relationship/out_of_reach"] = new Published("Accepted", "accepted", "location=ProbeFarm;target=npc_relationship_b5586b3bf4942bb8;tile=0,0;distance=2;reach=1;approach=adjacent;stand_at=1,1", "<null>"),
-        ["interact_npc_with_item/item_not_owned"] = new Published("Rejected", "item_not_owned_in_slot", "slot=0", "<null>"),
-        ["interact_npc_with_item/item_slot_changed"] = new Published("Rejected", "item_slot_changed", "slot=0", "<null>"),
+        ["interact_npc_with_item/item_not_owned"] = new Published("Rejected", "item_not_owned_in_pack", "item=(O)24;named_slot=0", "<null>"),
+        ["interact_npc_with_item/item_mismatch"] = new Published("Rejected", "item_not_owned_in_pack", "item=(O)22;named_slot=0", "<null>"),
         ["interact_npc_with_item/npc_gone"] = new Published("Rejected", "npc_interaction_target_gone", "target=npc_relationship_0000000000000000", "<null>"),
         ["interact_npc_with_item/out_of_reach"] = new Published("Accepted", "accepted", "location=ProbeFarm;target=npc_relationship_b5586b3bf4942bb8;tile=0,0;distance=2;reach=1;approach=adjacent;stand_at=1,1", "<null>"),
     };
@@ -155,16 +155,16 @@ public sealed class MovingSubjectRequestEquivalenceTests
     /// rather than agreeing with whatever the code happens to answer.
     ///
     /// <para>
-    /// <c>interact_npc_with_item/item_slot_changed</c> is the row chosen because its argument is load-bearing: the request
-    /// names an item the pack slot does not hold, so the gate refuses <c>item_slot_changed</c> before it ever looks for a
-    /// villager. Name the item the slot DOES hold and the same request walks past that refusal to the next one - which is
+    /// <c>interact_npc_with_item/item_mismatch</c> is the row chosen because its argument is load-bearing: the request
+    /// names an item the pack does not hold, so the gate refuses <c>item_not_owned_in_pack</c> before it ever looks for a
+    /// villager. Name the item the pack DOES hold and the same request walks past that refusal to the next one - which is
     /// the difference this asserts, in the reason code the caller reads.
     /// </para>
     /// </summary>
     [Fact]
     public void TheComparisonDetectsASingleChangedArgument()
     {
-        const string Row = "interact_npc_with_item/item_slot_changed";
+        const string Row = "interact_npc_with_item/item_mismatch";
         Drive(Row).Should().Be(Before[Row], "the row must read clean before one argument is changed");
 
         using TargetFamilyWorld world = TargetFamilyWorld.Create();
@@ -421,7 +421,7 @@ public sealed class MovingSubjectRequestEquivalenceTests
                     ExpectedTargetId = "npc_relationship_0000000000000000",
                 });
             },
-            ["interact_npc_with_item/item_slot_changed"] = () =>
+            ["interact_npc_with_item/item_mismatch"] = () =>
             {
                 using TargetFamilyWorld world = TargetFamilyWorld.Create();
                 world.PutInPackSlot(0, SomeItem, 1);

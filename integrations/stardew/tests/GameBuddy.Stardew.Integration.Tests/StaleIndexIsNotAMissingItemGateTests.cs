@@ -37,7 +37,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// MEASURED 2026-11-19 (`round77`): 40 planned plantings, 6 done, <c>seed_not_owned_in_slot</c> 22 times. The planting
 /// family was the first walked and the four farming members - <c>fertilize_tile</c>, <c>place_wood_fence</c>,
 /// <c>place_crab_pot</c>, <c>bait_crab_pot</c> - the second, driven rather than only declared by
-/// <see cref="StaleSlotWalkTests"/> below. The rest of the population is named in <see cref="PendingWalk"/> and every
+/// <see cref="StaleSlotWalkTests"/> below, and <c>use_item</c>, <c>machine_load</c> and <c>interact_npc_with_item</c> the
+/// third. The rest of the population is named in <see cref="PendingWalk"/> and every
 /// entry there EXPIRES - the gate fails the moment one of them starts re-resolving, so the list cannot outlive its
 /// reason.
 /// </para>
@@ -123,9 +124,6 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
     private static readonly IReadOnlyDictionary<string, string> PendingWalk = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["equip_wearable"] = "the pack side of a wearable move is a slot the caller saw; the walk has not reached it",
-        ["interact_npc_with_item"] = "not walked yet",
-        ["machine_load"] = "not walked yet",
-        ["use_item"] = "not walked yet",
     };
 
     private static readonly Lazy<Measurement> Measured = new(Measure);
@@ -427,8 +425,9 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
 
 /// <summary>
 /// THE WALK THE GATE ONLY DECLARES. <see cref="StaleIndexIsNotAMissingItemGateTests"/> proves by shape that a member of
-/// the population resolves the item through the live pack; these cases drive the four farming members through their own
-/// production entry points and read which half answered.
+/// the population resolves the item through the live pack; these cases drive the four farming members, and the three
+/// slot-carrying members of the machine/animal/item file (<c>use_item</c>, <c>machine_load</c>,
+/// <c>interact_npc_with_item</c>), through their own production entry points and read which half answered.
 ///
 /// <para>
 /// Each case builds the measured shape: the plan's node named a slot it OBSERVED, and by the time the body armed the pack
@@ -461,6 +460,8 @@ public sealed class StaleSlotWalkTests
     private const string BaitItem = "(O)685";
     private const string WoodFenceItem = "(O)322";
     private const string CrabPotItem = "(O)710";
+    private const string CarryableItem = "(O)24";
+    private const string CoffeeBeanItem = "(O)433";
 
     [Fact]
     public void AFertilizerThatMovedInThePackIsFoundWhereThePackHoldsIt()
@@ -551,6 +552,97 @@ public sealed class StaleSlotWalkTests
             $"slot={LiveSlot};named_slot={NamedSlot}",
             "the receipt names the slot the pack answered and the slot the plan named");
         world.Actor.Items[LiveSlot]!.Stack.Should().Be(2, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    /// <summary>
+    /// <c>use_item</c>: the plan saw the item in slot 0, and by the time the body arms the stack sits in slot 5. The body
+    /// reads the item the request NAMES out of the live pack, so the answer is the item's own (a bare object is inedible)
+    /// and the receipt names the slot the pack answered beside the slot the plan named.
+    /// </summary>
+    [Fact]
+    public void AnItemToUseThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.PutInPackSlot(LiveSlot, CarryableItem, 1);
+
+        LocalExecutionReceipt receipt = WithEmptyObjectData(() =>
+            world.NewExecutionManager("use_item").RequestLocalUseItem("req_use_moved", NamedSlot, CarryableItem, Deadline()));
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "item_not_consumable",
+            $"the pack holds the item the request named, so the item's own edibility is what answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(1, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    /// <summary>
+    /// <c>machine_load</c> carries the input in the pack and addresses the machine by its own identity, so its input is
+    /// re-resolved the same way: the harness has no machine at the tile, and THAT is the answer the receipt must reach
+    /// instead of "there is nothing in slot 0".
+    /// </summary>
+    [Fact]
+    public void AMachineLoadThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutInPackSlot(LiveSlot, CoffeeBeanItem, 5);
+        string targetId = TargetId("BuildMachineTargetId", world.Farm, TileX, TileY, "(BC)12");
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("machine_load")
+            .RequestLocalLoadMachineInput("req_machine_moved", NamedSlot, TileX, TileY, CoffeeBeanItem, targetId, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "machine_load_target_changed",
+            $"the pack holds the input the request named, so the tile is what answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain(
+            $"slot={LiveSlot};named_slot={NamedSlot}",
+            "the receipt names the slot the pack answered and the slot the plan named");
+        world.Actor.Items[LiveSlot]!.Stack.Should().Be(5, "a refused request consumes nothing from the slot it resolved");
+    }
+
+    /// <summary>
+    /// <c>interact_npc_with_item</c> carries the gift in the pack and addresses the villager by identity, so the gift is
+    /// re-resolved the same way: what answers is the villager the request named, not the slot the plan wrote down.
+    /// </summary>
+    [Fact]
+    public void ANpcGiftThatMovedInThePackIsFoundWhereThePackHoldsIt()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PutInPackSlot(LiveSlot, CarryableItem, 1);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("interact_npc_with_item").RequestLocalInteractNpcWithItem(
+            "req_gift_moved", NamedSlot, TileX, TileY, CarryableItem, "npc_relationship_0000000000000000", Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "npc_interaction_target_gone",
+            $"the pack holds the gift the request named, so the villager is the layer that answers (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain("target=npc_relationship_0000000000000000");
+    }
+
+    /// <summary>
+    /// <c>use_item</c> reads <c>Game1.objectData</c> for the drink bit, a table only a loaded save supplies. An empty
+    /// table is supplied for the length of the call and taken back afterwards, the same way <see cref="PlaceWoodFence"/>
+    /// supplies the one fence row it needs.
+    /// </summary>
+    private static LocalExecutionReceipt WithEmptyObjectData(Func<LocalExecutionReceipt> request)
+    {
+        FieldInfo field = typeof(Game1).GetField("objectData", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!;
+        object? before = field.GetValue(null);
+        try
+        {
+            field.SetValue(null, new Dictionary<string, StardewValley.GameData.Objects.ObjectData>(StringComparer.Ordinal));
+            return request();
+        }
+        finally
+        {
+            field.SetValue(null, before);
+        }
     }
 
     private static long Deadline() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;

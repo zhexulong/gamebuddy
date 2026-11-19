@@ -18,9 +18,9 @@ internal sealed partial class ExecutionManager
             authorize: null,
             gate: _ =>
             {
-                if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
-                    return new TileTargetRefusal("machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
-                return MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal
+                if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+                    return new TileTargetRefusal("machine_load_input_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+                return MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, held) is { } machineRefusal
                     ? new TileTargetRefusal(machineRefusal.ReasonCode, machineRefusal.Detail)
                     : null;
             },
@@ -45,19 +45,21 @@ internal sealed partial class ExecutionManager
     /// for the INPUT comes from the probe, and it names the inputs the machine's data does accept.
     /// </para>
     /// </summary>
-    private static (string ReasonCode, string Detail)? MachineLoadRefusal(int targetX, int targetY, string expectedTargetId, StardewValley.Object input)
+    private static (string ReasonCode, string Detail)? MachineLoadRefusal(int targetX, int targetY, string expectedTargetId, int namedSlot, LiveSlot held)
     {
+        StardewValley.Object input = held.Item;
+        string slots = $"slot={held.Slot};named_slot={namedSlot}";
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return ("machine_load_target_changed", $"target={targetX},{targetY}");
+            return ("machine_load_target_changed", $"target={targetX},{targetY};{slots}");
         if (machine.GetMachineData() is null || !IsMachineInteractionObject(machine))
-            return ("machine_load_unsupported_machine", $"machine={machine.QualifiedItemId};accepts={UnavailableAcceptedInputs}");
+            return ("machine_load_unsupported_machine", $"machine={machine.QualifiedItemId};accepts={UnavailableAcceptedInputs};{slots}");
         if (machine.heldObject.Value is not null || machine.readyForHarvest.Value || machine.MinutesUntilReady > 0)
-            return ("machine_load_target_changed", $"machine={machine.QualifiedItemId};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};tile={targetX},{targetY}");
+            return ("machine_load_target_changed", $"machine={machine.QualifiedItemId};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};tile={targetX},{targetY};{slots}");
         if (!machine.performObjectDropInAction(input, probe: true, Game1.player))
-            return ("machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={input.QualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)}");
+            return ("machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={input.QualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)};{slots}");
         return null;
     }
 
@@ -118,32 +120,27 @@ internal sealed partial class ExecutionManager
         return acceptance.Inputs.Count == 0 ? NoAcceptedMachineInputs : string.Join(",", acceptance.Inputs);
     }
 
-    private static StardewValley.Object? ResolveLoadInput(int slot, string expectedQualifiedItemId) =>
-        slot >= 0 && slot < Game1.player.Items.Count
-        && Game1.player.Items[slot] is StardewValley.Object input
-        && string.Equals(input.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            ? input
-            : null;
-
     private LocalExecutionReceipt ExecuteMachineLoad(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
-        if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
-        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal)
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } liveInput)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = liveInput.Slot;
+        StardewValley.Object input = liveInput.Item;
+        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, slot, liveInput) is { } machineRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, machineRefusal.ReasonCode, machineRefusal.Detail);
 
         GameLocation location = Game1.player.currentLocation;
         if (!location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? machine))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY};slot={liveSlot};named_slot={slot}");
         if (!TryReadMachineLoadRequirement(machine, input, Game1.player, location, out MachineLoadRequirement requirement))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={expectedQualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={expectedQualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)};slot={liveSlot};named_slot={slot}");
 
         int stackBefore = input.Stack;
         int previousSlot = Game1.player.CurrentToolIndex;
         bool nativeHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
         }
         finally
@@ -151,7 +148,7 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        int stackAfter = Game1.player.Items[slot] is StardewValley.Object remainingStack ? remainingStack.Stack : 0;
+        int stackAfter = Game1.player.Items[liveSlot] is StardewValley.Object remainingStack ? remainingStack.Stack : 0;
         string? lastInput = machine.lastInputItem.Value?.QualifiedItemId;
         string? held = machine.heldObject.Value?.QualifiedItemId;
         bool consumedTheDeclaredCount = stackBefore - stackAfter == requirement.ConsumedCount;
@@ -163,7 +160,7 @@ internal sealed partial class ExecutionManager
             : machine.MinutesUntilReady >= 0;
         bool readinessAgrees = machine.readyForHarvest.Value == (machine.MinutesUntilReady == 0);
         bool succeeded = nativeHandled && consumedTheDeclaredCount && machineRecordedTheInput && held is not null && windowAgrees && readinessAgrees;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};slot={slot};input={expectedQualifiedItemId};input_stack_before={stackBefore};input_consumed={requirement.ConsumedCount};input_stack_after={stackAfter};last_input={lastInput ?? "none"};held={held ?? "none"};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(requirement.ProcessingMinutes is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};slot={liveSlot};named_slot={slot};input={expectedQualifiedItemId};input_stack_before={stackBefore};input_consumed={requirement.ConsumedCount};input_stack_after={stackAfter};last_input={lastInput ?? "none"};held={held ?? "none"};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(requirement.ProcessingMinutes is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
         return this.SettlePostcondition(requestId, executionId, succeeded, "machine_coffee_loaded", "machine_coffee_load_postcondition_unavailable", evidence);
     }
 
@@ -309,20 +306,20 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object food)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(food.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object food = held.Item;
         bool isDrink = Game1.objectData.TryGetValue(food.ItemId, out var objectData) && objectData.IsDrink;
         if (food.QualifiedItemId == "(O)434" || (!isDrink && food.Edibility == -300))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_consumable", $"slot={slot};item={expectedQualifiedItemId}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_consumable", $"item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
 
         int stackBefore = food.Stack;
-        LocalItemUseSpec specification = new(executionId, requestId, slot, expectedQualifiedItemId, stackBefore, food.Edibility, isDrink, Game1.player.Stamina, Game1.player.health, this.revision, requestedDeadlineMs);
+        LocalItemUseSpec specification = new(executionId, requestId, liveSlot, expectedQualifiedItemId, stackBefore, food.Edibility, isDrink, Game1.player.Stamina, Game1.player.health, this.revision, requestedDeadlineMs);
         int previousSlot = Game1.player.CurrentToolIndex;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             Game1.player.mostRecentlyGrabbedItem = food;
             Game1.player.eatHeldObject();
         }
@@ -331,18 +328,18 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        StardewValley.Object? remaining = slot < Game1.player.Items.Count ? Game1.player.Items[slot] as StardewValley.Object : null;
+        StardewValley.Object? remaining = liveSlot < Game1.player.Items.Count ? Game1.player.Items[liveSlot] as StardewValley.Object : null;
         bool started = Game1.player.isEating;
         bool consumed = remaining is null || (string.Equals(remaining.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && remaining.Stack == stackBefore - 1);
         if (!started)
         {
             ExecutionState state = consumed ? ExecutionState.Uncertain : ExecutionState.Rejected;
-            return this.RememberTerminal(requestId, executionId, state, consumed ? "item_use_started_without_animation" : "item_use_not_started", $"slot={slot};started=false;consumed={consumed.ToString().ToLowerInvariant()}");
+            return this.RememberTerminal(requestId, executionId, state, consumed ? "item_use_started_without_animation" : "item_use_not_started", $"slot={liveSlot};named_slot={slot};started=false;consumed={consumed.ToString().ToLowerInvariant()}");
         }
 
         this.slots.ItemUse.Assign(specification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
-            $"slot={slot};item={expectedQualifiedItemId};stack_before={stackBefore};edibility={food.Edibility};drink={isDrink.ToString().ToLowerInvariant()}");
+            $"slot={liveSlot};named_slot={slot};item={expectedQualifiedItemId};stack_before={stackBefore};edibility={food.Edibility};drink={isDrink.ToString().ToLowerInvariant()}");
     }
 
     /// <summary>
@@ -761,10 +758,8 @@ internal sealed partial class ExecutionManager
         return this.RequestLocalTileTarget("interact_npc_with_item", requestId, expectedTargetId, requestedDeadlineMs, AdmissionActionabilityProfile.General,
             location =>
             {
-                if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
-                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_slot", $"slot={slot}"));
-                if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-                    return TileTargetGate.Refused(new TileTargetRefusal("item_slot_changed", $"slot={slot}"));
+                if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } offered)
+                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}"));
                 if (FindVillagerByTargetId(location, expectedTargetId) is not StardewValley.NPC npc)
                     return TileTargetGate.Refused(new TileTargetRefusal("npc_interaction_target_gone", $"target={expectedTargetId}"));
                 return TileTargetGate.Resolved((int)npc.Tile.X, (int)npc.Tile.Y);
@@ -774,18 +769,18 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteInteractNpcWithItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
+        Farmer player = Game1.player;
+        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object offered = held.Item;
+        StardewValley.GameLocation location = player.currentLocation;
         StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
+        if (!IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_out_of_reach_after_approach", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
 
-        Farmer player = Game1.player;
         // Mirrors NPC.tryToReceiveActiveObject `if (!probe) { who.Halt();
         // who.faceGeneralDirection(this.getStandingPosition(), 0, opposite:
         // false, useTileCalculations: false); }` (NPC.cs:1725-1728).
@@ -833,7 +828,7 @@ internal sealed partial class ExecutionManager
         if (deliveryQuest is null && undersuppliedQuest is not null)
         {
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "quest_quantity_mismatch",
-                GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+                GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
                 + $";quest_id={undersuppliedQuest.id.Value};quest_target={undersuppliedQuest.target.Value};quest_item={undersuppliedQuest.ItemId.Value};quest_number={undersuppliedQuest.number.Value};quest_required_stack={undersuppliedQuest.number.Value};stack_after={stackBefore};completed_quests_before={completedQuestsBefore};completed_quests_after={completedQuestsBefore};quest_completed_after=false");
         }
 
@@ -852,7 +847,7 @@ internal sealed partial class ExecutionManager
                 // companion has no one to dismiss; the RNG-gated NPC emote the
                 // caller adds for this branch (NPC.cs:1781-1784) is a cosmetic
                 // animation with no observable product effect.
-                player.CurrentToolIndex = slot;
+                player.CurrentToolIndex = liveSlot;
                 player.Items.Reduce(offered, requiredNumber);
                 deliveryQuest.reloadDescription();
                 player.changeFriendship(friendshipAmount, npc);
@@ -863,7 +858,7 @@ internal sealed partial class ExecutionManager
             catch (Exception)
             {
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "quest_delivery_postcondition_unavailable",
-                    GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+                    GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
                     + $";quest_id={deliveryQuest.id.Value};quest_target={deliveryQuest.target.Value};quest_item={deliveryQuest.ItemId.Value};quest_number={requiredNumber};completed_quests_before={completedQuestsBefore}");
             }
             finally
@@ -871,8 +866,8 @@ internal sealed partial class ExecutionManager
                 player.CurrentToolIndex = previousToolIndex;
             }
 
-            int deliveryStackAfter = slot < player.Items.Count
-                && player.Items[slot] is StardewValley.Object remainingDelivery
+            int deliveryStackAfter = liveSlot < player.Items.Count
+                && player.Items[liveSlot] is StardewValley.Object remainingDelivery
                 && string.Equals(remainingDelivery.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
                 ? remainingDelivery.Stack
                 : 0;
@@ -885,7 +880,7 @@ internal sealed partial class ExecutionManager
             bool questStaysInLog = deliveryQuest.moneyReward.Value > 0
                 || (deliveryQuest.rewardDescription.Value is not null && deliveryQuest.rewardDescription.Value.Length > 2);
             bool noModalMounted = Game1.activeClickableMenu is null && !Game1.dialogueUp;
-            string deliveryEvidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+            string deliveryEvidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
                 + $";quest_id={deliveryQuest.id.Value};quest_target={deliveryQuest.target.Value};quest_item={deliveryQuest.ItemId.Value};quest_number={requiredNumber};quest_daily={deliveryQuest.dailyQuest.Value.ToString().ToLowerInvariant()};quest_completed_before={questCompletedBefore.ToString().ToLowerInvariant()};quest_completed_after={deliveryCompleted.ToString().ToLowerInvariant()};quest_stays_in_log={questStaysInLog.ToString().ToLowerInvariant()};completed_quests_before={completedQuestsBefore};completed_quests_after={completedQuestsAfter};stack_after={deliveryStackAfter};points_after={pointsAfter};friendship_amount={friendshipAmount};quest_25_completed_after={player.questLog.Any(quest => quest.id.Value == "25" && quest.completed.Value).ToString().ToLowerInvariant()};showed_response=false;dialogue_open_after={Game1.dialogueUp.ToString().ToLowerInvariant()};menu_open_after={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()}";
 
             if (deliveryCompleted && consumedRequiredNumber && noModalMounted)
@@ -899,20 +894,20 @@ internal sealed partial class ExecutionManager
         if (string.Equals(offered.QualifiedItemId, "(O)460", StringComparison.Ordinal)
             || (npc.CanReceiveGifts() && offered.HasContextTag(ItemContextTagManager.SanitizeContextTag("propose_roommate_" + npc.Name))))
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_proposal_item", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_proposal_item", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
         }
 
         // Gates 1-3 (NPC.cs:1943/2297-2298): can-receive, can-be-given, not_giftable.
         if (!npc.CanReceiveGifts())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_cannot_receive", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_cannot_receive", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
         if (!offered.canBeGivenAsGift() || ItemContextTagManager.HasBaseTag(offered.QualifiedItemId, "not_giftable"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_not_giftable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_not_giftable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
 
         // Dumped refusal (NPC.cs:2300-2310): native refuses with an emote and
         // never reaches the gift path; the Mod settles the same refusal as a
         // receipt without the emote.
         if (player.activeDialogueEvents.Keys.Any(activeKey => activeKey.Contains("dumped") && npc.Dialogue.ContainsKey(activeKey)))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_dumped", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_dumped", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
 
         // Introduction quest (NPC.cs:2313): completed for any giftable offer,
         // before the limit gates -- exactly the native position.
@@ -922,7 +917,7 @@ internal sealed partial class ExecutionManager
         // Green-rain refusal (NPC.cs:2315-2322): native returns unhandled with a
         // red message; the Mod settles the same refusal without the message.
         if (Game1.IsGreenRainingHere() && Game1.year == 1 && !npc.isMarried())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_not_handled", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_not_handled", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
 
         // Weekly allowance gate (NPC.cs:2323).
         bool limitAllowsGift = (friendship != null && friendship.GiftsThisWeek < 2)
@@ -931,7 +926,7 @@ internal sealed partial class ExecutionManager
             || npc.isBirthday()
             || offered.QualifiedItemId == "(O)StardropTea";
         if (!limitAllowsGift)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_weekly_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_weekly_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
 
         // Dictionary protection (NPC.cs:2327-2329) exactly before any friendship
         // mutation: without it receiveGift's `giver.friendshipData[base.Name].
@@ -940,9 +935,9 @@ internal sealed partial class ExecutionManager
         if (friendship is null)
             friendship = player.friendshipData[npc.Name] = new Friendship();
         if (friendship.IsDivorced())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_divorced", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_divorced", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
         if (friendship.GiftsToday == 1 && offered.QualifiedItemId != "(O)StardropTea")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_daily_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "gift_rejected_daily_limit", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore) + $";quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()}");
 
         // Native accept sequence (NPC.cs:2342-2345), showResponse: false so no
         // dialogue is mounted (NPC.cs:4766 signature, :4844 gate).
@@ -954,7 +949,7 @@ internal sealed partial class ExecutionManager
         int previousSlot = player.CurrentToolIndex;
         try
         {
-            player.CurrentToolIndex = slot;
+            player.CurrentToolIndex = liveSlot;
             npc.receiveGift(offered, player, updateGiftLimitInfo, 1f, showResponse: false);
             player.reduceActiveItemByOne();
             player.completelyStopAnimatingOrDoingAction();
@@ -988,21 +983,21 @@ internal sealed partial class ExecutionManager
         }
         catch (Exception)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "gift_postcondition_unavailable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "gift_postcondition_unavailable", GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore));
         }
         finally
         {
             player.CurrentToolIndex = previousSlot;
         }
 
-        int stackAfter = slot < player.Items.Count && player.Items[slot] is StardewValley.Object remaining && string.Equals(remaining.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+        int stackAfter = liveSlot < player.Items.Count && player.Items[liveSlot] is StardewValley.Object remaining && string.Equals(remaining.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
             ? remaining.Stack
             : 0;
         bool consumedExactlyOne = stackAfter == stackBefore - 1;
         Friendship friendshipAfter = player.friendshipData.TryGetValue(npc.Name, out Friendship? afterFriendship) ? afterFriendship : friendship;
         bool giftRecorded = friendshipAfter.GiftsToday > giftsTodayBefore || friendshipAfter.GiftsThisWeek > giftsThisWeekBefore;
         bool pointsChanged = friendshipAfter.Points != pointsBefore;
-        string evidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
+        string evidence = GiftEvidencePrefix(location, expectedTargetId, targetX, targetY, npc, expectedQualifiedItemId, liveSlot, slot, stackBefore, pointsBefore, giftsTodayBefore, giftsThisWeekBefore, quest25CompletedBefore)
             + $";stack_after={stackAfter};points_after={friendshipAfter.Points};gifts_today_after={friendshipAfter.GiftsToday};gifts_this_week_after={friendshipAfter.GiftsThisWeek};quest_25_completed_after={quest25CompletedAfter.ToString().ToLowerInvariant()};update_gift_limit={updateGiftLimitInfo.ToString().ToLowerInvariant()};showed_response=false;gift_recorded={giftRecorded.ToString().ToLowerInvariant()};points_changed={pointsChanged.ToString().ToLowerInvariant()};spouse_jealousy={spouseJealousy.ToString().ToLowerInvariant()};spouse_points_before={spousePointsBefore};spouse_points_after={spousePointsAfter};menu_open_after={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()};dialogue_open_after={Game1.dialogueUp.ToString().ToLowerInvariant()}";
 
         if (giftGiven && consumedExactlyOne && (giftRecorded || pointsChanged))
@@ -1010,8 +1005,8 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "gift_postcondition_unavailable", evidence);
     }
 
-    private static string GiftEvidencePrefix(StardewValley.GameLocation location, string expectedTargetId, int targetX, int targetY, StardewValley.NPC npc, string expectedQualifiedItemId, int slot, int stackBefore, int pointsBefore, int giftsTodayBefore, int giftsThisWeekBefore, bool quest25CompletedBefore)
-        => $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};npc={npc.Name};item={expectedQualifiedItemId};slot={slot};stack_before={stackBefore};points_before={pointsBefore};gifts_today_before={giftsTodayBefore};gifts_this_week_before={giftsThisWeekBefore};quest_25_completed_before={quest25CompletedBefore.ToString().ToLowerInvariant()}";
+    private static string GiftEvidencePrefix(StardewValley.GameLocation location, string expectedTargetId, int targetX, int targetY, StardewValley.NPC npc, string expectedQualifiedItemId, int slot, int namedSlot, int stackBefore, int pointsBefore, int giftsTodayBefore, int giftsThisWeekBefore, bool quest25CompletedBefore)
+        => $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};npc={npc.Name};item={expectedQualifiedItemId};slot={slot};named_slot={namedSlot};stack_before={stackBefore};points_before={pointsBefore};gifts_today_before={giftsTodayBefore};gifts_this_week_before={giftsThisWeekBefore};quest_25_completed_before={quest25CompletedBefore.ToString().ToLowerInvariant()}";
 
     /// <summary>One native Axe strike which fells the exact mature health-one tree into its native stump state; drops remain separate pickup targets.</summary>
 }

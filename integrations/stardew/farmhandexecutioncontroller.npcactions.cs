@@ -15,7 +15,7 @@ namespace GameBuddy.Stardew;
 //     :2781, :2840) routes into tryToReceiveActiveObject (:1712). That is what
 //     `interact_npc_with_item` mirrors, and that action REQUIRES a held item
 //     (`slot` + `expectedQualifiedItemId`; it refuses with
-//     `item_not_owned_in_slot` without one), so it covers gifting only;
+//     `item_not_owned_in_pack` without one), so it covers gifting only;
 //   * the TALK half — with empty hands the ingress reaches
 //     `grantConversationFriendship(who); Game1.drawDialogue(this);` (:2766-2767,
 //     and the queued-dialogue sibling at :2807-2811). Nothing invoked it.

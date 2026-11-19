@@ -63,7 +63,10 @@ public sealed class MachineLoadMachineDataSourceShapeTests
             source,
             "public LocalExecutionReceipt RequestLocalLoadMachineInput(",
             "public LocalExecutionReceipt RequestLocalCollectMachineOutput(");
-        load.Should().Contain("ResolveLoadInput(", "the only item identity the request supplies is the caller's own id");
+        load.Should().Contain(
+            "ResolveLiveSlot(",
+            "the only item identity the request supplies is the caller's own id; the slot it sits in is the pack's answer, "
+                + "which is why the item is re-resolved rather than read at the index the plan wrote down");
     }
 
     [Fact]
