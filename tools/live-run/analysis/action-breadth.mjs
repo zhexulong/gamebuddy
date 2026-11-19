@@ -36,6 +36,17 @@
  * with the count of identities beside the count of lines so a doubled row cannot double a number. The census is the
  * BUNDLE's fact alone, so a mid-run reading has no addressable width and says `not_measured:no_snapshot_census`.
  *
+ * THE SETTLEMENT IS READ FROM THE RECEIPTS, NEVER FROM THE ROW'S EXISTENCE. Measured 2026-11-19, reading `round79`'s log
+ * through this file: all NINE per-action rows printed `succeeded`, because a row was marked from the run's list of actions
+ * with AT LEAST ONE success - and `move_placed_furniture` carried six executions of which four were `rejected`. A reader
+ * asking how that action went was told "it worked" while four receipts said it did not. So every row now prints the
+ * settlements of its OWN executions, counted once per `executionId`
+ * (`executions 6 (6 distinct executionIds) · succeeded 2 · rejected 4 · uncertain 0`); every settlement a receipt names is
+ * printed by name instead of being folded into a count of two; and a row with no receipt behind it says
+ * `not_measured:<why>` rather than a success. `a_reading_of_success_names_the_settlement_it_read` is the gate for it: the
+ * population is every per-action row this tool prints, a row that reads as an outcome without naming the settlement behind
+ * it fails and is named, and `rows examined R · settled S · assumed A` says how much of that population was read.
+ *
  * VERDICT: `rich` / `narrow:<reason>` / `not_measured:<missing input>`. Exit 0 for `rich`, 1 for `narrow:`, 2 for
  * `not_measured:` - a reading this tree could not take is refused rather than reported as a pass. A bundle that
  * publishes no census is `not_measured:no_snapshot_census` and is never measured against the catalog instead: the
@@ -46,10 +57,15 @@
  * red-proof (this tree cannot take it): run against `E:/projects/round39/tools/_multiday_routine-round39.result.json`
  * and the reading exits 2 with `action_breadth: verdict not_measured:no_snapshot_census`. The number it used to print
  * - `attempted 15 of 95` - is the catalog denominator that charged the companion for the fixture's world.
+ *
+ * red-proof (history): `tools/_multiday_routine-round79-live-runner.log` read nine `succeeded` rows under the previous
+ * version of this file. This one reads `move_placed_furniture ... executions 6 (6 distinct executionIds) · succeeded 2 ·
+ * rejected 4 · uncertain 0` and its gate reads `rows examined 9 · settled 9 · assumed 0 · not_measured 0`.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   formatActionBreadth,
@@ -59,6 +75,7 @@ import {
 } from "../../lib/action-breadth.mjs";
 import {
   actionExecutions,
+  actionStates,
   attemptedActions,
   describeRunnerLog,
   locateRunnerLog,
@@ -73,6 +90,21 @@ import { programExecutionRows } from "../game/execution-trace.mjs";
 function out(line) {
   process.stdout.write(`${line}\n`);
 }
+
+/** The settlements every per-action row prints by name, in the order a reader asks about them. */
+const NAMED_SETTLEMENTS = Object.freeze(["succeeded", "rejected", "uncertain"]);
+
+/** A receipt that recorded no state: an execution whose settlement nobody wrote down, kept visible, never rounded. */
+const UNCLASSIFIED_SETTLEMENT = "no_state";
+
+/** Why a row carries no settlement: no receipt was read for it, so no execution of it can be placed. */
+const NO_SETTLEMENT_READ = "no_per_execution_settlement_read";
+
+/** The gate: every per-action row names the settlement it read, or says that it could not read one. */
+const SETTLEMENT_GATE = "a_reading_of_success_names_the_settlement_it_read";
+
+const SETTLED_ROW = /succeeded \d+ · rejected \d+ · uncertain \d+/u;
+const ABSENT_ROW = /settlement not_measured:\S+/u;
 
 function parseArgs(argv) {
   const options = { result: null, run: null, logPath: null, logDir: null, baselinePath: undefined };
@@ -98,7 +130,62 @@ async function readFlatActionRows(runDir) {
     .map((line) => JSON.parse(line));
 }
 
-function reportPerAction(breadth) {
+/** One receipt's settlement, with a receipt that recorded none kept visible instead of being counted as a success. */
+function settlementOf(state) {
+  return typeof state === "string" && state.length > 0 ? state : UNCLASSIFIED_SETTLEMENT;
+}
+
+/**
+ * Per action, the settlement of each of its executions, keyed on the identity the producer gave it.
+ *
+ * The receipts are `live-runner-log.mjs`'s own rows, already deduplicated on the `executionId` each one carries, and the
+ * identity is kept as the KEY rather than as a counter here: a receipt written twice in the log is one execution, so it
+ * can neither add an execution nor a settlement to the row that names it.
+ */
+function settlementsByAction(log) {
+  const byAction = new Map();
+  for (const receipt of log.receipts) {
+    if (receipt.actionId === null) continue;
+    const executions = byAction.get(receipt.actionId) ?? new Map();
+    if (!executions.has(receipt.identity)) executions.set(receipt.identity, settlementOf(receipt.state));
+    byAction.set(receipt.actionId, executions);
+  }
+  return byAction;
+}
+
+/** How many executions reached each settlement. */
+function settlementCounts(executions) {
+  const counts = new Map();
+  for (const settlement of executions.values()) counts.set(settlement, (counts.get(settlement) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * The settlements as text: the three that must stay apart first, then every other settlement a receipt named, by name.
+ *
+ * The three are printed even when zero, because "no refusal" and "nobody recorded a settlement" are different answers
+ * and a row that omitted its zeroes would let a reader supply one. Anything this file did not anticipate (`failed`,
+ * `cancelled`, `no_state`) is appended by name rather than added into one of the three - a count of two states would be
+ * the same defect this row exists to end.
+ */
+function settlementLine(counts) {
+  const named = NAMED_SETTLEMENTS.map((state) => `${state} ${String(counts.get(state) ?? 0)}`);
+  const other = [...counts.keys()]
+    .filter((settlement) => !NAMED_SETTLEMENTS.includes(settlement))
+    .sort()
+    .map((settlement) => `${settlement} ${String(counts.get(settlement))}`);
+  return [...named, ...other].join(" · ");
+}
+
+/**
+ * Every per-action row, each beside the settlements its own executions carry - and each row returned for the gate.
+ *
+ * `settlements` is per-action identity maps read from the run's receipts, or `null` when no receipt answered this run (a
+ * bundle on its own publishes no per-execution settlement). A null settlement is printed as `not_measured`, never as a
+ * success: the row still says how many executions the run counted, which is a different fact from how they went.
+ */
+function reportPerAction(breadth, settlements) {
+  const rows = [];
   for (const row of breadth.perAction) {
     const marks = [
       row.excluded ? "excluded" : null,
@@ -109,12 +196,70 @@ function reportPerAction(breadth) {
             ? "addressable"
             : "outside_addressable"
         : `withheld:${row.withheld}`,
-      row.succeeded ? "succeeded" : "not_succeeded",
     ].filter((mark) => mark !== null);
-    out(
-      `action_breadth_action: ${row.actionId} family=${row.family} executions=${String(row.executions)} ${marks.join(" ")}`,
+    const executions = settlements === null ? null : (settlements.get(row.actionId) ?? null);
+    const counted =
+      executions === null
+        ? `executions ${String(row.executions)} · settlement not_measured:${NO_SETTLEMENT_READ}`
+        : `executions ${String(row.executions)} (${String(executions.size)} distinct executionIds) · ${settlementLine(settlementCounts(executions))}`;
+    const reading = `action_breadth_action:${row.actionId}`;
+    const text = `action_breadth_action: ${row.actionId} family=${row.family} ${counted}${marks.length === 0 ? "" : ` ${marks.join(" ")}`}`;
+    rows.push({ reading, line: text });
+    out(text);
+  }
+  return rows;
+}
+
+/**
+ * The whole log's settlements, beside the identity population they were counted on.
+ *
+ * `actionStates` is `live-runner-log.mjs`'s own count, already keyed on the identity each receipt carries, so this line
+ * and the per-action rows can never disagree about one execution: a log whose receipt appears twice prints one identity,
+ * not two settlements.
+ */
+function logSettlementLine(log) {
+  const identities = log.counts.receipts;
+  return `${String(identities)} executions (${String(identities)} distinct executionIds) · ${settlementLine(actionStates(log))}`;
+}
+
+/**
+ * The gate: every per-action row either names the settlement it read, or says that it could not read one.
+ *
+ * THE POPULATION IS EVERY ROW, and the failure is the one fact this file got wrong: `move_placed_furniture` printed
+ * `succeeded` beside six executions of which four were `rejected`, because a row's outcome was read from a list of
+ * actions rather than from the settlements its own receipts carry. So a row is one of three things - it names the
+ * settlements it counted (`succeeded 2 · rejected 4`), it states `not_measured:<why>`, or it is ASSUMED: printed as an
+ * outcome with no receipt behind it. Every assumed row fails and is named, and a population of zero is blocked rather
+ * than passed, because a gate that examined nothing agrees with itself.
+ */
+export function settlementGate(rows) {
+  const findings = [];
+  let settled = 0;
+  let assumed = 0;
+  let absent = 0;
+  for (const row of rows) {
+    if (SETTLED_ROW.test(row.line)) {
+      settled += 1;
+      continue;
+    }
+    if (ABSENT_ROW.test(row.line)) {
+      absent += 1;
+      continue;
+    }
+    assumed += 1;
+    findings.push(
+      `${SETTLEMENT_GATE}:${row.reading} - this row reads as an outcome and names no settlement behind it (${row.line.trim()}); count what each of its executions settled, or say not_measured:<why>`,
     );
   }
+  if (rows.length === 0)
+    findings.push(
+      `${SETTLEMENT_GATE}:blocked - rows examined 0 · settled 0 · assumed 0 · not_measured 0 · this tool printed no per-action row, so this gate would agree with itself`,
+    );
+  const lines = [
+    ...findings,
+    `${SETTLEMENT_GATE} rows examined ${String(rows.length)} · settled ${String(settled)} · assumed ${String(assumed)} · not_measured ${String(absent)}`,
+  ];
+  return Object.freeze({ lines, failed: assumed > 0 || rows.length === 0 });
 }
 
 /**
@@ -397,6 +542,7 @@ async function main() {
     out(`action_breadth_bundle: ${bundle.why}`);
     out(`action_breadth_log: ${located.why}`);
     for (const line of readings.lines()) out(line);
+    for (const line of settlementGate([]).lines) out(line);
     process.exitCode = 2;
     return;
   }
@@ -411,6 +557,7 @@ async function main() {
     );
     out(`action_breadth_log: ${located.why}`);
     for (const line of readings.lines()) out(line);
+    for (const line of settlementGate([]).lines) out(line);
     process.exitCode = 2;
     return;
   }
@@ -430,6 +577,10 @@ async function main() {
     out(
       `action_breadth_log_binding: ${located.path} - ${located.how} (read as a second source, never added to the bundle's counts)`,
     );
+  // The settlements come from the receipts alone, and only when the log is what answered: a row's outcome is what its own
+  // executions settled, and a bundle field is a LIST OF ACTIONS, which is the fact that printed nine successes over four
+  // refusals. Reading them beside a bundle's per-action counts would also put two populations on one line.
+  const settlements = chosen.source === FROM_RUNNER_LOG ? settlementsByAction(log) : null;
   const surface = await readActionBreadthSurface();
   const baseline = await readActionBreadthBaseline(
     options.baselinePath === undefined ? undefined : { path: options.baselinePath },
@@ -470,7 +621,10 @@ async function main() {
   out(
     `action_breadth_population: ${String(surface.actionIds.length)} published${excluded.length === 0 ? "" : `, excluded ${String(excluded.length)}: ${excluded.sort().join(",")}`}`,
   );
-  if (chosen.source === FROM_RUNNER_LOG) out(`action_breadth_identities: ${identityLine(log)}`);
+  if (chosen.source === FROM_RUNNER_LOG) {
+    out(`action_breadth_identities: ${identityLine(log)}`);
+    out(`action_breadth_settlements: ${logSettlementLine(log)}`);
+  }
   reportAddressable(breadth);
   for (const line of formatActionBreadth(breadth)) out(line);
   out(
@@ -486,7 +640,9 @@ async function main() {
     );
   reportFindings(breadth, chosen.flatDispatchCount, chosen.source === FROM_RESULT ? flatRows : null);
   reportCensusContact(breadth, actedFamilies);
-  reportPerAction(breadth);
+  const actionRows = reportPerAction(breadth, settlements);
+  const gate = settlementGate(actionRows);
+  for (const line of gate.lines) out(line);
   if (log !== null && fromLog !== null)
     reportBothSources({
       fromBundle: fromBundle === null || fromBundle.attempted === null ? null : fromBundle,
@@ -511,7 +667,7 @@ async function main() {
     `action_breadth_verdict: ${breadth.verdict}${chosen.partial ? " (partial - the run has not ended, so this is what it had done and not what it did)" : ""}`,
   );
   for (const line of readings.lines()) out(line);
-  process.exitCode = exitCodeFor(breadth, readings.failed());
+  process.exitCode = exitCodeFor(breadth, readings.failed() || gate.failed);
 }
 
-await main();
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { settlementGate } from "./action-breadth.mjs";
+
 const BREADTH = join(import.meta.dirname, "action-breadth.mjs");
 const START = Date.parse("2026-11-19T10:30:34.853Z");
 
@@ -43,6 +45,20 @@ const LOG = [
   receiptLine("exec-2", "break_rock", "succeeded"),
   receiptLine("exec-3", "navigate_to_destination", "rejected"),
   'AGENT_PROGRAM_SUBMIT {"programId":"plan_1","code":"accepted","nodes":3}',
+];
+
+// The shape `round79` printed as six successes: one action, six executions, four of them refusals. `exec-1` is written
+// twice for the reason the log writes one receipt's detail in two places, so the identity population must stay six.
+const MIXED_LOG = [
+  `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START + 1654}}`,
+  receiptLine("m-1", "move_placed_furniture", "succeeded"),
+  receiptLine("m-1", "move_placed_furniture", "succeeded"),
+  receiptLine("m-2", "move_placed_furniture", "succeeded"),
+  receiptLine("m-3", "move_placed_furniture", "rejected"),
+  receiptLine("m-4", "move_placed_furniture", "rejected"),
+  receiptLine("m-5", "move_placed_furniture", "rejected"),
+  receiptLine("m-6", "move_placed_furniture", "rejected"),
+  receiptLine("n-1", "navigate_to_destination", "uncertain"),
 ];
 
 /** One run directory, its launch receipt, and the log directory this run's log was written into. */
@@ -128,6 +144,102 @@ test("a bundle answers first, and the log is printed beside it instead of being 
     assert.match(
       out,
       /^a_reading_names_the_source_it_read readings examined \d+ · from-result [1-9]\d* · from-log [1-9]\d* · unmeasured 0$/mu,
+    );
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("a row whose executions were refused reads as refusals, never as one success", () => {
+  const options = fixture({ logLines: MIXED_LOG });
+  try {
+    const { out } = breadth(options, [
+      "--run",
+      options.runDir,
+      "--log-dir",
+      options.logs,
+      "--baseline",
+      join(import.meta.dirname, "..", "..", "action-breadth-baseline.json"),
+    ]);
+    assert.match(
+      line(out, "action_breadth_action: move_placed_furniture"),
+      /executions 6 \(6 distinct executionIds\) · succeeded 2 · rejected 4 · uncertain 0/u,
+      "the row names what each of its six executions settled, counted once per executionId although the log wrote one receipt twice",
+    );
+    assert.match(
+      line(out, "action_breadth_action: navigate_to_destination"),
+      /executions 1 \(1 distinct executionIds\) · succeeded 0 · rejected 0 · uncertain 1/u,
+      "uncertain is its own settlement, not a rounding of succeeded or rejected",
+    );
+    assert.doesNotMatch(
+      out,
+      /executions[= ]\d+ (?:succeeded|not_succeeded)\b/u,
+      "a row marked succeeded because the action appears in a list of successes is the reading this tool must not print",
+    );
+    assert.match(
+      line(out, "action_breadth_settlements:"),
+      /^action_breadth_settlements: 7 executions \(7 distinct executionIds\) · succeeded 2 · rejected 4 · uncertain 1$/u,
+    );
+    assert.match(
+      out,
+      /^a_reading_of_success_names_the_settlement_it_read rows examined 2 · settled 2 · assumed 0 · not_measured 0$/mu,
+      "every row names the settlement it read, so none is assumed",
+    );
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("the settlement gate reds on a row that reads as an outcome with no settlement behind it", () => {
+  const gate = settlementGate([
+    {
+      reading: "action_breadth_action:move_placed_furniture",
+      line: "action_breadth_action: move_placed_furniture family=buildings_farm_management executions=6 succeeded",
+    },
+    {
+      reading: "action_breadth_action:navigate_to_destination",
+      line: "action_breadth_action: navigate_to_destination family=world_navigation executions 10 (10 distinct executionIds) · succeeded 0 · rejected 8 · uncertain 2",
+    },
+  ]);
+  assert.equal(gate.failed, true);
+  assert.equal(gate.lines.length, 2, "one finding, then the summary");
+  assert.match(
+    gate.lines[0],
+    /^a_reading_of_success_names_the_settlement_it_read:action_breadth_action:move_placed_furniture - this row reads as an outcome/u,
+    "the failure names the row, not just a count",
+  );
+  assert.match(gate.lines[1], /rows examined 2 · settled 1 · assumed 1 · not_measured 0$/u);
+});
+
+test("the settlement gate refuses a population of zero instead of agreeing with itself", () => {
+  const gate = settlementGate([]);
+  assert.equal(gate.failed, true);
+  assert.match(
+    gate.lines[0],
+    /^a_reading_of_success_names_the_settlement_it_read:blocked - rows examined 0 · settled 0 · assumed 0 · not_measured 0/u,
+  );
+});
+
+test("a bundle with no receipts says not_measured per row rather than success", () => {
+  const options = fixture({
+    result: {
+      scenario: "multiday_routine",
+      attemptedActionIds: ["move_to_tile", "break_rock"],
+      succeededActionIds: ["move_to_tile"],
+      executionTrace: { rows: 6, flat: 0 },
+      programOutcomes: [],
+      programSubmissions: [],
+    },
+    logLines: null,
+  });
+  try {
+    const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
+    const row = line(out, "action_breadth_action: move_to_tile");
+    assert.match(row, /settlement not_measured:no_per_execution_settlement_read/u);
+    assert.doesNotMatch(row, /\bsucceeded\b/u, "a bundle publishes a list of actions, not a settlement per execution");
+    assert.match(
+      out,
+      /^a_reading_of_success_names_the_settlement_it_read rows examined 2 · settled 0 · assumed 0 · not_measured 2$/mu,
     );
   } finally {
     rmSync(options.root, { recursive: true, force: true });
