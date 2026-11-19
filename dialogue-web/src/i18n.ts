@@ -756,6 +756,24 @@ const en = {
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
   problemInternalErrorNoCode: "none reported",
+  // The mount's own four causes (`composedBootstrapProblemView`). A failed first read has no session
+  // behind it, so these are the only problem sentences that must name what is missing - the chats,
+  // never "the app" - and the only ones whose step cannot be `problemRetryRead`: the card's own read
+  // asks the same Host the same question, and for these four the answer is already settled. None of
+  // them says anything about the game, because the mount that reads them holds no `connectionStatus`
+  // to know whether it is still running.
+  problemBootHostNotAnsweringTitle: "GameBuddy is not answering",
+  problemBootHostNotAnsweringDetail:
+    "The GameBuddy that serves this page is not running, so there are no chats to read here. Start GameBuddy from its tray icon, then open the page it shows.",
+  problemBootChatsUnreadableTitle: "GameBuddy cannot open your chats",
+  problemBootChatsUnreadableDetail:
+    "GameBuddy is running, but it could not read the conversation it was started on, so this page has nothing to show. Reading it again repeats the same read: quit GameBuddy from its tray icon, start it again, and if this page comes back the same way, send the report its launch window names.",
+  problemBootNoChatTitle: "There is no chat to open",
+  problemBootNoChatDetail:
+    "The start that opened this page named no conversation, and this page cannot make one. Reading it again finds the same nothing: start GameBuddy again from its tray icon, and if it stops at the same place, send the report its launch window names.",
+  problemBootPageMismatchTitle: "This page and this GameBuddy do not match",
+  problemBootPageMismatchDetail:
+    "The page that opened and the GameBuddy answering it do not agree on what a chat read is, so no chat can be shown here. Close this page and start GameBuddy again; if the same page comes back the same way, update GameBuddy.",
   // The rewind refusals, one sentence each: which row is gone, which view has moved, which point is
   // the greeting, and whether a reply is still being written.
   problemChatMessageNotFoundTitle: "That message is gone",
@@ -1958,6 +1976,18 @@ const zh: Messages = {
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
   problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
   problemInternalErrorNoCode: "未报告任何代码",
+  problemBootHostNotAnsweringTitle: "GameBuddy 没有响应",
+  problemBootHostNotAnsweringDetail:
+    "提供这个页面的 GameBuddy 没有在运行，所以这里没有聊天可读。请从系统托盘图标启动 GameBuddy，再打开它给出的页面。",
+  problemBootChatsUnreadableTitle: "GameBuddy 打不开你的聊天",
+  problemBootChatsUnreadableDetail:
+    "GameBuddy 在运行，但它读不到启动时用的那段对话，所以这个页面没有内容可显示。再读一次只是把同一个问题再问一遍：请从系统托盘图标退出 GameBuddy 并重新启动；如果这个页面还是这样，请发送它启动窗口给出的报告。",
+  problemBootNoChatTitle: "没有可以打开的聊天",
+  problemBootNoChatDetail:
+    "打开这个页面的那次启动没有指定任何对话，而这个页面也无法自己创建一段。再读一次同样什么都没有：请从系统托盘图标重新启动 GameBuddy；如果它停在同一处，请发送它启动窗口给出的报告。",
+  problemBootPageMismatchTitle: "这个页面和这个 GameBuddy 不匹配",
+  problemBootPageMismatchDetail:
+    "打开它的页面和回应它的 GameBuddy 对“读取聊天”的理解不一致，所以这里显示不了聊天。请关闭这个页面并重新启动 GameBuddy；如果还是同一个页面、同样的结果，请更新 GameBuddy。",
   problemChatMessageNotFoundTitle: "这条消息已经不在了",
   problemChatMessageNotFoundDetail: "这个对话里已经没有这条消息了。请重新读取，另选一个回退位置。",
   problemChatMessageRevisionConflictTitle: "对话已经变化",

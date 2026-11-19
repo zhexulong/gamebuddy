@@ -187,6 +187,44 @@ const reconciliationFailed: ProblemSentence = (labels) =>
 const routeUnavailable: ProblemSentence = (labels) =>
   sentence(labels.problemRouteUnavailableTitle, labels.problemRouteUnavailableDetail, RESTART_GAMEBUDDY);
 
+// --- The mount: the causes of a card with no session behind it ----------------------------------
+//
+// A failed first read is the one problem with nothing behind it: no session, no transcript, no Game
+// surface and no composer. `composedProblemView` answers a refusal by the surface that refused it, so
+// every sentence it could give here named a subject this page does not have, and every one of them
+// handed the player the card's own read. Measured on the boot path (2026-11-18): a `409
+// state_unavailable` from `/state` read as "The game is not available right now ... Reload the game
+// page", a game that is not on this page at all; an answer with no Chat half read as "The chat state
+// could not be safely reconciled", which is the fact about a disagreeing pair of reads and not about a
+// root that holds no conversation; and a Host that had stopped answering read as "GameBuddy reported an
+// internal error (code network_error)". All three offered `Read it again`, which asks the same Host the
+// same question and, for these causes, gets the same answer.
+//
+// So the four below are the mount's own, each naming what is missing (the chats) and the step that
+// changes it. None of them says anything about the game: the mount that reads them holds no
+// `connectionStatus`, and a card that claimed the game was still running would be asserting a fact its
+// renderer never had.
+
+/** The process that serves this page is gone: no read can land until it is started again. */
+const bootHostNotAnswering: ProblemSentence = (labels) =>
+  sentence(labels.problemBootHostNotAnsweringTitle, labels.problemBootHostNotAnsweringDetail, RESTART_GAMEBUDDY);
+
+/**
+ * This GameBuddy is up and cannot read the conversation it was started on - the shape of the
+ * unmountable-successor state the launcher fails closed on, and of any producer fault the composed
+ * root's Chat projection reports. It answered, so the next question is whether it answers a restart.
+ */
+const bootChatsUnreadable: ProblemSentence = (labels) =>
+  sentence(labels.problemBootChatsUnreadableTitle, labels.problemBootChatsUnreadableDetail, RESTART_GAMEBUDDY);
+
+/** The aggregate is well formed and holds no conversation: there is nothing here to open. */
+const bootNoChat: ProblemSentence = (labels) =>
+  sentence(labels.problemBootNoChatTitle, labels.problemBootNoChatDetail, RESTART_GAMEBUDDY);
+
+/** This page and the Host answering it do not agree on what a chat read is: a build/page disagreement. */
+const bootPageMismatch: ProblemSentence = (labels) =>
+  sentence(labels.problemBootPageMismatchTitle, labels.problemBootPageMismatchDetail, RESTART_GAMEBUDDY);
+
 // --- The message mutations: one sentence each -------------------------------------------------
 //
 // A rewind destroys everything after the point it names, an edit changes words the model will answer,
@@ -910,4 +948,75 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
     };
   }
   return internalProblem(error, labels);
+}
+
+/**
+ * The game codes whose meaning at MOUNT is a page/Host disagreement rather than a game fact.
+ *
+ * These are the codes the composed broker answers when the route itself is the thing that does not
+ * match: `not_found` for a path this Host does not serve, `unsupported_api_version` /
+ * `profile_operation_unavailable` for a profile this build does not speak, and the two request-shape
+ * refusals for a body or query the route does not carry. Every other declared code keeps the sentence
+ * `composedProblemView` gives it - an `unauthorized` is a session that ended and a 5xx is a service
+ * that is not answering, on this page as on any other.
+ */
+const MOUNT_MISMATCH_PROBLEM_CODES: ReadonlySet<string> = new Set([
+  "not_found",
+  "unsupported_api_version",
+  "profile_operation_unavailable",
+  "invalid_request",
+  "malformed_request",
+]);
+
+/**
+ * The protocol reasons that mean "this page cannot read the answer it was given".
+ *
+ * `network_error` is deliberately absent: it is the one protocol failure that is about the Host not
+ * being there rather than about what it said, and it has its own sentence.
+ */
+const UNREADABLE_ANSWER_REASONS: ReadonlySet<string> = new Set([
+  "invalid_composed_root",
+  "invalid_composed_chat",
+  "invalid_composed_chat_profile",
+  "invalid_composed_game",
+  "mismatched_composed_session",
+  "non_json_response",
+  "unexpected_status",
+  "invalid_problem",
+]);
+
+/** The mount's cause for one failure, or `null` when it is a failure `composedProblemView` words correctly. */
+function bootstrapSentence(error: unknown): ProblemSentence | null {
+  if (error instanceof ComposedReferenceGameProblemError) {
+    // The composed root's own 409: `readStateRoute` answers it when the Chat projection throws, so the
+    // Host is up and the conversation behind it is what could not be read.
+    if (error.code === "state_unavailable") return bootChatsUnreadable;
+    // The session behind the page, not the chats: the same sentence every other surface reads.
+    if (error.code === "unauthorized" || error.code === "csrf_failed" || error.code === "closed") return sessionExpired;
+    if (MOUNT_MISMATCH_PROBLEM_CODES.has(error.code)) return bootPageMismatch;
+    return null;
+  }
+  if (error instanceof ComposedReferenceGameProtocolError) {
+    if (error.reason === "network_error") return bootHostNotAnswering;
+    if (UNREADABLE_ANSWER_REASONS.has(error.reason)) return bootPageMismatch;
+    return null;
+  }
+  // The one reducer code the mount itself raises: the aggregate carries no chat, or no active
+  // identity to mount it with (`readChatSnapshotPair`, `createReferencePipelineSession`).
+  if (error instanceof ReferencePipelineSessionError && error.code === "state_reconciliation_required")
+    return bootNoChat;
+  return null;
+}
+
+/**
+ * The failure that leaves no session behind it, worded for the card that is then the whole window.
+ *
+ * This is the mount's vocabulary, not a second general one: a cause it does not name is the cause
+ * `composedProblemView` already words correctly, so a transient refusal keeps the read-again control
+ * that is the step for it. The distinction this function adds is the one a reader needs at boot - what
+ * is unavailable (the chats), whether the Host answered at all, and whether pressing the card's own
+ * read could change anything.
+ */
+export function composedBootstrapProblemView(error: unknown, labels: Messages): ProblemViewState {
+  return bootstrapSentence(error)?.(labels) ?? composedProblemView(error, labels);
 }

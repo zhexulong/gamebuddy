@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  composedBootstrapProblemView,
   composedProblemView,
   declaredProblemSentence,
   gameOperationFailure,
@@ -16,8 +17,9 @@ import {
   ComposedReferenceGameProtocolError,
   GAME_PROBLEM_CODES,
 } from "./composed-reference-game-browser-api";
-import { messages } from "./i18n";
+import { type Messages, messages } from "./i18n";
 import { PROBLEM_CODES, TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
+import { ReferencePipelineSessionError } from "./reference-pipeline-session";
 
 /**
  * A refusal becomes a player sentence here, and nowhere else.
@@ -234,4 +236,98 @@ void test("a game operation's failure line is the refusal's words, or the uncert
     assert.deepEqual(gameOperationFailure(error, labels), { kind: "unsettled" }, String(error));
   const refused = gameOperationFailure(gameProblem("unauthorized"), labels);
   assert.ok(refused.kind === "refused" && refused.sentence.length > 0, "a refusal with no words is a silent panel");
+});
+
+/**
+ * The mount's own causes, in both catalogues: what the boot card says, and whether its step can be a
+ * press at all.
+ *
+ * The population is the decision, not a list of sentences: every cause the mount can be handed, plus
+ * the transient one that must keep the card's own read. A cause whose step is `PROBLEM_RETRY_READ`
+ * draws the control, so the assertion is about the STEP and not about the words: a re-read of a Host
+ * that is not there, or of a root with no conversation in it, returns the same answer.
+ */
+void test("the boot card names its own cause and offers a step a press can change", () => {
+  const causes = [
+    {
+      cause: "a Host that is not answering",
+      error: new ComposedReferenceGameProtocolError("network_error"),
+      key: "problemBootHostNotAnsweringTitle",
+      // Nothing on the page can read a process that is not there.
+      pressesHelp: false,
+    },
+    {
+      cause: "a Chat projection the Host could not produce",
+      error: gameProblem("state_unavailable"),
+      key: "problemBootChatsUnreadableTitle",
+      pressesHelp: false,
+    },
+    {
+      cause: "an aggregate with no Chat half",
+      error: new ReferencePipelineSessionError("state_reconciliation_required"),
+      key: "problemBootNoChatTitle",
+      pressesHelp: false,
+    },
+    {
+      cause: "an answer this page cannot read",
+      error: new ComposedReferenceGameProtocolError("invalid_composed_root"),
+      key: "problemBootPageMismatchTitle",
+      pressesHelp: false,
+    },
+    {
+      cause: "a Host that answered a shape this build does not serve",
+      error: gameProblem("not_found"),
+      key: "problemBootPageMismatchTitle",
+      pressesHelp: false,
+    },
+    {
+      cause: "a session that ended",
+      error: gameProblem("unauthorized"),
+      key: "problemSessionExpiredTitle",
+      pressesHelp: false,
+    },
+  ] as const satisfies readonly Readonly<{
+    cause: string;
+    error: unknown;
+    key: keyof Messages;
+    pressesHelp: boolean;
+  }>[];
+
+  for (const locale of LOCALES) {
+    const labels = messages(locale);
+    for (const { cause, error, key, pressesHelp } of causes) {
+      const view = composedBootstrapProblemView(error, labels);
+      const presentation = problemStepPresentation(view.step, labels);
+      assert.equal(view.title, labels[key], `${locale}: ${cause} reads "${view.title}"`);
+      // The subject is the chats (or the session), never the game: the mount holds no Game projection.
+      assert.doesNotMatch(view.detail, /\bgame\b/u, `${locale}: ${cause} claims something about the game`);
+      // A raw code is a diagnostic, never a sentence: the internal-error wording carried one.
+      assert.doesNotMatch(view.detail, /\{\{|internal error/u, `${locale}: ${cause} leaks the fault's shape`);
+      assert.equal(
+        presentation.drawsOwnRead,
+        pressesHelp,
+        `${locale}: ${cause} ${pressesHelp ? "lost" : "still offers"} the read it cannot help`,
+      );
+      if (!pressesHelp)
+        assert.ok(
+          (presentation.stepLine ?? "").length > 0,
+          `${locale}: ${cause} leaves the card with neither a control nor a step`,
+        );
+    }
+  }
+});
+
+void test("a refusal the mount did not cause keeps the words the panels already read", () => {
+  for (const locale of LOCALES) {
+    const labels = messages(locale);
+    for (const error of [gameProblem("storage_unavailable"), tavernProblem("runtime_unavailable", true)]) {
+      assert.deepEqual(composedBootstrapProblemView(error, labels), composedProblemView(error, labels));
+    }
+    // The one transient answer at mount: the card's own read is the step, and it stays.
+    assert.equal(
+      problemStepPresentation(composedBootstrapProblemView(gameProblem("storage_unavailable"), labels).step, labels)
+        .drawsOwnRead,
+      true,
+    );
+  }
 });

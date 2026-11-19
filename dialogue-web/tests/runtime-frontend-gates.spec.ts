@@ -2308,12 +2308,12 @@ type RoleGroup = Readonly<{
 /**
  * The role groups this product has.
  *
- * The problem card. `i18n.ts` says it in the catalogue's own words: three
- * faults a player meets while a chat cannot be read, and three headings, because "the card's
- * `<h1>` is what a player reads first and compares between two failures, so a heading it shares
- * with another fault is the card saying nothing where it must say what". The three are the
- * retryable refusal that clears itself, the reconciliation that needs the read taken again, and
- * the internal fault with a code in the detail - three facts, one card.
+ * The problem card. `i18n.ts` says it in the catalogue's own words: three faults a player meets while
+ * a chat cannot be read, and three headings, because "the card's `<h1>` is what a player reads first
+ * and compares between two failures, so a heading it shares with another fault is the card saying
+ * nothing where it must say what". The three are the reconciliation that needs the read taken again,
+ * the retryable refusal that clears itself, and the disagreement between this page and the Host that
+ * answered it - three facts, one card.
  *
  * Rendered, all three go through `ProblemView`'s `<h1>`, so the ONLY channel between them is the
  * words. That is what `text` is for, and it is why the gate compares the heading each one draws
@@ -2351,8 +2351,8 @@ const ROLE_GROUPS: readonly RoleGroup[] = [
         role: ".problem-card h1",
       },
       {
-        // A body the client mirror refuses: this build's own fault, with a code in the detail.
-        name: "this build could not read the Host",
+        // An answer this build cannot read at all: the page and the Host disagree, so no press clears it.
+        name: "the page and the Host disagree",
         mount: { kind: "composed-read-refusal", refusal: { status: 200, body: "not a composed state document" } },
         role: ".problem-card h1",
       },

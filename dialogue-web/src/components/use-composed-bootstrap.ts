@@ -1,6 +1,9 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
-import { composedProblemView as problemView } from "../composed-problem-view";
+import {
+  composedBootstrapProblemView as bootstrapProblemView,
+  composedProblemView as problemView,
+} from "../composed-problem-view";
 import {
   type ComposedReferenceGameBrowserApi,
   ComposedReferenceGameProblemError,
@@ -166,8 +169,11 @@ export function useComposedBootstrap(
           chatProblem: null,
         });
       } catch (error) {
-        // Nothing was committed yet: there is no session, and no region to draw a card in.
-        if (active) commit(problemView(error, messages(localeRef.current)));
+        // Nothing was committed yet: there is no session, and no region to draw a card in. The card is
+        // then the whole window, so it is worded from the mount's own causes (`composedBootstrapProblemView`)
+        // rather than from a panel's: what is unavailable here is the chats, and a read taken again cannot
+        // change the causes this path can be handed.
+        if (active) commit(bootstrapProblemView(error, messages(localeRef.current)));
       }
     })();
     return () => {

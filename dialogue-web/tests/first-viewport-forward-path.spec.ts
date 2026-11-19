@@ -190,11 +190,19 @@ const expiresAtMs = 1_900_000_000_000;
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
-/** The frozen problem shape: what the Host answers when it refuses a route. */
-const problem = (status: number, code: string) => ({
+/**
+ * The composed broker's own refusal: `{code}` (optionally with a bounded `cause`), which is the document
+ * `composed-reference-game-browser-api.ts` reads (`problemFromResponse`).
+ *
+ * Not the tavern contract's RFC-9457 body: that one carries `type`/`title`/`status`/`requestId`, the
+ * composed client refuses it as `invalid_problem`, and a fixture in that shape therefore never measured
+ * the refusal it named - it measured the client's own parse failure, which fell through to the
+ * internal-error sentence and so drew the card's read-again control whatever code was under test.
+ */
+const composedProblem = (status: number, code: string) => ({
   status,
-  contentType: "application/problem+json",
-  body: JSON.stringify({ type: "about:blank", title: code, status, code, requestId: `${"R".repeat(42)}A`, retryable: false }),
+  contentType: "application/json",
+  body: JSON.stringify({ code }),
 });
 
 /**
@@ -911,8 +919,12 @@ test("the shell's own states are each measured or named as a gap", async ({ page
     }
     if (kind === "problem") {
       await page.setViewportSize(VIEWPORT);
+      // The transient refusal on purpose: `storage_unavailable` is a service that is not answering, so
+      // the card's own read really is the step and the control below is what a player can press. The
+      // causes where a press cannot help (a Host that is gone, a root with no chat) say so in the card's
+      // step line instead - the shape `every tavern problem code leaves a step` measures below.
       await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-        route.fulfill(problem(503, "storage_unavailable")),
+        route.fulfill(composedProblem(503, "storage_unavailable")),
       );
       await page.goto(`/#profile=composed-reference-game&boot=${token}`);
       await expect(page.locator(".problem-view")).toBeVisible();
@@ -983,7 +995,7 @@ test("every tavern problem code leaves a step in the first viewport", async ({ p
   // One handler, switched per code: re-registering a route per iteration would stack handlers and
   // answer with whichever was registered last rather than with the code under test.
   let underTest = "";
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(problem(403, underTest)));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(composedProblem(403, underTest)));
 
   const deadEnds: string[] = [];
   for (const code of PROBLEM_CODES) {
