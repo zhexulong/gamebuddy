@@ -9,11 +9,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { auditConductClasses } from "../../check-game-surface-conduct-classes.mjs";
 import { buildInputManifest, inputManifestPathForResult, writeInputManifest } from "./input-manifest.mjs";
 
-/** The rule ids the product's own declaration carries, in the order the model reads them. */
-const CONDUCT_IDS = auditConductClasses().rules.map((rule) => rule.id);
+/** Two lines of surface header: what the Game surface installs since 2026-11-24 (`gameSurfaceInputHeader`). */
+const SURFACE_LINES = 2;
 
 /**
  * A session record with the shape the runtime writes: header, model change, one system message whose `sections` and
@@ -28,9 +27,9 @@ const CONDUCT_IDS = auditConductClasses().rules.map((rule) => rule.id);
  * The conduct block is built from the declaration's own rule count, so a rule added to the floor tomorrow moves this
  * fixture with it instead of leaving a stale 19 in a test.
  */
-function sessionFixture({ conductLines = CONDUCT_IDS.length, tools = null, delivery = null, model = true } = {}) {
+function sessionFixture({ surfaceLines = SURFACE_LINES, tools = null, delivery = null, model = true } = {}) {
   const preamble = [
-    ...Array.from({ length: conductLines }, (_, index) => `conduct rule ${String(index + 1)} of the floor`),
+    ...Array.from({ length: surfaceLines }, (_, index) => `surface line ${String(index + 1)} of the header`),
     "",
     "[Character: 琥珀]",
     "Role: the player's game companion",
@@ -99,65 +98,60 @@ function withTempRoot(run) {
   }
 }
 
-test("every conduct block is a section under the id its declaration gives it", () => {
+test("the preamble's other named sections are recorded beside the surface block", () => {
   withTempRoot((root) => {
     const manifest = buildInputManifest({ sessionPath: writeSession(root, sessionFixture()) });
     const byId = new Map(manifest.sections.map((section) => [section.id, section.text]));
-
-    assert.ok(CONDUCT_IDS.length > 0, "the declaration must name rules or this test proves nothing");
-    for (const [index, id] of CONDUCT_IDS.entries()) {
-      assert.equal(byId.get(`prompt:conduct:${id}`), `conduct rule ${String(index + 1)} of the floor`);
-    }
-    // THE CONDUCT BLOCK IS THE PREAMBLE'S FIRST BLOCK, so there is no floor above it: a `prompt:floor` section here
-    // would be an empty section invented by the reader.
-    assert.equal(byId.has("prompt:floor"), false, "nothing precedes the conduct block in the delivered preamble");
     assert.deepEqual(manifest.problems, [], "the reader names no problem on the shape the assembly delivers");
-    assert.match(byId.get("prompt:authored"), /^\[Character: 琥珀\]/u);
     assert.equal(byId.get("prompt:magic_context"), "standing rule");
+    assert.equal(byId.get("prompt:cwd"), "C:/root");
   });
 });
 
-test("the delivered preamble's rules come out in the order they are declared, one section each", () => {
-  // THE ORDER IS THE DECLARATION'S, not the preamble's: the six sections must be named by the ids
-  // `auditConductClasses` gives in reading order, so a reordering of either side moves the sections with it. This is
-  // the property the formatting drift broke - the block was there, matched by count, and the reader skipped it.
+test("the surface block is one section of its own, and the authored remainder follows it", () => {
+  // THE SURFACE BLOCK IS THE PREAMBLE'S HEAD, because that is where `buildCompanionSystemPrompt` puts it. Since
+  // 2026-11-24 it is a two-line input header rather than a rule list, so it is recorded as ONE section - the block the
+  // model actually read - and the identity follows it as the authored remainder.
   withTempRoot((root) => {
     const manifest = buildInputManifest({ sessionPath: writeSession(root, sessionFixture()) });
-    const conduct = manifest.sections.filter((section) => section.id.startsWith("prompt:conduct:"));
-    assert.deepEqual(
-      conduct.map((section) => section.id.slice("prompt:conduct:".length)),
-      CONDUCT_IDS,
-      "one section per declared rule, in declaration order",
+    const byId = new Map(manifest.sections.map((section) => [section.id, section.text]));
+    assert.equal(
+      byId.get("prompt:surface_block"),
+      "surface line 1 of the header\nsurface line 2 of the header",
+      "the surface block is recorded whole, as delivered",
     );
-    for (const [index, section] of conduct.entries())
-      assert.equal(section.text, `conduct rule ${String(index + 1)} of the floor`);
+    assert.match(byId.get("prompt:authored") ?? "", /^\[Character: 琥珀\]/u, "the identity follows the surface block");
+    assert.equal(
+      manifest.sections.filter((section) => section.id.startsWith("prompt:conduct:")).length,
+      0,
+      "the rule-per-section split is gone with the rules: no section may claim to be one",
+    );
+    assert.equal(byId.has("prompt:floor"), false, "nothing precedes the surface block in the delivered preamble");
   });
 });
 
-test("a blank line inside the conduct block is reported by name instead of read as the floor", () => {
-  // THE FALSIFIER. This is the drift the audit found in the artifact - a block whose formatting no longer matches the
-  // declaration - and it has to go red rather than silently relabelling the preamble.
+test("a preamble with no blank line is one section, not a preamble nobody could split", () => {
+  // THE FALSIFIER for the reader's shape: with no blank line the whole preamble is the surface block, and the manifest
+  // says so rather than silently dropping it or inventing a second section.
   withTempRoot((root) => {
     const entries = sessionFixture();
     const system = entries.find((entry) => entry.message?.role === "system");
-    const lines = system.message.sections.preamble.split("\n");
-    lines.splice(2, 0, "");
-    system.message.sections.preamble = lines.join("\n");
+    system.message.sections.preamble = "one block with no blank line";
     const manifest = buildInputManifest({ sessionPath: writeSession(root, entries) });
-    assert.deepEqual(manifest.problems, [
-      `prompt_conduct_block_unmatched:${String(CONDUCT_IDS.length)}_declared_rules`,
-    ]);
-    assert.deepEqual(
-      manifest.sections.filter((section) => section.id.startsWith("prompt:conduct:")).length,
-      0,
-      "a block the reader cannot match yields no rule sections at all",
-    );
     assert.ok(
-      manifest.sections.some((section) => section.id === "prompt:preamble"),
-      "the whole preamble is recorded as itself rather than as rules it is not",
+      manifest.sections.some((section) => section.id === "prompt:surface_block"),
+      "the whole preamble is one surface block",
     );
+    assert.equal(
+      manifest.sections.some((section) => section.id === "prompt:authored"),
+      false,
+      "there is no authored remainder inside a preamble with no blank line",
+    );
+    assert.equal(manifest.problems.length, 0, "a preamble this reader can place is not a problem");
   });
 });
+
+
 
 test("the tool list is each tool's name and full description, and the vocabulary block inside plan_work", () => {
   withTempRoot((root) => {

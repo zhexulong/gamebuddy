@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
  *   2. `host/src/games/<game>/prompt/**` - the per-game conduct and plan description the floor splices in.
  *   3. a production module that DECLARES prompt text - a named export the product mounts as model input, matched in the
  *      module's own source: a `build*CompanionSystemPrompt` builder, `provisionLiveRunPersona`, a surface block
- *      (`CHAT_SURFACE_DIVERGENCE`, `GAME_SURFACE_CONDUCT_RULES`) or a `*PostHistoryInstructions` writer.
+ *      (`CHAT_SURFACE_DIVERGENCE`, `GAME_SURFACE_INPUT_HEADER`) or a `*PostHistoryInstructions` writer.
  * A new card, a new game's conduct file or a renamed prompt module therefore joins by existing. Tests and
  * test-support files are excluded: they assert about the prompt, they are not read by the model.
  *
@@ -96,7 +96,7 @@ export const PROMPT_TEXT_DECLARATIONS = Object.freeze([
   }),
   Object.freeze({ id: "live_run_persona", pattern: /^export (async )?function provisionLiveRunPersona\(/u }),
   Object.freeze({ id: "chat_surface_block", pattern: /^export const CHAT_SURFACE_DIVERGENCE/u }),
-  Object.freeze({ id: "game_surface_block", pattern: /^export const GAME_SURFACE_CONDUCT_RULES/u }),
+  Object.freeze({ id: "game_surface_block", pattern: /^export const GAME_SURFACE_INPUT_HEADER/u }),
   Object.freeze({
     id: "post_history_writer",
     pattern: /^export (async )?function [A-Za-z0-9_]*PostHistoryInstructions\(/u,

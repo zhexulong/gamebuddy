@@ -225,7 +225,7 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
         scope: "setting",
         provenance: "authored",
         tokenBudget: "small",
-        constant: false,
+        constant: true,
         keys: [
           "睡觉",
           "收工",

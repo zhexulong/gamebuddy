@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { COMPANION_ARCHIVE_TOOL_DESCRIPTIONS } from "./companion-archive-tool-descriptions.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { type CompanionIdentity, createCompanionRuntime } from "./runtime.js";
 import {
@@ -378,11 +379,16 @@ export function sharedDescriptionsOf(
  *
  * <p>
  * The paragraph was refused rather than derived. What it claimed the tools already declare: `ctx_search`'s own
- * description states the phrasing hint, and `ctx_expand`'s parameters state the tag-versus-ordinal distinction. The one
- * claim that is not the tool's - that this archive is HER earlier turns rather than a repository's history - is the Game
- * floor's, and it states it once (`game-surface-prompt-floor.ts` `archive_is_her_own_history`). Keyed by class, it also
- * rewrote tools its author never saw: a tool the extension registered tomorrow arrived carrying a sentence written
- * before it existed, and nothing in the tree could notice.
+ * description states the phrasing hint, and `ctx_expand`'s parameters state the tag-versus-ordinal distinction. Keyed by
+ * class, it also rewrote tools its author never saw: a tool the extension registered tomorrow arrived carrying a
+ * sentence written before it existed, and nothing in the tree could notice.
+ * </p>
+ *
+ * <p>
+ * WHAT REPLACED IT IS THE OPPOSITE POLICY AND IS TESTED BESIDE IT: `companion-archive-tool-descriptions.ts` names TWO
+ * tools, gives each its own sentence, and its subject is this surface's memory. So this case asserts both halves - a
+ * class still shares no wording, and a projection that names a tool really IS the wording that tool mounts - and a name
+ * the table does not carry keeps the extension's own words.
  * </p>
  *
  * <p>
@@ -436,8 +442,25 @@ test("each mounted tool carries its own words, not its class's", async () => {
         inspection.length >= 2,
         `the Game surface mounts the session inspection family: ${inspection.map((tool) => tool.name).join(", ")}`,
       );
+      // THE OTHER HALF: WHERE THE PROJECTION NAMES A TOOL, THE MOUNTED DEFINITION IS THE PROJECTION'S - and where it does
+      // not, the tool kept the words its extension registered. That is what separates a named per-tool projection from
+      // the class-keyed override the case above refuses.
+      const projected = inspection.filter((tool) => Object.hasOwn(COMPANION_ARCHIVE_TOOL_DESCRIPTIONS, tool.name));
+      assert.deepEqual(
+        projected.map((tool) => tool.name).sort(),
+        Object.keys(COMPANION_ARCHIVE_TOOL_DESCRIPTIONS).sort(),
+        "the projection and the mounted set disagree about which archive tools carry this surface's words",
+      );
+      for (const tool of projected) {
+        const entry = COMPANION_ARCHIVE_TOOL_DESCRIPTIONS[tool.name]!;
+        assert.equal(tool.description, entry.description, `${tool.name} does not carry the projection's sentence`);
+        assert.ok(
+          entry.why.trim().split(/\s+/u).length >= 8,
+          `${tool.name} is projected without a stated reason: a third name has to say what it is doing on this surface`,
+        );
+      }
       process.stdout.write(
-        `mounted tools examined ${String(mounted.length)} · classes with two or more ${String(multiToolClasses.length)} · session_inspection ${String(inspection.length)} · shared descriptions ${String(shared.length)}\n`,
+        `mounted tools examined ${String(mounted.length)} · classes with two or more ${String(multiToolClasses.length)} · session_inspection ${String(inspection.length)} · projected ${String(projected.length)} · shared descriptions ${String(shared.length)}\n`,
       );
     } finally {
       runtime.session.dispose();

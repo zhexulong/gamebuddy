@@ -224,6 +224,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "CARD EXAMPLES AND VOICE WERE TIGHTENED TO SHORT CO-OP BUBBLES (`card.json`, `default-companion-preset.ts`), so `systemChars` shrank while `conductBlock.chars` stayed fixed at 3,595. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 6,120 (vs 6,184 at `e9cdf450`: -64 raw chars, -61 JSON-escaped chars, -220 raw UTF-8 bytes / -217 JSON UTF-8 bytes). `conductBlock.chars` stays 3,595, so `charShareOfSystemPrompt` is re-derived as 3,595 / 6,120 = 0.5874. `envelopeChars`/`envelopeBytes` follow the system string by this change's measured JSON delta against HEAD (-61 chars: 23,514 -> 23,453; -217 UTF-8 JSON bytes: 32,987 -> 32,770) under `remeasured_2026_11_05`'s convention. The TOKEN columns remain carried unchanged.",
     remeasured_2026_11_19_c:
       "`SLEEPING_IS_AN_ACTION` LEFT THE CONDUCT BLOCK FOR THE PLAN TOOL'S OWN `sleep()` DESCRIPTION (`stardew-game-conduct.ts`, `body-program-script.ts`), so the prompt lost the rule and the conduct slice with it while nothing outside the block moved. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 5,922 and `conductBlock.chars` 3,397 - both -198, and the two deltas AGREE because the edit is inside the conduct block and nowhere else (the deleted rule is 197 chars and the join that held it 1, MEASURED on the two texts; it is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both -198). The share is re-derived from that pair as 3,397 / 5,922 = 0.5736. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-198: 23,453 -> 23,255; 32,770 -> 32,572) and were NOT re-measured, because that needs the whole materialized-session instrumentation. `not_derived` and NAMED RATHER THAN ABSORBED: the `stardew_plan_work` row's `descriptionChars` is still 2,160, the session's own measurement, and the description this tree composes now carries 82 more characters than the one that session ran (the moved precondition); no session was materialized for this unit, so the row is left as measured rather than incremented by arithmetic.",
+    remeasured_2026_11_24_b:
+      "THE CONDUCT BLOCK BECAME AN INPUT HEADER, so every column that counts it moved and the block itself is now syntax. Every conduct rule left for the layer that owns it - the night's enforced hours are the shipped world book's `wb-entry-05`, now `constant: true` so it is in the m[0] stable source rather than behind keyword luck at 01:30; how to move her body is the two mounted tools' own descriptions (`game-tools.ts`); whose archive the two readers open is their own projection (`companion-archive-tool-descriptions.ts`); the day's end is `sleep()`'s description; and the machine-vocabulary line is the one rule with no other home, kept as one Chinese line and recorded as `cannot-be-moved` in the floor suite's own gate. What remains is two lines in the run's locale naming the delivery's blocks and where speech sits. Measured by the test against the product's builder: `systemChars` 2,808 and `conductBlock.chars` 283, so the share is re-derived as 283 / 2,808 = 0.1008. THE TWO DELTAS DO NOT AGREE AND BOTH ARE RECORDED: the block fell by 3,226 - 283 = 2,943 chars (MEASURED on the two texts), while the prompt fell by 5,553 - 2,808 = 2,745, so 198 characters of the prompt grew OUTSIDE the block - THIS WORKTREE CARRIES OTHER LANES' UNCOMMITTED CARD AND PRESET EDITS, and the number recorded here is the tree's own reading rather than a projection of what a commit ships. THE LANE THAT LANDS THOSE EDITS MUST RE-RECORD THIS COLUMN. `envelopeChars`/`envelopeBytes`, `systemTokens` and the conduct `tokens` column are carried UNCHANGED under `remeasured_2026_11_05`'s convention - they are measurements of a materialized session, no session was materialized for this unit, and they now over-count by the 2,745 characters the prompt lost. NOT IN THIS READING'S COLUMNS: the class table the old gate read is deleted with the rules it classified (`tools/check-game-surface-conduct-classes.mjs` and its suite), and what replaced it is `game-surface-prompt-floor.test.ts`'s `a_rule_the_prompt_states_has_an_owner`, which reads the assembled block's sentences and prints `sentences examined 3 · syntax 2 · behaviour 1 · enforced-elsewhere 0 · cannot-be-moved 1`.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -231,10 +233,9 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 5,922 at `remeasured_2026_11_19_c`, following the sleep
-    // rule's removal from the conduct block (-198 raw chars from 6,120). The token column below is the 2026-11-05
-    // MEASUREMENT.
-    systemChars: 5922,
+    // Re-derived from the product's builder by the test itself: 2,808 at `remeasured_2026_11_24_b`, where the conduct
+    // block became an input header. The token column below is the 2026-11-05 MEASUREMENT.
+    systemChars: 2808,
     systemTokens: 5119,
     toolsTokens: 3552,
     // The recorded envelope plus this change's measured JSON-escaped delta over HEAD (-198 characters): the tool array
@@ -245,10 +246,12 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 3397,
+    // The Game surface block's own size. It measures the INPUT HEADER now (`gameSurfaceInputHeader('zh-CN')`), not a rule
+    // list; the name is kept because the pair-budget gate reads this column, and what it measures is stated here.
+    chars: 283,
     tokens: 1227,
-    // The measured slice over the measured prompt: 3,397 / 5,922.
-    charShareOfSystemPrompt: 0.5736,
+    // The measured slice over the measured prompt: 283 / 2,808.
+    charShareOfSystemPrompt: 0.1008,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
@@ -261,7 +264,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
   comparison: Object.freeze({
     chatSurfaceEnvelopeTokens: 4099,
     chatSurfaceToolCount: 0,
-    note: "runtime-core.internal.ts gives the Chat surface no tool group at all, so its floor is its system prompt alone. The Game floor is more than twice the Chat floor, and 3,620 of the difference are tool definitions.",
+    note: "runtime-core.internal.ts gives the Chat surface no tool group at all, so its floor is its system prompt alone. Since `remeasured_2026_11_24_b` the Game prompt's own prose is a 283-character input header, so the remaining difference is the tool definitions - the half this comparison was always about.",
   }),
   rows: Object.freeze([
     Object.freeze({

@@ -945,9 +945,10 @@ const SCENARIO_PROMPTS = Object.freeze({
     // THE THREE THINGS THE NARRATION WAS CARRYING are owned by layers that already state them:
     //   - WHICH DAY IT IS: `<world-state>`'s own date line, from `snapshot.dayOfMonth` / `seasonIndex` / `year` through
     //     `game-world-vocabulary.ts#formatGameDate` (`春季 3 日`), restated every turn.
-    //   - THAT SLEEPING IS WHAT ENDS THE DAY: the Game prompt floor's `SLEEPING_IS_AN_ACTION` and `BED_IS_INSIDE`
-    //     (`games/stardew/prompt/stardew-game-conduct.ts`), said once for every Game run rather than restated in the
-    //     player's mouth on every day of one scenario.
+    //   - THAT SLEEPING IS WHAT ENDS THE DAY: `stardew_plan_work`'s own `sleep()` description
+    //     (`body-program-script.ts` `planWorkDescription`), which states the call and its precondition at the moment a
+    //     caller can make it - the floor rules that used to say it (`SLEEPING_IS_AN_ACTION`, `BED_IS_INSIDE`) are gone
+    //     with the floor's rule list.
     //   - WHOSE THE WORDS ARE: the shape. The player's text is the head of the turn, verbatim, and the machine's blocks
     //     follow it (`fact-brief.ts#composeFactBrief`), so nothing has to label it and nothing can mislabel it.
     // What is left is what a person says to their companion: I am out, here is the job, order it yourself, do not wait

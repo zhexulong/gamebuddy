@@ -54,10 +54,13 @@
  *                    `a_directory_whose_only_content_is_a_claim` plus `document_claim_names_missing_source` for the
  *                    module the README quotes and the tree does not carry, while the same tree with both files added
  *                    is silent (tools/check-host-source-directories.mjs)
- * red-proof: self-check  a scratch tree holding `host/src/other-game-lifecycle-widget.internal.ts` flat ->
- *                    `a_game_module_lives_in_the_game_tree:host/src/other-game-lifecycle-widget.internal.ts`, while
- *                    the same file under `host/src/games/other/lifecycle/` is silent; and a stated row whose claimed
- *                    import is gone -> `stated_placement_reason_expired` (tools/check-host-source-directories.mjs)
+ * red-proof: self-check  a scratch tree holding one game module flat (`other-game-lifecycle-widget.internal.ts`) ->
+ *                    `a_game_module_lives_in_the_game_tree` naming that module and its directory, while the same file
+ *                    under the scratch tree's `games/other/lifecycle/` is silent; and a stated row whose claimed
+ *                    import is gone -> `stated_placement_reason_expired` (tools/check-host-source-directories.mjs).
+ *                    The scratch paths are written without the `host/src/` prefix on purpose: the red-proof ledger
+ *                    resolves every repository path a marker names, and a path that only exists inside the tree the
+ *                    falsifier builds is `pointer_missing` rather than a claim it can check (measured 2026-11-19).
  */
 
 export const gateDeclaration = {

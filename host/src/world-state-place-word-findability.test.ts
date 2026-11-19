@@ -48,7 +48,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { composeWorldState } from "./fact-brief.js";
-import { GAME_SURFACE_INTERACTION_CONDUCT } from "./game-surface-prompt-floor.js";
+import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import {
   destinationQueriesIn,
   formatGameLocation,
@@ -310,10 +310,10 @@ function wordsOf(document: unknown): string {
 }
 
 test("a_place_word_is_a_key_only_where_a_name_is_asked_for: every word the product hands over as a name is the world's", () => {
-  const queries = searchQueryWords(GAME_SURFACE_INTERACTION_CONDUCT);
+  const queries = searchQueryWords(GAME_SURFACE_INPUT_HEADER);
   const keys = [...rowLabelWords(), ...standingPlaceWords(), ...queries];
   const speech = [
-    ...speechWords(GAME_SURFACE_INTERACTION_CONDUCT, queries),
+    ...speechWords(GAME_SURFACE_INPUT_HEADER, queries),
     ...speechWords(wordsOf(DEFAULT_COMPANION_PRESET), []),
   ];
   const examined = [...keys, ...speech];
@@ -347,16 +347,17 @@ test("a_place_word_is_a_key_only_where_a_name_is_asked_for: an instruction that 
   );
   assert.equal(namesAPlace("矿洞"), false, "no destination declares 矿洞, which is the word the round77 label taught");
   assert.equal(keys[0]!.text, line, "the verdict names the text that made the word a key, not the word alone");
-  // AND SPEECH IS NOT READ AS A KEY: the rule that says the mine out loud asks the search for nothing, and the gate reads
-  // only what a rule hands the search.
-  const registerRule = GAME_SURFACE_INTERACTION_CONDUCT.split("\n").find((rule) => rule.includes("矿洞第 10 层"));
+  // AND SPEECH IS NOT READ AS A KEY: the world book says where the mine is in her own words and asks the search for
+  // nothing, and the gate reads only what a text hands the search. The floor's own `矿洞第 10 层` sentence left with the
+  // conduct rule that carried it (2026-11-24), so the prose population here is the book the Game surface mounts.
+  const mineEntry = (DEFAULT_COMPANION_PRESET.worldBook?.entries ?? []).find((entry) => entry.content.includes("矿洞"));
   assert.ok(
-    registerRule !== undefined,
-    "the floor states how to say the mine out loud, and that line is speech the gate must leave alone",
+    mineEntry !== undefined,
+    "blocked: the shipped world book names no mine, so the speech half of this reading examined nothing",
   );
   assert.deepEqual(
-    destinationQueriesIn(registerRule),
+    destinationQueriesIn(mineEntry.content),
     [],
-    `the rule that says 矿洞第 10 层 out loud asks the search for nothing: ${registerRule}`,
+    `the book that says where the mine is asks the search for nothing: ${mineEntry.content.slice(0, 60)}`,
   );
 });

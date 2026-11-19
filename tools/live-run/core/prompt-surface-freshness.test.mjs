@@ -161,7 +161,15 @@ describe("the population is derived from the launched tree, never a hand list", 
     ];
     const declaring = [];
     for (const path of sources) {
-      const text = readFileSync(join(repositoryRoot, path), "utf8");
+      // THE TREE IS HEAD'S, SO THE TEXT MUST BE HEAD'S TOO. Reading a HEAD-listed path out of the working tree reds with
+      // ENOENT on the day a lane deletes a prompt module it has not committed yet - the population still names it, and
+      // the reader cannot open it. The fallback asks git for the blob it listed.
+      let text;
+      try {
+        text = readFileSync(join(repositoryRoot, path), "utf8");
+      } catch {
+        text = execFileSync("git", ["show", `HEAD:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
+      }
       const declared = builders.filter((builder) => text.includes(builder));
       if (declared.length > 0) declaring.push({ path, declared });
     }
@@ -205,7 +213,7 @@ describe("the population is derived from the launched tree, never a hand list", 
     // A module joins by DECLARING prompt text, not by being named like one: this file is named `-prompt-floor` and does
     // not join, because it declares nothing the model reads.
     write(dir, "host/src/zz-scenario-prompt-floor.ts", "export const floor = 1;\n");
-    write(dir, "host/src/zz-somewhere-else.ts", "export const GAME_SURFACE_CONDUCT_RULES = Object.freeze([]);\n");
+    write(dir, "host/src/zz-somewhere-else.ts", "export const GAME_SURFACE_INPUT_HEADER = Object.freeze([]);\n");
     write(dir, "host/src/zz-unrelated-plumbing.ts", "export const plumbing = 1;\n");
     commit(dir, "base");
     const population = promptSurfacePopulation({ repositoryRoot: dir });

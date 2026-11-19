@@ -1,425 +1,94 @@
 import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
-import { CONTENT_IDS_IN_WORDS, NIGHT_HAS_ENFORCED_HOURS } from "./games/stardew/prompt/stardew-game-conduct.js";
 import { type IdentityProfile } from "./identity-profile.js";
 import { buildCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
 
 /**
- * The Game surface's prompt floor: the conduct rules a Game companion reads, and the one builder that installs them.
+ * The Game surface's prompt header: the syntax of one turn's message, and the one builder that installs it.
  *
  * <p>
- * It is its own module because the floor is the part of the Game prompt that grows, rule by rule, out of live-run
- * measurements - and it lives on the Game surface alone. The shared framework, the identity block, the card's own
- * directive and the Chat builders stay in `identity-profile.ts`; what is here is the surface's conduct and the
- * deliverable that renders it.
+ * THIS FILE USED TO BE A FLOOR OF CONDUCT RULES, and it is a header now. Every rule it carried was a second spelling of
+ * a fact another layer already owned - the night's enforced hours are the shipped world book's entry, the day's end is
+ * `sleep()`'s own description, how to move her body is the two mounted tools' descriptions, and when she speaks is the
+ * card's. Each left for the layer that owns it, and what remains is the one thing no other layer can state: which parts
+ * of a turn's message are the machine's blocks and which part is her partner talking.
  * </p>
  *
  * <p>
- * The rules are split by OWNER, and this module composes them into the one list the model reads. What holds for any game
- * surface is written below: machine-block semantics, the receipt vocabulary, body language
- * through the mounted tools. What is true only of this save format - `(T)Hoe` - is
- * Stardew's, in
- * `games/stardew/prompt/stardew-game-conduct.ts`, and is spliced in at the position it reads at. The order is
- * `GAME_SURFACE_INTERACTION_CONDUCT`'s, and it is the order of the prompt.
- * </p>
- *
- * <h2>Every instruction here is one of exactly three kinds</h2>
- *
- * <p>
- * Classify a new one before adding it, because the third kind grows into the other two:
- * </p>
- *
- * <ul>
- *  <li>FLOOR - what she must never do: break character, speak out of world, or violate a product safety/contract rule.
- *    A pacing bound that only forbids a monologue ("do not write long speeches") is floor. The prompt owns this.</li>
- *  <li>FORM - how long a turn is, how many action beats it carries, what shape the prose takes. THE CARD OWNS THIS;
- *    the prompt says nothing about it. A prompt-written shape rule beats a card that teaches the opposite shape, which
- *    is exactly how a character whose every example opens with a `*...*` micro-action flattened into dialogue-only
- *    service prose (owner ruling: "the prompt governs the floor, the card governs the form; anything that governs form
- *    gets deleted").</li>
- *  <li>CHANNEL - how to operate the surface we gave her: the one stage-direction syntax the renderer draws, the
- *    mounted tool name that moves her body, the machine vocabulary a receipt has to be translated out of, what to do
- *    when an action is refused. Legitimate and required - the renderer draws nothing until the prompt names its syntax
- *    - but it is the kind that quietly claims authority over form, so state what the surface DOES, never what her prose
- *    must look like. `stardew_express_emote` is a channel fact; "at most one short stage direction" was form wearing a
- *    channel's clothes.</li>
- * </ul>
- *
- * <p>
- * The classification is not a matter of taste, so it is written down beside the rules: every entry of
- * `GAME_SURFACE_CONDUCT_RULES` carries one class and one line saying why, the Stardew module carries the same table for
- * the rules it owns, `GAME_SURFACE_CONDUCT_CLASSES` is that first set of entries read as a table, and
- * `tools/check-game-surface-conduct-classes.mjs` fails by name when a rule arrives without a class, when a class is
- * stated anywhere but inside its rule's own entry, or when a rule classified FORM is still in the floor.
- * </p>
- *
- * <h2>Every rule names its exit, and that is what makes the count monotone</h2>
- *
- * <p>
- * A rule here is not "the wrong layer". It is a DEBT WITH A NAMED OWNER - the surface change that would delete it - and
- * every entry carries that owner in one `exit`, which is one of exactly three kinds: `surface: <the change to the
- * delivery, the renderer or the tool surface that would delete the rule>`, `authority: <the authority that already owns
- * the claim, making this rule its duplicate>`, or `permanent: <why no mechanism can enforce it>`. The classification is
- * the same reading as the classes above and is written in the same entries; `GameRuleExit` is a template-literal union
- * so a missing or misnamed exit is a compile error, and `tools/check-game-surface-conduct-classes.mjs` fails by name on
- * the source it reads - `floor_rule_has_no_exit:<id>` - and prints `rules examined N · with an exit E · unowned U`.
+ * WHAT IS LEFT IS SYNTAX, AND IT IS WRITTEN LIKE SYNTAX: two lines in the run's own locale, naming the blocks the
+ * delivery sends and the one positional fact that speech has no markup of its own (`2026-11-14`: the player's words are
+ * the head, unlabelled). Nothing here tells her what to feel, how long a turn is, or when to speak.
  * </p>
  *
  * <p>
- * MEASURED ON EVERY RULE THIS FLOOR CARRIES: each names a surface change, and none is permanent. A new rule cannot be
- * added without saying how it dies, which is what keeps this list from growing back - the gate prints how many it
- * examined, so this paragraph states no count of its own. The rules that have left left as SURFACE EXITS TAKEN, not as
- * deletions nobody could see: `BED_IS_INSIDE` the day the day's end refused the fields itself, `never_a_customer` the day
- * the preset said the register, and `SLEEPING_IS_AN_ACTION` the day `sleep()`'s own description took the precondition it
- * was written to state.
+ * WHY A FUTURE "ADD A RULE HERE" IS THE WRONG PLACE. A conduct rule has an owner whenever it is about the world, a
+ * tool, a renderer or her voice, and this module owns none of those - so a rule written here is a rule written twice.
+ * The gate in `game-surface-prompt-floor.test.ts` (`a_rule_the_prompt_states_has_an_owner`) reads every sentence of this
+ * block and refuses one that states behaviour with neither an owner nor a recorded reason it cannot move.
  * </p>
  *
  * <p>
- * THE END STATE AT ZERO RULES IS DELETION, AND THE GATE CAN SEE IT. With no rules this module has nothing to classify, so
- * `GAME_SURFACE_INTERACTION_CONDUCT` is empty and the gate BLOCKS (exit 2, "declares no rule") instead of passing green
- * on a population of zero - its message says to delete the floor and its tables rather than leave an empty one. Zero is a
- * resting state only for a module that still classifies rules a surface change has not yet removed; a floor with nothing
- * to classify is dead code.
- * </p>
- *
- * <h2>WHEN she speaks is the persona's, and this floor states nothing about it</h2>
- *
- * <p>
- * The three kinds above decide what a rule is ABOUT. This is a separate axis, and it decides WHO OWNS the rule: the
- * persona owns her voice and every rule about when, whether or how much she speaks (`assets/tavern/presets/` - the card's
- * own directive, which every Game session mounts as `characterVoice`, and the preset the surface mounts); the floor owns
- * what the blocks and the receipts MEAN, what counts as an action, and what the SURFACE does; a tool description owns
- * only how to call the tool. The floor may state the machine vocabulary of a
- * receipt. It may not hang a speech act on a state, a reply or a count - not as a
- * command, not as a permission, and not as a claim about what the surface will carry. Nor may it state a register: the
- * customer-service wording left on 2026-11-23 (below), because tone is the persona's on this axis as much as a count is.
+ * ONE LINE THAT IS TEMPORARY SAYS SO. `formatHeldTool` falls back to the native identity when a slot publishes no tool
+ * word (`game-world-vocabulary.ts`), and `fact-brief.ts` prints a receipt's `reasonCode` and `evidence.detail` as the Mod
+ * published them, so a machine word can still reach her. That line is debt with a named owner - the two renderers - and it
+ * leaves the day they translate. The archive claim LEFT on 2026-11-24 rather than staying here: the two mounted readers'
+ * own descriptions now say whose memory they open (`companion-archive-tool-descriptions.ts`), which is the layer that
+ * hands her the call.
  * </p>
  *
  * <p>
- * Measured 2026-11-15: the floor said "say one thing per reply and stop when it has been said" and the plan tool's
- * description ended "so end your turn and speak to the player". Together they read as WAKE UP - SAY ONE THING - STOP on
- * every turn, work or no work, and the run answered with a bubble on 120 opened turns of which 86 carried
- * `observation:nothing_pending`. Nothing kept the shape from coming back, because the gate that watched this floor looked
- * for PHRASINGS. On 2026-11-22 ten of the nineteen rules these tables declare were still state machines written in prose no phrase list
- * contained - "When a stretch of work ends ... speak from your immediate bodily sensation", "When something blocks you,
- * the player hears a person's reaction", "You may speak while you work", "the surface carries one per reply", "never ask
- * your partner what you should do next" - which is why the gate's population is now every rule these tables declare and
- * its property is whether the rule says when, whether or how much she speaks. Six of those rules duplicated the card's
- * own directive and were deleted rather than moved (one spelling: 先接住人 / 不报进度 / 遇上卡路只说眼前障碍); the one rule
- * nothing else stated - never hand the choice of the next move back, with its concrete-question boundary - moved to the
- * preset the Game surface mounts (`amber-game.json`).
- * </p>
- *
- * <p>
- * TWO MORE RULES LEFT ON 2026-11-23, and the order of that unit was the point: the guards for both were repaired FIRST, so
- * the deletions could be seen. Deleting a rule whose guard cannot fail makes the floor smaller and the tree greener at the
- * same time (see `fb9dbb44`, and `floor_block_count_owes_update`, which still fails by name there).
- * </p>
- *
- * <p>
- * `BED_IS_INSIDE` stated what the SURFACE refuses - going to bed from the fields - and the surface does refuse it: the day's
- * end answers `not_home` from its own lifecycle (`SleepAndAdvanceDayLifecycle.cs`), which is the Mod's fact and the Mod's
- * test. WHERE the day ends went the same way on 2026-11-19, one layer further out: the precondition belongs to one call,
- * so `stardew_plan_work`'s `sleep()` description states it (`body-program-script.ts`), and `body-program-script.test.ts`
- * holds the clause there rather than here.
- * </p>
- *
- * <p>
- * `never_a_customer` stated the assistant register, and the register is tone: the card's own directive already bans it in her
- * own words (绝无半分低姿态保姆腔或客套, asserted in `identity-profile.test.ts`), and the Game preset now states the one
- * thing the card's class does not spell out - the concrete customer-service phrasing - in `amber-game.json`'s Main, which is
- * the layer every Game live run mounts.
- * </p>
- *
- * <p>
- * THE LAST TWO LEFT ON 2026-11-23, AND BOTH WENT TO THE PERSONA BECAUSE BOTH ARE CLAIMS ABOUT HER RATHER THAN ABOUT WHAT A
- * BLOCK MEANS. `one_utterance_per_reply` banned markdown, lists and 首先/其次/最后: that is a reply's LAYOUT, which is the
- * preset's on this surface as on every other, and the preset states it now - one clause in `amber-game.json`'s Main, in her
- * own voice. `observed_only` said she may state only what the game reported and never invent a villager's reaction: that is
- * who she is, and the preset already carried the principle one noun narrower ({{user}}'s reactions and words are his), so
- * it was WIDENED in that same clause rather than restated beside itself.
- * </p>
- *
- * <p>
- * NEITHER IS RECORDED AS A `moved` ENTRY HERE, BECAUSE A MOVED RULE LEAVES NOTHING BEHIND: an entry marked moved is a
- * second spelling of a claim its new owner states, which is the duplication this floor has been shrinking for a year. What
- * holds the move instead is `game-surface-prompt-floor.test.ts`: it reads the claim out of the preset's Main and fails by
- * name if any rule the floor still composes states it, so a rule that drifts back is red on the day it lands.
- * </p>
- *
- * <p>
- * THE FLOOR STATES NO SURFACE FACT ABOUT A REPLY'S SHAPE, AND THAT LAST ONE WAS THE WORST OF THEM: `one_bubble_of_size`
- * said "one bubble holds 80 characters ... anything you say past the bubble's ceiling is deleted". Measured against the
- * three surfaces it was describing: the wire carries 4,000 characters (`BridgeSession.cs`
- * `MaximumPresentationTextLength`), the bubble is two lines of 448 px - about 34 CJK glyphs - and clamps itself with a
- * visible `…` (`CompanionBubble.cs`), and the chat line beside it keeps the whole text for scroll-back (`ModEntry.cs`
- * "the chat line is the authority for the receipt"). So 80 was the transport's bound divided by fifty and the bubble's
- * capacity multiplied by two, a compliant 79-character line already ended in `…` on screen, and the number was the one
- * thing she could budget by - while the delivery deleted 18 turns' tails on `round62` for it. Both halves are gone: the
- * delivery cuts at the transport's own bound (`companion-delivery-pacing.ts`) and this floor says nothing about size.
- * `game-surface-prompt-floor.test.ts` holds both - a turn below the transport arrives whole, and the prompt states no
- * bubble ceiling at all.
+ * THE COUNT AND THE NAMES ARE READ FROM `FACT_BRIEF_BLOCKS`, never typed here: on 2026-11-11 a fifth block (`<in-flight>`)
+ * was added while a sentence still said "four", so the prompt told her the batch had four blocks and then sent five. A
+ * number in prose is a second spelling of a fact the constant already owns, and `BLOCK_GLOSS` is a
+ * `Record<FactBriefBlock, …>` because that is what makes a sixth block a compile error here instead of a silent omission.
  * </p>
  */
 
+/** One block's gloss, in each of the two languages this surface renders: the run's locale decides which. */
+const BLOCK_GLOSS: Readonly<Record<FactBriefBlock, Readonly<{ zh: string; en: string }>>> = Object.freeze({
+  "world-state": Object.freeze({
+    zh: "世界现状，每轮都有",
+    en: "the world as last observed; the one block every turn carries",
+  }),
+  "world-facts": Object.freeze({
+    zh: "要你知道的事：被拒绝、有人来了、桥断了",
+    en: "the decisions you have to see: a refusal, a notice, an arrival, the bridge going away",
+  }),
+  "execution-result": Object.freeze({ zh: "你交的计划跑成什么样", en: "what a plan you submitted did" }),
+});
+
+/** True when the run's own locale is a Chinese one; the surface renders in that locale and nowhere else. */
+function readsChinese(locale: string | undefined): boolean {
+  return typeof locale === "string" && locale.toLowerCase().startsWith("zh");
+}
+
 /**
- * Game-surface conduct shared by every Game companion runtime.
- *
- * The Game surface has native action channels (movement, the emote balloon, a
- * turn to a cardinal direction), so spoken text must carry only interaction —
- * never a play-by-play of the actions themselves. Long step-by-step narration
- * makes the companion feel like a status reporter instead of a companion.
- *
- * THE NAME THIS RULE USES IS THE ONE THE LIVE SURFACE MOUNTS, and those are `stardew_express_emote` and
- * `stardew_face_direction`. `runtime-core.internal.ts` drops every tool the adapter publishes as an action when
- * `planActionSurface` is declared, and the live Game materializer declares it, so `STARDEW_ACTION_TOOL_NAMES` is a
- * projection the Agent is never handed - EXCEPT for the actions the registry declares expression-only
- * (`EXPRESSION_ONLY_ACTION_IDS`), whose tools that same filter keeps. A gesture is one step by nature, so it does not
- * need the plan to avoid a one-step run of work; forcing it into the plan made it queue behind the work steps in front of
- * it and be reported settled by the plan's own settlement. This paragraph has now been wrong twice in the same way, both
- * times by naming a route the request did not carry: it once called the per-action names "the MOUNTED ones" (measured
- * `round46b`, 2026-11-11: 68 tool calls, not one emote), then called the plan step the route (measured `round47`, 64
- * assistant turns, 188 planned nodes, zero emotes). `action-route-gate.test.ts` is what now holds every action to exactly
- * one route, derived from the assembled tool set rather than from a name list, and `identity-profile.test.ts`,
- * `surface-protocol-isolation.test.ts` and `action-registry-consistency.test.ts` resolve every `stardew_*` name in the
- * prompt against the MOUNTED set.
- *
- * THE ROUTE BEING NAMED WAS NOT THE WHOLE OF WHAT A CALLER NEEDS, so the rule names the argument too. Measured
- * `round47` (64 assistant turns, 188 planned nodes - 140 `move_to_tile`, 26 `cut_weeds`, 12 `break_rock`, 9 `cut_grass`,
- * 1 `enter_exit`): zero emotes, because nothing a caller was handed said which of the 21 `emote` words an `emote` call
- * takes. The rule now names the argument, and the words themselves are the tool's own closed set in its parameter list -
- * `stardew_plan_shape` cannot answer for these two actions, because the plan form does not admit them.
- *
- * WHAT IT DELIBERATELY DOES NOT CARRY IS A FREQUENCY. Under the owner's Option
- * B nothing guarantees an emote: the product teaches the shape and leaves the
- * judgement to her, and no gate anywhere fails a run for not using one. The record
- * is exported so `conversational-stance-gate.test.ts` can read every rule this floor
- * declares; only `buildGameCompanionSystemPrompt` and that gate consume it.
- *
- * THE PACING BOUND IS GONE WITH THE RULES THAT OWNED IT, and its measurement is why
- * it cannot come back as a floor rule. Measured 2026-10-27 on a chain-fixed live run:
- * `firstPieceTtfbMs = 88,532` over a 130 s run whose first SIXTEEN assistant messages
- * were pure `toolCall` turns with no text at all. Nothing in the presentation path was
- * withholding speech (the Game observer releases one mid-work line per reply,
- * `native-companion-content.ts` under `stopReason === "toolUse"` and its 3 s silence
- * timer) - the floor had licensed the silence, and the clause that replaced it then
- * made a line owed on every turn instead. Both readings are one error from two
- * directions: how much she says is the persona's, and the card's own directive states
- * it (说完就停 / 不报进度).
- *
- * LENGTH IS THE SURFACE'S OWN FACT HERE, AND ONLY THE BUBBLE'S.
- *
- * Live runs answered the old adjective with 157/178/144-character turns: paragraphs in a
- * box the player cannot scroll, shaped like a status document, in the voice of a host. No
- * imported card is obliged to say anything about the box, so the floor states it - as the
- * box's measured size, DERIVED from the delivery policy that splits the reply and never
- * restated. How many lines a reply carries, how it is laid out, and when a line belongs, are
- * the persona's.
- *
- * THE SIZE ALONE UNDER-STATED WHAT THE SURFACE DOES WITH THE EXCESS, and "about N characters" was the
- * under-statement. Measured 2026-11-16 on `round62`'s session (90 turns that carried text, 70 bubbles): 18 turns
- * were cut at the ceiling - 533 characters and 26 whole sentences deleted before the player saw them. The turn lane
- * cannot deliver the tail (`native-companion-content.ts` `deliverTurn`: one commit per turn is the bubble's whole
- * contract), so the rule states the deletion rather than a soft target, because she budgets by whatever the rule says
- * and the surface deletes. `game-surface-prompt-floor.test.ts` joins the two halves: every turn whose delivery reports
- * a cut must be one the model was told about, at the same ceiling.
- *
- * Deliberately absent: a banned list of dialect particles (a card's voice may carry them),
- * any restatement of the persona, and any rule about a moment. The observation-honesty and
- * emote-channel rules are contract, not style.
- *
- * THE DAY'S OWN MECHANISM LEFT ON 2026-11-19, AND THE MEASUREMENT THAT PUT IT HERE IS WHY IT WENT TO THE TOOL. Measured
- * 2026-10-28 (run game-1793210285549, day 5): at in-game 22:00 in the farmhouse the companion's own thinking read "Going
- * to bed would be good. Let me check if there's a sleep action. ... I don't know the action id. Let me not risk it; a brief
- * line is fine." It said goodnight and the body never moved; the engine's 02:00 pass-out took the night, and `advance_day`
- * - published, live-verified, and a plan builder method - was never dispatched, which is also why no `advance_day`
- * lifecycle was running for the morning's ShippingMenu to belong to. The scenario text already said that announcing does
- * not end the day, so the companion knew a goodnight was not the act; what nothing said is that the day's end is an ACTION
- * at all. `SLEEPING_IS_AN_ACTION` answered that from here for a while, and the answer belonged one layer out: what she
- * lacked was the CALL, so the call's own description says it (`body-program-script.ts` `planWorkDescription` - `sleep()`
- * takes no arguments, and the day passes only from inside your own farmhouse or cabin). A rule left here is a fact stated
- * twice; this one now has one writer, and `body-program-script.test.ts` fails by naming `sleep` and the missing precondition
- * if it stops being stated there.
- *
- * TWO RULES LEFT THIS BLOCK BECAUSE THE DELIVERY STATES THEIR FACT, AND THE DELIVERY IS THE ONLY SPELLING THAT DOES
- * NOT DRIFT. Measured 2026-11-05 (day 2, 18:00, the starter farmhouse): she said "六点了，锅里没东西可下，我烧壶水泡点茶对付
- * 一口算了" in a house with neither a kitchen nor a stove, and nothing in the prompt described the room - the book's entry
- * is behind its own trigger words (料理/做饭/绿菜/土豆饼/...) and that sentence carries none of them. The rule written for it
- * stated the starter house's form, and it was already the second copy of a fact the Mod publishes: the live line answers
- * `厨房: 无` / `厨房: 有` from its own `cookingStationTargets` scan of the map she is standing on
- * (`game-world-vocabulary.ts` `formatKitchen`), so a saved house that has been upgraded is followed rather than
- * contradicted. `LIVE_STATE_GROUNDING` went the same way and for the same reason: the clock, the date, the weather, the
- * map, the tile, the held tool, the unwatered crops and the stamina are the `<world-state>` paragraph every turn, and the
- * rest of the rule was three other owners' prose - the 01:30 mechanic is the shipped book's own entry, "never hallucinate"
- * is the persona's now, and "speak from tangible objects" is the card's. Both are held by
- * `game-surface-prompt-floor.test.ts` rather than by this comment: every fact the line renders for a house must reach her
- * in `<world-state>`, both polarities of the kitchen, and no sentence of this block may state either fact again.
- *
- * Rendered one rule per line (joined with "\n"): joined as one paragraph, these rules hide
- * their own structure from whoever reviews the next change here.
- *
- * ONE RULE NAMES THE DELIVERY'S BLOCKS, because the block names are markup the model has to recognize rather
- * than prose it can infer. It is CHANNEL - what the surface sends, that every block is the machine's, and that the
- * words above them are the person speaking - and it is written once, here, rather than repeated in every delivery.
- * The distinction it draws is positional on purpose: speech has no markup of its own since `2026-11-14`, so the rule
- * says where it sits instead of naming a block that holds it.
- *
- * THE COUNT AND THE NAMES ARE READ FROM `FACT_BRIEF_BLOCKS`, never typed here: on 2026-11-11 a fifth block
- * (`<in-flight>`) was added while this paragraph still said "four", so the prompt told her the batch had four
- * blocks and then sent five. A number in prose is a second spelling of a fact the constant already owns, and
- * `FACT_BRIEF_BLOCK_GLOSS` is a `Record<FactBriefBlock, string>` because that is what makes a sixth block a
- * compile error here instead of a silent omission from the prompt.
- *
- * THE HEAD OF THE MESSAGE IS CHECKED AGAINST A DELIVERY, because on 2026-11-21 it was not. Measured `round56`, 32
- * delivered batches: 29 began with `<world-state>` and 3 with the partner's own words - which is every shape there is,
- * because `composeFactBrief` puts the player's speech first when they typed and otherwise the world block, the one block
- * every batch carries. The rule said "A turn's message opens with your partner's own words ... answer what your partner
- * said at the top of the message": a false premise stated as fact on 90% of the turns that ran, and an instruction to
- * answer something that was not there. It now states both shapes and what to do in each one, and
- * `game-surface-prompt-floor.test.ts` composes a delivery of EACH shape through the producer and fails by name
- * (`floor_asserts_a_premise_the_delivery_contradicts:<claim>:<shape>`) on any conduct sentence - including one written
- * tomorrow - that names the partner's words as what the head holds.
- *
- * THE TWO SHAPES ARE STATED, AND WHEN SHE SPEAKS STILL IS NOT. The measurement above invites "act on it, and speak only
- * if there is something to coordinate", and that clause is deliberately absent: a condition on when she speaks is a
- * MOMENT, which the section above says the floor may not command, and its history here is the WAKE UP - SAY ONE THING -
- * STOP that the 2026-11-15 measurement produced. Removing the false premise is what this rule owes her; what she says on
- * a turn with nobody speaking is the preset's.
+ * The header's two lines for one locale: the blocks and where speech sits, and the machine vocabulary still arriving in
+ * receipts.
  */
-const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
-  "world-state":
-    "the world as last observed; its first line names the revision and says whether this turn brought a new observation or re-states the last one",
-  "world-facts": "the decisions you have to see: a refusal, a notice, an arrival, the bridge going away",
-  "execution-result": "what a plan you submitted did",
-};
+export function gameSurfaceInputHeader(locale?: string): string {
+  const zh = readsChinese(locale);
+  const blocks = FACT_BRIEF_BLOCKS.map((block) => {
+    const gloss = BLOCK_GLOSS[block];
+    if (gloss === undefined) throw new Error(`game_surface_block_without_gloss:${block}`);
+    return `<${block}> ${zh ? gloss.zh : gloss.en}`;
+  }).join(zh ? "、" : ", ");
+  const blockCount = String(FACT_BRIEF_BLOCKS.length);
+  return [
+    zh
+      ? `【消息格式】这条消息是机器的报告，${blockCount} 段：${blocks}。三段都是机器写的；三段外面的字是你搭档说的，原样放在最前面，他没开口消息就从 <world-state> 开始。`
+      : `[Message format] This message is the machine's report, in ${blockCount} blocks: ${blocks}. Every block is written by the machine; text outside them is your partner's own words, verbatim and first, and a turn that carries none opens with <world-state> instead.`,
+    zh
+      ? "回执和拒绝里还带着机器写法（gift_given 这样的原因码、location=Farm;item=(O)472 这样的字段），说的时候翻成人话；物件名字偶尔只有 id（手持: (T)Hoe），说的时候用词，id 只拿去填动作参数。"
+      : "Receipts and refusals still carry the machine's own vocabulary (a reason code such as gift_given, fields such as location=Farm;item=(O)472), so say what they mean to a person, and a name that arrives as an id alone (holding: (T)Hoe) is said as the word it stands for while the id is kept for an action argument.",
+  ].join("\n");
+}
 
-/** One of the doctrine's three kinds. `FORM` is a finding here, not an option: the card owns form. */
-type GameSurfaceConductClass = "FLOOR" | "CHANNEL" | "FORM";
-
-/**
- * How a rule dies: the surface change that would delete it, the authority that already owns the claim, or `permanent`
- * with the reason no mechanism can enforce it.
- *
- * <p>
- * A TEMPLATE-LITERAL UNION RATHER THAN A FREE STRING, so the type refuses a rule with no exit and refuses a prefix
- * outside the three kinds - the same property `tools/check-game-surface-conduct-classes.mjs` fails by name on
- * (`floor_rule_has_no_exit:<id>`), stated once in the entry. A floor rule is not "the wrong layer": it is a debt with a
- * named owner, and a rule whose death nobody can name is a legend written for an invented format.
- * </p>
- */
-export type GameRuleExit = `surface: ${string}` | `authority: ${string}` | `permanent: ${string}`;
-
-/** One rule of this floor: its text, the class it belongs to, and how it dies, in one place. */
-type GameSurfaceConductRule = Readonly<{
-  class: GameSurfaceConductClass;
-  reason: string;
-  exit: GameRuleExit;
-  text: string;
-}>;
+/** The header the shipped configuration installs: the locale a player's Game session runs under (measured 2026-10-31). */
+export const GAME_SURFACE_INPUT_HEADER = gameSurfaceInputHeader("zh-CN");
 
 /**
- * Every rule this module owns: the text, the class, and the line of argument for that class, in ONE entry.
- *
- * <p>
- * There is no second array to keep in step, and none is possible: a class is a fact about a rule, so it is declared
- * inside the rule's own entry, and the readers below - the joined prompt and the class view - are projections of these
- * entries. Until 2026-11-15 the rules were one array and their classes another, joined only by array index, and
- * `tools/check-game-surface-conduct-classes.mjs` read the RESULT of that pairing: swapping two rules of different
- * classes left every number in its report unchanged - the observation rule recorded as a delivery rule and the delivery
- * rule as observation honesty - at exit code 0. A rule cannot be added here without a class now; the type refuses it.
- * </p>
- *
- * <p>
- * The keys are the ids the gate's failure codes and the live run's input manifest name a rule by, so they outlive any
- * rewording. They are also not the prompt's order: `GAME_SURFACE_INTERACTION_CONDUCT` below is where the order is
- * written, because a game module's rules read at positions between these.
- * </p>
- */
-/**
- * The archive: the one claim about her memory that no tool description makes.
- *
- * <p>
- * It used to be written by Magic Context itself, as the `magic_context` system-prompt section, and the Host only
- * replaced its prose (`magic-context-companion-guidance.ts`). That section is the coding harness's, and it was being
- * injected into the Game prompt on every turn of every run - measured on `round75`'s session record: a 406-character
- * `magic_context` section at rec#3, and a `<system-reminder>` housekeeping nudge inside a tool result at rec#142 that
- * the companion answered with a `ctx_reduce` turn of her own (rec#143). A surface's instructions belong to the
- * surface, so the claim moved here and the extension was told to inject nothing
- * (`runtime-core.internal.ts`, `system_prompt_injection.enabled`), which is what makes the harness section
- * unrepresentable in the Game prompt rather than filtered out of it later.
- * </p>
- *
- * <p>
- * THE TEXT IS ENGLISH LIKE EVERY OTHER RULE HERE, and that is a deliberate difference from the file it replaces: the
- * guidance override was written in the companion's locale, and this floor is English prose on both surfaces. The
- * archive's mechanics are already stated by the two tools that own them (`ctx_search`'s and `ctx_expand`'s own
- * descriptions), so what is left is the AUDIENCE - this archive is her own earlier turns, not a project's history -
- * which no tool description can say and which is why the claim keeps one writer.
- * </p>
- */
-
-export const GAME_SURFACE_CONDUCT_RULES = {
-  fact_batch_blocks: {
-    class: "CHANNEL",
-    reason: "the block names are markup the model cannot infer; what the surface sends and who is speaking in it.",
-    exit: "surface: the delivery stops sending block markup - composeFactBrief renders the same report as prose paragraphs and the message carries no tag to recognize - so nothing is left to gloss.",
-    text: `Every turn's message is the machine's report, in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")} - and only <world-state> arrives on every turn. Your partner's own words are the one thing that breaks into it: a turn that carries them puts them first, exactly as they said them and outside every block, and a turn that carries none opens with <world-state> instead. Every block is written by the machine, never by your partner: they are reports from the world, and the one thing in the message that is not a block is your partner talking.`,
-  },
-  machine_fields_translated: {
-    class: "CHANNEL",
-    reason:
-      "a receipt's field names are machine vocabulary; the channel says what to do with them instead of reading them out.",
-    exit: "surface: the receipt is rendered in the player's language where it is composed - fact-brief.ts's execution-result and its refusal lines - so no reasonCode, flag or enum value reaches her and nothing is left to translate.",
-    text: "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
-  },
-  archive_is_her_own_history: {
-    class: "CHANNEL",
-    reason:
-      "the two tools that read her own earlier turns back, and what a §N§ number means - a channel of this surface, not a mechanic of the game.",
-    exit: "surface: the two mounted descriptions state the audience as well as the mechanics, so nothing is left for a floor rule to add.",
-    text: "The archive holds what is no longer in view, and everything in it is your own: `ctx_search` reads it back — what you said, decided, saw or were told, and your own earlier actions with their tool results — and `ctx_expand(tag=N)` returns one item whole. Every item carries a §N§ number, and a `[dropped §N§]` placeholder is the number of an item already in the archive.",
-  },
-  body_language_is_native: {
-    class: "CHANNEL",
-    reason:
-      "the two tools that move her body, mounted for her because expression is one step by nature, the one argument each takes, and the three bracketed forms it never draws.",
-    exit: "surface: the mounted tool descriptions carry what this rule says - the emote words and that neither tool is a step inside stardew_plan_work (game-tools.ts) - and the renderer draws a bracketed stage direction as a body instead of dropping it, so the rule has nothing left to teach.",
-    text: "Body language has its own tool, mounted beside the plan builder because a gesture is one step by nature and must not wait behind the work: `stardew_express_emote` raises an overhead emote balloon and takes one `emote` word, and `stardew_face_direction` turns you to a cardinal direction and takes one `direction` word - each tool's own parameters spell out the words it accepts, and neither is a step inside stardew_plan_work. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
-  },
-} as const satisfies Readonly<Record<string, GameSurfaceConductRule>>;
-
-/** The floor as the model reads it: each entry's own text, in reading order, with the game modules' rules spliced in. */
-export const GAME_SURFACE_INTERACTION_CONDUCT = [
-  GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
-  NIGHT_HAS_ENFORCED_HOURS,
-  GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
-  CONTENT_IDS_IN_WORDS,
-  GAME_SURFACE_CONDUCT_RULES.body_language_is_native.text,
-  GAME_SURFACE_CONDUCT_RULES.archive_is_her_own_history.text,
-].join("\n");
-
-/**
- * The same entries as the class table: one row per rule this module owns, its id, its class, the line of argument and the
- * exit.
- *
- * <p>
- * PROJECTED, never written: a table beside the entries is the second spelling this unit removed, and a table that can
- * disagree with the entry it names is what let a reorder go unseen. `tools/check-game-surface-conduct-classes.mjs`
- * fails on any class stated outside the entries above (`conduct_class_restated:<id>`), so a table written back here
- * goes red naming the rule and both classes rather than drifting.
- * </p>
- */
-export const GAME_SURFACE_CONDUCT_CLASSES: readonly Readonly<{
-  id: string;
-  class: GameSurfaceConductClass;
-  reason: string;
-  exit: GameRuleExit;
-}>[] = Object.entries(GAME_SURFACE_CONDUCT_RULES).map(([id, rule]) =>
-  Object.freeze({ id, class: rule.class, reason: rule.reason, exit: rule.exit }),
-);
-
-/**
- * The Game companion's prompt, with the player's own addition appended after the floor.
+ * The Game companion's prompt: the surface's header, then the identity, the card and the player's own addition.
  *
  * `playerAddition` is passed in rather than read here: a running Game session keeps the
  * instructions it started with, so the value is resolved ONCE where the session is
@@ -433,7 +102,7 @@ export function buildGameCompanionSystemPrompt(
   playerAddition?: GamePromptAddition,
 ): string {
   return buildCompanionSystemPrompt(profile, {
-    surfaceBlock: GAME_SURFACE_INTERACTION_CONDUCT,
+    surfaceBlock: gameSurfaceInputHeader(locale),
     ...(locale === undefined ? {} : { locale }),
     ...(playerAddition === undefined ? {} : { playerAddition }),
   });

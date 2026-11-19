@@ -462,22 +462,6 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-fail-closed-forward-path.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
-  // Prints `conduct rules examined N · FLOOR … · CHANNEL … · FORM … · with an exit E · surface … · authority … ·
-  // permanent … · unowned U` plus a `checks[]` verdict carrying one entry per rule it can go red on (the population, a
-  // composed rule no module owns, a rule its owner's table does not reach, a class that outlived its rule, a class
-  // outside the three kinds, a class with no reason, a FORM rule in the floor, and a rule that names no exit), so its
-  // default run is the report this suite reads. Its falsifier is tools/check-game-surface-conduct-classes.test.mjs:
-  // the deleted "Speak before you act" rule put back and classified FORM is
-  // `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts` with that `checks[]` entry failed, a
-  // rule appended with no class names its position and first words, a Stardew rule taken out of the floor while its
-  // class stays is `stale_conduct_class:content_ids_in_words`, a class outside the three kinds is a finding rather than
-  // a fourth kind, a class with no reason is named, a composed name no module declares is `conduct_rule_unowned`,
-  // an entry whose `exit` is removed and a table row whose `exit` is removed are
-  // `floor_rule_has_no_exit:<id>`, an exit kind outside the three and an exit with nothing after the kind are that same
-  // finding rather than a parse failure, an empty composed list blocks (exit 2) with the message that says to delete the
-  // module, a renamed declaration is blocked (exit 2, never green) and a list no longer written one rule per line is
-  // blocked because a reader that mis-parsed the floor and passed would be worse than no gate.
-  "check-game-surface-conduct-classes.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
   // Its default run prints `{gate:"terminal-commit-single-entry", status, examined, throughSeam, seamCalls, seamBody,
@@ -722,6 +706,19 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // pattern changed is `value_read_baseline_stale` naming the entry, while the unrecorded site of the same value stays a
   // `value_read_from_another_languages_source` finding.
   "check-cross-language-value-reads.mjs",
+  // Prints `{"gate":"description_plan_vocabulary/v1", status, checks[5]}` after its census line (`descriptions examined 195 ·
+  // refused vocabulary 27`), so its default run is the report read here. Its falsifier is
+  // tools/check-description-plan-vocabulary.test.mjs, whose injected description teaches a deleted plan form and asserts
+  // the vocabulary code it produces.
+  "check-description-plan-vocabulary.mjs",
+  // Prints `{"gate":"host_source_directories/v1","status":"passed","examined":54,...}` - `examined` is the directive
+  // count the shared judge reads, so a run over zero directories is blocked rather than green. Its falsifiers are the two
+  // `self-check` markers in its own header: both drive the same predicate over a scratch tree, one module at a time.
+  "check-host-source-directories.mjs",
+  // Prints `{"gate":"stale-line-age", status, checks[2]}` beside `renderers examined 7 · proven-by-receipt 2 ·
+  // can-go-stale 0`. Its falsifier is tools/check-stale-line-age.test.mjs, whose injections are the pre-fix bodies of
+  // the two renderers and which asserts the violation each one names.
+  "check-stale-line-age.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -1371,6 +1368,99 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "it cited had moved on - and `inject` - an `absent_evidence_field` claim naming a field the action's receipt " +
       "carries, and an `action_lifecycle` claim naming a lifecycle the catalog does not declare, both " +
       "`gap_reason_no_longer_holds:<task>:<claim>` naming the task and the measured value",
+  },
+  {
+    gate: "audit-hotspots.mjs",
+    reason:
+      "a report, not a gate: its own header says the ranking was measured against the defects this repository shipped " +
+      "and does not separate them, and `--why-not-a-gate` prints that retrospection, so it exits 0 over every ranking " +
+      "(`files examined 3530 · with a revision in the window 2849`). Its falsifier is tools/audit-hotspots.test.mjs, run " +
+      "by `test:hotspots`, which drives the ranking arithmetic over a fixed change set instead of the repository's " +
+      "churn",
+  },
+  {
+    gate: "check-deadline-ceiling-declaration.mjs",
+    reason:
+      "prints `ceiling sites examined 103 · from a declaration 103 · from a name list 0`, so its reading is lines and not " +
+      "a `{gate, checks[]}` report; its falsifier suite is tools/check-deadline-ceiling-declaration.test.mjs, run by " +
+      "`test:deadline-ceiling-declaration`, which plants the pre-fix `action === \"navigate_to_destination\" || action === " +
+      "\"sleep\"` name list and asserts the finding it produces",
+  },
+  {
+    gate: "check-declared-deleted-facts.mjs",
+    reason:
+      "prints `declared-deleted facts: kinds examined 9 · declared-by-doc 5 · declared-by-code 7 · agreed …`, so its " +
+      "reading is lines; and its `check:declared-deleted-facts` script needs `--log <a recorded run> --expect …`, which " +
+      "a default run has not got. Its falsifier suite is tools/check-declared-deleted-facts.test.mjs, run by " +
+      "`test:declared-deleted-facts`, which drives the real CLI over the committed `round66` fact stream (red, naming " +
+      "`accepted · 46`, `running · 17`, `tool_equipped · 1`), over the same log with those lines removed (green), and " +
+      "over a pump that stopped holding `body_idle` while the document still declares it",
+  },
+  {
+    gate: "check-delivery-truncation-bound.mjs",
+    reason:
+      "prints `bounds examined 1 · transport-derived 1 · declared 0 · hand-picked 0`, so its reading is lines and not a " +
+      "`{gate, checks[]}` report; its falsifier suite is tools/check-delivery-truncation-bound.test.mjs, which plants the " +
+      "pre-fix `maxChars: 80` beside the transport's own bound and asserts the violation that names where the ceiling " +
+      "came from",
+  },
+  {
+    gate: "check-dotnet-target-and-language.mjs",
+    reason:
+      "prints `dotnet_target_and_language: projects examined 30 · net10.0 8 · net10.0-windows 8 · net6.0 …`, so its " +
+      "reading is lines; its falsifier suite is tools/check-dotnet-target-and-language.test.mjs, run by " +
+      "`test:dotnet-target-and-language`, which feeds a project file targeting an unsupported framework and asserts the " +
+      "finding rather than the reading of this tree",
+  },
+  {
+    gate: "check-fact-authority.mjs",
+    reason:
+      "prints `progress_reported_as_a_fact: kinds examined 23 · events 9 · traces 0 · declared-once 14`, so its reading " +
+      "is lines and not a `{gate, checks[]}` report; its falsifier suite is tools/check-fact-authority.test.mjs, run by " +
+      "`test:fact-authority`, which removes the guard on a folded state and asserts the finding that names it",
+  },
+  {
+    gate: "check-fact-seams.mjs",
+    reason:
+      "prints `facts examined 28 · one authority 21 · recorded debt 8 · key sequences examined 130 …`, so its reading is " +
+      "lines; its falsifier suite is tools/check-fact-seams.test.mjs, run by `test:fact-seams`, whose cases plant a fact " +
+      "with two authorities and a seam whose key sequence disagrees, each asserting the code it produces",
+  },
+  {
+    gate: "check-hand-written-schema-constants.mjs",
+    reason:
+      "prints `members examined 327 · from a constant 314 · action-local 13 · restated 0 · sites 59 …`, so its reading " +
+      "is lines and not a `{gate, checks[]}` report; its falsifier suite is " +
+      "tools/check-hand-written-schema-constants.test.mjs, run by `test:hand-written-schema-constants`, whose `history` " +
+      "replay of `9adf97b5:host/src/game-tools.ts` asserts `hand_written_schema_restates_a_constant:move_to_tile:x` and " +
+      "`shared_constant_missing:TILE_COORDINATE_SCHEMA`, and whose injections paste a bound back and delete an " +
+      "action-local override",
+  },
+  {
+    gate: "check-live-run-closures.mjs",
+    reason:
+      "prints `runs examined 381 · closed 2 · recorded-died 1 · bundle-only 186 · silent 103` and names each open run, so " +
+      "its reading is lines; and its `--root DIR` default is `.live-runs`, which a checkout that has never run has not " +
+      "got (`run_closures_not_measured`, exit 2). Its falsifier suite is tools/check-live-run-closures.test.mjs, run by " +
+      "`test:live-run-closures`, whose fixtures are real run directories including round67's shape (a launch receipt " +
+      "with no closure, named and red)",
+  },
+  {
+    gate: "check-policy-change-is-learned-by-polling.mjs",
+    reason:
+      "prints `[policy-reads] files examined 257 · config reads examined 1 · at startup 1 · periodic 0`, so its reading " +
+      "is lines and not a `{gate, checks[]}` report; its falsifier suite is " +
+      "tools/check-policy-change-is-learned-by-polling.test.mjs, run by " +
+      "`test:policy-change-is-learned-by-polling`, which plants the pre-fix `FarmhandPolicyRefreshThrottle.ShouldRefresh` " +
+      "poll and asserts the finding that names the site",
+  },
+  {
+    gate: "check-run-walking.mjs",
+    reason:
+      "prints `run_walking_log_skipped: no --log given, so no run's walking was read` on a bare invocation, so there is " +
+      "no report to read; its `check:run-walking` script takes `--log <a recorded run> --expect walked=647,…`. Its " +
+      "falsifier suite is tools/check-run-walking.test.mjs, run by `test:run-walking`, which asserts " +
+      "`walking_not_measured` for a log with no positioned event and `walking_nothing_to_place` for the empty one",
   },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);

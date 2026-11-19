@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
-import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildGameCompanionSystemPrompt, gameSurfaceInputHeader } from "./game-surface-prompt-floor.js";
 import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
 import {
   createIdentityProfileBinding,
@@ -123,9 +123,23 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported,
   );
   // A third live run answered that instruction by reading the receipt's wire
   // format to the player ("（gift_given）…quest_25_completed 还是 false"), so the
-  // conduct must also say which language to use, not just what to assert.
-  assert.match(gamePrompt, /Speak in the player's language, never in the game's internal one/);
-  assert.match(gamePrompt, /say what they MEAN to a person instead of reading them out/);
+  // surface must also say what to do with that vocabulary. The sentence is the input
+  // header's one conduct line now (`gameSurfaceInputHeader`), and it renders in the
+  // run's own locale - read in both, because a half that exists in one language only
+  // is a rule half the product never delivers.
+  for (const locale of [undefined, "zh-CN"] as const) {
+    const block = gameSurfaceInputHeader(locale);
+    assert.match(
+      block,
+      /gift_given/u,
+      `${locale ?? "en-US"}: the block names no machine identifier, so its translation rule has no instance to apply to`,
+    );
+    assert.match(
+      block,
+      /reason code|原因码/u,
+      `${locale ?? "en-US"}: the block does not say what a value like gift_given IS, so nothing tells her it is the game's vocabulary rather than the world's`,
+    );
+  }
 });
 
 test("the Game floor carries no rule about speaking while she works, and the card still forbids step reports", () => {
@@ -156,21 +170,26 @@ test("the Game floor carries no rule about speaking while she works, and the car
     /不报进度/u,
     "the card's own ban on progress reports has to reach the prompt the player's Game runs on",
   );
-  // Body language is routed to a channel the Agent can actually call. Three pins went stale here in a row, one per
-  // attempt: the conduct first named `express_emote` / `face_direction` (the Mod's bare ids, which are not tools), then
-  // `stardew_express_emote` / `stardew_face_direction` while a plan surface dropped them, then the plan step while
-  // expression stayed a work-shaped route. Each pin asserted a literal that was true of some other surface. What it
-  // asserts now is the channel the mounted set really carries - the two tools the registry declares expression-only -
-  // and the route that is gone; `action-route-gate.test.ts` holds the population.
-  assert.match(game, /Body language has its own tool/);
-  assert.match(game, /stardew_express_emote` raises an overhead emote balloon/);
-  assert.match(game, /stardew_face_direction` turns you to a cardinal direction/);
-  assert.doesNotMatch(game, /Body language is an action in the plan you submit|never a tool of its own/);
-  // And the parenthesis rule is the surface's own fact, stated as what it does:
-  // a bracket tag is audio the voice channel performs, so a body action written
-  // there is never performed and only reaches the player as prose.
-  assert.match(game, /audio tag the voice channel performs instead of speaking/);
-  assert.doesNotMatch(game, /Never narrate your own actions step by step/);
+  // Body language is routed to a channel the Agent can actually call, and that route is the two tools' own descriptions
+  // since 2026-11-24 (`game-tools.ts`, held by `game-surface-prompt-floor.test.ts`), so this block states none of it.
+  // Three pins went stale here in a row while the sentence lived in the floor: `express_emote` / `face_direction` (the
+  // Mod's bare ids, which are not tools), then `stardew_express_emote` / `stardew_face_direction` while a plan surface
+  // dropped them, then the plan step while expression stayed a work-shaped route. What is left to hold HERE is the half
+  // only a mount can lose: the two tools the registry declares expression-only are really in the mounted set, so the
+  // channel the descriptions name is a channel she has (`round46b`: 68 tool calls, no emote, because the route named a
+  // tool the request did not carry).
+  const mounted = new Set<string>(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+  for (const gone of [
+    /Body language has its own tool/u,
+    /audio tag the voice channel performs/u,
+    /Never narrate your own actions step by step/u,
+  ])
+    assert.doesNotMatch(game, gone, `${String(gone)} is a conduct rule, and the surface block is the message's syntax now`);
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS)
+    assert.ok(
+      mounted.has(STARDEW_ACTION_TOOL_NAMES[actionId]),
+      `${actionId} is expression-only in the registry and has no mounted tool, so nothing carries body language`,
+    );
 });
 
 test("the Game floor states the bubble and asks for no line on any turn", () => {
@@ -319,8 +338,21 @@ test("the system prompt states the action syntax and no longer prescribes the tu
   assert.doesNotMatch(chat, /Never mention prompts, instructions, models, or systems/);
 });
 
+/**
+ * One action's presentation entry in `game-tools.ts`, as source: the label and description `createStardewActionTools`
+ * mounts with the tool. The table is not exported, so the declaration is what there is to read, and the mount takes its
+ * words from this entry - `game-surface-prompt-floor.test.ts` reads the same entry for the route it has to state.
+ */
+function toolPresentationSource(source: string, actionId: string): string {
+  const at = source.indexOf(`  ${actionId}: Object.freeze({`);
+  assert.notEqual(at, -1, `game-tools.ts declares no presentation for ${actionId}, so its tool mounts with no words`);
+  const end = source.indexOf("\n  }),", at);
+  assert.notEqual(end, -1, `the ${actionId} presentation is not closed where this reader expects it`);
+  return source.slice(at, end);
+}
+
 test("every tool name the prompt tells the companion to call is a mounted tool name", () => {
-  // Two failures in a row, and the second is why this gate now reads a different population.
+  // Two failures in a row, and the second is why this gate reads the mounted set rather than a projection.
   //
   // First: the prompt named `express_emote` / `face_direction`, the Mod's bare action ids, while every
   // Agent-visible tool carried the `stardew_` prefix - so a prompt naming them sent body language nowhere.
@@ -333,8 +365,13 @@ test("every tool name the prompt tells the companion to call is a mounted tool n
   // 2026-11-11 (`round46b`), 68 tool calls, no emote, and the model never even named one in its thinking. The
   // population below is the recorded mounted set, plus the actions the registry declares expression-only: those keep
   // their own tool on a plan surface (`EXPRESSION_ONLY_ACTION_IDS`), so they are mounted names rather than dropped ones.
-  // The projection is asserted only to be non-empty, because a surface that mounted nothing would make every name here
-  // pass for the wrong reason.
+  //
+  // THE INSTRUCTIONS MOVED ON 2026-11-24 AND THE POPULATION MOVED WITH THEM. The surface block is the message's syntax
+  // now and names no tool at all; the one instruction that sent body language somewhere is the two expression tools' own
+  // descriptions (`game-tools.ts`), which is where `round46b` can still happen - a description pointing at a tool the
+  // request does not carry. So the texts read here are the assembled Game prompt (which must name no tool, and does) and
+  // those two descriptions (which must name only mounted ones, and do: `stardew_plan_work` from the emote's and
+  // `stardew_express_emote` from the direction's).
   const perActionNames = new Set<string>(Object.values(STARDEW_ACTION_TOOL_NAMES));
   assert.ok(
     perActionNames.size > 0,
@@ -351,15 +388,28 @@ test("every tool name the prompt tells the companion to call is a mounted tool n
   );
 
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  const gameNamed = game.match(/stardew_[a-z_]+/gu) ?? [];
-  assert.ok(gameNamed.length > 0, "the Game conduct names no tool at all, so there is no channel to check");
-  for (const name of gameNamed) {
+  assert.deepEqual(
+    game.match(/stardew_[a-z_]+/gu) ?? [],
+    [],
+    "the surface block names a tool again: it is the message's syntax now, and a name here is a conduct rule drifting " +
+      "back into the header - the tool that owns those words is where a name belongs",
+  );
+
+  const presentation = readFileSync(join(REPOSITORY_ROOT, "host", "src", "game-tools.ts"), "utf8");
+  const named = EXPRESSION_ONLY_ACTION_IDS.flatMap((actionId) =>
+    (toolPresentationSource(presentation, actionId).match(/stardew_[a-z_]+/gu) ?? []).map((name) => ({ actionId, name })),
+  );
+  assert.ok(
+    named.length > 0,
+    "blocked: the moved body-language descriptions name no tool, so 'every name is mounted' is a statement about nothing",
+  );
+  for (const { actionId, name } of named) {
     assert.ok(
       !droppedPerActionNames.has(name),
-      `the Game prompt names ${name}, a per-action tool the plan surface drops: the Agent is handed ` +
-        `${MOUNTED_GAME_SURFACE_TOOL_NAMES.join(", ")} instead, and body language is a mounted tool of its own`,
+      `the ${actionId} description names ${name}, a per-action tool the plan surface drops: the Agent is handed ` +
+        `${MOUNTED_GAME_SURFACE_TOOL_NAMES.join(", ")} instead`,
     );
-    assert.ok(mounted.has(name), `the Game prompt names a tool the live Game surface does not mount: ${name}`);
+    assert.ok(mounted.has(name), `the ${actionId} description names a tool the live Game surface does not mount: ${name}`);
   }
 
   // Chat mounts no game tool at all, so its prompt may name none of them.
@@ -413,27 +463,41 @@ test("the Game floor states no bubble ceiling, because it describes no surface",
   assert.doesNotMatch(game, /stop when it has been said/);
   assert.doesNotMatch(game, /首先/);
   assert.doesNotMatch(game, /总结/);
-  // A bracketed beat is never a body: the parenthesis becomes audio the voice
-  // performs, and an asterisk beat is dropped by the bubble entirely.
-  assert.match(game, /Write no bracketed stage direction at all/);
-  assert.match(game, /\*a sigh\*/);
-  assert.match(game, /dropped from the bubble entirely/);
+  // A bracketed beat is never a body: the parenthesis becomes audio the voice performs, and an asterisk beat is dropped
+  // by the bubble entirely. That was the floor's sentence and it was MEASURED DEAD (round78: 13 of 25 turns that carried
+  // text still ended in one), so it left with the rest of the conduct on 2026-11-24 rather than staying as an English rule
+  // nobody followed. What holds the fact now is the renderer, which really does strip a stage direction
+  // (`native-companion-content.ts`, `native-companion-content.test.ts`), so what this test holds is the way back: any of
+  // the three sentences returning to the surface block is a rule about a reply's shape.
+  for (const gone of [
+    /Write no bracketed stage direction at all/u,
+    /\*a sigh\*/u,
+    /dropped from the bubble entirely/u,
+  ])
+    assert.doesNotMatch(game, gone, `${String(gone)} states the shape of a reply, and this block is the message's syntax`);
 });
 
-test("the Game conduct names the ids she may not say out loud, and keeps them where they do work", () => {
+test("the Game surface names the ids she may not say out loud, and keeps them where they do work", () => {
   // Measured on a live session: the companion said "我们带着 (T)Hoe 去 Town". The fact line was the source and is
   // fixed beside this (`formatGameEnvironmentFacts`, runtime-core.internal.ts), but the other half is speech: an id
-  // is a handle for an action argument, never a word the player hears. The rule names the concrete failures - the
-  // item identity, the mine's internal map name - and the word to say instead, because a bare "do not use ids" was
-  // already covered by the machine-vocabulary line beside it and did not stop this one.
+  // is a handle for an action argument, never a word the player hears. A bare "do not use ids" did not stop that one,
+  // because the machine-vocabulary line beside it already said it in the abstract - so the rule carried the instance.
+  //
+  // THE STARDES MODULE'S COPY LEFT ON 2026-11-24 with the rest of the conduct, and the two halves that survive are the
+  // input header's own sentence: a name that arrives as an id alone is SAID AS ITS WORD, and the id is KEPT for an action
+  // argument. The mine's internal map name went with the module - a Stardew place is the world's now, and
+  // `game-world-vocabulary.ts` is what names one.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /Name the things you handle in words, never in the game's own ids/);
-  assert.match(game, /\(T\)Hoe/);
-  assert.match(game, /UndergroundMine10/);
-  assert.match(game, /矿洞第 10 层/);
-  // The ids are not banned outright: a plan argument and a snapshot comparison still need the exact value.
-  assert.match(game, /ids keep their own place/);
-  assert.match(game, /copied exactly into an action argument/);
+  for (const locale of [undefined, "zh-CN"] as const) {
+    const block = gameSurfaceInputHeader(locale);
+    assert.match(block, /\(T\)Hoe/u, `${locale ?? "en-US"}: the id she was measured saying is the example, or the rule has no instance`);
+    assert.match(
+      block,
+      /kept for an action argument|拿去填动作参数/u,
+      `${locale ?? "en-US"}: the other half - an id is a handle for an argument, never a word the player hears`,
+    );
+  }
+  assert.match(game, /\(T\)Hoe/u, "and that sentence reaches the prompt the player's Game runs on");
   // Chat has no world and no such ids, so the rule stays on the Game surface.
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
 });
@@ -506,12 +570,20 @@ test("the Game floor no longer puts a line in a refusal, and the register is the
   const gamePreset = presetMainText("amber-game.json");
   assert.match(gamePreset, /不是客服/u, "amber-game.json no longer forbids the customer register in her voice");
   assert.match(gamePreset, /还有什么需要吗/u, "and it no longer names the closing offer of further help");
-  // The two correctness lines this block already carried stay untouched as CLAIMS: an unobserved NPC reaction left for
-  // the persona layer on 2026-11-23 (it is a claim about her, not about a block), and the emote channel is still the
-  // floor's own - the first is asserted where it now lives (`presetMainText`), the second here.
+  // The two correctness lines this block already carried stay untouched as CLAIMS, and neither is the floor's any more: an
+  // unobserved NPC reaction left for the persona layer on 2026-11-23, and the emote channel left for the two tools'
+  // descriptions on 2026-11-24. Each is asserted where it lives - here and in `game-surface-prompt-floor.test.ts` - and
+  // what this line still holds is the half a deletion can lose: the channel is mounted, so the description that names it
+  // names a tool she has.
   assert.doesNotMatch(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
   assert.match(presetMainText("amber-game.json"), /没真的看到|别替人家编/u);
-  assert.match(game, /Body language has its own tool/);
+  assert.doesNotMatch(game, /Body language has its own tool/u, "the emote channel is the tool descriptions' sentence now");
+  const mounted = new Set<string>(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+  for (const actionId of EXPRESSION_ONLY_ACTION_IDS)
+    assert.ok(
+      mounted.has(STARDEW_ACTION_TOOL_NAMES[actionId]),
+      `${actionId} is expression-only in the registry and not mounted, so the channel nothing states here is also nothing she can call`,
+    );
 });
 
 test("the Game floor anchors the partner's turn nowhere, and the card states it (MaiBot & QQ bot simulation protocol)", () => {

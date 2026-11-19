@@ -18,18 +18,14 @@
  * WHY NO HASHES: a digest cannot tell a reader which line moved, and this repository's rules refuse ritualistic digests.
  * A section is the exact text, so `tools/compare-run-inputs.mjs` prints the line that changed under the section's name.
  *
- * WHY THE SPLIT USES THE DECLARATION: `tools/check-game-surface-conduct-classes.mjs` reads the floor's composed rule
- * list by declaration name and pairs each rule with its class table positionally. The ids therefore exist already, and
- * a rule added tomorrow is labelled without an edit here. The one assumption is that the composed conduct block is the
- * first blank-line-delimited block whose line count equals the number of declared rules; when no block matches, the
- * whole preamble is recorded as `prompt:preamble` and `prompt_conduct_block_unmatched` says why it was not split. A
- * manifest that named 19 offsets as 19 rules would be worse than one that admits it could not.
+ * WHY THE SPLIT USES THE ASSEMBLY'S OWN ORDER: `buildCompanionSystemPrompt` puts the surface block first, so the
+ * preamble's first blank-line-delimited block IS the surface block and is recorded under `prompt:surface_block`. Until
+ * 2026-11-24 it was split one section per conduct rule, labelled by the class table's ids; the rules left for the layer
+ * that owns each of them and the block is a two-line input header now, so what is recorded is the block itself.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { auditConductClasses } from "../../check-game-surface-conduct-classes.mjs";
 
 export const INPUT_MANIFEST_SCHEMA = "gamebuddy-run-input-manifest/v1";
 
@@ -42,8 +38,6 @@ const PLAN_WORK_TOOL_NAME = "stardew_plan_work";
 
 /** A vocabulary row: a family id, a colon, then whatever the declaration gives each action. */
 const VOCABULARY_ROW = /^[a-z][a-z0-9_]*: /u;
-
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 /**
  * The manifest that belongs beside a result bundle: the result's own stem, the manifest's suffix.
@@ -62,10 +56,6 @@ export function inputManifestPathForResult(resultPath) {
   return `${stem}${MANIFEST_SUFFIX}`;
 }
 
-/** The rule ids the delivered conduct blocks are labelled with, in the order the model reads them. */
-export function declaredConductRuleIds({ repositoryRoot = REPOSITORY_ROOT } = {}) {
-  return auditConductClasses({ root: repositoryRoot }).rules.map((rule) => rule.id);
-}
 
 /** Every entry of a Pi session record, with a half-written last line skipped rather than repaired. */
 export function readSessionEntries(sessionPath) {
@@ -116,47 +106,38 @@ function blankDelimitedBlocks(lines) {
 }
 
 /**
- * The preamble, split by its own structure: the floor, one section per conduct rule, and the authored remainder.
+ * The preamble, split by its own structure: the surface block, then the authored remainder.
  *
- * The conduct block is found by its length against the declaration; every rule then takes the id at its own position,
- * which is the pairing the conduct-class gate already asserts between the composed list and the class tables.
+ * THE SURFACE BLOCK IS THE PREAMBLE'S FIRST BLANK-LINE-DELIMITED BLOCK, because that is where the assembly puts it
+ * (`buildCompanionSystemPrompt` pushes the surface block before the identity, and its own doc says why). This reader used
+ * to split that block one section per conduct rule, labelled by the class table's ids - and it refused the first block,
+ * so every real run reported `prompt_conduct_block_unmatched:6_declared_rules` while the suite stayed green (measured
+ * 2026-11-18, `round73`).
  *
- * IT IS THE PREAMBLE'S FIRST BLOCK, AND THIS READER USED TO REFUSE THE FIRST ONE. `buildCompanionSystemPrompt` pushes
- * the surface block first (its own doc says why: the surface is what the request is ABOUT), so the six composed rules
- * arrive as block 0 - and the search skipped `index > 0` and reported `prompt_conduct_block_unmatched:6_declared_rules`
- * on every real run while the suite stayed green, because its fixture put two identity blocks above the conduct block
- * instead of below it from the assembly. Measured 2026-11-18 (`round73`): the delivered preamble's block 0 is six
- * lines, block 0's lines are the six rules, and the manifest named none of them.
+ * SINCE 2026-11-24 THERE ARE NO RULES TO LABEL: the conduct block is a two-line input header, and every rule it carried
+ * moved to the layer that owns it (`game-surface-prompt-floor.ts`). So the block is recorded as itself under one name,
+ * and `prompt_conduct_block_unmatched` can no longer fire - there is no declared rule list to disagree with. That is a
+ * lost check only in the sense that the thing it watched is gone; a run's surface block is now always the preamble's head.
  */
-export function preambleSections(preamble, { conductIds, problems }) {
+export function preambleSections(preamble) {
   const lines = preamble.split("\n");
   const blocks = blankDelimitedBlocks(lines);
   if (blocks.length === 0) return [];
-  const conductIndex =
-    conductIds.length === 0 ? -1 : blocks.findIndex((block) => block.to - block.from + 1 === conductIds.length);
-  if (conductIndex < 0) {
-    problems.push(`prompt_conduct_block_unmatched:${String(conductIds.length)}_declared_rules`);
-    return [{ id: "prompt:preamble", text: preamble.trim() }];
-  }
-  const conduct = blocks[conductIndex];
-  const sections = [];
-  const floor = lines.slice(0, conduct.from).join("\n").trim();
-  if (floor.length > 0) sections.push({ id: "prompt:floor", text: floor });
-  conductIds.forEach((id, offset) => sections.push({ id: `prompt:conduct:${id}`, text: lines[conduct.from + offset] }));
-  const authored = lines
-    .slice(conduct.to + 1)
-    .join("\n")
-    .trim();
+  const surface = blocks[0];
+  const sections = [
+    { id: "prompt:surface_block", text: lines.slice(surface.from, surface.to + 1).join("\n").trim() },
+  ];
+  const authored = lines.slice(surface.to + 1).join("\n").trim();
   if (authored.length > 0) sections.push({ id: "prompt:authored", text: authored });
   return sections;
 }
 
 /** The runtime's own named prompt sections, with the preamble split inside its own key. */
-function promptSections(systemMessage, { conductIds, problems }) {
+function promptSections(systemMessage, { problems }) {
   const sections = [];
   for (const [name, text] of Object.entries(systemMessage?.sections ?? {})) {
     if (typeof text !== "string") continue;
-    if (name === "preamble") sections.push(...preambleSections(text, { conductIds, problems }));
+    if (name === "preamble") sections.push(...preambleSections(text));
     else sections.push({ id: `prompt:${name}`, text });
   }
   return sections;
@@ -253,15 +234,14 @@ function runtimeSections(entries, { problems }) {
  * section this could not label or find, so a reader can tell "this input did not contain it" from "the reader missed
  * it" - the two answer different questions about a run.
  */
-export function buildInputManifest({ sessionPath, repositoryRoot = REPOSITORY_ROOT } = {}) {
+export function buildInputManifest({ sessionPath } = {}) {
   const entries = readSessionEntries(sessionPath);
   if (entries === null) throw new Error(`session record unreadable: ${String(sessionPath)}`);
   const problems = [];
-  const conductIds = declaredConductRuleIds({ repositoryRoot });
   const systemMessages = entries.filter((entry) => entry?.type === "message" && entry.message?.role === "system");
 
   const sections = [
-    ...(systemMessages.length === 0 ? [] : promptSections(systemMessages[0].message, { conductIds, problems })),
+    ...(systemMessages.length === 0 ? [] : promptSections(systemMessages[0].message, { problems })),
     ...toolSections(systemMessages, { problems }),
     ...deliverySections(entries, { problems }),
     ...runtimeSections(entries, { problems }),
@@ -275,7 +255,6 @@ export function buildInputManifest({ sessionPath, repositoryRoot = REPOSITORY_RO
     recordedAtMs: Date.now(),
     model,
     provider,
-    declaredConductRules: conductIds.length,
     sections,
     problems,
   });

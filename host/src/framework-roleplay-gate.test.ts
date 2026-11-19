@@ -11,7 +11,7 @@ import {
   fillTemplate,
   renderIdentityProfile,
 } from "./companion-prompt-assembly.js";
-import { buildGameCompanionSystemPrompt, GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
+import { buildGameCompanionSystemPrompt, GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE, type IdentityProfile, identityProfileMacros } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { renderMacros } from "./tavern/macro-engine.js";
@@ -492,12 +492,20 @@ const RETIRED_RULES: readonly RetiredRule[] = Object.freeze([
  * stays in the assembler, where it labels the player's turn; the INSTRUCTION is the preset's. This ledger is what stops
  * it from being dropped on the way instead of moved: the pattern below reads the preset corpus, so a preset that stops
  * saying it reds.
+ *
+ * THE PATTERN IS A CLASS, AND IT WAS RE-READ ON 2026-11-24: the presets state the constraint in their own voice rather
+ * than in the framework's one sentence - `只用中文想和说` (amber-game), `全程只在中文里完成` (amber-chat), `全程只用中文思考`
+ * (amber-deepseek-v4.1) - and the old `/一律使用中文|一律用中文/` matched none of them, so this row reported the rule
+ * orphaned while three presets were stating it. A ledger whose pattern only knows the wording it was written against is
+ * a false red, and a false red is what teaches the next reader to widen the pattern without reading the corpus.
  */
 const RETIRED_LANGUAGE_CONSTRAINT: RetiredRule = Object.freeze({
   slug: "consistently-think-reason-and-converse-in-the-runs-language",
   sentence:
     "Consistently think, reason, and converse in <language>. Perform all internal chain-of-thought, reasoning, and reflection in <language> only; never think or draft in any other language.",
-  homes: Object.freeze([Object.freeze({ source: "persona corpus", pattern: /一律使用中文|一律用中文/u })]),
+  homes: Object.freeze([
+    Object.freeze({ source: "persona corpus", pattern: /一律使用中文|一律用中文|只用中文|只在中文|不切换外语/u }),
+  ]),
 });
 
 test("the framework emits no input sentence - every string it writes is a field label or a delimiter", () => {
@@ -916,8 +924,13 @@ test("the classifier reds a restated card fact of every claim, and blocks when t
     ["framework_restates_the_card:continuity"],
     "the identity block's own sentence is not a Host rule",
   );
+  const machineVocabularyLine = GAME_SURFACE_INPUT_HEADER.split("\n").find((line) => line.includes("gift_given"));
+  assert.ok(
+    machineVocabularyLine !== undefined,
+    "blocked: the surface header carries no machine-vocabulary line, so the control below examined nothing",
+  );
   assert.deepEqual(
-    claimsOf([GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text]),
+    claimsOf([machineVocabularyLine]),
     [],
     "how a receipt's machine vocabulary is translated is the surface's, and the card states nothing about it",
   );
@@ -1089,8 +1102,26 @@ test("the tail wrapper states a position and no conduct, and every writer on the
 
   // THE RULE MOVED HERE IS NOT DELETED: the condition on speaking still rides the tail, in the document that owns
   // conduct. This is the assertion that makes the change a move - deleting it from the preset reds here.
-  assert.match(tail, /专心干活/u, "the tail no longer states that work is done without narration");
-  assert.match(tail, /不做旁白式的解说/u, "the tail no longer forbids running commentary");
+  assert.match(
+    tail,
+    /没说话|不必开口/u,
+    "the tail no longer states the condition on speaking: what a turn answers, and what she does instead of answering",
+  );
+  // AND THE HALF THAT LEFT IT ON 2026-11-24 IS IN THE SAME DOCUMENT'S MAIN. The tail stopped banning running narration
+  // (`专心干活` / `不做旁白式的解说`) when the Game preset was rewritten in the positive co-op voice; a deletion is only a
+  // move if somebody still says it, so the ban is read where it went instead of being dropped from this file.
+  const main = presetDocument.prompts.find((prompt) => prompt.identifier === "main")?.content ?? "";
+  assert.match(
+    main,
+    /不用汇报刚干完什么/u,
+    "amber-game.json's Main no longer forbids narrating the work she finished, and the tail does not state it either, so " +
+      "the ban on running commentary was deleted rather than moved",
+  );
+  assert.doesNotMatch(
+    tail,
+    /旁白/u,
+    "the tail states the narration ban again: a rule that left it has one writer, and the Main is the one that has it",
+  );
   // And the condition is a PERMISSION, not an obligation: it says nothing about the reply's length or pace, which is
   // the property `design/input-authority.md` gives the preset rather than the card.
   assert.equal(

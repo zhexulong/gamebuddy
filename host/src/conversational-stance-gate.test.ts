@@ -5,9 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-import { GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
+import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { FACT_PRODUCERS } from "./event-pump.js";
-import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -36,10 +35,8 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  * the floor's string literals. The floor's rules are prose, and a rule can state a state machine in words no phrase list
  * contains: "When a stretch of work ends, speak from your immediate bodily sensation", "When something blocks you, the
  * player hears a person's reaction", "the surface carries one per reply". So the population is no longer a phrase list at
- * all: it is EVERY RULE the floor declares, read from the floor's own tables - the generic floor's
- * `GAME_SURFACE_CONDUCT_RULES` and the Stardew module's exported rules joined to its `STARDEW_GAME_CONDUCT_CLASSES`
- * table. A rule added tomorrow joins without an edit here, and a class-table row naming a rule no module exports is
- * blocked by name rather than silently dropped.
+ * all: it is EVERY line the Game surface block installs, read from the text the builder hands the model
+ * (`GAME_SURFACE_INPUT_HEADER`), so a line added tomorrow joins without an edit here.
  * </p>
  *
  * <p>
@@ -85,7 +82,6 @@ const REPOSITORY_ROOT = (() => {
 })();
 
 const FLOOR_SOURCE = "host/src/game-surface-prompt-floor.ts";
-const STARDEW_SOURCE = "host/src/games/stardew/prompt/stardew-game-conduct.ts";
 
 /**
  * The two modules whose string literals are tool descriptions the model is handed.
@@ -105,28 +101,25 @@ const PRESET_DIRECTORY = "assets/tavern/presets";
 type Rule = Readonly<{ id: string; source: string; text: string }>;
 
 /**
- * EVERY rule the floor declares, from the two authorities that declare them.
+ * EVERY line the Game surface block installs, read from the text the builder hands the model.
  *
- * The floor's rules are a record keyed by id. The Stardew module exports its rules as texts and classifies them in
- * `STARDEW_GAME_CONDUCT_CLASSES`, whose ids are those declarations' names lowercased - the convention
- * `tools/check-game-surface-conduct-classes.mjs` already reads the source by - so the join is derived from the table
- * and a row naming nothing throws instead of shrinking the population.
+ * The floor used to declare its rules in a record and a Stardew module exported its own beside it; every one of those
+ * rules left for the layer that owns it, and what remains is one header of input syntax. So the population is the
+ * header's own lines - a line added tomorrow joins without an edit here, and an empty suffix throws instead of passing
+ * on nothing.
  */
 function floorRules(): readonly Rule[] {
-  const rules: Rule[] = [];
-  for (const [id, rule] of Object.entries(GAME_SURFACE_CONDUCT_RULES))
-    rules.push(Object.freeze({ id, source: FLOOR_SOURCE, text: rule.text }));
-  const exports: Readonly<Record<string, unknown>> = stardewConduct;
-  for (const row of stardewConduct.STARDEW_GAME_CONDUCT_CLASSES) {
-    const text = exports[row.id.toUpperCase()];
-    if (typeof text !== "string" || text.trim().length === 0)
-      throw new Error(
-        `conduct_rule_text_unreadable:${row.id}: the class table classifies a rule this module does not export, so the ` +
-          "population this gate examines would be smaller than the floor without saying so",
-      );
-    rules.push(Object.freeze({ id: row.id, source: STARDEW_SOURCE, text }));
-  }
-  return Object.freeze(rules);
+  const lines = GAME_SURFACE_INPUT_HEADER.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0)
+    throw new Error(
+      "surface_block_is_empty: the Game surface block installs no line, so the population this gate examines would be " +
+        "nothing and 'no line governs when she speaks' would be a statement about nothing",
+    );
+  return Object.freeze(
+    lines.map((text, index) => Object.freeze({ id: `input_header_line_${String(index)}`, source: FLOOR_SOURCE, text })),
+  );
 }
 
 /** A speech act, as the floor's prose spells it. The words themselves are not the property - where they sit is. */
@@ -1095,9 +1088,14 @@ test("the rule that moved to the preset is stated there, not only deleted", () =
   assert.ok(preset !== undefined);
   const prompts = (preset.document as { prompts?: readonly { content?: unknown }[] }).prompts ?? [];
   const text = prompts.map((prompt) => (typeof prompt.content === "string" ? prompt.content : "")).join("\n");
+  // THE RULE SURVIVED THE PRESET'S REWRITE, IN THE PRESET'S OWN VOICE. It was stated as a prohibition until 2026-11-24
+  // (`不问下一步` / `自己拿主意`); the Game preset was then rewritten in the positive co-op register, and what states it now
+  // is the positive form - when {{user}} has not spoken and nothing is stuck, she acts on her own (`只管动手做事`) instead
+  // of asking what to do next. Read as a CLASS, because the phrasing is the preset author's and the property - she
+  // decides the next move - is what must not be lost with the sentence that used to carry it.
   assert.match(
     text,
-    /不问.*下一步|自己拿主意|自己定/u,
+    /只管动手|自己拿主意|自己定|不问.*下一步/u,
     `${preset.name} is where a rule deleted from the floor has to be readable: 'never hand the choice of the next move ` +
       "back to your partner' is the one rule nothing else states, so deleting it from the floor without saying it here " +
       "would be a loss",

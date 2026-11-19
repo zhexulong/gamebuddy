@@ -8,8 +8,8 @@ import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescripti
 import { composeFactBrief, FACT_BRIEF_BLOCKS } from "./fact-brief.js";
 import {
   buildGameCompanionSystemPrompt,
-  GAME_SURFACE_CONDUCT_RULES,
-  GAME_SURFACE_INTERACTION_CONDUCT,
+  GAME_SURFACE_INPUT_HEADER,
+  gameSurfaceInputHeader,
 } from "./game-surface-prompt-floor.js";
 import { composeGameEnvironmentFacts } from "./game-world-vocabulary.js";
 import {
@@ -97,16 +97,16 @@ const LOCALE = "zh-CN";
 const GAME_PROMPT = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
 
 /**
- * The conduct block, read out of the assembled prompt rather than from the module that composes it.
+ * The surface block, read out of the assembled prompt rather than from the module that composes it.
  *
- * The block's own text is the authority - `GAME_SURFACE_INTERACTION_CONDUCT` is what the builder installs - so slicing
- * the prompt at that exact string proves the prompt carries it whole. It used to be anchored on the first and last
- * rule's prose, which is a second spelling that went stale the moment the first rule was deleted.
+ * The block's own text is the authority - `gameSurfaceInputHeader(locale)` is what the builder installs, and
+ * `GAME_SURFACE_INPUT_HEADER` is that function's own zh-CN value - so slicing the prompt at that exact string proves the
+ * prompt carries it whole, in the locale the session runs under.
  */
-function conductBlock(prompt: string): string {
-  const at = prompt.indexOf(GAME_SURFACE_INTERACTION_CONDUCT);
-  assert.notEqual(at, -1, "the conduct block is no longer in the Game prompt as the builder composes it");
-  return prompt.slice(at, at + GAME_SURFACE_INTERACTION_CONDUCT.length);
+function surfaceBlock(prompt: string): string {
+  const at = prompt.indexOf(GAME_SURFACE_INPUT_HEADER);
+  assert.notEqual(at, -1, "the surface header is no longer in the Game prompt as the builder composes it");
+  return prompt.slice(at, at + GAME_SURFACE_INPUT_HEADER.length);
 }
 
 test("the recorded Game system-prompt floor is what the product's builder still produces", () => {
@@ -120,7 +120,7 @@ test("the recorded Game system-prompt floor is what the product's builder still 
 });
 
 test("the conduct block is the measured slice of the prompt, and its share is still the recorded one", () => {
-  const conduct = conductBlock(GAME_PROMPT);
+  const conduct = surfaceBlock(GAME_PROMPT);
   assert.equal(
     conduct.length,
     READING.conductBlock.chars,
@@ -144,10 +144,11 @@ test("the conduct block is the measured slice of the prompt, and its share is st
 });
 
 test("the Chat surface still mounts zero tools, so the recorded comparison stays a comparison", () => {
-  // The reading's point is that the Game floor is heavy RELATIVE to Chat. `runtime-core.internal.ts` gives the
-  // Chat surface no tool group at all (`PERMITTED_TOOL_CLASSES.chat` is host status only, and Chat composes
-  // none), so Chat's floor is its system prompt alone. If Chat ever mounts a tool, the recorded comparison stops
-  // meaning what it says - and nothing else here would notice, because the number would still be the number.
+  // The reading's point was that the Game floor was heavy RELATIVE to Chat, and that 3,620 tokens of the difference were
+  // tool definitions. The PROSE half of that is now a 283-character header (2026-11-24), so what is left of the gap is the
+  // tools - which is the half this test still holds: `runtime-core.internal.ts` gives the Chat surface no tool group at
+  // all, so Chat's floor is its system prompt alone. If Chat ever mounts a tool, the comparison stops meaning what it
+  // says, and nothing else here would notice because the number would still be the number.
   assert.equal(
     READING.comparison.chatSurfaceToolCount,
     0,
@@ -155,9 +156,11 @@ test("the Chat surface still mounts zero tools, so the recorded comparison stays
   );
   const chatPrompt = buildChatCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
   assert.ok(chatPrompt.length > 0, "the Chat surface's prompt must still build, or the comparison has no other half");
-  assert.ok(
-    chatPrompt.length < GAME_PROMPT.length,
-    "the Game prompt carries the conduct block Chat does not; if this inverts, the reading's comparison is stale",
+  // The Game prompt's prose is no longer the reason the two differ, so the length ordering is recorded rather than
+  // asserted: what this test protects is that Chat has no tools to compare with and that both prompts build.
+  process.stdout.write(
+    `\nsurface prompts: game ${String(GAME_PROMPT.length)} chars · chat ${String(chatPrompt.length)} chars · ` +
+      `the Game block is ${String(GAME_SURFACE_INPUT_HEADER.length)} of the game prompt\n`,
   );
 });
 
@@ -305,63 +308,54 @@ test("the recorded denominator is the geometry function's own arithmetic, not a 
 });
 
 /**
- * The body-language rule names the route the surface really mounts, the argument that route takes, and the route it
- * must NOT teach.
+ * THE BODY-LANGUAGE ROUTE MOVED FROM THE FLOOR TO THE TWO TOOL DESCRIPTIONS, AND THIS HOLDS IT THERE.
  *
  * <p>
- * Three measured defects sit behind this, one turn each. `round46b` (2026-11-11): the rule sent body language to
- * `stardew_express_emote`, a per-action tool a plan surface dropped, so it named a route the Agent was never handed -
- * `action-registry-consistency.test.ts` holds that half against the mounted set. `round47` (2026-11-12, 64 assistant
- * turns): the rule named a plan step instead and the run still submitted zero emotes out of 188 planned nodes, because a
- * gesture is one step by nature and the plan is where work goes. The surface now mounts the two expression tools
- * (`EXPRESSION_ONLY_ACTION_IDS`) and the plan no longer admits them.
+ * The floor carried `body_language_is_native` until 2026-11-24. Its ROUTING half - `stardew_express_emote` and
+ * `stardew_face_direction` are one step by nature, mounted on their own, and not steps inside `stardew_plan_work` -
+ * belongs beside the call, which is the tool description (`game-tools.ts` `DECLARED_ACTION_TOOL_PRESENTATION`); its
+ * "write no bracketed stage direction" half measured dead (round78: 13 of 25 turns that carried text still ended in a
+ * bracketed line) and left for the persona and the renderer rather than staying as a failed English rule.
  * </p>
  *
  * <p>
- * The ARGUMENT is read from the Mod's own descriptor (`SURFACE`, the emitted action surface), not typed here: an action
- * that grows a second argument joins this gate without an edit, and a rule that names an argument the action does not
- * declare is refused by name. What is asserted about the shape is only that the rule states it - never a frequency,
- * because nothing guarantees an emote and no run is failed for not using one.
+ * The POPULATION is the two actions the registry declares expression-only (`EXPRESSION_ONLY_ACTION_IDS`), and the text is
+ * read out of `game-tools.ts`'s own presentation table, which is where the mount takes it (`createStardewActionTools`).
+ * The ARGUMENT is read from the Mod's emitted descriptor (`SURFACE`), so an action that grows a second argument joins
+ * this gate without an edit. Nothing here counts calls: no run is failed for not using a gesture.
  * </p>
  */
-test("the body-language rule names the mounted tools and the argument each declares, and no longer teaches a plan step", () => {
-  const rule = conductBlock(GAME_PROMPT)
-    .split("\n")
-    .find((line) => line.includes("Body language has its own tool"));
-  assert.ok(rule !== undefined, "the Game prompt must still carry a body-language rule to hold");
-  assert.doesNotMatch(
-    rule,
-    /Body language is an action in the plan|express_emote raises|never a tool of its own/u,
-    "the rule still teaches the old plan-step route for a gesture",
-  );
+function presentationOf(source: string, actionId: string): string {
+  const at = source.indexOf(`  ${actionId}: Object.freeze({`);
+  assert.notEqual(at, -1, `game-tools.ts declares no presentation for ${actionId}, so its tool mounts with no words`);
+  const end = source.indexOf("\n  }),", at);
+  assert.notEqual(end, -1, `the ${actionId} presentation is not closed where this reader expects it`);
+  return source.slice(at, end);
+}
+
+test("the two expression tools' own descriptions carry the route the floor used to teach", () => {
+  const presentationSource = readFileSync(join(HOST_SOURCE, "game-tools.ts"), "utf8");
   for (const actionId of EXPRESSION_ONLY_ACTION_IDS) {
-    const toolName = STARDEW_ACTION_TOOL_NAMES[actionId];
-    assert.ok(
-      rule.includes(toolName),
-      `the rule must name ${toolName}, the tool a Game session mounts for this action`,
-    );
+    const words = presentationOf(presentationSource, actionId);
     const action = SURFACE.find((candidate) => candidate.actionId === actionId);
     assert.ok(action !== undefined, `the Mod publishes ${actionId}, or the declaration exempts nothing`);
     const declared = Object.keys(action.argumentSchema ?? {});
     assert.ok(declared.length > 0, `blocked: ${action.actionId} declares no argument, so this gate examines nothing`);
     for (const argument of declared)
       assert.ok(
-        rule.includes(`\`${argument}\``),
-        `the rule teaches ${action.actionId} without naming its \`${argument}\` argument, so the one call it shows is refused as invalid_args`,
+        words.includes(`\`${argument}\``),
+        `${actionId}'s description never names its \`${argument}\` argument, so the one call it shows is refused as invalid_args`,
       );
-  }
-  // The route NOT to teach, and the reason this test exists: the plan builder is named nowhere near body language, and
-  // the action ids are not printed as builder methods either.
-  assert.doesNotMatch(
-    rule,
-    /stardew_plan_shape/u,
-    "the plan form does not admit these two actions, so it cannot be where their words are read",
-  );
-  for (const actionId of EXPRESSION_ONLY_ACTION_IDS)
-    assert.ok(
-      !new RegExp(`builder\\.${actionId}\\(`, "u").test(rule),
-      `the rule still shows builder.${actionId}(...), a call the compiler now refuses as plan_script_unknown_action`,
+    assert.match(
+      words,
+      /NOT a step inside `stardew_plan_work`/u,
+      `${actionId}'s description does not say it is not a plan step, so the route the floor stopped teaching has no owner`,
     );
+    assert.ok(
+      STARDEW_ACTION_TOOL_NAMES[actionId].length > 0,
+      `${actionId} has no mounted tool name, so nothing carries these words to the model`,
+    );
+  }
 });
 
 /**
@@ -525,7 +519,7 @@ test("no conduct sentence claims a delivery opens with words a delivery can do w
     );
   }
 
-  const sentences = conductBlock(GAME_PROMPT)
+  const sentences = surfaceBlock(GAME_PROMPT)
     .split(/(?<=[.!?。！？])\s*/u)
     .filter((piece) => piece.trim() !== "");
   assert.ok(
@@ -533,7 +527,7 @@ test("no conduct sentence claims a delivery opens with words a delivery can do w
     "blocked: the conduct block split into no sentences, so 'no conduct sentence makes this claim' is a statement about " +
       "nothing",
   );
-  const found = headClaims(conductBlock(GAME_PROMPT));
+  const found = headClaims(surfaceBlock(GAME_PROMPT));
   // THE DETECTOR IS PROVEN LIVE INSIDE THIS TEST, because the population it reports is allowed to be zero: zero claims is
   // the state this gate wants, and "0 findings" from a detector that never matched anything is indistinguishable from it.
   const live = HEAD_CLAIMS.filter((claim) =>
@@ -764,7 +758,7 @@ async function deliveredCeilingTurn(
  * budget by, which is the defect this reader exists to keep out.
  */
 function bubbleCeilingStatements(prompt: string): readonly string[] {
-  return bubbleCeilingSentences(conductBlock(prompt));
+  return bubbleCeilingSentences(surfaceBlock(prompt));
 }
 
 /** The same reading over any text: the reader's own red proof needs it, and so does every sentence of the prompt. */
@@ -1061,16 +1055,16 @@ const DAY_END_CLAIM = Object.freeze({
   nowStatedBy: "`stardew_plan_work`'s `sleep()` description (`body-program-script.ts` `planWorkDescription`)",
 });
 
-test("the floor states no day-end precondition, because the plan tool's `sleep()` description does", () => {
-  const rules = GAME_SURFACE_INTERACTION_CONDUCT.split("\n");
-  assert.ok(rules.length > 0, "blocked: the composed conduct list is empty, so nothing was examined");
+test("the surface block states no day-end precondition, because the plan tool's `sleep()` description does", () => {
+  const lines = GAME_SURFACE_INPUT_HEADER.split("\n");
+  assert.ok(lines.length > 0, "blocked: the surface block is empty, so nothing was examined");
   assert.deepEqual(
-    rules
-      .filter((rule) => DAY_END_CLAIM.reads.test(rule))
-      .map((rule) => `day_end_claim_restated_in_the_floor:${DAY_END_CLAIM.id}:${rule.slice(0, 60)}`),
+    lines
+      .filter((line) => DAY_END_CLAIM.reads.test(line))
+      .map((line) => `day_end_claim_restated_in_the_floor:${DAY_END_CLAIM.id}:${line.slice(0, 60)}`),
     [],
-    `the floor states the day's end again, and it is now ${DAY_END_CLAIM.nowStatedBy}'s - a second spelling is the one ` +
-      `that goes stale. rules examined ${String(rules.length)}`,
+    `the surface block states the day's end again, and it is now ${DAY_END_CLAIM.nowStatedBy}'s - a second spelling is ` +
+      `the one that goes stale. lines examined ${String(lines.length)}`,
   );
   // The detector's own red: the deleted rule VERBATIM must fire on it, or its silence above means nothing.
   assert.match(DAY_END_CLAIM.was, DAY_END_CLAIM.reads, `day_end_claim_detector_is_dead:${DAY_END_CLAIM.id}`);
@@ -1094,7 +1088,7 @@ test("the floor states no day-end precondition, because the plan tool's `sleep()
  * <p>
  * WHY THIS IS A GATE AND NOT A DELETION: a rule removed from a table is invisible, and the next lane that measures a
  * markdown-shaped failure will reach for the floor again. So each claim is READ - one reader per claim, run over two
- * populations: every rule the floor composes (derived from `GAME_SURFACE_INTERACTION_CONDUCT`, one rule per line) and the
+ * populations: every line the surface block installs (derived from `GAME_SURFACE_INPUT_HEADER`) and the
  * persona layer's own `main` text (read from the shipped file, never re-typed here). The assertion is "exactly the
  * persona layer states it", which goes red when the floor takes it back, when the preset loses it, and when both state it.
  * </p>
@@ -1141,17 +1135,17 @@ const PERSONA_CLAIMS: readonly PersonaClaim[] = Object.freeze([
   }),
 ]);
 
-/** Every rule the floor composes, as the model reads it: one rule per line, derived and never listed. */
-const FLOOR_RULES: readonly string[] = Object.freeze(GAME_SURFACE_INTERACTION_CONDUCT.split("\n"));
+/** Every line the surface block installs, as the model reads it: one sentence group per line, derived and never listed. */
+const SURFACE_LINES: readonly string[] = Object.freeze(GAME_SURFACE_INPUT_HEADER.split("\n"));
 
-test("the claims the floor stopped making are stated by the persona layer, and by no rule the floor still composes", () => {
+test("the claims the surface block stopped making are stated by the persona layer, and by no line it still installs", () => {
   const persona = presetEntry(PERSONA_PRESET, "main");
   const findings: string[] = [];
   for (const claim of PERSONA_CLAIMS) {
-    for (const rule of FLOOR_RULES)
-      if (claim.reads.test(rule))
+    for (const line of SURFACE_LINES)
+      if (claim.reads.test(line))
         findings.push(
-          `floor_states_the_claim:${claim.id}: the rule "${rule.slice(0, 60)}" states ${claim.claim}, which is the ` +
+          `floor_states_the_claim:${claim.id}: the line "${line.slice(0, 60)}" states ${claim.claim}, which is the ` +
             `persona's now - delete it here rather than teaching this gate to tolerate it`,
         );
     if (!claim.reads.test(persona))
@@ -1160,18 +1154,11 @@ test("the claims the floor stopped making are stated by the persona layer, and b
       );
   }
   process.stdout.write(
-    `\npersona claims: ${String(PERSONA_CLAIMS.length)} · floor rules read ${String(FLOOR_RULES.length)} · ` +
+    `\npersona claims: ${String(PERSONA_CLAIMS.length)} · surface lines read ${String(SURFACE_LINES.length)} · ` +
       `findings ${String(findings.length)}\n`,
   );
   assert.deepEqual(findings, []);
 
-  // A MOVED RULE LEAVES NOTHING BEHIND: no entry, no composed element, no `moved` marker whose text restates the claim.
-  for (const claim of PERSONA_CLAIMS)
-    assert.ok(
-      !Object.keys(GAME_SURFACE_CONDUCT_RULES).includes(claim.id),
-      `${claim.id} left the floor and must not survive as an entry: a claim its owner states is stated once, not kept ` +
-        "here marked `moved`",
-    );
   // And the clause that absorbed the second one is stated ONCE: the preset's ownership sentence was widened to the
   // village, never duplicated beside the player-only half it replaced.
   assert.equal(
@@ -1217,4 +1204,156 @@ test("the persona readers turn red on the rules the floor lost, and stay silent 
       claim.reads,
       `${claim.id}'s reader fires on a preset cell that does not state it, so it cannot tell the layers apart`,
     );
+});
+
+/**
+ * A RULE THE PROMPT STATES HAS AN OWNER - the gate that replaced the class table.
+ *
+ * <p>
+ * The old gate counted rules and asked each one for a class and an exit. That was the right shape while the surface block
+ * WAS a rule list; now that it is a header, counting rules would count nothing, and the property worth holding is the one
+ * the deletions were made for: a sentence in this block that states BEHAVIOUR has an owner somewhere else, or a recorded
+ * reason it cannot move there yet. A future "add a rule here" then fails at the moment it lands, naming the sentence.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS DERIVED FROM THE PROMPT, not from a list: every sentence of the surface block as the builder installs
+ * it (`surfaceBlock(GAME_PROMPT)`), so a line added tomorrow joins without an edit here. The READING classifies each
+ * sentence as SYNTAX (it names what the message is - the blocks, where speech sits) or BEHAVIOUR (it tells her to do
+ * something), and a behaviour sentence is explained by one of the two ledgers below, each entry naming the owner and how
+ * this gate recognises the sentence. Two ledgers, because they are two different facts and the print says which:
+ * </p>
+ *
+ * <ul>
+ *   <li>`ENFORCED_ELSEWHERE` - another layer states and enforces the same claim, so this sentence could be deleted without
+ *     losing it.</li>
+ *   <li>`CANNOT_BE_MOVED` - no other layer can carry it yet, with the surface change that would end that. It is DEBT, not
+ *     a pass: it prints under its own count and is never added to the enforced one.</li>
+ * </ul>
+ *
+ * <p>
+ * THE FAILING CONDITION is `behaviour - enforced - cannotBeMoved > 0`: a sentence that states behaviour and is in neither
+ * ledger. A recorded entry that stops matching a sentence is a finding too (`rule_owner_record_stale`), because a ledger
+ * that outlives its sentence is an exemption over nothing.
+ * </p>
+ */
+
+/**
+ * A sentence states behaviour when it tells her to do something: a prohibition, a modal, or a Chinese imperative.
+ *
+ * A verb alone is not enough - the syntax line says "the words are your partner's" and that is a statement about the
+ * message, not an order - so the marker is the imperative itself.
+ */
+const STATES_BEHAVIOUR =
+  /(?:\b(?:never|do not|don't|must|always|only|say|says|speak|write|call|answer|tell|talk|translate|keep)\b)|(?:不要|别|不准|务必|记得|说的时候|翻成|说成|用词|只拿|只用|只填)/iu;
+
+/** One sentence of the surface block, and the layer that owns the claim it states. */
+type SurfaceSentenceOwner = Readonly<{
+  id: string;
+  /** The claim's own vocabulary, so a rewording that states it again joins the same entry. */
+  reads: RegExp;
+  /** Who states and enforces it - for `CANNOT_BE_MOVED`, the change that would give it a home. */
+  owner: string;
+}>;
+
+/**
+ * Sentences another layer states and enforces. Empty today, and that is the reading: every rule this module carried went
+ * to the layer that already owned it, so nothing in the header is a duplicate of an enforceable claim.
+ */
+const ENFORCED_ELSEWHERE: readonly SurfaceSentenceOwner[] = Object.freeze([]);
+
+/**
+ * Sentences no other layer can carry yet. Each is debt with the change that ends it, and the gate prints the count
+ * rather than folding it into `enforced-elsewhere`.
+ */
+const CANNOT_BE_MOVED: readonly SurfaceSentenceOwner[] = Object.freeze([
+  Object.freeze({
+    id: "machine_vocabulary_translated",
+    reads: /\bgift_given\b|原因码|reason code/u,
+    owner:
+      "the two renderers: `fact-brief.ts` prints a receipt's reasonCode and evidence.detail as the Mod published them, and " +
+      "`game-world-vocabulary.ts` falls back to the native tool identity when a slot publishes no tool word. The day both " +
+      "translate, this line is deleted - there is no other home for it, which is why it is debt rather than a duplicate",
+  }),
+]);
+
+/** The recorded pair before this unit: the assembled Game prompt and the surface block, as `remeasured_2026_11_24` took them. */
+const BEFORE_THIS_UNIT = Object.freeze({ systemChars: 5_553, surfaceChars: 3_226 });
+
+test("a_rule_the_prompt_states_has_an_owner: no sentence of the surface block states behaviour without one", () => {
+  const block = surfaceBlock(GAME_PROMPT);
+  const sentences = block
+    .split(/(?<=[.!?。！？])\s*/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+  assert.ok(
+    sentences.length > 0,
+    "blocked: the surface block split into no sentence, so 'no sentence states behaviour without an owner' is a statement " +
+      "about nothing",
+  );
+
+  const syntax = sentences.filter((sentence) => !STATES_BEHAVIOUR.test(sentence));
+  const behaviour = sentences.filter((sentence) => STATES_BEHAVIOUR.test(sentence));
+  const enforced = behaviour.filter((sentence) => ENFORCED_ELSEWHERE.some((entry) => entry.reads.test(sentence)));
+  const unmovable = behaviour.filter((sentence) => CANNOT_BE_MOVED.some((entry) => entry.reads.test(sentence)));
+  const unnamed = behaviour.filter(
+    (sentence) => !enforced.includes(sentence) && !unmovable.includes(sentence),
+  );
+  const stale = [...ENFORCED_ELSEWHERE, ...CANNOT_BE_MOVED].filter(
+    (entry) => !sentences.some((sentence) => entry.reads.test(sentence)),
+  );
+
+  // THE READER IS PROVEN LIVE IN BOTH DIRECTIONS: it must fire on the sentences this unit deleted and stay silent on the
+  // syntax it kept, or a green verdict here would be a statement about a detector nobody checked.
+  assert.ok(
+    STATES_BEHAVIOUR.test("When a stretch of work ends, speak from your immediate bodily sensation."),
+    "blocked: the behaviour reader does not fire on a rule the old floor carried, so its silence proves nothing",
+  );
+  assert.ok(
+    STATES_BEHAVIOUR.test("Write no bracketed stage direction at all."),
+    "blocked: the behaviour reader does not fire on the second rule the old floor carried",
+  );
+  assert.ok(
+    !STATES_BEHAVIOUR.test("This message is the machine's report, in three blocks."),
+    "the behaviour reader flags a sentence that names the message's syntax",
+  );
+
+  process.stdout.write(
+    `\na_rule_the_prompt_states_has_an_owner: sentences examined ${String(sentences.length)} · syntax ${String(syntax.length)} · ` +
+      `behaviour ${String(behaviour.length)} · enforced-elsewhere ${String(enforced.length)} · ` +
+      `cannot-be-moved ${String(unmovable.length)}\n`,
+  );
+  for (const entry of CANNOT_BE_MOVED)
+    process.stdout.write(`  cannot-be-moved ${entry.id}: ${entry.owner.slice(0, 120)}…\n`);
+
+  assert.deepEqual(
+    stale.map((entry) => `rule_owner_record_stale:${entry.id}`),
+    [],
+    "an owner record matches no sentence of the surface block: delete it with the sentence it described",
+  );
+  assert.deepEqual(
+    unnamed.map((sentence) => `a_rule_the_prompt_states_has_an_owner:${sentence.slice(0, 80)}`),
+    [],
+    "this sentence states behaviour and no layer owns it: move it to the layer that does (a tool description, the card, " +
+      "the delivery), or record it as `cannot-be-moved` with the surface change that would end it",
+  );
+});
+
+test("the surface block's share of the Game prompt is printed, before and after this unit", () => {
+  const share = GAME_SURFACE_INPUT_HEADER.length / GAME_PROMPT.length;
+  process.stdout.write(
+    `\ngame prompt characters: before ${String(BEFORE_THIS_UNIT.systemChars)} · after ${String(GAME_PROMPT.length)} · ` +
+      `surface block before ${String(BEFORE_THIS_UNIT.surfaceChars)} · after ${String(GAME_SURFACE_INPUT_HEADER.length)} · ` +
+      `the block is now ${(share * 100).toFixed(1)}% of the prompt\n`,
+  );
+  assert.ok(
+    GAME_SURFACE_INPUT_HEADER.length < BEFORE_THIS_UNIT.surfaceChars,
+    "the surface block grew: this unit replaced a rule list with a header, and a header larger than the list it replaced " +
+      "is the list coming back",
+  );
+  assert.ok(share < 0.15, `the surface block is ${(share * 100).toFixed(1)}% of the prompt, which is a rule list's share`);
+  // The block is in the run's locale, and the English half exists because `locale` is a runtime fact on both surfaces.
+  const english = gameSurfaceInputHeader("en-US");
+  assert.notEqual(english, GAME_SURFACE_INPUT_HEADER, "the header renders in the run's own locale, not in one language");
+  assert.doesNotMatch(GAME_SURFACE_INPUT_HEADER, /[A-Za-z]{4,} [A-Za-z]{4,} [A-Za-z]{4,} [A-Za-z]{4,}/u);
 });

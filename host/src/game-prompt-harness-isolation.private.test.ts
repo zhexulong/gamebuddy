@@ -14,8 +14,8 @@
  * floor - so the surface that must not carry the block was the only one guaranteed to receive it, and the Host wrote a
  * guidance override so that the Game copy said something else instead. A second writer for the same section is not
  * isolation. The section is now switched off outright (`system_prompt_injection.enabled: false`), and the one claim the
- * companion needs from it - that the archive is HER OWN earlier turns, not a repository's history - is the Game floor's
- * own rule (`game-surface-prompt-floor.ts` `archive_is_her_own_history`).
+ * companion needs from it - that the archive is HER OWN earlier turns, not a repository's history - is the Game
+ * surface's own header line (`game-surface-prompt-floor.ts`, `gameSurfaceInputHeader`).
  * </p>
  *
  * <p>
@@ -37,7 +37,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildChatCompanionSystemPrompt } from "./companion-prompt-assembly.js";
-import { GAME_SURFACE_CONDUCT_RULES, buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { COMPANION_ARCHIVE_TOOL_DESCRIPTIONS } from "./companion-archive-tool-descriptions.js";
+import { GAME_SURFACE_INPUT_HEADER, buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { PresentationRuntime } from "./presentation.js";
 import { type CompanionIdentity, createCompanionRuntime, resolveRuntimePaths } from "./runtime.js";
@@ -72,8 +73,11 @@ const DEVELOPER_FRAME_WORDS = Object.freeze([
   "A reply that is only tool calls gets no tag",
 ]);
 
-/** The archive mechanics, and the tag sense the floor rule owes her now that the harness section is gone. */
-const DESK_MECHANICS_WORDS = Object.freeze(["ctx_search", "ctx_expand", "§N§", "[dropped §N§]"]);
+/**
+ * The words that made the extension's own text a coding agent's: its example paths, its examples' tools, and the
+ * premise that the archive is a repository rather than one companion's memory.
+ */
+const CODING_AGENT_WORDS = Object.freeze(["opencode", "sqlite", "git_commit", "this project", "repository"]);
 
 function presentationFor(surface: "chat" | "game"): PresentationRuntime {
   return Object.freeze({
@@ -98,7 +102,7 @@ async function withRuntime(
   run: (session: {
     dispose: () => void;
     systemPrompt: string;
-    agent: { state: { tools: readonly { name: string }[] } };
+    agent: { state: { tools: readonly { name: string; description: string }[] } };
   }) => Promise<void>,
 ): Promise<void> {
   const runtime = await createCompanionRuntime(
@@ -153,7 +157,7 @@ test("the config the Host writes switches Magic Context's system-prompt section 
   });
 });
 
-test("the archive claim is the Game floor's, and it names only tools the Game surface mounts", async () => {
+test("the archive claim is the two mounted readers' own, and no coding-agent example survives in it", async () => {
   await withRoot(async (root) => {
     await withRuntime(root, "game", async (session) => {
       const mountedArchiveTools = session.agent.state.tools
@@ -163,22 +167,33 @@ test("the archive claim is the Game floor's, and it names only tools the Game su
       assert.deepEqual(
         mountedArchiveTools,
         ["ctx_expand", "ctx_memory", "ctx_note", "ctx_reduce", "ctx_search"],
-        "the Game surface's ctx_* tool set changed, so the floor's archive rule describes tools she does or does not have",
+        "the Game surface's ctx_* tool set changed, so the projection's table describes tools she does or does not have",
       );
-      const rule = GAME_SURFACE_CONDUCT_RULES.archive_is_her_own_history.text;
-      const named = [...new Set(rule.match(/ctx_[a-z_]+/gu) ?? [])].sort();
+      // THE POPULATION IS THE TABLE'S OWN KEYS, and every one of them must be a tool this surface mounts: a name added
+      // for a tool that is not there would be a description nobody reads.
+      const named = Object.keys(COMPANION_ARCHIVE_TOOL_DESCRIPTIONS).sort();
       assert.deepEqual(
         named.filter((name) => !mountedArchiveTools.includes(name)),
         [],
-        "the rule names an archive tool this surface does not mount, so she is told to call something she does not have",
+        "the projection names an archive tool this surface does not mount",
       );
-      for (const word of DESK_MECHANICS_WORDS)
-        assert.ok(rule.includes(word), `the archive rule never states ${word}, so she cannot read the archive back`);
-
-      // The falsifier of that reading: the same extractor over a prose that names a tool nothing mounts.
-      const reader = (prose: string): readonly string[] =>
-        [...new Set(prose.match(/ctx_[a-z_]+/gu) ?? [])].filter((name) => !mountedArchiveTools.includes(name)).sort();
-      assert.deepEqual(reader("`ctx_search` reads it back; `ctx_ghost` empties it."), ["ctx_ghost"]);
+      for (const name of named) {
+        const mounted = session.agent.state.tools.find((tool) => tool.name === name);
+        assert.ok(mounted !== undefined, `${name} is named by the projection and not mounted`);
+        assert.equal(
+          mounted.description,
+          COMPANION_ARCHIVE_TOOL_DESCRIPTIONS[name]!.description,
+          `${name}'s mounted description is not this surface's: the projection did not reach the definition the session carries`,
+        );
+        const developer = CODING_AGENT_WORDS.filter((word) => mounted.description.toLowerCase().includes(word));
+        assert.deepEqual(developer, [], `${name}'s description still reads as a coding agent's: ${developer.join(", ")}`);
+      }
+      // AND THE SURFACE BLOCK SAYS NONE OF IT: the claim has one writer, and it is the description that hands her the call.
+      assert.doesNotMatch(
+        GAME_SURFACE_INPUT_HEADER,
+        /ctx_[a-z_]+/u,
+        "the surface block names an archive tool again, which is the description's sentence stated twice",
+      );
     });
   });
 });
@@ -188,7 +203,7 @@ test("the Chat prompt states none of it: the archive is not a Chat surface's cap
   assert.doesNotMatch(chatPrompt, /ctx_[a-z_]+/u, "the Chat prompt must name no archive tool, mounted or not");
   assert.doesNotMatch(chatPrompt, /§N§/u, "the Chat prompt must not describe a tag order it has no archive for");
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
-  assert.match(gamePrompt, /archive holds what is no longer in view/u);
+  assert.match(gamePrompt, /这条消息是机器的报告/u);
 });
 
 /**

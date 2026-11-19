@@ -131,3 +131,21 @@ export function gateFileNames(population) {
 export function gateMemberNames(gate) {
   return [gate.id, ...gate.entryFiles.map((file) => file.replace(/^.*\//u, ""))];
 }
+
+/**
+ * The zero-population verdict, said once.
+ *
+ * Four gates hand-wrote this line and the duplication gate counted them as one group: the fact is the same - a gate
+ * that measured nothing has not passed - and only the reason belongs to the gate. The wrapper is shared so the wording
+ * cannot drift into five spellings, and each gate keeps its own reason.
+ *
+ * Every caller reads `process.exit(blockedOnEmptyPopulation(...))`, so the return value is the exit code. This export
+ * was dropped by the merge at `13383386` while four gates kept importing it, which is measured as
+ * `falsifier_signature_missing` in `gates/meta/check-harness-conformance.mjs` - a gate that cannot load prints no
+ * report, so the census had nothing to read from `check-fail-closed-forward-path`, `check-switch-exhaustiveness`,
+ * `check-armed-destructive-actions` and `check-viewport-population`.
+ */
+export function blockedOnEmptyPopulation(gateName, reason) {
+  console.error(`[${gateName}] blocked: ${reason}`);
+  return 1;
+}

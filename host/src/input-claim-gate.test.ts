@@ -5,8 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-import { GAME_SURFACE_CONDUCT_RULES } from "./game-surface-prompt-floor.js";
-import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js";
+import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 
 /**
  * GATE `input_claim_stated_twice`: one instruction, one writer.
@@ -51,13 +50,13 @@ import * as stardewConduct from "./games/stardew/prompt/stardew-game-conduct.js"
  * </p>
  *
  * <p>
- * THE POPULATION is derived, never listed by hand: the floor's rules come from `GAME_SURFACE_CONDUCT_RULES`, the
- * Stardew module's from `STARDEW_GAME_CONDUCT_CLASSES` joined to the module's own exports (a class row naming no export
- * throws instead of shrinking the population), the desk protocol from the function that renders it, and every other
- * writer is scanned out of its source file - every string literal, attributed to the declaration that holds it. The
- * personas and worldbooks are read from the files the Game session mounts. Zero population is blocked, and the counts are
- * printed on every run. `tool-surface.ts` is NOT a writer here: the surface stopped rewriting a mounted tool's
- * description (its own words are the extension's), and `tool-surface.private.test.ts` is what holds that.
+ * THE POPULATION is derived, never listed by hand: the surface block's lines come from `GAME_SURFACE_INPUT_HEADER`, the
+ * desk protocol from the function that renders it, and every other writer is scanned out of its source file - every
+ * string literal, attributed to the declaration that holds it. The personas and worldbooks are read from the files the
+ * Game session mounts. Zero population is blocked, and the counts are printed on every run. `tool-surface.ts` is NOT a
+ * writer here: the surface stopped rewriting a mounted tool's description by CLASS. The one writer of a tool description
+ * above the extensions is `companion-archive-tool-descriptions.ts`, which names two tools, and it IS in the population -
+ * its sentences reach the model every turn, so they belong in the corpus like every other writer's.
  * </p>
  */
 
@@ -206,26 +205,19 @@ function assetUnits(file: string): readonly Unit[] {
   return units;
 }
 
-/** The Stardew module's own rules, joined to the class table that names them - the same join `tools/check-game-surface-conduct-classes.mjs` makes. */
-function stardewUnits(): readonly Unit[] {
-  const exports: Readonly<Record<string, unknown>> = stardewConduct;
-  return stardewConduct.STARDEW_GAME_CONDUCT_CLASSES.map((row) => {
-    const text = exports[row.id.toUpperCase()];
-    if (typeof text !== "string" || text.trim().length === 0)
-      throw new Error(
-        `conduct_rule_text_unreadable:${row.id}: the class table classifies a rule this module does not export, so the ` +
-          "population this gate examines would be smaller than the floor without saying so",
-      );
-    return Object.freeze({ writer: `games/stardew/prompt/stardew-game-conduct.ts:${row.id.toUpperCase()}`, text });
-  });
-}
-
 /** The writers of model input this gate examines, derived from the declarations each layer owns. */
 function population(): readonly Unit[] {
   const units: Unit[] = [];
-  for (const [id, rule] of Object.entries(GAME_SURFACE_CONDUCT_RULES))
-    units.push(Object.freeze({ writer: `game-surface-prompt-floor.ts:${id}`, text: rule.text }));
-  units.push(...stardewUnits());
+  const surfaceLines = GAME_SURFACE_INPUT_HEADER.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (surfaceLines.length === 0)
+    throw new Error(
+      "input_claim_population_empty: the Game surface block installs no line, so the surface's own writers would be " +
+        "absent from this corpus without saying so",
+    );
+  for (const [index, text] of surfaceLines.entries())
+    units.push(Object.freeze({ writer: `game-surface-prompt-floor.ts:input_header_line_${String(index)}`, text }));
   for (const file of [
     "host/src/identity-profile.ts",
     "host/src/companion-prompt-assembly.ts",
@@ -236,6 +228,7 @@ function population(): readonly Unit[] {
     "host/src/host-service.ts",
     "host/src/tavern/preset-tail-block.ts",
     "host/src/stardew-integration-launcher-body-program.internal.ts",
+    "host/src/companion-archive-tool-descriptions.ts",
   ])
     units.push(...literalsOf(file));
   for (const file of [
@@ -338,25 +331,6 @@ const RECORDED: readonly Readonly<{
   blockedBy?: string;
 }>[] = Object.freeze([
   Object.freeze({
-    slug: "surface-draws-asterisk-form",
-    first: "chat-surface-block.ts:CHAT_SURFACE_DIVERGENCE",
-    second: "game-surface-prompt-floor.ts:body_language_is_native",
-    kind: "distinct",
-    why:
-      "the same construct with two opposite behaviours: the Chat renderer paints the asterisk beat as the action beat and a " +
-      "leading parenthesis as the prosody badge, and the Game bubble drops both, so the gesture happens nowhere. Deleting " +
-      "either sentence deletes a fact about a surface, not a duplicate.",
-  }),
-  Object.freeze({
-    slug: "first-line-names-revision",
-    first: "game-surface-prompt-floor.ts:fact_batch_blocks",
-    second: "games/stardew/prompt/stardew-game-conduct.ts:CONTENT_IDS_IN_WORDS",
-    kind: "distinct",
-    why:
-      "the shared words are line, names, already and fact: one sentence is about the world block's first line naming its " +
-      "revision, the other about the fact line naming a held tool. Different referents behind the same four words.",
-  }),
-  Object.freeze({
     slug: "反全知与元语言禁用-anti-omniscience-只说你自己的",
     first: "assets/tavern/presets/amber-chat.json:prompts.content",
     second: "assets/tavern/presets/amber-game.json:prompts.content",
@@ -412,8 +386,12 @@ test("no instruction is stated twice across the writers of model input", () => {
     writers.size >= 10,
     `input_claim_gate_population_too_small:${String(writers.size)}: the population is the writers, not a list of pairs`,
   );
+  // THE FLOOR MOVED WITH THE CORPUS, AND IT IS STILL A FLOOR. It was 40 while the Game surface block was six conduct
+  // rules; those rules left for the layers that own them on 2026-11-24, and a block that is now a two-line input header
+  // is 30 claims of this corpus. 24 is below today's population and above the size at which a layer dropping out would go
+  // unnoticed, so the guard still fails on a shrunken corpus rather than agreeing with it.
   assert.ok(
-    CLAIMS.length >= 40,
+    CLAIMS.length >= 24,
     `input_claim_gate_claims_too_few:${String(CLAIMS.length)}: a corpus this thin would agree with itself`,
   );
   assert.deepEqual(

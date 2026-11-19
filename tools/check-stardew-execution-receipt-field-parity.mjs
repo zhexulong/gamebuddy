@@ -2,7 +2,7 @@
 //   -> verdict `blocked`, exit 1, one violation on the ledger layer with
 //   `"issue": "produced_and_never_read"`, the report's `fields` reading
 //   `{written: 12, exported: 10, declaredIgnored: 1}` and the field named in both the violation and those counts.
-// red-proof: delete the `hint` entry from `DOCUMENTED_EXTRAS` -> the same violation names `hint`.
+// red-proof: inject deleting the `hint` entry from `DOCUMENTED_EXTRAS` -> the same violation names `hint`.
 // red-proof: rename the `hint` record member while the declaration keeps the old spelling ->
 //   `"issue": "stale_exemption"` names `hint`, because an exemption that exempts nothing must expire.
 // Gate: stardew_execution_receipt_field_parity/v1

@@ -22,6 +22,7 @@ import {
 } from "./action-execution-coordinator.internal.js";
 import { keepsOwnToolOnPlanSurface } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
+import { projectArchiveToolDescription } from "./companion-archive-tool-descriptions.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
@@ -1750,6 +1751,19 @@ export async function createRuntimeWithFixedToolsCore(
                 : undefined,
           ),
     );
+  // THE TWO ARCHIVE READERS CARRY THIS SURFACE'S WORDS (`companion-archive-tool-descriptions.ts`). Magic Context
+  // registers them for every runtime and writes for a coding agent; each projection spreads the extension's own
+  // definition and replaces only its description, so `execute`, `parameters` and every other member stay that tool's.
+  // Append after the planned groups, never through `planToolSurface`: the plan classifies these by the extension that
+  // registered them, and a second declaration of the same name there is the collision guard's business, not this
+  // projection's. Pi resolves a `customTools` entry over a registered tool of the same name.
+  const archiveTools =
+    runtimeSurface === "game"
+      ? loader
+          .getExtensions()
+          .extensions.flatMap((extension) => [...extension.tools.values()])
+          .map((tool) => projectArchiveToolDescription(tool.definition))
+      : [];
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
@@ -1762,7 +1776,7 @@ export async function createRuntimeWithFixedToolsCore(
       ...(model === undefined ? {} : { model }),
       noTools: "all",
       tools: [...toolSurface.mounted],
-      customTools,
+      customTools: [...customTools, ...archiveTools],
       // The player's own thinking level is forwarded verbatim: the embedded
       // runtime clamps a level the selected model does not advertise instead of
       // this Host narrowing a value the player typed (design/28 §2.3.1, §2.3.5).

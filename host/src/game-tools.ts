@@ -1669,11 +1669,13 @@ const DECLARED_ACTION_TOOL_PRESENTATION: Readonly<
   }),
   express_emote: Object.freeze({
     label: "Express Stardew Emote",
-    description: "Show a native overhead emote balloon for the companion actor.",
+    description:
+      "Show a native overhead emote balloon for the companion actor. A gesture is one step by nature, so this tool is mounted on its own beside the plan builder and is NOT a step inside `stardew_plan_work`: one call is the whole gesture, it never queues behind the work in front of it, and its settlement is its own. It takes exactly one `emote` word, and this parameter list carries the closed set of words the Mod accepts.",
   }),
   face_direction: Object.freeze({
     label: "Face Stardew Direction",
-    description: "Turn the companion actor to face a cardinal direction (up, right, down, left).",
+    description:
+      "Turn the companion actor to face a cardinal direction (up, right, down, left). Mounted on its own beside the plan builder for the same reason as `stardew_express_emote` - a turn is one step by nature and is NOT a step inside `stardew_plan_work` - and it takes exactly one `direction` word, whose closed set this parameter list carries.",
   }),
   interact_npc_with_item: Object.freeze({
     label: "Offer Item to NPC",

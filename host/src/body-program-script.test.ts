@@ -23,6 +23,7 @@ import {
   planWorkDescription,
 } from "./body-program-script.js";
 import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
+import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
 
@@ -2828,8 +2829,19 @@ test("the plan description and the Game floor fit the pair budget their own cons
  * leaving its old home. The first has no old home to pay for it; the second is the move done halfway, which reads as a
  * deduction on one side and an increase on the other - and nothing but the pair notices that the increase had no payer.
  *
- * Both are driven through the SAME predicate the gate uses, and both name the pair with each side's size, so a red says
- * which side grew rather than only that the total did.
+ * <p>
+ * WHAT THE PAIR CANNOT SEE, SAID HERE RATHER THAN LEFT TO BE DISCOVERED: its floor side is a recorded NUMBER
+ * (`READING.conductBlock.chars`), not the floor's text, so the pair can only read a move that changes the floor's SIZE.
+ * A sentence carried back into the floor while another sentence left it - the same size, two writers - is invisible to
+ * this arithmetic, and so is a recorded reading that was re-recorded to match. The second reading below is therefore the
+ * floor's own TEXT, where a sentence that came back has nowhere to hide, and the `a_rule_the_prompt_states_has_an_owner`
+ * gate in `game-surface-prompt-floor.test.ts` is what refuses any behaviour sentence the header has no owner for.
+ * </p>
+ *
+ * Both directions are driven through the SAME predicate the gate uses, and both name the pair with each side's size, so a
+ * red says which side grew rather than only that the total did. `GAME_PROSE_PAIR_BUDGET_CHARS` was re-recorded on
+ * 2026-11-24 with the floor's own shrink: against the older ceiling BOTH directions passed, because the pair had fallen
+ * 3,226 characters below a budget nothing lowered - a gate that could not fail.
  */
 test("the pair gate turns red on added prose, and on a sentence that moved without leaving its old home", () => {
   const description = planWorkDescription(CATALOG_ACTIONS);
@@ -2865,6 +2877,14 @@ test("the pair gate turns red on added prose, and on a sentence that moved witho
   );
   // The control: the pair as the tree really composes it fits, so the two reds above are the shapes and not the reading.
   assert.equal(prosePairOverBudget(description, floor), undefined);
+
+  // THE SECOND READING, AND IT IS THE ONE THAT CAN SEE A SENTENCE IN BOTH HOMES: the floor's own text. The clause moved
+  // into the description on 2026-11-19, so its return is a red here whether or not the recorded size moved with it.
+  assert.doesNotMatch(
+    GAME_SURFACE_INPUT_HEADER,
+    /ends the day only from inside your own/u,
+    "the moved sentence is back in the floor's own text: one fact, two writers, and the description is the one that owns it",
+  );
 });
 
 /**

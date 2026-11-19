@@ -517,7 +517,7 @@ export function kindOf(file) {
 }
 
 /** Every read site of one tree: the three clauses decided per site, plus the counts that explain the exclusions. */
-export function readSites({ root }) {
+export function readSites({ root, files = treeFiles({ root }) }) {
   const counts = {
     readers: 0,
     readCalls: 0,
@@ -525,12 +525,26 @@ export function readSites({ root }) {
     sameLanguage: 0,
     nonSourceTarget: 0,
     unresolved: 0,
+    unreadableByTheWorktree: 0,
   };
   const sites = [];
-  for (const file of treeFiles({ root })) {
+  const absent = [];
+  for (const file of files) {
     const readerLanguage = languageOf(file);
     if (readerLanguage === null) continue;
-    const text = readFileSync(join(root, file), "utf8");
+    let text;
+    try {
+      text = readFileSync(join(root, file), "utf8");
+    } catch {
+      // `treeFiles` is the INDEX and this read is the WORKTREE, so an uncommitted deletion puts a path here that has no
+      // bytes to read. Its read sites went with the file, so it is counted and named rather than thrown over: measured
+      // 2026-11-19, a lane's in-flight deletion of `host/src/games/stardew/prompt/stardew-game-conduct.ts` made the
+      // default run die in `node:fs` and print no report at all, which is a gate that says nothing instead of one that
+      // says what it could not read.
+      absent.push(file);
+      counts.unreadableByTheWorktree += 1;
+      continue;
+    }
     counts.readers += 1;
     const { skip } = scanText(text, readerLanguage);
     const constants = pathVariables(text, skip);
@@ -584,7 +598,7 @@ export function readSites({ root }) {
       });
     }
   }
-  return { counts, sites };
+  return { counts, sites, absent };
 }
 
 /** Which of the three classes a site falls in. Written out rather than nested, because the partition is the point. */
@@ -626,7 +640,7 @@ const identityOf = (site) => `${normalize(site.file)} -> ${normalize(site.target
  * exists - so the baseline can only shrink.
  */
 export function checkValueReads({ root }) {
-  const { counts, sites } = readSites({ root });
+  const { counts, sites, absent } = readSites({ root });
   const values = sites.filter((site) => site.siteClass === "value");
   const baseline = readBaseline({ root });
   const recorded = new Map(baseline.sites.map((entry) => [identityOf(entry), entry]));
@@ -662,6 +676,7 @@ export function checkValueReads({ root }) {
       ...byKind,
     },
     sites,
+    absent,
     values,
     baseline: baseline.sites,
     findings,
@@ -677,7 +692,7 @@ export function describeCensus(report) {
   return [
     `readers ${counts.readers} · read calls ${counts.readCalls} · cross-language source sites ${counts.foreignSource} in ${new Set(report.sites.map((site) => site.file)).size} file(s)`,
     `clauses: foreign source ${counts.foreignSource} · value ${counts.value} · shape ${shapes} · content ${contents}`,
-    `excluded: same-language ${counts.sameLanguage} · non-source target ${counts.nonSourceTarget} · unresolved ${counts.unresolved}`,
+    `excluded: same-language ${counts.sameLanguage} · non-source target ${counts.nonSourceTarget} · unresolved ${counts.unresolved} · named by the index and absent from the worktree ${counts.unreadableByTheWorktree}${counts.unreadableByTheWorktree === 0 ? "" : ` (${report.absent.join(", ")})`}`,
     `values by kind: test ${counts.test} · gate ${counts.gate} · derive ${counts.derive} · lib ${counts.lib} · recorded ${counts.recorded} · finding ${report.findings.filter((finding) => finding.code === "value_read_from_another_languages_source").length}`,
   ];
 }

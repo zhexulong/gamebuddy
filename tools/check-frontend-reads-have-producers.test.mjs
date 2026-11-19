@@ -148,7 +148,8 @@ test("a route the Host registers through its own constant is served", () => {
   assert.equal(served.status, "passed");
   assert.deepEqual(served.unreadableRegistrations, []);
 
-  // red-proof: the same registration with its constant written wrong is the defect, named by the read's own route.
+  // red-proof: inject the same registration with its constant written wrong (`${PRESET_ROUTE}-typo`) -> the reading
+  // goes `failed` and the violation is named by the read's own route, not by the constant's spelling.
   const changed = reading({
     [PRESET_READ]: webRead(PRESET_ROUTE),
     "host/src/broker.ts": withTable.replace(`"${PRESET_ROUTE}"`, `"${PRESET_ROUTE}-typo"`),

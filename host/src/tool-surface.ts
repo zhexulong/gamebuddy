@@ -95,35 +95,25 @@ export type DeclaredExtension = Readonly<{
 }>;
 
 /*
- * WHAT THIS MODULE DOES NOT DO ANY MORE: IT DOES NOT WRITE A TOOL'S DESCRIPTION.
+ * WHAT THIS MODULE DOES NOT DO: IT DOES NOT WRITE A TOOL'S DESCRIPTION.
  *
  * <p>
- * It used to. A table keyed by capability class replaced the description of every tool in that class on the Game
- * surface, because the Magic Context extension writes for a coding agent - `ctx_search` is "everything that ever
- * happened in this project" - and the Game surface is where a farmhand who has just forgotten her own morning reads it.
- * The rewrite was measured against that: on a 34-minute run she used `ctx_reduce` (the tool that SHRINKS) six times and
- * never called either of the two that read her history back.
+ * It used to, keyed by CAPABILITY CLASS. One paragraph replaced the description of every tool in that class on the Game
+ * surface, because the Magic Context extension writes for a coding agent - `ctx_search` is "everything that ever happened
+ * in this project" - and the Game surface is where a farmhand who has just forgotten her own morning reads it. That was
+ * refused, and the mechanism was the worse half: keyed by class it rewrote tools its author never saw, so a tool the
+ * extension registered tomorrow arrived carrying a sentence written before it existed, and nothing in the tree could
+ * notice.
  * </p>
  *
  * <p>
- * WHY IT IS REFUSED RATHER THAN DERIVED. A projection is the only shape an override may take: text read off the
- * registered `definition` itself - `name`, `parameters`' property names, enum members - so it cannot disagree with the
- * tool. This one could not be made into that, because it did not add a rendering of the declaration; it added claims the
- * tools already declare, in a compressed second spelling. `ctx_search`'s own description says "phrase `query` as a
- * natural-language question that still carries the exact terms you expect"; `ctx_expand`'s says "`tag=N`: the number from
- * a §N§ tag or a `[dropped §N§]` placeholder ... `message=N`, `start`/`end`: message ordinals, the positions shown in
- * `<session-history>` headings" - which is the override's two argument lines. The one claim that is NOT the tool's is the
- * audience: that this archive is her own earlier turns rather than a repository's history. That claim belongs to the
- * Game surface's own floor, which states it once as a rule (`game-surface-prompt-floor.ts`
- * `archive_is_her_own_history`). So the claim keeps one writer, and the tool keeps its own words.
- * </p>
- *
- * <p>
- * AND THE MECHANISM WAS THE WORSE HALF. It installed by CLASS, so a tool the extension registered tomorrow arrived
- * carrying a sentence written before it existed, and nothing in the tree could notice: the author of the override never
- * saw the tool it rewrote. `tool-surface.private.test.ts` now asserts the inverse over the real mounted set - every
- * mounted tool's description is byte-identical to what its extension registered - and `input-claim-gate.test.ts` no
- * longer lists this module as a writer of model input, because it is not one.
+ * THE ONE WRITER IS NAMED AND NARROW: `companion-archive-tool-descriptions.ts` projects exactly TWO tools, by name, each
+ * with its own sentence, and its subject is this surface - her own memory of this world rather than a repository's history.
+ * That is the opposite policy in the two ways that mattered: NAMED, not classed, so no tool the table does not name is
+ * touched; and TWO, not every tool of a class, so the projection cannot blur a family into one voice. Each entry carries
+ * its own `why`, so a third name has to say what it is doing on this surface. The mechanics stay the tools' - what is
+ * replaced is the audience and the examples, which the extension cannot know because it does not know which surface mounts
+ * it. `tool-surface.private.test.ts` holds both halves.
  * </p>
  */
 

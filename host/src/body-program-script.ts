@@ -997,6 +997,12 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * MEASURED 2026-11-19, THE UNIT THAT MADE THIS A PAIR: `SLEEPING_IS_AN_ACTION` moved out of the conduct block into
  * `sleep()`'s description, +82 here and -198 there, so the pair fell 10,747 -> 10,631 while one of its two sides grew.
  *
+ * RE-RECORDED 2026-11-24, AND THE RE-RECORD IS WHAT KEPT THE GATE ABLE TO FAIL: the conduct block became an input header,
+ * 3,397 -> 283, so every expression of growth the pair refuses - a hundred characters nobody removed, the moved sentence
+ * still in its old home - became unreachable against a 10,631 ceiling, and the falsifier in
+ * `body-program-script.test.ts` passed on a budget that no longer measured anything. The description is unchanged
+ * (7,234 both readings), so the ceiling follows the floor: 7,234 + 283 = 7,517, and it may only fall from here.
+ *
  * THE TWO SIDES ARE READ FROM THEIR OWN OWNERS. The description is read live (`planWorkDescription`); the Game floor's size
  * is the floor's own recorded reading (`GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars` in
  * `game-surface-prompt-floor.test-support.ts`), which the floor's suite holds against the prompt the product really builds -
@@ -1006,7 +1012,7 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * (`game_prose_pair_exceeds_budget:<pair>:<budget>`) and prints both sides with their sources, so a reader of a green run
  * sees which side moved rather than only the pair.
  */
-export const GAME_PROSE_PAIR_BUDGET_CHARS = 10631;
+export const GAME_PROSE_PAIR_BUDGET_CHARS = 7517;
 
 /**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the

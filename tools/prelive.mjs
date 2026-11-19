@@ -199,12 +199,6 @@ export const L0_GATES = Object.freeze([
   // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
   // names the drifting field rather than a file.
   "tools/check-persona-prose.mjs",
-  // The Game floor's own composition, classified rule by rule: FLOOR (what she must never do), CHANNEL (how to operate
-  // the surface) or FORM (how long a turn is, how many beats it carries - the card's, so a FORM rule is deleted). It runs
-  // here because its defect is invisible everywhere else: the rule it was built for (`Speak before you act ... never run
-  // tools in total silence`) was reviewed, shipped, and answered with 132 bubbles over 93 prompt turns - 90 of them
-  // standalone speech with no tool call - before anyone asked what KIND of rule it was. Pure file reads, milliseconds.
-  "tools/check-game-surface-conduct-classes.mjs",
   // Where a delivered line's CEILING comes from. The delivery cut every turn's speech at 80 characters - 77 with the
   // reaction sound - while the presentation transport carries 4,000 and the bubble clamps its own two lines with `…`;
   // measured on `round62` (90 turns carried text, 70 delivered a bubble), 18 turns lost their tails for it: 533 characters,
