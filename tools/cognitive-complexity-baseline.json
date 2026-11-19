@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4576, largest ExecutionManager at 24636 lines / 846 members across 52 partial(s).",
-  "revision": "2ea1bea4",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.CreateBridgeSnapshot() = 107, class ExecutionManager = 4594, largest ExecutionManager at 24768 lines / 852 members across 52 partial(s).",
+  "revision": "6b1a6f9f",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -141,7 +141,7 @@
       "language": "cs",
       "name": "ExecutionManager.DiscoverWorldObjectTargets(Farmer)",
       "file": "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
-      "line": 878,
+      "line": 964,
       "value": 89
     },
     {
@@ -775,7 +775,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3870,
+      "line": 3889,
       "value": 59
     },
     {
@@ -783,7 +783,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3040,
+      "line": 3050,
       "value": 49
     },
     {
@@ -791,7 +791,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3172,
+      "line": 3182,
       "value": 64
     },
     {
@@ -799,7 +799,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3357,
+      "line": 3367,
       "value": 47
     },
     {
@@ -807,7 +807,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4044,
+      "line": 4063,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -816,7 +816,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2473,
+      "line": 2483,
       "value": 44
     },
     {
@@ -1093,7 +1093,7 @@
       "language": "ts",
       "name": "host/src/windows-stardew-installation-discovery/internal.ts#readVdfTokens",
       "file": "host/src/windows-stardew-installation-discovery/internal.ts",
-      "line": 188,
+      "line": 199,
       "value": 34
     },
     {
@@ -1138,7 +1138,7 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4576,
+      "value": 4594,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
     },
     {
@@ -1259,8 +1259,8 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 24636,
-      "methods": 846,
+      "lines": 24768,
+      "methods": 852,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
     },
     {
