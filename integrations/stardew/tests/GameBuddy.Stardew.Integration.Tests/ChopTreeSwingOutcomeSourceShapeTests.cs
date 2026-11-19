@@ -118,8 +118,8 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
             "tree.health.Value != 1f",
             "the precheck must refuse a tree that is GONE, not one that is merely healthy");
         actions.Should().Contain(
-            "tree.health.Value <= 0f",
-            "zero or below is the engine's own test for a tree that is no longer standing");
+            "tree.health.Value > 0f",
+            "zero is the engine's own line for a tree that is no longer standing (Tree.cs:587), and the resolver that answers this request states it in the direction that ADMITS a standing tree");
     }
 
     private static string Source() =>

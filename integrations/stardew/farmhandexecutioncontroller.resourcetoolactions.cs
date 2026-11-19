@@ -15,33 +15,88 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
-            "chop_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            "chop_tree", requestId, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
-            authorize: null,
             gate: location =>
-            {
-                if (ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal)
-                    return new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot));
-                return DescribeTreeChopSourceRefusal(location, targetX, targetY, expectedTargetId);
-            },
-            inReach: IsTileWithinToolReach,
-            execute: (executionId, admittedRequestId) => this.ExecuteChopTree(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
+                ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal
+                    ? TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot)))
+                    : AnswerTreeChopSource(location, targetX, targetY, expectedTargetId),
+            execute: (executionId, admittedRequestId) => this.ExecuteChopTree(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
+            authorize: null,
+            inReach: IsTileWithinToolReach);
+
+    /// <summary>The tree `chop_tree` leaves behind is a STUMP, so a stump at the named identity is the request's outcome.</summary>
+    private const string TreeChopSourceAlreadyFelled = "tree_chop_source_gone";
 
     /// <summary>
+    /// What the live terrain layer answers about the tree a request named. Three answers, and they must not collapse into
+    /// one - the shape <see cref="ResolveRockSource"/> gives the rock family, for the same reason.
+    ///
+    /// <list type="bullet">
+    /// <item><b>Resolved</b> - the identity the request carries is the standing, mature, untapped tree on the named tile,
+    /// so the axe swing is this request's work.</item>
+    /// <item><b>Refused</b> - a different thing stands there (another species, a sapling, a tapped tree, grass, a
+    /// machine), or nothing does and the catalogue does not back the settlement. Retrying is wrong and re-observing is
+    /// right, so the receipt names the identity that stands there now.</item>
+    /// <item><b>Settled</b> - the SAME tree identity stands there FELLED. <c>chop_tree</c>'s postcondition is
+    /// <c>stump</c> (`ExecuteChopTree` grades <c>felled</c> on <c>!stump_before &amp;&amp; stump_after</c>), so a stump at the
+    /// named address is the state the request asked for: the tree in front of her fell, and refusing it costs a turn to
+    /// re-observe a world that already agrees.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// MEASURED `round80`: six `tree_chop_target_changed` against twelve `tree_source_chopped` - a third of the family's
+    /// nodes re-asking for a felling the world had already done. The warrant is the catalogue's own: `chop_tree` is
+    /// declared <c>Finishes</c> over `treeChopSourceTargets`, so a felled tree's row leaves that family. When the
+    /// declaration does not back that claim, both settled branches answer their own refusal instead.
+    /// </para>
+    ///
+    /// <para>
     /// MOSS IS NOT A REFUSAL. `Tree.performToolAction` strips it on the way through - it drops the moss item, sets
     /// `hasMoss = false` and keeps going into the axe branch in the SAME swing (Tree.cs:1087-1120) - so a mossy tree is a
     /// tree the axe fells. Refusing it here was a second, narrower answer than the engine's.
+    /// </para>
     /// </summary>
-    private static TileTargetRefusal? DescribeTreeChopSourceRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
-        location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            && feature is StardewValley.TerrainFeatures.Tree tree
-            && !tree.stump.Value
-            && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
-            && !tree.tapped.Value
-            && tree.health.Value > 0f
-            && string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal)
-                ? null
-                : new TileTargetRefusal("tree_chop_target_changed", $"target={targetX},{targetY}");
+    private static TileTargetGate AnswerTreeChopSource(GameLocation location, int targetX, int targetY, string expectedTargetId)
+    {
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature))
+        {
+            return TileTargetGate.SettledIfConsumed(
+                "chop_tree",
+                ExecutionState.Succeeded,
+                TreeChopSourceAlreadyFelled,
+                $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none",
+                new TileTargetRefusal("tree_chop_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};actual=none"));
+        }
+        if (feature is not StardewValley.TerrainFeatures.Tree tree)
+        {
+            return TileTargetGate.Refused(new TileTargetRefusal(
+                "tree_chop_target_changed",
+                $"target={expectedTargetId};named_tile={targetX},{targetY};actual=none;occupant={DescribeOccupantKind(feature)}"));
+        }
+        string liveTargetId = BuildTreeChopSourceTargetId(location, targetX, targetY, tree);
+        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
+        {
+            return TileTargetGate.Refused(new TileTargetRefusal(
+                "tree_chop_target_changed",
+                $"target={expectedTargetId};named_tile={targetX},{targetY};actual={liveTargetId};tree_type={tree.treeType.Value}"));
+        }
+        if (tree.stump.Value)
+        {
+            return TileTargetGate.SettledIfConsumed(
+                "chop_tree",
+                ExecutionState.Succeeded,
+                TreeChopSourceAlreadyFelled,
+                $"target={expectedTargetId};named_tile={targetX},{targetY};tree_type={tree.treeType.Value};stump=true",
+                new TileTargetRefusal("tree_chop_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};stump=true"));
+        }
+        return tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage && !tree.tapped.Value && tree.health.Value > 0f
+            ? TileTargetGate.Resolved(targetX, targetY)
+            : TileTargetGate.Refused(new TileTargetRefusal(
+                "tree_chop_target_changed",
+                $"target={expectedTargetId};named_tile={targetX},{targetY};growth_stage={tree.growthStage.Value.ToString(CultureInfo.InvariantCulture)};tapped={tree.tapped.Value.ToString().ToLowerInvariant()};health={tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}"));
+    }
 
     /// <summary>
     /// Executes chop_tree_source against the current world, re-validating the tool
@@ -72,10 +127,13 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             GameLocation location = Game1.player.currentLocation;
             Vector2 tile = new(targetX, targetY);
-            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-                || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.tapped.Value || tree.health.Value <= 0f
-                || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
+            // THE SAME THREE-WAY ANSWER AS THE PRE-APPROACH GATE. A request admitted before the walk may have waited
+            // through one, so the terrain layer gets a second chance to answer - and a tree that fell while she walked
+            // is the outcome, not a refusal.
+            TileTargetGate live = AnswerTreeChopSource(location, targetX, targetY, expectedTargetId);
+            if (live.Refusal is not null || live.Settlement is not null)
+                return this.RememberTileTargetAnswer(requestId, executionId, live);
+            StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)location.terrainFeatures[tile];
             float before = tree.health.Value;
             bool stumpBefore = tree.stump.Value;
             string treeType = tree.treeType.Value;
@@ -243,7 +301,8 @@ internal sealed partial class ExecutionManager
     /// <para>
     /// THE SETTLEMENT'S WARRANT IS THE CATALOGUE'S OWN CLAIM, not this branch's: `break_rock` is declared `Finishes` -
     /// its success takes the addressed row out of `rockSourceTargets` - so an empty tile at an identity built from the
-    /// location, the tile and the item is that success, rather than a target that moved.
+    /// location, the tile and the item is that success, rather than a target that moved. <see cref="TileTargetSettledBy.ConsumesFor"/>
+    /// is what asks that declaration, and an action it does not back keeps the refusal.
     /// </para>
     /// </summary>
     private static TileTargetGate AnswerRockSource(GameLocation location, int targetX, int targetY, string expectedTargetId)
@@ -252,11 +311,12 @@ internal sealed partial class ExecutionManager
         return live.Answer switch
         {
             RockSourceAnswer.Stands => TileTargetGate.Resolved(targetX, targetY),
-            RockSourceAnswer.Settled => TileTargetGate.Settled(
+            RockSourceAnswer.Settled => TileTargetGate.SettledIfConsumed(
+                "break_rock",
                 ExecutionState.Succeeded,
                 RockSourceAlreadySettled,
                 $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none",
-                TileTargetSettledBy.Consumes),
+                new TileTargetRefusal("rock_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};actual=none;occupant=none")),
             _ => TileTargetGate.Refused(new TileTargetRefusal(
                 "rock_target_changed",
                 $"target={expectedTargetId};named_tile={targetX},{targetY};actual={live.LiveTargetId};occupant={live.Occupant}")),
@@ -283,14 +343,12 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             GameLocation location = Game1.player.currentLocation;
             Vector2 tile = new(targetX, targetY);
-            RockSourceResolution live = ResolveRockSource(location, targetX, targetY, expectedTargetId);
             // THE SAME THREE-WAY ANSWER AS THE PRE-APPROACH GATE. This body is reached by a request that was admitted
             // before the walk and may have waited through one, so the world has had a second chance to settle the rock
-            // (another actor's swing, the engine's own debris pass).
-            if (live.Answer is RockSourceAnswer.Settled)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, RockSourceAlreadySettled, $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none");
-            if (live.Answer is RockSourceAnswer.Changed)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};actual={live.LiveTargetId};occupant={live.Occupant}");
+            // (another actor's swing, the engine's own debris pass) - and one spelling answers both readings.
+            TileTargetGate live = AnswerRockSource(location, targetX, targetY, expectedTargetId);
+            if (live.Refusal is not null || live.Settlement is not null)
+                return this.RememberTileTargetAnswer(requestId, executionId, live);
             StardewValley.Object rock = location.objects[tile];
             int before = rock.MinutesUntilReady;
             float staminaBefore = Game1.player.Stamina;
@@ -509,24 +567,29 @@ internal sealed partial class ExecutionManager
             return admissionRefusal;
         if (ResolveDeclaredTool(Game1.player.Items, "till_soil").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusal));
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        // THE TILE'S OWN SOIL BEFORE THE WALK. A tile the Hoe has already been over is the state this request asks for,
+        // and asking it here is what keeps the seam from walking her to a tile there is nothing left to do on - the
+        // four `soil_already_tilled` refusals of `round80` were each paid for with a walk first.
+        if (AnswerTilledSoil(location, targetX, targetY) is { Settlement: not null } soil)
+            return this.RememberTileTargetAnswer(requestId, executionId, soil);
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
-            StardewValley.GameLocation distantLocation = Game1.player.currentLocation;
-            if (DescribeSoilRefusal(distantLocation, targetX, targetY) is { } soilRefusal)
+            if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             {
                 return this.RememberTerminal(
                     requestId,
                     executionId,
                     ExecutionState.Rejected,
                     DescribeSoilRefusalCode(soilRefusal),
-                    $"target={targetX},{targetY}{DescribeSoilGuidance(distantLocation, targetX, targetY)}");
+                    $"target={targetX},{targetY}{DescribeSoilGuidance(location, targetX, targetY)}");
             }
 
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
                 "till_soil",
-                distantLocation,
+                location,
                 targetX,
                 targetY,
                 $"till_soil_{targetX}_{targetY}",
@@ -539,17 +602,46 @@ internal sealed partial class ExecutionManager
         return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, charge, requestedDeadlineMs);
     }
 
+    /// <summary>The word this action already uses for a tile the Hoe has been over.</summary>
+    private const string SoilAlreadyTilled = "soil_already_tilled";
+
+    /// <summary>
+    /// What the tile answers about the work `till_soil` does: the settlement when the Hoe has already been over it, and
+    /// the resolved tile when there is still a swing to make.
+    ///
+    /// <para>
+    /// THE WARRANT IS THE ENGINE'S OWN FINISHED STATE, NOT THE CATALOGUE'S `Consumes`. `ExecuteTillSoil` grades
+    /// `soil_tilled` on exactly one read - <c>GameLocation.GetHoeDirtAtTile</c> non-null - so a tile that already carries
+    /// soil is the state the request asked for. `till_soil` declares no chore, so <see cref="TileTargetSettledBy.ConsumesFor"/>
+    /// answers nothing for it and this family may not claim that its work takes the addressed row out of the world; what
+    /// it may claim is the second form the design admits, printed from the engine field the postcondition reads.
+    /// </para>
+    ///
+    /// <para>
+    /// MEASURED `round80`: four `soil_already_tilled` refusals in nine minutes, against soil that was already tilled. The
+    /// refusal named the state correctly (`before=HoeDirt`) and called it a failure, so a plan node that asked for a row
+    /// a previous node had already tilled spent itself learning that the world agreed with it.
+    /// </para>
+    /// </summary>
+    private static TileTargetGate AnswerTilledSoil(GameLocation location, int targetX, int targetY) =>
+        location.GetHoeDirtAtTile(new Vector2(targetX, targetY)) is { } dirt
+            ? TileTargetGate.Settled(
+                ExecutionState.Succeeded,
+                SoilAlreadyTilled,
+                $"target={targetX},{targetY};before={DescribeSoilFeature(dirt)}",
+                TileTargetSettledBy.EngineFlag("hoedirt", "present"))
+            : TileTargetGate.Resolved(targetX, targetY);
+
     private LocalExecutionReceipt ExecuteTillSoil(string executionId, string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
     {
         Vector2 tile = new(targetX, targetY);
         StardewValley.GameLocation location = Game1.player.currentLocation;
         // The tile's soil feature, READ before the hoe swings. `before` used to be the literal "none", so the receipt
-        // claimed a transition from nothing to `HoeDirt` that no read had ever seen, and a tile that already carried
-        // one was refused without naming what was actually there.
-        StardewValley.TerrainFeatures.HoeDirt? dirtBefore = location.GetHoeDirtAtTile(tile);
-        string before = DescribeSoilFeature(dirtBefore);
-        if (dirtBefore is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY};before={before}");
+        // claimed a transition from nothing to `HoeDirt` that no read had ever seen. A tile that already carries one is
+        // the SAME answer the request half gives before its walk, from the one helper.
+        if (AnswerTilledSoil(location, targetX, targetY) is { Settlement: not null } soil)
+            return this.RememberTileTargetAnswer(requestId, executionId, soil);
+        string before = DescribeSoilFeature(location.GetHoeDirtAtTile(tile));
         if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}{DescribeSoilGuidance(location, targetX, targetY)}");
         if (!TrySelectDeclaredTool(Game1.player, "till_soil", out DeclaredToolSelection selection, out string toolRefusalCode))
@@ -1130,24 +1222,62 @@ internal sealed partial class ExecutionManager
     /// </summary>
     public LocalExecutionReceipt RequestLocalCutWeeds(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
-            "cut_weeds", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            "cut_weeds", requestId, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
-            authorize: null,
             gate: location =>
-            {
-                if (ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal)
-                    return new TileTargetRefusal(toolRefusal, $"slot={slot}");
-                return DescribeWeedRefusal(location, targetX, targetY, expectedTargetId);
-            },
-            inReach: IsTileWithinToolReach,
-            execute: (executionId, admittedRequestId) => this.ExecuteCutWeeds(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
+                ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal
+                    ? TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, $"slot={slot}"))
+                    : AnswerWeed(location, targetX, targetY, expectedTargetId),
+            execute: (executionId, admittedRequestId) => this.ExecuteCutWeeds(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
+            authorize: null,
+            inReach: IsTileWithinToolReach);
 
-    private static TileTargetRefusal? DescribeWeedRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
-        location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? probeWeed)
-            && probeWeed.IsWeeds()
-            && string.Equals(BuildWeedTargetId(location, targetX, targetY, probeWeed), expectedTargetId, StringComparison.Ordinal)
-                ? null
-                : new TileTargetRefusal("weed_target_changed", $"target={targetX},{targetY}");
+    /// <summary>What a tile answers once the weed this request named has been cut out of the object layer.</summary>
+    private const string WeedTargetAlreadyCut = "weed_target_gone";
+
+    /// <summary>
+    /// What the live object layer answers about the weed a request named. Three answers, and they must not collapse into
+    /// one - the shape <see cref="ResolveRockSource"/> gives the rock family, for the same reason.
+    ///
+    /// <list type="bullet">
+    /// <item><b>Resolved</b> - the identity the request carries is the weed standing on the named tile, so the scythe
+    /// swing is this request's work. A weed that lost a point of health is the SAME weed: `BuildWeedTargetId` hashes the
+    /// tile and the item, never the health the swing spends.</item>
+    /// <item><b>Refused</b> - something else stands there (a chest, a machine, a different weed species), or nothing does
+    /// and the catalogue gives no warrant for settling it. Re-observing is the right next step, so the receipt names the
+    /// identity that stands there now rather than only the tile.</item>
+    /// <item><b>Settled</b> - the tile holds NOTHING. `ExecuteCutWeeds` removes the weed from the object layer, so an
+    /// empty tile at the named address is the state the request asked for.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// MEASURED `round80`: ten `weed_target_changed` against forty-two `weeds_cut` in nine minutes, every one of them a
+    /// bare `target=53,11` that named neither the warrant nor what the tile held. The silence is the defect: `chore=`
+    /// said a weed was cut and nothing said this node was re-asking for a weed an earlier node had already cut. The
+    /// warrant is the catalogue's own - `cut_weeds` is declared `Finishes` over `weedTargets` - and when it answers
+    /// nothing the site refuses, because "there is nothing there" is the evidence a real missing precondition produces
+    /// too.
+    /// </para>
+    /// </summary>
+    private static TileTargetGate AnswerWeed(GameLocation location, int targetX, int targetY, string expectedTargetId)
+    {
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? live))
+        {
+            return TileTargetGate.SettledIfConsumed(
+                "cut_weeds",
+                ExecutionState.Succeeded,
+                WeedTargetAlreadyCut,
+                $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none",
+                new TileTargetRefusal("weed_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};actual=none"));
+        }
+        string liveTargetId = BuildWeedTargetId(location, targetX, targetY, live);
+        return live.IsWeeds() && string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal)
+            ? TileTargetGate.Resolved(targetX, targetY)
+            : TileTargetGate.Refused(new TileTargetRefusal(
+                "weed_target_changed",
+                $"target={expectedTargetId};named_tile={targetX},{targetY};actual={(live.IsWeeds() ? liveTargetId : "none")};occupant={live.QualifiedItemId}"));
+    }
 
     /// <summary>
     /// Cut one grass tuft (the TerrainFeature `Grass`, not the Object-layer weeds)
@@ -1458,9 +1588,12 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             GameLocation location = Game1.player.currentLocation;
             Vector2 tile = new(targetX, targetY);
-            if (!location.objects.TryGetValue(tile, out StardewValley.Object? weed) || !weed.IsWeeds()
-                || !string.Equals(BuildWeedTargetId(location, targetX, targetY, weed), expectedTargetId, StringComparison.Ordinal))
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
+            // THE SAME THREE-WAY ANSWER AS THE PRE-APPROACH GATE: a request admitted before the walk may have waited
+            // through one, and a weed another swing cut while she walked is the outcome rather than a refusal.
+            TileTargetGate live = AnswerWeed(location, targetX, targetY, expectedTargetId);
+            if (live.Refusal is not null || live.Settlement is not null)
+                return this.RememberTileTargetAnswer(requestId, executionId, live);
+            StardewValley.Object weed = location.objects[tile];
 
             int healthBefore = weed.MinutesUntilReady;
             float staminaBefore = Game1.player.Stamina;

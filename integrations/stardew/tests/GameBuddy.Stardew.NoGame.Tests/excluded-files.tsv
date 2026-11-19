@@ -203,7 +203,7 @@ SeedSupplyProjectionTests.cs	game	StardewValley, ShopOwnerData, ShopData
 SelfAnimationHoldTests.cs	game	Netcode, StardewValley, Farmer
 SendMultiplayerChatTests.cs	mod-assembly	CompanionSessionHosting, ExecutionManager, Farmer, LocalizedContentManager, Multiplayer
 SettlementMenuTerminalTests.cs	mod-assembly	ModEntry
-SettlementSaysWhatMakesItOneGateTests.cs	mod-assembly	TileTargetSettledBy
+ASettlementNamesTheDeclarationThatWarrantsItGateTests.cs	mod-assembly	TileTargetSettledBy
 SettlementWithoutLifecycleTests.cs	game	IClickableMenu, StardewValley
 ShipItemActionTests.cs	mod-assembly	Handlers
 ShipItemApproachWiringTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
@@ -270,3 +270,4 @@ WaterTargetApproachTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFam
 FarmhandConstructionInitializationGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); it reads the Mod's source text, so it needs neither Core alone nor this project's compile set
 GameOwnedIdGuardGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); it reads the Mod's source text, so it needs neither Core alone nor this project's compile set
 TargetDiscoveryOrderTests.cs	mod-assembly	Xna, ExecutionManager, Game1, Farm, GameLocation, Item, HoeDirt
+WorkThatIsAlreadyDoneIsTheOutcomeTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, Handlers, ExecutionManager (and Xna, StardewValley, StardewValley.Tools from the game)

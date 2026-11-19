@@ -1,3 +1,4 @@
+using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
 using StardewValley;
 
@@ -72,6 +73,28 @@ internal sealed partial class ExecutionManager
         /// </summary>
         internal static TileTargetGate Settled(ExecutionState state, string reasonCode, string evidence, string settledBy) =>
             new(0, 0, null, new TileTargetSettlement(state, reasonCode, $"{evidence};{TileTargetSettledBy.EvidenceField}{settledBy}"));
+
+        /// <summary>
+        /// The target is already in the state the request asked for WHEN the catalogue says this action's success takes
+        /// the addressed row out of the world, and <paramref name="otherwise"/> when it does not.
+        ///
+        /// <para>
+        /// THE DECLARATION IS ASKED HERE, not at each site, so a `consumes` settlement cannot be minted without one:
+        /// <see cref="TileTargetSettledBy.ConsumesFor"/> reads the action's own <see cref="FarmhandChoreDeclaration"/> and
+        /// answers nothing when the declaration does not back the claim, in which case the world that does not hold the
+        /// target is answered with the refusal the branch already owes. The action id is the site's own wire identity,
+        /// spelled once at the call, and it is what the gate reads to hold the site against that declaration.
+        /// </para>
+        /// </summary>
+        internal static TileTargetGate SettledIfConsumed(
+            string actionId,
+            ExecutionState state,
+            string reasonCode,
+            string evidence,
+            TileTargetRefusal otherwise) =>
+            TileTargetSettledBy.ConsumesFor(actionId) is { } warrant
+                ? Settled(state, reasonCode, evidence, warrant)
+                : new(0, 0, otherwise);
     }
 
     /// <summary>One gate's answer that the request's own outcome already holds, ready to be minted as the terminal.</summary>
@@ -96,14 +119,27 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
         GameLocation location = Game1.player.currentLocation;
         TileTargetGate answer = gate(location);
-        if (answer.Settlement is TileTargetSettlement settled)
-            return this.RememberTerminal(requestId, executionId, settled.State, settled.ReasonCode, settled.Evidence);
-        if (answer.Refusal is TileTargetRefusal refusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        if (answer.Settlement is not null || answer.Refusal is not null)
+            return this.RememberTileTargetAnswer(requestId, executionId, answer);
         if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))
             return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);
         return execute(executionId, requestId);
     }
+
+    /// <summary>
+    /// Publishes one gate's own answer as the terminal: the settlement it carries, or the refusal it owes.
+    ///
+    /// <para>
+    /// ONE SPELLING FOR BOTH PATHS THAT ASK A GATE. The seam asks it before the walk and the execution body asks it
+    /// again after one, because an admitted request can wait through a walk while the world moves - so a settlement
+    /// minted on the second read has to carry the same evidence and the same warrant as one minted on the first, and a
+    /// branch that spelled its own `RememberTerminal` would drift from the gate it claims to repeat.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt RememberTileTargetAnswer(string requestId, string executionId, TileTargetGate answer) =>
+        answer.Settlement is TileTargetSettlement settled
+            ? this.RememberTerminal(requestId, executionId, settled.State, settled.ReasonCode, settled.Evidence)
+            : this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, answer.Refusal!.Value.ReasonCode, answer.Refusal!.Value.Evidence);
 
     private LocalExecutionReceipt RequestLocalTileTarget(
         string actionId,
@@ -175,10 +211,12 @@ internal sealed partial class ExecutionManager
 /// </para>
 ///
 /// <para>
-/// ONE FORM HAS A PRODUCER TODAY, and that is a measurement rather than a gap: <c>break_rock</c>'s absent stone is the
-/// row its own work takes out of the world, so <see cref="Consumes"/> is the warrant its receipt prints. The other two
-/// are spelled here so the day a site mints one it uses this vocabulary instead of inventing a token a gate would have
-/// to be taught; no producer exists for either, and none is written ahead of the site that needs it.
+/// TWO FORMS HAVE A PRODUCER TODAY, and that is a measurement rather than a gap. <c>break_rock</c>, <c>chop_tree</c> and
+/// <c>cut_weeds</c> address a row their own success takes out of the world, so each prints <see cref="Consumes"/> and the
+/// family its declaration names; <c>till_soil</c> addresses a row the ENGINE already reports in the asked-for state (its
+/// postcondition IS <c>GetHoeDirtAtTile</c> non-null) and declares no chore, so it prints the engine's own flag. The third
+/// is spelled here so the day a site mints one it uses this vocabulary instead of inventing a token a gate would have to
+/// be taught; no producer exists for it, and none is written ahead of the site that needs it.
 /// </para>
 /// </summary>
 internal static class TileTargetSettledBy
@@ -199,6 +237,28 @@ internal static class TileTargetSettledBy
     /// A terminal already recorded for the same action and subject, printed as <c>prior_receipt:&lt;requestId&gt;</c>.
     /// </summary>
     internal const string PriorReceiptPrefix = "prior_receipt:";
+
+    /// <summary>
+    /// The catalogue's own claim about ONE action, printed as <c>consumes:&lt;family&gt;</c>, or null when the catalogue
+    /// does not declare that this action's success consumes the row it addressed.
+    ///
+    /// <para>
+    /// ASK THE DECLARATION FIRST. A site that settles on this form mints it from here rather than deciding for itself that
+    /// an absence is its outcome, and the family is read from the action's own <see cref="FarmhandChoreDeclaration"/>
+    /// (<c>FarmhandActionCatalog.ChoreFamilyOf</c>) instead of being restated beside it. When this answers nothing there
+    /// is no warrant to print and the site must refuse: a settlement minted without one is the absence being used as the
+    /// evidence for itself.
+    /// </para>
+    /// </summary>
+    internal static string? ConsumesFor(string actionId) =>
+        FarmhandActionCatalog.ChoreFamilyOf(actionId) is { } family ? $"{Consumes}:{family}" : null;
+
+    /// <summary>
+    /// The engine's own completion state, printed as <c>engine_flag:&lt;field&gt;=&lt;value&gt;</c> - the form for an action
+    /// whose finished state the world itself reports and whose catalogue row declares no chore (<c>till_soil</c>, whose
+    /// postcondition is the engine's own <c>GetHoeDirtAtTile</c> read).
+    /// </summary>
+    internal static string EngineFlag(string field, string value) => $"{EngineFlagPrefix}{field}={value}";
 
     /// <summary>The evidence field a settlement writes the warrant under, so the receipt and the gates spell it once.</summary>
     internal const string EvidenceField = "settled_by=";

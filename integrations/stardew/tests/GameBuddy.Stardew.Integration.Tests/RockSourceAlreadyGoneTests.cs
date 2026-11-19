@@ -57,6 +57,7 @@ public sealed class RockSourceAlreadyGoneTests
         foreach ((int x, int y) in tiles) world.Farm.objects.Remove(new Vector2(x, y));
 
         ExecutionManager manager = world.NewExecutionManager("break_rock");
+        string warrant = TileTargetSettledBy.ConsumesFor("break_rock")!;
         var receipts = published
             .Select((row, index) => (Row: row, Receipt: Break(manager, $"round77_rock_{index}", row.X, row.Y, row.TargetId)))
             .ToList();
@@ -70,9 +71,10 @@ public sealed class RockSourceAlreadyGoneTests
             receipt.Evidence.Should().Contain($"named_tile={row.X},{row.Y}", "the receipt prints the tile the caller named");
             receipt.Evidence.Should().Contain("tile=none", "and the one it acted on, which is no tile at all");
             receipt.Evidence.Should().Contain(
-                $"settled_by={TileTargetSettledBy.Consumes}",
-                "the receipt says WHY the absence is the outcome: `break_rock`'s own success takes the addressed row out of "
-                    + "`rockSourceTargets`, which is the catalogue's declaration rather than this branch's opinion");
+                $"settled_by={warrant}",
+                "the receipt says WHY the absence is the outcome and WHICH family it consumed - `break_rock`'s own success "
+                    + "takes the addressed row out of `rockSourceTargets`, read from the catalogue's declaration rather than "
+                    + "chosen by this branch");
         }
     }
 

@@ -131,7 +131,7 @@ public sealed class ToolApproachContractSourceShapeTests
         // `TileTargetRequestSeamTests.TheSeamAuthorizesAdmitsResolvesWalksThenExecutesInThatOrder`); the reach itself is
         // the tool family's own predicate, so the walk still happens only for a target a swing can land on.
         int axeCheck = body.IndexOf("ResolveDeclaredTool(Game1.player.Items, \"chop_tree\")", StringComparison.Ordinal);
-        int targetCheck = body.IndexOf("DescribeTreeChopSourceRefusal(location, targetX, targetY, expectedTargetId)", StringComparison.Ordinal);
+        int targetCheck = body.IndexOf("AnswerTreeChopSource(location, targetX, targetY, expectedTargetId)", StringComparison.Ordinal);
         int reach = body.IndexOf("inReach: IsTileWithinToolReach", StringComparison.Ordinal);
         axeCheck.Should().BeGreaterThanOrEqualTo(0);
         targetCheck.Should().BeGreaterThanOrEqualTo(0);
@@ -142,7 +142,7 @@ public sealed class ToolApproachContractSourceShapeTests
         // The refusal the target half owes is still `tree_chop_target_changed`, now stated by the resolver the gate
         // hands the seam rather than spelled inline in the handler.
         RequestHalf(Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs"),
-                "private static TileTargetRefusal? DescribeTreeChopSourceRefusal(")
+                "private static TileTargetGate AnswerTreeChopSource(")
             .Should().Contain("tree_chop_target_changed", "the resolver owes the same named refusal the handler used to spell");
 
         body.Should().NotContain("\"target_out_of_range\"",
@@ -241,7 +241,7 @@ public sealed class ToolApproachContractSourceShapeTests
         // The request path must hand the seam a delegate into that body, so the post-approach execution reuses the
         // in-range execution instead of duplicating it - and it may not name an arrival identity of its own.
         int start = source.IndexOf("public LocalExecutionReceipt RequestLocalChopTreeSource(", StringComparison.Ordinal);
-        int end = source.IndexOf("private static TileTargetRefusal? DescribeTreeChopSourceRefusal(", StringComparison.Ordinal);
+        int end = source.IndexOf("private static TileTargetGate AnswerTreeChopSource(", StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0);
         end.Should().BeGreaterThan(start);
         string request = source.Substring(start, end - start);

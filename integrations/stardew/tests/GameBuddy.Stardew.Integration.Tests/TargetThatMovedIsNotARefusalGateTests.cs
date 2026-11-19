@@ -102,12 +102,10 @@ public sealed class TargetThatMovedIsNotARefusalGateTests
     {
         ["break_resource_clump"] = "clump_target_gone",
         ["chop_stump"] = "stump_target_gone",
-        ["chop_tree"] = "tree_chop_source_gone",
         ["clear_debris"] = "debris_target_gone",
         ["clear_hoedirt"] = "clear_hoedirt_target_gone",
         ["collect_crab_pot_output"] = "crab_pot_output_gone",
         ["cut_grass"] = "grass_target_gone",
-        ["cut_weeds"] = "weed_target_gone",
         ["dig_artifact_spot"] = "artifact_spot_gone",
         ["feed_animal"] = "feed_trough_target_gone",
         ["harvest_bush"] = "bush_fruit_gone",
@@ -130,8 +128,10 @@ public sealed class TargetThatMovedIsNotARefusalGateTests
     /// <summary>The codes that name absence as its own fact, so a caller can tell "gone" from "a different thing".</summary>
     private static readonly Regex AbsenceCode = new(@"(?:_target_(?:gone|not_found|unavailable)|^nothing_to_|_already_answered)$", RegexOptions.CultureInvariant);
 
-    /// <summary>The one seam a gate uses to answer that the request's own outcome already holds.</summary>
-    private const string SettlementMarker = "TileTargetGate.Settled(";
+    /// <summary>The two seams a gate uses to answer that the request's own outcome already holds.</summary>
+    private const string ConsumesSettlementMarker = "TileTargetGate.SettledIfConsumed(";
+
+    private const string FormSettlementMarker = "TileTargetGate.Settled(";
 
     private readonly ITestOutputHelper output;
 
@@ -210,7 +210,7 @@ public sealed class TargetThatMovedIsNotARefusalGateTests
     {
         Census before = Measure(edit: (file, text) =>
             file.EndsWith("farmhandexecutioncontroller.resourcetoolactions.cs", StringComparison.Ordinal)
-                ? text.Replace(SettlementMarker, "TileTargetGate.Refused(", StringComparison.Ordinal)
+                ? text.Replace(ConsumesSettlementMarker, "TileTargetGate.Refused(", StringComparison.Ordinal)
                 : text);
 
         Row rock = before.Rows.Should().ContainSingle(row => row.ActionId == "break_rock").Subject;
@@ -254,7 +254,7 @@ public sealed class TargetThatMovedIsNotARefusalGateTests
             rows.Add(new Row(
                 registration.ActionId,
                 half,
-                path.Contains(SettlementMarker, StringComparison.Ordinal),
+                path.Contains(ConsumesSettlementMarker, StringComparison.Ordinal) || path.Contains(FormSettlementMarker, StringComparison.Ordinal),
                 codes.Any(code => AbsenceCode.IsMatch(code)),
                 codes.Where(code => ChangeCode.IsMatch(code)).ToList()));
         }

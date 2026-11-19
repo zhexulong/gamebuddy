@@ -237,22 +237,27 @@ public sealed class TillSoilRefusalNamingTests
     }
 
     [Fact]
-    public void AnAlreadyTilledTile_IsRefusedNamingTheStateThatWasActuallyThere()
+    public void AnAlreadyTilledTile_IsTheOutcomeAndNamesTheStateThatWasActuallyThere()
     {
         // `before` used to be the literal "none" written beside the receipt, so a tile that already carried a
-        // `HoeDirt` was refused without saying so - and a swing on it would have published `before=none;after=HoeDirt`,
-        // a delta of zero reported as a transition. The state is now READ off the tile and named.
+        // `HoeDirt` was answered without saying so. The state is READ off the tile and named - and the ANSWER is the
+        // settlement, because `ExecuteTillSoil` grades `soil_tilled` on exactly that read: a tile that already carries
+        // soil is the state this request asks for (`round80`: four such refusals in nine minutes).
         using TillSoilHarness harness = TillSoilHarness.Create();
         harness.PlaceActorAt(13, 9);
         harness.SetDiggable(13, 10);
         harness.PlaceHoeDirt(13, 10);
 
         LocalExecutionReceipt receipt = harness.RequestTill(13, 10);
+        string warrant = TileTargetSettledBy.EngineFlag("hoedirt", "present");
 
-        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.State.Should().Be(ExecutionState.Succeeded);
         receipt.ReasonCode.Should().Be("soil_already_tilled");
         receipt.Evidence.Should().Contain("target=13,10");
-        receipt.Evidence.Should().Contain("before=HoeDirt", "the refusal names the state the tile was actually in");
+        receipt.Evidence.Should().Contain("before=HoeDirt", "the settlement names the state the tile was actually in");
+        receipt.Evidence.Should().Contain(
+            $"settled_by={warrant}",
+            "and WHY it is the outcome: `till_soil` declares no chore, so the warrant is the engine's own field, not a `consumes` claim");
     }
 
     [Fact]

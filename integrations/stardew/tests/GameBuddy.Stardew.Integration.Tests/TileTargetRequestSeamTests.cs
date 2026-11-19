@@ -185,7 +185,7 @@ public sealed class TileTargetRequestSeamTests
         seam.Should().Contain("if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile) is LocalExecutionReceipt admissionRejection)");
         seam.Should().Contain("GameLocation location = Game1.player.currentLocation;");
         seam.Should().Contain("TileTargetGate answer = gate(location);", "the target is resolved against the actor's own location");
-        seam.Should().Contain("if (answer.Refusal is TileTargetRefusal refusal)");
+        seam.Should().Contain("if (answer.Settlement is not null || answer.Refusal is not null)", "the gate's own answer is published before anything is walked to");
         seam.Should().Contain("if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))", "the reach test reads the action's own predicate, or the native radius when it declares none");
         seam.Should().Contain(
             "return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);",
