@@ -11,33 +11,50 @@
  * </p>
  *
  * <p>
+ * WHY THE SECOND POPULATION (measured, `round78`, 2026-11-19). The same window printed
+ * `石头 (6,5) (5,5) (5,6) (11,7) (11,8) (4,9) 其余 2 格未列出` under its own `<execution-result>` naming six of those
+ * stones `rock_source_broken`, and the next plan took `snapshot.rockSourceTargets.slice(0, 4)` - the first four rows of
+ * that stale array - and was answered `rock_source_gone` four times. A ROW LIST is the same class as a count: a set of
+ * ids a plan copies into an action, printed as the present tense with nothing on the line saying when it was read.
+ * </p>
+ *
+ * <p>
  * THE CLASS, not the instance. A block-level age (`（这是 N 轮之前看到的，世界已经不一样了）`, three clauses away, about
- * "the world") cannot be applied to one number inside a paragraph of twelve. Any line that prints a pack quantity is
- * therefore one of exactly two things:
+ * "the world") cannot be applied to one number inside a paragraph of twelve, and it cannot be applied to one family's
+ * rows either. Any line that prints a pack quantity or a target row is therefore one of exactly two things:
  * </p>
  * <ol>
- *   <li>RE-EMITTED from this delivery's own proof - the Mod's `item=` + `inventory_after=`, which `provedPackCounts`
- *     (`host/src/fact-brief.ts`) reads out of a receipt or a settled programme's node evidence; or</li>
- *   <li>in neither state, which is the defect: the number reads as the present tense and its age is somewhere else.</li>
+ *   <li>RE-DERIVED from this delivery's own proof - the Mod's `item=` + `inventory_after=` for a count
+ *     (`provedPackCounts`), and `target=` + `removed=true` or a `_gone` reason code for a row (`provedGoneTargets`),
+ *     both in `host/src/fact-brief.ts`, both read out of a receipt or a settled programme's node evidence; or</li>
+ *   <li>in neither state, which is the defect: the value reads as the present tense and its age is somewhere else.</li>
  * </ol>
  *
  * <p>
- * THE POPULATION IS DERIVED, twice over, and both derivations are from declarations the product already owns:
+ * THE POPULATION IS DERIVED, from declarations the product already owns:
  * </p>
  * <ul>
- *   <li>THE LINES come from `<world-state>`'s own composition: every `parts.push(x)` in `composeWorldState` whose `x` is
- *     a local bound to a renderer call is a line of the block. A renderer added to the block joins this gate with no
+ *   <li>THE PACK LINES come from `<world-state>`'s own composition: every `parts.push(x)` in `composeWorldState` whose `x`
+ *     is a local bound to a renderer call is a line of the block. A renderer added to the block joins this gate with no
  *     edit here, and a renderer deleted from it stops counting.</li>
+ *   <li>THE TARGET-FAMILY LINE comes from the composition too, followed one step further: the block spreads a composed
+ *     line (`lines.push(...composeNearbyTargets(world))`), that function asks one reader for the families
+ *     (`nearbyTargetFamilies`), and the reader assigns each family's sentence from one renderer
+ *     (`rendered: renderTargetFamily(...)`). A step this gate cannot follow is `world_state_line_unread`, never skipped.</li>
  *   <li>THE PACK comes from the wire: `inventory*` and `seed*` among `SNAPSHOT_KEYS` (`host/src/protocol.ts`), read by
  *     name. A line is a PACK LINE when the renderer it names reads one of those fields. So "which lines print a pack
  *     count" is answered by the field list the Mod publishes, not by a list somebody remembered.</li>
+ *   <li>THE FAMILIES come from `TARGET_FAMILY_LABELS` (`host/src/game-world-vocabulary.ts`) crossed with those same wire
+ *     fields: the table says which families this line prints, the wire says which of them exist. A family added to the
+ *     table is judged the day it is printed.</li>
  * </ul>
  *
  * <p>
- * WHY IT IS NOT A SHAPE CHECK. Two things are asserted, and each was red once against the real defect: the renderer must
- * consult `freshness.proved`, AND `composeFactBrief` must hand `provedPackCounts(input.events)` to `composeWorldState`.
- * A renderer that reads `freshness.proved` from a map nobody filled is the same silence with more code, so the wiring is
- * checked as its own member.
+ * WHY IT IS NOT A SHAPE CHECK. Four things are asserted, and each was red once against the real defect: a pack renderer
+ * must consult `freshness.proved`; the family reader must consult `freshness.gone` AND the sentence must state what the
+ * receipt took out (`proved.removed`); and `composeFactBrief` must hand BOTH `provedPackCounts(input.events)` and
+ * `provedGoneTargets(input.events)` to `composeWorldState`. A renderer that reads a map nobody filled is the same silence
+ * with more code, so each wiring is checked as its own member.
  * </p>
  *
  * <p>
@@ -56,8 +73,14 @@
  * red-proof: inject  restoring `formatHeldSeeds`'s pre-fix body (no `freshness`, count straight from `heldCount`) in a
  *            copied tree -> exit 1, `a_line_can_go_stale_without_saying_so:formatHeldSeeds`
  *            (tools/check-stale-line-age.test.mjs)
- * red-proof: inject  dropping the proof from the composition (`composeWorldState(input.snapshot)` in a copied tree) ->
- *            exit 1, `pack_proof_not_wired:composeFactBrief` (the same suite)
+ * red-proof: inject  dropping the pack proof from the composition (a `composeWorldState` call without
+ *            `provedPackCounts(input.events)`) -> exit 1, `pack_proof_not_wired:composeFactBrief` (the same suite)
+ * red-proof: inject  reading the family rows from the reading instead of the delivery (`splitProvedGone(value,
+ *            NO_TARGET_FRESHNESS.gone)`) -> exit 1, `a_line_can_go_stale_without_saying_so:renderTargetFamily`
+ * red-proof: inject  `renderTargetFamily`'s pre-fix body (the rows split, the sentence saying nothing about them) -> exit 1,
+ *            `a_line_can_go_stale_without_saying_so:renderTargetFamily`
+ * red-proof: inject  dropping the target proof from the composition -> exit 1,
+ *            `target_proof_not_wired:composeFactBrief`
  */
 
 export const gateDeclaration = {
@@ -72,7 +95,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { snapshotFields } from "./check-snapshot-field-rendering.mjs";
-import { withoutComments } from "./lib/gate-preamble.mjs";
+import { bracesFrom, withoutComments } from "./lib/gate-preamble.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -101,6 +124,23 @@ const PROOF_READ = /freshness\s*\.\s*proved/u;
 /** The derivation the composition must hand the block. */
 const PROOF_DERIVATION = /\bprovedPackCounts\s*\(\s*input\s*\.\s*events\s*\)/u;
 
+/**
+ * The member a TARGET-FAMILY reader must consult: `freshness.gone` - the rows this delivery's receipts proved out of the
+ * world (`provedGoneTargets` in the composer, `TargetFreshness` in the vocabulary).
+ *
+ * A row list is a set of opaque ids a plan copies into an action, so it can go stale exactly as a count can, and
+ * `round78` is the measured case: eight stones printed after six of them had been broken, and the next plan submitted the
+ * first four of them again. This gate's population did not include the row lines at all until that run, because the pack
+ * line derivation below reads `parts.push(<local>)` and the row lines are `lines.push(...composeNearbyTargets(world))`.
+ */
+const TARGET_PROOF_READ = /freshness\s*\.\s*gone/u;
+
+/** The member the SENTENCE itself must read, so the subtraction cannot be silent: `proved.removed`. */
+const TARGET_SENTENCE_READ = /proved\s*\.\s*removed/u;
+
+/** The derivation the composition must hand the target lines. */
+const TARGET_PROOF_DERIVATION = /\bprovedGoneTargets\s*\(\s*input\s*\.\s*events\s*\)/u;
+
 /** The body of one declared function, brace-matched, comments stripped. */
 function functionBody(source, declaration) {
   const code = withoutComments(source);
@@ -117,6 +157,92 @@ function functionBody(source, declaration) {
     }
   }
   return null;
+}
+
+/**
+ * The body of a DECLARED FUNCTION whose parameter list reaches braces - `renderTargetFamily`'s row type is
+ * `{ x: number; … }[]`, so the first `{` after its name sits inside the signature and the plain brace reader above would
+ * return the type instead of the body.
+ *
+ * The parameter list is skipped by matching its own parentheses first; the body then starts at the next `{`.
+ */
+function functionBodyPastParams(source, name) {
+  const code = withoutComments(source);
+  const at = code.indexOf(`function ${name}(`);
+  if (at < 0) return null;
+  let depth = 0;
+  let open = -1;
+  for (let index = code.indexOf("(", at); index >= 0 && index < code.length; index += 1) {
+    if (code[index] === "(") depth += 1;
+    else if (code[index] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        open = code.indexOf("{", index);
+        break;
+      }
+    }
+  }
+  if (open < 0) return null;
+  return bracesFrom(code, open);
+}
+
+/**
+ * The renderers that compose `<world-state>`'s TARGET-FAMILY lines, followed through the product's own composition.
+ *
+ * THREE STEPS, each read from the source rather than listed here, so a fourth family line joins without an edit:
+ *
+ *  1. `composeWorldState` spreads one composed line into the block - `lines.push(...composeNearbyTargets(world))`;
+ *  2. that function asks one reader for the families - `nearbyTargetFamilies(world, freshness)`;
+ *  3. the reader assigns each family's sentence from one renderer - `rendered: renderTargetFamily(...)`.
+ *
+ * `renderers` is every renderer step 3 names, `families` is the reader's own name, and `reason` is the step this gate
+ * could not follow - reported as unread rather than skipped, because a line it cannot read is not a line that passed.
+ */
+export function targetFamilyComposition(composer, vocabulary) {
+  const block = functionBody(composer, "export function composeWorldState");
+  if (block === null)
+    return { reason: `${COMPOSER_SOURCE}: composeWorldState is not declared in the shape this gate reads` };
+  const spread = /\.\s*push\(\s*\.\.\.\s*([A-Za-z_$][\w$]*)\s*\(/u.exec(block);
+  if (spread === null)
+    return {
+      reason: `${COMPOSER_SOURCE}: composeWorldState spreads no composed line into the block, so the target-family lines cannot be found`,
+    };
+  const lineSource = spread[1];
+  const line = functionBody(composer, `function ${lineSource}(`);
+  if (line === null)
+    return { reason: `${COMPOSER_SOURCE}: ${lineSource} is pushed into the block but not declared beside it` };
+  const reader = /([A-Za-z_$][\w$]*)\s*\(\s*(?:world|snapshot)\s*[,)]/u.exec(line);
+  if (reader === null) return { reason: `${COMPOSER_SOURCE}: ${lineSource} asks no reader for the families it prints` };
+  const readerName = reader[1];
+  const readerBody = functionBody(vocabulary, `function ${readerName}(`);
+  if (readerBody === null)
+    return { reason: `${VOCABULARY_SOURCE}: ${readerName} is not declared there, so its rows cannot be read` };
+  const renderers = [...readerBody.matchAll(/rendered\s*:\s*([A-Za-z_$][\w$]*)\s*\(/gu)].map((match) => match[1]);
+  if (renderers.length === 0)
+    return {
+      reason: `${VOCABULARY_SOURCE}: ${readerName} assigns no sentence to a family, so nothing composes the line`,
+    };
+  return Object.freeze({ lineSource, families: readerName, readerBody, renderers: Object.freeze(renderers) });
+}
+
+/**
+ * Every family `<world-state>` prints rows of: the keys `TARGET_FAMILY_LABELS` declares AND the wire publishes.
+ *
+ * Both sides are declarations the product already owns, so a family added to the table is in this population the day it
+ * is printed - and a label with no wire field behind it is somebody else's finding (`check-inventory-row-field-rendering`),
+ * not a row this gate can judge.
+ */
+export function targetFamilyFields(vocabulary, protocol) {
+  const table = tableBody(vocabulary, "export const TARGET_FAMILY_LABELS");
+  if (table === null) return null;
+  const declared = [...table.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:/gmu)].map((match) => match[1]);
+  const wire = new Set(snapshotFields(protocol));
+  return declared.filter((field) => wire.has(field));
+}
+
+/** The body of a module-level declaration such as an object literal table, comments stripped. */
+function tableBody(source, declaration) {
+  return functionBody(source, declaration);
 }
 
 /**
@@ -268,6 +394,76 @@ export function auditStaleLines({ root = REPOSITORY_ROOT } = {}) {
     });
   }
 
+  const packLines = dispositions.filter((entry) => entry.pack === true);
+  if (packLines.length === 0) {
+    violations.push({
+      code: "no_pack_line_in_the_block",
+      line: "composeWorldState",
+      detail: `no line of <world-state> reads ${packFields.join(", ")}: with no population this gate would agree with itself`,
+    });
+  }
+
+  // THE TARGET-FAMILY LINES, the second half of the same class: a row list is a set of opaque ids a plan copies into an
+  // action, so it goes stale exactly as a count does (`round78`: eight stones printed after six were broken).
+  const targetFields = targetFamilyFields(vocabulary, protocol);
+  if (targetFields === null) {
+    violations.push({
+      code: "world_state_line_unread:renderTargetFamily",
+      line: "TARGET_FAMILY_LABELS",
+      detail: `${VOCABULARY_SOURCE} declares no TARGET_FAMILY_LABELS in the shape this gate reads, so no row line can be judged`,
+    });
+  } else if (targetFields.length === 0) {
+    violations.push({
+      code: "no_target_family_line_in_the_block",
+      line: "TARGET_FAMILY_LABELS",
+      detail: `no family in TARGET_FAMILY_LABELS is a field ${PROTOCOL_SOURCE} publishes: with no population this gate would agree with itself`,
+    });
+  } else {
+    const composition = targetFamilyComposition(composer, vocabulary);
+    if (composition.reason !== undefined) {
+      violations.push({
+        code: "world_state_line_unread:composeNearbyTargets",
+        line: "composeNearbyTargets",
+        detail: composition.reason,
+      });
+    } else {
+      for (const renderer of composition.renderers) {
+        const body = functionBodyPastParams(vocabulary, renderer);
+        if (body === null) {
+          dispositions.push({ line: composition.lineSource, renderer, found: false });
+          violations.push({
+            code: `world_state_line_unread:${renderer}`,
+            line: composition.lineSource,
+            detail: `${composition.families} composes each family's sentence with ${renderer}, which ${VOCABULARY_SOURCE} does not declare in the shape this gate reads`,
+          });
+          continue;
+        }
+        const rowsReadTheProof = TARGET_PROOF_READ.test(composition.readerBody);
+        const sentenceSaysIt = TARGET_SENTENCE_READ.test(body);
+        const reemitted = rowsReadTheProof && sentenceSaysIt;
+        dispositions.push({
+          line: composition.lineSource,
+          renderer,
+          found: true,
+          target: true,
+          fields: targetFields,
+          reemitted,
+        });
+        if (reemitted) continue;
+        violations.push({
+          code: `a_line_can_go_stale_without_saying_so:${renderer}`,
+          line: composition.lineSource,
+          detail:
+            `${renderer} prints rows of ${targetFields.length} families and ` +
+            (rowsReadTheProof
+              ? `the sentence never states what a receipt took out of the world (${TARGET_SENTENCE_READ.source})`
+              : `${composition.families} never consults this delivery's own proof (${TARGET_PROOF_READ.source})`) +
+            ": the ids she plans against are the reading's, with neither a proof nor an age on them",
+        });
+      }
+    }
+  }
+
   // THE WIRING, as its own member: a renderer that reads a map nobody filled is the same silence with more code.
   const brief = functionBody(composer, "export function composeFactBrief");
   if (brief === null) {
@@ -277,29 +473,29 @@ export function auditStaleLines({ root = REPOSITORY_ROOT } = {}) {
       detail:
         "composeFactBrief is not declared in the shape this gate reads, so the proof cannot be shown to reach the block",
     });
-  } else if (!PROOF_DERIVATION.test(brief)) {
-    violations.push({
-      code: "pack_proof_not_wired:composeFactBrief",
-      line: "composeFactBrief",
-      detail: `composeFactBrief composes <world-state> without ${PROOF_DERIVATION.source}: every pack line then prints the reading's count however fresh the delivery is`,
-    });
+  } else {
+    if (!PROOF_DERIVATION.test(brief))
+      violations.push({
+        code: "pack_proof_not_wired:composeFactBrief",
+        line: "composeFactBrief",
+        detail: `composeFactBrief composes <world-state> without ${PROOF_DERIVATION.source}: every pack line then prints the reading's count however fresh the delivery is`,
+      });
+    if (!TARGET_PROOF_DERIVATION.test(brief))
+      violations.push({
+        code: "target_proof_not_wired:composeFactBrief",
+        line: "composeFactBrief",
+        detail: `composeFactBrief composes <world-state> without ${TARGET_PROOF_DERIVATION.source}: every target-family line then prints the reading's rows however many of them the delivery already took out of the world`,
+      });
   }
 
-  const packLines = dispositions.filter((entry) => entry.pack === true);
-  if (packLines.length === 0 && violations.length === 0) {
-    violations.push({
-      code: "no_pack_line_in_the_block",
-      line: "composeWorldState",
-      detail: `no line of <world-state> reads ${packFields.join(", ")}: with no population this gate would agree with itself`,
-    });
-  }
-
+  const judged = dispositions.filter((entry) => entry.pack === true || entry.target === true);
   return {
     status: violations.length === 0 ? "passed" : "failed",
     examined: dispositions.length,
-    reemitted: packLines.filter((entry) => entry.reemitted === true).length,
-    canGoStale: packLines.filter((entry) => entry.reemitted !== true).length,
+    reemitted: judged.filter((entry) => entry.reemitted === true).length,
+    canGoStale: judged.filter((entry) => entry.reemitted !== true).length,
     packFields,
+    targetFields: targetFields ?? [],
     dispositions,
     violations,
     unreadable: [],
@@ -315,14 +511,14 @@ function main(argv) {
   const blocked = reading.status === "blocked";
   const checks = [
     {
-      id: "line_population",
+      id: "renderer_population",
       status: reading.examined === 0 ? "blocked" : "passed",
-      detail: `${String(reading.examined)} line(s) of <world-state>`,
+      detail: `${String(reading.examined)} renderer(s) of <world-state>`,
     },
     {
-      id: "every_pack_line_says_how_fresh_it_is",
+      id: "every_staleable_line_says_how_fresh_it_is",
       status: blocked ? "blocked" : reading.canGoStale === 0 ? "passed" : "failed",
-      detail: `${String(reading.reemitted)} re-emitted · ${String(reading.canGoStale)} can go stale`,
+      detail: `${String(reading.reemitted)} proven by receipt · ${String(reading.canGoStale)} can go stale`,
     },
   ];
   const report = {
@@ -332,6 +528,7 @@ function main(argv) {
     reemitted: reading.reemitted ?? 0,
     canGoStale: reading.canGoStale ?? 0,
     packFields: reading.packFields ?? [],
+    targetFields: reading.targetFields ?? [],
     checks,
   };
   if (json) {
@@ -342,7 +539,7 @@ function main(argv) {
     for (const line of reading.unreadable) process.stderr.write(`stale_line_age_unreadable: ${line}\n`);
     for (const violation of reading.violations) process.stderr.write(`${violation.code}: ${violation.detail}\n`);
     process.stdout.write(
-      `world-state lines examined ${String(report.examined)} · re-emitted ${String(report.reemitted)} · ` +
+      `renderers examined ${String(report.examined)} · proven-by-receipt ${String(report.reemitted)} · ` +
         `can-go-stale ${String(report.canGoStale)} · status ${report.status}\n`,
     );
     process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -49,7 +49,7 @@
  */
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
-import { CARRIED_BACKLOG_SEMANTIC_KIND, heldWorldOf, type HeldWorldDeclaration } from "./event-pump.js";
+import { CARRIED_BACKLOG_SEMANTIC_KIND, type HeldWorldDeclaration, heldWorldOf } from "./event-pump.js";
 import {
   formatBodyState,
   formatGameClock,
@@ -57,10 +57,14 @@ import {
   formatRipeCrops,
   MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
+  NO_TARGET_FRESHNESS,
   nearbyTargetFamilies,
+  type ProvedGoneTarget,
+  ROW_TILE_FIELD_PAIRS,
+  TARGET_FAMILY_LABELS,
+  type TargetFreshness,
 } from "./game-world-vocabulary.js";
-import { MAX_WORLD_FACT_LINES, boundedField } from "./model-field-budget.js";
-import { ROW_TILE_FIELD_PAIRS, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
+import { boundedField, MAX_WORLD_FACT_LINES } from "./model-field-budget.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
@@ -228,7 +232,7 @@ export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
   const speech = playerSpeech(input.inputs);
   if (speech !== "") blocks.push(speech);
-  const state = composeWorldState(input.snapshot, provedPackCounts(input.events));
+  const state = composeWorldState(input.snapshot, provedPackCounts(input.events), provedGoneTargets(input.events));
   if (state !== "") blocks.push(state);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
@@ -295,15 +299,23 @@ function playerSpeech(inputs: readonly PlayerInput[]): string {
  *
  * A session that has received nothing yet says so, in the same block: an omitted block would read as "nothing here" and
  * an invented one would be a world the Mod never published.
+ *
+ * THE TARGET FAMILIES ARE COMPOSED FROM THE SAME DELIVERY'S PROOFS, not from the reading alone: `provedGone` is what the
+ * batch's own receipts took out of the world (`provedGoneTargets`), and a row it names is not printed - because an id the
+ * Mod has already answered `_gone` for is an address to nothing (`round78`: eight stones printed under a receipt block
+ * naming six of them broken). It is passed as its own argument rather than folded into `provedPack`, which is a map of
+ * ITEM COUNTS: the two proofs answer two different questions and a single shape would let one be read as the other.
  */
 export function composeWorldState(
   reading: WorldStateReading | undefined,
   provedPack: ReadonlyMap<string, ProvedPackCount> = NO_PACK_FRESHNESS.proved,
+  provedGone: ReadonlyMap<string, ProvedGoneTarget> = NO_TARGET_FRESHNESS.gone,
 ): string {
   if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
   const world = reading.snapshot;
   if (world === null || typeof world !== "object") return block("world-state", NOTHING_OBSERVED);
   const freshness: PackFreshness = Object.freeze({ proved: provedPack, ageTurns: reading.ageTurns });
+  const targetFreshness: TargetFreshness = Object.freeze({ gone: provedGone, ageTurns: reading.ageTurns });
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
@@ -327,7 +339,7 @@ export function composeWorldState(
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
-  lines.push(...composeNearbyTargets(world));
+  lines.push(...composeNearbyTargets(world, targetFreshness));
   return block("world-state", lines.join("\n"));
 }
 
@@ -482,6 +494,67 @@ export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<stri
   }
   return proved;
 }
+
+/**
+ * The target rows THIS DELIVERY's receipts proved are out of the world, keyed by the row's own opaque id.
+ *
+ * <p>
+ * WHY. Measured `round78` (2026-11-19, the mine window, her own session): six `break_rock` receipts at revisions 112-123
+ * broke six stones while the reading she held was `revision 108`, and the delivery that arrived after them printed
+ * `石头 (6,5) (5,5) (5,6) (11,7) (11,8) (4,9) 其余 2 格未列出` - all eight rows, every broken one among them - a few lines
+ * under its own `<execution-result>` naming those stones as `rock_source_broken`. Her next plan wrote
+ * `snapshot.rockSourceTargets.slice(0, 4)`, the first four rows of that same stale array, and the Mod answered
+ * `rock_source_gone` four times: four empty nodes and a wasted round. The count beside it in the same block already had
+ * the fix (`30 份 石头（pickup_item 之后数的）`); the row list did not.
+ * </p>
+ *
+ * <p>
+ * THE PROOF IS THE MOD'S OWN, and it has two spellings because the Mod publishes two: a receipt that took the row out
+ * says `removed=true` (`farmhandexecutioncontroller.resourcetoolactions.cs:310`), and a request whose row the world no
+ * longer holds is answered with a reason code ending `_gone` - `rock_source_gone`, `item_target_gone`,
+ * `animal_product_target_gone`, `pet_target_gone`, `farm_animal_target_gone`, `npc_relationship_target_gone`,
+ * `npc_interaction_target_gone`. Every one of those codes means the row this request named is not in the world, so no
+ * table of families is needed and no family has to be named here: the code's own word is the proof. The row's id has to
+ * be in the evidence as well, which is what keeps a `_gone` code that names no row (`clear_blocker_gone`) out.
+ * </p>
+ *
+ * <p>
+ * THE ROW'S ID is the pair the Mod names it by - `target=` in both spellings, `expected=` for `item_target_gone` - which
+ * is the same id the row publishes as `targetId` and the plan copies as `expectedTargetId`. A detail with neither pair
+ * proves nothing, and a refusal that names another row does not touch this one.
+ * </p>
+ *
+ * BOTH SHAPES REACH HER, for the same reason `provedPackCounts` reads both: a bare `execution_receipt` and the nodes of a
+ * settled body programme carry the same Mod detail. Later events win.
+ */
+export function provedGoneTargets(events: readonly WorldFact[]): ReadonlyMap<string, ProvedGoneTarget> {
+  const gone = new Map<string, ProvedGoneTarget>();
+  const record = (actionId: string, detail: unknown, reasonCode: unknown): void => {
+    if (typeof detail !== "string" || detail === "") return;
+    const pairs = evidencePairs(detail);
+    const target = pairs.get("target") ?? pairs.get("expected");
+    if (target === undefined || target === "") return;
+    const removed = pairs.get("removed") === "true";
+    const settled = typeof reasonCode === "string" && reasonCode.endsWith(GONE_REASON_SUFFIX);
+    if (!(removed || settled)) return;
+    gone.set(target, Object.freeze({ actionId: actionId === "" ? "动作" : actionId }));
+  };
+  for (const fact of events) {
+    const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "";
+    if (fact.kind === "execution_receipt") {
+      record(actionId, (fact.payload.evidence as { detail?: unknown } | undefined)?.detail, fact.payload.reasonCode);
+      continue;
+    }
+    if (fact.semanticKind !== PROGRAM_SETTLED) continue;
+    if (!Array.isArray(fact.payload.nodes)) continue;
+    for (const node of fact.payload.nodes as readonly SettledNode[])
+      record(typeof node.actionId === "string" ? node.actionId : actionId, node.evidence, node.reasonCode);
+  }
+  return gone;
+}
+
+/** The Mod's own word for "the row this request named is out of the world": `rock_source_gone`, `item_target_gone`. */
+const GONE_REASON_SUFFIX = "_gone";
 
 /** The `key=value` pairs of one Mod evidence detail: `location=Farm;item=(O)472;inventory_after=0`. */
 function evidencePairs(detail: string): ReadonlyMap<string, string> {
@@ -673,9 +746,12 @@ function formatCarriedCanWater(world: Snapshot): string {
  * THE CAP NAMES WHAT IT DROPPED. A line that said only `其余 1 类未列出` left the reader unable to tell which family of
  * the thirteen she could not see - the same silence one level up from the family this line used to omit entirely
  * (`soilTiles`). The names cost a few bytes; a numbered absence costs a turn spent guessing.
+ *
+ * `freshness` is handed straight to `nearbyTargetFamilies`, which owns both halves of the row question: rows this
+ * delivery proved out of the world, and how old the rest of the reading is.
  */
-function composeNearbyTargets(world: Snapshot): readonly string[] {
-  const families = nearbyTargetFamilies(world);
+function composeNearbyTargets(world: Snapshot, freshness: TargetFreshness = NO_TARGET_FRESHNESS): readonly string[] {
+  const families = nearbyTargetFamilies(world, freshness);
   const occupied = families
     .filter((family) => family.rendered !== undefined)
     .sort(

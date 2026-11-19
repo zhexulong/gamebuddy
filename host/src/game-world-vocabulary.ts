@@ -195,7 +195,7 @@ function chineseTimeOfDayBand(rawHour: number): string {
 export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
   // An absent reading is DROPPED, never rendered as `undefined年第undefined天` - the same rule every sibling fact here
   // follows. The wire requires all three, so this only fires for a payload that is not a full snapshot.
-  if (!Number.isSafeInteger(day) || !Number.isSafeInteger(seasonIndex) || !Number.isSafeInteger(year)) return "";
+  if (!(Number.isSafeInteger(day) && Number.isSafeInteger(seasonIndex) && Number.isSafeInteger(year))) return "";
   const season = (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
   if (zh) return `${year}年第${day}天 ${season}`;
   return `Year ${year}, Day ${day} of ${season}`;
@@ -309,7 +309,7 @@ function boundedName(value: string): string {
 
 /** The tile under her feet, in the map's own coordinates. */
 function formatGameTile(tile: { readonly x: number; readonly y: number } | undefined, zh: boolean): string {
-  if (!Number.isFinite(tile?.x) || !Number.isFinite(tile?.y)) return "";
+  if (!(Number.isFinite(tile?.x) && Number.isFinite(tile?.y))) return "";
   return `${zh ? "脚下" : "tile"}: (${String(tile?.x)}, ${String(tile?.y)})`;
 }
 
@@ -473,7 +473,7 @@ export function observationChestTiles(
   const here = source.location;
   const tiles = new Map<string, Readonly<{ x: number; y: number }>>();
   const add = (row: Readonly<{ x: number; y: number; location?: string }>): void => {
-    if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) return;
+    if (!(Number.isFinite(row.x) && Number.isFinite(row.y))) return;
     if (row.location !== undefined && row.location !== here) return;
     tiles.set(`${row.x},${row.y}`, Object.freeze({ x: row.x, y: row.y }));
   };
@@ -1121,6 +1121,54 @@ export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string;
   colorTargets: Object.freeze({ field: "color", label: "色" }),
 });
 
+/**
+ * One target row THIS DELIVERY's receipts proved is out of the world, and the action whose receipt proved it.
+ *
+ * <p>
+ * WHY A ROW NEEDS ITS OWN PROOF. A row is an opaque id the caller copies into an action (`expectedTargetId`), and the
+ * reading it comes from is not the world. Measured `round78` (2026-11-19, the mine window): six `break_rock` receipts at
+ * revisions 112-123 broke six stones while the reading she held was `revision 108`, so the block printed all eight stones
+ * - every broken one among them - directly under an `<execution-result>` that named those same stones as
+ * `rock_source_broken`. The next delivery's plan took `snapshot.rockSourceTargets.slice(0, 4)` - the first four rows of
+ * the same stale array - and the Mod answered `rock_source_gone` four times: four empty nodes, and a turn spent re-aiming
+ * at stone that was already gone.
+ * </p>
+ *
+ * <p>
+ * THE PROOF IS THE MOD'S OWN, never a second reading of the world. The receipt that took the row out names it (a
+ * `target=` pair, or `expected=` for `item_target_gone`) and says so in one of the two spellings the Mod publishes:
+ * `removed=true` (`farmhandexecutioncontroller.resourcetoolactions.cs:310`), or a reason code ending in `_gone` - the seven
+ * the Mod declares (`rock_source_gone`, `item_target_gone`, `animal_product_target_gone`, `pet_target_gone`,
+ * `farm_animal_target_gone`, `npc_relationship_target_gone`, `npc_interaction_target_gone`), each meaning "the row this
+ * request named is out of the world". A code that ends `_gone` without naming a row in its evidence (`clear_blocker_gone`)
+ * proves nothing here, which is why the row's id is required rather than the suffix alone. So the line is RE-DERIVED from
+ * what the delivery already proved, which is the seeds line's precedent (`provedPackCounts` in `fact-brief.ts`), not the
+ * reading's rows printed as the present tense.
+ * </p>
+ */
+export type ProvedGoneTarget = Readonly<{ actionId: string }>;
+
+/**
+ * What THIS DELIVERY already knows about the target rows, and how old the reading is.
+ *
+ * The two halves of the freshness question for a row list, kept beside each other because a renderer that took one
+ * without the other could print a row with neither a source nor an age. `gone` is the map `fact-brief.ts`
+ * (`provedGoneTargets`) derives from the delivery's receipts; `ageTurns` is the reading's own age, the same number the
+ * block's first line states.
+ */
+export type TargetFreshness = Readonly<{
+  /** Rows a receipt in this delivery took out of the world, keyed by the row's own opaque id. */
+  gone: ReadonlyMap<string, ProvedGoneTarget>;
+  /** How many delivered turns ago this reading arrived: `0` is the turn it arrived in. */
+  ageTurns: number;
+}>;
+
+/** No delivery to trust: every published row stands, and the age is the caller's own. */
+export const NO_TARGET_FRESHNESS: TargetFreshness = Object.freeze({
+  gone: new Map<string, ProvedGoneTarget>(),
+  ageTurns: 0,
+});
+
 /** One family the snapshot published, as the state line prints it. */
 export type NearbyTargetFamily = Readonly<{
   /** The wire key the rows came from, so a reader can check the label against it. */
@@ -1130,7 +1178,11 @@ export type NearbyTargetFamily = Readonly<{
   nearest: Readonly<{ x: number; y: number; distance: number }> | undefined;
   /** How many rows the family published. */
   total: number;
-  /** How many this line did not name: the cap, plus any row that carried no coordinate. */
+  /**
+   * How many rows this line did not name: the cap, plus any row that carried no coordinate. A row a receipt in THIS
+   * delivery proved out of the world is NOT counted here - it is counted by the line's own proof sentence, so the cap's
+   * omission and the world's change cannot be read as one number.
+   */
   omitted: number;
   /**
    * The sentence this line prints for the family, or `undefined` for a family the Mod published as empty (which prints
@@ -1160,6 +1212,11 @@ export type NearbyTargetFamily = Readonly<{
  * replacing a piece she could not name. The name is not interpolated blind: a row with no readable `displayName` prints
  * its tile alone, never the word `undefined`.
  *
+ * A ROW A RECEIPT PROVED GONE IS NOT PRINTED. `freshness.gone` is this delivery's own proof (see `ProvedGoneTarget`),
+ * and a row it names is subtracted before the cap is applied - because an id the Mod has already answered `_gone` for is
+ * an id any plan written from this line would point at a thing that is not there. What was subtracted, and by which
+ * action, is stated on the line itself (`renderTargetFamily`), so the subtraction is a fact rather than a silence.
+ *
  * A FAMILY WHOSE ROWS IT CANNOT PLACE STILL PRINTS. The tile is read through `ROW_TILE_FIELD_PAIRS`, so a `doorTargets`
  * row is placed at its `sourceX`/`sourceY` exactly as an `animalDoorTargets` row is placed at its `x`/`y` - `round62`'s
  * falsifier: 畜舍门 (70,13) printed, and the FarmHouse door did not. The families that carry no tile at all -
@@ -1169,20 +1226,25 @@ export type NearbyTargetFamily = Readonly<{
  * so those rows were on neither line and said nothing. A row this line cannot place is an OMISSION, and an omission is
  * counted.
  */
-export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetFamily[] {
+export function nearbyTargetFamilies(
+  snapshot: Snapshot,
+  freshness: TargetFreshness = NO_TARGET_FRESHNESS,
+): readonly NearbyTargetFamily[] {
   const actor = snapshot.tile;
   const readable = Number.isFinite(actor?.x) && Number.isFinite(actor?.y);
   const families: NearbyTargetFamily[] = [];
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const tiles = placedTargetTiles(value, ROW_STATE_FIELDS[family]);
+    const { standing, removed, actions } = splitProvedGone(value, freshness.gone);
+    const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family]);
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
     tiles.sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
     const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
-    const omitted = value.length - shown.length;
+    const omitted = standing.length - shown.length;
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
+    const proved: TargetLineProof = Object.freeze({ removed, actions, ageTurns: freshness.ageTurns });
     families.push(
       Object.freeze({
         family,
@@ -1190,11 +1252,50 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
         nearest,
         total: value.length,
         omitted,
-        rendered: renderTargetFamily(label, value.length, shown, omitted),
+        rendered: renderTargetFamily(label, value.length, shown, omitted, proved),
       }),
     );
   }
   return Object.freeze(families);
+}
+
+/**
+ * One family's published rows, split by what this delivery proved about them.
+ *
+ * `standing` keeps the wire's order, which the cap's sort then re-ranks; `removed` and `actions` are the two numbers the
+ * line's proof sentence is composed from, so the arithmetic and the sentence cannot disagree about how many rows left.
+ */
+function splitProvedGone(
+  value: readonly unknown[],
+  gone: ReadonlyMap<string, ProvedGoneTarget>,
+): Readonly<{ standing: readonly unknown[]; removed: number; actions: readonly string[] }> {
+  const standing: unknown[] = [];
+  const actions = new Set<string>();
+  let removed = 0;
+  for (const row of value) {
+    const id = rowTargetId(row);
+    const proved = id === undefined ? undefined : gone.get(id);
+    if (proved === undefined) {
+      standing.push(row);
+      continue;
+    }
+    removed += 1;
+    actions.add(proved.actionId);
+  }
+  return { standing, removed, actions: Object.freeze([...actions].sort()) };
+}
+
+/**
+ * The opaque id a row is addressed by, or `undefined` for a row that carries none.
+ *
+ * `targetId` is the wire's name for it in every family but `chests` (which names its container `chestId`) and the four
+ * families the plan surface calls unidentified - and those rows are exactly the ones no receipt can be matched to, which
+ * is why the absence is `undefined` here rather than a guess.
+ */
+function rowTargetId(row: unknown): string | undefined {
+  if (row === null || typeof row !== "object") return undefined;
+  const id = (row as Record<string, unknown>).targetId;
+  return typeof id === "string" && id !== "" ? id : undefined;
 }
 
 /**
@@ -1235,27 +1336,65 @@ function rowDisplayName(candidate: Record<string, unknown>): string | undefined 
 }
 
 /**
+ * What ONE LINE's receipts proved about that line's own rows, and how old the rows that are left are.
+ *
+ * Separate from `TargetFreshness` because it is a different fact: the delivery proves ids out of the world for every
+ * family at once, and each family's sentence states only its own share of that.
+ */
+type TargetLineProof = Readonly<{ removed: number; actions: readonly string[]; ageTurns: number }>;
+
+/** Nothing proved and nothing aged: the sentence a caller with no delivery (the Chat surface's own reader) gets. */
+const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, actions: [], ageTurns: 0 });
+
+/**
  * The sentence one family prints, or `undefined` for a family the Mod published as empty.
  *
  * Three shapes and no more: empty is silent (it belongs to the "nothing here" line), rows that could not be placed
  * say so and how many, and rows that were placed name the cap's cost. `omitted` counts both, which is why it is
  * passed in rather than derived from `shown`.
+ *
+ * AND THE LINE SAYS HOW FRESH ITS ROWS ARE (`proved`). A row list is a set of ids rather than a count, and an id a
+ * receipt in this delivery already took out of the world is an id a plan would point at nothing. So the two things that
+ * can be true of a row list are said on the line itself - which action removed the rows that are gone, and how many turns
+ * old the rest are - because the block's own age sentence is about "the world" and cannot be read as applying to one
+ * family of twelve. `round78` is the falsifier: eight stones printed under a receipt block naming six of them broken,
+ * and nothing on the line said the two disagreed.
  */
 function renderTargetFamily(
   label: string,
   total: number,
   shown: readonly { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[],
   omitted: number,
+  proved: TargetLineProof = NOTHING_PROVED,
 ): string | undefined {
   if (total === 0) return undefined;
-  if (shown.length === 0) return `${label} 其余 ${String(total)} 格未列出（这些行没有坐标）`;
+  if (proved.removed >= total)
+    return `${label} 全部 ${String(proved.removed)} 格已不在（${proved.actions.join("、")} 之后数的）`;
+  if (shown.length === 0)
+    return `${label} 其余 ${String(total - proved.removed)} 格未列出（这些行没有坐标）${targetLineFreshness(proved)}`;
   const tiles = shown
     .map(
       (tile) =>
         `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
     )
     .join(" ");
-  return `${label} ${tiles}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;
+  return `${label} ${tiles}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}${targetLineFreshness(proved)}`;
+}
+
+/**
+ * The tail a row list carries: which action proved rows out of the world, and how old the rows that are left are.
+ *
+ * The wording mirrors the seeds line's `（plant_seed 之后数的）` deliberately - a row list that replaced the reading's own
+ * names the receipt that replaced it - and the age is stated once, for the line, only when a receipt did not account for
+ * every row on it.
+ */
+function targetLineFreshness(proved: TargetLineProof): string {
+  const source =
+    proved.removed < 1 ? "" : `（${proved.actions.join("、")} 之后数的，少了 ${String(proved.removed)} 格）`;
+  if (proved.ageTurns < 1) return source;
+  const aged =
+    proved.removed > 0 ? `（其余是 ${String(proved.ageTurns)} 轮前数的）` : `（${String(proved.ageTurns)} 轮前数的）`;
+  return `${source}${aged}`;
 }
 
 /**

@@ -51,6 +51,18 @@ function withComposer(contents, run) {
   );
 }
 
+/** The real tree with the VOCABULARY replaced: the target-family lines live there, not in the composer. */
+function withVocabulary(contents, run) {
+  return withFixtureRoot(
+    {
+      [COMPOSER_SOURCE]: readReal(COMPOSER_SOURCE),
+      [PROTOCOL_SOURCE]: readReal(PROTOCOL_SOURCE),
+      [VOCABULARY_SOURCE]: contents,
+    },
+    run,
+  );
+}
+
 const runGate = (root) => {
   const result = spawnSync(process.execPath, [GATE, "--root", root, "--json"], {
     encoding: "utf8",
@@ -73,6 +85,28 @@ test("the real tree passes, and it examined a population rather than nothing", (
     `the pack lines consult the delivery's proof: ${JSON.stringify(reading.dispositions)}`,
   );
   assert.equal(reading.canGoStale, 0);
+  // BOTH HALVES OF THE POPULATION, measured: the pack lines and the target-family line are judged by one gate.
+  assert.ok(reading.packFields.length > 0, "the pack declaration is read");
+  assert.ok(reading.targetFields.length > 0, "the target families are read from the vocabulary's own table");
+  assert.ok(
+    reading.dispositions.some((entry) => entry.pack === true),
+    `a pack line is judged: ${JSON.stringify(reading.dispositions)}`,
+  );
+  assert.ok(
+    reading.dispositions.some((entry) => entry.target === true),
+    `a target-family line is judged: ${JSON.stringify(reading.dispositions)}`,
+  );
+});
+
+test("the run prints the population it examined, and the two verdicts", () => {
+  // The line a lane reads. `examined 0` would be a blocked reading, so the population is printed beside the verdict.
+  const result = spawnSync(process.execPath, [GATE], { encoding: "utf8", cwd: REPOSITORY_ROOT });
+  assert.equal(result.status, 0, `the real tree passes: ${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /renderers examined \d+ · proven-by-receipt \d+ · can-go-stale 0 · status passed/u,
+    `the report states what it examined and how many of those are proven: ${result.stdout}`,
+  );
 });
 
 test("red: a pack renderer that prints the reading's count and no proof is named by the line it composes", () => {
@@ -118,9 +152,9 @@ test("red: a pack renderer that prints the reading's count and no proof is named
 test("red: dropping the proof from the composition is its own member, not covered by the renderer", () => {
   // A renderer that reads a map nobody filled is the same silence with more code, so the wiring must fail on its own.
   const before = readReal(COMPOSER_SOURCE);
-  const wired = "composeWorldState(input.snapshot, provedPackCounts(input.events))";
+  const wired = "composeWorldState(input.snapshot, provedPackCounts(input.events), provedGoneTargets(input.events))";
   assert.ok(before.includes(wired), "the composition hands the proof to the block today");
-  withComposer(before.replace(wired, "composeWorldState(input.snapshot)"), (root) => {
+  withComposer(before.replace(wired, "composeWorldState(input.snapshot, provedGoneTargets(input.events))"), (root) => {
     const { status, codes } = runGate(root);
     assert.equal(status, 1, "the gate fails on an unwired proof");
     assert.ok(
@@ -150,6 +184,72 @@ test("red: a second pack line added to the block joins the gate without an edit 
     assert.ok(
       codes.includes("a_line_can_go_stale_without_saying_so:formatSeedPads"),
       `the new renderer joins the population: ${codes.join(", ")}`,
+    );
+  });
+});
+
+test("red: a row reader that ignores the delivery's proof is named by the line it composes", () => {
+  // THE TARGET-FAMILY HORN, on the real defect: this is `round78`'s line reading the reading's rows instead of the
+  // delivery's proof - eight stones printed under a receipt block naming six of them broken.
+  const before = readReal(VOCABULARY_SOURCE);
+  const wired = "splitProvedGone(value, freshness.gone)";
+  assert.ok(before.includes(wired), "the family reader consults the delivery's own proof today");
+  withVocabulary(before.replace(wired, "splitProvedGone(value, NO_TARGET_FRESHNESS.gone)"), (root) => {
+    const { status, codes } = runGate(root);
+    assert.equal(status, 1, "the gate fails on a reader that prints the reading's rows");
+    assert.ok(
+      codes.includes("a_line_can_go_stale_without_saying_so:renderTargetFamily"),
+      `the violation names the renderer: ${codes.join(", ")}`,
+    );
+  });
+});
+
+test("red: a sentence that names the proof but states nothing about it is still the silence", () => {
+  // THE OTHER HORN inside the same line: the rows are split correctly and the sentence does not say so, which is the
+  // subtraction nobody can audit. The injection is the pre-fix body of `renderTargetFamily`.
+  const before = readReal(VOCABULARY_SOURCE);
+  const start = before.indexOf("function renderTargetFamily(");
+  assert.ok(start > 0, "the renderer this proof injects into is declared");
+  const end = before.indexOf("\n}\n", start);
+  assert.ok(end > start, "the renderer's body is closed");
+  const shallow = [
+    "function renderTargetFamily(",
+    "  label: string,",
+    "  total: number,",
+    "  shown: readonly { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[],",
+    "  omitted: number,",
+    "  proved: TargetLineProof = NOTHING_PROVED,",
+    "): string | undefined {",
+    "  if (total === 0) return undefined;",
+    "  if (shown.length === 0) return `${label} 其余 ${String(total)} 格未列出（这些行没有坐标）`;",
+    "  const tiles = shown",
+    '    .map((tile) => `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`)',
+    '    .join(" ");',
+    '  return `${label} ${tiles}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}`;',
+    "}",
+    "",
+  ].join("\n");
+  withVocabulary(`${before.slice(0, start)}${shallow}${before.slice(end + 3)}`, (root) => {
+    const { status, codes } = runGate(root);
+    assert.equal(status, 1, "the gate fails on a sentence that prints the rows and nothing about them");
+    assert.ok(
+      codes.includes("a_line_can_go_stale_without_saying_so:renderTargetFamily"),
+      `the violation names the renderer: ${codes.join(", ")}`,
+    );
+  });
+});
+
+test("red: dropping the target proof from the composition is its own member", () => {
+  // A reader that consults a map nobody filled is the same silence with more code, exactly as for the pack.
+  const before = readReal(COMPOSER_SOURCE);
+  const wired = "composeWorldState(input.snapshot, provedPackCounts(input.events), provedGoneTargets(input.events))";
+  assert.ok(before.includes(wired), "the composition hands the target proof to the block today");
+  withComposer(before.replace(wired, "composeWorldState(input.snapshot, provedPackCounts(input.events))"), (root) => {
+    const { status, codes } = runGate(root);
+    assert.equal(status, 1, "the gate fails on an unwired target proof");
+    assert.ok(
+      codes.includes("target_proof_not_wired:composeFactBrief"),
+      `the wiring is its own member: ${codes.join(", ")}`,
     );
   });
 });
