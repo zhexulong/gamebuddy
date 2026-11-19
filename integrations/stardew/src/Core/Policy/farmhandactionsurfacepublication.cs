@@ -9,7 +9,10 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// static Mod projection, not a live capability publication or grant.
 /// <see cref="WatchdogMs"/> is a Body Program execution budget derived from the
 /// Mod registration; it never appears on the exact-key surface artifact
-/// (JsonIgnore) because it is not an Agent-facing contract field.
+/// (JsonIgnore) because it is not an Agent-facing contract field. The one member
+/// of the wire descriptor this projection does not carry is its `SceneTarget`
+/// (the observation binding `pickup_forage` declares): nothing outside the game
+/// reads it, so a static consumer has nothing to do with it.
 /// </summary>
 public sealed record FarmhandActionDescriptorProjection(
     string ActionId,
@@ -32,7 +35,7 @@ public sealed record FarmhandActionDescriptorProjection(
     /// snapshot publishes (`advance_day`, `dismiss_modal`).
     ///
     /// <para>
-    /// Omitted when null, like `Approach` and `SceneTarget`, so the actions that address nothing keep the exact wire
+    /// Omitted when null, like `Approach`, so the actions that address nothing keep the exact wire
     /// shape they had before. Published because a refusal that says a target was refused without naming the family
     /// the caller should re-read leaves it guessing at a vocabulary it cannot see - and because the two halves that
     /// must agree (the `Discover*` projection that publishes rows and the preflight that refuses them) are otherwise

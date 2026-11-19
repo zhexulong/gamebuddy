@@ -2,6 +2,17 @@
 // hello_ack when one key is unknown, so a missing entry here is a live run that dies at hello with
 // `invalid_hello_ack` - measured 2026-11-06, four runs. The population comes from the Mod's own records, so a member
 // added there fails here instead of after a game launch.
+//
+// The second question this file answers is the one the Mod's two records raise against EACH OTHER: they are two
+// projections of one Core record for two different readers, so they do not carry the same fields - and a field on one
+// side only reads exactly like a field someone forgot on the other. `SINGLE_SIDED_MEMBERS` below is where that
+// difference is stated instead of rediscovered.
+//
+// red-proof: inject  a member added to `FarmhandActionDescriptorWire` only (`string? InjectionProbe = null`) ->
+//                    `the wire declares member(s) the artifact does not: arguments, injectionProbe, sceneTarget`
+// red-proof: inject  `bool? Synthetic = null` added to the wire record -> `stale_single_sided_member: synthetic`,
+//                    while the key-list test above stays GREEN: `KNOWN_ACTION_DESCRIPTOR_KEYS` already names that key,
+//                    so this pair's difference cannot refuse hello_ack today
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -25,6 +36,43 @@ const PROTOCOL = join(ROOT, "host/src/protocol.ts");
  * measured here.
  */
 const SURFACE_REGISTRATION_KEYS = ["actionId", "identityVersion", "lifecycle", "kind"];
+
+/**
+ * Members exactly ONE of the two declarations carries, and who reads the side that lacks it.
+ *
+ * `FarmhandActionDescriptor` owns every field; `FarmhandActionDescriptorWire` is the hello_ack projection and
+ * `FarmhandActionDescriptorProjection` the artifact projection. A claim a static consumer needs and a live dispatch
+ * does not belongs on one side only, so the two records are not meant to be the same document - but the difference is
+ * invisible in either declaration alone: "which field is lost" and "is the loss a defect" are two questions, and only
+ * the second one is about a reader.
+ *
+ * `arguments`/`argumentSchema` are the same fact in the two shapes each consumer reads; `synthetic` is a claim only the
+ * artifact states; `sceneTarget` is the one member with NO reader at all. The assertion below is exact in both
+ * directions, so a member added to one projection fails until it is named here, and an entry whose member reaches both
+ * projections fails as stale.
+ */
+const SINGLE_SIDED_MEMBERS: Readonly<Record<string, Readonly<{ carriedBy: "wire" | "surface"; reason: string }>>> = {
+  arguments: {
+    carriedBy: "wire",
+    reason:
+      "the hello_ack spelling of an action's arguments, read by the Host (`action-registry.ts` `publishedArguments`, `game-tools.ts` `descriptor.arguments`); the artifact states the same list as `argumentSchema` because a static consumer looks an argument up by name",
+  },
+  argumentSchema: {
+    carriedBy: "surface",
+    reason:
+      "the artifact spelling of that same list (`ProjectAction` builds it from `descriptor.Arguments`), read by the artifact's own gateway (`packages/game-action-program/src/descriptors.mjs`) and, as the other legal descriptor shape, by the Host (`action-registry.ts` `publishedArguments`); no wire descriptor carries it",
+  },
+  sceneTarget: {
+    carriedBy: "wire",
+    reason:
+      "the observation binding `pickup_forage` declares, with NO reader on either side: the Host's `ActionRegistrationDescriptor` has no such member and `isValidActionDescriptor` only tolerates the key, the Mod reads `FarmhandActionDescriptor.SceneTarget` nowhere but the reply that copies it (`BridgeSession.cs`), and this projection omits it - so its absence here loses nothing, and the gateway and `tools/check-stardew-observation-consumers.mjs` that are written to accept it are reading a field nothing enforces",
+  },
+  synthetic: {
+    carriedBy: "surface",
+    reason:
+      "the claim that an action performs its effect without the NPC counter that owns it; no Host code branches on it (`isValidActionDescriptor` only admits `true`), and it cannot refuse `hello_ack` either because `KNOWN_ACTION_DESCRIPTOR_KEYS` already names the key - it is stated on the artifact because that is the only descriptor a consumer outside a running game can read",
+  },
+};
 
 /** Parameter names of one C# positional record, camelCased the way the wire spells them. */
 function recordMembers(source: string, declaration: string): string[] {
@@ -104,6 +152,52 @@ test("every member of the Mod's descriptor record is a key the Host accepts", ()
     missing,
     [],
     `the Mod publishes descriptor key(s) the Host's hasOnlyKeys refuses, which fails the WHOLE hello_ack: ${missing.join(", ")}`,
+  );
+});
+
+test("every descriptor member only one declaration carries is named here with the reader on the other side", () => {
+  const wire = new Set(recordMembers(readFileSync(WIRE_MODELS, "utf8"), "record FarmhandActionDescriptorWire("));
+  const surface = new Set(
+    recordMembers(readFileSync(SURFACE_PUBLICATION, "utf8"), "record FarmhandActionDescriptorProjection(").filter(
+      (member) => !SURFACE_REGISTRATION_KEYS.includes(member),
+    ),
+  );
+  assert.ok(
+    wire.size >= 6 && surface.size >= 6,
+    `parsed ${wire.size} wire and ${surface.size} surface members, so the parser is wrong, not the table`,
+  );
+
+  const declared = Object.entries(SINGLE_SIDED_MEMBERS);
+  for (const [member, entry] of declared)
+    assert.ok(
+      entry.reason.length >= 40,
+      `${member} needs a reason that names who reads the side that lacks it, or says there is none`,
+    );
+
+  const both = declared.filter(([member]) => wire.has(member) && surface.has(member)).map(([member]) => member);
+  assert.deepEqual(
+    both,
+    [],
+    `stale_single_sided_member: ${both.join(", ")} is on BOTH declarations now, so it is not single-sided - delete its entry`,
+  );
+
+  const wireOnly = [...wire].filter((member) => !surface.has(member)).sort();
+  const surfaceOnly = [...surface].filter((member) => !wire.has(member)).sort();
+  assert.deepEqual(
+    wireOnly,
+    declared
+      .filter(([, entry]) => entry.carriedBy === "wire")
+      .map(([member]) => member)
+      .sort(),
+    `the wire declares member(s) the artifact does not: ${wireOnly.join(", ")} - name each one in SINGLE_SIDED_MEMBERS with the reader on the artifact side, or the statement that there is none`,
+  );
+  assert.deepEqual(
+    surfaceOnly,
+    declared
+      .filter(([, entry]) => entry.carriedBy === "surface")
+      .map(([member]) => member)
+      .sort(),
+    `the artifact declares member(s) the wire does not: ${surfaceOnly.join(", ")} - name each one in SINGLE_SIDED_MEMBERS with the reader on the wire side, or the statement that there is none`,
   );
 });
 
