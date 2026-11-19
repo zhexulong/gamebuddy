@@ -80,6 +80,54 @@ internal sealed partial class ExecutionManager
         IsTileWithinChebyshevRadius(player, x, y, radius) && IsTargetTileAddressable(player.currentLocation, x, y);
 
     /// <summary>
+    /// A radius-window family, from the held stacks that could supply it to the rows it publishes: scan the window
+    /// around the actor once per source stack, admit each tile through <see cref="IsPublishedTargetTileInRadius"/>, ask
+    /// the family for the row that tile would produce, and ORDER THE WHOLE FAMILY BEFORE TRIMMING it to `rowBudget`.
+    ///
+    /// <para>
+    /// THE TWO ORDERS ARE DIFFERENT ONES. The window is walked west-to-east from its north-west corner, so the scan's
+    /// order is the map's while the order a row is published in is the actor's; a family that truncated while it walked
+    /// published whichever tiles the loops reached first - the westernmost columns - wherever she stood. Each family
+    /// loses differently to that: the fence list's legal tiles are a ring, the crab-pot list's are a shore scattered
+    /// through the window, and the fertilizer list's are a solid tilled block in which the westmost columns alone would
+    /// fill all sixty-four rows and never name the soil she is standing in.
+    /// </para>
+    ///
+    /// <para>
+    /// The published order is <see cref="TargetOrdering.NearestFirstByChebyshev"/>'s - distance, then slot, then tile.
+    /// Three things differ per family and all three are arguments: the predicate (`isSource`, plus whatever `buildRow`
+    /// admits and refuses by returning null), the cap (a named budget constant - `RadiusWindowRowBudget` for the fence
+    /// and crab-pot lists, `FertilizerRowBudget` for the fertilizer list - never a literal at the call site), and the
+    /// natural key `identify` reads a row's tile and slot back out of. Ordering removes nothing: a row the actor was
+    /// never shown is a target the dispatch can never name.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<T> NearestFirstRadiusWindowRows<T>(
+        Farmer player,
+        Func<StardewValley.Object, bool> isSource,
+        int rowBudget,
+        Func<StardewValley.Object, int, int, int, T?> buildRow,
+        Func<T, TargetCandidate> identify)
+        where T : class
+    {
+        List<T> candidates = new();
+        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
+        {
+            if (item is not StardewValley.Object source || !isSource(source)) continue;
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
+            {
+                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)) continue;
+                if (buildRow(source, slot, x, y) is not { } row) continue;
+                candidates.Add(row);
+            }
+        }
+
+        return TargetOrdering.NearestFirstByChebyshev(candidates, (int)player.Tile.X, (int)player.Tile.Y, identify)
+            .Take(rowBudget).ToArray();
+    }
+
+    /// <summary>
     /// Every tile this location offers as a way out, asked of the two tables the ENGINE keeps, in the order the game
     /// itself resolves them: the door table <c>updateDoors</c> builds, the human door of each building standing here, and
     /// the location's own warp list.
@@ -1250,28 +1298,14 @@ internal sealed partial class ExecutionManager
     private static IReadOnlyList<BridgeWoodFenceTarget> DiscoverWoodFenceTargets(Farmer player)
     {
         if (player.currentLocation is not Farm farm) return Array.Empty<BridgeWoodFenceTarget>();
-        List<BridgeWoodFenceTarget> candidates = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)322" || source.Stack <= 0)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
-            {
-                Vector2 tile = new(x, y);
-                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
-                    continue;
-                candidates.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
-            }
-        }
-        // ORDER FIRST, THEN TRIM: the scan walks the radius window west-to-east from the map's own corner, so truncating
-        // while it walks publishes whichever tiles the loops reach first - the two westernmost columns of the window - and
-        // the tiles a fence could actually be built on from where the actor stands are dropped without a word.
-        return TargetOrdering.NearestFirstByChebyshev(
-            candidates,
-            (int)player.Tile.X,
-            (int)player.Tile.Y,
-            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(RadiusWindowRowBudget).ToArray();
+        return NearestFirstRadiusWindowRows<BridgeWoodFenceTarget>(
+            player,
+            source => source.QualifiedItemId == "(O)322" && source.Stack > 0,
+            RadiusWindowRowBudget,
+            (source, slot, x, y) => IsLegalEmptyFarmFenceTile(farm, new Vector2(x, y), source)
+                ? new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322"))
+                : null,
+            row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
     private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
@@ -1334,62 +1368,37 @@ internal sealed partial class ExecutionManager
     private static IReadOnlyList<BridgeCrabPotTarget> DiscoverCrabPotTargets(Farmer player)
     {
         if (player.currentLocation is not Farm farm) return Array.Empty<BridgeCrabPotTarget>();
-        List<BridgeCrabPotTarget> candidates = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
-            for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
-            {
-                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
-                    || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
-                    continue;
-                candidates.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
-            }
-        }
-        // ORDER FIRST, THEN TRIM, for the same reason `DiscoverWoodFenceTargets` does: the water tiles a pot may go in are
-        // scattered through the window, and the westmost would otherwise fill the budget by being scanned first.
-        return TargetOrdering.NearestFirstByChebyshev(
-            candidates,
-            (int)player.Tile.X,
-            (int)player.Tile.Y,
-            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(RadiusWindowRowBudget).ToArray();
+        return NearestFirstRadiusWindowRows<BridgeCrabPotTarget>(
+            player,
+            source => source.QualifiedItemId == "(O)710" && source.Stack > 0,
+            RadiusWindowRowBudget,
+            (_, slot, x, y) => StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y)
+                ? new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710"))
+                : null,
+            row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
     private static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeFertilizerTarget>();
-        List<BridgeFertilizerTarget> candidates = new();
-        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
-        {
-            if (item is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
-                continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
+        return NearestFirstRadiusWindowRows<BridgeFertilizerTarget>(
+            player,
+            source => source.Category == StardewValley.Object.fertilizerCategory,
+            FertilizerRowBudget,
+            (source, slot, x, y) =>
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
-                {
-                    Vector2 tile = new(x, y);
-                    if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
-                        || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-                        || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
-                        continue;
-                    bool canApplyFertilizer = dirt.CanApplyFertilizer(fertilizer.QualifiedItemId);
-                    if (!canApplyFertilizer)
-                        continue;
-                    candidates.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId), canApplyFertilizer));
-                }
-            }
-        }
-        // ORDER FIRST, THEN TRIM: a tilled field is a solid block of candidates, so the westmost columns of the window
-        // would otherwise fill all sixty-four rows and the soil she is standing in would never be named.
-        return TargetOrdering.NearestFirstByChebyshev(
-            candidates,
-            (int)player.Tile.X,
-            (int)player.Tile.Y,
-            candidate => new TargetCandidate(candidate.X, candidate.Y, candidate.Slot)).Take(FertilizerRowBudget).ToArray();
+                Vector2 tile = new(x, y);
+                if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                    || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+                    || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
+                    return null;
+                bool canApplyFertilizer = dirt.CanApplyFertilizer(source.QualifiedItemId);
+                if (!canApplyFertilizer)
+                    return null;
+                return new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, source.QualifiedItemId), slot, x, y, source.QualifiedItemId, RequireDisplayName(source.QualifiedItemId), canApplyFertilizer);
+            },
+            row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
     private static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
