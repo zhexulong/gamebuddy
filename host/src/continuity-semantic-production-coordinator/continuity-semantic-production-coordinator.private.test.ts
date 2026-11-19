@@ -24,12 +24,11 @@ import {
   type TavernExactContentReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
-import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { readSourceShape } from "../test-support/source-shape.test-support.js";
+import { bindVerifiedWindowsLockReclaimerForTest } from "../test-support/windows-lock-reclaimer.test-support.js";
+import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 import { authorityRootMutexName } from "../windows-partition-mutex.js";
-import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import * as internalCoordinator from "./continuity-semantic-production-coordinator.internal.js";
 import { createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest } from "./continuity-semantic-production-coordinator.internal.js";
 import * as publicCoordinator from "./continuity-semantic-production-coordinator.js";
@@ -40,11 +39,11 @@ import {
 } from "./continuity-semantic-production-coordinator.js";
 import { createTestSemanticChatRuntimeCoordinator } from "./continuity-semantic-production-coordinator.test-support.js";
 
-// The compiled test artifact is not a production artifact; give this test
-// module the explicit test-only reclaimer required by path-lock before it
-// constructs a runtime that writes its identity profile.
+// The compiled test artifact is not a production artifact, so this suite binds the test-only Windows lock reclaimer
+// every durable write in it releases through - and proves the release before the first fixture runs, because a suite
+// whose correctness depends on who launched it fails from a release deep inside a fixture instead of here.
 before(async () => {
-  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  await bindVerifiedWindowsLockReclaimerForTest("continuity-semantic-production-coordinator.private.test");
 });
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });

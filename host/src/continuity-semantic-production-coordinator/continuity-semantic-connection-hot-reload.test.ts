@@ -23,12 +23,11 @@ import { rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { before } from "node:test";
-import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
-import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { bindVerifiedWindowsLockReclaimerForTest } from "../test-support/windows-lock-reclaimer.test-support.js";
 
 before(async () => {
-  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  await bindVerifiedWindowsLockReclaimerForTest("continuity-semantic-connection-hot-reload.test");
 });
 
 const principal = Object.freeze({

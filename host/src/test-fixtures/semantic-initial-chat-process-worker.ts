@@ -4,6 +4,7 @@ import {
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
+import { bindVerifiedWindowsLockReclaimerForTest } from "../test-support/windows-lock-reclaimer.test-support.js";
 
 type Mode = "crash-after-register" | "resume";
 type Reply = Readonly<{ type: "registered" | "selected" | "fatal"; code?: string }>;
@@ -54,7 +55,13 @@ if (!manifestPath || (mode !== "crash-after-register" && mode !== "resume")) {
     process.exitCode = 1;
   });
 } else {
-  void run(mode, manifestPath).catch(async (error) => {
+  // This fixture owns the Windows lock reclaimer every durable release in its own process goes through. Inheriting it
+  // from the compiled-test bootstrap's `--import` through `fork`'s default `execArgv` made the fixture work only when
+  // its parent had been launched one particular way; the binding and its proof happen here, before the first write.
+  void (async () => {
+    await bindVerifiedWindowsLockReclaimerForTest("semantic-initial-chat-process-worker");
+    await run(mode, manifestPath);
+  })().catch(async (error) => {
     try {
       await reply(Object.freeze({ type: "fatal", code: code(error) }));
     } catch {

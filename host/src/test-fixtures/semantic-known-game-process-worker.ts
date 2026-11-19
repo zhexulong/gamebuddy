@@ -1,6 +1,7 @@
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { bindVerifiedWindowsLockReclaimerForTest } from "../test-support/windows-lock-reclaimer.test-support.js";
 
 type WorkerRequest =
   | Readonly<{ type: "attempt"; manifestPath: string }>
@@ -128,4 +129,16 @@ process.on("message", (message: WorkerRequest) => {
   })();
 });
 
-reply(Object.freeze({ type: "ready" }));
+// `ready` means one thing: this process can do the durable work asked of it. It therefore follows the binding of the
+// Windows lock reclaimer every release here goes through - inherited from the compiled-test bootstrap's `--import`
+// through `fork`'s default `execArgv`, this fixture used to be correct only when its parent had been launched a
+// particular way, and answered `windows_reclaimer_unavailable` from a release instead.
+void (async () => {
+  try {
+    await bindVerifiedWindowsLockReclaimerForTest("semantic-known-game-process-worker");
+  } catch (error) {
+    reply(Object.freeze({ type: "fatal", code: errorCode(error) }));
+    return;
+  }
+  reply(Object.freeze({ type: "ready" }));
+})();
