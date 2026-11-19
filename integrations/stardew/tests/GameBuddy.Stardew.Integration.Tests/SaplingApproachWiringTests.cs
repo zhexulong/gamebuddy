@@ -114,7 +114,7 @@ public sealed class SaplingApproachWiringTests
     }
 
     [Fact]
-    public void ASaplingThatLeftTheSlotDuringTheWalk_IsRefusedOnArrival_AndNothingIsPlanted()
+    public void ASaplingThatLeftThePackDuringTheWalk_IsRefusedOnArrival_AndNothingIsPlanted()
     {
         using var harness = SaplingHarness.Create();
         harness.StandAt(ActorTileX, ActorTileY);
@@ -130,12 +130,53 @@ public sealed class SaplingApproachWiringTests
         LocalExecutionReceipt arrival = harness.RunArrival(manager, "req_sapling_gone");
 
         arrival.State.Should().Be(ExecutionState.Rejected);
-        arrival.ReasonCode.Should().Be("sapling_not_owned_in_slot");
+        arrival.ReasonCode.Should().Be(
+            "sapling_not_owned_in_pack",
+            "the pack holds no acorn at all, which is the refusal a caller can act on - unlike a stale index, which is not");
+        arrival.Evidence.Should().Contain("named_slot=0", "the refusal names the slot the caller asked from, so it reads as " + "the pack's answer rather than as a mystery");
         harness.HasTreeAt(TargetTileX, TargetTileY).Should().BeFalse("the native placement was never reached");
     }
 
+    /// <summary>
+    /// THE REPLAY OF THE MEASURED DEFECT: the pack re-packed itself during the walk, so the slot the plan named now holds
+    /// somebody else's item and the acorn sits one index along.
+    ///
+    /// <para>
+    /// Measured 2026-11-19 (`round77`): 22 of 40 planned plantings were refused <c>seed_not_owned_in_slot</c> for exactly
+    /// this shape - the plan's snapshot named a position, a sibling node consumed or the pack re-ordered, and the body
+    /// read the position as the item. The fix is the pickup's: the executor holds the live pack, so it asks the pack which
+    /// slot holds the item the caller NAMED. This case is the end of that claim - a tree planted, the named slot's own
+    /// occupant untouched, and the receipt naming both slots.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void ADifferentItemInTheSlotDuringTheWalk_IsRefusedOnArrival()
+    public void ASaplingThatMovedDuringTheWalk_IsPlantedFromItsLiveSlot()
+    {
+        using var harness = SaplingHarness.Create();
+        harness.StandAt(ActorTileX, ActorTileY);
+        ExecutionManager manager = harness.CreateManager();
+        string targetId = harness.TargetId();
+
+        manager.RequestLocalPlantSapling("req_sapling_moved", Slot, TargetTileX, TargetTileY, SaplingQualifiedItemId, targetId, harness.DeadlineMs);
+
+        // The named slot 0 now holds a DIFFERENT wild-tree seed - the case an identity check used to refuse - while the
+        // acorn the request names sits at slot 1.
+        harness.ArrangePack(SaplingHarness.WildTreeSeed("(O)310", stack: 1), SaplingHarness.WildTreeSeed(SaplingQualifiedItemId, stack: SaplingsInSlot));
+        harness.StandAt(TargetTileX - 1, TargetTileY);
+
+        LocalExecutionReceipt arrival = harness.RunArrival(manager, "req_sapling_moved");
+
+        arrival.State.Should().Be(ExecutionState.Succeeded, harness.Describe(arrival, manager));
+        arrival.ReasonCode.Should().Be("sapling_planted");
+        arrival.Evidence.Should().Contain("slot=1;named_slot=0", "the receipt names the slot the pack answered and the slot the caller asked from");
+        harness.HasTreeAt(TargetTileX, TargetTileY).Should().BeTrue("the acorn the request named is the thing that was planted");
+        harness.SaplingCount().Should().Be(SaplingsInSlot - 1, "exactly one acorn was spent");
+        harness.ItemInSlot(0).Should().Be("(O)310", "the named slot's own occupant was not the item the request named, so it is untouched");
+        harness.ItemStackInSlot(0).Should().Be(1, "and not even shortened by the planting");
+    }
+
+    [Fact]
+    public void ADifferentSeedInThePackIsNotTheSaplingTheRequestNamed()
     {
         using var harness = SaplingHarness.Create();
         harness.StandAt(ActorTileX, ActorTileY);
@@ -144,14 +185,16 @@ public sealed class SaplingApproachWiringTests
 
         manager.RequestLocalPlantSapling("req_sapling_swapped", Slot, TargetTileX, TargetTileY, SaplingQualifiedItemId, targetId, harness.DeadlineMs);
 
-        // A different wild-tree seed is still a wild-tree seed, so only the identity check can catch it.
+        // A different wild-tree seed is still a wild-tree seed, so this is the case the KIND predicate alone would spend:
+        // the pack holds no acorn at all, and the only honest answer is that the item the request named is not there.
         harness.PutInSlot(SaplingHarness.WildTreeSeed("(O)310", stack: 1));
         harness.StandAt(TargetTileX - 1, TargetTileY);
 
         LocalExecutionReceipt arrival = harness.RunArrival(manager, "req_sapling_swapped");
 
         arrival.State.Should().Be(ExecutionState.Rejected);
-        arrival.ReasonCode.Should().Be("sapling_slot_changed");
+        arrival.ReasonCode.Should().Be("sapling_not_owned_in_pack");
+        arrival.Evidence.Should().Contain($"item={SaplingQualifiedItemId}", "the refusal names the item it looked for");
         harness.HasTreeAt(TargetTileX, TargetTileY).Should().BeFalse();
     }
 
@@ -214,7 +257,7 @@ public sealed class SaplingApproachWiringTests
         string inRange = RefusalOfWorldChangeThatLeftTheSlot(approach: false);
         string onArrival = RefusalOfWorldChangeThatLeftTheSlot(approach: true);
 
-        inRange.Should().Be("sapling_not_owned_in_slot");
+        inRange.Should().Be("sapling_not_owned_in_pack");
         onArrival.Should().Be(inRange, "both routes run the one execution body");
 
         static string RefusalOfWorldChangeThatLeftTheSlot(bool approach)
@@ -482,7 +525,18 @@ public sealed class SaplingApproachWiringTests
         internal string TargetId() =>
             (string)typeof(ExecutionManager)
                 .GetMethod("BuildTreeSaplingTargetId", BindingFlags.NonPublic | BindingFlags.Static)!
-                .Invoke(null, new object[] { this.Farm, Slot, TargetTileX, TargetTileY, SaplingQualifiedItemId })!;
+                .Invoke(null, new object[] { this.Farm, TargetTileX, TargetTileY, SaplingQualifiedItemId })!;
+
+        /// <summary>The pack as an ordered list, so a case can put the sapling where the caller did not name it.</summary>
+        internal void ArrangePack(params Item[] items)
+        {
+            this.Actor.Items.Clear();
+            foreach (Item item in items) this.Actor.Items.Add(item);
+        }
+
+        internal string? ItemInSlot(int slot) => slot >= 0 && slot < this.Actor.Items.Count ? this.Actor.Items[slot]?.QualifiedItemId : null;
+
+        internal int ItemStackInSlot(int slot) => slot >= 0 && slot < this.Actor.Items.Count ? this.Actor.Items[slot]?.Stack ?? 0 : 0;
 
         internal string Describe(LocalExecutionReceipt receipt, ExecutionManager manager)
         {

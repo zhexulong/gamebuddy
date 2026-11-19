@@ -631,15 +631,15 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
-    /// A SEED ROW'S IDENTITY IS (slot, tile, item), and the row's own `do` declares the two the tile does not decide.
+    /// A SEED ROW'S IDENTITY IS (tile, item), and the row's own `do` declares the item beside the tile.
     ///
     /// The family publishes one row per held stack, so no observation carries a row for "a bare tile" - which is exactly
     /// the address a loop over a patch needs. The identity is the one <see cref="ExecutionManager.BuildSeedTargetId"/>
-    /// answers for the row's own slot and tile; whether the pack holds the seed and whether the tile is plantable stay the
-    /// handler's answers.
+    /// answers for the row's own tile and item; whether the pack holds the seed, in which slot, and whether the tile is
+    /// plantable stay the handler's answers.
     /// </summary>
     [Fact]
-    public void ASeedRowCarriesTheIdentityItsFamilyPublishesForItsTileAndSlot()
+    public void ASeedRowCarriesTheIdentityItsFamilyPublishesForItsTileAndItem()
     {
         using var harness = ForEachHarness.Create(enabledActions: new[] { "plant_seed" });
 
@@ -651,10 +651,10 @@ public sealed class ForEachNodeExecutionTests
         harness.Handler.Requests.Select(request => request.Args.ExpectedTargetId).Should().BeEquivalentTo(
             new[]
             {
-                ExecutionManager.BuildSeedTargetId(harness.Farm, 3, 10, 10, "(O)472"),
-                ExecutionManager.BuildSeedTargetId(harness.Farm, 3, 11, 10, "(O)472"),
+                ExecutionManager.BuildSeedTargetId(harness.Farm, 10, 10, "(O)472"),
+                ExecutionManager.BuildSeedTargetId(harness.Farm, 11, 10, "(O)472"),
             },
-            "a seed target is (slot, tile, item), and the slot is the one the row's own `do` declared");
+            "a seed target is (tile, item); the slot rides beside it as an argument the body re-resolves against the live pack");
         harness.Handler.Requests.Should().OnlyContain(
             request => request.Args.Slot == 3 && request.Args.ExpectedQualifiedItemId == "(O)472",
             "the caller's own declared arguments ride along beside the minted identity");

@@ -544,7 +544,7 @@ internal sealed partial class ExecutionManager
                     Vector2 tile = new(x, y);
                     if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
                         continue;
-                    rowsForThisStack.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
+                    rowsForThisStack.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
                 }
             }
             result.AddRange(TargetOrdering.NearestFirstByChebyshev(
@@ -1225,7 +1225,7 @@ internal sealed partial class ExecutionManager
                     bool canPlantThisSeedHere = dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false);
                     if (dirt.crop is not null || !canPlantThisSeedHere)
                         continue;
-                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
+                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
                 }
             }
             result.AddRange(TargetOrdering.NearestFirstByChebyshev(

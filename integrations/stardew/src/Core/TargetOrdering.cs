@@ -19,9 +19,10 @@ public readonly record struct TargetCandidate(int X, int Y, int Slot);
 /// at the front, so the sixteen a script could reach soonest were scattered through a list of sixty-four.
 /// </para>
 /// <para>
-/// Trimming is NOT available here, and that is the constraint that shaped this file: `ExecutePlantSeed` recomputes
-/// `BuildSeedTargetId` from slot and tile and refuses the dispatch on a mismatch, so a row the model was never shown is
-/// a target it can never name. Ordering changes which sixteen are cheapest to use and removes nothing.
+/// Trimming is NOT available here, and that is the constraint that shaped this file: `ExecutePlantSeed` recomputes the
+/// seed row's identity from the tile and the item it is told to spend and refuses the dispatch on a mismatch, so a row
+/// the model was never shown is a target it can never name. Ordering changes which sixteen are cheapest to use and
+/// removes nothing.
 /// </para>
 /// </summary>
 public static class TargetOrdering

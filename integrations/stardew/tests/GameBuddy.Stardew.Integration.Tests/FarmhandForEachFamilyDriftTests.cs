@@ -234,7 +234,7 @@ public sealed class FarmhandForEachFamilyDriftTests
     /// offers a tile the seed can actually be planted on - an answer `HoeDirt.canPlantThisSeedHere` takes from Data/Crops,
     /// which this process never loads, so every candidate tile is refused before a row exists. The MINT is proved at the
     /// dispatch level instead: `ForEachNodeExecutionTests` runs a `plant_seed` loop and asserts each row carries
-    /// <see cref="ExecutionManager.BuildSeedTargetId"/> for its own slot and tile.
+    /// <see cref="ExecutionManager.BuildSeedTargetId"/> for its own tile and item.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> PublisherPublishesNothing = new Dictionary<string, string>(StringComparer.Ordinal)
     {

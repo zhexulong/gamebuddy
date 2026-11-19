@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
@@ -37,8 +36,8 @@ namespace GameBuddy.Stardew;
 /// MEASURED 2026-11-11 (`round44`): a `for_each` over sixty `cut_weeds` rows refused every one as
 /// <c>row_target_identity_unavailable:cut_weeds:weedtargets</c>, because this seam knew the four actions `3d249ff1` covered
 /// and nothing cleared a strip. The population is now the tile occupants a clearing pass walks - weeds, grass, a crop, a
-/// tree, a stump, a resource clump, a ground chunk, forage - plus `seedTargets`, whose row declares the slot and item its
-/// identity names beside the tile. Every OTHER family an action declares is answered by
+/// tree, a stump, a resource clump, a ground chunk, forage - plus `seedTargets`, whose row carries the slot and item its
+/// `do` declared beside the tile. Every OTHER family an action declares is answered by
 /// <see cref="RowIdentityRefusalFor"/> with a reason, so a caller can tell "this form cannot address that family" from
 /// "this tile carries nothing" (<c>row_target_absent</c>).
 /// </para>
@@ -179,11 +178,10 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
     };
 
     /// <summary>
-    /// The seed family's own two row fields, read from the row's `do`: a seed target is (slot, tile, item), and the first
-    /// and third of those are the caller's declaration rather than anything the tile decides.
+    /// The seed family's own row field, read from the row's `do`: a seed target is (tile, item), and the item is the
+    /// caller's declaration rather than anything the tile decides. The slot the row also carries is an argument of the
+    /// dispatch, not part of the identity - `plant_seed` re-resolves it against the live pack.
     /// </summary>
-    private const string SeedSlotArgument = "slot";
-
     private const string SeedItemArgument = "expectedQualifiedItemId";
 
     private readonly GameLocation farm;
@@ -238,16 +236,15 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
                     && feature is HoeDirt { crop: not null } dirt
                         ? ExecutionManager.BuildCropTargetId(this.farm, x, y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value)
                         : null;
-            // A seed target is (slot, tile, item): the family publishes one per held stack, and `plant_seed` recomputes it
-            // from the slot it is told to spend. Whether the pack still holds that seed is the handler's answer
-            // (`seed_not_owned_in_slot`), and whether the tile is plantable is its `seed_target_unavailable`.
+            // A seed target is (tile, item): the family publishes one row per held stack, and the slot it names is the
+            // position that stack happened to sit in when the row was minted - so `plant_seed` re-resolves it against the
+            // live pack by the item rather than trusting it. Whether the pack holds that seed at all is the handler's
+            // answer (`seed_not_owned_in_pack`), and whether the tile is plantable is its `seed_target_unavailable`.
             case SeedTargetsFamily:
                 return declaredArguments is not null
-                    && declaredArguments.TryGetValue(SeedSlotArgument, out string? slotText)
-                    && int.TryParse(slotText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int slot)
                     && declaredArguments.TryGetValue(SeedItemArgument, out string? qualifiedItemId)
                     && !string.IsNullOrWhiteSpace(qualifiedItemId)
-                        ? ExecutionManager.BuildSeedTargetId(this.farm, slot, x, y, qualifiedItemId)
+                        ? ExecutionManager.BuildSeedTargetId(this.farm, x, y, qualifiedItemId)
                         : null;
             // THE OBJECT LAYER. Each of these families mints an id for the object standing on this tile, through the same
             // function its discovery calls, and the predicate below is that discovery's own selection: a weed is the

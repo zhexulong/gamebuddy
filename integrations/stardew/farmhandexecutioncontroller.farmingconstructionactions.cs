@@ -351,10 +351,10 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecutePlantSeed(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(seed.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_slot_changed", $"slot={slot}");
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object seed = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -363,16 +363,16 @@ internal sealed partial class ExecutionManager
             || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
             || dirt.crop is not null
             || !dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false)
-            || !string.Equals(BuildSeedTargetId(location, slot, targetX, targetY, seed.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_target_unavailable", $"target={targetX},{targetY}");
+            || !string.Equals(BuildSeedTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         int previousSlot = Game1.player.CurrentToolIndex;
-        LocalSeedPlantingSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
+        LocalSeedPlantingSpec specification = new(executionId, requestId, location.NameOrUniqueName, liveSlot, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
         bool placementHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             placementHandled = seed.placementAction(location, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
             if (placementHandled)
                 Game1.player.reduceActiveItemByOne();
@@ -390,8 +390,14 @@ internal sealed partial class ExecutionManager
         ExecutionState state = placementHandled && cropCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "seed_planted" : "seed_plant_postcondition_unavailable";
         return this.RememberTerminal(requestId, executionId, state, reasonCode,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
+            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
     }
+
+    /// <summary>The kind `Object.placementAction`'s seed branch plants: a stack in the engine's own seeds category.</summary>
+    private static bool IsPlantableSeed(StardewValley.Object candidate) => candidate.Category == StardewValley.Object.SeedsCategory;
+
+    /// <summary>The kind the wild-tree branch plants: a seed `Data/WildTrees` knows (<see cref="StardewValley.Object.isWildTreeSeed"/>).</summary>
+    private static bool IsWildTreeSeedItem(StardewValley.Object candidate) => StardewValley.Object.isWildTreeSeed(candidate.ItemId);
 
     /// <summary>
     /// Plant exactly one wild-tree sapling item (Acorn/Maple Seed/Pine Cone or
@@ -425,16 +431,15 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecutePlantSapling(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object sapling
-            || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(sapling.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_slot_changed", $"slot={slot}");
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsWildTreeSeedItem) is not { } held)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
+        int liveSlot = held.Slot;
+        StardewValley.Object sapling = held.Item;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
-            || !string.Equals(BuildTreeSaplingTargetId(location, slot, targetX, targetY, sapling.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY}");
+            || !string.Equals(BuildTreeSaplingTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
         if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach", $"target={targetX},{targetY};reach=1;approach=did_not_arrive");
 
@@ -443,7 +448,7 @@ internal sealed partial class ExecutionManager
         bool placementHandled;
         try
         {
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             placementHandled = sapling.placementAction(location, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
             if (placementHandled)
                 Game1.player.reduceActiveItemByOne();
@@ -460,7 +465,7 @@ internal sealed partial class ExecutionManager
         ExecutionState state = placementHandled && treeCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "sapling_planted" : "sapling_plant_postcondition_unavailable";
         string treeType = plantedFeature is StardewValley.TerrainFeatures.Tree pt ? pt.treeType.Value : "none";
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={slot};tree_type={treeType};inventory_before={beforeCount};inventory_after={afterCount};native_placement={placementHandled.ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};tree_type={treeType};inventory_before={beforeCount};inventory_after={afterCount};native_placement={placementHandled.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 

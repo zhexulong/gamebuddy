@@ -85,7 +85,7 @@ public sealed class TileTargetSeamBranchTests
     [Theory]
     [InlineData("water_crop", "crop_target_unavailable")]
     [InlineData("harvest_crop", "harvest_target_unavailable")]
-    [InlineData("plant_seed", "seed_not_owned_in_slot")]
+    [InlineData("plant_seed", "seed_not_owned_in_pack")]
     [InlineData("fertilize_tile", "fertilizer_not_owned_in_slot")]
     [InlineData("bait_crab_pot", "bait_not_owned_in_slot")]
     public void ATargetInReachReachesTheActionsOwnBody(string action, string expectedReasonCode)

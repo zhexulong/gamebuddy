@@ -1868,9 +1868,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"scythe_crop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    /// <summary>
+    /// The one identity a sapling target has: (location, tile, item). The caller's slot is not part of it - see
+    /// <see cref="ResolveLiveSlot"/>: the slot is where the sapling happened to be when the row was minted, and binding a
+    /// position into the identity made a re-resolved sapling look like a moved target.
+    /// </summary>
+    private static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
     {
-        string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"tree_sapling_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -2322,6 +2327,47 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return player.FacingDirection;
     }
 
+    /// <summary>The live pack slot holding the item a request named, and that item.</summary>
+    internal readonly record struct LiveSlot(int Slot, StardewValley.Object Item);
+
+    /// <summary>
+    /// The slot the pack HOLDS <paramref name="qualifiedItemId"/> in, resolved live against the pack, or null when the
+    /// pack holds none of it.
+    ///
+    /// <para>
+    /// WHY A REQUEST'S SLOT IS NOT AN ADDRESS. A plan's node was written from an observation, and that observation named
+    /// an INDEX into <c>Game1.player.Items</c> - a position, not a fact. By the time the body arms, an earlier node of the
+    /// same plan has usually spent part of a stack or emptied it, and the pack has re-packed itself: measured 2026-11-19
+    /// (`round77`), 22 of 40 planned `plant_seed` nodes were refused <c>seed_not_owned_in_slot</c> with the seed one slot
+    /// away or in a stack a sibling had shortened. The index was stale; the seed was still hers.
+    /// </para>
+    /// <para>
+    /// So the item the caller NAMES (<c>expectedQualifiedItemId</c>, plus the kind predicate the action owns) is the
+    /// identity, and this is where it is turned into the slot the game will read. The caller's index remains an
+    /// argument, and the receipt prints it beside the live one (<c>slot=</c> and <c>named_slot=</c>) so a caller can see
+    /// the re-resolution instead of inferring it. What keeps that safe is the same fact that keeps a pickup's
+    /// re-resolved tile safe: the executor holds the live container, and the identity it acts on is the caller's own
+    /// name for the thing, not an index into a snapshot.
+    /// </para>
+    /// <para>
+    /// A stale index and a missing item are therefore two different answers: this returns null only when the pack holds
+    /// no such item at all, which is the refusal a caller can act on. Nothing here searches by KIND alone - the caller's
+    /// qualified id is required - so a request can never spend a different item than the one it named.
+    /// </para>
+    /// </summary>
+    internal static LiveSlot? ResolveLiveSlot(Farmer player, string qualifiedItemId, Func<StardewValley.Object, bool> isKind)
+    {
+        for (int index = 0; index < player.Items.Count; index++)
+        {
+            if (player.Items[index] is StardewValley.Object candidate
+                && candidate.Stack > 0
+                && string.Equals(candidate.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)
+                && isKind(candidate))
+                return new LiveSlot(index, candidate);
+        }
+        return null;
+    }
+
     private static int CountQualifiedItem(Farmer player, string qualifiedItemId) => player.Items.OfType<StardewValley.Object>()
         .Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
         .Sum(item => item.Stack);
@@ -2405,15 +2451,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// The one identity a seed target has: (location, slot, tile, item).
+    /// The one identity a seed target has: (location, tile, item).
     ///
     /// `internal` because a `for_each` row mints it too: a loop's rows are read live, so the row's `expectedTargetId` is
     /// this function's answer for that tile rather than an id the caller copied out of an observation. `plant_seed`
-    /// recomputes it from the same four values before it acts, so the two cannot disagree.
+    /// recomputes it from the same three values before it acts, so the two cannot disagree.
+    ///
+    /// THE SLOT IS NOT PART OF IT. A seed target used to be (location, slot, tile, item), which bound a POSITION into an
+    /// identity - the one thing a re-resolving executor cannot keep true, and the pickup's tile had the same problem
+    /// until `place_owned_object` stopped naming a tile in an id the game decides on the thread. The caller's slot is
+    /// still an argument and is still carried on the row; what it stops being is a second spelling of "which seed",
+    /// which <c>expectedQualifiedItemId</c> already answers.
     /// </summary>
-    internal static string BuildSeedTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    internal static string BuildSeedTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
     {
-        string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"seed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
