@@ -4868,7 +4868,25 @@
     .app-bar-companion {
       gap: var(--space-1);
     }
+  }
 
+  /* The status words retire where the NAME stops fitting beside them, which is the bar's own
+   width and not the phone boundary above.
+
+   Measured on this sheet with a 127 px companion name:
+
+     bar 481  name given 40   (87 px cut off)
+     bar 560  name given 119  (8 px cut off)
+     bar 640  name given 199  (whole)
+
+   The 500 px dock in the owner's own report ("GameBuddy floats beside Stardew Valley in a
+   400-500 px strip") is in that range, and the name is the one thing this ladder exists to keep
+   whole. `173bf747` added the game's own word to the same budget - a second badge, with
+   `app-bar-game-status-label` - and left the number where a single badge had measured it, so
+   between 481 and about 568 the bar kept three facts in a strip that fits two and a name.
+   576 px is the first step above that crossover, so both words are retired together as soon as
+   the bar cannot hold them, exactly as they already are below 480. */
+  @container (max-width: 576px) {
     .app-bar-status-label,
     .app-bar-game-status-label {
       display: none;
@@ -6101,9 +6119,14 @@
    reports none.
 
    Appended block; the rules above are untouched.
+
+   The width is the same one the status words retire at ("The app bar in a mini-window strip",
+   above): a badge with its word gone must not stay in the bar as a dot - that is the floating dot
+   U-02 retired - and it must stop being a dot in the bar at exactly the width where the word goes
+   and the name is what the space is being spent on.
    ========================================================================== */
 
-  @container (max-width: 480px) {
+  @container (max-width: 576px) {
     .app-bar-companion {
       position: relative;
     }

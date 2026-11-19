@@ -15,7 +15,7 @@
  * difference to the name, which is the one item that can be shortened without losing a fact. The bar's
  * actions are then `flex: 0 1 auto` at the end of a bar that is not overfull, so their x is a function of
  * the bar's width and nothing else. At 400x800 both badges are `position: absolute` dots on the
- * monogram's two corners with both labels retired (`@container (max-width: 480px)`), so at that cell the
+ * monogram's two corners with both labels retired (`@container (max-width: 576px)`), so at that cell the
  * word cannot reach a sibling by construction.
  *
  * WHAT IS ASSERTED, per locale and per cell of the layout pair:
@@ -277,10 +277,10 @@ test("the game's status word never moves a bar control", async ({ page }) => {
             `${where}: "${name}" moved between game readings — x=${xs.join(", ")} (readings: ${readings.join(", ")})`,
           ).toBe(0);
         }
-        // The reading is about a word that really changes width. Above the 480px container fold both
+        // The reading is about a word that really changes width. Above the 576px container fold both
         // labels are drawn, so the four readings are not one width; the phone cell retires them on
-        // purpose (`@container (max-width: 480px)`) and its badge is a dot whose tone is the whole claim.
-        if (cell.width > 480) {
+        // purpose (`@container (max-width: 576px)`) and its badge is a dot whose tone is the whole claim.
+        if (cell.width > 576) {
           expect(
             spread(badgeWidths),
             `${where}: the four catalogue readings are one width (${badgeWidths.join(", ")}), so this cell proves nothing about a word changing width`,
