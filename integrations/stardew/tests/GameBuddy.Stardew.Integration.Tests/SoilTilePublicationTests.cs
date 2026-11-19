@@ -153,12 +153,12 @@ public sealed class SoilTilePublicationTests
     /// <summary>
     /// THE ROUND80 BLOCK, read twice: ten columns by three rows around the actor, bare and then worked.
     ///
-    /// Measured on that run (eighteen minutes, one live process, day 6): fifty-four <c>soil_already_tilled</c> refusals,
-    /// twenty of them one programme walking a single 3x10 block tile by tile while seven other tiles of the same block
-    /// tilled. The question that leaves is whether the published family called that ground tillable, because if it did
-    /// the refusal is the projection's fault. It does not: the same block answers thirty rows that need work while it is
-    /// bare and NONE once every tile carries a <c>HoeDirt</c> - with all thirty rows still published and every one of
-    /// them saying so. <c>IsTillableTile</c> is the action's own admission, so the count is read from the predicate the
+    /// Measured on that run's runner log (one live process, day 6): twenty-seven <c>soil_already_tilled</c> receipts,
+    /// twenty-one of them one programme (<c>plan_258_049edd2fe50d8886</c>) walking a single 3x10 block tile by tile
+    /// while seven other tiles of the same block tilled. The question that leaves is whether the published family
+    /// called that ground tillable, because if it did the refusal is the projection's fault. It does not: the same
+    /// block answers thirty rows that need work while it is bare and NONE once every tile carries a <c>HoeDirt</c> -
+    /// with all thirty rows still published and every one of them saying so. <c>IsTillableTile</c> is the action's own admission, so the count is read from the predicate the
     /// refusal is minted from rather than from the flag beside it, and both readings come from this one run.
     /// </summary>
     [Fact]
