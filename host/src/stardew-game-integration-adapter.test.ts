@@ -273,6 +273,65 @@ test("move_to_tile completion evidence accepts exact native arrival after :0.## 
   }
 });
 
+/**
+ * `move_to_tile` answers TWO arrivals, and both are bounded by the native interaction radius.
+ *
+ * The action's own postcondition is "the body can act on the tile that was asked for"
+ * (`farmhandexecutioncontroller.movementactions.cs:103-137`), not "the body stands on it": the substituted
+ * approach, the stand-aside for a character on the named tile and the landing beside a warp tile are all honest
+ * answers to that request. Each is admitted only where the receipt's own tiles prove the body is still within the
+ * radius the engine gates the NEXT action at - Chebyshev 1 (`Utility.tileWithinRadiusOfPlayer`, Utility.cs:4100-4109)
+ * - so "next to" is a measurement here and not a word.
+ */
+test("move_to_tile completion evidence reads both arrivals, bounded by the native interaction radius", () => {
+  const arrival = (detail: string) =>
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("move_to_tile", {
+      state: "succeeded",
+      reasonCode: "target_reached",
+      evidence: { detail },
+    });
+
+  for (const produced of [
+    // `DescribeMoveArrival` (movementactions.cs:56-61): the body is on the requested tile, then beside it, then
+    // diagonally beside it - all three are within the radius the next action refuses outside of.
+    "reached=requested;requested=4,18;actor=4,18;within_range_of_request=true",
+    "reached=adjacent;requested=4,18;actor=4,19;within_range_of_request=true",
+    "reached=adjacent;requested=4,18;actor=5,19;within_range_of_request=true",
+    // round77's day 2, verbatim: seven dispatches of this shape, and `stood_aside_for` is the optional clause the
+    // stand-aside case appends (RefusalLayer.Format).
+    "reached=adjacent;requested=3,12;actor=3,11;within_range_of_request=true",
+    "reached=adjacent;requested=3,12;actor=3,11;within_range_of_request=true;stood_aside_for=character:npc@3,12",
+    // The walk's own arrival beside a warp tile (round66's fact log, `tile=12,8;target=11,8`): the named tile warps
+    // the body away, so the walk settles one tile short and names it.
+    "tile=12,8;target=11,8;arrival=warp_adjacent;path=stardew_native",
+    // A staged step names the request it did not reach, and that request is still within reach (RUNBOOK §38.2).
+    "tile=62,15;target=62,15;arrival=exact;path=stardew_native;staged_approach=true;requested=63,14",
+    "tile=12,8;target=11,8;arrival=warp_adjacent;path=stardew_native;staged_approach=true;requested=12,9",
+  ])
+    assert.equal(arrival(produced), true, produced);
+
+  for (const malformed of [
+    // Outside the radius the next action would refuse at, and the receipt's own boolean disagreeing with its tiles.
+    "reached=adjacent;requested=4,18;actor=4,20;within_range_of_request=true",
+    "reached=adjacent;requested=4,18;actor=4,19;within_range_of_request=false",
+    "reached=requested;requested=4,18;actor=4,19;within_range_of_request=true",
+    "reached=requested;requested=4,18;actor=4,18;within_range_of_request=false",
+    "reached=adjacent;requested=4,18;actor=4,18;within_range_of_request=true",
+    "reached=beside;requested=4,18;actor=4,19;within_range_of_request=true",
+    "reached=adjacent;requested=4,18;actor=4,19",
+    "reached=adjacent;requested=4.5,18;actor=4,19;within_range_of_request=true",
+    "reached=adjacent;requested=4,18;actor=4,19;within_range_of_request=true;extra=value",
+    // `warp_adjacent` REQUIRES the adjacency: on the target tile the walk would have said `exact`.
+    "tile=11,8;target=11,8;arrival=warp_adjacent;path=stardew_native",
+    "tile=13,8;target=11,8;arrival=warp_adjacent;path=stardew_native",
+    "tile=12,8;target=11,8;arrival=warp_adjacent;path=stardew_native;staged_approach=false;requested=11,8",
+    "tile=12,8;target=11,8;arrival=warp_adjacent;path=stardew_native;staged_approach=true",
+    // A staged step whose walked tile is NOT within reach of the request it names is not an answer to it.
+    "tile=62,15;target=62,15;arrival=exact;path=stardew_native;staged_approach=true;requested=70,15",
+  ])
+    assert.equal(arrival(malformed), false, malformed);
+});
+
 test("till_soil completion evidence requires exact location, coordinates, and soil transition", () => {
   const valid =
     "location=Farm;target=37,18;before=none;after=HoeDirt;charge_requested=0;charge_applied=0;window=32,13:42,23;tiles_changed=1;changed=37:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none";

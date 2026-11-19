@@ -1,0 +1,253 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  hasStardewCompletionEvidence,
+  STARDEW_COMPLETION_CONTRACTS,
+  STARDEW_SETTLEMENT_ENVELOPE_FIELDS,
+} from "./stardew-completion-contracts.js";
+
+/**
+ * `a_completion_contract_names_what_the_action_answers:<action>` - does each row read a receipt its action's
+ * producers actually mint?
+ *
+ * WHY. `host/src/stardew-live-receipt-parity.test.ts` asks this of the recorded corpus, receipt by receipt, and it
+ * passed while `move_to_tile` answered nothing for a whole day of walking: the corpus holds ONE move receipt (an
+ * `arrival=exact` walk) and no substituted arrival, so the corpus comparison had nothing to say about the shape
+ * round77 produced seven times. A receipt-level comparison can only see the shapes it was given; the question that
+ * catches the class is asked per ACTION - "what does this action answer, and does the row read every answer it has
+ * been seen to give?" - and an action nobody recorded an answer for is a hole in the corpus, which is a different
+ * statement from a contract that reads its action correctly.
+ *
+ * POPULATION. The rows themselves - `Object.keys(STARDEW_COMPLETION_CONTRACTS)`, imported rather than parsed, so a
+ * row added tomorrow is examined without touching this file. The WITNESSES are the two places real receipts live in
+ * this tree: the recorded corpus (`host/src/test-fixtures/stardew-live-receipts.json`, produced from run artifacts by
+ * `tools/record-stardew-live-receipts.mjs`) and round77's second day, declared below with the timeline index of each
+ * receipt so a reader can open the fact log it came from.
+ *
+ * PROPERTY, in three parts:
+ *
+ *   1. every recorded success the action's own declaration calls its postcondition is READ by its row. A shape that
+ *      is refused while another shape is read is `contract_shape_not_read:<action>:<reasonCode>` and names the keys
+ *      the accepted shapes carry that the refused one lacks - which is the row's requirement, in its own words;
+ *   2. an action with recorded shapes and none of them read is `contract_unsatisfiable:<action>`: the row demands a
+ *      postcondition no producer minted, so nothing the action has ever answered can complete it;
+ *   3. a recorded success this tree declares a NO-OP is REFUSED - `no_op_claimed_a_completion:<action>:<reasonCode>`.
+ *      A no-op is a success whose terminal names that there was nothing to do (`nothing_to_dismiss` / `modal=none`),
+ *      so reading it as the action's postcondition would report a change the world did not make.
+ *
+ * WHAT IT DOES NOT READ, stated rather than implied: an action with no recorded success at all is counted
+ * `unwitnessed` and printed. It is not green - nothing here says the row is right - and it is not a failure of the
+ * row either; closing it means recording a real run, not writing a fixture by hand.
+ *
+ * PRINT. `contracts examined C · mintable M · unsatisfiable U · unwitnessed W`, then one line per finding. An empty
+ * population is refused: a floor over no rows agrees with itself.
+ *
+ * red-proof: history  with the rule as it stood before this file (a required `tile`/`target`/`arrival`/`path` shape
+ *                   and `arrival=exact`), the same run prints
+ *                   `contract_shape_not_read:move_to_tile:target_reached missing [tile,target,arrival,path]` for the
+ *                   seven `reached=adjacent` successes and
+ *                   `no_op_claimed_a_completion:dismiss_modal:nothing_to_dismiss` is absent because that row already
+ *                   refused it - the pair is why both halves are asserted here: one row was too narrow, and the other
+ *                   was right for a reason nobody had written down
+ *                   (host/src/stardew-completion-contract-mintability.test.ts)
+ */
+
+type MintedShape = Readonly<{
+  actionId: string;
+  reasonCode: string;
+  /** The receipt's evidence in the wire's own `key=value;` spelling. */
+  detail: string;
+  /** Where the receipt came from, so a reader can open it. */
+  from: string;
+  /**
+   * What this tree declares the terminal to be: `completion` when the action's own descriptor says it is the
+   * postcondition, `no-op` when the terminal says there was nothing to do.
+   */
+  answers: "completion" | "no-op";
+}>;
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** The detail string the Mod emits: `key=value` joined by `;`, in the order it wrote them. */
+function wireDetail(evidence: Readonly<Record<string, string>>): string {
+  return Object.entries(evidence)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(";");
+}
+
+/**
+ * The recorded corpus, read the way `stardew-live-receipt-parity.test.ts` reads it: the producer's own output, with
+ * the run that produced it. Every entry in it is a success the Host already calls a postcondition (that file asserts
+ * exactly that), which is why they are witnesses of `completion` and not of `no-op`.
+ */
+function recordedCorpus(): MintedShape[] {
+  const corpus = JSON.parse(
+    readFileSync(join(ROOT, "host", "src", "test-fixtures", "stardew-live-receipts.json"), "utf8"),
+  ) as {
+    receipts: Array<{
+      fromRun: string;
+      actionId: string;
+      state: string;
+      reasonCode: string;
+      evidence: Record<string, string>;
+    }>;
+  };
+  return corpus.receipts
+    .filter((entry) => entry.state === "succeeded")
+    .map((entry) => ({
+      actionId: entry.actionId,
+      reasonCode: entry.reasonCode,
+      detail: wireDetail(entry.evidence),
+      from: `recorded corpus, run ${entry.fromRun}`,
+      answers: "completion",
+    }));
+}
+
+/**
+ * ROUND77'S SECOND DAY, receipt for receipt.
+ *
+ * `2026-11-19T04-46-54-502Z-multiday_routine`'s day 2 is the timeline slice `[275, 469)` - the indices the runner
+ * recorded for it. Seven `move_to_tile` successes carried the substituted arrival and one `dismiss_modal` answered
+ * that there was nothing to dismiss; the corpus above holds neither, and both were read as nothing at all.
+ *
+ * The duplicated details are kept, with their own indices, because they are separate dispatches: a reading that
+ * de-duplicated them would report six substituted arrivals where the run made seven.
+ */
+const ROUND77_DAY_TWO: readonly MintedShape[] = [
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=14,40;actor=14,39;within_range_of_request=true", 306],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=80,16;actor=79,16;within_range_of_request=true", 310],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=15,41;actor=15,40;within_range_of_request=true", 321],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=14,40;actor=14,39;within_range_of_request=true", 330],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=3,12;actor=3,11;within_range_of_request=true", 453],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=63,14;actor=64,15;within_range_of_request=true", 459],
+  ["move_to_tile", "target_reached", "reached=adjacent;requested=64,14;actor=64,15;within_range_of_request=true", 460],
+  ["dismiss_modal", "nothing_to_dismiss", "modal=none", 302],
+].map(([actionId, reasonCode, detail, index]) => ({
+  actionId: actionId as string,
+  reasonCode: reasonCode as string,
+  detail: detail as string,
+  from: `2026-11-19T04-46-54-502Z-multiday_routine timeline index ${String(index)}`,
+  answers: actionId === "dismiss_modal" ? ("no-op" as const) : ("completion" as const),
+}));
+
+/** Whether the Host's row for this action calls this receipt a completion. */
+function reads(row: string, shape: MintedShape): boolean {
+  return hasStardewCompletionEvidence(row, {
+    state: "succeeded",
+    reasonCode: shape.reasonCode,
+    evidence: { detail: shape.detail },
+  });
+}
+
+/**
+ * The evidence keys a ROW sees, in the order the receipt wrote them: the settlement envelope
+ * (`STARDEW_SETTLEMENT_ENVELOPE_FIELDS`) is removed before a row runs, so counting it here would name a requirement no
+ * row makes.
+ */
+function evidenceKeys(detail: string): string[] {
+  return detail
+    .split(";")
+    .map((clause) => clause.slice(0, Math.max(clause.indexOf("="), 0)))
+    .filter((key) => key.length > 0 && !Object.hasOwn(STARDEW_SETTLEMENT_ENVELOPE_FIELDS, key));
+}
+
+test("a_completion_contract_names_what_the_action_answers:<action>", () => {
+  const rows = Object.keys(STARDEW_COMPLETION_CONTRACTS);
+  const witnesses = [...recordedCorpus(), ...ROUND77_DAY_TWO].sort((left, right) =>
+    left.actionId.localeCompare(right.actionId),
+  );
+
+  const findings: string[] = [];
+  let mintable = 0;
+  let unsatisfiable = 0;
+  let unwitnessed = 0;
+
+  for (const actionId of rows) {
+    const shapes = witnesses.filter((shape) => shape.actionId === actionId);
+    const completions = shapes.filter((shape) => shape.answers === "completion");
+    for (const shape of shapes.filter((candidate) => candidate.answers === "no-op")) {
+      if (reads(actionId, shape))
+        findings.push(
+          `no_op_claimed_a_completion:${actionId}:${shape.reasonCode} (${shape.detail}; ${shape.from}) - a terminal that says there was nothing to do is not the action's postcondition`,
+        );
+    }
+    if (completions.length === 0) {
+      unwitnessed += 1;
+      continue;
+    }
+    const read = completions.filter((shape) => reads(actionId, shape));
+    const refused = completions.filter((shape) => !reads(actionId, shape));
+    if (read.length === 0) {
+      unsatisfiable += 1;
+      findings.push(
+        `contract_unsatisfiable:${actionId}: no recorded success is read, so the row demands a postcondition no producer minted: ${refused
+          .map((shape) => `${shape.reasonCode} [${evidenceKeys(shape.detail).join(",")}] (${shape.from})`)
+          .join("; ")}`,
+      );
+      continue;
+    }
+    mintable += 1;
+    // The requirement the row actually states is what its ACCEPTED shapes carry: a refused shape lacking one of
+    // those keys is the row asking for a fact this receipt does not publish, and the key is named rather than
+    // counted.
+    const acceptedKeys = new Set(read.flatMap((shape) => evidenceKeys(shape.detail)));
+    for (const shape of refused) {
+      const carried = new Set(evidenceKeys(shape.detail));
+      const missing = [...acceptedKeys].filter((key) => !carried.has(key));
+      findings.push(
+        `contract_shape_not_read:${actionId}:${shape.reasonCode} carrying [${[...carried].join(",")}] misses [${missing.join(",")}] (${shape.from}) - the row reads another of this action's successes and not this one`,
+      );
+    }
+  }
+
+  for (const shape of witnesses) {
+    if (!rows.includes(shape.actionId))
+      findings.push(`contract_missing_row:${shape.actionId}:${shape.reasonCode} (${shape.from})`);
+  }
+
+  console.log(
+    `contracts examined ${String(rows.length)} · mintable ${String(mintable)} · unsatisfiable ${String(unsatisfiable)} · unwitnessed ${String(unwitnessed)}`,
+  );
+  assert.ok(rows.length > 0, "an empty contract table reads nothing and would report every action as unwitnessed");
+  assert.ok(
+    witnesses.length > 0,
+    "no recorded success at all: the corpus or the run this file reads has gone, and the verdict is not measured",
+  );
+  assert.deepEqual(findings, [], "an action whose real success its own contract cannot read proves nothing");
+});
+
+/**
+ * THE OTHER HALF OF THE SAME QUESTION, for the two shapes a row must REFUSE, held here so a later lane cannot
+ * widen the row into them while this file stays silent.
+ *
+ * `modal=none` is not a dismissal: `farmhandexecutioncontroller.modalactions.cs:84` answers a dismiss that finds no
+ * modal with `nothing_to_dismiss`, and the action's own descriptor declares `modal_dismissed` beside `WRITES_EFFECT`
+ * (`action-registry.ts`, MOD_DESCRIPTOR_REQUIREMENTS). The terminal therefore keeps its own name - "no modal was up"
+ * - and this asserts the row does not read it as the postcondition, in the shape the run actually produced.
+ */
+test("dismiss_modal: a dismissal that found nothing is not the dismissal", () => {
+  assert.equal(
+    hasStardewCompletionEvidence("dismiss_modal", {
+      state: "succeeded",
+      reasonCode: "nothing_to_dismiss",
+      evidence: { detail: "modal=none" },
+    }),
+    false,
+    "no close ran, so `modal_dismissed` is not what this receipt states",
+  );
+  assert.equal(
+    hasStardewCompletionEvidence("dismiss_modal", {
+      state: "succeeded",
+      reasonCode: "nothing_to_dismiss",
+      evidence: {
+        detail: "modal_type=DialogueBox;dismissed=true;cleared_modal=DialogueBox;close_effect=native_dialogue_close",
+      },
+    }),
+    false,
+    "the terminal names a no-op whatever shape it carries, so a dismissal-shaped body under it is still not read",
+  );
+});

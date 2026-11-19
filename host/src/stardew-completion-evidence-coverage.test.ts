@@ -113,6 +113,19 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     reasonCode: "actor_facing_matches",
     fields: [["direction", "up"]],
   },
+  // The substituted arrival (`DescribeMoveArrival`, farmhandexecutioncontroller.movementactions.cs:56-61): the tile
+  // the caller named held the thing it wanted to touch, so the body walked to a standable neighbour inside the
+  // native interaction radius and the receipt names all three facts. Seven of these in one day of round77 read as
+  // nothing until the row learned the shape, which is why the fixture is the ADJACENT form and not the walk's own.
+  move_to_tile: {
+    reasonCode: "target_reached",
+    fields: [
+      ["reached", "adjacent"],
+      ["requested", "3,12"],
+      ["actor", "3,11"],
+      ["within_range_of_request", "true"],
+    ],
+  },
   interact_npc_with_item: {
     reasonCode: "gift_given",
     fields: [

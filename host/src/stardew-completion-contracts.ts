@@ -555,18 +555,128 @@ function hasNavigationCompletionEvidence(detail: string): boolean {
   );
 }
 
+/**
+ * The radius a move's postcondition is written in: the engine's own native interaction radius.
+ *
+ * <para>
+ * `NativeInteractionRadius` is 1 (`farmhandexecutioncontroller.movementactions.cs:22`) because that is where the
+ * engine gates the ordinary action path (`Game1.checkAction`, `Game1.cs:11509`, `tileWithinRadiusOfPlayer`), so a
+ * body one tile away CAN act on the named tile and a body two tiles away cannot - which is the difference this
+ * action's postcondition is about.
+ * </para>
+ */
+const NATIVE_INTERACTION_RADIUS = 1;
+
+/** The engine's own reach test (`Utility.tileWithinRadiusOfPlayer`, Utility.cs:4100-4109): Chebyshev over int tiles. */
+function tileWithinNativeReach(left: readonly [number, number], right: readonly [number, number]): boolean {
+  return (
+    Math.abs(left[0] - right[0]) <= NATIVE_INTERACTION_RADIUS &&
+    Math.abs(left[1] - right[1]) <= NATIVE_INTERACTION_RADIUS
+  );
+}
+
+/** The walk's own adjacency (`StardewBodyController.IsArrivalDelta`): exactly one tile on the larger axis. */
+function isChebyshevAdjacentTile(left: readonly [number, number], right: readonly [number, number]): boolean {
+  return Math.max(Math.abs(left[0] - right[0]), Math.abs(left[1] - right[1])) === NATIVE_INTERACTION_RADIUS;
+}
+
+/**
+ * `move_to_tile`'s completion: the body can ACT on the tile the caller named.
+ *
+ * <para>
+ * THAT IS THE ACTION'S OWN DECLARED POSTCONDITION, and it is not "the actor stands on that exact tile".
+ * `farmhandexecutioncontroller.movementactions.cs:103-137` substitutes a walkable neighbour for a tile the caller
+ * meant to touch (a tree, a rock, a chest) and states the postcondition in its own words - "The postcondition of a
+ * move is to be able to act on that tile, so the honest walk is the tile beside them" - refusing the substitution
+ * with `approach_out_of_reach` the moment the neighbour it chose is outside the native interaction radius. The
+ * descriptor names `native_action_postcondition` and the agent-facing contract says the same thing
+ * (`game-tools.ts`: "A tile that holds an object ... is approached from a standable neighbouring tile: the receipt
+ * then reports target_reached ... and names the requested tile").
+ * </para>
+ * <para>
+ * SO THE RULE READS BOTH ARRIVALS THE MOD MINTS, because the action answers both: the walk's own arrival
+ * (`hasWalkArrivalCompletionEvidence`) and the answer a request that was ALREADY satisfied or substituted gets at
+ * once (`hasRequestArrivalCompletionEvidence`). Measured round77
+ * (`.live-runs/game-ladder/2026-11-19T04-46-54-502Z-multiday_routine`): seven of that run's thirteen
+ * `reached=adjacent` successes fell in its second day, and a rule that required `arrival=exact` plus the walk's key
+ * set read none of them, so a day of walking that worked proved nothing.
+ * </para>
+ */
 function hasMoveToTileCompletionEvidence(detail: string): boolean {
-  return declaredCompletionEvidence(detail, ["tile", "target", "arrival", "path"], (e) => {
-    const target = parseCanonicalIntegralTile(e.target);
-    const tile = parseFormatTile(e.tile);
-    return (
-      target !== null &&
-      tile !== null &&
-      canBeSerializedExactArrival(tile, target) &&
-      e.arrival === "exact" &&
-      e.path === "stardew_native"
-    );
-  });
+  return hasWalkArrivalCompletionEvidence(detail) || hasRequestArrivalCompletionEvidence(detail);
+}
+
+/**
+ * The WALK's own arrival (`StardewBodyController.cs:1097,1134`, which composes `FormatTile` and
+ * `FormatStagedMarker`):
+ *   tile=<reached>;target=<walked>;arrival=exact|warp_adjacent;path=stardew_native[;staged_approach=true;requested=<asked>]
+ *
+ * `arrival=exact` is the walk's own `Vector2.DistanceSquared(currentTile, target) <= 0.04`. `arrival=warp_adjacent`
+ * is the one other arrival it accepts, and it is ADJACENT by construction: `AllowAdjacentArrival` is set for a
+ * target tile that carries a native warp (`movementactions.cs:100-101`) and the walk then settles on a
+ * Chebyshev-neighbour of it, so a receipt that printed the value while standing anywhere else would be claiming an
+ * arrival no producer makes.
+ *
+ * A STAGED STEP IS NOT THE REQUESTED TILE, and the receipt says so itself (`fixtures/stardew/RUNBOOK.md` §38.2):
+ * whenever the walk heads for a goal it will not reach in one step it appends `staged_approach=true;requested=<asked>`,
+ * and that requested tile is kept inside the same native reach the action's postcondition is written in - the same
+ * bound the handler refuses `target_out_of_reach` at.
+ */
+function hasWalkArrivalCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(
+    detail,
+    ["tile", "target", "arrival", "path"],
+    (e) => {
+      if (e.path !== "stardew_native") return false;
+      if (e.staged_approach === "true") {
+        const requested = parseCanonicalIntegralTile(e.requested);
+        const reached = parseCanonicalIntegralTile(e.tile);
+        if (requested === null || reached === null || !tileWithinNativeReach(reached, requested)) return false;
+      } else if (e.staged_approach !== undefined) return false;
+      if (e.arrival === "exact") {
+        const target = parseFormatTile(e.target);
+        const tile = parseFormatTile(e.tile);
+        return target !== null && tile !== null && canBeSerializedExactArrival(tile, target);
+      }
+      if (e.arrival !== "warp_adjacent") return false;
+      const target = parseCanonicalIntegralTile(e.target);
+      const tile = parseCanonicalIntegralTile(e.tile);
+      return target !== null && tile !== null && isChebyshevAdjacentTile(tile, target);
+    },
+    ["staged_approach", "requested"],
+  );
+}
+
+/**
+ * The arrival the request ALREADY HAD when it was admitted (`DescribeMoveArrival`,
+ * `farmhandexecutioncontroller.movementactions.cs:56-61,:167-173`):
+ *   reached=requested|adjacent;requested=<asked>;actor=<where the body stands>;within_range_of_request=<bool>
+ *     [;stood_aside_for=<layer>:<detail>]
+ *
+ * `reached=requested` is the only spelling that claims the requested tile, so it must BE that tile.
+ * `reached=adjacent` is the substituted approach - or the body that stood aside for a character standing on the
+ * named tile - and it is admitted only inside the native interaction radius. The receipt publishes the two tiles AND
+ * the engine's own answer, and those are ONE fact: `IsWithinRangeOfRequest` asks
+ * `Utility.tileWithinRadiusOfPlayer(requested, 1, actor)`, which is Chebyshev over integer tiles. The rule therefore
+ * reads the published tile pair and requires the boolean to agree with it, so a receipt whose two spellings disagree
+ * is refused instead of believed.
+ */
+function hasRequestArrivalCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(
+    detail,
+    ["reached", "requested", "actor", "within_range_of_request"],
+    (e) => {
+      const requested = parseCanonicalIntegralTile(e.requested);
+      const actor = parseCanonicalIntegralTile(e.actor);
+      if (requested === null || actor === null) return false;
+      if (e.within_range_of_request !== "true") return false;
+      if (!tileWithinNativeReach(actor, requested)) return false;
+      const onTheRequestedTile = actor[0] === requested[0] && actor[1] === requested[1];
+      if (e.reached === "requested") return onTheRequestedTile;
+      return e.reached === "adjacent" && !onTheRequestedTile;
+    },
+    ["stood_aside_for"],
+  );
 }
 
 /**
@@ -2968,6 +3078,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     );
   },
   move_to_tile: (claim) => {
+    // One terminal, two arrivals: see `hasMoveToTileCompletionEvidence` for the two shapes the Mod mints and the
+    // radius both of them are bounded by.
     return claim.reasonCode === "target_reached" && hasMoveToTileCompletionEvidence(claim.detail);
   },
   travel: (claim) => {
@@ -3559,6 +3671,16 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // that reads `dismissed` as the answer to its request must see the false. Without this arm the latch's two
     // terminals were readable on only one side, so a receipt-backed re-ask (the recovery path for a dismiss whose
     // response timed out) landed as a succeeded receipt with zero typed transitions.
+    //
+    // AND THE SUCCESS THIS ROW REFUSES BY NAME. A dismiss that finds no modal answers
+    // `nothing_to_dismiss` / `modal=none` (`farmhandexecutioncontroller.modalactions.cs:84`). No close ran, nothing
+    // was cleared, and half of this action's own declared postcondition is absent - the descriptor declares
+    // `mintsPostcondition("modal_dismissed")` beside `WRITES_EFFECT` (`action-registry.ts`, MOD_DESCRIPTOR_REQUIREMENTS),
+    // and a no-op writes no effect. So the outcome keeps its own name (`nothing_to_dismiss`, "no modal was up") and
+    // is never read as the dismissal; the world fact a caller needs there is the observation, not a completion.
+    // `a_completion_contract_names_what_the_action_answers` (host/src/stardew-completion-contract-mintability.test.ts)
+    // records it as the declared no-op it is, so this refusal is a decision a later lane can read rather than a shape
+    // nobody thought about.
     return (
       (claim.reasonCode === "modal_dismissed" &&
         declaredCompletionEvidence(
