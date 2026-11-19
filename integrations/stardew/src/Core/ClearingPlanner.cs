@@ -10,6 +10,22 @@ namespace GameBuddy.Stardew.Core;
 public sealed record ClearingPlan(bool Reachable, IReadOnlyList<(int X, int Y)> Clear, int Cost)
 {
     public static readonly ClearingPlan Unreachable = new(false, Array.Empty<(int X, int Y)>(), 0);
+
+    /// <summary>
+    /// The search stopped at <see cref="ClearingPlanner.ExpansionBudget"/> before it could decide, so the
+    /// `Reachable == false` beside this field means "too expensive to plan" and NOT "no route exists".
+    ///
+    /// <para>
+    /// Without it the two answers are one word, and the word is the wrong one: a weedy field past the budget
+    /// was reported to the caller as `unreachable`, which every reader of that field treats as a wall - the
+    /// price list was withheld from exactly the targets the budget exists for. Only ever set beside
+    /// `Reachable == false`: a route that was FOUND is a route, however much of the field went unexplored.
+    /// </para>
+    /// </summary>
+    public bool BudgetExhausted { get; init; }
+
+    /// <summary>The named refusal: this clearing is too expensive to plan, not impossible.</summary>
+    public static ClearingPlan TooExpensiveToPlan => Unreachable with { BudgetExhausted = true };
 }
 
 /// <summary>
@@ -36,7 +52,7 @@ public static class ClearingPlanner
 
     /// <summary>
     /// How many distinct targets one plan may expand. A field full of weeds is a chain of clearable tiles, and
-    /// `FinishWithTargetClear` asks `Plan` for each clearable neighbour, so the search is recursive by
+    /// `FinishWithTargetClear` asks `PlanCore` for each clearable neighbour, so the search is recursive by
     /// construction: without a bound it walks that chain one stack frame per tile.
     ///
     /// <para>
@@ -45,11 +61,13 @@ public static class ClearingPlanner
     /// was gone and the run reported `night_watched_over_a_dead_bridge:pipe_closed`, which named nothing.
     /// </para>
     /// <para>
-    /// Exceeding the budget answers `Unreachable`, which is the honest answer available here ("I did not find a
-    /// route within what I will pay to look"); it is NOT a claim that no route exists, and the caller says so.
+    /// Exceeding the budget answers <see cref="ClearingPlan.TooExpensiveToPlan"/>: `Reachable == false` beside
+    /// `BudgetExhausted == true`, which is "I did not find a route within what I will pay to look" and is NOT a
+    /// claim that no route exists. The flag is what lets the caller say which of the two it was; before it, this
+    /// budget turned every too-expensive field into the word `unreachable`, and a wall is a different answer.
     /// </para>
     /// </summary>
-    private const int ExpansionBudget = 256;
+    public const int ExpansionBudget = 256;
 
     /// <summary>
     /// The cheapest set of clears that opens a route from <paramref name="actor"/> to
@@ -93,7 +111,7 @@ public static class ClearingPlanner
         try
         {
             if (budget <= 0)
-                return ClearingPlan.Unreachable;
+                return ClearingPlan.TooExpensiveToPlan;
             budget -= 1;
 
             ClearingPlan result = Expand(actor, target, walkable, clearable, memo, expanding, ref budget);
@@ -200,6 +218,7 @@ public static class ClearingPlanner
 
         // Nearest standable neighbour that is walkable at all: the actor swings from there.
         ClearingPlan best = ClearingPlan.Unreachable;
+        bool refusedForBudget = false;
         foreach ((int dx, int dy) in Cardinal)
         {
             (int X, int Y) from = (target.X + dx, target.Y + dy);
@@ -207,7 +226,10 @@ public static class ClearingPlanner
                 continue;
             ClearingPlan approach = PlanCore(actor, from, walkable, clearable, memo, expanding, ref budget);
             if (!approach.Reachable)
+            {
+                refusedForBudget |= approach.BudgetExhausted;
                 continue;
+            }
             var clears = new List<(int X, int Y)>(approach.Clear);
             if (!clears.Contains(target))
                 clears.Add(target);
@@ -217,6 +239,8 @@ public static class ClearingPlanner
             best = new ClearingPlan(true, clears, cost);
         }
 
-        return best;
+        // A refused approach makes the whole answer a refusal, not a wall: the route may be one clear further
+        // out than this budget could look.
+        return !best.Reachable && refusedForBudget ? ClearingPlan.TooExpensiveToPlan : best;
     }
 }
