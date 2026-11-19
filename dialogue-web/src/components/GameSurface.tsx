@@ -11,7 +11,6 @@ import {
   type GameFactPatchV1,
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
-  type StardewInstallationDiscoveryV1,
 } from "../composed-reference-game-browser-api";
 import {
   deriveGameLifecycleControlAvailability,
@@ -79,9 +78,10 @@ type CabinHandoffAnswer = "choices" | "missing" | "unavailable";
  * conversation: the projection of the Game, and the fact that its own command finished, is the whole
  * of what a Game operation may publish.
  *
- * It is always mounted while the shell has a ready view and returns null when it
- * is not the selected surface, so its state survives a surface switch exactly as
- * it did inside the shell (a peer surface that resets its in-flight attempt on
+ * It is mounted for the whole ready lifetime once the player has opened it, and the shell parks it
+ * rather than unmounting it while another peer holds the region (`ComposedReferenceGameApp`'s Game
+ * slot), because the panels inside it hold drafts. That is also why its state survives a surface
+ * switch exactly as it did inside the shell (a peer surface that resets its in-flight attempt on
  * every AppBar click would forget a resume the player is watching). The one thing an arrival does add
  * is the shell's own re-read of the projection it renders, taken in the shell's arrival effect rather
  * than here, so it cannot touch this surface's in-flight attempt. When it fails, the shell hands this
@@ -1470,30 +1470,27 @@ export function GameSurface({
     />
   );
   /**
-   * The last scan the installation panel made, kept here so a tab switch does not buy another one.
+   * Whether the player has opened this surface yet.
    *
-   * The panel is a sibling of the Game state region inside this surface, and this surface returns nothing while
-   * another one is selected - so the panel is unmounted on every switch and its own answer goes with it. Its mount
-   * effect starts a scan, and a scan is the slowest thing a cold machine does (`StardewInstallationDiscovery`: the
-   * Host reads the registry, the Steam libraries and every known location). Measured on the mounted shell, phases
-   * mount | chat-idle | game-1 | chat-2 | game-2, `game/installation/discovery` per phase: 0 | 0 | 1 | 0 | 1 - the
-   * second arrival paid the whole sweep again for an answer that had not changed.
-   *
-   * This ref survives the switch because THIS component does (it is mounted for the whole ready lifetime), so the
-   * panel is handed the answer it settled on last time and starts from it instead of scanning. A scan is the
-   * player's own request after that: "Find again" and "Choose game folder" still read the Host, and a registration
-   * the player just made is still what the panel states.
+   * The surface is not rendered before its first open, and after one it is parked rather than
+   * unmounted (the shell keeps its slot in the region - `ComposedReferenceGameApp` says why). The
+   * two halves are one decision: the panels below hold drafts (`GamePlayerSettings` writes the Host
+   * only when the player presses Save), so an unmount threw them away; and the installation panel's
+   * mount IS a scan of the machine (the Host reads the registry, the Steam libraries and every known
+   * location), so a player who never opens the Game surface must not pay for that scan at launch.
+   * Measured on the mounted shell before parking, phases mount | chat-idle | game-1 | chat-2 | game-2,
+   * `game/installation/discovery` per phase: 0 | 0 | 1 | 0 | 1 - each arrival after the first paid the
+   * whole sweep again for an answer that had not changed.
    */
-  const lastInstallationScan = useRef<StardewInstallationDiscoveryV1 | null>(null);
+  const [opened, setOpened] = useState(selected);
+  useEffect(() => {
+    if (selected && !opened) setOpened(true);
+  }, [selected, opened]);
   const installationDiscovery = (
     <StardewInstallationDiscovery
       key="installation-discovery"
       api={composedApi}
       labels={labels}
-      seed={lastInstallationScan.current}
-      onScanSettled={(result) => {
-        lastInstallationScan.current = result;
-      }}
       // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
       // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
       // the folder had been accepted, and only a reload cleared it.
@@ -1518,13 +1515,14 @@ export function GameSurface({
   const gettingGoing = installationRegistered
     ? [gameStatePanel, installationDiscovery]
     : [installationDiscovery, gameStatePanel];
-  if (!selected) return null;
+  if (!opened) return null;
 
   return (
     <SurfaceView
       title={labels.gamePanel}
       testId="game-surface"
       icon={Gamepad2}
+      selected={selected}
       // The Game surface lays its own content out (a two-column panel grid at a
       // desktop width), so it names itself for the stylesheet the way the
       // conversation does with `surface-conversation`.

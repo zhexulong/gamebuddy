@@ -38,11 +38,31 @@ export type SurfaceViewProps = Readonly<{
    * the shell's move, through the field's own ref (`useSurfaceRoute`).
    */
   restoreFocusTo?: RefObject<HTMLElement | null>;
+  /**
+   * Whether this surface is the region's occupant right now.
+   *
+   * A surface the shell parks instead of unmounting (the conversation, and the Game surface whose
+   * panels hold drafts) mounts while another one holds the region, so its mount is not the moment a
+   * keyboard player steps into it. It hands that fact down here, and the heading - the surface's one
+   * landing place - is claimed when the region becomes this surface's own. Surfaces that mount on
+   * their own selection keep the default.
+   */
+  selected?: boolean;
   children: ReactNode;
 }>;
 
-export function SurfaceView({ title, testId, icon: Icon, className, restoreFocusTo, children }: SurfaceViewProps) {
+export function SurfaceView({
+  title,
+  testId,
+  icon: Icon,
+  className,
+  restoreFocusTo,
+  selected = true,
+  children,
+}: SurfaceViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  /** Whether this surface held the region at the previous commit, for the landing focus below. */
+  const wasSelectedRef = useRef(selected);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -72,6 +92,15 @@ export function SurfaceView({ title, testId, icon: Icon, className, restoreFocus
       foldedOwner?.focus();
     };
   }, [restoreFocusTo]);
+
+  useEffect(() => {
+    // The same landing place, claimed by the surface that was already mounted: a parked surface's
+    // mount happened while another one held the region, and focus on a node inside
+    // `visibility: hidden` does nothing (which is what makes the mount focus above harmless for a
+    // parked surface). This is the transition that means "the player stepped in here".
+    if (selected && !wasSelectedRef.current) headingRef.current?.focus();
+    wasSelectedRef.current = selected;
+  }, [selected]);
 
   const titleId = `${testId}-title`;
 

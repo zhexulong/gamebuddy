@@ -1306,9 +1306,10 @@ export function ComposedReferenceGameApp() {
                   `timeline-position-survives-a-surface-switch.spec.ts`). `visibility: hidden` is also
                   what keeps the parked surface out of the accessibility tree, so the conversation's
                   one announcement region says nothing while it is parked. Nothing else may join this
-                  slot: one conversation is one transcript and one announcement channel, and every
-                  other peer keeps what it has by unmounting because it has no live scroll box to
-                  lose. */}
+                  slot: one conversation is one transcript and one announcement channel, and a peer that
+                  has no live scroll box to lose loses nothing by unmounting. The Game surface is the
+                  one peer that does lose something, and it has a slot of its own below for that
+                  reason. */}
               {chatProblem === null && (
                 <div className={shownSurface === CHAT_PANEL ? "surface-slot" : "surface-slot surface-slot-parked"}>
                   <ChatSurface
@@ -1379,20 +1380,31 @@ export function ComposedReferenceGameApp() {
                   />
                 </div>
               )}
-              <GameSurface
-                selected={shownSurface === GAME_PANEL}
-                ready={view.kind === "ready"}
-                game={view.root.game}
-                csrfToken={view.session.snapshot.csrfToken}
-                labels={labels()}
-                readView={() => viewRef.current}
-                commit={commit}
-                isCancelled={() => cancelledRef.current}
-                composedApi={composedApiRef.current}
-                managementApi={managementPipelineApiRef.current}
-                arrivalNotice={arrivalReads.gameArrivalNotice}
-                restoreFocusTo={gameEntryRef}
-              />
+              {/* The Game surface parks in a slot of its own, and for a different fact than the
+                  conversation's: the panels inside it hold drafts. `GamePlayerSettings` is a form the
+                  Host hears about only when the player presses Save, so unmounting it on every glance
+                  at the conversation threw away the boxes they had just ticked - and the return
+                  re-read the record, putting every control back on the Host's values with nothing
+                  said. The class is the conversation's own (`.surface-slot-parked`: out of the flow at
+                  `inset: 0`, `visibility: hidden`, never `display: none`), because the mechanism is the
+                  same one; the slot is not, because two peers in one box would be two surfaces in one
+                  region. */}
+              <div className={shownSurface === GAME_PANEL ? "surface-slot" : "surface-slot surface-slot-parked"}>
+                <GameSurface
+                  selected={shownSurface === GAME_PANEL}
+                  ready={view.kind === "ready"}
+                  game={view.root.game}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  readView={() => viewRef.current}
+                  commit={commit}
+                  isCancelled={() => cancelledRef.current}
+                  composedApi={composedApiRef.current}
+                  managementApi={managementPipelineApiRef.current}
+                  arrivalNotice={arrivalReads.gameArrivalNotice}
+                  restoreFocusTo={gameEntryRef}
+                />
+              </div>
               {shownSurface === CHATS_PANEL && (
                 <ChatsSurface
                   api={managementPipelineApiRef.current}

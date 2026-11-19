@@ -38,25 +38,16 @@ type Props = {
    * way out was a full reload.
    */
   onAdmitted?: () => void;
-  /**
-   * The answer this panel settled on the last time it was shown, or null the first time.
-   *
-   * The surface renders this panel only while it is selected, so every switch away unmounts it - and a mount scans.
-   * The scan is what the answer is for, not what the panel is: a returning player is shown the answer they already
-   * have, and asks for a fresh one with "Find again" or by choosing a folder.
-   */
-  seed?: StardewInstallationDiscoveryV1 | null;
-  /** Reported for every scan that settles, so the surface can hand it back on the next mount. */
-  onScanSettled?: (result: StardewInstallationDiscoveryV1) => void;
 };
 
 /**
  * Installation discovery.
  *
  * The read behind this panel is a *scan* rather than a projection: the Host runs
- * the discovery provider on `discovery_read`, so a mount with no answer to show starts one, and a
- * scan on a cold machine is the slowest thing the surface does (`seed` is the answer the surface
- * already holds, and the mount that has one does not scan). The panel's own rules follow from
+ * the discovery provider on `discovery_read`, so a mount starts one, and a
+ * scan on a cold machine is the slowest thing the surface does. The panel is mounted once - the
+ * Game surface is parked rather than unmounted after its first open - so the scan is the panel's
+ * own first read and never a per-arrival cost. The panel's own rules follow from
  * that:
  *
  *  - **One sentence per moment.** The panel's status line is exactly one of the
@@ -150,10 +141,8 @@ const SMAPI_DOWNLOAD_URL = "https://smapi.io";
  */
 type CompanionModReport = NonNullable<StardewInstallationMutationV1["companionMod"]> | "not-reported";
 
-export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = null, onScanSettled }: Props) {
-  const [state, setState] = useState<InstallationDiscoveryState>(
-    seed === null ? "loading" : installationDiscoveryState(seed.candidates.length, seed.diagnostics),
-  );
+export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props) {
+  const [state, setState] = useState<InstallationDiscoveryState>("loading");
   /**
    * What happened to the companion Mod in the folder that was just registered, or `null` before one was.
    *
@@ -162,7 +151,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
    * refused names its refusal instead of the panel implying the companion is ready.
    */
   const [companionMod, setCompanionMod] = useState<CompanionModReport | null>(null);
-  const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(seed);
+  const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   // What is outstanding, which gates the rendered controls; a ref would not re-render
   // the buttons that must become disabled.
   const [pending, setPending] = useState<Pending>("none");
@@ -192,7 +181,6 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
       if (!mounted.current || epoch !== refreshEpoch.current) return;
       setDiscovery(result);
       setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
-      onScanSettled?.(result);
     } catch (error) {
       if (!mounted.current || epoch !== refreshEpoch.current) return;
       setState(installationDiscoveryFailureState(observedProblemCode(error)));
@@ -206,9 +194,6 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
     }
   };
   useEffect(() => {
-    // The panel shows the answer it already has instead of buying the same scan again; a mount with no answer yet
-    // (the first arrival, or a surface that never asked) is the one that scans.
-    if (seed !== null) return;
     void read();
   }, []);
   const action = async (kind: "confirm" | "retry" | "cancel" | "picker", candidateId?: string) => {
@@ -254,7 +239,6 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
       if ("candidates" in result) {
         setDiscovery(result);
         setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
-        onScanSettled?.(result);
         return;
       }
       // A folder dialog the player dismissed is not a failure, and says nothing about the
