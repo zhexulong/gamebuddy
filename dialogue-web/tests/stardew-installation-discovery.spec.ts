@@ -13,7 +13,7 @@ const root = {
   apiVersion: 1,
   build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
   chat: { apiVersion: 1, build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.chat-core.reference-pipeline" }, csrfToken, browserSession: { expiresAtMs: 1900000000000 }, operations: [], navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }], selection: { chatHandle: handle, generation: 1, stateRevision: handle }, chat: { companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" }, title: "Reference Game Chat", transcript: [{ handle: "D".repeat(42) + "A", role: "companion", text: "The game projection is read-only.", locale: "und", order: 0, revision: 1 }], draft: { revision: 4, present: true }, turn: null, worldInfo: null }, memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null }, eventStream: null },
-  game: { apiVersion: 1, build: { browserContract: "game_browser_api/v1", profileId: "gamebuddy.game.preview" }, csrfToken, browserSession: { expiresAtMs: 1900000000000 }, game: { prerequisites: { status: "unknown", detectedGame: null, missingItems: [] }, instance: { status: "none", gameTitle: null, generation: 0 }, compatibility: { status: "unchecked", message: null }, attachment: { status: "none", generation: 0 }, connectionStatus: "none", actionAuthority: "unavailable", role: null, companionName: null, selectedWorld: null, selectedSave: null, capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" }, latestOutcome: "none" } },
+  game: { apiVersion: 1, build: { browserContract: "game_browser_api/v1", profileId: "gamebuddy.game.preview" }, csrfToken, browserSession: { expiresAtMs: 1900000000000 }, game: { prerequisites: { status: "unknown", detectedGame: null }, instance: { status: "none", gameTitle: null, generation: 0 }, compatibility: { status: "unchecked", message: null }, attachment: { status: "none", generation: 0 }, connectionStatus: "none", actionAuthority: "unavailable", role: null, companionName: null, selectedWorld: null, selectedSave: null, capabilitySummary: { status: "not_measured", reason: "no_attached_runtime" }, latestOutcome: "none" } },
 };
 /** The Host's own evidence shape: the installation its scan found, which every
  * production reply stamps `admission_required`
@@ -266,7 +266,7 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
         game: {
           ...root.game.game,
           prerequisites: confirmed
-            ? { status: "met", detectedGame: "Stardew Valley", missingItems: [] }
+            ? { status: "met", detectedGame: "Stardew Valley" }
             : root.game.game.prerequisites,
         },
       },
