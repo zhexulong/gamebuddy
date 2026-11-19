@@ -999,6 +999,55 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
 });
 
 /**
+ * WHERE A PLACE WORD IS A KEY, AND WHERE IT IS ONLY SPEECH.
+ *
+ * <p>
+ * MEASURED `round77`, day 2: the block printed `矿洞入口` over the mine entrance and she copied the place word out of it
+ * as `stardew_find_destination("矿洞")`; the search answered a villager's house, because no destination declares 矿洞. The
+ * label was wrong - `TARGET_FAMILY_PLACES` above carries the argument and the fix. ONE FILE OVER, THE SAME WORD IS RIGHT:
+ * the Stardew conduct floor tells her to say `矿洞第 10 层 / floor 10 of the mines` rather than a map id, which is how a
+ * person says a place - and a hygiene pass that deleted every `矿洞` would have taken the character's own line with it.
+ * Nothing in the product could tell the two uses apart, which is the defect this declaration removes.
+ * </p>
+ *
+ * <p>
+ * A place word is a KEY where the product offers it AS A NAME - a value something later has to copy and an action has to
+ * find again:
+ * </p>
+ * <ul>
+ * <li>`rowLabel` - the label printed beside a row of a place's family. `矿洞入口` was one, and reading it is how she got
+ * the word she searched for.</li>
+ * <li>`standingPlace` - the value of `位置:`, the name of the map she is standing in, which is the same name the search
+ * answers to.</li>
+ * <li>`searchQuery` - a query an instruction hands the action that resolves names; `destinationQueriesIn` reads those.</li>
+ * </ul>
+ *
+ * <p>
+ * Everywhere else a place word is SPEECH, and the line is drawn on the real text rather than in principle: the default
+ * companion's world book says `适合带镐前往矿洞深层探索开辟电梯`, a sentence that sends her somewhere by that word and is
+ * still prose - no search is ever handed it, and refusing it would demand the lore be renamed. Speech is never held to the
+ * catalogue: the gate that reads this declaration counts it and asserts nothing about it, because a companion whose own
+ * vocabulary is refused her has been broken by the check, not fixed.
+ * </p>
+ */
+export type PlaceWordKeySlot = "rowLabel" | "standingPlace" | "searchQuery";
+
+/** The three spellings an instruction uses to hand `find_destination` a query: a call, a field, an assignment. */
+const DESTINATION_QUERY = /find_destination\s*(?:\(\s*|[：:=]\s*)["'`「]?([^\s)"'`」,;，。]+)/gu;
+
+/**
+ * The queries an instruction hands `find_destination`, in the order it writes them.
+ *
+ * A place word inside one is a KEY: it is the exact string the search will be asked for, so it has to be the string the
+ * world answers to. The same word in the sentence around the query is speech - a walkthrough saying where she went, a
+ * rule showing how to say a place out loud - and this reader returns nothing for it, because an instruction that is
+ * talking about a place is not asking the search for one.
+ */
+export function destinationQueriesIn(text: string): readonly string[] {
+  return Object.freeze([...text.matchAll(DESTINATION_QUERY)].map((match) => match[1]!.trim()));
+}
+
+/**
  * The wire families the nearby-target line does not print as rows, each with the reason it is not one.
  *
  * Not an exemption from the label table: the gate above refuses a coordinate family with neither, so a family has to

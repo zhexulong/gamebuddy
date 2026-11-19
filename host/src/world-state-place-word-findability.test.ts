@@ -1,5 +1,6 @@
 /**
  * GATE `a_place_the_observation_names_is_a_place_the_search_finds:<word>`.
+ * GATE `a_place_word_is_a_key_only_where_a_name_is_asked_for:<word>`.
  *
  * <p>
  * ONE PLACE, ONE WORD, AND THE WORD IS THE WORLD'S. MEASURED `round77`, day 2: `<world-state>` printed
@@ -29,19 +30,36 @@
  * place-naming family added tomorrow is measured without anybody remembering this file, and zero of them is blocked
  * rather than green.
  * </p>
+ *
+ * <p>
+ * AND A PLACE WORD IS ONLY A NAME WHERE SOMETHING ASKS FOR ONE. `矿洞` is the word that made `round77` go wrong and it is
+ * also the word the conduct floor tells her to SAY (`矿洞第 10 层 / floor 10 of the mines`, where a map id will not do), so
+ * the same string is a defect in one place and a virtue in the other. `PlaceWordKeySlot` in `game-world-vocabulary.ts`
+ * states which is which once - a key is a place word the product hands over AS A NAME (the label beside a row, the
+ * `位置:` value, a query an instruction gives `find_destination`), and every other place word is speech. The second gate
+ * below reads only the keys: it derives its place words from `LOCATION_NAMES_ZH` and the label table, prints
+ * `place words examined W · keys K · keys findable F · speech S`, and fails naming the word and the text that made it a
+ * key. S is printed and never asserted, because a gate that forbids the character her own vocabulary breaks the product
+ * it was written to protect.
+ * </p>
  */
 
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { composeWorldState } from "./fact-brief.js";
+import { GAME_SURFACE_INTERACTION_CONDUCT } from "./game-surface-prompt-floor.js";
 import {
+  destinationQueriesIn,
+  formatGameLocation,
   gameLocationName,
   LOCATION_NAMES_ZH,
+  type PlaceWordKeySlot,
   TARGET_FAMILY_LABELS,
   TARGET_FAMILY_PLACES,
 } from "./game-world-vocabulary.js";
 import type { Snapshot } from "./protocol.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /** The tile the fixture's one row stands on, spelled as the block spells it so the word beside it can be found. */
 const ROW_TILE = "(3,9)";
@@ -90,18 +108,25 @@ function blockOf(snapshot: Snapshot): string {
 }
 
 /**
+ * The one segment of the block that names the row at `ROW_TILE`: the line a reader copies the place word out of.
+ */
+function rowSegment(block: string): string {
+  const segments = block
+    .split(/[\n；]/u)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.includes(ROW_TILE));
+  assert.equal(segments.length, 1, `the block names no row at ${ROW_TILE}, so there is no word to read: ${block}`);
+  return segments[0] as string;
+}
+
+/**
  * The word the block printed for the row at `ROW_TILE`, read out of the block itself.
  *
  * That is the whole point of reading it here rather than from the label table: what she copies into a search is the
  * word on the line, so a renderer that spells a family its own way is measured too.
  */
 function printedWord(block: string): string {
-  const segments = block
-    .split(/[\n；]/u)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.includes(ROW_TILE));
-  assert.equal(segments.length, 1, `the block names no row at ${ROW_TILE}, so there is no word to read: ${block}`);
-  const segment = segments[0] as string;
+  const segment = rowSegment(block);
   return segment.slice(0, segment.indexOf(ROW_TILE)).trim();
 }
 
@@ -172,11 +197,7 @@ test("a_place_the_observation_names_is_a_place_the_search_finds: the word round7
   const verdict = placeWordVerdict("mineEntranceTargets", "矿洞入口", TARGET_FAMILY_PLACES.mineEntranceTargets);
   assert.equal(verdict.findable, false, `the shipped word passed as ${verdict.placeName}: ${orphanLine(verdict)}`);
   assert.equal(verdict.taught, "矿洞", `the orphan word is the place part she carried away: ${orphanLine(verdict)}`);
-  assert.equal(
-    verdict.placeName,
-    "矿井",
-    `the place's own name is the game's: ${orphanLine(verdict)}`,
-  );
+  assert.equal(verdict.placeName, "矿井", `the place's own name is the game's: ${orphanLine(verdict)}`);
 });
 
 test("a_place_the_observation_names_is_a_place_the_search_finds: the mine reaches her as the word she can search for", () => {
@@ -191,4 +212,151 @@ test("a_place_the_observation_names_is_a_place_the_search_finds: the mine reache
     );
     assert.equal(block.includes("矿洞"), false, `no line coins a word for the mine: ${block}`);
   }
+});
+
+/** Every place name the world's own table declares, and the role word a label may put after one. */
+const PLACE_NAMES: ReadonlySet<string> = new Set(Object.values(LOCATION_NAMES_ZH));
+const PLACE_ROLES: ReadonlySet<string> = new Set(Object.values(TARGET_FAMILY_PLACES).map((place) => place.role));
+
+/** Whether the search can find a word: the world calls a place that, with or without the role word a label adds. */
+function namesAPlace(word: string): boolean {
+  if (PLACE_NAMES.has(word)) return true;
+  for (const role of PLACE_ROLES) {
+    if (word.length > role.length && word.endsWith(role) && PLACE_NAMES.has(word.slice(0, word.length - role.length))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * One place word the product emits: the word itself, the slot that made it a KEY - or `speech`, when nothing asked for it
+ * as a name - and the text that carried it, so a failure quotes the line rather than a bare word.
+ */
+type EmittedPlaceWord = Readonly<{
+  word: string;
+  slot: PlaceWordKeySlot | "speech";
+  text: string;
+}>;
+
+/** What a failure says: the word, the slot that made it a key, and the text that carried it. */
+function keyLine(word: EmittedPlaceWord): string {
+  return `${word.word} (${word.slot}) in ${word.text}`;
+}
+
+/** The sentence of `text` that carries `word`, so the verdict names a line a reader can find. */
+function sentenceNaming(text: string, word: string): string {
+  const sentences = text
+    .split(/[。！？\n]/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+  return sentences.find((sentence) => sentence.includes(word)) ?? text;
+}
+
+/** The label the observation prints BESIDE a place's row: the word she copies into a search. */
+function rowLabelWords(): readonly EmittedPlaceWord[] {
+  return Object.entries(TARGET_FAMILY_PLACES).map(([family, place]) => {
+    const block = blockOf(observing(place.map, family));
+    return { word: printedWord(block), slot: "rowLabel", text: rowSegment(block) };
+  });
+}
+
+/** The word `位置:` prints for every map the world's own table names: the place she says she is standing in. */
+function standingPlaceWords(): readonly EmittedPlaceWord[] {
+  return Object.keys(LOCATION_NAMES_ZH).map((map) => {
+    const line = formatGameLocation(map, true);
+    return { word: line.slice(line.indexOf(":") + 1).trim(), slot: "standingPlace", text: line };
+  });
+}
+
+/** The words an instruction hands `find_destination`: the exact string the search will be asked for. */
+function searchQueryWords(text: string): readonly EmittedPlaceWord[] {
+  return destinationQueriesIn(text).map((word) => ({ word, slot: "searchQuery", text: sentenceNaming(text, word) }));
+}
+
+/**
+ * Every place name a text says WITHOUT asking for it: her voice, a rule about how a thing is said, a dialogue sample.
+ *
+ * A slot's word is subtracted, because one occurrence cannot be a key and speech in the same breath. Nothing this returns
+ * is ever asserted - it is the product's own vocabulary, counted so the report says how much of it there is.
+ */
+function speechWords(text: string, keys: readonly EmittedPlaceWord[]): readonly EmittedPlaceWord[] {
+  const claimed = new Map<string, number>();
+  for (const key of keys) claimed.set(key.word, (claimed.get(key.word) ?? 0) + 1);
+  const said: EmittedPlaceWord[] = [];
+  for (const name of PLACE_NAMES) {
+    const occurrences = text.split(name).length - 1 - (claimed.get(name) ?? 0);
+    for (let index = 0; index < occurrences; index += 1) {
+      said.push({ word: name, slot: "speech", text: sentenceNaming(text, name) });
+    }
+  }
+  return said;
+}
+
+/**
+ * Every word a document holds, in reading order: the persona's prose, the world book's lore and its own trigger words, and
+ * none of the picture stored beside them. All of it is SPEECH unless a slot asks for a name, which none of these do.
+ */
+function wordsOf(document: unknown): string {
+  if (typeof document === "string") return document;
+  if (Array.isArray(document)) return document.map(wordsOf).join("\n");
+  if (typeof document === "object" && document !== null) {
+    return Object.entries(document)
+      .filter(([field]) => field !== "avatarBase64")
+      .map(([, value]) => wordsOf(value))
+      .join("\n");
+  }
+  return "";
+}
+
+test("a_place_word_is_a_key_only_where_a_name_is_asked_for: every word the product hands over as a name is the world's", () => {
+  const queries = searchQueryWords(GAME_SURFACE_INTERACTION_CONDUCT);
+  const keys = [...rowLabelWords(), ...standingPlaceWords(), ...queries];
+  const speech = [
+    ...speechWords(GAME_SURFACE_INTERACTION_CONDUCT, queries),
+    ...speechWords(wordsOf(DEFAULT_COMPANION_PRESET), []),
+  ];
+  const examined = [...keys, ...speech];
+  const findable = keys.filter((key) => namesAPlace(key.word));
+  const orphaned = keys.filter((key) => !namesAPlace(key.word));
+  console.log(
+    `a_place_word_is_a_key_only_where_a_name_is_asked_for: place words examined ${String(examined.length)} · ` +
+      `keys ${String(keys.length)} · keys findable ${String(findable.length)} · speech ${String(speech.length)}`,
+  );
+  assert.ok(
+    keys.length > 0,
+    "zero place words examined as keys is blocked, never green: the catalogue's names crossed with the label table are the population",
+  );
+  assert.deepEqual(
+    orphaned.map(keyLine),
+    [],
+    `the product hands over a word the world does not answer to: ${orphaned.map(keyLine).join(" | ")}`,
+  );
+});
+
+test("a_place_word_is_a_key_only_where_a_name_is_asked_for: an instruction that asks by the word round77 measured is named", () => {
+  // THE FALSIFIER. The conduct floor's own `矿洞第 10 层` is speech and stays untouched; the same word becomes a key the
+  // moment an instruction hands it to the search, and then the verdict names the word and the sentence that did it.
+  const line =
+    'To reach the mine, hand the search stardew_find_destination("矿洞") and the map answers with a villager\'s house.';
+  const keys = searchQueryWords(line);
+  assert.deepEqual(
+    keys.map((key) => key.word),
+    ["矿洞"],
+    `the line hands the search exactly one query: ${line}`,
+  );
+  assert.equal(namesAPlace("矿洞"), false, "no destination declares 矿洞, which is the word the round77 label taught");
+  assert.equal(keys[0]!.text, line, "the verdict names the text that made the word a key, not the word alone");
+  // AND SPEECH IS NOT READ AS A KEY: the rule that says the mine out loud asks the search for nothing, and the gate reads
+  // only what a rule hands the search.
+  const registerRule = GAME_SURFACE_INTERACTION_CONDUCT.split("\n").find((rule) => rule.includes("矿洞第 10 层"));
+  assert.ok(
+    registerRule !== undefined,
+    "the floor states how to say the mine out loud, and that line is speech the gate must leave alone",
+  );
+  assert.deepEqual(
+    destinationQueriesIn(registerRule),
+    [],
+    `the rule that says 矿洞第 10 层 out loud asks the search for nothing: ${registerRule}`,
+  );
 });
