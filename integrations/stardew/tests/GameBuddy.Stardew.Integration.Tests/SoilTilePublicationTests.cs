@@ -151,6 +151,66 @@ public sealed class SoilTilePublicationTests
     }
 
     /// <summary>
+    /// THE ROUND80 BLOCK, read twice: ten columns by three rows around the actor, bare and then worked.
+    ///
+    /// Measured on that run (eighteen minutes, one live process, day 6): fifty-four <c>soil_already_tilled</c> refusals,
+    /// twenty of them one programme walking a single 3x10 block tile by tile while seven other tiles of the same block
+    /// tilled. The question that leaves is whether the published family called that ground tillable, because if it did
+    /// the refusal is the projection's fault. It does not: the same block answers thirty rows that need work while it is
+    /// bare and NONE once every tile carries a <c>HoeDirt</c> - with all thirty rows still published and every one of
+    /// them saying so. <c>IsTillableTile</c> is the action's own admission, so the count is read from the predicate the
+    /// refusal is minted from rather than from the flag beside it, and both readings come from this one run.
+    /// </summary>
+    [Fact]
+    public void AWorkedBlockIsPublishedInFullAndNeverAsGroundTheHoeStillAdmits()
+    {
+        using SoilHarness harness = SoilHarness.Create();
+        var block = new List<(int X, int Y)>();
+        for (int column = -5; column <= 4; column++)
+            for (int row = -1; row <= 1; row++)
+            {
+                int x = SoilHarness.ActorX + column;
+                int y = SoilHarness.ActorY + row;
+                harness.SetDiggable(x, y);
+                block.Add((x, y));
+            }
+
+        IReadOnlyList<BridgeSoilTile> bare = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int bareOmitted);
+        (int X, int Y)[] bareNeedingWork = NeedsWork(harness, bare);
+        foreach ((int x, int y) in block)
+            harness.PlaceHoeDirt(x, y);
+        IReadOnlyList<BridgeSoilTile> worked = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int workedOmitted);
+        (int X, int Y)[] workedNeedingWork = NeedsWork(harness, worked);
+
+        bare.Select(row => (row.X, row.Y)).Should().BeEquivalentTo(
+            block, "the bare block is the family's population, so the fixture and the wire agree before anything is tilled");
+        bareOmitted.Should().Be(0, "thirty tiles fit inside the bound, so the cap took nothing of the bare block");
+        bareNeedingWork.Should().HaveCount(
+            block.Count,
+            "a bare tile the Hoe admits is a row that needs work: rows that need work {0} of {1} published",
+            bareNeedingWork.Length,
+            bare.Count);
+
+        worked.Select(row => (row.X, row.Y)).Should().BeEquivalentTo(
+            block, "tilling a tile does not remove it: the worked block answers the same {0} rows", block.Count);
+        workedOmitted.Should().Be(0, "and the bound took nothing of it either");
+        worked.Should().OnlyContain(row => row.HoeDirt, "every row states which of the two states its tile is in");
+        string stillTillable = string.Join(", ", workedNeedingWork.Select(tile => $"({tile.X},{tile.Y})"));
+        workedNeedingWork.Should().BeEmpty(
+            "soilTiles publishes a worked tile as the record of work done and the target of plant_seed, so a row may be "
+            + "here while it needs nothing - but never as ground the Hoe admits: rows that need work {0} of {1} on a "
+            + "fully worked block, and these answered tillable: {2}",
+            workedNeedingWork.Length,
+            worked.Count,
+            string.IsNullOrEmpty(stillTillable) ? "none" : stillTillable);
+
+        static (int X, int Y)[] NeedsWork(SoilHarness harness, IReadOnlyList<BridgeSoilTile> rows) => rows
+            .Where(row => ExecutionManager.IsTillableTile(harness.Location, row.X, row.Y))
+            .Select(row => (row.X, row.Y))
+            .ToArray();
+    }
+
+    /// <summary>
     /// A neighbourhood larger than the bound is TRUNCATED AND STATED.
     ///
     /// The whole 13x13 window is tillable, so the published list is the bound and <c>omitted</c> is the rest.

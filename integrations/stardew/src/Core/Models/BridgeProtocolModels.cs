@@ -242,8 +242,11 @@ public sealed record BridgeDoor(
 /// <para>
 /// <see cref="HoeDirt"/> is the engine's own presence answer for the tile
 /// (<c>GameLocation.GetHoeDirtAtTile</c>), which is the fact <c>till_soil</c> admits on: a tile that already carries
-/// one is refused with <c>soil_already_tilled</c>. Discovery publishes no tilled tile today, so this reads false - the
-/// point is that the row states the fact instead of leaving its reader to infer it from the row's existence.
+/// one is refused with <c>soil_already_tilled</c>. Discovery publishes that tile anyway - it is the target of
+/// <c>plant_seed</c>, <c>fertilize_tile</c> and <c>water_crop</c> and the record of work already done - so `true` is a
+/// row a caller planning a till pass must skip, and the reason the state is a field instead of being inferred from the
+/// row's existence. Measured round80: fifty-four <c>soil_already_tilled</c> refusals in eighteen minutes, twenty of
+/// them one programme walking a block it had already hoed, while every row of that block answered `hoeDirt: true`.
 /// </para>
 /// </summary>
 public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt);
