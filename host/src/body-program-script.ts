@@ -985,14 +985,28 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
 }
 
 /**
- * The most characters the `stardew_plan_work` description may occupy.
+ * The most characters the Game surface's own FIXED PROSE may occupy: the `stardew_plan_work` description plus the conduct
+ * block the floor composes, counted TOGETHER.
  *
- * A BUDGET, not a measurement: the block is handed to the model on every Game turn, so every sentence in it spends the
- * context a plan is written in. Each change that adds prose pays for it here, the number may only fall, and the gate that
- * reads it (`body-program-script.test.ts`) refuses an overrun by name
- * (`plan_description_exceeds_budget:<chars>:<budget>`) instead of leaving the cost to be noticed in a transcript.
+ * A PAIR, not a per-document ceiling, because a per-document ceiling is exactly what moving prose exploits: a sentence can
+ * leave one document and land in the other, and a ceiling on the document it left would call that growth while a ceiling on
+ * the document it reached would read a move as new prose. The pair may only fall. A sentence may move between the two
+ * owners - the per-document numbers then move in opposite directions - and that is the only case in which either may rise,
+ * because the pair proves it was a move rather than a sentence nobody paid for.
+ *
+ * MEASURED 2026-11-19, THE UNIT THAT MADE THIS A PAIR: `SLEEPING_IS_AN_ACTION` moved out of the conduct block into
+ * `sleep()`'s description, +82 here and -198 there, so the pair fell 10,747 -> 10,631 while one of its two sides grew.
+ *
+ * THE TWO SIDES ARE READ FROM THEIR OWN OWNERS. The description is read live (`planWorkDescription`); the Game floor's size
+ * is the floor's own recorded reading (`GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars` in
+ * `game-surface-prompt-floor.test-support.ts`), which the floor's suite holds against the prompt the product really builds -
+ * so this budget carries no second measurement of that text. A reading that goes missing is BLOCKED
+ * (`pair_budget_not_measured:<where it looked>`) and never read as zero: a floor side of 0 would make the pair the
+ * description alone and pass. `body-program-script.test.ts` refuses an overrun by name
+ * (`game_prose_pair_exceeds_budget:<pair>:<budget>`) and prints both sides with their sources, so a reader of a green run
+ * sees which side moved rather than only the pair.
  */
-export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 7154;
+export const GAME_PROSE_PAIR_BUDGET_CHARS = 10631;
 
 /**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
@@ -1030,6 +1044,14 @@ export const PLAN_WORK_DESCRIPTION_BUDGET_CHARS = 7154;
  * one example builder call (`c63a5763`), and it is no longer a builder method at all - expression reaches the actor
  * through its own mounted tool (`EXPRESSION_ONLY_ACTION_IDS`), so an example here would teach a call the compiler now
  * refuses as `plan_script_unknown_action`. The conduct names the tool.
+ *
+ * THE DAY'S END IS STATED HERE BECAUSE THE CALL IS DECLARED HERE. `SLEEPING_IS_AN_ACTION` carried "call builder.sleep()
+ * (with no arguments) after entering the farmhouse" in the Game prompt floor until 2026-11-19, and the part of it nothing
+ * else could say is the precondition: `sleep()` takes no arguments, and the day passes only from inside her own farmhouse or
+ * cabin, answering `not_home` outdoors. A precondition a caller needs AT THE MOMENT OF THE CALL belongs beside the call, and
+ * the floor is the last thing she reads rather than the place she decides what to write - so a rule there stating the same
+ * thing was the second spelling, the one that goes stale. `body-program-script.test.ts` holds the sentence here (and drives
+ * its own red by taking it back out), and `game-surface-prompt-floor.test.ts` holds the floor to saying nothing about it.
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (

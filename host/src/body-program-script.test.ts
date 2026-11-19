@@ -9,11 +9,11 @@ import {
   BODY_YIELDING_PLAN_ACTION_IDS,
   type CompiledPlan,
   compilePlanScript,
+  GAME_PROSE_PAIR_BUDGET_CHARS,
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
   PLAN_SCRIPT_BUDGET_MS,
-  PLAN_WORK_DESCRIPTION_BUDGET_CHARS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -22,6 +22,7 @@ import {
   planShape,
   planWorkDescription,
 } from "./body-program-script.js";
+import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
 
@@ -2661,16 +2662,32 @@ test("the description's example uses a published action and that action's own de
 });
 
 /**
- * The one reading of the description budget, so the gate and its falsifier take the same predicate.
+ * The one reading of the prose budget, so the gate and its falsifiers take the same predicate: the description and the Game
+ * floor's own size, counted TOGETHER.
  *
- * The budget is `PLAN_WORK_DESCRIPTION_BUDGET_CHARS` - a declared constant in the product, not a number written here - and
- * the answer names the size and the budget because that is the whole correction a later prose change needs.
+ * The budget is `GAME_PROSE_PAIR_BUDGET_CHARS` - a declared constant in the product, not a number written here - and the
+ * answer names the pair, the budget and BOTH sides, because a reader who saw only one side would think prose had been added
+ * when a sentence had only moved between the two.
  */
-function descriptionOverBudget(actions: readonly PublishedPlanAction[]): string | undefined {
-  const description = planWorkDescription(actions);
-  return description.length <= PLAN_WORK_DESCRIPTION_BUDGET_CHARS
+function prosePairOverBudget(description: string, floorChars: number): string | undefined {
+  const pair = description.length + floorChars;
+  return pair <= GAME_PROSE_PAIR_BUDGET_CHARS
     ? undefined
-    : `plan_description_exceeds_budget:${String(description.length)}:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}`;
+    : `game_prose_pair_exceeds_budget:${String(pair)}:${String(GAME_PROSE_PAIR_BUDGET_CHARS)}:plan_${String(description.length)}:floor_${String(floorChars)}`;
+}
+
+/**
+ * The Game floor's size, READ FROM THE FLOOR'S OWN RECORDED READING rather than from the module that composes it.
+ *
+ * The floor block is the pair's other half, and the floor's suite already holds its recorded size against the prompt the
+ * product builds (`GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars`), so reading it there keeps this gate from carrying a second
+ * measurement of the same text. The reading is required to be a SIZE: `undefined` here is a blocked reading, never a zero,
+ * because a side that silently became 0 would turn the pair into the description alone and pass.
+ */
+function recordedFloorChars(): number | undefined {
+  const conduct = (READING as { conductBlock?: { readonly chars?: unknown } }).conductBlock;
+  const chars = conduct?.chars;
+  return typeof chars === "number" && chars > 0 ? chars : undefined;
 }
 
 /**
@@ -2772,41 +2789,73 @@ test("the precondition gate names `sleep` and the lost precondition when the mov
   );
 });
 
-test("the plan description fits the budget its own constant declares", () => {
-  assert.ok(PLAN_WORK_DESCRIPTION_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
+test("the plan description and the Game floor fit the pair budget their own constant declares", () => {
+  assert.ok(GAME_PROSE_PAIR_BUDGET_CHARS > 0, "the budget must be a size, not a placeholder");
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  const floor = recordedFloorChars();
+  // BLOCKED, never green and never zero: the floor's size is the pair's other half, and a reading that went missing would
+  // make "the pair fits" agree with a pair that is the description alone.
+  assert.ok(
+    floor !== undefined,
+    "pair_budget_not_measured:game-surface-prompt-floor.test-support.ts:GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars - " +
+      "the Game floor's own recorded size is the other half of this budget, so a missing reading cannot be read as zero",
+  );
+  // Printed on every run: the pair is what has to fit, and each side is printed with where its number came from, so a change
+  // that MOVED a sentence is not read as prose nobody paid for.
+  process.stdout.write(
+    `\ngame prose: plan description ${String(description.length)} (live) · game floor ${String(floor)} (recorded ` +
+      `reading) · pair ${String(description.length + floor)} · budget ${String(GAME_PROSE_PAIR_BUDGET_CHARS)}\n`,
+  );
   assert.equal(
-    descriptionOverBudget(CATALOG_ACTIONS),
+    prosePairOverBudget(description, floor),
     undefined,
-    "every Game turn hands this description to the model, so a description over budget spends the context a plan is written in",
+    "both halves are handed to the model on every Game turn, so what they carry together is what has to fit: a sentence " +
+      "may move between them, and nothing may be added to the pair",
   );
 });
 
 /**
- * A vocabulary whose rows are longer must be refused by the SAME predicate - otherwise the budget only measures today's
- * catalog and stops meaning anything the first time an action declares a long argument.
+ * THE PAIR'S RED, IN THE TWO SHAPES IT EXISTS TO TELL APART: prose that was ADDED, and a sentence that MOVED without
+ * leaving its old home. The first has no old home to pay for it; the second is the move done halfway, which reads as a
+ * deduction on one side and an increase on the other - and nothing but the pair notices that the increase had no payer.
+ *
+ * Both are driven through the SAME predicate the gate uses, and both name the pair with each side's size, so a red says
+ * which side grew rather than only that the total did.
  */
-test("the budget gate turns red when a vocabulary outgrows the declared budget", () => {
-  // The population is sized so that even a vocabulary printing bare ids would exceed the budget: the falsifier must be red
-  // for the CONSTANT, not for whatever the renderer happens to print today.
-  const args = Object.freeze(
-    Array.from({ length: 40 }, (_, index) => `veryLongArgumentName${String(index)}`).map((name) =>
-      Object.freeze({ name, type: "integer", required: true as const }),
+test("the pair gate turns red on added prose, and on a sentence that moved without leaving its old home", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  const floor = recordedFloorChars();
+  assert.ok(
+    floor !== undefined,
+    "pair_budget_not_measured:game-surface-prompt-floor.test-support.ts:GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars - " +
+      "this falsifier reads the same recorded size the gate does, and a zero would make both reds unreachable",
+  );
+
+  // Direction one: a hundred characters nobody removed from anywhere else.
+  const planned = `${description} ${"x".repeat(100)}`;
+  assert.equal(
+    prosePairOverBudget(planned, floor),
+    `game_prose_pair_exceeds_budget:${String(planned.length + floor)}:${String(GAME_PROSE_PAIR_BUDGET_CHARS)}:plan_${String(planned.length)}:floor_${String(floor)}`,
+    "a description that grew by prose nothing paid for is refused by name, with the pair and both sides",
+  );
+
+  // Direction two: the sentence is here AND still in the floor. The halfway state is the floor's own size PLUS the clause it
+  // did not give up, read from the real description rather than from a copy of the deleted rule.
+  const movedClause = /`sleep\(\)` takes none, and ends the day only[^;]*?outdoors\)/u.exec(description)?.[0];
+  assert.ok(
+    movedClause !== undefined,
+    "blocked: the moved clause is not in the description as this falsifier copies it back to its old home",
+  );
+  const halfway = floor + 1 + movedClause.length;
+  assert.ok(
+    (prosePairOverBudget(description, halfway) ?? "").startsWith(
+      `game_prose_pair_exceeds_budget:${String(description.length + halfway)}:`,
     ),
+    "the same sentence in both places is refused by the pair: the floor keeping it is what makes this a duplicated fact " +
+      "rather than a move, and the floor's own claim reader names it there too",
   );
-  const heavy = Object.freeze(
-    Array.from({ length: 160 }, (_, index) =>
-      Object.freeze({
-        ...CATALOG_ACTIONS[0]!,
-        actionId: `heavy_action_${String(index)}`,
-        arguments: args,
-      }),
-    ),
-  );
-  assert.match(
-    descriptionOverBudget(heavy) ?? "",
-    new RegExp(`^plan_description_exceeds_budget:\\d+:${String(PLAN_WORK_DESCRIPTION_BUDGET_CHARS)}$`, "u"),
-    "a description over the declared budget is refused by name, with its size and the budget it met",
-  );
+  // The control: the pair as the tree really composes it fits, so the two reds above are the shapes and not the reading.
+  assert.equal(prosePairOverBudget(description, floor), undefined);
 });
 
 /**
