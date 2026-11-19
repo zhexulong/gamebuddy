@@ -274,6 +274,49 @@ public sealed class DestinationSearchTests
         result.Reason.Should().Be("destination_not_found");
     }
 
+    [Fact]
+    public void Find_AWordNoDestinationHolds_IsRefusedRatherThanAnsweredWithASharedCharacter()
+    {
+        // round77: "矿洞" answered 乔迪，肯特和山姆的家 and nothing else. The directory names the
+        // mine 矿井, so 矿洞 is a word nothing holds; 洞 survives only inside the cave carrot its
+        // residents sell (山洞萝卜). A shared character orders candidates; it cannot be the answer.
+        DestinationSearchResult result = Find(Set(
+            Leaf("矿井", "Mine"),
+            NpcLeaf("乔迪，肯特和山姆的家", "SamHouse", null, new[] { "山洞萝卜" })),
+            "矿洞");
+
+        result.Status.Should().Be("not_found");
+        result.Reason.Should().Be("destination_not_found");
+    }
+
+    [Fact]
+    public void Find_ADestinationRecalledByTheWholeWordIsStillACandidate()
+    {
+        DestinationSearchResult result = Find(Set(
+            Leaf("矿井", "Mine"),
+            NpcLeaf("乔迪，肯特和山姆的家", "SamHouse", null, new[] { "山洞萝卜" })),
+            "山洞");
+
+        result.Status.Should().Be("candidates");
+        result.Candidates.Should().NotBeNull().And.HaveCount(1);
+        result.Candidates![0].Label.Should().Be("乔迪，肯特和山姆的家");
+    }
+
+    [Fact]
+    public void Find_ASingleCharacterQueryIsStillAnsweredByASharedCharacter()
+    {
+        // The word floor only applies to a query that is asked in words: one CJK
+        // character has no word to be matched on, and is answered by that character.
+        DestinationSearchResult result = Find(Set(
+            Leaf("煤矿森林", "Forest"),
+            NpcLeaf("乔迪，肯特和山姆的家", "SamHouse", null, new[] { "山洞萝卜" })),
+            "矿");
+
+        result.Status.Should().Be("candidates");
+        result.Candidates.Should().NotBeNull().And.HaveCount(1);
+        result.Candidates![0].Label.Should().Be("煤矿森林");
+    }
+
     private static DerivedDestinationSet Set(params NavigationSourceNode[] nodes) =>
         new("generation_01", new NavigationSourceNode("root", null, null, null, nodes));
 

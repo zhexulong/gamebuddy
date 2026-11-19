@@ -397,11 +397,23 @@ export type RuntimeMagicContextRoot = Readonly<{
 }>;
 
 /**
+ * How a scope announces that a foreground request may take the globals back.
+ *
+ * `preempt` is how the holder stops the work it is doing, so the request waits for one abort instead of for
+ * that work. A scope that omits it - the runtime's own mount - is never preempted: its work is a local load,
+ * and there is nothing for a foreground request to wait for.
+ */
+export type RuntimeMagicContextScope = Readonly<{ preempt?: () => void }>;
+
+/**
  * The one lock over the Magic Context process globals. `withRuntimeMagicContextRoot` is its only acquirer,
  * so a second writer of `MAGIC_CONTEXT_STORAGE_DIR`/cwd/XDG cannot appear beside it without going through
  * that function, and a second lock over the same global cannot be introduced by accident.
  */
 let magicContextScopeTail: Promise<void> = Promise.resolve();
+
+/** The scope holding the globals right now, so a foreground request can ask it to yield. */
+let magicContextHeldScope: Readonly<{ preempt: () => void }> | undefined;
 
 /**
  * Runs `work` with the process pointed at one runtime root's Magic Context store, and only then.
@@ -412,10 +424,15 @@ let magicContextScopeTail: Promise<void> = Promise.resolve();
  * have it open at the same time: the runtime's own mount and the session-end reflection each pin a
  * runtime root, and an unserialised second writer would migrate its store into the other's reads.
  *
- * The values are a bus, not a setting. The vendored resolver reads them per call, and Magic Context's own
- * subagent runner spawns its `pi` children with `{...process.env}`, so a child learns the store from the
- * environment it inherits at spawn time: anything spawned inside `work` belongs to this root, and nothing
- * outside the process reads the variable - no file records it, and no child is started outside a scope.
+ * The values are a bus, not a setting, and the mutation must not be deleted as legacy. The vendored resolver
+ * reads them per call (there is no other input for the store path), and Magic Context's own subagent runner
+ * spawns its `pi` children with `{...process.env}` - a child in which the lean `ctx_*` entry calls
+ * `openDatabase()` at start and is therefore a store client: its root is decided by the environment it
+ * inherits at spawn. Anything spawned inside `work` belongs to this root; nothing on disk records it.
+ *
+ * A FOREGROUND request never waits for a background holder's provider call. The one holder that calls a
+ * model is the session-end reflection, and it passes `scope.preempt`, so a mount that arrives while it is
+ * inside that call takes the globals back after one abort instead of after a whole reflection.
  *
  * The window cannot outlive its holder: the values are restored and the lock released in the same
  * `finally` that ends the callback, so a reader that begins inside the scope resolves this root and a
@@ -424,13 +441,29 @@ let magicContextScopeTail: Promise<void> = Promise.resolve();
 export async function withRuntimeMagicContextRoot<T>(
   runtimeCwd: string,
   work: (root: RuntimeMagicContextRoot) => Promise<T>,
+  scope?: RuntimeMagicContextScope,
 ): Promise<T> {
   const previous = magicContextScopeTail;
   let release: () => void = () => undefined;
   magicContextScopeTail = new Promise<void>((resolveScope) => {
     release = resolveScope;
   });
+  // Asked before waiting, not after: a foreground request must not spend a reflection's wall clock proving the
+  // holder will not yield on its own.
+  if (scope?.preempt === undefined) magicContextHeldScope?.preempt();
   await previous;
+  let preempted = false;
+  const holder: Readonly<{ preempt: () => void }> | undefined =
+    scope?.preempt === undefined
+      ? undefined
+      : {
+          preempt: () => {
+            if (preempted) return;
+            preempted = true;
+            scope.preempt?.();
+          },
+        };
+  if (holder !== undefined) magicContextHeldScope = holder;
   try {
     const absoluteRuntimeCwd = resolve(runtimeCwd);
     const dataHome = join(absoluteRuntimeCwd, "data");
@@ -471,6 +504,7 @@ export async function withRuntimeMagicContextRoot<T>(
       else process.env.MAGIC_CONTEXT_STORAGE_DIR = previousStorageDir;
     }
   } finally {
+    if (magicContextHeldScope === holder) magicContextHeldScope = undefined;
     release();
   }
 }

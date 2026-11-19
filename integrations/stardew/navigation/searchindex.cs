@@ -149,14 +149,29 @@ internal sealed class DestinationSearchIndex
     private const int MinimumLatinPrefixLength = 2;
 
     /// <summary>
-    /// A destination must be recalled by at least half of the query's
-    /// information mass, measured over the idf-weighted query tokens that exist
-    /// anywhere in the directory. BM25 magnitudes depend on the directory
-    /// contents, so this relative floor replaces the fixed 0-100 ratio floor of
-    /// the retired edit-distance scorer while keeping its "no junk candidate"
-    /// intent.
+    /// A destination must be recalled by at least half of the query's WORDS that
+    /// the directory holds anywhere - a CJK bigram or a latin word, never a lone
+    /// CJK character. A query is asked in words, and one shared character is not
+    /// evidence of a place.
+    ///
+    /// <para>
+    /// MEASURED `round77`: <c>find_destination("矿洞")</c> and
+    /// <c>find_destination("矿洞入口 Mine entrance")</c> both answered
+    /// <c>乔迪，肯特和山姆的家</c> and nothing else. The directory's own names for the
+    /// mine are 矿井 / "Mines" (Data/Locations "Mine" -&gt;
+    /// StringsFromCSFiles:MapPage.cs.11098), and 矿洞 is the word the Host's own
+    /// world-state vocabulary prints for the mine entrance, so no destination
+    /// declares it. The retired floor measured the query's idf MASS and only over
+    /// the tokens the directory happened to hold: 矿 is held by the mine and by
+    /// 煤矿森林, 洞 only by that villager's house (its residents sell the cave carrot
+    /// at the Desert Festival), and the rarer token's larger idf let the house cover
+    /// "half the query's mass" while both places whose own names hold 矿 covered
+    /// less than half and were zeroed. The house was then the only candidate left.
+    /// A word-shaped floor cannot do that: 矿洞 is a word nothing holds, so the query
+    /// is refused instead of answered with a neighbour.
+    /// </para>
     /// </summary>
-    private const double MinimumQueryCoverage = 0.5;
+    private const double MinimumQueryWordCoverage = 0.5;
 
     private readonly int destinationCount;
     private readonly Dictionary<string, PostingList> postings;
@@ -215,8 +230,8 @@ internal sealed class DestinationSearchIndex
     /// <summary>
     /// Scores one normalized query against every destination, aligned with the
     /// directory order it was built from. A destination that cannot be recalled,
-    /// that covers too little of the query, or that is scored against an empty
-    /// query scores exactly zero.
+    /// that covers less than half of the query's words, or that is scored against
+    /// an empty query scores exactly zero.
     /// </summary>
     internal double[] ScoreAll(string? normalizedQuery)
     {
@@ -228,29 +243,49 @@ internal sealed class DestinationSearchIndex
         if (tokens.Count == 0)
             return scores;
 
-        double[] coveredMass = new double[this.destinationCount];
+        bool askedInWords = false;
+        foreach (SearchToken token in tokens)
+        {
+            if (token.Kind != SearchTokenKind.CjkUnigram)
+            {
+                askedInWords = true;
+                break;
+            }
+        }
+
+        int[] coveredWords = new int[this.destinationCount];
         HashSet<string> visited = new(StringComparer.Ordinal);
-        double queryMass = 0.0;
+        int queryWords = 0;
         foreach (SearchToken token in tokens)
         {
             if (!visited.Add(token.Text) || !this.postings.TryGetValue(token.Text, out PostingList? posting))
                 continue;
+            // A CJK character is part of a word, not a word of its own: it orders
+            // candidates, and counts towards the floor only when the query carries
+            // nothing word-shaped to be matched on.
+            bool isWord = !askedInWords || token.Kind != SearchTokenKind.CjkUnigram;
+            if (isWord)
+                queryWords++;
             double mass = posting.InverseDocumentFrequency * TokenWeight(token);
-            queryMass += mass;
             for (int entry = 0; entry < posting.Destinations.Length; entry++)
             {
                 int destination = posting.Destinations[entry];
                 scores[destination] += mass * posting.WeightedFrequencies[entry];
-                coveredMass[destination] += mass;
+                if (isWord)
+                    coveredWords[destination]++;
             }
         }
-        if (queryMass <= 0.0)
-            return scores;
 
-        double minimumMass = queryMass * MinimumQueryCoverage;
+        // Not one word of the query is a word this directory holds: the query names
+        // nothing this world can answer, which is a different fact from "the nearest
+        // neighbouring place", and the only honest answer is that no such place exists.
+        if (queryWords == 0)
+            return new double[this.destinationCount];
+
+        int requiredWords = (int)Math.Ceiling(queryWords * MinimumQueryWordCoverage);
         for (int destination = 0; destination < scores.Length; destination++)
         {
-            if (coveredMass[destination] < minimumMass)
+            if (coveredWords[destination] < requiredWords)
                 scores[destination] = 0.0;
         }
         return scores;

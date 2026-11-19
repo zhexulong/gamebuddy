@@ -1,15 +1,19 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { reloadMagicContextInRuntimeRoot } from "../runtime-core.internal.js";
 import {
   COMPANION_REFLECTION_MAX_ATTEMPTS,
+  type CompanionSessionReflectionDeps,
   companionReflectionPendingPath,
   companionReflectionRuntimeCwd,
   createCompanionSessionReflectionChild,
   reflectCompanionSessionOnce,
+  recordPendingCompanionReflection,
   runPendingCompanionReflection,
 } from "./companion-session-reflection.js";
 
@@ -129,4 +133,130 @@ test("a reflection that keeps failing is abandoned after its own attempt ceiling
   assert.deepEqual(outcomes, ["failed", "failed", "abandoned"]);
   assert.equal(existsSync(companionReflectionPendingPath(runtimeCwd)), false);
   assert.equal(await runPendingCompanionReflection({ runtimeCwd, timeoutMs: 5_000 }), "none");
+});
+
+/**
+ * One reflection attempt whose provider call never returns on its own.
+ *
+ * Exactly the shape the dreamer's spawned call has: it holds until it answers or until the registration it belongs
+ * to is aborted, and the abort is what settles it. The seam carries no store, root or model capability - the store
+ * resolving phase is the production plan's, and a focused test cannot script a live model call.
+ */
+function hangingReflection(probe: { entered: boolean; aborts: number }): CompanionSessionReflectionDeps {
+  let abortCall: () => void = () => undefined;
+  const call = new Promise<void>((_resolve, reject) => {
+    abortCall = () => reject(new Error("companion_reflection_preempted"));
+  });
+  return Object.freeze({
+    plan: async () =>
+      Object.freeze({
+        kind: "run" as const,
+        attempt: Object.freeze({
+          run: async (): Promise<void> => {
+            probe.entered = true;
+            await call;
+          },
+          abort: (): void => {
+            probe.aborts += 1;
+            abortCall();
+          },
+          close: (): void => undefined,
+        }),
+      }),
+  });
+}
+
+async function untilProviderCallStarts(probe: { entered: boolean }): Promise<void> {
+  for (let tick = 0; tick < 2_000 && !probe.entered; tick += 1)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(probe.entered, true, "the attempt never reached its provider call");
+}
+
+/**
+ * A MOUNT NEVER WAITS FOR A MODEL CALL.
+ *
+ * The reflection runs a spawned provider call (this module's own measurement: 8 748 ms against a reachable provider,
+ * 4 306 ms against one that rejected the key) inside the window that pins MAGIC_CONTEXT_STORAGE_DIR, cwd and the two
+ * XDG roots. Measured on that accessor before this test existed: a mount started inside the window waited 9 005 ms
+ * of it, against 13 ms with no holder at all. The property is not that the reflection is fast - it is that the mount
+ * never pays for the call: it asks the attempt to yield, the dreamer's own abort stops the spawned call, and the
+ * mount takes the globals for the milliseconds its own load needs.
+ */
+test("a reflection whose provider call hangs does not hold a runtime mount", async (t) => {
+  const reflectionRoot = mkdtempSync(join(tmpdir(), "companion-reflection-hung-"));
+  const mountRoot = mkdtempSync(join(tmpdir(), "companion-reflection-mount-"));
+  const mountStore = join(mountRoot, "data", "cortexkit", "magic-context");
+  const ambient = {
+    cwd: process.cwd(),
+    storage: process.env.MAGIC_CONTEXT_STORAGE_DIR,
+    data: process.env.XDG_DATA_HOME,
+    config: process.env.XDG_CONFIG_HOME,
+  };
+  const probe = { entered: false, aborts: 0 };
+  let mountRead: string | undefined;
+  try {
+    const reflection = reflectCompanionSessionOnce(
+      { runtimeCwd: reflectionRoot, timeoutMs: 2_000 },
+      hangingReflection(probe),
+    );
+    await untilProviderCallStarts(probe);
+    const startedAt = Date.now();
+    await reloadMagicContextInRuntimeRoot(
+      {
+        reload: async (): Promise<void> => {
+          mountRead = process.env.MAGIC_CONTEXT_STORAGE_DIR;
+        },
+      } as unknown as DefaultResourceLoader,
+      mountRoot,
+    );
+    const mountElapsedMs = Date.now() - startedAt;
+    const outcome = await reflection;
+    t.diagnostic(`mount ${mountElapsedMs} ms, reflection ${outcome}, abort calls ${probe.aborts}`);
+    assert.equal(outcome, "preempted", "the attempt names the mount that took the globals rather than a failure");
+    assert.equal(probe.aborts, 1, "the mount asks once, and the dreamer's own abort is what stops the call");
+    assert.equal(mountRead, mountStore, "the mount resolves its own store, never the reflection's");
+    assert.ok(mountElapsedMs < 1_000, `the mount waited ${mountElapsedMs} ms for a provider call it must not wait for`);
+    assert.equal(process.env.MAGIC_CONTEXT_STORAGE_DIR, ambient.storage);
+    assert.equal(process.env.XDG_DATA_HOME, ambient.data);
+    assert.equal(process.env.XDG_CONFIG_HOME, ambient.config);
+    assert.equal(process.cwd(), ambient.cwd);
+  } finally {
+    if (ambient.storage === undefined) delete process.env.MAGIC_CONTEXT_STORAGE_DIR;
+    else process.env.MAGIC_CONTEXT_STORAGE_DIR = ambient.storage;
+    if (ambient.data === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = ambient.data;
+    if (ambient.config === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = ambient.config;
+    process.chdir(ambient.cwd);
+    rmSync(reflectionRoot, { recursive: true, force: true });
+    rmSync(mountRoot, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The other half of that preemption: it costs the reflection nothing it has to pay for.
+ *
+ * A reflection that loses the globals to a mount did not fail - it never got to answer - so its marker stays and
+ * its attempt count does not move. A budget that counted these would abandon a reflection on the third mount of a
+ * session, which is a decision the player never made and never saw.
+ */
+test("a preempted reflection keeps its marker and spends no attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "companion-reflection-preempted-"));
+  const mountRoot = mkdtempSync(join(tmpdir(), "companion-reflection-preempted-mount-"));
+  const probe = { entered: false, aborts: 0 };
+  try {
+    await recordPendingCompanionReflection(root);
+    const reflection = runPendingCompanionReflection({ runtimeCwd: root, timeoutMs: 2_000 }, hangingReflection(probe));
+    await untilProviderCallStarts(probe);
+    await reloadMagicContextInRuntimeRoot(
+      { reload: async (): Promise<void> => undefined } as unknown as DefaultResourceLoader,
+      mountRoot,
+    );
+    assert.equal(await reflection, "deferred");
+    const marker = JSON.parse(readFileSync(companionReflectionPendingPath(root), "utf8")) as { attempts: number };
+    assert.equal(marker.attempts, 0, "a preempted attempt is not a failure and must not spend the retry budget");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(mountRoot, { recursive: true, force: true });
+  }
 });

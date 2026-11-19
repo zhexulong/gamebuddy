@@ -49,10 +49,13 @@ internal sealed class DestinationSearch
     private const int MaximumResultUtf8Bytes = 2048;
 
     /// <summary>
-    /// Fuzzy candidates must score within 25% of the best candidate. The managed
-    /// index reports directory-relative BM25 magnitudes rather than the retired
-    /// edit-distance scorer's fixed 0-100 ratio, so the ambiguity margin is taken
-    /// relative to the best score.
+    /// Fuzzy candidates must score within 25% of the best candidate, so a near-tie is
+    /// offered as a set rather than as one arbitrary winner. This is a tie-collapse over
+    /// the destinations the index already recalled, NOT a judgement that the winner is
+    /// the place the caller named: a margin cannot make an unrelated place plausible, and
+    /// lowering or raising it cannot make a query answer the place it asked for. What a
+    /// candidate has to be is decided by the index's word floor (see
+    /// <see cref="DestinationSearchIndex"/>) before this ratio ever applies.
     /// </summary>
     private const double AmbiguousScoreRatioMargin = 0.25;
 

@@ -210,6 +210,19 @@ internal sealed class DerivedDestinationSet
     }
 
 
+    /// <summary>
+    /// The spellings a destination declares, all of them derived from the location's own rows:
+    /// its <c>Data/Locations</c> display name in the current language (the canonical label), the same
+    /// row in the fallback language, the world-map area's label, and its internal identity (added by
+    /// <see cref="WithIdentityAlias"/>). Nothing here is written by hand, and nothing outside these
+    /// four rows is a name this directory can answer. In particular the word the Host's own
+    /// world-state vocabulary prints for the mine entrance (矿洞入口, <c>game-world-vocabulary.ts</c>
+    /// <c>mineEntranceTargets</c>) is NOT one of them: the game calls that place 矿井 / "Mines", and a
+    /// hand-written synonym table here would only cover the places somebody remembered. A query for a
+    /// word no location declares is answered as no such place, which is why the search floor is
+    /// measured over the query's words (see <c>DestinationSearchIndex</c>) rather than over whatever
+    /// characters happen to be in the index.
+    /// </summary>
     private static IReadOnlyList<string>? BuildExplicitAliases(string canonicalLabel, string? currentLabel, string? fallbackLabel)
     {
         string[] aliases = new[] { currentLabel, fallbackLabel }

@@ -40,11 +40,42 @@ interface DreamerSubpath {
   dreamerRunConfig: (config: unknown, fallback: unknown) => unknown;
   registerPiDreamerProject: (options: Readonly<Record<string, unknown>>) => void;
   runPiDreamForProject: (projectIdentity: string, task: string, registrationOwner: object) => Promise<unknown>;
+  /** Stops the spawned provider call of one registration; the dreamer's own abort for its subagent child. */
+  abortInFlightDreamers: (registrationOwner: object) => void;
   unregisterPiDreamerProject: (options: Readonly<{ projectIdentity: string; registrationOwner: object }>) => void;
 }
 
+/**
+ * What one attempt will really do once the store is resolved: the spawned provider call, and how to stop it.
+ *
+ * `run` is the only step of a reflection that takes a provider's wall clock, and it is NOT the Magic Context
+ * scope's own work - the scope's work is resolving the store, which must stay pinned, and the provider call
+ * happens inside it only because the dreamer's `pi` child is itself a store client whose root is decided by
+ * the environment it inherits at spawn.
+ */
+export type CompanionReflectionRun = Readonly<{
+  run: () => Promise<void>;
+  abort: () => void;
+  close: () => void;
+}>;
+
+/** One plan: either a bounded outcome already, or the attempt this reflection will really perform. */
+export type CompanionReflectionPlan =
+  | Readonly<{ kind: "terminal"; outcome: CompanionSessionReflectionOutcome }>
+  | Readonly<{ kind: "run"; attempt: CompanionReflectionRun }>;
+
+/**
+ * The narrow seam for the one step a focused test cannot script: the spawned provider call.
+ *
+ * Production always plans against the vendored dreamer (`planAgainstRuntimeStore`); the seam exists only
+ * because a live reflection is a model call, and it carries no store, root or model capability of its own.
+ */
+export type CompanionSessionReflectionDeps = Readonly<{
+  plan?: (root: RuntimeMagicContextRoot) => Promise<CompanionReflectionPlan>;
+}>;
+
 /** The bounded outcome one session-end reflection reports. */
-export type CompanionSessionReflectionOutcome = "completed" | "not_applicable" | "failed";
+export type CompanionSessionReflectionOutcome = "completed" | "not_applicable" | "failed" | "preempted";
 
 export type CompanionSessionReflectionInput = Readonly<{
   /** The runtime root the conversation ran in; its store is under `data/cortexkit/magic-context`. */
@@ -73,17 +104,48 @@ export const DEFAULT_REFLECTION_TIMEOUT_MS = 60_000;
  * caller: deriving one from a directory lands on a different partition whenever the run's identity came from a
  * git root, and the task would then reflect on nothing.
  *
+ * The attempt is PREEMPTABLE. A reflection is spawned provider call held inside that window, so a runtime mount
+ * that arrives while it runs announces itself through `scope.preempt`, the dreamer's own abort stops the call,
+ * and the attempt reports `preempted` - a bounded outcome the caller keeps for the next launch rather than a
+ * failure it pays for. Nothing here waits for a model on a foreground path.
+ *
  * Never throws: every failure is one bounded outcome, because this runs on the exit path and a failure here must
  * not become a second failure of the exit it describes.
  */
 export async function reflectCompanionSessionOnce(
   input: CompanionSessionReflectionInput,
+  deps: CompanionSessionReflectionDeps = {},
 ): Promise<CompanionSessionReflectionOutcome> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_REFLECTION_TIMEOUT_MS;
+  const plan = deps.plan ?? planAgainstRuntimeStore;
+  let attempt: CompanionReflectionRun | undefined;
+  let preempted = false;
   try {
     return await withRuntimeMagicContextRoot(
       input.runtimeCwd,
-      async (root) => await withTimeout(timeoutMs, () => runOnce(root)),
+      async (root) => {
+        const planned = await plan(root);
+        if (planned.kind === "terminal") return planned.outcome;
+        attempt = planned.attempt;
+        // A mount that arrived while the store was being resolved already asked this attempt to yield, and the
+        // provider call must then never start: the mount is waiting on the globals it will take back here.
+        if (preempted) return "preempted";
+        try {
+          await withTimeout(timeoutMs, () => planned.attempt.run());
+          return "completed";
+        } catch (error) {
+          if (!preempted) throw error;
+          return "preempted";
+        } finally {
+          planned.attempt.close();
+        }
+      },
+      {
+        preempt: () => {
+          preempted = true;
+          attempt?.abort();
+        },
+      },
     );
   } catch (error) {
     // One bounded outcome, never a throw: this runs on the exit path. The reason is printed for the operator
@@ -96,14 +158,21 @@ export async function reflectCompanionSessionOnce(
   }
 }
 
-async function runOnce(root: RuntimeMagicContextRoot): Promise<CompanionSessionReflectionOutcome> {
+/**
+ * Resolves this runtime root's store inside the scope, and hands back the provider call that will run in it.
+ *
+ * Everything that resolves a path happens here, while the scope holds: the module import, the store open, the
+ * two reads that decide whether there is anything to reflect on, the config load and the registration. The
+ * attempt it returns names the vendored dreamer's own abort, because stopping the call is the dreamer's job.
+ */
+async function planAgainstRuntimeStore(root: RuntimeMagicContextRoot): Promise<CompanionReflectionPlan> {
   // The specifier is spelled here, as a literal, because the production artifact's external-closure gate declares a
   // dynamic import by its emitted argument text and accepts only a canonical JSON string literal or the frozen
   // magicContext bridge expression. A specifier bound to a constant is emitted as an identifier, so it can never be
   // declared and the artifact could not be published at all. Same package, same subpath, same runtime resolution.
   const dreamer = (await import("@cortexkit/pi-magic-context/dreamer")) as unknown as DreamerSubpath;
   const db = dreamer.openRuntimeDatabase();
-  if (db === null) return "not_applicable";
+  if (db === null) return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
 
   // The store's own meta row is the authority on the identity its sessions ran under.
   const meta = db
@@ -112,12 +181,14 @@ async function runOnce(root: RuntimeMagicContextRoot): Promise<CompanionSessionR
     )
     .get() as { identity?: string } | undefined;
   const projectIdentity = meta?.identity;
-  if (typeof projectIdentity !== "string" || projectIdentity.length === 0) return "not_applicable";
+  if (typeof projectIdentity !== "string" || projectIdentity.length === 0)
+    return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
 
   // Nothing to reflect on yet: the compartment stream is what a reflection reads, and the historian's first fold
   // is what creates it.
   const compartments = db.prepare("SELECT COUNT(*) AS n FROM compartments").get() as { n?: number } | undefined;
-  if ((compartments?.n ?? 0) === 0) return "not_applicable";
+  if ((compartments?.n ?? 0) === 0)
+    return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
 
   const loaded = dreamer.loadPiConfig();
   const registrationOwner = {};
@@ -135,16 +206,29 @@ async function runOnce(root: RuntimeMagicContextRoot): Promise<CompanionSessionR
     gitCommitIndexing: { enabled: false, since_days: 30, max_commits: 200 },
     config: dreamer.dreamerRunConfig(loaded.config, loaded.config),
   });
-  try {
-    await dreamer.runPiDreamForProject(projectIdentity, "reflect", registrationOwner);
-    return "completed";
-  } finally {
-    try {
-      dreamer.unregisterPiDreamerProject({ projectIdentity, registrationOwner });
-    } catch {
-      // An unregistration that fails must not replace the outcome the attempt reported.
-    }
-  }
+  return Object.freeze({
+    kind: "run" as const,
+    attempt: Object.freeze({
+      run: async (): Promise<void> => {
+        await dreamer.runPiDreamForProject(projectIdentity, "reflect", registrationOwner);
+      },
+      // The dreamer's own abort for this registration: it stops the spawned `pi` child through that run's signal.
+      abort: (): void => {
+        try {
+          dreamer.abortInFlightDreamers(registrationOwner);
+        } catch {
+          // An abort that cannot be delivered must not become a second failure of this attempt.
+        }
+      },
+      close: (): void => {
+        try {
+          dreamer.unregisterPiDreamerProject({ projectIdentity, registrationOwner });
+        } catch {
+          // An unregistration that fails must not replace the outcome the attempt reported.
+        }
+      },
+    }),
+  });
 }
 
 async function withTimeout<T>(timeoutMs: number, work: () => Promise<T>): Promise<T> {
@@ -173,8 +257,20 @@ export const COMPANION_REFLECTION_PENDING_SCHEMA = "gamebuddy-companion-reflecti
 export const COMPANION_REFLECTION_PENDING_FILE = "companion-reflection-pending.json";
 export const COMPANION_REFLECTION_MAX_ATTEMPTS = 3;
 
-/** What one launch did with the reflection an earlier exit recorded. */
-export type PendingCompanionReflectionOutcome = "none" | "completed" | "not_applicable" | "failed" | "abandoned";
+/**
+ * What one launch did with the reflection an earlier exit recorded.
+ *
+ * `deferred` is the mount's own outcome: the attempt was preempted by a runtime mount that needed the globals, so
+ * it neither completed nor failed. The marker stays and no attempt is spent - a reflection that keeps losing to
+ * mounts is retried on the next launch rather than abandoned by a budget the player never saw.
+ */
+export type PendingCompanionReflectionOutcome =
+  | "none"
+  | "completed"
+  | "not_applicable"
+  | "failed"
+  | "abandoned"
+  | "deferred";
 
 type PendingCompanionReflection = Readonly<{
   schema: typeof COMPANION_REFLECTION_PENDING_SCHEMA;
@@ -219,11 +315,14 @@ export async function recordPendingCompanionReflection(runtimeCwd: string): Prom
  */
 export async function runPendingCompanionReflection(
   input: CompanionSessionReflectionInput,
+  deps: CompanionSessionReflectionDeps = {},
 ): Promise<PendingCompanionReflectionOutcome> {
   const path = companionReflectionPendingPath(input.runtimeCwd);
   const pending = await readPendingCompanionReflection(path);
   if (pending === undefined) return "none";
-  const outcome = await reflectCompanionSessionOnce(input);
+  const outcome = await reflectCompanionSessionOnce(input, deps);
+  // A preempted attempt is owed no longer and owes no attempt: the marker is left exactly as it was.
+  if (outcome === "preempted") return "deferred";
   if (outcome !== "failed") {
     await removePendingCompanionReflection(path);
     return outcome;
