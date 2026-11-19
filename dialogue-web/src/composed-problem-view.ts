@@ -709,6 +709,19 @@ const gameHandoffUncertain: ProblemSentence = (labels) =>
   sentence(labels.gameProblemHandoffUncertainTitle, labels.gameProblemHandoffUncertainDetail, HOST_RETRIES);
 const gameRuntimeUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemRuntimeUnavailableTitle, labels.gameProblemRuntimeUnavailableDetail, RETRY_READ);
+/**
+ * The launch that never reached the game: the Host's own connection to the part that starts the
+ * game's process was not there, or ended before the launch. Nothing was started, so this is the
+ * refusal sentence rather than the operation's "the result is uncertain" line - and its step is the
+ * launch control itself, which is what a fresh attempt needs. A transport that keeps ending leads
+ * to the last step, because the session that carries it lives inside this Host's own process.
+ */
+const gameLaunchUnreachable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemLaunchUnreachableTitle, labels.gameProblemLaunchUnreachableDetail, {
+    kind: "control",
+    id: "game-launch",
+    elsewhere: { said_as: "Start the game" },
+  });
 const gameStorageUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemStorageUnavailableTitle, labels.gameProblemStorageUnavailableDetail, RETRY_READ);
 const gameEndgameSettlement: ProblemSentence = (labels) =>
@@ -810,6 +823,7 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   stardew_cabin_choice_stale: refused(gameCabinChoiceStale),
   stardew_manifest_handoff_uncertain: unsettled(gameHandoffUncertain),
   game_runtime_unavailable: unsettled(gameRuntimeUnavailable),
+  game_launch_unreachable: refused(gameLaunchUnreachable),
   game_storage_unavailable: refused(gameStorageUnavailable),
 
   closed: refused(gameClosed),

@@ -131,6 +131,7 @@ export const GAME_PROBLEM_CODES = [
   "stardew_cabin_choice_stale",
   "stardew_manifest_handoff_uncertain",
   "game_runtime_unavailable",
+  "game_launch_unreachable",
   "game_storage_unavailable",
   "closed",
   "malformed_request",

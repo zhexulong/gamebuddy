@@ -1024,6 +1024,84 @@ test("the bounded-cause walk terminates on a cyclic cause chain", async () => {
   });
 });
 
+/**
+ * The launch's Guardian session is one attempt's own connection, and it can end at any moment: the
+ * peer refuses the arm, the pipe closes mid-command, or the Desktop Guardian goes away. The measured
+ * run (`w-game-launch.txt`, 2026-11-15) answered that with a dead Host - `/game/launch` and every
+ * later `/state` read came back `net::ERR_CONNECTION_REFUSED` - so this holds the two things the
+ * panel needs from the surface while the process half is fixed where the exit is armed.
+ */
+test("a launch whose Guardian session is lost answers a named refusal and the Host keeps serving", async () => {
+  // The process corner of this handler's boundary: nothing in the request path may ask the process
+  // to leave. Recorded rather than reasoned about, because "the handler returned" is not the same
+  // claim as "it never called exit".
+  const exits: unknown[] = [];
+  const realExit = process.exit;
+  process.exit = ((code?: string | number | null) => {
+    exits.push(code ?? null);
+  }) as unknown as typeof process.exit;
+  let launchCalls = 0;
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithLaunch }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameLaunch: async () => {
+      launchCalls += 1;
+      // Exactly what the coordinator wraps an arm refused by a lost session in
+      // (`runPlayerHostLaunch`): the wrapper on the message, the wire's own code on the cause.
+      if (launchCalls === 1)
+        throw new Error("stardew_player_host_launch_failed", { cause: new Error("guardian_session_closed") });
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 };
+    const launch = () =>
+      fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
+        method: "POST",
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(command),
+      });
+
+    const refused = await launch();
+    // (a) The answer is a code, and it is the code that says nothing was started - not the generic
+    // wrapper whose cause the panel would print at the player.
+    assert.equal(refused.status, 409);
+    assert.deepEqual(JSON.parse(await refused.text()), { code: "game_launch_unreachable" });
+
+    // (b) The Host is still serving: the surface behind the failed launch answers the next read.
+    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(state.status, 200);
+    assert.equal(
+      ((await state.json()) as { game: { build: { profileId: string } } }).game.build.profileId,
+      gameProfile.profileId,
+    );
+
+    // The next attempt is still admitted: a surface that closed itself behind one refused launch
+    // would answer `503 closed` here, and the player's retry would be impossible.
+    const retried = await launch();
+    assert.equal(retried.status, 204);
+    assert.equal(launchCalls, 2);
+
+    // (c) Nothing along the way asked this process to leave.
+    assert.deepEqual(exits, [], "the launch path requested a process exit");
+  } finally {
+    process.exit = realExit;
+    await server.close();
+  }
+});
+
 test("game.stop mount is exact and cannot drift from its production callback", () => {
   assert.throws(
     () =>
@@ -3626,12 +3704,19 @@ test("the composed root's two 409s carry the bounded producer code in the body, 
 
   // The one other root read in this surface is the Game half's own, and its refusal is not the
   // composed root's: it keeps the closed body, with no cause and no branch header.
+  //
+  // The refusal is raised AFTER the bootstrap, and it has to be: the bootstrap composes the whole
+  // root, so a `readGame` that throws cannot mint a session at all (it answers the root's own 409,
+  // which is the pair asserted above). Sequencing it here is what makes the `/game` route the thing
+  // under test rather than a bootstrap that never completed.
+  let gameReadFails = false;
   const failingGame = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
     bootstrapToken,
     readChat: async (context) => stateForChat(context),
-    readGame: async () => {
-      throw new Error("stardew_player_host_launch_runtime_unavailable");
+    readGame: async (context) => {
+      if (gameReadFails) throw new Error("stardew_player_host_launch_runtime_unavailable");
+      return stateForGame(context);
     },
   });
   const gameServer = await start(failingGame);
@@ -3639,6 +3724,7 @@ test("the composed root's two 409s carry the bounded producer code in the body, 
     const session = await bootstrap(gameServer.origin);
     assert.equal(session.status, 200);
     const cookie = session.headers.get("set-cookie")!.split(";", 1)[0]!;
+    gameReadFails = true;
     const game = await fetch(`${gameServer.origin}/api/composed-reference-game/v1/game`, {
       headers: { origin: gameServer.origin, cookie },
     });

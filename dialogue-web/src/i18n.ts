@@ -952,6 +952,13 @@ const en = {
   gameProblemRuntimeUnavailableTitle: "The game's runtime is not available",
   gameProblemRuntimeUnavailableDetail:
     "The runtime that runs the game's side of this session is not running, so the action did not go on. Reload the game page, then start the game again.",
+  // The launch that never reached the game. Unlike the pair above, the Host knows the command did
+  // not run: the connection that starts the game's own process was not there, so nothing started.
+  // The step names the launch control itself - a fresh attempt opens a fresh connection - and only
+  // then the restart, because that connection lives inside this Host's own process.
+  gameProblemLaunchUnreachableTitle: "The launch did not reach the game",
+  gameProblemLaunchUnreachableDetail:
+    "GameBuddy's own connection to the part that starts the game ended before the game started, so this launch started nothing and will not be repeated. Press Start the game again; if it ends the same way, quit GameBuddy from the tray icon and open it again.",
   gameProblemStorageUnavailableTitle: "The game session could not be stored",
   gameProblemStorageUnavailableDetail:
     "GameBuddy could not write this session's game record, so the game session was not created. Reload the game page and try again.",
@@ -2119,6 +2126,12 @@ const zh: Messages = {
   gameProblemRuntimeUnavailableTitle: "游戏的运行时不可用",
   gameProblemRuntimeUnavailableDetail:
     "运行这次会话中游戏那一侧的运行时没有在运行，所以这次操作没有进行下去。请重新加载游戏页面，再启动游戏。",
+  // 这次启动根本没有抵达游戏：Host 自己那条用来启动游戏进程的连接不在，或在启动之前就结束了。
+  // 与上一条不同，Host 知道命令没有执行过，所以这是拒绝而不是“结果不确定”。
+  // 下一步是先再启动一次（新的一次会开一条新连接），仍然如此才需要退出 GameBuddy 重开。
+  gameProblemLaunchUnreachableTitle: "这次启动没有连到游戏",
+  gameProblemLaunchUnreachableDetail:
+    "GameBuddy 自己那条用来启动游戏的连接，在游戏开始之前就结束了，所以这次启动什么也没有启动，也不会重放。请再按一次「启动游戏」；如果还是这样结束，请从托盘图标退出 GameBuddy，重新打开后再试。",
   gameProblemStorageUnavailableTitle: "游戏会话没能保存",
   gameProblemStorageUnavailableDetail:
     "GameBuddy 无法写入这次会话的游戏记录，所以游戏会话没有创建。请重新加载游戏页面，再试一次。",

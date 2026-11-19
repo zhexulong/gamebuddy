@@ -471,6 +471,40 @@ function sendLifecycleProblem(response: ServerResponse, statusCode: number, erro
   sendProblem(response, statusCode, code, projectedLifecycleCause(error, code));
 }
 
+/**
+ * The wire names a launch's own transport refuses under.
+ *
+ * A launch reaches the game through the Host's one authenticated Guardian session, and that
+ * session's refusals are the wire's vocabulary rather than the coordinator's - which is why the
+ * bounded-cause projection above deliberately drops them (it carries `stardew_*` only, and an
+ * unknown token in a response body tells a player nothing). They are still the fact that tells this
+ * launch's refusal apart from the wrapper it arrives in: a session that ends mid-command or a pipe
+ * that is not there means nothing was started.
+ */
+const GAME_LAUNCH_TRANSPORT_CAUSES: ReadonlySet<string> = new Set([
+  "guardian_pipe_unreachable",
+  "guardian_session_closed",
+  "guardian_hello_acknowledgement_invalid",
+  "guardian_command_acknowledgement_invalid",
+]);
+
+/**
+ * Whether this launch never reached the game because the Guardian transport itself was gone.
+ *
+ * It walks the raw `cause` chain rather than `boundedLifecycleCause`, because the names it looks
+ * for are exactly the ones that projection drops; the walk is depth-limited for the same reason
+ * the projection's is (a `cause` chain is attacker-shaped in the general case).
+ */
+function launchLostItsGuardian(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_LIFECYCLE_CAUSE_DEPTH; depth += 1) {
+    if (!(current instanceof Error)) return false;
+    if (GAME_LAUNCH_TRANSPORT_CAUSES.has(current.message)) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 function gameSetupProblemCode(error: unknown): string {
   if (!(error instanceof Error)) return "state_unavailable";
   switch (error.message) {
@@ -522,6 +556,12 @@ function gameLaunchProblemCode(error: unknown): string {
     case "stardew_player_host_launch_not_staged":
       return "game_prerequisites_missing";
     case "stardew_player_host_launch_failed":
+      // The launch's transport is the one cause this route answers under its own code instead of
+      // the generic wrapper: a session that was not there, or ended before the launch, started
+      // nothing, so the panel says so rather than offering the retry that an uncertain outcome
+      // earns.
+      if (launchLostItsGuardian(error)) return "game_launch_unreachable";
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_player_host_launch_quarantined":
     case "stardew_lifecycle_closing":
       return distinguishableLifecycleProblemCode(error, "game_unavailable");

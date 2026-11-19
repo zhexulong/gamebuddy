@@ -535,8 +535,12 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // moving it 27 to 29. It went the other way once, 29 to 28: `game_compatibility_error` named no
   // refusal any route makes - the fact it stood for is published where it is computed
   // (`compatibility.status = "incompatible"` plus the reason codes `stardew-compatibility.ts` derives,
-  // `game-browser-state-provider.ts:274-290`) - and no host source ever produced the code.
-  assert.equal(game.size, 28, `the game problem union should have 28 members, read ${game.size}`);
+  // `game-browser-state-provider.ts:274-290`) - and no host source ever produced the code. It went
+  // back up 28 to 29 with `game_launch_unreachable`: the launch that never reached the game because
+  // the Host's own Guardian session was not there or ended first. Nothing was started, so the generic
+  // `game_unavailable` (whose cause read `stardew_player_host_launch_failed`, the wrapper) and
+  // `state_unavailable` (whose panel line claims the result is uncertain) were both wrong answers for it.
+  assert.equal(game.size, 29, `the game problem union should have 29 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
   const { findings, examined, senders } = unreadCodeArguments(
