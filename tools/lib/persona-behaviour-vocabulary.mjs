@@ -99,7 +99,7 @@ export const BEHAVIOURS = Object.freeze([
     gloss: "把选择或情况当问题抛回去，有商有量",
     mode: "permitted",
     claim: "有商有量",
-    samples: ["还是去河边碰运气钓鲶鱼？", "兜里还有南边树林拔的野葱没？", "听见蝙蝠扑腾没？"],
+    samples: ["还是去河边碰运气钓鲶鱼？", "兜里还有南边树林拔的野葱没？", "听见蝙蝠扑腾没？", "上酒吧喝一杯去？"],
   },
   {
     behaviour: "divides_the_work",
