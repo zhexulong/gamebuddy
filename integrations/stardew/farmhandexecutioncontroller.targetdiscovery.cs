@@ -14,6 +14,63 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager
 {
     /// <summary>
+    /// WHETHER A TILE IS A PLACE a published target row may name - the one admission every family's tile passes
+    /// before it becomes a row.
+    ///
+    /// <para>
+    /// Measured `round77` (2026-11-19): twelve `move_to_tile` attempts, seven distinct receipts, every one
+    /// `no_native_path` with `native=not_attempted`, on coordinates the Mod had named. Two of those coordinates do not
+    /// exist on the map the body was standing on at all - `79,16` and `80,16` read in `Backwoods`, whose east exit the
+    /// Farm publishes at `x = width` - and the FarmHouse's `45,22` is the same shape: a cell an interior of that size
+    /// does not contain. A third (`80,0` in `Mountain`) is a Buildings-layer wall. The probe refused them all before the
+    /// engine was asked, and each refusal cost a turn: a row naming a cell no body can ever occupy is not a target, it
+    /// is a coordinate.
+    /// </para>
+    ///
+    /// <para>
+    /// THE RULE, and it is deliberately the MAP's answer rather than this frame's: the tile is on the map, and at least
+    /// one cardinal neighbour is a cell <c>GameLocation.isTilePassable</c> admits (GameLocation.cs:3192, the Back and
+    /// Buildings layers - the engine's own reading of the map's ground). The body stands BESIDE a target, not on it
+    /// (a tree, a chest, a weed and a trellis crop are all cells the planner refuses), so a tile with no admissible
+    /// neighbour is a cell nothing can be done at, however interesting the entity on it looks.
+    /// </para>
+    ///
+    /// <para>
+    /// The two things this is NOT: the reachability flood's verdict, and the occupancy list. A target that vanished
+    /// because a chicken stood beside it would be a radar that changes between two snapshots of the same world, and the
+    /// flood answers a question about where the body IS rather than about where a tile is - a target inside a sealed
+    /// pocket is a place the receipt can name (`target_enclosed=true`), and it becomes usable the moment the pocket opens.
+    /// `DiscoverArtifactSpotTargets` asks the stricter planner question on top of this, because an artifact spot is only
+    /// worth a row when a body can dig THIS frame; that is a second question and it keeps its own spelling.
+    /// </para>
+    /// </summary>
+    internal static bool IsTargetTileAddressable(GameLocation? location, int x, int y)
+    {
+        if (location is null || !location.isTileOnMap(x, y)) return false;
+        foreach ((int neighbourX, int neighbourY) in CardinalNeighbours(x, y))
+        {
+            if (!location.isTileOnMap(neighbourX, neighbourY)) continue;
+            if (location.isTilePassable(new Vector2(neighbourX, neighbourY))) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The four cells a body can stand on beside one tile, in the planner's own cardinal step set.</summary>
+    private static (int X, int Y)[] CardinalNeighbours(int x, int y) => new[]
+    {
+        (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1),
+    };
+
+    /// <summary>
+    /// The discovery radius AND <see cref="IsTargetTileAddressable"/>, as one question: the bound every family's
+    /// candidate tile is admitted through. Kept beside the radius test it composes so a family cannot pick up the
+    /// distance and forget the place.
+    /// </summary>
+    private static bool IsPublishedTargetTileInRadius(Farmer player, int x, int y, int radius) =>
+        IsTileWithinChebyshevRadius(player, x, y, radius) && IsTargetTileAddressable(player.currentLocation, x, y);
+
+    /// <summary>
     /// Every tile this location offers as a way out, asked of the two tables the ENGINE keeps, in the order the game
     /// itself resolves them: the door table <c>updateDoors</c> builds, the human door of each building standing here, and
     /// the location's own warp list.
@@ -87,7 +144,7 @@ internal sealed partial class ExecutionManager
             .OfType<StardewValley.NPC>()
             .Where(npc => npc.IsVillager
                 && !string.IsNullOrWhiteSpace(npc.Name)
-                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius))
+                && IsPublishedTargetTileInRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(npc =>
             {
@@ -261,7 +318,7 @@ internal sealed partial class ExecutionManager
         if (location is null) return Array.Empty<BridgePetTarget>();
         List<BridgePetTarget> result = new();
         foreach (Pet pet in location.characters.OfType<Pet>()
-            .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius, player))
+            .Where(pet => IsPublishedTargetTileInRadius(player, (int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius))
             .Take(16))
         {
             BridgePetTarget target = new(
@@ -302,7 +359,7 @@ internal sealed partial class ExecutionManager
         if (location is null) return Array.Empty<BridgeFarmAnimalPetTarget>();
         List<BridgeFarmAnimalPetTarget> result = new();
         foreach (FarmAnimal animal in location.animals.Values
-            .Where(animal => IsTileWithinChebyshevRadius(player, (int)animal.Tile.X, (int)animal.Tile.Y, TargetDiscoveryRadius))
+            .Where(animal => IsPublishedTargetTileInRadius(player, (int)animal.Tile.X, (int)animal.Tile.Y, TargetDiscoveryRadius))
             .OrderBy(animal => ChebyshevDistance(player, (int)animal.Tile.X, (int)animal.Tile.Y))
             .ThenBy(animal => animal.Tile.X)
             .ThenBy(animal => animal.Tile.Y))
@@ -332,7 +389,7 @@ internal sealed partial class ExecutionManager
         if (location is null) return Array.Empty<BridgeMachineTarget>();
         return location.objects.Pairs
             .Where(pair => pair.Value.GetMachineData() is not null
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(pair =>
             {
@@ -388,9 +445,7 @@ internal sealed partial class ExecutionManager
         List<BridgeTreeChopSourceTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree
-                && pair.Key.X >= 0 && pair.Key.X <= 1000
-                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player))
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
         {
             if (result.Count >= 64) break;
             StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
@@ -433,8 +488,7 @@ internal sealed partial class ExecutionManager
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
                 && tree.stump.Value && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
                 && tree.health.Value == 5f
-                && pair.Key.X >= 0 && pair.Key.X <= 1000 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(pair =>
             {
@@ -457,9 +511,7 @@ internal sealed partial class ExecutionManager
         return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
                 && tree.stump.Value
-                && pair.Key.X >= 0 && pair.Key.X <= 1000
-                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(16)
             .Select(pair =>
             {
@@ -490,7 +542,7 @@ internal sealed partial class ExecutionManager
                 for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
+                    if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
                         continue;
                     rowsForThisStack.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
                 }
@@ -513,7 +565,7 @@ internal sealed partial class ExecutionManager
                 && pair.Value.IsWeeds()
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(16)
             .Select(pair => new BridgeWeedTarget(
                 BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
@@ -529,7 +581,7 @@ internal sealed partial class ExecutionManager
         foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
         {
             if (pair.Value is not StardewValley.Objects.Cask cask
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                || !IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
             result.Add(new BridgeCaskTarget(BuildCaskTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, cask), location.NameOrUniqueName,
                 (int)pair.Key.X, (int)pair.Key.Y, cask.heldObject.Value is not null, cask.heldObject.Value?.QualifiedItemId));
@@ -541,14 +593,14 @@ internal sealed partial class ExecutionManager
     private static IReadOnlyList<BridgeMannequinTarget> DiscoverMannequinTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
-        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Mannequin && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
+        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Mannequin && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
             .Select(pair => new BridgeMannequinTarget(BuildMannequinTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y)).ToArray() ?? Array.Empty<BridgeMannequinTarget>();
     }
 
     private static IReadOnlyList<BridgeSignTarget> DiscoverSignTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
-        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Sign && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
+        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Sign && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
             .Select(pair => { StardewValley.Objects.Sign sign = (StardewValley.Objects.Sign)pair.Value; return new BridgeSignTarget(BuildSignTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, sign), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, sign.displayItem.Value is not null, sign.displayItem.Value?.QualifiedItemId); }).ToArray() ?? Array.Empty<BridgeSignTarget>();
     }
 
@@ -561,7 +613,7 @@ internal sealed partial class ExecutionManager
         {
             Vector2 tile = new(building.tileX.Value, building.tileY.Value);
             Point door = building.getPointForHumanDoor();
-            if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
+            if (!IsPublishedTargetTileInRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
             result.Add(new BridgeSiloTarget(BuildSiloTargetId(location, building), location.NameOrUniqueName, door.X, door.Y, location.piecesOfHay.Value));
         }
         return result;
@@ -581,7 +633,7 @@ internal sealed partial class ExecutionManager
                 || grass.numberOfWeeds.Value <= 0
                 || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000
                 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                || !IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
             result.Add(new BridgeGrassTarget(
                 BuildGrassTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, grass),
@@ -601,7 +653,7 @@ internal sealed partial class ExecutionManager
         {
             if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is null
                 || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                || !IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
             bool forageCrop = dirt.crop.forageCrop.Value;
             bool readyForHarvest = dirt.readyForHarvest();
@@ -642,7 +694,7 @@ internal sealed partial class ExecutionManager
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
-        return NearestFirst(location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
+        return NearestFirst(location.terrainFeatures.Pairs.Where(pair => IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)
             && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
             && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)), player)
             .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
@@ -786,7 +838,7 @@ internal sealed partial class ExecutionManager
         // radar while `break_rock_source` refused it. Each published row carries its real durability in `health`, so the
         // Agent can see how many swings remain; the action itself decides what one landing swing is worth.
         return NearestFirst(location.objects.Pairs
-            .Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsBreakableStone(pair.Value)), player)
+            .Where(pair => IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius) && NativeItemPredicates.IsBreakableStone(pair.Value)), player)
             .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
@@ -903,7 +955,7 @@ internal sealed partial class ExecutionManager
             }
             foreach (Vector2 tile in PetBowlWaterableTiles(bowl))
             {
-                if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
+                if (!IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
                 result.Add(new BridgePetBowlTarget(BuildPetBowlTargetId(location, (int)tile.X, (int)tile.Y), (int)tile.X, (int)tile.Y));
             }
             if (result.Count >= 8) break;
@@ -924,7 +976,7 @@ internal sealed partial class ExecutionManager
                 exclusions.Record("slimeHutchTroughTargets", DiscoveryExclusionReasons.AlreadyWatered);
                 continue;
             }
-            if (!IsTileWithinChebyshevRadius(player, SlimeHutchTroughColumn, y, TargetDiscoveryRadius)) continue;
+            if (!IsPublishedTargetTileInRadius(player, SlimeHutchTroughColumn, y, TargetDiscoveryRadius)) continue;
             result.Add(new BridgeSlimeHutchTroughTarget(BuildSlimeHutchTroughTargetId(hutch, SlimeHutchTroughColumn, y), SlimeHutchTroughColumn, y));
         }
         return result;
@@ -972,7 +1024,7 @@ internal sealed partial class ExecutionManager
                 for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 32; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || location.doesTileHaveProperty(x, y, "Trough", "Back") is null || location.objects.ContainsKey(tile))
+                    if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || location.doesTileHaveProperty(x, y, "Trough", "Back") is null || location.objects.ContainsKey(tile))
                         continue;
                     result.Add(new BridgeFeedTroughTarget(BuildFeedTroughTargetId(location, slot, x, y, hay.Stack), slot, x, y, hay.Stack));
                 }
@@ -1038,7 +1090,7 @@ internal sealed partial class ExecutionManager
                 if (result.Count >= 32) return result;
                 int x = (int)animal.Tile.X;
                 int y = (int)animal.Tile.Y;
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool)) continue;
+                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool)) continue;
                 StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
                 int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
                 if (!player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack)) continue;
@@ -1099,7 +1151,7 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeForageTarget>();
         return NearestFirst(location.objects.Pairs
-            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
+            .Where(pair => pair.Value is not null && pair.Value.isForage() && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(64)
             .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack, pair.Value.isForage()))
             .ToArray();
@@ -1122,7 +1174,7 @@ internal sealed partial class ExecutionManager
             foreach (Chunk chunk in debris.Chunks)
             {
                 Point tile = GetChunkTile(chunk);
-                if (IsTileWithinChebyshevRadius(player, tile.X, tile.Y, discoveryRadius))
+                if (IsPublishedTargetTileInRadius(player, tile.X, tile.Y, discoveryRadius))
                 {
                     string targetId = BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
                     int stack = Math.Max(1, debris.item?.Stack ?? 1);
@@ -1165,7 +1217,7 @@ internal sealed partial class ExecutionManager
                 for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
+                    if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
                         || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
@@ -1197,7 +1249,7 @@ internal sealed partial class ExecutionManager
             for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
             {
                 Vector2 tile = new(x, y);
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
+                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
                     continue;
                 result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322", RequireDisplayName("(O)322")));
             }
@@ -1218,7 +1270,7 @@ internal sealed partial class ExecutionManager
                 Vector2 tile = pair.Key;
                 StardewValley.Object placed = pair.Value;
                 if (result.Count >= 16) return result;
-                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
+                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || !IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
                 // `CrabPot.NeedsBait` is false for a pot that already carries bait (CrabPot.cs:64-71), and the drop-in
                 // that fills one is gated on that same predicate (:239). The pot exists and is not a bait target.
                 if (crabPot.bait.Value is not null)
@@ -1247,7 +1299,7 @@ internal sealed partial class ExecutionManager
                 || !crabPot.readyForHarvest.Value
                 || crabPot.tileIndexToShow != 714
                 || crabPot.heldObject.Value is null
-                || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+                || !IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
             result.Add(new BridgeCrabPotCollectTarget(
                 BuildCollectCrabPotTargetId(location, (int)tile.X, (int)tile.Y),
@@ -1273,7 +1325,7 @@ internal sealed partial class ExecutionManager
             for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 16; x++)
             for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 16; y++)
             {
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
+                if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
                     || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
                     continue;
                 result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710", RequireDisplayName("(O)710")));
@@ -1296,7 +1348,7 @@ internal sealed partial class ExecutionManager
                 for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
                 {
                     Vector2 tile = new(x, y);
-                    if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
+                    if (!IsPublishedTargetTileInRadius(player, x, y, TargetDiscoveryRadius)
                         || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                         || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
@@ -1321,7 +1373,7 @@ internal sealed partial class ExecutionManager
                 && dirt.crop is not null
                 && !dirt.crop.forageCrop.Value
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
         {
             if (result.Count >= 64) break;
             StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
@@ -1364,7 +1416,7 @@ internal sealed partial class ExecutionManager
         List<BridgeCropTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null }
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
+                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
         {
             if (result.Count >= 64) break;
             StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;

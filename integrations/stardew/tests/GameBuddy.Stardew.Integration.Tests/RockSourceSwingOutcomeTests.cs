@@ -258,6 +258,10 @@ public sealed class RockSourceSwingOutcomeTests
             var farm = new GameLocation();
             var map = new xTile.Map();
             map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            // `GameLocation.isTilePassable` REQUIRES the `Buildings` layer (`RequireLayer`, GameLocation.cs:3192) - every
+            // map the engine loads declares it, so a fixture without one is not shaped like a location and any discovery
+            // that asks the map's own ground about a tile throws instead of answering.
+            map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
             farm.map = map;
             farm.IsFarm = true;
             SetInstanceField(farm, "name", new NetString("ProbeFarm"));
