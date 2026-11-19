@@ -203,7 +203,7 @@ test("a mount whose session file carries more than the transcript still has its 
   }
 });
 
-test("a mount whose session file disagrees with the transcript is left exactly as it is, by name", async () => {
+test("a mount whose session file disagrees with the transcript is rebuilt from the transcript, so the model reads the store's words", async () => {
   const diverging = row("player", "Words the model was actually given, not the row the store kept.");
   const seededRows = [TRANSCRIPT[0]!, diverging, TRANSCRIPT[2]!];
   const mount = await mountWithSessionFile("gamebuddy-transcript-restore-diverges-", (sessionManager) => {
@@ -211,12 +211,42 @@ test("a mount whose session file disagrees with the transcript is left exactly a
     for (const one of seededRows) appendRow(sessionManager, one);
   });
   try {
-    const before = mount.conversation();
+    assert.deepEqual(
+      mount.conversation(),
+      conversationOfRows(seededRows),
+      "the seeded session carries the words the store no longer holds",
+    );
     const alignment = alignSessionToTranscriptRows(mount.session, TRANSCRIPT);
-    assert.deepEqual(alignment, { status: "refused", reason: "session_diverges_from_transcript:1" });
-    const after = mount.conversation();
-    assert.deepEqual(after, before, `the session was rewritten: ${JSON.stringify(after)}`);
-    assert.deepEqual(after, conversationOfRows(seededRows));
+    // The transcript owns the conversation: the model is given the rows from the first disagreement on, not left
+    // reading the history the player already replaced.
+    assert.deepEqual(alignment, { status: "rebuilt", dropped: 2, appended: 4 });
+    const carried = mount.conversation();
+    assert.deepEqual(
+      carried,
+      conversationOfRows(TRANSCRIPT),
+      `the model's assembled context was ${JSON.stringify(carried)}`,
+    );
+  } finally {
+    await mount.close();
+  }
+});
+
+test("a mount whose session file disagrees at its first row is rebuilt from the transcript from the beginning", async () => {
+  const mount = await mountWithSessionFile("gamebuddy-transcript-restore-diverges-first-", (sessionManager) => {
+    sessionManager.appendMessage({ role: "system", content: HOST_SYSTEM_PROMPT, timestamp: Date.now() });
+    // The player corrected the opening line while nothing was mounted: every row after it is the store's own.
+    appendRow(sessionManager, row("companion", "*She does not look up.* You are late."));
+    for (const one of TRANSCRIPT.slice(1)) appendRow(sessionManager, one);
+  });
+  try {
+    const alignment = alignSessionToTranscriptRows(mount.session, TRANSCRIPT);
+    assert.deepEqual(alignment, { status: "rebuilt", dropped: 5, appended: 5 });
+    const carried = mount.conversation();
+    assert.deepEqual(
+      carried,
+      conversationOfRows(TRANSCRIPT),
+      `the model's assembled context was ${JSON.stringify(carried)}`,
+    );
   } finally {
     await mount.close();
   }

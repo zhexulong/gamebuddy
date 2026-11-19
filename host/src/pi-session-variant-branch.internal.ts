@@ -327,26 +327,27 @@ export function rewindPiTranscriptTail(
 export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
 
 /**
- * What one mount-time alignment did, or the fact it refused to touch the session at all.
+ * What one mount-time alignment did, or the fact it could not carry a row at all.
  *
  * `dropped` and `appended` are the two directions of ONE disagreement between the two authorities, and a mount
- * reports whichever it settled. A refusal names the row it stopped at, because "the session and the transcript
- * disagree" is not something a reader can act on and the row is.
+ * reports whichever it settled. `rebuilt` is the third: the rows the two sides shared disagreed, so the session's
+ * conversation was taken back to that row and given the transcript's words from there. A refusal names the row it
+ * stopped at, because "the session and the transcript disagree" is not something a reader can act on and the row is.
  */
 export type PiTranscriptAlignment =
   | Readonly<{ status: "aligned"; dropped: number; appended: number }>
+  | Readonly<{ status: "rebuilt"; dropped: number; appended: number }>
   | Readonly<{ status: "refused"; reason: string }>;
 
 /**
  * The one mount-time alignment: after the Pi session is reopened, make its rows the transcript's rows.
  *
- * The store and the session are two authorities over one conversation, and they disagree in exactly two ways.
+ * The store and the session are two authorities over one conversation, and they disagree in three ways.
  *
  * The session is LONGER. A delete or a rewind performed while nothing was mounted changes only the store - there
  * is no live session to reshape - and re-opening the session file lands the leaf where the file last ended, which
- * resurrects exactly the rows the player removed. That is settled the way a mounted rewind settles it: the kept
- * prefix is proved text by text against what the session still carries, and the tail past it is cut with the same
- * append-only edit, so the cut survives the next re-open too.
+ * resurrects exactly the rows the player removed. The tail past the transcript's last row is cut, with the same
+ * append-only edit a mounted rewind pins its cut with, so the cut survives the next re-open too.
  *
  * The session is SHORTER. This is the shape of every thread whose rows were written while no session of its own
  * existed: a fork's fresh surface session, a session file that was never created or was truncated. Nothing used to
@@ -354,29 +355,40 @@ export type PiTranscriptAlignment =
  * the companion answered the next line as if the conversation had just begun. The missing rows are handed to the
  * model instead, in order, as the conversation's own messages.
  *
- * WHAT DECIDES IT. The rows the two sides SHARE must be the same conversation, in the same order, before either
- * side is touched - a session that disagrees is left exactly as it is, because rewriting one authority from the
- * other on a disagreement is a repair no mount has the authority to make. Only a session whose rows are a strict
- * PREFIX of the transcript's is given the rest; and each row is proved to read back as the transcript's own text
- * before anything is appended, because the projection that reads a row back is not the identity and a row that
- * would come back as different words is a row this session cannot carry.
+ * The session DISAGREES. An edit made while nothing was mounted rewrites a store row and leaves the session's own
+ * line standing, so the two histories say different words at the same position - and until this branch existed the
+ * mount printed a line and left the model reading the words the player had already replaced, which is the one
+ * outcome the two-authority split must never produce: the surface shows one conversation while the model answers
+ * another. THE DURABLE TRANSCRIPT OWNS the conversation (the same ruling that gives it liveness), so the session is
+ * rebuilt from it: every entry from the first disagreed row onwards stops contributing, and the transcript's rows
+ * from that position are appended as the conversation's own messages.
  *
- * Refusals are reported rather than thrown. A mount whose session shape this function cannot prove is still a
- * mount - the player's conversation must open - and a silent rewrite would damage a conversation on a guess.
+ * WHAT DECIDES IT. The rows are matched by ENTRY, not by position in a filtered list: each entry that contributes a
+ * line is remembered with the entry it came from, so the cut lands on the exact entry the disagreed row belongs to
+ * even when a tool call or a tool result sits between two lines. Nothing is matched by text and no tail is proved
+ * positionally, because a positional proof is the thing that cannot see an entry which contributes no line - it was
+ * the reason a delete in a session with tool calls could not be settled at all. Each row that is appended is still
+ * proved to read back as the transcript's own text first, because the projection that reads a row back is not the
+ * identity and a row that would come back as different words is a row this session cannot carry.
+ *
+ * Refusals are reported rather than thrown, and they are now only about the words: a mount must still open, and a row
+ * the projection cannot reproduce is the one disagreement left that this function may not settle on a guess.
  */
 export function alignSessionToTranscriptRows(
   session: PiVariantBranchSession,
   rows: readonly Readonly<{ role: string; text: string }>[],
 ): PiTranscriptAlignment {
-  // What each side thinks the conversation is, in the same shape: a player line or a companion line, with its
-  // text. An entry that carries no line of the conversation - the Host's own system prompt, a tool result, a
-  // greeting the row projection drops - holds no position, exactly as it holds none in the mounted mutations'
-  // positional proofs, so it is passed over rather than counted as an empty row.
-  const sessionRows = branchMessageEntries(session).flatMap((entry) => {
+  // What each side thinks the conversation is, in the same shape: a player line or a companion line, with its text
+  // and the entry it came from. An entry that carries no line of the conversation - the Host's own system prompt, a
+  // tool call whose own text is empty - holds no position in that list, so it is passed over rather than counted as
+  // an empty row, and remembering its neighbours' entry ids is what keeps the cut on the right node.
+  const entries = branchMessageEntries(session);
+  const sessionRows = entries.flatMap((entry, index) => {
     const text = entry.player ?? entry.reply;
     if (text === null) return [];
     return [
       Object.freeze({
+        index,
         role: entry.player !== null ? ("player" as const) : ("companion" as const),
         text: text.trim(),
       }),
@@ -389,36 +401,32 @@ export function alignSessionToTranscriptRows(
     }),
   );
   const shared = Math.min(sessionRows.length, expected.length);
-  for (let offset = 0; offset < shared; offset += 1) {
-    const actual = sessionRows[offset]!;
-    const row = expected[offset]!;
-    if (actual.role !== row.role || actual.text !== row.text)
-      return Object.freeze({ status: "refused", reason: `session_diverges_from_transcript:${offset}` });
-  }
-  if (sessionRows.length === expected.length) return Object.freeze({ status: "aligned", dropped: 0, appended: 0 });
-  if (sessionRows.length > expected.length) {
-    const trailing = sessionRows.slice(expected.length);
-    const dropped = trailing.map((row): PiTranscriptMessage => Object.freeze({ role: row.role, text: row.text }));
-    // An empty companion reply cannot be proved byte for byte, so it is left alone rather than cut on a guess.
-    if (dropped.some((row) => row.text.length === 0))
-      return Object.freeze({ status: "refused", reason: "trailing_row_unprovable" });
-    const rewound = rewindPiTranscriptTail(session, dropped);
-    if (rewound.status !== "rewound") return Object.freeze({ status: "refused", reason: rewound.reason });
-    return Object.freeze({ status: "aligned", dropped: dropped.length, appended: 0 });
-  }
-  const missing = expected.slice(sessionRows.length);
-  const carrying = missing.map((row) => messageCarryingTranscriptRow(row));
-  for (const [offset, row] of missing.entries()) {
+  let agrees = 0;
+  while (
+    agrees < shared &&
+    sessionRows[agrees]!.role === expected[agrees]!.role &&
+    sessionRows[agrees]!.text === expected[agrees]!.text
+  )
+    agrees += 1;
+  const carrying = expected.slice(agrees).map((row) => messageCarryingTranscriptRow(row));
+  for (const [offset, row] of expected.slice(agrees).entries()) {
     if (transcriptRowTextOf(carrying[offset]!) !== row.text)
-      return Object.freeze({
-        status: "refused",
-        reason: `transcript_row_unwritable:${sessionRows.length + offset}`,
-      });
+      return Object.freeze({ status: "refused", reason: `transcript_row_unwritable:${agrees + offset}` });
   }
+  if (agrees === sessionRows.length && agrees === expected.length)
+    return Object.freeze({ status: "aligned", dropped: 0, appended: 0 });
+  // Every entry from the first row the session does not agree with, or the first row it does not hold at all, stops
+  // contributing the conversation: the rows that belonged to them are the transcript's to state, and are re-appended
+  // below as the conversation's own messages.
+  const cut = sessionRows[agrees] === undefined ? entries.length : sessionRows[agrees]!.index;
+  const dropped = sessionRows.length - agrees;
+  for (const entry of entries.slice(cut)) session.sessionManager.appendContextEdit(entry.id, null);
   for (const message of carrying) session.sessionManager.appendMessage(message);
   // The live context is derived from the session only by this call (`agent-session.js`
   // `_refreshFinalizedContext`); without it the next prompt would read the pre-mount state.
   session.refreshContext();
+  if (dropped > 0 && carrying.length === 0) return Object.freeze({ status: "aligned", dropped, appended: 0 });
+  if (dropped > 0) return Object.freeze({ status: "rebuilt", dropped, appended: carrying.length });
   return Object.freeze({ status: "aligned", dropped: 0, appended: carrying.length });
 }
 

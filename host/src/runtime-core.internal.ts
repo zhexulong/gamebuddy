@@ -894,13 +894,19 @@ export async function createChatRuntimeConstructionInternal(
       }
     }
     // The store is the authority for which rows exist; the session is the authority for what the model carries. A mount
-    // is the one moment both are known and neither is in flight, so the disagreement is settled here in both
-    // directions: whatever the session still carries past the store's last row was removed while nothing was mounted -
-    // an offline delete or rewind - and the same append-only cut a mounted rewind uses pins it durably; and whatever
-    // the session is MISSING is handed to the model, which is the one shape a fork's own fresh surface session has.
+    // is the one moment both are known and neither is in flight, so the disagreement is settled here in the direction
+    // the ruling gives it: THE TRANSCRIPT OWNS. Whatever the session still carries past the store's last row was
+    // removed while nothing was mounted - an offline delete or rewind - and is cut; whatever the session is MISSING is
+    // handed to the model, which is the one shape a fork's own fresh surface session has; and a session whose shared
+    // rows DISAGREE with the store's (an edit made while nothing was mounted) is rebuilt from the transcript's words
+    // at that row, because leaving it would show the player one conversation and give the model another.
     const alignment = alignSessionToTranscriptRows(runtime.session, construction.transcriptRows);
     if (alignment.status === "refused")
-      process.stderr.write(`[mount] the session was left as it is: ${alignment.reason}\n`);
+      process.stderr.write(`[mount] a transcript row could not be carried: ${alignment.reason}\n`);
+    else if (alignment.status === "rebuilt")
+      process.stderr.write(
+        `[mount] rebuilt the session from the transcript at the row the two disagreed on: dropped ${alignment.dropped} row(s), appended ${alignment.appended}\n`,
+      );
     else if (alignment.dropped > 0)
       process.stderr.write(`[mount] aligned the session to the transcript: dropped ${alignment.dropped} row(s)\n`);
     else if (alignment.appended > 0)
