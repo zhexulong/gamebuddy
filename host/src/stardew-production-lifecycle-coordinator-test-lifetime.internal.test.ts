@@ -64,10 +64,11 @@ const SUPPORT_IMPORT = new RegExp(
  *
  * A call, not a mention: the first version of this rule matched the identifier anywhere in the file, so a file whose
  * `installLifecycleTestHooks();` call was deleted still passed on the import it no longer used - measured, and the reason
- * this is anchored on an invocation.
+ * this is anchored on an invocation. `bindWindowsStaleLockReclaimer(undefined)` is not a binding either: it is the
+ * fail-closed code that DISABLES the reclaimer, and it was the exact shape of the child this lane fixed.
  */
 const BINDS_RECLAIMER =
-  /\b(?:bindVerifiedWindowsLockReclaimerForTest|bindWindowsStaleLockReclaimer|installLifecycleTestHooks)\s*\(/u;
+  /\b(?:bindVerifiedWindowsLockReclaimerForTest|bindWindowsStaleLockReclaimer(?!\s*\(\s*undefined\s*\))|installLifecycleTestHooks)\s*\(/u;
 
 /**
  * How long one file may take before it is called hung. Every file in today's population finishes in
