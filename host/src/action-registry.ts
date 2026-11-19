@@ -884,10 +884,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Actions whose Host tool schema is derived from the Mod-owned descriptor rather
-// than a static Host adapter. Membership is about how the arguments are built,
-// not about lifecycle: a member may be Experimental (admitted through the
-// candidate carve-out) or already live_verified.
+/**
+ * WHICH actions' tool schemas are projected from the Mod's own declaration instead of a hand-written Host mount.
+ *
+ * Membership is a statement about HOW the arguments are built - `game-tools.ts` mounts one projection block for every id
+ * here, and `MOD_DESCRIPTOR_REQUIREMENTS` holds the facts each of those tools needs - and NOT a lifecycle statement. Read
+ * as a lifecycle list it says nearly the opposite of the truth: measured 2026-11-20 on the artifact the Mod publishes,
+ * 46 of these 48 are `live_verified` or `published`, and only `place_item_on_pedestal` and `put_item_in_fish_tank` are
+ * `experimental`. The set that answers "which actions carry no proof of their own" is derived from the registration
+ * lifecycle by `unprovenVisibilityActionIds`; a reader took this list for that set once and reported forty-eight unproven
+ * actions where the measured answer was two.
+ */
 export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "place_owned_object",
   "remove_placed_item",
@@ -1384,20 +1391,46 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
  * <p>
  * `deleteWhen` is the expiry, and it is a real one: `live_verified` is re-derived from recorded live runs by
  * `tools/check-stardew-action-promotion.mjs` rather than taken on faith from the lifecycle byte, so the row retires
- * exactly when the action earns the proof the row exists to stand in for. `action-registry-consistency.test.ts` holds
- * this table and the carve-out's actual population to each other in BOTH directions and fails by name: an action the
- * carve-out admits that no row explains, and a row whose action has since earned its live proof (or left the surface).
+ * exactly when the action earns the proof the row exists to stand in for. WHICH actions need a row is not listed here:
+ * `unprovenVisibilityActionIds` derives it from the Mod's own registration, and `action-registry-consistency.test.ts`
+ * holds that set and this table to each other in BOTH directions and fails by name - an action without its own proof that
+ * no row explains, and a row whose action has since earned its live proof (or left the surface).
  * </p>
  */
 export type UnprovenVisibilityDeclaration = Readonly<{
-  actionId: StardewDescriptorDerivedActionId;
+  actionId: string;
   reason: string;
   deleteWhen: string;
 }>;
 
+/** Whether the Mod's lifecycle admits the action on its own: a live run, or the full publication process behind it. */
+function carriesItsOwnProof(lifecycle: ActionLifecycle): boolean {
+  return lifecycle === "live_verified" || lifecycle === "published";
+}
+
 /**
- * Every action that may be visible without its live proof, one row each. Typed against the enrollment list, so a row
- * for an action the descriptor gate does not carry is a compile error rather than a row that excuses nothing.
+ * Every registered action whose own lifecycle carries no proof.
+ *
+ * The SET is derived because the Mod owns it: `lifecycle` is a field its registration publishes, and "has no live proof"
+ * is exactly the two values it is not. A hand-written list of the same ids was a second spelling of that field, and one
+ * that could only ever be right about the registrations its author happened to remember - an action that earns or loses
+ * its proof moves between the two sides here with no edit. Only the PROSE is Host-owned, in
+ * `UNPROVEN_VISIBILITY_DECLARATIONS`, and `action-registry-consistency.test.ts` holds the two to each other in both
+ * directions.
+ */
+export function unprovenVisibilityActionIds(registrations: readonly ActionRegistration[]): readonly string[] {
+  return Object.freeze(
+    [...new Set(registrations.filter((r) => !carriesItsOwnProof(r.lifecycle)).map((r) => r.actionId))].sort(),
+  );
+}
+
+/**
+ * The reason each action without its own proof may be visible anyway, and the condition that retires the row.
+ *
+ * The rows carry PROSE ONLY: which actions need one is `unprovenVisibilityActionIds`' answer, derived from the Mod's
+ * registration, so a row for an action that holds its own proof means the row outlived its reason and a missing row means
+ * an action is visible with nobody saying why. Both are failures of
+ * `action-registry-consistency.test.ts`'s bijection, each with its own name.
  */
 export const UNPROVEN_VISIBILITY_DECLARATIONS = Object.freeze([
   {
@@ -1418,15 +1451,6 @@ export const UNPROVEN_VISIBILITY_DECLARATIONS = Object.freeze([
       "its Mod registration reaches `live_verified`, which admits it on its own live proof and makes this row dead",
   },
 ] as const satisfies readonly UnprovenVisibilityDeclaration[]);
-
-const UNPROVEN_VISIBILITY_DECLARATION_BY_ACTION: ReadonlyMap<string, UnprovenVisibilityDeclaration> = new Map(
-  UNPROVEN_VISIBILITY_DECLARATIONS.map((declaration) => [declaration.actionId, declaration]),
-);
-
-/** The one way anything asks whether an action may be visible before its live proof, and why it may. */
-export function unprovenVisibilityDeclaration(actionId: string): UnprovenVisibilityDeclaration | undefined {
-  return UNPROVEN_VISIBILITY_DECLARATION_BY_ACTION.get(actionId);
-}
 
 /**
  * Intersect local typed-adapter availability with the authenticated Mod
@@ -1466,12 +1490,11 @@ export function visibleActionsFromModCatalog(
     const isVisibleWithoutLiveProof =
       isDescriptorDerivedActionId(registration.actionId) &&
       isModDescriptorComplete(registration.actionId, registration.descriptor);
+    const hasAnAdmissionPath = carriesItsOwnProof(registration.lifecycle) || isVisibleWithoutLiveProof;
     if (
       adapter === undefined ||
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
-      (registration.lifecycle !== "published" &&
-        registration.lifecycle !== "live_verified" &&
-        !isVisibleWithoutLiveProof) ||
+      !hasAnAdmissionPath ||
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||

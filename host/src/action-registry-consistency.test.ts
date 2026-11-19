@@ -13,7 +13,7 @@ import {
   UNPROVEN_VISIBILITY_DECLARATIONS,
   isDescriptorDerivedActionId,
   isModDescriptorComplete,
-  unprovenVisibilityDeclaration,
+  unprovenVisibilityActionIds,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
@@ -370,88 +370,97 @@ function toolNameFor(actionId: string): string | undefined {
 }
 
 /**
- * EVERYTHING THE AGENT CAN SEE, HELD TO ONE PROPERTY: it has a live proof, or a declared reason.
+ * EVERYTHING THE MOD REGISTERS CARRIES ITS OWN PROOF OR A DECLARED REASON, AND NOTHING CARRIES BOTH.
  *
- * `design/architecture/game-action-model.md:44` gives visibility exactly one door - `live_verified`, earned by a real
- * live run on the target version - and `visibleActionsFromModCatalog` has two. The second is the descriptor-derived
- * carve-out: an enrolled action whose Mod-owned descriptor is complete is admitted while its lifecycle still says
- * `experimental`. That is the honest description of the second door, and `UNPROVEN_VISIBILITY_DECLARATIONS` is where
- * each action that walks through it is named, with the reason it may and the condition that retires the row.
+ * `design/architecture/game-action-model.md:44` gives visibility exactly one door - `live_verified`, earned by a real live
+ * run on the target version - and `visibleActionsFromModCatalog` has two. The second is the descriptor-derived carve-out:
+ * an enrolled action whose Mod-owned descriptor is complete is admitted while its lifecycle still says `experimental`.
  *
- * The gate is a BIJECTION between that table and the carve-out's actual population, so it fails in both directions and
- * by name rather than by count:
+ * WHICH actions walk through that door is not written down anywhere: `lifecycle` is a field the Mod's registration
+ * publishes, so "carries no proof of its own" is `unprovenVisibilityActionIds(registrations)`, derived from the artifact
+ * here. `UNPROVEN_VISIBILITY_DECLARATIONS` supplies the PROSE and nothing else, and this gate is the bijection between the
+ * two - failing in both directions, each with its own name rather than a count:
  *
- *   `an_action_the_agent_can_see_has_a_live_proof_or_a_declared_reason:<action>`
- *       visible, no live proof in its lifecycle, and no row. The model can call it and nobody wrote down why.
- *   `declared_row_outlived_its_reason:<action>`
- *       a row whose action has since earned its live proof (or left the surface altogether). An exemption must expire.
+ *   `an_action_without_its_own_proof_is_undeclared:<action>`
+ *       registered, lifecycle neither `live_verified` nor `published`, and no row. Nobody wrote down why it is (or could
+ *       be) visible, and one direction alone would be a list that can only grow.
+ *   `declared_row_names_a_proven_action:<action>`
+ *       a row whose action has since earned its own proof. An exemption must expire, and a row left sitting there reads as
+ *       authority for a fact the Mod already states.
+ *   `declared_row_names_no_registered_action:<action>`
+ *       a row whose action has left the surface altogether: it excuses nothing.
  *
- * The population is the Mod's own published surface, and "has a live proof" is the lifecycle byte - which is not taken
- * on faith here either: `tools/check-stardew-action-promotion.mjs` re-derives `live_verified` from the recorded live
- * runs in `host/src/test-fixtures/stardew-live-receipts.json` and the target-version evidence directory, so the fact
- * this gate reads is the fact that gate checks.
+ * The population is the Mod's own published surface, and "carries its own proof" is the lifecycle byte - which is not
+ * taken on faith here either: `tools/check-stardew-action-promotion.mjs` re-derives `live_verified` from the recorded live
+ * runs in `host/src/test-fixtures/stardew-live-receipts.json` and the target-version evidence directory, so the fact this
+ * gate reads is the fact that gate checks.
  */
-test("an action the Agent can see has a live proof or a declared reason", (t) => {
+test("every action without its own proof has a declared reason, and no row outlives its reason", (t) => {
   const registrations = registrationsFor(loadActionSurface());
   const capabilities = registrations
     .filter((registration) => registration.kind === "execution")
     .map((registration) => registration.actionId);
   const visible = visibleActionsFromModCatalog(registrations, capabilities, DEFAULT_ACTION_POLICY);
 
-  const liveVerified: string[] = [];
-  const reviewed: string[] = [];
-  const carveOut: string[] = [];
-  const unexplained: string[] = [];
-  for (const action of visible) {
-    if (action.lifecycle === "live_verified") liveVerified.push(action.actionId);
-    else if (action.lifecycle === "published") reviewed.push(action.actionId);
-    else if (unprovenVisibilityDeclaration(action.actionId) !== undefined) carveOut.push(action.actionId);
-    else unexplained.push(action.actionId);
-  }
-
-  const failures: string[] = unexplained.map(
-    (actionId) => `an_action_the_agent_can_see_has_a_live_proof_or_a_declared_reason:${actionId}`,
-  );
-
+  const registered = [...new Set(registrations.map((registration) => registration.actionId))].sort();
   const lifecycleOf = new Map(registrations.map((registration) => [registration.actionId, registration.lifecycle]));
   const visibleIds = new Set(visible.map((action) => action.actionId));
+  // "Proven" is the registered set MINUS the derived one: the two lifecycle values this gate is made of are read by
+  // `unprovenVisibilityActionIds`, and reading them again here would be the same second spelling the row list was.
+  const unproven = unprovenVisibilityActionIds(registrations);
+  const unprovenIds = new Set(unproven);
+  const proven = registered.filter((actionId) => !unprovenIds.has(actionId));
+  const declared: readonly string[] = UNPROVEN_VISIBILITY_DECLARATIONS.map(
+    (declaration) => declaration.actionId,
+  ).sort();
+  const declaredIds = new Set(declared);
+  const refused = registered.filter((actionId) => !visibleIds.has(actionId));
+
+  const failures: string[] = [];
+  for (const actionId of unproven) {
+    if (declaredIds.has(actionId)) continue;
+    const reach = visibleIds.has(actionId) ? "hands it to the Agent" : "refuses it";
+    failures.push(
+      `an_action_without_its_own_proof_is_undeclared:${actionId}:its registration lifecycle is ` +
+        `\`${String(lifecycleOf.get(actionId))}\`, and the catalog gate ${reach} with no row stating why it may be ` +
+        "visible and what would retire that reason",
+    );
+  }
   for (const declaration of UNPROVEN_VISIBILITY_DECLARATIONS) {
     const { actionId } = declaration;
     if (declaration.reason.trim().length === 0 || declaration.deleteWhen.trim().length === 0) {
       failures.push(`declared_row_states_no_reason_or_no_expiry:${actionId}`);
-      continue;
     }
-    if (!visibleIds.has(actionId)) {
+    if (!lifecycleOf.has(actionId)) {
       failures.push(
-        `declared_row_outlived_its_reason:${actionId}:the surface admits no such action, so the row excuses nothing`,
+        `declared_row_names_no_registered_action:${actionId}:the Mod's surface publishes no such action, so the row excuses nothing`,
       );
-      continue;
-    }
-    const lifecycle = lifecycleOf.get(actionId);
-    if (lifecycle === "live_verified" || lifecycle === "published") {
+    } else if (!unprovenIds.has(actionId)) {
       failures.push(
-        `declared_row_outlived_its_reason:${actionId}:its own lifecycle is now \`${lifecycle}\`, so delete the row and let its live proof admit it`,
+        `declared_row_names_a_proven_action:${actionId}:its own lifecycle is ` +
+          `\`${String(lifecycleOf.get(actionId))}\`, so delete the row and let its own proof admit it`,
       );
     }
   }
 
-  // The population, printed so a green run states what it examined instead of agreeing with itself: a surface that
-  // quietly emptied would otherwise be indistinguishable from one where every action earned its proof.
+  // The population, printed so a green run states what it examined instead of agreeing with itself: a derivation that
+  // stopped seeing the lifecycle would empty `unproven` and leave `declared` the only side still naming an action.
   t.diagnostic(
-    `actions visible ${String(visible.length)} · live_verified ${String(liveVerified.length)} · published ${String(
-      reviewed.length,
-    )} · carve-out ${String(carveOut.length)} (declared) · unexplained ${String(unexplained.length)}` +
-      (carveOut.length === 0
-        ? " · the declaration is empty because every visible action holds a live proof"
-        : ` · carve-out names [${carveOut.join(", ")}]`) +
-      (unexplained.length === 0 ? "" : ` · unexplained names [${unexplained.join(", ")}]`),
+    `visible ${String(visible.length)} · proven ${String(proven.length)} · unproven ${String(unproven.length)}` +
+      ` · declared ${String(declared.length)} · refused ${String(refused.length)} · of ${String(
+        registered.length,
+      )} registered · unproven [${unproven.join(", ")}] · declared [${declared.join(", ")}]`,
   );
-  // Zero population is BLOCKED, never green: a surface that admits nothing makes every count above agree on nothing.
+  // Zero population is BLOCKED, never green: a surface that registers nothing makes every count above agree on nothing.
+  assert.ok(
+    registered.length > 0,
+    "blocked: the published surface registers no action at all, so this gate examines nothing",
+  );
   assert.ok(
     visible.length > 0,
     "blocked: the published surface admits no action at all, so this gate examines nothing",
   );
-  assert.deepEqual(failures, [], "the visibility the model is handed is not accounted for");
+  assert.deepEqual(failures, [], "the declared reasons do not account for the actions without a proof of their own");
 });
 
 test("the mounted descriptor-derived set is exactly the published set whose arm opens", () => {
