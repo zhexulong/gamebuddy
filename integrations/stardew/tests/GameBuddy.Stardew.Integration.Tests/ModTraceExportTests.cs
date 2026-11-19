@@ -130,7 +130,9 @@ public sealed class ModTraceExportTests
 
     private static string FunnelBody(string controllerSource)
     {
-        int start = controllerSource.IndexOf("private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)", StringComparison.Ordinal);
+        // By its declaration, not by its parameter list: the funnel's parameter list grew the producer's own
+        // "is this NEWS" answer, which moved the signature and not the funnel.
+        int start = controllerSource.IndexOf("private LocalExecutionReceipt AddTrace(", StringComparison.Ordinal);
         start.Should().BeGreaterThan(0, "the one delivery funnel must exist");
         int end = controllerSource.IndexOf("\n    }\n", start, StringComparison.Ordinal);
         end.Should().BeGreaterThan(start);

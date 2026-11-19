@@ -51,7 +51,10 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
     {
         string source = ReadExecutionController();
         // The funnel RETURNS the receipt it published, so the caller answers with the same bytes the fact stream carries.
-        int start = source.IndexOf("private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)", StringComparison.Ordinal);
+        // It is found by its DECLARATION - the one private method of that name returning a receipt - not by a
+        // parameter list: a parameter added to it (`publish`, the producer's answer to "is this NEWS") is a change
+        // of its signature rather than of its identity, and the body below is what these assertions are about.
+        int start = source.IndexOf("private LocalExecutionReceipt AddTrace(", StringComparison.Ordinal);
         start.Should().BeGreaterThan(0, "the delivery funnel must exist");
         // The WHOLE method, not up to any one marker inside it: the publish and the trace line are both part of
         // the funnel and their order is what the assertions below are about.

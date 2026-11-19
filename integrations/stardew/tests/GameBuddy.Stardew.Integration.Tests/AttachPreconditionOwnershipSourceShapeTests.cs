@@ -103,6 +103,9 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         {
             ["hostState"] = "GetHostState",
             ["target.RefusalReason"] = "TargetFarmhand.Refused",
+            // The refusal of a Farmhand that was prepared and can no longer be bound: one helper takes the Farmhand
+            // out of the save before answering, so the code is its parameter and the values are its call sites.
+            ["reasonCode"] = "RefusePreparedFarmhand",
         };
 
     /// <summary>Every (state, code) answer the given provisioning source can give, derived from that source.</summary>
@@ -119,6 +122,14 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         string hostState = TryBodyOf(source, "private string GetHostState()") ?? string.Empty;
         foreach (Match match in Regex.Matches(hostState, @"return ""(?<code>[a-z_]+)"";"))
             if (match.Groups["code"].Value != "ready")
+                answers.Add(("rejected", match.Groups["code"].Value));
+        // A derived answer's codes are written where its PRODUCER is called, not at the one `new(...)` that names the
+        // variable. `RefusePreparedFarmhand` exists so that the rollback of a prepared Farmhand is shared by every
+        // refusal after it; reading only the construction site dropped `cabin_identity_mismatch` and
+        // `target_farmhand_busy` out of the population and called them stale, so the surface read smaller than it is
+        // and a refusal nobody classified could have passed unseen.
+        foreach (string producer in DerivedAnswerProducers.Values)
+            foreach (Match match in Regex.Matches(source, Regex.Escape(producer) + @"\([^;()]*?""(?<code>[a-z_]+)""\s*\)"))
                 answers.Add(("rejected", match.Groups["code"].Value));
         return answers.Distinct().OrderBy(answer => answer.Code, StringComparer.Ordinal).ToArray();
     }
@@ -344,8 +355,9 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
     /// The falsifier: the pre-fix shape, expressed as the code it really was, is reported by name.
     ///
     /// A gate that cannot be made red on purpose is decoration, so these are the three shapes that
-    /// shipped: an answer whose precondition nothing creates, a trigger armed only by the fixture, and
-    /// two config options for one save.
+    /// shipped - an answer whose precondition nothing creates, a trigger armed only by the fixture, and
+    /// two config options for one save - plus the one shape that keeps the population honest: a code
+    /// carried through a shared refusing helper instead of written at a `new(...)` site.
     /// </summary>
     [Fact]
     public void ThePreFixShape_IsReportedByName()
@@ -370,6 +382,25 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         planted.Should().Contain(finding => finding.StartsWith("unexplained_precondition:binding_persist_pending", StringComparison.Ordinal));
         planted.Should().Contain(finding => finding.StartsWith("unparsed_answer:laterReason", StringComparison.Ordinal));
         planted.Should().Contain(finding => finding.StartsWith("stale_declaration:", StringComparison.Ordinal));
+
+        // The shared refusal: its code is a parameter, so the population must read the values its call sites
+        // write. A code that only ever travels through the helper is a precondition the gate still has to see,
+        // or factorising two refusals into one would quietly take an answer out of its population.
+        const string CarriedRefusal = @"
+            private FarmhandProvisioningResult RefusePreparedFarmhand(Cabin cabin, Farmer farmhand, string reasonCode)
+            {
+                return new(""rejected"", reasonCode);
+            }
+            private FarmhandProvisioningResult HandleRequest()
+            {
+                return this.RefusePreparedFarmhand(cabin, farmhand, ""a_code_nobody_classified"");
+            }
+            ";
+        var carried = FindingsFor(CarriedRefusal, Declared, _ => true);
+        this.output.WriteLine($"planted carried refusal -> {string.Join(" | ", carried)}");
+        carried.Should().Contain(
+            finding => finding.StartsWith("unexplained_precondition:a_code_nobody_classified", StringComparison.Ordinal),
+            "a code carried through a refusing helper is still an answer this gate must see");
 
         const string FixturesBefore = @"
             private void TryTriggerNativeAutomationSave()
