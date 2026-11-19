@@ -17,7 +17,10 @@
     Not set here on purpose:
       - TreatWarningsAsErrors / CodeAnalysisTreatWarningsAsErrors:
         each project owns its warning policy; enabling it centrally would
-        change seven projects at once.
+        change seven projects at once. ONE exception to that priority is
+        declared below (WarningsNotAsErrors, NU1900 and nothing else), because
+        the code it demotes is about a check that could not run rather than
+        about this tree's source.
       - Any third-party analyzer package (SonarAnalyzer, StyleCop,
         Meziantou, Roslynator): the SDK's built-in NetAnalyzers are not
         yet used to their full extent, and analyzer NuGet packages add
@@ -57,6 +60,39 @@
   -->
   <PropertyGroup>
     <LangVersion>12.0</LangVersion>
+  </PropertyGroup>
+
+  <!--
+    NU1900 is "the vulnerability database could not be read", not "a vulnerability was found".
+    NuGet raises it during restore when a package source is unreachable, and because every
+    project here sets TreatWarningsAsErrors, NuGet routes its own warning through that and the
+    restore fails - measured 2026-11-20: with https://api.nuget.org down,
+    `dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release` died with
+    `error NU1900 ... 未能还原 ... 2 个错误` while every package it needs was already in the
+    global cache (`dotnet restore` with an empty <packageSources> list succeeds in 88ms). The
+    only thing the network was still needed for was the audit, and no pinned live run could
+    build until it answered again.
+
+    So exactly ONE code is demoted, and only on the way from warning to error: the audit still
+    runs, and a vulnerability it FINDS (NU1901..NU1904) is still an error here. What is no longer
+    an error is the diagnostic that says the check could not run at all.
+    `tools/check-dotnet-target-and-language.mjs` asserts this list is exactly [NU1900] for every
+    project in this tree that promotes warnings, so adding a second code to quiet a real finding
+    reds a gate instead of shipping.
+
+    WHAT THIS COSTS. Every project in this directory, including the Release output
+    `host/scripts/build-production-artifact.mjs` stages into every generation: a machine that
+    cannot reach its package source now publishes a generation whose package graph was NOT
+    audited, and prints a warning saying so instead of stopping. That is intended - the one
+    package here is build-time only (Pathoschild.Stardew.ModBuildConfig, PrivateAssets=all) and
+    an unreachable diagnostic is not a defect in this tree - and the live-run harness records
+    the fact as `NUGET-AUDIT:` in the pinned build's log rather than assuming the audit ran.
+
+    It becomes unnecessary when restore can read a vulnerability database without reaching the
+    internet, or when no project here promotes warnings.
+  -->
+  <PropertyGroup>
+    <WarningsNotAsErrors>NU1900</WarningsNotAsErrors>
   </PropertyGroup>
 
 </Project>

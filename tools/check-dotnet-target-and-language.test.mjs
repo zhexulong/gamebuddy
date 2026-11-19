@@ -16,7 +16,9 @@
  *   2026-11-16 exits 1 naming `net10.0-windows`, while the same project read on 2026-11-10 - the window's last day -
  *   exits 0; a `<LangVersion>` in a csproj reds `langversion_is_not_declared_once` and a props file that governs a
  *   project while declaring nothing reds `langversion_not_governed`; a row whose project vanished, drifted or lost its
- *   evidence reds on its own code; and a checkout holding no csproj exits 2 rather than agreeing with every rule.
+ *   evidence reds on its own code; a warning-promoting project whose props demotes `NU1900;NU1902` (or nothing, or a
+ *   finding) reds `demoted_nuget_codes_are_not_exactly_nu1900`; and a checkout holding no csproj exits 2 rather than
+ *   agreeing with every rule.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -287,5 +289,81 @@ describe("this repository, through the CLI", () => {
       /:integrations\/stardew\/GameBuddy\.Stardew\.csproj:/u,
       "the Mod's net6.0 is forced by SMAPI, so it must not be a finding",
     );
+  });
+});
+
+describe("demoted_nuget_codes_are_not_exactly_nu1900", () => {
+  /** A project in the pinned build's trees that promotes warnings, with the props file that governs it. */
+  const promoting = (props) =>
+    checkout({
+      "integrations/stardew/Directory.Build.props": props,
+      "integrations/stardew/Mod.csproj": MOD.replace(
+        "<TargetFramework>",
+        "<TreatWarningsAsErrors>true</TreatWarningsAsErrors><TargetFramework>",
+      ),
+    });
+  const GOVERNS = (demoted) =>
+    `<Project><PropertyGroup><LangVersion>12.0</LangVersion>${demoted === null ? "" : `<WarningsNotAsErrors>${demoted}</WarningsNotAsErrors>`}</PropertyGroup></Project>`;
+
+  it("passes when the governing props demotes exactly NU1900", () => {
+    const reading = judgeFixture(promoting(GOVERNS("NU1900")));
+    assert.deepEqual(codesOf(reading), []);
+    assert.deepEqual([reading.promoting, reading.demoted], [1, 1]);
+  });
+
+  it("trims and reads one code, so `NU1900` written alone is the accepted spelling", () => {
+    const reading = judgeFixture(promoting(GOVERNS(" NU1900 ")));
+    assert.deepEqual(codesOf(reading), []);
+    assert.equal(reading.demoted, 1);
+  });
+
+  it("reds a list that carries a second code, naming what it found", () => {
+    const reading = judgeFixture(promoting(GOVERNS("NU1900;NU1902")));
+    assert.deepEqual(codesOf(reading), ["demoted_nuget_codes_are_not_exactly_nu1900"]);
+    assert.equal(reading.findings[0].detail, "integrations/stardew/Directory.Build.props -> NU1900;NU1902");
+    // The found vulnerability is exactly what must stay fatal: the whole list is judged, not membership of NU1900.
+    assert.equal(reading.demoted, 0);
+  });
+
+  it("reds a list that demotes the finding instead of the unreadable database", () => {
+    const reading = judgeFixture(promoting(GOVERNS("NU1902")));
+    assert.deepEqual(codesOf(reading), ["demoted_nuget_codes_are_not_exactly_nu1900"]);
+    assert.equal(reading.demoted, 0);
+  });
+
+  it("reds a promoting project with no props above it, and says where it looked", () => {
+    const root = checkout({
+      "integrations/stardew/Mod.csproj": MOD.replace(
+        "<TargetFramework>",
+        "<TreatWarningsAsErrors>true</TreatWarningsAsErrors><TargetFramework>",
+      ),
+    });
+    const reading = judgeFixture(root);
+    assert.deepEqual(codesOf(reading), ["demoted_nuget_codes_are_not_exactly_nu1900"]);
+    assert.equal(reading.findings[0].detail, "(no props file above this project) -> (nothing)");
+  });
+
+  it("puts a project in the population when the PROPS promotes, not only when the csproj does", () => {
+    const reading = judgeFixture(
+      promoting(
+        "<Project><PropertyGroup><LangVersion>12.0</LangVersion><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Project>",
+      ),
+    );
+    assert.deepEqual(codesOf(reading), ["demoted_nuget_codes_are_not_exactly_nu1900"]);
+    assert.deepEqual([reading.promoting, reading.demoted], [1, 0]);
+  });
+
+  it("leaves a promoting project outside the pinned build's trees to its own decision", () => {
+    const root = checkout({
+      "desktop/Directory.Build.props":
+        "<Project><PropertyGroup><LangVersion>12.0</LangVersion></PropertyGroup></Project>",
+      "desktop/Desktop.csproj": PLAIN("net10.0-windows").replace(
+        "<TargetFramework>",
+        "<TreatWarningsAsErrors>true</TreatWarningsAsErrors><TargetFramework>",
+      ),
+    });
+    const reading = judgeFixture(root);
+    assert.deepEqual(codesOf(reading), []);
+    assert.equal(reading.promoting, 0);
   });
 });

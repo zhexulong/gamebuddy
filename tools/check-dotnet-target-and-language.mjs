@@ -28,6 +28,14 @@
  *      a props file that exists but says nothing, which is a tree that LOOKS governed and is not.
  *   P2 `supported S · forced by an external constraint F · unsupported U`   Every project's TFM is supported today,
  *      or is forced by a constraint that is not this repository's to choose, or is a declared exception. `U` must be 0.
+ *   P3 `promote warnings N · demote exactly NU1900 M`   A project that promotes warnings is one where a NuGet
+ *      diagnostic can fail the build, so the props file that governs it must carve exactly ONE code back out:
+ *      `NU1900`, "the vulnerability database could not be read". `N - M` must be 0. Measured 2026-11-20: with
+ *      https://api.nuget.org unreachable, `dotnet build integrations/stardew/GameBuddy.Stardew.csproj` died on
+ *      `error NU1900` while every package it needed was already in the global cache, so no pinned live run could
+ *      build - and the tempting repair (`NuGetAudit=false`, `--no-restore`) turns off the audit itself, including
+ *      its findings. Demoting `NU1900` demotes only the report that the check could not run; `NU1901`..`NU1904` stay
+ *      errors, and this rule is what stops a second code joining the list to quiet a real finding.
  *
  * HOW A CONSTRAINT IS ESTABLISHED, in two ways, and the difference is printed:
  *
@@ -126,6 +134,20 @@ const GAME_ASSEMBLIES = Object.freeze(["StardewModdingAPI.dll", "Stardew Valley.
 const MOD_BUILD_PACKAGES = Object.freeze(["Pathoschild.Stardew.ModBuildConfig"]);
 
 /**
+ * The trees whose projects the pinned live-run build compiles (`tools/live-run/frontend/phases/build.ps1` builds the
+ * Mod, `host/scripts/build-windows-*.mjs` publish the native helpers), which is where P3 is judged.
+ *
+ * Named rather than derived because the authority for "what the pinned build compiles" is a PowerShell phase and five
+ * builder modules, and a gate that scraped their text would break on a refactor that changed nothing. `desktop/` and
+ * `tools/stardew-*` also promote warnings and are deliberately OUT of scope: their builds are not on the live-run path,
+ * so demoting a code there is a different decision that has not been taken.
+ */
+export const WARNING_PROMOTING_TREES = Object.freeze(["integrations/stardew/", "host/native/"]);
+
+/** The one NuGet code a warning-promoting project may carve out: the audit could not run, not a finding. */
+export const DEMOTED_NUGET_CODES = Object.freeze(["NU1900"]);
+
+/**
  * Projects that run on an old framework because something in the tree outside this repository's build says so.
  *
  * Each row names the authority in the tree that states it, and every part of the row is checked: the project must
@@ -206,7 +228,18 @@ export function readProject(source) {
     bindsGameAssemblies:
       GAME_ASSEMBLIES.some((name) => new RegExp(`<HintPath>[^<]*${escape(name)}`, "u").test(source)) ||
       MOD_BUILD_PACKAGES.some((name) => new RegExp(`<PackageReference\\s+Include="${escape(name)}"`, "u").test(source)),
+    promotesWarnings: /<TreatWarningsAsErrors>\s*true\s*<\/TreatWarningsAsErrors>/u.test(source),
   };
+}
+
+/** The codes a props file demotes from warning to message, or `null` when it says nothing about them. */
+export function readDemotedCodes(source) {
+  const value = /<WarningsNotAsErrors>([^<]*)<\/WarningsNotAsErrors>/u.exec(source)?.[1];
+  if (value === undefined) return null;
+  return value
+    .split(";")
+    .map((code) => code.trim())
+    .filter(Boolean);
 }
 
 /** Every ancestor `Directory.Build.props` of a project up to and including the checkout root, nearest first. */
@@ -285,6 +318,8 @@ export function judge({ root = DEFAULT_ROOT, now = new Date(), declared = DECLAR
   let unsupported = 0;
   let declaredCount = 0;
   let langVersionInCsproj = 0;
+  let promoting = 0;
+  let demoted = 0;
 
   for (const path of projects) {
     const fact = facts.get(path);
@@ -305,6 +340,36 @@ export function judge({ root = DEFAULT_ROOT, now = new Date(), declared = DECLAR
       const text = readFileSync(join(root, props), "utf8");
       if (!/<LangVersion>/u.test(text)) {
         findings.push({ code: "langversion_not_governed", project: path, detail: props });
+      }
+    }
+
+    if (WARNING_PROMOTING_TREES.some((tree) => path.startsWith(tree))) {
+      const governing = propsAbove(root, path).map((props) => ({
+        props,
+        text: readFileSync(join(root, props), "utf8"),
+      }));
+      const promotes =
+        fact.promotesWarnings ||
+        governing.some(({ text }) => /<TreatWarningsAsErrors>\s*true\s*<\/TreatWarningsAsErrors>/u.test(text));
+      if (promotes) {
+        promoting += 1;
+        const declaredCodes = governing
+          .map(({ props, text }) => ({ props, codes: readDemotedCodes(text) }))
+          .find((entry) => entry.codes !== null);
+        const codes = declaredCodes?.codes ?? null;
+        const exact =
+          codes !== null &&
+          codes.length === DEMOTED_NUGET_CODES.length &&
+          codes.every((code, index) => code === DEMOTED_NUGET_CODES[index]);
+        if (exact) {
+          demoted += 1;
+        } else {
+          findings.push({
+            code: "demoted_nuget_codes_are_not_exactly_nu1900",
+            project: path,
+            detail: `${declaredCodes?.props ?? "(no props file above this project)"} -> ${codes === null ? "(nothing)" : codes.join(";")}`,
+          });
+        }
       }
     }
 
@@ -359,6 +424,8 @@ export function judge({ root = DEFAULT_ROOT, now = new Date(), declared = DECLAR
     census,
     langVersionInCsproj,
     declaredCount,
+    promoting,
+    demoted,
     supported,
     forced,
     unsupported,
@@ -376,6 +443,7 @@ export function report(reading) {
   return [
     `projects examined ${String(reading.projects.length)} · ${census} · declared exceptions ${String(reading.declaredCount)} · langversion in a csproj ${String(reading.langVersionInCsproj)}`,
     `supported ${String(reading.supported)} · forced by an external constraint ${String(reading.forced)} · unsupported ${String(reading.unsupported)}`,
+    `promote warnings ${String(reading.promoting)} (${WARNING_PROMOTING_TREES.join(" + ")}) · demote exactly ${DEMOTED_NUGET_CODES.join(";")} ${String(reading.demoted)}`,
   ];
 }
 
@@ -419,6 +487,10 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
     } else if (finding.code === "targetframework_is_unsupported_and_not_declared") {
       console.error(
         `${finding.code}:${finding.project}:${finding.tfm} — its support window has closed and nothing here forces it: move it to ${replacementFor(finding.tfm)} (the runtime a self-contained Windows project bundles changes; what a player must have installed does not), or add a DECLARED_CONSTRAINTS row naming the authority that forces this framework and the file that states it`,
+      );
+    } else if (finding.code === "demoted_nuget_codes_are_not_exactly_nu1900") {
+      console.error(
+        `${finding.code}:${finding.project}:${finding.detail} — this project promotes warnings, so a NuGet restore diagnostic can fail its build; the props that governs it must demote exactly ${DEMOTED_NUGET_CODES.join(";")} ("the vulnerability database could not be read") and nothing else. A second code here would quietly turn a FOUND vulnerability into a warning, which is why the list is judged as a whole rather than checked for membership`,
       );
     } else {
       console.error(`${finding.code}:${finding.project}:${finding.detail}`);
