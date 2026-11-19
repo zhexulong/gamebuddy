@@ -49,10 +49,29 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
     /// (`waveout:N`) or `default` for the Windows default multimedia output.
     /// </summary>
     internal IReadOnlyDictionary<string, string> Environment => BuildEnvironment(Port, Token, CloudTtsAdmitted, Persona, OutputDevice);
-    // The bundled entry never parses argv (vendor/pi-koe/src/main.ts reads its
-    // per-launch facts, including the persona, exclusively from the environment),
-    // so the child's command line is only the entry path.
-    internal string Arguments => $"{Quote(EntryPath)}";
+
+    /// <summary>
+    /// The child's owner watch, as the three statements that make it notice the channel's end.
+    ///
+    /// The gateway entry is a released artifact of another repository - GameBuddy admits its bytes
+    /// and never builds it from source - so this launcher cannot give it a watch inside its own code.
+    /// What it can give it is the channel: the child's standard input is inherited from Desktop alone,
+    /// held open for the whole run, and the kernel closes every handle of a process that dies. Its end
+    /// is therefore the same owner-liveness signal the Host reads for its own lifetime
+    /// (<c>openDesktopControllerChannel</c>), and this constant is what makes an artifact that reads
+    /// nothing notice it.
+    ///
+    /// It is constant: no player data, no credential, no path, nothing a launch decides. Exiting here
+    /// skips the gateway's own tidy-up, which is why the player sees voice stop rather than a failure:
+    /// the resident waveOut helper leaves on the EOF of its own input (`windows-waveout.ps1`).
+    /// </summary>
+    internal const string OwnerWatchPreload = "data:text/javascript,process.stdin.on('end',()=>process.exit(0)).resume()";
+
+    // The bundled entry parses no argv (vendor/pi-koe/src/main.ts reads its per-launch facts,
+    // including the persona, exclusively from the environment), so nothing this launch decides - the
+    // port, the token, the persona, the player's endpoint - is ever an argv token. The command line
+    // names exactly two constants of this launcher: the owner watch above and the admitted entry.
+    internal string Arguments => $"--import {Quote(OwnerWatchPreload)} {Quote(EntryPath)}";
 
     // The token is launch-only and never appears in any string representation.
     public override string ToString() => $"VoiceGatewayLaunchPlan(NodePath={NodePath}, EntryPath={EntryPath}, Port={Port}, CloudTtsAdmitted={CloudTtsAdmitted}, Persona={Persona}, OutputDevice={OutputDevice})";
@@ -118,6 +137,7 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
     private static readonly Regex GatewayTokenRegex = new("^[A-Za-z0-9_-]{16,256}$", RegexOptions.CultureInvariant);
 
     private Process? process;
+    private StreamWriter? ownerChannel;
     private int closed;
 
     // The endpoint is either the frozen `waveout:N` selection or `default`
@@ -146,7 +166,7 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (Volatile.Read(ref closed) != 0) throw new ObjectDisposedException(nameof(VoiceGatewaySupervisor));
         if (Volatile.Read(ref process) is not null) throw new InvalidOperationException("Voice gateway is already started; a supervisor starts exactly one child and never restarts it.");
-        var start = new ProcessStartInfo { FileName = plan.NodePath, Arguments = plan.Arguments, UseShellExecute = false, CreateNoWindow = true };
+        var start = new ProcessStartInfo { FileName = plan.NodePath, Arguments = plan.Arguments, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
         start.Environment.Clear();
         foreach (var pair in plan.Environment) start.Environment[pair.Key] = pair.Value;
         var child = new Process { StartInfo = start };
@@ -160,7 +180,23 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
             throw;
         }
         Interlocked.Exchange(ref process, child);
+        // The write end of the child's stdin lives exactly as long as this launcher does, and the
+        // child's owner watch ends it. Nothing is ever written through it.
+        Interlocked.Exchange(ref ownerChannel, child.StandardInput);
         return Task.FromResult(new VoiceGatewayLease(this));
+    }
+
+    /// <summary>
+    /// Closes the channel that tells the child its owner is gone - the same event the kernel produces
+    /// on this process's death, when it closes every handle this launcher holds. The quit path closes
+    /// it first, and a driven test closes it to read what a dead Desktop produces.
+    /// </summary>
+    internal void CloseOwnerChannel()
+    {
+        var channel = Interlocked.Exchange(ref ownerChannel, null);
+        if (channel is null) return;
+        try { channel.Close(); }
+        catch (InvalidOperationException) { }
     }
 
     internal Task WaitForExitAsync(CancellationToken cancellationToken = default)
@@ -170,10 +206,15 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
         return child.WaitForExitAsync(cancellationToken);
     }
 
-    /// <summary>Stops the exact child and its process tree once; later closes return immediately.</summary>
+    /// <summary>
+    /// Stops the exact child and its process tree once; later closes return immediately. The owner
+    /// channel is closed first: it is the handle this launcher holds for the whole run, and releasing
+    /// it is the event a dead Desktop produces.
+    /// </summary>
     internal async ValueTask CloseAsync(CancellationToken cancellationToken)
     {
         if (Interlocked.Exchange(ref closed, 1) != 0) return;
+        CloseOwnerChannel();
         var child = Interlocked.Exchange(ref process, null);
         if (child is null) return;
         if (!child.HasExited)

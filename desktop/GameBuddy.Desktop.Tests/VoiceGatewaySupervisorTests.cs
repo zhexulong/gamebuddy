@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
+using GameBuddy.Desktop.Tests.Fixtures;
 
 namespace GameBuddy.Desktop.Tests;
 
@@ -131,13 +133,13 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     [Fact]
-    public void BuildLaunchPlan_arguments_carry_only_the_entry()
+    public void BuildLaunchPlan_arguments_carry_the_owner_watch_and_the_admitted_entry_and_nothing_a_launch_decides()
     {
         using var root = TemporaryRoot.Create();
         var entry = root.Gateway("voice/entry.js").EntryPath;
 
         var noPersona = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), new AdmittedVoiceGateway(entry, System.IO.Path.Combine(root.Path, "protocol.js")), 49731, ValidToken, cloudTtsAdmitted: false);
-        Assert.Equal($"\"{entry}\"", noPersona.Arguments);
+        Assert.Equal($"--import \"{VoiceGatewayLaunchPlan.OwnerWatchPreload}\" \"{entry}\"", noPersona.Arguments);
         Assert.DoesNotContain(ValidToken, noPersona.Arguments, StringComparison.Ordinal);
         Assert.DoesNotContain(" --persona", noPersona.Arguments, StringComparison.Ordinal);
         Assert.DoesNotContain(" --port", noPersona.Arguments, StringComparison.Ordinal);
@@ -145,8 +147,40 @@ public sealed class VoiceGatewaySupervisorTests
         // The persona is never an argv token: the bundled entry parses no argv
         // and reads the persona from the environment instead.
         var withPersona = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), new AdmittedVoiceGateway(entry, System.IO.Path.Combine(root.Path, "protocol.js")), 49731, ValidToken, cloudTtsAdmitted: false, persona: "companion.default", outputDevice: "default");
-        Assert.Equal($"\"{entry}\"", withPersona.Arguments);
+        Assert.Equal(noPersona.Arguments, withPersona.Arguments);
         Assert.DoesNotContain("companion.default", withPersona.Arguments, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_admitted_child_leaves_when_the_owner_channel_ends_the_way_a_dead_desktop_ends_it()
+    {
+        using var root = TemporaryRoot.Create();
+        var entry = root.GatewayEntry("voice/entry.js");
+        var plan = VoiceGatewaySupervisor.BuildLaunchPlan(TestNodeRuntime.ResolveExecutable(), new AdmittedVoiceGateway(entry, root.Protocol()), 49731, ValidToken, cloudTtsAdmitted: false);
+        await using var supervisor = new VoiceGatewaySupervisor();
+        await using var lease = await supervisor.StartAsync(plan, CancellationToken.None);
+
+        // The child is serving before the channel ends, so this reads the watch and not a child that
+        // never reached its own loop.
+        var serving = System.IO.Path.Combine(root.Path, "voice", "serving");
+        var served = Task.Run(async () =>
+        {
+            while (!File.Exists(serving)) await Task.Delay(25);
+        });
+        var exitedEarly = await Task.WhenAny(served, lease.WaitForExitAsync(CancellationToken.None));
+        Assert.True(exitedEarly == served, "the launched gateway left before it ever served");
+
+        // Closing this handle is what the kernel does to every handle a dead process held, and it is
+        // the only thing that happens here: nothing kills the child.
+        var started = Stopwatch.GetTimestamp();
+        supervisor.CloseOwnerChannel();
+        var exit = lease.WaitForExitAsync(CancellationToken.None);
+        var gone = await Task.WhenAny(exit, Task.Delay(TimeSpan.FromSeconds(20))) == exit;
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Assert.True(gone, $"the voice child was still serving {elapsed.TotalMilliseconds:0} ms after the owner channel ended; a gateway that outlives Desktop holds its loopback endpoint and its waveOut helper with nothing left to talk to it");
+        Assert.True(elapsed < TimeSpan.FromSeconds(5), $"the voice child took {elapsed.TotalMilliseconds:0} ms to leave after the owner channel ended");
+
     }
 
     [Fact]
@@ -345,6 +379,20 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     [Fact]
+    public void Supervisor_source_hands_the_child_an_owner_channel_and_closes_it_before_the_kill()
+    {
+        var source = File.ReadAllText(Source());
+
+        Assert.Contains("RedirectStandardInput = true", source, StringComparison.Ordinal);
+        Assert.Contains("Interlocked.Exchange(ref ownerChannel, child.StandardInput)", source, StringComparison.Ordinal);
+        Assert.Contains("OwnerWatchPreload", source, StringComparison.Ordinal);
+        var close = source.IndexOf("internal async ValueTask CloseAsync", StringComparison.Ordinal);
+        var channelClose = source.IndexOf("CloseOwnerChannel();", close, StringComparison.Ordinal);
+        var kill = source.IndexOf("child.Kill(entireProcessTree: true)", close, StringComparison.Ordinal);
+        Assert.True(channelClose >= 0 && channelClose < kill, "the owner channel is released before the child is killed");
+    }
+
+    [Fact]
     public void Supervisor_source_has_no_host_consent_publisher_or_v2_dependencies()
     {
         var source = File.ReadAllText(Source());
@@ -418,6 +466,28 @@ public sealed class VoiceGatewaySupervisorTests
         internal static TemporaryRoot Create() { var root = new TemporaryRoot(); Directory.CreateDirectory(root.Path); return root; }
         internal string Node() => Write("runtime/node.exe");
         internal AdmittedVoiceGateway Gateway(string relative) { var entry = Write(relative); var protocol = Write("voice/protocol.js"); return new AdmittedVoiceGateway(entry, protocol); }
+        /// <summary>
+        /// A real gateway entry: it opens the loopback endpoint the product's gateway serves and stays
+        /// alive, so a launch of it holds a listening socket exactly as the admitted artifact does. It
+        /// binds an ephemeral port rather than the plan's, so this gate reads the owner channel and not
+        /// whether one fixed port happened to be free on this machine. It reads nothing from stdin: the
+        /// owner watch is the launcher's, and that is what must reach it.
+        /// </summary>
+        internal string GatewayEntry(string relative)
+        {
+            var path = System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, """
+                const { createServer } = require("node:http");
+                const { writeFileSync } = require("node:fs");
+                const { join } = require("node:path");
+                createServer((request, response) => response.end("ok")).listen(0, "127.0.0.1", () => {
+                  writeFileSync(join(__dirname, "serving"), String(process.pid));
+                });
+                """);
+            return path;
+        }
+        internal string Protocol() => Write("voice/protocol.js");
         private string Write(string relative) { var path = System.IO.Path.Combine(Path, relative.Replace('/', System.IO.Path.DirectorySeparatorChar)); Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!); File.WriteAllText(path, "x"); return path; }
         public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
     }
