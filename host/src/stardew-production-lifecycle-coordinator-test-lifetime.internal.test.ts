@@ -16,7 +16,12 @@
  *  1. the MECHANISM - a fixture whose own bootstrap is refused throws, and leaves no listening
  *     server behind;
  *  2. the CLASS - every test file that can stand up one of those sockets is run as its own bounded
- *     process, and one that does not terminate with a summary is named.
+ *     process, and one that does not terminate with a summary is named;
+ *  3. the BINDING that made running them that way honest - these children are spawned with no
+ *     `--import`, so the compiled-test bootstrap's Windows stale-lock reclaimer never reaches them, and
+ *     a file that releases a path lock must bind its own. Without this reading the gate above would
+ *     still report a file as terminated while the file's own fixtures answered
+ *     `windows_reclaimer_unavailable`.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -39,6 +44,30 @@ const SOURCE_ROOT = join(HOST_ROOT, "src");
 const COMPILED_ROOT = join(HOST_ROOT, "dist-test");
 /** The one module that owns a loopback socket for the fixture family. */
 const SUPPORT_MODULE = "stardew-production-lifecycle-coordinator.test-support.ts";
+
+/** This file, which is excluded from its own population: a gate that ran itself would never return either. */
+const SELF = "stardew-production-lifecycle-coordinator-test-lifetime.internal.test.ts";
+
+/**
+ * The import specifier of the support module. Derived from {@link SUPPORT_MODULE} rather than written twice, so a renamed
+ * support module cannot leave the population rule reading a file that is no longer there.
+ */
+const SUPPORT_IMPORT = new RegExp(
+  `from "[^"]*${SUPPORT_MODULE.replace(/\.ts$/u, ".js").replace(/[.]/gu, "\\.")}"`,
+  "u",
+);
+
+/**
+ * A file that releases a path lock CALLS a binding at its own entry. Three spellings are the tree's: the shared bind-and-
+ * prove helper, the binding itself, and the coordinator support module's hooks (which bind a test reclaimer in
+ * `beforeEach`).
+ *
+ * A call, not a mention: the first version of this rule matched the identifier anywhere in the file, so a file whose
+ * `installLifecycleTestHooks();` call was deleted still passed on the import it no longer used - measured, and the reason
+ * this is anchored on an invocation.
+ */
+const BINDS_RECLAIMER =
+  /\b(?:bindVerifiedWindowsLockReclaimerForTest|bindWindowsStaleLockReclaimer|installLifecycleTestHooks)\s*\(/u;
 
 /**
  * How long one file may take before it is called hung. Every file in today's population finishes in
@@ -99,21 +128,24 @@ function socketReachingExports(source: string): ReadonlySet<string> {
 }
 
 /**
- * The files that can stand up a loopback socket: every test file whose source names one of the
- * support module's socket-reaching exports. This file is excluded from its own population - it is
- * the one that walks them, and a gate that ran itself would never return either.
+ * The files that can stand up a loopback socket: every test file that IMPORTS the support module and names one of its
+ * socket-reaching exports. This file is excluded from its own population - it is the one that walks them, and a gate
+ * that ran itself would never return either.
+ *
+ * The import is load-bearing, not the name. `continuity-semantic-store/continuity-semantic-production-store.private.test.ts`
+ * declares its own local `createFixture`, so the name-only rule this replaced put a file in the population that never
+ * touches the support module's socket at all - and, being a member, it was one of the files the binding reading below
+ * had to report.
  */
 function terminationPopulation(relativeFiles: readonly string[], self: string): readonly string[] {
   const entryPoints = socketReachingExports(readFileSync(join(SOURCE_ROOT, SUPPORT_MODULE), "utf8"));
   if (entryPoints.size === 0) return [];
-  return relativeFiles.filter(
-    (file) =>
-      file !== self &&
-      file.endsWith(".test.ts") &&
-      [...entryPoints].some((name) =>
-        new RegExp(`\\b${name}\\b`, "u").test(readFileSync(join(SOURCE_ROOT, file), "utf8")),
-      ),
-  );
+  return relativeFiles.filter((file) => {
+    if (file === self || !file.endsWith(".test.ts")) return false;
+    const source = readFileSync(join(SOURCE_ROOT, file), "utf8");
+    if (!SUPPORT_IMPORT.test(source)) return false;
+    return [...entryPoints].some((name) => new RegExp(`\\b${name}\\b`, "u").test(source));
+  });
 }
 
 /** The reporter's own totals line: the one thing a file that terminated always printed. */
@@ -251,10 +283,7 @@ test("a_fixture_whose_bootstrap_is_refused_leaves_no_listening_server", async ()
 });
 
 test("a_test_that_never_returns_hides_the_ones_after_it: every fixture file terminates and prints a summary", async (t) => {
-  const population = terminationPopulation(
-    sourceFiles(),
-    "stardew-production-lifecycle-coordinator-test-lifetime.internal.test.ts",
-  );
+  const population = terminationPopulation(sourceFiles(), SELF);
   // Fail on zero: a population that found no file agrees with itself.
   assert.ok(
     population.length > 0,
@@ -266,6 +295,36 @@ test("a_test_that_never_returns_hides_the_ones_after_it: every fixture file term
       `${reading.terminated} · hung ${reading.hung} · bound_ms ${FILE_BOUND_MS} · slowest_ms ${reading.slowestMs}`,
   );
   assert.deepEqual(reading.findings, []);
+});
+
+/**
+ * The reading that makes the one above a fact about the files rather than about how they were launched.
+ *
+ * `runBounded` passes no `--import` on purpose (see its comment), so the compiled-test bootstrap never binds the Windows
+ * stale-lock reclaimer in these children. A population file that releases a path lock therefore has to bind its own - and
+ * the termination reading cannot see the difference, because a release that fails still leaves a file that prints its
+ * summary. Read from source, before any file is run, so a file that joins the population without a binding is named here
+ * instead of failing later from inside one of its own fixtures.
+ */
+test("every_termination_child_binds_the_reclaimer_its_release_goes_through", (t) => {
+  const population = terminationPopulation(sourceFiles(), SELF);
+  assert.ok(
+    population.length > 0,
+    "no test file imports a socket-reaching support export, so this reading examined nothing and proves nothing",
+  );
+  const unbound = population.filter((file) => !BINDS_RECLAIMER.test(readFileSync(join(SOURCE_ROOT, file), "utf8")));
+  t.diagnostic(
+    `every_termination_child_binds_the_reclaimer_its_release_goes_through: files examined ${population.length} · ` +
+      `binding their own reclaimer ${population.length - unbound.length} · with none ${unbound.length}`,
+  );
+  assert.deepEqual(
+    unbound,
+    [],
+    `${unbound.join(", ")}: this gate spawns each of these files as its own process with no --import, so the ` +
+      "compiled-test bootstrap's Windows stale-lock reclaimer binding never reaches it. A file that releases a path " +
+      "lock must bind its own: bindVerifiedWindowsLockReclaimerForTest at its top, or installLifecycleTestHooks. A file " +
+      "that releases none states that where a reader looks.",
+  );
 });
 
 /**
