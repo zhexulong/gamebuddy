@@ -2530,12 +2530,17 @@ function isImportDisposition(value: unknown): value is StCardImportDispositionV1
   );
 }
 
+/**
+ * The Host's own field rows, one per field the card carried. The count is derived from the card, so
+ * this mirror must not cap it: the card-import review of a book-rich companion is dozens of rows,
+ * and a cap here would report the Host's own answer as a malformed response.
+ */
 function isImportFields(value: unknown): value is readonly StCardImportFieldSummaryV1[] {
-  return Array.isArray(value) && value.length <= 32 && value.every(isImportField);
+  return Array.isArray(value) && value.every(isImportField);
 }
 
 function isImportDispositions(value: unknown): value is readonly StCardImportDispositionV1[] {
-  return Array.isArray(value) && value.length <= 128 && value.every(isImportDisposition);
+  return Array.isArray(value) && value.every(isImportDisposition);
 }
 
 function isImportOmittedMacro(value: unknown): value is StCardImportOmittedMacroV1 {
@@ -2582,7 +2587,7 @@ function isImportLoss(value: unknown): value is StCardImportLossV1 {
  * predates it (or a card with no losses) simply omits the member.
  */
 function isImportLosses(value: unknown): value is readonly StCardImportLossV1[] {
-  return Array.isArray(value) && value.length <= 64 && value.every(isImportLoss);
+  return Array.isArray(value) && value.every(isImportLoss);
 }
 
 function hasOptionalLosses(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -2591,7 +2596,7 @@ function hasOptionalLosses(value: Record<string, unknown>, keys: readonly string
 }
 
 function isReviewedFields(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.length <= 32 && value.every((field) => isLengthBoundedString(field, 1, 64));
+  return Array.isArray(value) && value.every((field) => isLengthBoundedString(field, 1, 64));
 }
 
 function isStCardImportStageResult(value: unknown): value is StCardImportStageResultV1 {

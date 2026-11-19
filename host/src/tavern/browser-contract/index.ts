@@ -628,14 +628,25 @@ export const StageStCardImportCommandV1Schema = Type.Union([
     cardFileBase64: Type.String({ minLength: 1, maxLength: MAX_PNG_CARD_BASE64_CHARS }),
   }),
 ]);
+/**
+ * The reviewed import's own report of what it read and what it will keep.
+ *
+ * None of these arrays carries a `maxItems`, and that is deliberate: every one of them is DERIVED
+ * from the card (`st-card-import-service.ts:candidateFromReport`), whose size the stage route has
+ * already bounded (`MAX_ST_CARD_IMPORT_BODY_BYTES`). A fixed row cap therefore cannot bound the
+ * Host's work - it can only refuse a projection the Host itself just built. One did: `32` was
+ * smaller than the rows the product's own shipped companion produces (her 17 examples and 12
+ * world-book entries are 39 rows), so exporting her card and importing it back answered
+ * `503 runtime_unavailable` and the player was told "无法导入该角色卡。" for a card this Host wrote.
+ */
 export const StCardImportStageResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   importId: OpaqueHandle,
   name: Type.String({ minLength: 1, maxLength: 128 }),
   candidateRevision: Revision,
-  fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
-  dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
-  losses: Type.Optional(Type.Array(StCardImportLossV1Schema, { maxItems: 64 })),
+  fields: Type.Array(StCardImportFieldSummaryV1Schema),
+  dispositions: Type.Array(StCardImportDispositionV1Schema),
+  losses: Type.Optional(Type.Array(StCardImportLossV1Schema)),
 });
 export const StCardImportReadResultV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -643,20 +654,20 @@ export const StCardImportReadResultV1Schema = strictObject({
   name: Type.String({ minLength: 1, maxLength: 128 }),
   candidateRevision: Revision,
   reviewed: Type.Boolean(),
-  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
-  fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
-  dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
-  losses: Type.Optional(Type.Array(StCardImportLossV1Schema, { maxItems: 64 })),
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 })),
+  fields: Type.Array(StCardImportFieldSummaryV1Schema),
+  dispositions: Type.Array(StCardImportDispositionV1Schema),
+  losses: Type.Optional(Type.Array(StCardImportLossV1Schema)),
 });
 export const ReviewStCardImportCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
-  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 })),
   approvedAtMs: Revision,
 });
 export const StCardImportReviewResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   importId: OpaqueHandle,
-  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 })),
   approvedAtMs: Revision,
 });
 export const ConfirmStCardImportCommandV1Schema = strictObject({ apiVersion: ApiVersion });

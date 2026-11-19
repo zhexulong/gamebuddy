@@ -7,11 +7,16 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { identityKey } from "./runtime.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import { pngCardFile, pngCardFileWithoutImage, pngPictureFile } from "./test-support/png-card.test-support.js";
+import type { WorldBookEntry } from "./worldbook.js";
 import { TavernArtifactStore } from "./tavern/artifact-store.js";
 import { composeTavernProfile, type StCardImportStageResultV1 } from "./tavern/browser-contract/index.js";
 import { createChatThreadStore } from "./tavern/chat-thread-store.js";
 import { companionAvatarPath } from "./tavern/companion-avatar/index.js";
+import { type CompanionCardRecords, exportCompanionCard } from "./tavern/companion-card-export.js";
+import { createCompanionCardExportService } from "./tavern/companion-card-export-service.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { provisionNewCompanion } from "./tavern/new-companion-service.js";
+import { writeCompanionCardPng } from "./tavern/png-card-writer.js";
 import { StCardImportService } from "./tavern/st-card-import-service.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
 import { startTavernManagementDialogueWebServer } from "./tavern-management-dialogue-web.js";
@@ -466,5 +471,231 @@ test("a staged card that is abandoned leaves nothing in any companion's own root
     await fixture.server.close();
     fixture.threads.close?.();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Her records as the export builder takes them: the shipped companion's own profile, opening set,
+ * scenario and world book (`DEFAULT_COMPANION_PRESET`, so the population grows with her), one entry
+ * that carries EVERY optional world-book key the card format has, and the author fields this product
+ * keeps without interpreting.
+ */
+function shippedCompanionRecords(): CompanionCardRecords {
+  const preset = DEFAULT_COMPANION_PRESET;
+  return {
+    name: preset.profile.identity.name,
+    ...(preset.profile.persona === undefined ? {} : { persona: preset.profile.persona }),
+    ...(preset.profile.examples === undefined ? {} : { examples: preset.profile.examples }),
+    ...(preset.profile.characterVoice === undefined ? {} : { characterVoice: preset.profile.characterVoice }),
+    ...(preset.scenario === undefined ? {} : { scenario: preset.scenario }),
+    openings: preset.greetings.map((greeting) => Object.freeze({ text: greeting.text })),
+    worldBook: Object.freeze({
+      ...preset.worldBook,
+      entries: Object.freeze([...preset.worldBook.entries, SECONDARY_GATED_ENTRY]),
+    }),
+    ...(preset.postHistoryInstructions === undefined
+      ? {}
+      : { postHistoryInstructions: preset.postHistoryInstructions }),
+    preservedFields: Object.freeze({
+      creator: "gamebuddy",
+      character_version: "1.0.0",
+      tags: Object.freeze(["星露谷", "农场搭档"]),
+    }),
+    extensions: Object.freeze({ talkativeness: "0.5", inCharactersFavorites: false }),
+  };
+}
+
+/** The one entry in her book that carries every optional key: the ones a round trip loses silently. */
+const SECONDARY_GATED_ENTRY: WorldBookEntry = Object.freeze({
+  entryId: "wb-entry-secondary",
+  title: "只在说到镇上时补充",
+  content: "提到了酒吧，并且已经聊到镇上的时候，她才补充这一条。",
+  scope: "setting",
+  provenance: "authored",
+  tokenBudget: "small",
+  keys: ["酒吧"],
+  secondaryKeys: ["镇上"],
+  selectiveLogic: 0,
+  constant: false,
+  enabled: false,
+});
+
+/**
+ * A book entry's card-relevant facts, normalized the way the FORMAT defines them: an absent `keys`,
+ * `secondaryKeys`, `constant` or `enabled` is the spec's own default (`none`, `none`, `false`,
+ * enabled), so a durable entry and the entry the import reads back are comparable without pinning
+ * which spelling of "off" a record happens to use.
+ */
+function bookEntryFacts(entry: WorldBookEntry) {
+  return {
+    title: entry.title,
+    content: entry.content,
+    keys: entry.keys ?? [],
+    secondaryKeys: entry.secondaryKeys ?? [],
+    selectiveLogic: entry.selectiveLogic ?? null,
+    constant: entry.constant === true,
+    enabled: entry.enabled !== false,
+  };
+}
+
+/**
+ * A companion's own card, given back to the route that will read it.
+ *
+ * Driver R's real run exported 琥珀's PNG card (`status=200`, 29,655 bytes, chunks
+ * `IHDR/tEXt/IDAT/IEND`, a 15,044-character `chara` chunk) and then handed that exact file to the
+ * surface's own picker, which answered `{"state":"error","text":"无法导入该角色卡。"}` with no review
+ * and no companion. The decoder kept the card; the STAGE ROUTE refused the projection of it, because
+ * the player-readable field rows are derived from the card (`st-card-import-service.ts`,
+ * `candidateFromReport`) and the wire schema capped them at a hand-written 32
+ * (`browser-contract/index.ts`, `StCardImportStageResultV1Schema.fields`). The shipped companion
+ * produces 39 rows before this test adds its own, so her own card was unreadable by the Host that
+ * wrote it.
+ *
+ * Every assertion below is a field the import accepts, compared with the card the export wrote - the
+ * lossless round trip AGENTS.md names. A field that survives export but is dropped on import is the
+ * defect even when the import "succeeds".
+ */
+test("the card the Host exports from a companion is staged by the route that will read it", async () => {
+  const root = await canonicalTestRoot("tavern-st-card-round-trip-");
+  const fixture = await stageFixmounted(root);
+  try {
+    const origin = fixture.server.origin;
+    const session = await bootstrap(origin);
+    const records = shippedCompanionRecords();
+    const exported = exportCompanionCard(records);
+    // The PNG arm as the player saves it: a picture with the card inside its one `tEXt` chunk.
+    const cardFile = writeCompanionCardPng(pngPictureFile(), exported.card);
+    const card = JSON.parse(exported.card) as { readonly data: Readonly<Record<string, unknown>> };
+
+    const staged = await ok<StCardImportStageResultV1>(await stagePng(origin, session, cardFile));
+    assert.equal(staged.name, records.name);
+
+    const rows = staged.fields.map((field) => field.field);
+    const worldBookRows = rows.filter((row) => row.startsWith("worldbook_"));
+    assert.deepEqual(
+      rows.filter((row) => !row.startsWith("worldbook_")),
+      [
+        "name",
+        "identity_role",
+        "continuity",
+        ...(records.scenario === undefined ? [] : ["scenario"]),
+        "system_prompt",
+        "persona_core",
+        "persona_interaction_style",
+        ...(records.examples ?? []).map((_, index) => `example_${index + 1}`),
+        "first_greeting",
+        ...(records.openings ?? []).slice(1).map((_, index) => `alternate_greeting_${index + 1}`),
+      ],
+    );
+    assert.equal(worldBookRows.length, records.worldBook?.entries.length ?? 0);
+    // The world-book rows carry the entries' own text, in the book's order.
+    assert.deepEqual(
+      worldBookRows.map((row) => staged.fields.find((field) => field.field === row)?.chars),
+      (records.worldBook?.entries ?? []).map((entry) => entry.content.length),
+    );
+
+    // Every accepted field, read back out of the durable candidate the stage wrote.
+    const candidate = (await fixture.service.read(staged.importId)).candidate.artifact;
+    const fieldText = (field: string): string | undefined => candidate.fields.find((row) => row.field === field)?.text;
+    assert.equal(candidate.name, card.data.name);
+    assert.equal(fieldText("persona_core"), card.data.description);
+    assert.equal(fieldText("persona_interaction_style"), card.data.personality);
+    assert.equal(fieldText("scenario"), card.data.scenario);
+    assert.equal(fieldText("system_prompt"), card.data.system_prompt);
+    assert.equal(fieldText("first_greeting"), card.data.first_mes);
+    assert.deepEqual(
+      rows.filter((row) => row.startsWith("alternate_greeting_")).map((row) => fieldText(row)),
+      card.data.alternate_greetings ?? [],
+    );
+    assert.deepEqual(
+      rows.filter((row) => row.startsWith("example_")).map((row) => JSON.parse(fieldText(row) ?? "null")),
+      records.examples,
+    );
+    assert.equal(candidate.postHistoryInstructions, card.data.post_history_instructions);
+    assert.deepEqual(candidate.extensions, records.extensions);
+    assert.deepEqual(candidate.preservedFields, records.preservedFields);
+    assert.equal(candidate.worldBookScanDepth, records.worldBook?.scanDepth);
+    assert.deepEqual(
+      (candidate.worldBookCandidates ?? []).map(bookEntryFacts),
+      (records.worldBook?.entries ?? []).map(bookEntryFacts),
+    );
+
+    // The review the surface records covers exactly the fields the Host marked eligible - for this
+    // companion that is more rows than the old hand-written cap, which refused her here too.
+    const kept = staged.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    const reviewed = await ok<Readonly<{ reviewedFields: readonly string[] }>>(
+      await post(origin, `/api/tavern/v1/imports/${staged.importId}/review`, session, {
+        apiVersion: 1,
+        reviewedFields: kept,
+        approvedAtMs: 1,
+      }),
+    );
+    assert.deepEqual(reviewed.reviewedFields, kept);
+  } finally {
+    await fixture.server.close();
+    fixture.threads.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * The other direction: the companion a card provisions exports a card that stages the same way.
+ *
+ * A card that came in through the import and went out through the export is the same card, so the
+ * second stage sees the same rows and the same opening. This is where a card-shaped record that lost
+ * a field on the way IN shows up: the export can only write what provisioning kept.
+ */
+test("the companion a card provisions exports a card the same route stages again", async () => {
+  const root = await canonicalTestRoot("tavern-st-card-re-export-");
+  const fixture = await stageFixmounted(root);
+  try {
+    const origin = fixture.server.origin;
+    const session = await bootstrap(origin);
+    const staged = await ok<StCardImportStageResultV1>(
+      await stagePng(
+        origin,
+        session,
+        writeCompanionCardPng(pngPictureFile(), exportCompanionCard(shippedCompanionRecords()).card),
+      ),
+    );
+    await ok(
+      await post(origin, `/api/tavern/v1/imports/${staged.importId}/review`, session, {
+        apiVersion: 1,
+        reviewedFields: staged.fields
+          .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+          .map((field) => field.field),
+        approvedAtMs: 1,
+      }),
+    );
+    await ok(await post(origin, `/api/tavern/v1/imports/${staged.importId}/confirm`, session, { apiVersion: 1 }));
+    const provisioned = fixture.provisioned[0];
+    assert.ok(provisioned !== undefined, "the confirm provisioned a companion");
+
+    const again = await createCompanionCardExportService({
+      store: new TavernArtifactStore(root),
+      runtimeRoot: root,
+      playerId: identity.playerId,
+      resolveCompanion: async () =>
+        Object.freeze({ companionId: provisioned.companionId, continuityId: provisioned.continuityId, name: null }),
+    }).read(handle, "json");
+    assert.ok(again !== null && again.format === "json", "her card exports");
+    const reStaged = await ok<StCardImportStageResultV1>(
+      await post(origin, "/api/tavern/v1/imports", session, {
+        apiVersion: 1,
+        cardSource: "json",
+        card: again.card,
+      }),
+    );
+    assert.equal(reStaged.name, staged.name);
+    assert.deepEqual(
+      reStaged.fields.map((field) => field.field),
+      staged.fields.map((field) => field.field),
+    );
+  } finally {
+    await fixture.server.close();
+    fixture.threads.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
