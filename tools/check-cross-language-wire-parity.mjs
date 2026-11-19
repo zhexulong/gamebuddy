@@ -13,16 +13,21 @@
  *
  * THE TWO SIDES, AND WHICH ONE IS THE AUTHORITY.
  *
- *  - FRAMES come from the Mod's own protocol code: a member of `integrations/stardew/src/Core/Protocol/*.cs` or
- *    `integrations/stardew/BridgeSession.cs` which names a frame in a call that actually frames it - `Reply("<frame>",
- *    ...)` for outbound, `TryReadInboundPayload(json, "<frame>", ...)` / `TryDeserializeInbound(json, "<frame>", ...)` for
- *    inbound - pairs that frame with the payload type the same member carries (`BridgeEnvelope<T>` in the signature for a
- *    decoder, the record constructed in the reply for a sender). Nothing here is a hand-written frame table; a frame the
- *    Mod stops framing, or a payload type it swaps, changes this population with no edit to this file. A member that names
- *    a frame AND leaves several payload types possible is AMBIGUOUS and reported by name rather than guessed.
- *  - FIELDS come from the payload declarations under `integrations/stardew/src/Core/Models/*.cs`, in BOTH forms the Mod
- *    uses: a positional `public sealed record <Name>(<Type> <Name>, ...)` and a class of init-only properties (`public
- *    sealed class BridgeExecutionArgs`), which is where `SceneTarget` lives. They are mapped to the wire spelling by the
+ *  - FRAMES come from the Mod's own protocol code - the `integrations/stardew/src/Core/Protocol/*.cs` wire models,
+ *    `integrations/stardew/BridgeSession.cs`, and `integrations/stardew/ModEntry.cs`, which is where the Mod answers the
+ *    frames its session does not - a member which names a frame in a call that actually frames it: `Reply("<frame>", ...)`
+ *    for outbound, `TryReadInboundPayload(json, "<frame>", ...)` / `TryDeserializeInbound(json, "<frame>", ...)` for
+ *    inbound. That frame pairs with the payload type the same member carries: for a decoder the `BridgeEnvelope<T>` of the
+ *    call's own `out` argument (`TryDeserializeInbound(json, "…", out BridgeEnvelope<FarmhandActionPolicy>? …)`, which is
+ *    how `ModEntry` states it) or of the member's signature (which is how the wire models state it), for a sender the
+ *    record constructed in the reply. Nothing here is a hand-written frame table; a frame the Mod stops framing, or a
+ *    payload type it swaps, changes this population with no edit to this file. A member that names a frame AND leaves
+ *    several payload types possible is AMBIGUOUS and reported by name rather than guessed.
+ *  - FIELDS come from the payload declarations anywhere under `integrations/stardew/src`, in the THREE forms the Mod uses:
+ *    a positional `public sealed record <Name>(<Type> <Name>, ...)`, a class of init-only properties (`public sealed
+ *    class BridgeExecutionArgs`, which is where `SceneTarget` lives), and a record with a property body (`public sealed
+ *    record FarmhandActionPolicy`, which is where the pushed policy frame's two keys live - and it is declared with the
+ *    policy domain in `Core/Policy` rather than with the wire models). They are mapped to the wire spelling by the
  *    naming policy the Mod's SERIALISER declares - `JsonNamingPolicy.<Policy>` inside `BridgeProtocol.JsonOptions` - which
  *    this gate reads and PRINTS with its file and line, because assuming `camelCase` would make every drift line it prints
  *    unfalsifiable. Records the payload publishes are walked too, so a field one object deep is examined as well.
@@ -78,11 +83,15 @@
  * and `tools/check-refusal-detail-state-parity.mjs` names the drift there
  * (`refusal_detail_state_set_drift:partially_succeeded:host`). One fact, one owner: the state set belongs to that gate,
  * the field NAME belongs to this one - and the field-name crossing it does own is reproduced on the real declarations by
- * tools/check-cross-language-wire-parity.test.mjs.
+ * tools/check-cross-language-wire-parity.test.mjs. The second gap this gate was caught with is reproduced there too: the
+ * Host's 38 arms against the Mod's 36 pairs was ONE frame answered in a file the reader never opened
+ * (`frame_not_measured:farmhand_action_policy_request`, renamed out of `ModEntry` and named on both sides of the block).
  *
  * red-proof: inject  a field added to the real `BridgeBodyProgramNodeStatus`, and `"refusalDetail"` deleted from the
  *   real `isBodyProgramNodeStatus` key list -> `wire_field_unaccepted:program_status_result:<field>:<C# type>`
  *   (tools/check-cross-language-wire-parity.test.mjs)
+ * red-proof: inject  the pushed policy's frame renamed in the real `ModEntry.cs` -> `frame_not_measured:` names it and the
+ *   blocked line prints 38 Host arms against 36 Mod pairs (tools/check-cross-language-wire-parity.test.mjs)
  */
 
 export const gateDeclaration = {
@@ -106,11 +115,19 @@ export const MOD_SERIALIZER_PATH = "integrations/stardew/src/Core/Protocol/Bridg
 /** The outbound reply sites: `Reply("<frame>", ...)` lives with the session, not with the wire model. */
 export const MOD_SESSION_PATH = "integrations/stardew/BridgeSession.cs";
 /**
- * The program frames' payloads: `ActionProgramCandidate`, `NodeAdmissionChallenge`, `HostAdmissionGrant` and the three
- * concrete admission results are declared here rather than in `Core/Models`, and leaving the file out made
- * `program_submit` pair with a type whose fields this gate then could not read - a frame inside the population that
- * contributed nothing to it.
+ * The inbound dispatch sites the session does not own: `HandleFarmhandActionPolicy` answers the pushed action policy from
+ * `ModEntry`, and a reader that knew only the session and the wire models reported that frame as one the Mod never
+ * mentions - a frame the Host dispatches on, inside neither population.
  */
+export const MOD_DISPATCH_PATH = "integrations/stardew/ModEntry.cs";
+/**
+ * Where payload declarations are read from: the Mod's whole source tree, not `Core/Models` plus a list of the other
+ * directories that happened to hold a payload. The list is what went stale - `Core/BodyPrograms` carried the program
+ * payloads, so `program_submit` paired with a type whose fields this gate could not read, and `Core/Policy` carries the
+ * pushed policy record the same way. A directory scan is not a taxonomy: a payload declared anywhere under here is read.
+ */
+export const MOD_SOURCE_ROOT = "integrations/stardew/src";
+/** The program frames' payloads, named here because the falsifier drives their absence; the tree scan reads the file. */
 export const MOD_PROGRAM_MODELS_PATH = "integrations/stardew/src/Core/BodyPrograms/BodyProgramModels.cs";
 export const HOST_PROTOCOL_PATH = "host/src/protocol.ts";
 export const HOST_FACTS_PATH = "host/src/protocol-target-facts.ts";
@@ -374,11 +391,13 @@ function readParameter(parameterTokens) {
 /**
  * Every wire type the source declares, name -> its parameters/properties.
  *
- * TWO DECLARATION FORMS carry a bridge payload in this Mod and both are read, because the surface grew one of each:
- * a positional `record` states its shape in its parameter list (`public sealed record BridgeReceipt(...)`), and a class
+ * THREE DECLARATION FORMS carry a bridge payload in this Mod and all three are read, because the surface grew one of
+ * each: a positional `record` states its shape in its parameter list (`public sealed record BridgeReceipt(...)`), a class
  * with init-only properties states it one member at a time (`public sealed class BridgeExecutionArgs`, whose `SceneTarget`
- * was the key the Host did not admit). A reader that knew only the first form would have skipped the very type the
- * incident lived on.
+ * was the key the Host did not admit), and a record with a property body states it the same way (`public sealed record
+ * FarmhandActionPolicy`, the pushed policy, whose two keys the `farmhand_action_policy_request` arm accepts). A reader
+ * that knew only the first form would have skipped the very type the incident lived on; one that knew only the first two
+ * found no declaration at all for a frame the Mod decodes.
  */
 export function modRecords(source) {
   const tokens = tokenize(source);
@@ -400,7 +419,7 @@ export function modRecords(source) {
     if (!records.has(name.value)) records.set(name.value, Object.freeze(fields));
   }
   for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index].type !== "word" || tokens[index].value !== "class") continue;
+    if (tokens[index].type !== "word" || !/^(?:class|record)$/u.test(tokens[index].value)) continue;
     const name = tokens[index + 1];
     if (name?.type !== "word" || records.has(name.value)) continue;
     let bodyOpen = index + 2;
@@ -562,6 +581,39 @@ function recordWords(tokens, records) {
  */
 const normalisedType = (name) => name.replace(/^Bridge/u, "").replace(/(?:Payload|Wire|Args)$/u, "");
 
+/** The calls that DECODE an inbound frame. `IsValidEnvelope` validates one and names no payload type, so it is not here. */
+const DECODERS = new Set(["TryReadInboundPayload", "TryDeserializeInbound"]);
+
+/**
+ * The payload a decoder names IN ITS OWN CALL: `TryDeserializeInbound(json, "farmhand_action_policy_request", out
+ * BridgeEnvelope<FarmhandActionPolicy>? request, ...)`, as `ModEntry` writes it.
+ *
+ * The Mod states an inbound payload two ways, and they are not the same evidence. The wire models use the member's
+ * signature (`out BridgeEnvelope<BridgeReceipt>? response`), where the frame literal and the type are in different
+ * declarations; the dispatch hands the envelope to the call, where the frame, the payload and the reason the Mod answers
+ * it sit in one line. A reader that knew only the signature found no candidate at all for the pushed policy frame and
+ * reported it as a frame the Mod never mentions - the same hole `MOD_PROGRAM_MODELS_PATH` closed for `program_submit`.
+ */
+function decodedAtCall(tokens, frame) {
+  const at = tokens.findIndex((token) => token.type === "string" && token.value === frame);
+  if (at < 0) return null;
+  let callAt = -1;
+  for (let index = at; index >= 0; index -= 1)
+    if (tokens[index].type === "word" && DECODERS.has(tokens[index].value)) {
+      callAt = index;
+      break;
+    }
+  if (callAt < 0) return null;
+  const open = tokens.findIndex((token, index) => index > callAt && token.value === "(");
+  const close = open < 0 ? -1 : balanced(tokens, open);
+  if (close < 0) return null;
+  const call = tokens.slice(open + 1, close);
+  for (let index = 0; index < call.length; index += 1)
+    if (call[index].value === "BridgeEnvelope" && call[index + 1]?.value === "<" && call[index + 2]?.type === "word")
+      return call[index + 2].value;
+  return null;
+}
+
 /**
  * The record a reply at `frame` sends: the first `new <Record>(` after the frame literal, which is the value the reply
  * carries (`Reply("hello_ack", ..., new BridgeHelloAck(...))`). Nested constructions inside that one are not the payload,
@@ -591,8 +643,10 @@ function constructedAtReply(tokens, frame) {
 /**
  * frame -> the C# record that carries it, from the Mod's own framing calls, one direction at a time.
  *
- * INBOUND is the Mod's decoder: `out BridgeEnvelope<BridgeReceipt>?` in the signature beside `TryReadInboundPayload(json,
- * "execution_receipt", ...)` in the body. OUTBOUND is a reply: `Reply("snapshot", ...)` beside the value the same member
+ * INBOUND is the Mod's decoder: `out BridgeEnvelope<BridgeReceipt>?` beside `TryReadInboundPayload(json,
+ * "execution_receipt", ...)`, in the signature for the wire models and in the call itself for the dispatch. Evidence is
+ * ranked strongest first - the call's own envelope, then the signature's, then the records the signature happens to name.
+ * OUTBOUND is a reply: `Reply("snapshot", ...)` beside the value the same member
  * sends. Keeping the two apart is what stops `Reply("data_query_result", ..., request)` from pairing a RESULT frame with a
  * REQUEST record.
  *
@@ -635,9 +689,14 @@ export function modFramePairs(
       .filter((frame) => hostFrames.has(frame));
     if (inbound.length > 0) {
       const envelope = /BridgeEnvelope\s*<\s*(\w+)\s*>/u.exec(signatureText);
-      const candidates = envelope === null ? recordWords(member.signature, records) : new Set([envelope[1]]);
-      const rank = envelope === null ? 2 : 1;
-      for (const frame of inbound) record(inboundCandidates, frame, candidates, rank);
+      for (const frame of inbound) {
+        // The call's own `out BridgeEnvelope<T>` is the frame and its payload in one line, so it outranks the signature,
+        // which states a type without stating which frame it carries.
+        const inCall = decodedAtCall(member.body, frame);
+        if (inCall !== null) record(inboundCandidates, frame, [inCall], 1);
+        else if (envelope !== null) record(inboundCandidates, frame, [envelope[1]], 2);
+        else record(inboundCandidates, frame, recordWords(member.signature, records), 3);
+      }
     }
 
     const outbound = []
@@ -1026,13 +1085,25 @@ function frameEntryPoints(frame, bodies) {
 
 const check = (id, status, detail) => (detail === undefined ? { id, status } : { id, status, detail });
 
-/** Every `.cs` file under `integrations/stardew/src/Core/Models`, concatenated: the payload declarations. */
-function readModelsDirectory(root, overrides) {
-  const directory = join(root, MODELS_DIRECTORY);
-  const names = readdirSync(directory)
-    .filter((name) => name.endsWith(".cs"))
-    .sort();
-  return names.map((name) => overrides[`${MODELS_DIRECTORY}/${name}`] ?? readFileSync(join(directory, name), "utf8"));
+/** Every `.cs` file under `integrations/stardew/src`, concatenated: the payload declarations, wherever they are declared. */
+function readModSourceTree(root, overrides) {
+  const sources = [];
+  const visit = (directory, relative) => {
+    // Sorted so two machines read the same tree in the same order: `modRecords` keeps the first declaration it meets.
+    const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+    for (const entry of entries) {
+      // Compiler output, not declarations: a generated `AssemblyInfo.cs` is not a wire type.
+      if (entry.name === "bin" || entry.name === "obj") continue;
+      const path = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) visit(join(directory, entry.name), path);
+      else if (entry.name.endsWith(".cs"))
+        sources.push(overrides[path] ?? readFileSync(join(directory, entry.name), "utf8"));
+    }
+  };
+  visit(join(root, MOD_SOURCE_ROOT), MOD_SOURCE_ROOT);
+  return sources;
 }
 
 function readProtocolDirectory(root, overrides) {
@@ -1056,10 +1127,9 @@ export function checkCrossLanguageWireParity({
   frameExemptions = UNPAIRED_FRAME_EXEMPTIONS,
 } = {}) {
   const read = (relativePath) => overrides[relativePath] ?? readFileSync(join(root, relativePath), "utf8");
-  const models = readModelsDirectory(root, overrides).join("\n");
   const protocol = readProtocolDirectory(root, overrides).join("\n");
   const session = read(MOD_SESSION_PATH);
-  const program = read(MOD_PROGRAM_MODELS_PATH);
+  const dispatch = read(MOD_DISPATCH_PATH);
   const hostProtocol = withoutComments(read(HOST_PROTOCOL_PATH));
   const hostFacts = withoutComments(read(HOST_FACTS_PATH));
   const hostSource = `${hostProtocol}\n${hostFacts}`;
@@ -1095,18 +1165,19 @@ export function checkCrossLanguageWireParity({
   if (arms.size === 0)
     return blocked(`no \`case "<frame>":\` arm in \`validateBridgeMessage\` (${HOST_PROTOCOL_PATH})`);
   const bodies = hostFunctionBodies(hostSource);
-  const modelRecords = modRecords(models);
-  if (modelRecords.size === 0) return blocked(`no wire type declaration under ${MODELS_DIRECTORY}`);
-  const records = modRecords(`${models}\n${protocol}\n${session}\n${program}`);
-  const derivations = modDerivations(`${models}\n${protocol}\n${session}\n${program}`);
+  const declared = `${readModSourceTree(root, overrides).join("\n")}\n${session}`;
+  const records = modRecords(declared);
+  if (records.size === 0) return blocked(`no type declaration under ${MOD_SOURCE_ROOT}`);
+  const derivations = modDerivations(declared);
   const hostTypes = hostFramePayloadTypes(hostProtocol);
+  const framing = `${protocol}\n${session}\n${dispatch}`;
   const paired = modFramePairs(
-    `${protocol}\n${session}`,
+    framing,
     new Set(arms.keys()),
     records,
     (frame) => hostTypes.get(frame) ?? null,
-    csharpReturnTypes(`${protocol}\n${session}`),
-    modSerialisableTypes(`${protocol}\n${session}`),
+    csharpReturnTypes(framing),
+    modSerialisableTypes(framing),
   );
   /** frame -> how many fields the walk over that frame's payload contributed, so "paired but empty" is visible. */
   const examinedFrames = new Map();
@@ -1291,7 +1362,7 @@ export function checkCrossLanguageWireParity({
       check(
         "declarations_readable",
         "passed",
-        `${naming.policy} at ${naming.where}, ${paired.pairs.size} frame pair(s), ${arms.size} Host arm(s), ${records.size} wire type(s)`,
+        `${naming.policy} at ${naming.where}, ${paired.pairs.size} frame pair(s), ${arms.size} Host arm(s), ${records.size} type declaration(s)`,
       ),
       gaps.length === 0
         ? check(
@@ -1309,7 +1380,17 @@ export function checkCrossLanguageWireParity({
 
 /** The lines one run prints: the population first, then the members, so a failure names the drifting field. */
 export function formatWireParity(report) {
-  if (report.status === "blocked") return [`cross_language_wire_parity blocked: ${report.reason}`];
+  if (report.status === "blocked") {
+    const lines = [`cross_language_wire_parity blocked: ${report.reason}`];
+    // BOTH SIDES ON THE LINE THE READER SEES. A blocked run names the frame it could not measure; the two counts say which
+    // side carried it, so "the Host has 38 arms and the Mod declares 36" is one line and not an investigation.
+    if (report.frames.examined > 0)
+      lines.push(
+        `  the Host dispatches on ${report.frames.examined} frame(s) · the Mod pairs ${report.frames.paired} of them · ` +
+          `${report.frames.exempt} exempt with an owner · unmeasured ${report.frames.unpaired.join(", ") || "none"}`,
+      );
+    return lines;
+  }
   const lines = [
     `frames examined ${report.frames.examined} · paired ${report.frames.paired} · measured here ${report.frames.paired - report.frames.ownedElsewhere.length} · owned elsewhere ${report.frames.ownedElsewhere.length} · exempt ${report.frames.exempt} · unmeasured ${report.frames.unpaired.length}`,
     `fields examined ${report.fields.examined} · accepted ${report.fields.accepted} · unaccepted ${report.fields.unaccepted} · exempt ${report.fields.exempt}`,

@@ -24,9 +24,11 @@ import {
   HOST_FACTS_PATH,
   HOST_PROTOCOL_PATH,
   hostFrameArms,
+  MOD_DISPATCH_PATH,
   MOD_PROGRAM_MODELS_PATH,
   MOD_PROTOCOL_DIRECTORY,
   MOD_SESSION_PATH,
+  MOD_SOURCE_ROOT,
   MODELS_DIRECTORY,
   modRecords,
   UNPAIRED_FRAME_EXEMPTIONS,
@@ -42,6 +44,18 @@ const SESSION_FILE = MOD_SESSION_PATH;
 
 const real = (relativePath) => readFileSync(join(REPOSITORY_ROOT, relativePath), "utf8");
 const realHostProtocol = () => real(HOST_PROTOCOL_PATH);
+
+/** Every `.cs` declaration the gate reads, relative to the repository root - the population an injection has to empty. */
+function treeFiles(relative = MOD_SOURCE_ROOT) {
+  const files = [];
+  for (const entry of readdirSync(join(REPOSITORY_ROOT, relative), { withFileTypes: true })) {
+    if (entry.name === "bin" || entry.name === "obj") continue;
+    const path = `${relative}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...treeFiles(path));
+    else if (entry.name.endsWith(".cs")) files.push(path);
+  }
+  return files;
+}
 
 /** One injected parameter at the head of a C# record's parameter list: `record X(string? Field = null, ...)`. */
 function withRecordField(source, record, parameter) {
@@ -115,10 +129,7 @@ test("a field the Mod adds one record down the payload is named too", () => {
 test("the field the incident carried is named when the Host's own key list loses it", () => {
   // The field-level sibling of `tools/check-refusal-detail-state-parity.mjs`: `refusalDetail` rides the
   // `program_status_result` frame, and the frame is refused the moment the Host's optional-key list stops naming it.
-  const protocol = realHostProtocol().replace(
-    '"rejectionCode", "failureCode", "hint", "refusalDetail",',
-    '"rejectionCode", "failureCode", "hint",',
-  );
+  const protocol = realHostProtocol().replace('        "refusalDetail",\n', "");
   assert.notEqual(
     protocol,
     realHostProtocol(),
@@ -201,12 +212,67 @@ test("an unreadable declaration is blocked, never green", () => {
     /SnakeCaseLower/u,
   );
   blocked({ [HOST_PROTOCOL_PATH]: "export {};\n" }, /validateBridgeMessage|no `case/u);
-  const emptyModels = Object.fromEntries(
-    readdirSync(join(REPOSITORY_ROOT, MODELS_DIRECTORY))
-      .filter((name) => name.endsWith(".cs"))
-      .map((name) => [`${MODELS_DIRECTORY}/${name}`, "// no wire type here\n"]),
+  // The declarations are the whole `src` tree, so one quiet directory is no longer "the reader found nothing": the
+  // injection is a tree that carries no declaration at all, with the serialiser's naming policy the only thing left in it.
+  const emptyTree = Object.fromEntries(treeFiles().map((path) => [path, "// no wire type here\n"]));
+  assert.ok(Object.keys(emptyTree).length > 50, "the injection must empty the tree the reader walks");
+  blocked(
+    {
+      ...emptyTree,
+      [SESSION_FILE]: "// nor here\n",
+      [PROTOCOL_FILE]:
+        "JsonSerializerOptions JsonOptions = new () { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };\n",
+    },
+    /no type declaration under integrations\/stardew\/src/u,
   );
-  blocked({ ...emptyModels, [SESSION_FILE]: "// nor here\n" }, /wire type declaration/u);
+});
+
+test("a frame the Mod answers from its dispatch pairs, and renaming that arm blocks it by name", () => {
+  // The Host dispatches on `farmhand_action_policy_request` and the Mod answers it in `ModEntry.HandleFarmhandActionPolicy`
+  // - a file a reader that knew only the session and the wire models never opened. The frame was inside neither
+  // population, and the run blocked on a frame both languages handle (38 Host arms, 36 pairs, one exempt).
+  const shipped = checkCrossLanguageWireParity();
+  assert.equal(shipped.status, "passed", `the shipped tree must pass: ${shipped.reason}`);
+  assert.equal(shipped.frames.examined, 38, "every Host arm is in the population");
+  assert.ok(
+    !shipped.frames.unpaired.includes("farmhand_action_policy_request"),
+    "the pushed policy frame is answered by the Mod, so it must not be unmeasured",
+  );
+
+  const dispatch = real(MOD_DISPATCH_PATH);
+  const renamed = dispatch.replace(
+    'TryDeserializeInbound(json, "farmhand_action_policy_request"',
+    'TryDeserializeInbound(json, "farmhand_action_policy_query"',
+  );
+  assert.notEqual(renamed, dispatch, "the injection must rename the frame the Mod answers");
+  const report = checkCrossLanguageWireParity({ overrides: { [MOD_DISPATCH_PATH]: renamed } });
+  assert.equal(report.status, "blocked", `an unanswered arm must block, not pass: ${report.status}`);
+  assert.deepEqual(
+    report.frames.unpaired,
+    ["farmhand_action_policy_request"],
+    `the frame must be named, not dropped: ${report.frames.unpaired.join(", ")}`,
+  );
+  // Both sides on the printed line: the Host's 38 arms and the Mod's 36 pairs are what makes the missing one visible.
+  assert.equal(report.frames.examined, 38);
+  assert.equal(report.frames.paired, 36);
+  const line = formatWireParity(report)[1] ?? "";
+  assert.match(line, /the Host dispatches on 38 frame\(s\) · the Mod pairs 36 of them/u, line);
+  assert.match(line, /unmeasured farmhand_action_policy_request$/u, line);
+});
+
+test("a key the Host writes on the pushed policy frame is named in the other direction", () => {
+  // Pairing the frame is half the fact: its two keys are the Host's declaration read against the Mod's record, and the
+  // record lives in `Core/Policy` rather than with the wire models.
+  const protocol = realHostProtocol().replace(
+    "export type FarmhandActionPolicyRequest = Readonly<{\n",
+    "export type FarmhandActionPolicyRequest = Readonly<{\n  redProofProbe?: string;\n",
+  );
+  assert.notEqual(protocol, realHostProtocol(), "the injection must change the Host declaration");
+  const report = checkCrossLanguageWireParity({ overrides: { [HOST_PROTOCOL_PATH]: protocol } });
+  assert.ok(
+    codes(report).includes("wire_field_unknown_to_mod:farmhand_action_policy_request:redProofProbe"),
+    `the Host-written key must be named:\n${codes(report).join("\n")}`,
+  );
 });
 
 test("a frame nothing pairs BLOCKS the run and is named, instead of being a trailing sentence", () => {
@@ -293,20 +359,19 @@ test("the CLI exits 0 on this tree and 2 on a tree it cannot read", () => {
 
   const root = mkdtempSync(join(tmpdir(), "wire-parity-"));
   try {
+    // The gate reads the Mod's whole `src` tree for declarations, so the copy is the tree: a checkout that carried only
+    // `Core/Models` would answer a question about a tree nobody builds.
     for (const relativePath of [
-      MODELS_FILE,
-      PROTOCOL_FILE,
+      MOD_SOURCE_ROOT,
+      MOD_DISPATCH_PATH,
       SESSION_FILE,
-      MOD_PROGRAM_MODELS_PATH,
       HOST_PROTOCOL_PATH,
       HOST_FACTS_PATH,
-      `${MODELS_DIRECTORY}/WorldObjectTargetModels.cs`,
-      `${MODELS_DIRECTORY}/BridgeWearableTarget.cs`,
-      `${MODELS_DIRECTORY}/ModalPresentedPayload.cs`,
-      `${MODELS_DIRECTORY}/NpcDialoguePresentedPayload.cs`,
     ]) {
-      const target = join(root, relativePath);
-      cpSync(join(REPOSITORY_ROOT, relativePath), target);
+      cpSync(join(REPOSITORY_ROOT, relativePath), join(root, relativePath), {
+        recursive: true,
+        filter: (source) => !/[\\/](?:bin|obj)$/u.test(source),
+      });
     }
     const copied = spawnSync(process.execPath, [GATE, "--json", "--root", root], { encoding: "utf8" });
     assert.equal(copied.status, EXIT.agree, `the copied tree must read the same way: ${copied.stdout.slice(0, 400)}`);
