@@ -631,7 +631,7 @@ async function isMountedTurnCancellable(record: MountedChatRuntimeLeaseRecord): 
 export async function abortMountedTurnThroughCancelSeam(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
-  reasonCode: "player_chat_select" | "host_exit",
+  reasonCode: "player_chat_select" | "host_exit" | "host_startup_recovery",
 ): Promise<void> {
   const record = mountedChatRuntimeLeases.get(lease);
   if (record === undefined || !record.active) return;
@@ -2391,7 +2391,8 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // A moved selection's own `select_chat` is the successor bridge; writing a second
     // one for the same Chat would fork the runtime chain the admission counts on. A recorded
     // settlement is the same statement one start later: its register/verify/select is the bridge.
-    if (!resettled.movedSelection && !resettled.settlementRecorded) await semantic.reselectTerminalChatRuntimeSuccessor();
+    if (!resettled.movedSelection && !resettled.settlementRecorded)
+      await semantic.reselectTerminalChatRuntimeSuccessor();
     return createFreshChatRuntimeAuthority(
       provision,
       semantic,
@@ -2687,6 +2688,13 @@ async function createFreshChatRuntimeAuthority(
   let mountedStartPromise: Promise<MountedChatRuntimeLease> | undefined;
   let mountedLease: MountedChatRuntimeLease | undefined;
   /**
+   * The turn the pre-mount settlement found its owner gone on but could not close, because a turn whose prompt
+   * never started has no cancel shape until a mounted authority exists (`settleNeverStartedChatTurnOnMount`).
+   * Held here rather than re-derived after the mount, because the death proof belongs to the read the settlement
+   * already took: a second read could belong to a different turn.
+   */
+  let deferredUnstartedTurn: DeferredUnstartedChatTurn | undefined;
+  /**
    * Every lease this authority has minted, current or already superseded by an
    * in-process turn-level switch. Its `close()` closes the authority's mounted
    * Chat lane, so a stale lease must still be able to shut the lane down.
@@ -2929,6 +2937,10 @@ async function createFreshChatRuntimeAuthority(
    * verifier the Game side already uses, and settles the turn as failed/`interrupted` through the
    * ordinary P5 transition authority - the same durable seam every other turn transition goes through,
    * fed the attempt facts the ledger itself holds.
+   *
+   * A turn whose prompt never started is not settled here: the only shape that can close it is the cancel
+   * seam a mounted authority owns (`settleNeverStartedChatTurnOnMount`), so its settlement is deferred until
+   * this start has minted the mount and every fact that seam validates exists.
    */
   async function settleChatTurnRecoveryForMount(): Promise<void> {
     const selected = await locked(() => provision.store.readChatCatalog().activeSelection);
@@ -2937,7 +2949,7 @@ async function createFreshChatRuntimeAuthority(
       chatThreadId: selected.chatThreadId,
       chatSurfaceSessionId: selected.chatSurfaceSessionId,
     });
-    await settleAbandonedChatTurnOnStartup(
+    const settlement = await settleAbandonedChatTurnOnStartup(
       chat,
       async () => (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).turnLedger,
       async (turn) => {
@@ -2975,6 +2987,7 @@ async function createFreshChatRuntimeAuthority(
       },
       ownerDeathVerifier,
     );
+    deferredUnstartedTurn = settlement?.settlement === "deferred" ? settlement : undefined;
   }
 
   const startChatRuntime = (): Promise<ProductionChatRuntimeReadback> => {
@@ -3143,103 +3156,119 @@ async function createFreshChatRuntimeAuthority(
    * released and the successor mount for the requested Chat is committed in this
    * same process. Only a mounted turn this authority cannot reach with that path
    * leaves the runtime where it is, and that is the bounded `turn_in_flight`.
+   *
+   * ONE SELECTION AT A TIME. The surface cannot make the second click wait for the first - two taps inside one
+   * round trip are handed to this authority together - and this request releases the mounted runtime, records a
+   * durable expectation and mounts a successor, so two of them interleaved would each release and mount across the
+   * other's awaits: the later intent would overwrite the earlier one's expectation while the earlier one's answer
+   * named a Chat the runtime then did not serve. They are therefore serialised here, at the layer that owns the
+   * transition: the second runs after the first has finished, finds the durable selection advanced past the
+   * generation the surface captured, and is refused by name (`semantic_chat_selection_generation_conflict`) instead
+   * of answering a switch it cannot honour. The player's newest click therefore lands as soon as the surface
+   * re-reads its generation, which it must do for any accepted switch anyway.
    */
-  const requestChatSelection = (input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome> =>
-    begin(async () => {
-      const target =
-        input?.kind === "select"
-          ? Object.freeze({
-              chatThreadId: input.chatThreadId,
-              chatSurfaceSessionId: input.chatSurfaceSessionId,
-            })
-          : mintChatSelectionIdentity();
-      // ADR 0009: a `select` names a Chat the player can reach, and the durable
-      // authority only admits a `select` expectation for a Chat it already knows. A
-      // Chat the product's New Chat creates is written to Tavern content and
-      // registered nowhere, so it is not known here yet - while the pre-mount
-      // settlement is the one window in which a registration may advance the
-      // vector, because a mounted runtime forbids it (the teardown consumes the
-      // runtime's own committed vector). That leaves exactly two halves:
-      //
-      // - the target's exact Tavern content must already exist. This runs BEFORE
-      //   anything is released: the settlement runs after the release, so a target
-      //   that could never be registered would otherwise leave the player with no
-      //   mounted Chat at all. It is also what stops a request from fabricating a
-      //   conversation, since the recorded shape below may create content the
-      //   settlement does not find.
-      // - the expectation is recorded in the settlement's own `create` shape, which
-      //   is the durable shape for "a Chat only the settlement registers". The
-      //   settlement registers that exact pair and verifies its Tavern content
-      //   before the Chat can become active or be mounted, and a pair anything else
-      //   already occupies is still refused by the authority.
-      let intentKind: "create" | "select" = input?.kind === "select" ? "select" : "create";
-      if (input?.kind === "select") {
-        const unregistered = await locked(() => {
+  let chatSelectionInFlight: Promise<unknown> = Promise.resolve();
+  const requestChatSelection = (input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome> => {
+    const request = chatSelectionInFlight.then(() =>
+      begin(async () => {
+        const target =
+          input?.kind === "select"
+            ? Object.freeze({
+                chatThreadId: input.chatThreadId,
+                chatSurfaceSessionId: input.chatSurfaceSessionId,
+              })
+            : mintChatSelectionIdentity();
+        // ADR 0009: a `select` names a Chat the player can reach, and the durable
+        // authority only admits a `select` expectation for a Chat it already knows. A
+        // Chat the product's New Chat creates is written to Tavern content and
+        // registered nowhere, so it is not known here yet - while the pre-mount
+        // settlement is the one window in which a registration may advance the
+        // vector, because a mounted runtime forbids it (the teardown consumes the
+        // runtime's own committed vector). That leaves exactly two halves:
+        //
+        // - the target's exact Tavern content must already exist. This runs BEFORE
+        //   anything is released: the settlement runs after the release, so a target
+        //   that could never be registered would otherwise leave the player with no
+        //   mounted Chat at all. It is also what stops a request from fabricating a
+        //   conversation, since the recorded shape below may create content the
+        //   settlement does not find.
+        // - the expectation is recorded in the settlement's own `create` shape, which
+        //   is the durable shape for "a Chat only the settlement registers". The
+        //   settlement registers that exact pair and verifies its Tavern content
+        //   before the Chat can become active or be mounted, and a pair anything else
+        //   already occupies is still refused by the authority.
+        let intentKind: "create" | "select" = input?.kind === "select" ? "select" : "create";
+        if (input?.kind === "select") {
+          const unregistered = await locked(() => {
+            const catalog = provision.store.readChatCatalog();
+            if (
+              !Number.isSafeInteger(input.selectionGeneration) ||
+              input.selectionGeneration < 1 ||
+              catalog.activeSelection?.selectionRevision !== input.selectionGeneration
+            )
+              throw new SemanticProductionCoordinatorError("semantic_chat_selection_generation_conflict");
+            return !catalog.threads.some(
+              (thread) =>
+                thread.chatThreadId === target.chatThreadId &&
+                thread.chatSurfaceSessionId === target.chatSurfaceSessionId,
+            );
+          });
+          if (unregistered) {
+            await assertSelectTargetContentExists(target);
+            intentKind = "create";
+          }
+        }
+        const mountedRecord = mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
+        await locked(() => {
           const catalog = provision.store.readChatCatalog();
           if (
+            (input?.kind !== "create" && input?.kind !== "select") ||
             !Number.isSafeInteger(input.selectionGeneration) ||
             input.selectionGeneration < 1 ||
             catalog.activeSelection?.selectionRevision !== input.selectionGeneration
           )
             throw new SemanticProductionCoordinatorError("semantic_chat_selection_generation_conflict");
-          return !catalog.threads.some(
-            (thread) =>
-              thread.chatThreadId === target.chatThreadId &&
-              thread.chatSurfaceSessionId === target.chatSurfaceSessionId,
-          );
+          try {
+            provision.store.recordChatSelectionIntent(
+              Object.freeze({
+                intent: Object.freeze({ kind: intentKind, ...target }),
+                expected: { ...catalog.vector },
+              }),
+            );
+          } catch (error) {
+            // A runtime transition in flight and a target the settlement could
+            // never honour are the same product answer: this request conflicts
+            // with the current selection state and changes nothing.
+            if (
+              error instanceof Error &&
+              (error.message === "chat_selection_transition_in_flight" || error.message === "chat_selection_conflict")
+            )
+              throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
+            throw error;
+          }
         });
-        if (unregistered) {
-          await assertSelectTargetContentExists(target);
-          intentKind = "create";
-        }
-      }
-      const mountedRecord = mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
-      await locked(() => {
-        const catalog = provision.store.readChatCatalog();
+        // The runtime already serves the requested Chat: there is nothing to
+        // release, and the recorded expectation is cleared by the next settlement.
         if (
-          (input?.kind !== "create" && input?.kind !== "select") ||
-          !Number.isSafeInteger(input.selectionGeneration) ||
-          input.selectionGeneration < 1 ||
-          catalog.activeSelection?.selectionRevision !== input.selectionGeneration
+          mountedRecord?.active === true &&
+          mountedRecord.chatThreadId === target.chatThreadId &&
+          mountedRecord.chatSurfaceSessionId === target.chatSurfaceSessionId
         )
-          throw new SemanticProductionCoordinatorError("semantic_chat_selection_generation_conflict");
-        try {
-          provision.store.recordChatSelectionIntent(
-            Object.freeze({
-              intent: Object.freeze({ kind: intentKind, ...target }),
-              expected: { ...catalog.vector },
-            }),
-          );
-        } catch (error) {
-          // A runtime transition in flight and a target the settlement could
-          // never honour are the same product answer: this request conflicts
-          // with the current selection state and changes nothing.
-          if (
-            error instanceof Error &&
-            (error.message === "chat_selection_transition_in_flight" || error.message === "chat_selection_conflict")
-          )
-            throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
-          throw error;
+          return Object.freeze({ status: "switched" as const, ...target });
+        if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord))) {
+          await prepareMountedTurnForChatSelection(mountedRecord);
+          const lease = mountedLease;
+          if (lease !== undefined) await abortMountedTurnThroughCancelSeam(manifest, lease, "player_chat_select");
         }
-      });
-      // The runtime already serves the requested Chat: there is nothing to
-      // release, and the recorded expectation is cleared by the next settlement.
-      if (
-        mountedRecord?.active === true &&
-        mountedRecord.chatThreadId === target.chatThreadId &&
-        mountedRecord.chatSurfaceSessionId === target.chatSurfaceSessionId
-      )
+        if ((await releaseMountedChatRuntime()) === "turn_in_flight")
+          return Object.freeze({ status: "turn_in_flight" as const, ...target });
+        await startMountedChatRuntime();
         return Object.freeze({ status: "switched" as const, ...target });
-      if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord))) {
-        await prepareMountedTurnForChatSelection(mountedRecord);
-        const lease = mountedLease;
-        if (lease !== undefined) await abortMountedTurnThroughCancelSeam(manifest, lease, "player_chat_select");
-      }
-      if ((await releaseMountedChatRuntime()) === "turn_in_flight")
-        return Object.freeze({ status: "turn_in_flight" as const, ...target });
-      await startMountedChatRuntime();
-      return Object.freeze({ status: "switched" as const, ...target });
-    });
+      }),
+    );
+    chatSelectionInFlight = request.catch(() => undefined);
+    return request;
+  };
   /**
    * ADR 0009 pre-mount settlement. It runs under the same mutex as the runtime
    * start and reuses the ordinary register/verify/select commands: a Chat the
@@ -3378,7 +3407,7 @@ async function createFreshChatRuntimeAuthority(
     if (closing || closed)
       return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed"));
     if (mountedStartPromise !== undefined) return mountedStartPromise;
-    mountedStartPromise = startChatRuntime().then((readback) => {
+    mountedStartPromise = startChatRuntime().then(async (readback) => {
       // startChatRuntime may have been accepted before a concurrent close.
       // Recheck after its asynchronous work, immediately before lease minting.
       if (closing || closed) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
@@ -3482,7 +3511,7 @@ async function createFreshChatRuntimeAuthority(
         },
       });
       issuedLeases.add(lease as object);
-      mountedChatRuntimeLeases.set(lease, {
+      const leaseRecord: MountedChatRuntimeLeaseRecord = {
         active: true,
         runtimeRoot: provision.runtimeCwd,
         principal: Object.freeze({ ...provision.principal }),
@@ -3513,8 +3542,25 @@ async function createFreshChatRuntimeAuthority(
         begin,
         store: mountedStore,
         close: () => authority.close(),
-      });
+      };
+      mountedChatRuntimeLeases.set(lease, leaseRecord);
       mountedLease = lease;
+      // The second half of the startup settlement: a turn the dead Host left before its prompt ever started is
+      // closed here, where the one cancel seam a mounted authority owns can reach it. It runs before this promise
+      // resolves, so no send can be admitted against the ledger it is closing.
+      if (deferredUnstartedTurn !== undefined) {
+        const deferred = deferredUnstartedTurn;
+        deferredUnstartedTurn = undefined;
+        await settleNeverStartedChatTurnOnMount(
+          deferred,
+          async () =>
+            (await mountedStore().resumeThread(leaseRecord.chatThreadId, leaseRecord.chatSurfaceSessionId)).turnLedger,
+          async () => {
+            await prepareMountedTurnForChatSelection(leaseRecord);
+            await abortMountedTurnThroughCancelSeam(manifest, lease, "host_startup_recovery");
+          },
+        );
+      }
       return lease;
     });
     return mountedStartPromise;
@@ -4720,13 +4766,6 @@ export type AbandonedStartedChatTurn = Extract<
  * owner, and whether the turn was settled. No path, token, credential or player text.
  */
 export type StartupChatTurnRecoverySettlement = Readonly<{
-  settlement: "settled" | "refused";
-  code:
-    | "chat_turn_recovery_settled"
-    | "chat_turn_recovery_blocked_owner_alive"
-    | "chat_turn_recovery_blocked_owner_unknown"
-    | "chat_turn_recovery_blocked_turn_active"
-    | "chat_turn_recovery_blocked_turn_state";
   chatThreadId: string;
   chatSurfaceSessionId: string;
   turnId: string;
@@ -4735,7 +4774,22 @@ export type StartupChatTurnRecoverySettlement = Readonly<{
   ownerPid: number | null;
   ownerOutcome: WindowsOwnerDeathOutcome | null;
   settledAtUnixMs: number;
-}>;
+}> &
+  (
+    | Readonly<{
+        settlement: "settled";
+        code: "chat_turn_recovery_settled" | "chat_turn_recovery_settled_never_started";
+      }>
+    | Readonly<{
+        settlement: "refused";
+        code:
+          | "chat_turn_recovery_blocked_owner_alive"
+          | "chat_turn_recovery_blocked_owner_unknown"
+          | "chat_turn_recovery_blocked_turn_active"
+          | "chat_turn_recovery_blocked_turn_state";
+      }>
+    | Readonly<{ settlement: "deferred"; code: "chat_turn_recovery_deferred_to_mount" }>
+  );
 /**
  * Settles the one Chat turn a previous Host's death left owed, before this Host admits any Chat work on
  * that Chat, and reports what it settled.
@@ -4754,9 +4808,11 @@ export type StartupChatTurnRecoverySettlement = Readonly<{
  * merely reported, because proceeding would serve turns on a Chat whose owner might still be writing to
  * it.
  *
- * A turn that never started a prompt has no `failed` shape to settle into (the store refuses a failed
- * turn without a started observation), so it is named and left untouched: it is reported rather than
- * invented, and the mount continues because nothing of that turn is running.
+ * A turn that never started a prompt has no `failed` shape to settle into (the store refuses a failed turn
+ * without a started observation) and no `cancelled` one either (that shape is written by the cancel seam a
+ * mounted authority owns), so it is not settled HERE - it is handed to the mount as a `deferred` settlement
+ * and closed there by `settleNeverStartedChatTurnOnMount`. The owner proof is still taken here, for every
+ * non-terminal state: a live owner must never be cancelled by a process that merely started later.
  */
 export async function settleAbandonedChatTurnOnStartup(
   chat: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
@@ -4773,7 +4829,15 @@ export async function settleAbandonedChatTurnOnStartup(
     turnStatus: turn.status,
     settledAtUnixMs: Date.now(),
   };
-  if (turn.status !== "running" && turn.status !== "presentation_committed" && turn.status !== "completion_claimed") {
+  if (
+    turn.status !== "running" &&
+    turn.status !== "presentation_committed" &&
+    turn.status !== "completion_claimed" &&
+    turn.status !== "accepted_queued" &&
+    turn.status !== "attempt_starting"
+  ) {
+    // `cancel_claimed`: another authority already won the durable cancel and the runner that owns the
+    // prompt finishes it. Nothing here may replace that winner.
     const refusal = Object.freeze({
       ...unsettled,
       settlement: "refused" as const,
@@ -4784,17 +4848,18 @@ export async function settleAbandonedChatTurnOnStartup(
     recordStartupChatTurnRecovery(refusal);
     return refusal;
   }
-  const ownerOutcome = await verifyOwnerDeathOrUnknown(ownerDeathVerifier, turn.attempt.runtimeOwner);
+  const owner = "attempt" in turn ? turn.attempt.runtimeOwner : null;
+  const ownerOutcome = owner === null ? null : await verifyOwnerDeathOrUnknown(ownerDeathVerifier, owner);
   const decided = {
     ...unsettled,
-    ownerPid: turn.attempt.runtimeOwner.ownerPid,
+    ownerPid: owner?.ownerPid ?? null,
     ownerOutcome,
   };
-  if (ownerOutcome !== "proven_dead") {
+  if (owner !== null && ownerOutcome !== "proven_dead") {
     const code =
       ownerOutcome !== "alive"
         ? ("chat_turn_recovery_blocked_owner_unknown" as const)
-        : turn.attempt.runtimeOwner.ownerPid === process.pid
+        : owner.ownerPid === process.pid
           ? ("chat_turn_recovery_blocked_turn_active" as const)
           : ("chat_turn_recovery_blocked_owner_alive" as const);
     const refusal = Object.freeze({ ...decided, settlement: "refused" as const, code });
@@ -4802,11 +4867,68 @@ export async function settleAbandonedChatTurnOnStartup(
     if (code === "chat_turn_recovery_blocked_turn_active") return refusal;
     throw new SemanticProductionCoordinatorError(code);
   }
+  if (turn.status === "accepted_queued" || turn.status === "attempt_starting") {
+    const deferred = Object.freeze({
+      ...decided,
+      settlement: "deferred" as const,
+      code: "chat_turn_recovery_deferred_to_mount" as const,
+    });
+    recordStartupChatTurnRecovery(deferred);
+    return deferred;
+  }
   await interruptStartedTurn(turn);
   const settled = Object.freeze({
     ...decided,
     settlement: "settled" as const,
     code: "chat_turn_recovery_settled" as const,
+  });
+  recordStartupChatTurnRecovery(settled);
+  return settled;
+}
+/**
+ * The turn a dead Host left before its prompt ever started: accepted but never claimed, or claimed without
+ * its arm. It is the one family of non-terminal ledgers with no outgoing store transition, which is why the
+ * startup settlement hands it here instead of closing it.
+ */
+export type DeferredUnstartedChatTurn = Extract<StartupChatTurnRecoverySettlement, { settlement: "deferred" }>;
+/**
+ * The second half of the Chat startup settlement: closes the turn that never started, through the ONE cancel
+ * seam a mounted authority owns.
+ *
+ * The seam is not a second abort path (ADR-0010 forbids one). `prepareMountedTurn` drives the turn to the
+ * exact source that seam accepts - the claim the dead Host never made, then the arm it never wrote - and the
+ * ordinary stop then wins the durable cancel. A turn whose attempt already carries its own `not_started`
+ * proof is cancelled directly, and one already `armed` needs only the stop.
+ *
+ * It must run AFTER the mount and from the mount's own record, because every fact the seam validates
+ * (runtime binding digest, runtime owner, selection generation) is the current mount's. It reports the same
+ * bounded settlement the pre-mount half does, and refuses to claim a settlement the ledger does not hold.
+ */
+export async function settleNeverStartedChatTurnOnMount(
+  deferred: DeferredUnstartedChatTurn,
+  readTurn: () => Promise<ChatTurnLedger | null>,
+  settleThroughMountCancelSeam: () => Promise<void>,
+): Promise<StartupChatTurnRecoverySettlement> {
+  const turn = await readTurn();
+  // The turn the pre-mount read proved dead is the only one this may close: a different or absent ledger
+  // means something else moved it, and that something else owns its settlement.
+  if (turn === null || turn.turnId !== deferred.turnId) {
+    const refusal = Object.freeze({
+      ...deferred,
+      settlement: "refused" as const,
+      code: "chat_turn_recovery_blocked_turn_state" as const,
+    });
+    recordStartupChatTurnRecovery(refusal);
+    return refusal;
+  }
+  if (!isTerminalTurnStatusForCoordinator(turn.status)) await settleThroughMountCancelSeam();
+  const after = await readTurn();
+  if (after === null || after.turnId !== deferred.turnId || !isTerminalTurnStatusForCoordinator(after.status))
+    throw new SemanticProductionCoordinatorError("semantic_chat_turn_recovery_unsettled");
+  const settled = Object.freeze({
+    ...deferred,
+    settlement: "settled" as const,
+    code: "chat_turn_recovery_settled_never_started" as const,
   });
   recordStartupChatTurnRecovery(settled);
   return settled;
@@ -4820,13 +4942,17 @@ function recordStartupChatTurnRecovery(settlement: StartupChatTurnRecoverySettle
   const what =
     settlement.code === "chat_turn_recovery_settled"
       ? "settled the turn its dead owner left behind as interrupted; the next message is accepted"
-      : settlement.code === "chat_turn_recovery_blocked_owner_alive"
-        ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
-        : settlement.code === "chat_turn_recovery_blocked_turn_active"
-          ? "left the turn this process is still running alone; only its own runner may settle it"
-          : settlement.code === "chat_turn_recovery_blocked_owner_unknown"
-            ? "refused: the previous Chat owner's death could not be proven, so its turn was left untouched"
-            : "refused: the abandoned turn has no started prompt to interrupt, so it was left untouched and its Chat accepts no new message";
+      : settlement.code === "chat_turn_recovery_settled_never_started"
+        ? "settled the turn that never started before its dead owner exited as cancelled; the next message is accepted"
+        : settlement.code === "chat_turn_recovery_deferred_to_mount"
+          ? "handing the turn that never started to the mount's own cancel seam"
+          : settlement.code === "chat_turn_recovery_blocked_owner_alive"
+            ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
+            : settlement.code === "chat_turn_recovery_blocked_turn_active"
+              ? "left the turn this process is still running alone; only its own runner may settle it"
+              : settlement.code === "chat_turn_recovery_blocked_owner_unknown"
+                ? "refused: the previous Chat owner's death could not be proven, so its turn was left untouched"
+                : "refused: the abandoned turn is in a state another authority owns, so it was left untouched";
   process.stderr.write(
     `[chat-recovery] startup ${what} chat=${settlement.chatThreadId} surface=${settlement.chatSurfaceSessionId} turn=${settlement.turnId} state=${settlement.turnStatus} owner_pid=${settlement.ownerPid === null ? "none" : String(settlement.ownerPid)} owner=${settlement.ownerOutcome ?? "none"} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
   );

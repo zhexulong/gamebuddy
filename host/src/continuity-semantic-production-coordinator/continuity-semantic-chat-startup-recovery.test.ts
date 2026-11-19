@@ -28,6 +28,7 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import {
   type AbandonedStartedChatTurn,
   settleAbandonedChatTurnOnStartup,
+  settleNeverStartedChatTurnOnMount,
 } from "./continuity-semantic-production-coordinator.internal.js";
 
 const principal = Object.freeze({ playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" });
@@ -309,7 +310,74 @@ for (const outcome of ["mismatch", "ambiguous", "unavailable"] as const)
     }
   });
 
-test("a turn with no started prompt is named and left untouched instead of settled into a shape it has no evidence for", async () => {
+/**
+ * The whole two-half settlement, with the mount's cancel seam replaced by the store transitions it
+ * drives: claim (only when nothing was claimed), arm, then the ordinary turn-level cancel. The seam's
+ * own wiring is the mount's, and the switch suite drives that against a real runtime; what this pins is
+ * the DECISION - which shapes are deferred, and that the durable ledger ends terminal and admits a send.
+ */
+async function settleNeverStarted(
+  root: string,
+  store: ReturnType<typeof createChatThreadStore>,
+  outcome: WindowsOwnerDeathOutcome,
+) {
+  const transitionAuthority = createMountedTurnTransitionAuthority();
+  const read = async () => (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).turnLedger;
+  const durableAt = async () =>
+    (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs;
+  try {
+    const preMount = await settleAbandonedChatTurnOnStartup(
+      chat,
+      read,
+      async () => {
+        throw new Error("a turn that never started must not be settled as an interrupted prompt");
+      },
+      Object.freeze({
+        verify: async (exactOwner) => createTestWindowsOwnerDeathVerification(exactOwner, outcome),
+      }),
+    );
+    if (preMount?.settlement !== "deferred") return preMount;
+    return await settleNeverStartedChatTurnOnMount(preMount, read, async () => {
+      let turn = await read();
+      if (turn?.status === "accepted_queued") turn = await claimMountedAttempt(binding(root));
+      if (turn?.status !== "attempt_starting") throw new Error("never_started_settlement_source_unavailable");
+      const observedAtMs = (await durableAt()) + 1;
+      const arm = transitionAuthority.mintOperation();
+      try {
+        if (turn.observation === undefined)
+          await transitionMountedProviderStart(
+            {
+              ...binding(root),
+              authority: transitionAuthority.authority,
+              operationAuthority: arm.authority,
+              attemptId: turn.attempt.attemptId,
+            },
+            { operation: "arm", observedAtMs },
+          );
+      } finally {
+        arm.revoke();
+      }
+      const cancel = transitionAuthority.mintOperation();
+      try {
+        await transitionMountedProviderStart(
+          {
+            ...binding(root),
+            authority: transitionAuthority.authority,
+            operationAuthority: cancel.authority,
+            attemptId: turn.attempt.attemptId,
+          },
+          { operation: "cancel", observedAtMs: observedAtMs + 1, cancelledAtMs: observedAtMs + 1 },
+        );
+      } finally {
+        cancel.revoke();
+      }
+    });
+  } finally {
+    transitionAuthority.revoke();
+  }
+}
+
+test("a turn accepted before its owner died is settled through the mount's own cancel seam, and the Chat accepts again", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-recovery-unstarted-");
   const store = createChatThreadStore(root, identityKey(principal));
   try {
@@ -331,22 +399,72 @@ test("a turn with no started prompt is named and left untouched instead of settl
       expectedDraftRevision: 0,
       authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
     });
-    const { result, diagnostics } = await captureDiagnostics(() => settle(root, store, "proven_dead"));
-    // No prompt ever started, so there is nothing to interrupt - and `failed` carries the observation of
-    // a prompt that started, which this turn does not have. It is reported, not invented.
-    assert.equal(result?.settlement, "refused");
-    assert.equal(result?.code, "chat_turn_recovery_blocked_turn_state");
+    // The defect, measured on this tree before the settlement runs: the turn is durable and non-terminal,
+    // and the ordinary admission gate refuses every send with `turn_busy` - for the life of the root.
+    assert.equal((await ledger(store))?.status, "accepted_queued");
+    await assert.rejects(send(root, store, "bcdefghijklmnopqrstuvw"), /turn_busy/u);
+
+    const { result, diagnostics } = await captureDiagnostics(() => settleNeverStarted(root, store, "proven_dead"));
+    // A turn whose prompt never started has no `failed` shape (that one carries the observation of a
+    // prompt that started), so it is deferred to the mount and closed by the one cancel seam there.
+    assert.equal(result?.settlement, "settled");
+    assert.equal(result?.code, "chat_turn_recovery_settled_never_started");
     assert.equal(result?.turnStatus, "accepted_queued");
     assert.equal(result?.ownerPid, null);
-    assert.equal(result?.ownerOutcome, null);
-    assert.match(diagnostics, /state=accepted_queued/u);
-    assert.match(diagnostics, /no started prompt/u);
-    assert.equal((await ledger(store))?.status, "accepted_queued");
+    assert.match(diagnostics, /handing the turn that never started to the mount's own cancel seam/u);
+    assert.match(diagnostics, /as cancelled; the next message is accepted/u);
+
+    // What the player gets: a terminal turn with no reply, the player's own line still there, and a Chat
+    // that admits the next message.
+    const settled = await ledger(store);
+    assert.equal(settled?.status, "cancelled");
+    assert.equal(settled?.status === "cancelled" ? settled.presentation : undefined, null);
+    assert.equal(settled?.status === "cancelled" ? settled.observation.phase : undefined, "armed");
+    const accepted = await send(root, store, "bcdefghijklmnopqrstuvw");
+    assert.equal(accepted.status, "accepted_queued");
   } finally {
     cleanup(root, store);
   }
 });
 
+test("a turn claimed but never armed by its dead owner is settled the same way, and the Chat accepts again", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-recovery-claimed-only-");
+  const store = createChatThreadStore(root, identityKey(principal));
+  try {
+    await createProfileAwareChatThreadCreationCapability(store, {
+      async readExact() {
+        return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    }).createExplicit({
+      chatThreadId: chat.chatThreadId,
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      chatSurfaceSessionId: chat.chatSurfaceSessionId,
+      opening: "blank",
+    });
+    await acceptMountedPlayerMessage(binding(root), {
+      text: "Hello",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
+    // The arm step never landed: the claim is durable, the prompt was never invoked, nothing is running.
+    await claimMountedAttempt(binding(root));
+    assert.equal((await ledger(store))?.status, "attempt_starting");
+    await assert.rejects(send(root, store, "bcdefghijklmnopqrstuvw"), /turn_busy/u);
+
+    const { result } = await captureDiagnostics(() => settleNeverStarted(root, store, "proven_dead"));
+    assert.equal(result?.settlement, "settled");
+    assert.equal(result?.turnStatus, "attempt_starting");
+    assert.equal(result?.ownerPid, deadOwnerPid);
+    assert.equal(result?.ownerOutcome, "proven_dead");
+    assert.equal((await ledger(store))?.status, "cancelled");
+    assert.equal((await send(root, store, "bcdefghijklmnopqrstuvw")).status, "accepted_queued");
+  } finally {
+    cleanup(root, store);
+  }
+});
 test("a Chat with no current turn owes no recovery and says nothing", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-recovery-idle-");
   const store = createChatThreadStore(root, identityKey(principal));
