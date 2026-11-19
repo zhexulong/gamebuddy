@@ -1052,7 +1052,7 @@ internal sealed partial class ExecutionManager
                 BuildContainerTargetId(location, x, y, chest, isFridge),
                 x,
                 y,
-                RequireDisplayName(chest.QualifiedItemId),
+                DescribeContainerName(chest),
                 isFridge,
                 items));
         }
@@ -1060,12 +1060,13 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Every eligible storage container in discovery range: player-owned ordinary
-    /// Chests placed in the location's object layer, plus the location's built-in
-    /// kitchen fridge.
+    /// Every eligible storage container in discovery range: the location's own containers
+    /// (<see cref="LocationStorageContainers"/>) that <see cref="IsStorageContainer"/> admits, which is
+    /// the same predicate the chest summary counts - so no container this family offers is one the count
+    /// skipped, and none the count includes is one the family cannot offer.
     ///
-    /// The built-in fridge deserves the same player intent as any chest — store or
-    /// take one adjacent item — because it literally IS a Chest
+    /// The built-in fridge deserves the same player intent as any chest - store or
+    /// take one adjacent item - because it literally IS a Chest
     /// (`FarmHouse.fridge`/`IslandFarmHouse.fridge` are `NetRef&lt;Chest&gt;` built with
     /// `playerChest: true`), and the production transaction is the same
     /// `Chest.addItem` / `GetItemsForPlayer().Remove` pair. The only difference is
@@ -1075,7 +1076,7 @@ internal sealed partial class ExecutionManager
     private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> DiscoverStorageContainers(
         Farmer player, StardewValley.GameLocation location) =>
         LocationStorageContainers(location)
-            .Where(container => IsOwnedOrdinaryChest(container.Chest) && IsChestTargetInRange(player, container.X, container.Y));
+            .Where(container => IsStorageContainer(container.Chest) && IsChestTargetInRange(player, container.X, container.Y));
 
     private IReadOnlyList<BridgeAnimalProductTarget> DiscoverAnimalProductTargets(Farmer player)
     {

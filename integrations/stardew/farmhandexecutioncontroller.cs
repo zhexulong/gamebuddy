@@ -2013,16 +2013,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// the summary walks the same container list with the radius filter dropped rather than reusing the bounded one.
     /// </para>
     /// <para>
-    /// Eligibility is the ONE chest predicate, <see cref="TryDescribePlacedChest"/>: a chest is a placed `Chest`, the
-    /// same question the colour family asks. It is deliberately NOT <see cref="IsOwnedOrdinaryChest"/>, which answers "may
-    /// `chest_store`/`chest_retrieve` open this one" - counting through an admission test made this number a promise
-    /// about actions wearing the clothes of a fact about the room, and it disagreed with the rows the same observation
-    /// printed: measured 2026-11-18 (`round76`, the FarmHouse), 「本图箱子: 0（物品 0）」 sat above three chests the same
-    /// block listed at (2,10) (3,10) (4,10).
+    /// WHAT THE NUMBER MEANS, since a count beside a list is read as one set: the room's chests, and the chests she may
+    /// use, are the SAME set - <see cref="IsStorageContainer"/>, the one eligibility predicate, which
+    /// `chest_store`/`chest_retrieve` also resolve targets through. `TryDescribePlacedChest` above it answers "is this
+    /// world object a chest" and is what the colour family and the container walk read; that is a different question from
+    /// "is what is inside it this room's storage", and the pair of predicates is only honest when the second one names
+    /// the kinds it leaves out (it does, beside its own declaration).
     /// </para>
     /// <para>
-    /// The consequence, stated: this line now counts a container those two actions refuse (`chest_not_owned`), so it is
-    /// what the room holds, never the set a plan may open.
+    /// The two readings were once two different sets and the number was a promise nothing kept: measured 2026-11-18
+    /// (`round76`, the FarmHouse), 「本图箱子: 0（物品 0）」 sat above three chests the same block listed at (2,10) (3,10)
+    /// (4,10), because this counted through the ownership test the actions used. Counting every placed `Chest` fixed the
+    /// line and moved the disagreement down a layer - day 3 in the farmhouse then printed 「本图箱子: 1（物品 15）」 about
+    /// the starter gift box, which `chest_retrieve` answered `chest_not_owned`. One predicate for both readers is what
+    /// makes the number a fact about the room AND the set a plan may open; the exclusion list is where a kind is named
+    /// as not-storage instead of quietly disagreeing.
     /// </para>
     /// <para>
     /// "Full" is the engine's own capacity: `Chest.GetActualCapacity()`, which `Chest.addItem` compares against the
@@ -2041,6 +2046,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int fullCount = 0;
         foreach ((StardewValley.Objects.Chest chest, int _, int _, bool _) in LocationStorageContainers(location))
         {
+            if (!IsStorageContainer(chest)) continue;
             chestCount++;
             IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
             int occupiedSlots = 0;
@@ -2055,6 +2061,69 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         return new BridgeChestsSummary(chestCount, itemCount, fullCount);
     }
+
+    /// <summary>
+    /// The ONE container eligibility predicate: what the count counts and what `chest_store`/`chest_retrieve` may
+    /// address.
+    ///
+    /// <para>
+    /// It answers the half of the question <see cref="TryDescribePlacedChest"/> leaves open. That one asks "is this world
+    /// object a chest" and the summary, the colour family and the container walk all read it; this one asks "is the item
+    /// list inside it this room's storage". Three kinds answer no, by the engine's own construction:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>MiniShippingBin</c> ((BC)248): an item put in is SALE GOODS - the engine's own menu for it offers only
+    /// <c>Utility.highlightShippableObjects</c> (<c>Chest.cs:925</c>) and the day ends by selling the contents. That is
+    /// <c>ship_item</c>'s meaning, and a `chest_stored` receipt for a sale would be two spellings of one write.</item>
+    /// <item><c>Enricher</c>: a building's one-slot fertilizer holder (<c>Chest.cs:898</c>; its menu offers
+    /// <c>Object.HighlightFertilizers</c>, <c>Chest.cs:941</c>).</item>
+    /// <item><c>AutoLoader</c> ((BC)275): a machine attachment whose vanilla write ends by pushing its contents into the
+    /// machine below (<c>Chest.ShowMenu</c>'s exit function calls <c>CheckAutoLoad</c>, <c>Chest.cs:930-938</c>), which a
+    /// menu-free write cannot reproduce - so the pair leaves that container to the machine's own actions.</item>
+    /// </list>
+    /// <para>
+    /// A <c>GlobalInventoryId</c> is a team-global inventory the container only VIEWS, so what is inside is not this
+    /// chest's; the guard comes first, and no placeable chest sets one today.
+    /// </para>
+    /// <para>
+    /// EVERYTHING ELSE IS STORAGE, including the kinds the previous <c>playerChest</c> test refused.
+    /// `(BC)BigChest`/`(BC)BigStoneChest` are 70 slots of plain player storage whose `SpecialChestType` that test read as
+    /// "not an ordinary chest", so the player's own big chest was refused and counted - the same contradiction the
+    /// starter gift box had. A Junimo chest is 9 slots of shared storage whose <c>GetMutex()</c> is the team's own
+    /// <c>JunimoChests</c> inventory mutex - the lock its menu path holds (<c>Chest.cs:744-755</c>). And a world-placed
+    /// chest with <c>playerChest == false</c> is one the engine lets the player open: the farmhouse's starter gift box is
+    /// built that way (<c>FarmHouse.cs:140-181</c>) and <c>checkForAction</c>'s giftbox branch hands its contents to the
+    /// player (<c>Chest.cs:766-772</c>), so a pair that could not take from it was refusing a container the player uses.
+    /// </para>
+    /// <para>
+    /// "Is it a container" and "may the pair address it" stay two predicates on purpose: repainting a mini shipping bin
+    /// is legitimate, and the colour family keeps addressing it.
+    /// </para>
+    /// </summary>
+    private static bool IsStorageContainer(StardewValley.Objects.Chest chest)
+    {
+        if (chest.GlobalInventoryId is not null) return false;
+        return chest.SpecialChestType is not (
+            StardewValley.Objects.Chest.SpecialChestTypes.MiniShippingBin
+            or StardewValley.Objects.Chest.SpecialChestTypes.Enricher
+            or StardewValley.Objects.Chest.SpecialChestTypes.AutoLoader);
+    }
+
+    /// <summary>
+    /// The container's name as a `chests` row spells it: the display name of the item a chest IS (`(BC)130` 宝箱,
+    /// `(BC)BigChest` 大箱子), and the engine's own name for a GIFT BOX.
+    ///
+    /// <para>
+    /// A gift box is the one container here that was never an item. The farmhouse's starter gift box is built by the
+    /// constructor the location calls (<c>Chest.cs:279-295</c>, `FarmHouse.cs:142`), which assigns the gift flags and no
+    /// item id, so <c>QualifiedItemId</c> migrates to <c>(O)0</c> (<c>Item.cs:338-341</c>) and the registry answers its
+    /// Error Item - a fact about a lookup miss, not about the box the player is looking at. <c>Chest</c> names itself in
+    /// its own constructor (<c>Chest.cs:226-230</c>), and the block still labels the row 箱子 from the family; this is
+    /// only the name a reader sees when it asks the row what stands there.
+    /// </para>
+    /// </summary>
+    private static string DescribeContainerName(StardewValley.Objects.Chest chest) =>
+        chest.giftbox.Value ? chest.Name : RequireDisplayName(chest.QualifiedItemId);
 
     private static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
         Farmer player, StardewValley.GameLocation location) =>
@@ -2083,11 +2152,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string raw = $"{location.NameOrUniqueName}:{x},{y}:fridge:{fridge.QualifiedItemId}";
         return $"fridge_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
-
-    private static bool IsOwnedOrdinaryChest(StardewValley.Objects.Chest chest) =>
-        chest.playerChest.Value
-        && chest.GlobalInventoryId is null
-        && chest.SpecialChestType is StardewValley.Objects.Chest.SpecialChestTypes.None;
 
     private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius);
 

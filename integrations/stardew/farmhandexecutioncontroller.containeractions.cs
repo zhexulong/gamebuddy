@@ -15,9 +15,10 @@ namespace GameBuddy.Stardew;
 // chest_retrieve removes the exact target item through
 // GetItemsForPlayer().Remove + clearNulls and hands it to the native player
 // inventory. Neither path mounts ItemGrabMenu, neither writes the NetList
-// directly, and only player-owned ordinary Chests are eligible
-// (IsOwnedOrdinaryChest / BuildChestTargetId live next to the Discover radar
-// in farmhandexecutioncontroller.cs and are shared by the partial class).
+// directly, and the containers eligible are those `IsStorageContainer` admits
+// (the one predicate the chest summary counts through too; it lives next to the
+// Discover radar in farmhandexecutioncontroller.cs and is shared by the partial
+// class).
 //
 // CONTRACT: a container and an item, not a tile and a slot. Both actions take
 // `chestId` + `expectedQualifiedItemId` and nothing else. The published
@@ -233,6 +234,11 @@ internal sealed partial class ExecutionManager
     /// Resolution deliberately carries NO discovery radius: the walk-in approach exists precisely so
     /// that a published container which has drifted out of the snapshot window is still reachable,
     /// and the one-tile interaction radius is measured after the tile is known.
+    ///
+    /// A container that IS there but whose contents are not this room's storage answers
+    /// <c>container_not_storage</c>: the id matched, so "it moved" would be false, and the named limit
+    /// lives in <see cref="IsStorageContainer"/> rather than being folded into the ownership refusal
+    /// the previous revision used for every kind it could not open.
     /// </summary>
     internal static StorageContainerResolution ResolveStorageContainerById(StardewValley.GameLocation location, string chestId)
     {
@@ -240,12 +246,19 @@ internal sealed partial class ExecutionManager
         {
             if (!string.Equals(BuildContainerTargetId(location, x, y, chest, isFridge), chestId, StringComparison.Ordinal))
                 continue;
-            if (!IsOwnedOrdinaryChest(chest))
-                return new StorageContainerResolution(null, isFridge, x, y, "chest_not_owned");
+            if (!IsStorageContainer(chest))
+                return new StorageContainerResolution(null, isFridge, x, y, ContainerNotStorage);
             return new StorageContainerResolution(chest, isFridge, x, y, null);
         }
         return new StorageContainerResolution(null, false, 0, 0, "chest_target_changed");
     }
+
+    /// <summary>
+    /// The named refusal for a container whose contents belong to another action's meaning - a mini shipping
+    /// bin's sale goods, an enricher's fertilizer slot, an auto-loader's machine feed. Named apart from
+    /// <c>chest_target_changed</c> because the container IS where the id says it is.
+    /// </summary>
+    internal const string ContainerNotStorage = "container_not_storage";
 
     private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> LocationStorageContainers(StardewValley.GameLocation location)
     {
@@ -280,9 +293,12 @@ internal sealed partial class ExecutionManager
     /// while a player has the container open (<c>Chest.checkForAction</c> -
     /// <c>GetMutex().RequestLock</c>), and the net-synced owner makes that hold visible on every
     /// client. A menu-free write that ignored it would race the incumbent's open menu over the
-    /// same inventory. Only containers <see cref="IsOwnedOrdinaryChest"/> admits reach this - no
-    /// <c>GlobalInventoryId</c>, no special chest type - so <c>GetMutex()</c> is the chest's own
-    /// field and mints no team mutex as a side effect.
+    /// same inventory.
+    ///
+    /// What it locks travels with the container's own kind (`Chest.cs:744-755`): a chest with a
+    /// <c>GlobalInventoryId</c> or a Junimo chest locks the inventory it shares with its kin, and every
+    /// other kind locks its own field. Both are the lock the vanilla menu path would hold, so a Junimo
+    /// chest open in another room is refused as contention instead of being written through.
     /// </summary>
     private static string? ReadContainerContentionRefusal(Chest chest)
     {

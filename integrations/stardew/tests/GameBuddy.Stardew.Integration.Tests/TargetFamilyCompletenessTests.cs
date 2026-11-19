@@ -11,6 +11,7 @@ using Netcode;
 using StardewValley;
 using StardewValley.Network;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -36,6 +37,10 @@ public sealed class TargetFamilyCompletenessTests
     private const string WeedsQualifiedItemId = "(O)389";
     private const string DiamondQualifiedItemId = "(O)72";
     private const string VillagerName = "Abigail";
+
+    private readonly ITestOutputHelper output;
+
+    public TargetFamilyCompletenessTests(ITestOutputHelper output) => this.output = output;
 
     /// <summary>
     /// One container is ONE row carrying its whole contents, in slot order - the shape the ruling asks for.
@@ -243,8 +248,12 @@ public sealed class TargetFamilyCompletenessTests
     /// </para>
     /// <para>
     /// THE POPULATION IS THE LOCATION'S OBJECT LAYER, counted here from the world rather than listed: every `Chest` the
-    /// walk can yield is a chest both projections must name. One of the two below is the farmhouse's starter gift chest
-    /// shape - placed by the WORLD, `playerChest == false` - which is exactly the chest the two predicates split on.
+    /// walk can yield that is storage is a chest both projections must name. One of the two below is the farmhouse's
+    /// starter gift chest shape - placed by the WORLD, `playerChest == false` - which is exactly the chest the two
+    /// predicates used to split on. The kinds the count leaves out (a mini shipping bin's sale goods, an enricher's
+    /// fertilizer slot, an auto-loader's machine feed) are named beside `IsStorageContainer` and measured kind by kind in
+    /// `EveryChestKindTheSummaryCountsIsAChestKindTheContainerActionsAdmit`, which is why this case can hold only
+    /// storage chests.
     /// </para>
     /// </summary>
     [Fact]
@@ -267,34 +276,112 @@ public sealed class TargetFamilyCompletenessTests
             .Select(target => (target.X, target.Y))
             .ToList();
 
-        summary.ChestCount.Should().Be(population.Count, "the summary counts every chest the object layer holds");
-        named.Should().BeEquivalentTo(population, "the colour family names exactly the chests the count counted");
+        summary.ChestCount.Should().Be(population.Count, "the summary counts every storage chest the object layer holds");
+        named.Should().Contain(
+            population,
+            "the colour family names every `Chest`, so the count's population is a subset of it - this case holds only "
+            + "storage chests, and the kinds the count leaves out are measured by the agreement gate");
         summary.ItemCount.Should().Be(16, "1 + 15: what the room holds, whichever predicate placed the container");
     }
 
     /// <summary>
-    /// TWO QUESTIONS, TWO ANSWERS: what the room HOLDS is the summary's, and which containers an action may OPEN stays
-    /// `IsOwnedOrdinaryChest`'s. A world-placed chest is counted and is not offered to `chest_store`/`chest_retrieve`.
+    /// GATE `a_container_the_summary_counts_is_a_container_the_action_admits`.
     ///
     /// <para>
-    /// This is the consequence of counting a chest by its type rather than by its ownership, stated as a test so nobody
-    /// has to guess it: the summary is an inventory of the room, never a promise about admission. A lane that decides the
-    /// container actions should admit such a chest changes them HERE, with their own evidence - not by narrowing the count
-    /// back until the two agree.
+    /// THE COUNT AND THE ACTION ARE ONE SET. A count beside a list is read as one fact, and a count the actions beside
+    /// it refuse is the same defect twice: measured 2026-11-18 (`round76`, the FarmHouse) the line read
+    /// 「本图箱子: 0（物品 0）」 above three chests the same block listed; counting every placed `Chest` fixed the line
+    /// and moved the disagreement down a layer - day 3 in the farmhouse then printed 「本图箱子: 1（物品 15）」 about the
+    /// starter gift box, which `chest_retrieve` answered `chest_not_owned`.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS THE ENGINE'S OWN KIND AXIS: every <c>Chest.SpecialChestTypes</c> member - so a kind the game
+    /// adds tomorrow is measured without this file changing - crossed with the two facts that enum does not carry and
+    /// the engine distinguishes anyway (<c>playerChest == false</c>: the world-placed chest the farmhouse's starter gift
+    /// box is; and <c>giftbox</c>: the exact shape that box is built with, `FarmHouse.cs:142`). The ACTION axis is
+    /// every registration whose declared target family is <c>chests</c>, read from the catalog rather than listed here.
+    /// </para>
+    /// <para>
+    /// <c>AGREE</c> MEANS THE THREE READINGS OF ONE CONTAINER AGREE: the summary counts it, the `chests` family publishes
+    /// its id, and the resolution both bodies execute admits that id. The actor stands one tile away in every case, so
+    /// the summary's location-wide radius is not what a disagreement could be made of - the radius question is
+    /// `ChestsSummaryCountsTheWholeLocationRatherThanTheRadiusWindow`'s and stays there. A container that is counted and
+    /// not published, or published and refused, fails BY NAME with the refusal code.
+    /// </para>
+    /// <para>
+    /// The kitchen fridge is not its own kind: `FarmHouse.fridge` is `new Chest(playerChest: true)` (`FarmHouse.cs:27`),
+    /// i.e. the ordinary-chest row below, and only its RESOLUTION differs (`GetFridge()` plus the room's cached tile,
+    /// pinned by `ContainerActionTests.Container_Handlers_ResolveTheBuiltInKitchenFridgeAsAnEligibleTarget`).
     /// </para>
     /// </summary>
     [Fact]
-    public void AWorldChestIsCountedWithoutBeingOfferedToTheContainerActions()
+    public void EveryChestKindTheSummaryCountsIsAChestKindTheContainerActionsAdmit()
     {
-        using var world = TargetFamilyWorld.Create();
-        world.FreeOnePackSlot();
-        world.PlaceWorldChest(x: 3, y: 2, items: new[] { new ChestItem("(O)472", 15) });
-        world.StandAt(1, 2);
+        string[] actions = FarmhandActionCatalog.Registrations
+            .Where(registration => string.Equals(registration.Descriptor?.TargetFamily, "chests", StringComparison.Ordinal))
+            .Select(registration => registration.ActionId)
+            .ToArray();
+        actions.Should().NotBeEmpty("a zero action population would agree with itself");
 
-        world.ChestsSummary().ChestCount.Should().Be(1, "a chest the world placed is still a chest in the room");
-        world.ChestStates().Should().BeEmpty(
-            "the container actions keep their own admission, which is a different question from what the room holds");
+        IReadOnlyList<ChestKind> kinds = ChestKinds();
+        int pairs = 0;
+        int agree = 0;
+        List<string> disagreements = new();
+        foreach (ChestKind kind in kinds)
+        {
+            using TargetFamilyWorld world = TargetFamilyWorld.Create();
+            world.StandAt(1, 2);
+            StardewValley.Objects.Chest placed = world.PlaceChestOfKind(kind.Special, kind.PlayerChest, kind.Giftbox, x: 2, y: 2);
+
+            bool counted = world.ChestsSummary().ChestCount == 1;
+            BridgeChestState? row = world.ChestStates().FirstOrDefault(chest => chest.X == 2 && chest.Y == 2);
+            bool published = row is not null;
+            string? refusal = row is null ? "no_row" : ExecutionManager.ResolveStorageContainerById(world.Farm, row.ChestId).RefusalReasonCode;
+            bool admitted = row is not null && refusal is null;
+            if (kind.Giftbox)
+            {
+                row!.DisplayName.Should().Be(placed.Name,
+                    "the starter gift box was never an item, so its row is named the way the engine names the container "
+                    + "- not by the `(O)0` its item id migrates to (Item.cs:338-341)");
+            }
+
+            foreach (string action in actions)
+            {
+                pairs++;
+                if (counted == published && published == admitted)
+                {
+                    agree++;
+                    continue;
+                }
+
+                disagreements.Add(
+                    $"{kind.Name}/{action}: counted={counted}, published={published}, admitted={admitted}, code={refusal ?? "none"}");
+            }
+        }
+
+        string line =
+            $"kinds examined {kinds.Count} ({string.Join(",", kinds.Select(kind => kind.Name))}) · "
+            + $"actions examined {actions.Length} ({string.Join(",", actions)}) · "
+            + $"pairs examined {pairs} · agree {agree} · disagree {disagreements.Count}";
+        this.output.WriteLine(line + (disagreements.Count == 0 ? string.Empty : ": " + string.Join(" | ", disagreements)));
+        disagreements.Should().BeEmpty(
+            "a container the summary counts is a container the action admits, and a kind that is neither is named "
+            + "not-storage beside `IsStorageContainer`: " + line);
     }
+
+    /// <summary>The engine's kind axis, plus the two chest facts its enum does not carry.</summary>
+    private static IReadOnlyList<ChestKind> ChestKinds()
+    {
+        List<ChestKind> kinds = new();
+        foreach (StardewValley.Objects.Chest.SpecialChestTypes special in Enum.GetValues<StardewValley.Objects.Chest.SpecialChestTypes>())
+            kinds.Add(new ChestKind($"{special}/player", special, PlayerChest: true, Giftbox: false));
+        kinds.Add(new ChestKind("None/world", StardewValley.Objects.Chest.SpecialChestTypes.None, PlayerChest: false, Giftbox: false));
+        kinds.Add(new ChestKind("giftbox", StardewValley.Objects.Chest.SpecialChestTypes.None, PlayerChest: false, Giftbox: true));
+        return kinds;
+    }
+
+    /// <summary>One chest kind the gate crosses with the actions: the engine's own special-type word plus the two flags.</summary>
+    private sealed record ChestKind(string Name, StardewValley.Objects.Chest.SpecialChestTypes Special, bool PlayerChest, bool Giftbox);
 
     [Fact]
     public void NpcRelationshipPublishesAVillagerThePlayerHasNeverMet()
@@ -586,6 +673,11 @@ public sealed class TargetFamilyCompletenessTests
             // drop tables (`SpecialOrderRuleActive("DROP_QI_BEANS")`, Tree.cs:705 / Object.cs:1565).
             var team = (FarmerTeam)FormatterServices.GetUninitializedObject(typeof(FarmerTeam));
             SeedMissingNetFields(team);
+            // `FarmerTeam.globalInventories` is a readonly field INITIALIZER, which an uninitialized instance skips
+            // (`FarmerTeam.cs:112`). A Junimo chest's contents ARE that dictionary (`Chest.GetItemsForPlayer` ->
+            // `GetOrCreateGlobalInventory("JunimoChests")`, Chest.cs:1003-1004), so the chest summary threw inside the
+            // engine before it could count a container the room really holds.
+            SetInstanceField(team, "globalInventories", new NetStringDictionary<StardewValley.Inventories.Inventory, NetRef<StardewValley.Inventories.Inventory>>());
             SetInstanceField(actor, "teamRoot", new NetRoot<FarmerTeam> { Value = team });
             SetInstanceField(actor, "farmingLevel", new NetInt(0));
             SetInstanceField(actor, "foragingLevel", new NetInt(0));
@@ -777,31 +869,47 @@ public sealed class TargetFamilyCompletenessTests
             _ => null,
         };
 
-        internal void PlaceOrdinaryChest(int x, int y, IReadOnlyList<ChestItem> items)
-        {
-            var chest = new StardewValley.Objects.Chest();
-            chest.playerChest.Value = true;
-            chest.globalInventoryId.Value = null;
-            chest.ItemId = "130";
-            chest.TileLocation = new Vector2(x, y);
-            foreach (ChestItem item in items) chest.Items.Add(Item(item.QualifiedItemId, item.Stack));
-            this.Farm.objects[new Vector2(x, y)] = chest;
-        }
+        internal void PlaceOrdinaryChest(int x, int y, IReadOnlyList<ChestItem> items) =>
+            this.PlaceChestOfKind(StardewValley.Objects.Chest.SpecialChestTypes.None, playerChest: true, giftbox: false, x, y, items);
 
         /// <summary>
-        /// A chest the WORLD placed rather than the player. `playerChest == false` is the farmhouse's starter gift chest,
-        /// which the location itself puts down with the parsnip seeds in it - and it is a `Chest` all the same, which is
-        /// the whole distinction `TryDescribePlacedChest` answers and `IsOwnedOrdinaryChest` does not.
+        /// A chest the WORLD placed rather than the player: `playerChest == false` is the farmhouse's starter gift chest,
+        /// which the location itself puts down with the parsnip seeds in it - and it is a `Chest` the container actions
+        /// address, because the engine's own `checkForAction` hands its contents to the player (`Chest.cs:766-772`).
         /// </summary>
-        internal void PlaceWorldChest(int x, int y, IReadOnlyList<ChestItem> items)
+        internal void PlaceWorldChest(int x, int y, IReadOnlyList<ChestItem> items) =>
+            this.PlaceChestOfKind(StardewValley.Objects.Chest.SpecialChestTypes.None, playerChest: false, giftbox: false, x, y, items);
+
+        /// <summary>
+        /// One chest of an engine-declared kind, the way every other object in this world is built: a real `Chest` whose
+        /// state is the state the engine ends in. `SetSpecialChestType` derives four of these kinds from the item id
+        /// (Chest.cs:547-565) and the engine's own building code sets the rest, so the fixture writes the enum word
+        /// rather than re-deriving it from item data this process never loads - the kinds are the engine's, the ANSWERS
+        /// are the shipped predicates'.
+        ///
+        /// <para>
+        /// A GIFT BOX CARRIES NO ITEM ID, and that is the engine's shape rather than an omission: the ctor the location
+        /// calls assigns the gift flags and nothing else (Chest.cs:279-295, FarmHouse.cs:142), so `QualifiedItemId`
+        /// migrates to `(O)0` (Item.cs:338-341). Every other kind here is the placed big craftable `(BC)130`.
+        /// </para>
+        /// </summary>
+        internal StardewValley.Objects.Chest PlaceChestOfKind(
+            StardewValley.Objects.Chest.SpecialChestTypes special,
+            bool playerChest,
+            bool giftbox,
+            int x,
+            int y,
+            IReadOnlyList<ChestItem>? items = null)
         {
             var chest = new StardewValley.Objects.Chest();
-            chest.playerChest.Value = false;
-            chest.globalInventoryId.Value = null;
-            chest.ItemId = "130";
+            chest.playerChest.Value = playerChest;
+            chest.SpecialChestType = special;
+            chest.giftbox.Value = giftbox;
+            if (!giftbox) chest.ItemId = "130";
             chest.TileLocation = new Vector2(x, y);
-            foreach (ChestItem item in items) chest.Items.Add(Item(item.QualifiedItemId, item.Stack));
+            foreach (ChestItem item in items ?? Array.Empty<ChestItem>()) chest.Items.Add(Item(item.QualifiedItemId, item.Stack));
             this.Farm.objects[new Vector2(x, y)] = chest;
+            return chest;
         }
 
         /// <summary>

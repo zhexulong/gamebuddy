@@ -21,8 +21,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Seam decision recorded in tools/stardew-chest-seam-probe.md: chest_store
 /// uses the menu-free Chest.addItem path; chest_retrieve removes the exact
 /// target through GetItemsForPlayer().Remove + clearNulls and hands it to the
-/// native player inventory. Neither mounts ItemGrabMenu; only player-owned
-/// ordinary Chests are eligible.
+/// native player inventory. Neither mounts ItemGrabMenu; the containers eligible
+/// are the ones `IsStorageContainer` admits, which is the same predicate the chest
+/// summary counts through.
 ///
 /// Structural assertions run without a Game1 harness (world-not-ready path);
 /// full native put/take behavior belongs to the native-local fixture lane per
@@ -439,7 +440,51 @@ public sealed class ContainerActionTests
     }
 
     /// <summary>
-    /// The ORDER, and the release: every container mutation of both bodies sits between the lock being taken and a
+    /// A CONTAINER THE WORLD PLACED IS A CONTAINER THE PAIR USES. <c>playerChest == false</c> is the farmhouse's starter
+    /// gift box, which the location itself puts down with the parsnip seeds in it (`FarmHouse.cs:140-181`), and the engine
+    /// lets the player open it - <c>Chest.checkForAction</c>'s giftbox branch hands the contents to the player
+    /// (`Chest.cs:766-772`). The pair was refusing it as <c>chest_not_owned</c> while the chest summary counted it, so this
+    /// drives the real bodies over that kind: the container half of both admissions is `IsStorageContainer`, and the
+    /// transaction is the same `addItem` / `GetItemsForPlayer().Remove` pair as any other chest.
+    /// </summary>
+    [Fact]
+    public void AWorldPlacedChestIsStoredIntoByTheSameNativePair()
+    {
+        using var world = ContainerWorld.Create();
+        LockObservingChest chest = world.PlaceChest(x: 2, y: 2, playerChest: false);
+        world.Carry("(O)24", slot: 0, stack: 3);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt stored = world.Store("(O)24");
+
+        stored.State.Should().Be(ExecutionState.Succeeded, stored.Evidence);
+        stored.ReasonCode.Should().Be("chest_stored");
+        ContainerWorld.ChestCount(chest, "(O)24").Should().Be(3);
+        world.PackCount("(O)24").Should().Be(0);
+    }
+
+    /// <summary>
+    /// The other body on the same kind: the container half of the admission admits it, and the refusal is about what the
+    /// container HOLDS. `chest_not_owned` here was the defect itself - a refusal about ownership for a container the
+    /// player can open. (A successful retrieve cannot run in this process: the hand-off ends in
+    /// `Game1.player.addItemToInventory` -> `Object.initializeLightSource` -> `ItemRegistry`, which has no content here.
+    /// `ChestRetrieveRollbackActionSourceShapeTests` pins that body.)
+    /// </summary>
+    [Fact]
+    public void AWorldPlacedChestsRetrieveIsRefusedForItsContentsAndNotForItsOwnership()
+    {
+        using var world = ContainerWorld.Create();
+        world.PlaceChest(x: 2, y: 2, playerChest: false);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt retrieved = world.Retrieve("(O)24");
+
+        retrieved.State.Should().Be(ExecutionState.Rejected);
+        retrieved.ReasonCode.Should().Be("chest_empty", "the container was admitted; what it is missing is the item");
+    }
+
+    /// <summary>
+    /// THE ORDER, and the release: every container mutation of both bodies sits between the lock being taken and a
     /// <c>finally</c> that gives it back, so a throw cannot leave the container locked behind us.
     /// </summary>
     [Fact]
@@ -515,7 +560,7 @@ public sealed class ContainerActionTests
     /// The shape is <c>PutItemInFishTankActionTests.TankWorld</c>'s, because the container bodies read the same engine
     /// surface that fixture already proved out: <c>Game1.player.currentLocation</c>, <c>location.objects</c>,
     /// <c>Chest.GetMutex()</c> and the pack. The <c>Chest</c> itself is a real one (<c>new Chest()</c> runs its own NetField
-    /// initializers, which is what the resolver's <c>IsOwnedOrdinaryChest</c> and <c>GetMutex()</c> read).
+    /// initializers, which is what the resolver's <c>IsStorageContainer</c> and <c>GetMutex()</c> read).
     /// </para>
     /// </summary>
     private sealed class ContainerWorld : IDisposable
@@ -628,11 +673,11 @@ public sealed class ContainerActionTests
 
         internal static ContainerWorld Create() => new();
 
-        /// <summary>A real player-owned chest in the object layer, at the tile the caller names.</summary>
-        internal LockObservingChest PlaceChest(int x, int y)
+        /// <summary>A real chest in the object layer, at the tile the caller names.</summary>
+        internal LockObservingChest PlaceChest(int x, int y, bool playerChest = true)
         {
             var chest = new LockObservingChest();
-            chest.playerChest.Value = true;
+            chest.playerChest.Value = playerChest;
             chest.globalInventoryId.Value = null;
             chest.ItemId = "130";
             chest.TileLocation = new Vector2(x, y);
