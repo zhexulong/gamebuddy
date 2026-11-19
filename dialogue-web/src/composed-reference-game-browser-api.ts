@@ -353,9 +353,9 @@ export class ComposedReferenceGameProblemError extends Error {
   readonly requestId: string | null;
   readonly retryable: boolean;
   /**
-   * The bounded coordinator cause the shell named for a lifecycle refusal, or
-   * `null` when it named none. It is always a `stardew_*` snake_case code, so it
-   * can never carry producer text, a path or a token into the UI.
+   * The bounded producer code the Host named for this refusal, or `null` when it named
+   * none. It is a snake_case code of the shape the Host's own `boundedProducerCode` admits,
+   * so it can never carry producer text, a path or a token into the UI.
    */
   readonly causeCode: string | null;
 
@@ -1253,9 +1253,19 @@ async function readJson(response: Response): Promise<unknown> {
  * turned into an opaque protocol failure - that is the property that makes an
  * unfamiliar refusal diagnosable. Anything that is not a bounded token (raw
  * producer text, a path, a token, a space, a colon) is still refused outright.
+ *
+ * The cause used to be a coordinator code and nothing else (`^stardew_…`), because the
+ * coordinator was the only producer that named one. It is now every producer code the Host
+ * reports on a refused read of the composed root: the check that failed
+ * (`chat_snapshot_mismatch`), the projection's own code
+ * (`composed_reference_game_chat_snapshot_invalid`), the store's admission
+ * (`semantic_chat_*`), or that a producer named nothing projectable
+ * (`chat_projection_failed`). Those are minted at runtime, so this client cannot enumerate
+ * them; what it can hold is the shape every one of them already has - the shape the Host's
+ * own `boundedProducerCode` admits.
  */
 const PROBLEM_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
-const PROBLEM_CAUSE_PATTERN = /^stardew_[a-z0-9_]{1,95}$/;
+const PROBLEM_CAUSE_PATTERN = /^[a-z][a-z0-9_]{0,95}$/;
 
 function problemFromResponse(response: Response, value: unknown): ComposedReferenceGameProblemError {
   if (

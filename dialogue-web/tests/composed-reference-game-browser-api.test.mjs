@@ -319,23 +319,38 @@ test("composed client reports bounded server problems without accepting additive
       error.causeCode === null,
   );
 
-  // The bounded cause the shell projects for a lifecycle refusal is read as its
-  // own field; an unbounded or additive shape is still refused outright.
-  const caused = transport(
-    jsonResponse({ code: "game_unavailable", cause: "stardew_player_host_launch_runtime_unavailable" }, 409),
-  );
-  await assert.rejects(
-    createComposedReferenceGameBrowserApi(caused.fetch).readState(),
-    (error) =>
-      error instanceof ComposedReferenceGameProblemError &&
-      error.code === "game_unavailable" &&
-      error.causeCode === "stardew_player_host_launch_runtime_unavailable",
-  );
+  // The bounded cause the shell projects for a refusal: a coordinator code, the projection's own
+  // code, a store admission code, and the fallback that says the producer named nothing this Host
+  // could project. Every one is a bounded producer code, and a code this build has never seen is
+  // preserved rather than collapsed - which is what lets the page word it instead of guessing.
+  for (const cause of [
+    "stardew_player_host_launch_runtime_unavailable",
+    "composed_reference_game_chat_snapshot_invalid",
+    "semantic_chat_liveness_unrecoverable",
+    "chat_projection_failed",
+  ]) {
+    const responder = transport(jsonResponse({ code: "state_unavailable", cause }, 409));
+    await assert.rejects(
+      createComposedReferenceGameBrowserApi(responder.fetch).readState(),
+      (error) =>
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "state_unavailable" &&
+        error.causeCode === cause,
+    );
+  }
+
+  // The shape is the whole of the allowance: everything outside it still makes the answer
+  // `invalid_problem`, so no producer prose, path, token or additive field reaches the UI through
+  // the one field this relaxation opened.
   for (const body of [
-    { code: "game_unavailable", cause: "C:\\Games\\Stardew Valley" },
-    { code: "game_unavailable", cause: "stardew_" + "a".repeat(200) },
-    { code: "game_unavailable", cause: "not_a_coordinator_code" },
-    { code: "game_unavailable", cause: "stardew_ok", detail: "raw producer text" },
+    { code: "state_unavailable", cause: "C:\\Games\\Stardew Valley" },
+    { code: "state_unavailable", cause: "chat.db is locked" },
+    { code: "state_unavailable", cause: "Chat_Projection_Failed" },
+    { code: "state_unavailable", cause: "a".repeat(97) },
+    { code: "state_unavailable", cause: "1_starts_with_a_digit" },
+    { code: "state_unavailable", cause: "" },
+    { code: "state_unavailable", cause: 7 },
+    { code: "state_unavailable", cause: "chat_projection_failed", detail: "raw producer text" },
     { code: "C:\\Games\\Stardew Valley" },
     { code: "" },
     { code: "a".repeat(200) },
