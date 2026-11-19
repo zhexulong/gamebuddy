@@ -55,6 +55,91 @@ function scorecard(result, openings = null) {
 
 const line = (out, label) => out.split("\n").find((entry) => entry.startsWith(label)) ?? "";
 
+const START_MS = Date.parse("2026-11-19T10:30:34.853Z");
+const receiptLine = (executionId, actionId, state, nodeId = "n01") =>
+  `BRIDGE_FACT ${JSON.stringify({
+    type: "execution_receipt",
+    atMs: START_MS + 1000,
+    executionId,
+    requestId: `request-${executionId}`,
+    reasonCode: state,
+    worldFactPayload: {
+      actionId,
+      executionId,
+      state,
+      reasonCode: state,
+      origin: { kind: "programme", programId: "plan_1", nodeId },
+    },
+  })}`;
+
+/**
+ * A run that has not ended: no `result.json`, a launch receipt, and the log it has been writing all along.
+ *
+ * This is `round78`'s shape - stopped eleven minutes in - which the scorecard used to answer with
+ * `not_measured:no_bundle`.
+ */
+function scorecardMidRun({ logLines = null } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "airp-midrun-"));
+  try {
+    const runDir = join(root, "run");
+    const logs = join(root, "logs");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(runDir, "launch.json"),
+      JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", startedAtMs: START_MS }),
+      "utf8",
+    );
+    writeFileSync(
+      join(logs, "_multiday_routine-round99-live-runner.log"),
+      `${(
+        logLines ?? [
+          `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START_MS + 1654}}`,
+          receiptLine("exec-1", "move_to_tile", "succeeded"),
+          receiptLine("exec-2", "move_to_tile", "succeeded"),
+          receiptLine("exec-3", "navigate_to_destination", "rejected"),
+          receiptLine("exec-4", "break_rock", "succeeded", "n02"),
+          'AGENT_PROGRAM_SUBMIT {"programId":"plan_1","code":"accepted","nodes":2}',
+        ]
+      ).join("\n")}\n`,
+      "utf8",
+    );
+    const run = spawnSync(process.execPath, [SCORECARD, runDir, "--log-dir", logs], { encoding: "utf8" });
+    return { out: `${run.stdout}${run.stderr}`, status: run.status };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("a run that has not ended is scored from its log, and every reading says which file it read", () => {
+  const { out, status } = scorecardMidRun();
+  assert.match(line(out, "source"), /^source\s+live-runner\.log - its first line carries/u);
+  assert.match(
+    line(out, "partial"),
+    /^partial\s+this run has not ended, so every reading below is what it had done/mu,
+    "a reading taken before the bundle exists must never be read as a verdict on the run",
+  );
+  assert.match(line(out, "verdict"), /^verdict {28}not_measured:this run has published no result\.json/u);
+  assert.match(
+    line(out, "node identity"),
+    /^node identity\s+2 submitted nodes · 2 \(programId, nodeId\) receipt identities · 2 nodeId-only keys/u,
+  );
+  assert.match(
+    line(out, "first mistake"),
+    /^first mistake\s+receipt#2 plan_1 node n01 \(navigate_to_destination\) rejected/u,
+    "the first mistake is attributed to the action the receipt itself names, not to a node id shared by every programme",
+  );
+  assert.match(line(out, "breadth"), /^breadth\s+3 attempted of not_measured \(no snapshot census\) addressable/u);
+  // A metric the run directory cannot answer is a stated absence, never a zero: no session record reached this directory.
+  assert.match(line(out, "tool use"), /^tool use\s+not_measured:no session record in this run directory/u);
+  assert.match(
+    out,
+    /^a_reading_names_the_source_it_read readings examined \d+ · from-result 0 · from-log [1-9]\d* · unmeasured 0$/mu,
+    "nothing read from the log is printed without saying it came from the log",
+  );
+  assert.equal(status, 0, "a partial reading is not a failure; a reading with no source would be");
+});
+
 test("the checklist is read from the field the artifact publishes, and names each task's own state", () => {
   const { out } = scorecard({
     taskPurposes: [

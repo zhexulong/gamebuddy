@@ -11,10 +11,29 @@
 // deciding on her own is in character. What is measured is whether her initiative was LEGIBLE (she said what she was
 // doing and why) and whether she was REDIRECTABLE (pushback changed the next plan).
 //
-// Usage: node tools/live-run/analysis/airp-scorecard.mjs [runDir]
+// BEFORE THE RUN ENDS THERE IS NO BUNDLE. A run publishes `result.json` at its END, so the version of this scorecard that
+// read only that file printed `not_measured:no_bundle` for every run still in flight - which is the moment a scorecard is
+// worth reading, because a run that goes narrow looks exactly like a run that is working. Measured 2026-11-19: `round78`
+// was stopped eleven minutes in and its ten action families and seventy-four executions, all of them in the runner's own
+// log, reached no reading at all. So each metric below says WHICH FILE it was read from (`result.json` or
+// `live-runner.log`), a reading taken before the bundle exists is marked partial, and the ledger at the end counts the
+// readings whose source nobody named - which is what makes a number readable on a run that has not ended.
+//
+// Usage: node tools/live-run/analysis/airp-scorecard.mjs [runDir] [--log <live-runner.log>] [--log-dir <dir>]
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+import {
+  actionExecutions,
+  actionStates,
+  attemptedActions,
+  describeRunnerLog,
+  locateRunnerLog,
+  programmeNodes,
+  readRunnerLog,
+} from "../../lib/live-runner-log.mjs";
+import { createReadingLedger, FROM_RESULT, FROM_RUNNER_LOG } from "../../lib/reading-source.mjs";
 
 const RUNS_ROOT = ".live-runs/game-ladder";
 
@@ -179,32 +198,136 @@ function longestGapMs(times) {
   return longest;
 }
 
-const runDir = process.argv[2] ?? latestRun();
+/** The launcher's receipt: the only file that binds a run directory to the log it wrote. */
+function readLaunch(runDir) {
+  const path = join(runDir, "launch.json");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return { startedAtMs: Number.isFinite(parsed?.startedAtMs) ? parsed.startedAtMs : null };
+  } catch {
+    return null;
+  }
+}
+
+/** The settled states a run's own account calls a mistake - the same set the bundle's node outcomes are read with. */
+const BAD_STATES = new Set(["rejected", "failed", "recovery_required", "abandoned"]);
+
+/**
+ * The work the runner's log answers, keyed on the identities its producer gave it.
+ *
+ * This is the mid-run half of sections 2 and 3: the bundle's `programOutcomes` do not exist before the run ends, but the
+ * receipts do, each naming its own action, its settlement and - for a programme node - its `(programId, nodeId)`.
+ */
+function logWork(log) {
+  const receipts = log.receipts;
+  const firstBadIndex = receipts.findIndex((receipt) => BAD_STATES.has(receipt.state));
+  const firstBad = firstBadIndex < 0 ? null : receipts[firstBadIndex];
+  return {
+    firstBad,
+    firstBadIndex,
+    laterSameAction:
+      firstBad !== null &&
+      receipts
+        .slice(firstBadIndex + 1)
+        .some((receipt) => receipt.actionId === firstBad.actionId && receipt.state === "succeeded"),
+    succeededBefore:
+      firstBadIndex < 0
+        ? receipts.filter((receipt) => receipt.state === "succeeded").length
+        : receipts.slice(0, firstBadIndex).filter((receipt) => receipt.state === "succeeded").length,
+    nodes: programmeNodes(log),
+    states: actionStates(log),
+    executions: actionExecutions(log),
+  };
+}
+
+const argv = process.argv.slice(2);
+const optionValue = (name) => {
+  const index = argv.indexOf(name);
+  return index < 0 || index + 1 >= argv.length ? null : argv[index + 1];
+};
+const logOption = optionValue("--log");
+const logDir = optionValue("--log-dir");
+const runArg =
+  argv.find((argument) => !argument.startsWith("--") && argument !== logOption && argument !== logDir) ?? null;
+const runDir = runArg === null ? latestRun() : resolve(runArg);
 if (runDir === null) {
   console.log("airp scorecard: no run directory under " + RUNS_ROOT);
   process.exit(2);
 }
 
+// BOTH RECORDS, because the one that exists decides what can be read: the bundle on a finished run, the runner's log on
+// one still going. A run with neither is refused by name rather than scored as a run that did nothing.
 const resultPaths = readJsonFiles(runDir, "result.json");
-if (resultPaths.length === 0) {
+const result = resultPaths.length === 0 ? {} : JSON.parse(readFileSync(resultPaths[0], "utf8"));
+const hasResult = resultPaths.length > 0;
+const readings = createReadingLedger();
+const launch = readLaunch(runDir);
+const located = locateRunnerLog({ runDir, logPath: logOption, logDir, startedAtMs: launch?.startedAtMs ?? null });
+const log = located.path === null ? null : readRunnerLog(located.path);
+if (!hasResult && log === null) {
   console.log(`airp scorecard: not_measured:no_bundle in ${runDir}`);
+  console.log(`airp scorecard: result.json absent · ${located.why}`);
   process.exit(2);
 }
-const result = JSON.parse(readFileSync(resultPaths[0], "utf8"));
-const records = readSessions(runDir, result);
+// PARTIAL: the bundle is the run's final account, so a reading taken without it is what the run had done at the moment
+// its log was last written. Every reading from the log carries this, and the header says it once.
+const partial = !hasResult;
+const sessionPresent = findSessionFiles(runDir, result).length > 0;
+const SESSION_ABSENT =
+  "not_measured:no session record in this run directory - a run copies its runtime root at capture, which has not happened yet, so nothing here holds its turns";
+
+const records = sessionPresent ? readSessions(runDir, result) : [];
 const calls = toolCalls(records);
 const inputs = playerInputs(records);
 
 const lines = [];
-const say = (label, value) => lines.push(`${label.padEnd(34)} ${value}`);
+/** A header: a path or a source name, not a reading. */
+const head = (label, value) => lines.push(`${label.padEnd(34)} ${value}`);
+/**
+ * A reading, with the file it was read from.
+ *
+ * The third argument is not decoration: a value printed with no source is the one state the ledger fails on, and a
+ * `not_measured` value is the other honest half - it names what no artifact answers and is not counted as a reading.
+ */
+const say = (label, value, from) => {
+  lines.push(`${label.padEnd(34)} ${value}`);
+  if (from === FROM_RESULT) readings.fromResult(label, value);
+  else if (from === FROM_RUNNER_LOG) readings.fromLog(label, value);
+  else readings.unsourced(label, value);
+};
 
-say("run", runDir);
-say("verdict", `${result.state ?? "unknown"}${result.failure?.reasonCode ? " / " + result.failure.reasonCode : ""}`);
+head("run", runDir);
+head(
+  "source",
+  hasResult
+    ? `result.json${log === null ? "" : `, and live-runner.log as a second source (${located.how}) - never added to the bundle's counts`}`
+    : `live-runner.log - ${located.how}`,
+);
+if (partial)
+  head(
+    "partial",
+    "this run has not ended, so every reading below is what it had done when its log was last written - not a verdict on the run",
+  );
+if (log !== null) head("log", describeRunnerLog(log));
+say(
+  "verdict",
+  hasResult
+    ? `${result.state ?? "unknown"}${result.failure?.reasonCode ? " / " + result.failure.reasonCode : ""}`
+    : "not_measured:this run has published no result.json, so it has stated no state of its own",
+  FROM_RESULT,
+);
 
 // --- 1. Work actually done, as a checklist not a pass/fail -----------------------------------------------------------------
 const purposes = Array.isArray(result.taskPurposes) ? result.taskPurposes : [];
 const days = purposes.length > 0 ? Math.max(...purposes.map((entry) => entry.day ?? 1)) : 0;
-say("days with a declared task", `${days} (${purposes.map((entry) => entry.taskId ?? "?").join(", ") || "none"})`);
+say(
+  "days with a declared task",
+  purposes.length === 0 && !hasResult
+    ? "not_measured:this run has published no result.json, so it declares no task"
+    : `${days} (${purposes.map((entry) => entry.taskId ?? "?").join(", ") || "none"})`,
+  FROM_RESULT,
+);
 // WHICH OF THEM WERE ACHIEVED, read from the field the artifact publishes. This read
 // `result.multiday?.assessment?.taskPurpose ?? result.taskPurposeVerdict`, and no runner has ever published either: a
 // bundle carrying three judged tasks printed `not_measured` while `result.taskPurposes` held all three verdicts. The
@@ -224,14 +347,18 @@ const reasonTally = (entries) => {
 say(
   "task checklist progress",
   purposes.length === 0
-    ? "not_measured:bundle declares no taskPurposes"
+    ? hasResult
+      ? "not_measured:bundle declares no taskPurposes"
+      : "not_measured:this run has published no result.json, so it declares no taskPurposes"
     : `${purposes.length} tasks · achieved ${achieved.length} · unproven ${unachieved.length}${
         unachieved.length === 0 ? "" : ` (${reasonTally(unachieved).join(", ")})`
       }`,
+  FROM_RESULT,
 );
 
 // --- 2. First mistake, and whether the run recovered ---------------------------------------------------------------
 const outcomes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
+const work = log === null ? null : logWork(log);
 let firstBad = null;
 let goodBeforeBad = 0;
 // A NODE'S IDENTITY IS ITS PROGRAM AND ITS NODE ID. `nodeId` is `n01`, `n02`, ... in EVERY program, so a map keyed on it
@@ -265,14 +392,33 @@ outcomes.forEach((outcome, index) => {
   }
 });
 // What the old key cost, measured on this bundle: every submitted node it collapsed into another node's identity.
+// ON A RUN WITH NO BUNDLE THE LOG ANSWERS THIS ONE: the receipts name their programme and their node, and the nodes
+// submitted are the count of the submissions' own node totals, so the same three numbers exist before the run ends.
 say(
   "node identity",
-  submittedNodes === 0
-    ? "not_measured:no program submissions in this bundle"
-    : `${submittedNodes} submitted nodes · ${actionOfNode.size} (programId, nodeId) identities · ${nodeIdOnly.size} nodeId-only keys · duplicated ${submittedNodes - nodeIdOnly.size}`,
+  submittedNodes === 0 && work === null
+    ? "not_measured:no program submissions in this bundle and no runner log to read them from"
+    : submittedNodes > 0
+      ? `${submittedNodes} submitted nodes · ${actionOfNode.size} (programId, nodeId) identities · ${nodeIdOnly.size} nodeId-only keys · duplicated ${submittedNodes - nodeIdOnly.size}`
+      : `${log.counts.submittedNodes} submitted nodes · ${work.nodes.identities.size} (programId, nodeId) receipt identities · ${work.nodes.nodeIdOnly.size} nodeId-only keys · duplicated ${log.counts.submittedNodes - work.nodes.nodeIdOnly.size}`,
+  submittedNodes > 0 ? FROM_RESULT : FROM_RUNNER_LOG,
 );
-if (firstBad === null) {
-  say("first mistake", outcomes.length === 0 ? "not_measured:no programs executed" : "none recorded");
+if (firstBad === null && work?.firstBad !== null && work !== null) {
+  say(
+    "first mistake",
+    `receipt#${work.firstBadIndex} ${work.firstBad.programId ?? "standalone"} node ${work.firstBad.nodeId ?? "-"} (${work.firstBad.actionId ?? "?"}) ${work.firstBad.state}` +
+      `${work.firstBad.reasonCode ? " / " + work.firstBad.reasonCode : ""} ; later success on same action: ${work.laterSameAction ? "yes" : "no"}`,
+    FROM_RUNNER_LOG,
+  );
+  say("completed nodes before it", String(work.succeededBefore), FROM_RUNNER_LOG);
+} else if (firstBad === null) {
+  say(
+    "first mistake",
+    outcomes.length === 0 && work === null
+      ? "not_measured:no programs executed and no runner log to read"
+      : "none recorded",
+    work === null ? FROM_RESULT : FROM_RUNNER_LOG,
+  );
 } else {
   const laterSameAction = outcomes
     .slice(firstBad.index + 1)
@@ -287,8 +433,9 @@ if (firstBad === null) {
     "first mistake",
     `program#${firstBad.index} node ${firstBad.nodeId} (${firstBad.actionId}) ${firstBad.state}` +
       `${firstBad.reason ? " / " + firstBad.reason : ""} ; later success on same action: ${laterSameAction ? "yes" : "no"}`,
+    FROM_RESULT,
   );
-  say("completed nodes before it", String(goodBeforeBad));
+  say("completed nodes before it", String(goodBeforeBad), FROM_RESULT);
 }
 
 // --- 3. Redundancy: repeated asks for the same thing ---------------------------------------------------------------
@@ -307,9 +454,20 @@ for (const call of planCalls) {
 }
 say(
   "planned nodes / distinct targets",
-  planned === 0 ? "not_measured:no builder calls in the session" : `${planned} / ${touched.size}`,
+  !sessionPresent
+    ? SESSION_ABSENT
+    : planned === 0
+      ? "not_measured:no builder calls in the session"
+      : `${planned} / ${touched.size}`,
+  FROM_RESULT,
 );
-say("tool use", `plan_work ${planCalls.length}, observe ${observeCalls.length}, look_up ${lookUpCalls.length}`);
+say(
+  "tool use",
+  sessionPresent
+    ? `plan_work ${planCalls.length}, observe ${observeCalls.length}, look_up ${lookUpCalls.length}`
+    : SESSION_ABSENT,
+  FROM_RESULT,
+);
 
 // --- 4. Fabricated success: an answer that claims more than the world did ------------------------------------------
 let claimedWithDrops = 0;
@@ -330,9 +488,14 @@ for (const record of records) {
 }
 say(
   "answers admitting dropped calls",
-  claimedWithDrops === 0 ? "0 (either none dropped or none said)" : String(claimedWithDrops),
+  !sessionPresent
+    ? SESSION_ABSENT
+    : claimedWithDrops === 0
+      ? "0 (either none dropped or none said)"
+      : String(claimedWithDrops),
+  FROM_RESULT,
 );
-say("answers whose drop list was truncated", String(truncatedDrops));
+say("answers whose drop list was truncated", sessionPresent ? String(truncatedDrops) : SESSION_ABSENT, FROM_RESULT);
 
 // --- 5. Legibility and redirectability (the autonomy axis, measured the right way) ---------------------------------
 const speechEvents = [];
@@ -358,7 +521,12 @@ for (const call of planCalls) {
 }
 say(
   "plans preceded by a stated intent",
-  planCalls.length === 0 ? "not_measured:no plans" : `${announced} of ${planCalls.length}`,
+  !sessionPresent
+    ? SESSION_ABSENT
+    : planCalls.length === 0
+      ? "not_measured:no plans"
+      : `${announced} of ${planCalls.length}`,
+  FROM_RESULT,
 );
 let redirected = 0;
 for (const input of inputs) {
@@ -367,40 +535,62 @@ for (const input of inputs) {
 }
 say(
   "player inputs followed by a plan",
-  inputs.length === 0 ? "not_measured:no player input in this run" : `${redirected} of ${inputs.length}`,
+  !sessionPresent
+    ? SESSION_ABSENT
+    : inputs.length === 0
+      ? "not_measured:no player input in this run"
+      : `${redirected} of ${inputs.length}`,
+  FROM_RESULT,
 );
-say("player inputs", String(inputs.length));
+say("player inputs", sessionPresent ? String(inputs.length) : SESSION_ABSENT, FROM_RESULT);
 
 // --- 6. Time to first visible thing ---------------------------------------------------------------------------------
 const started = result.startedAtMs ?? (records[0]?.timestamp ? Date.parse(records[0].timestamp) : null);
 const firstText = firstAssistantTextAt(records);
 if (started === null || firstText === null) {
-  say("first visible text", "not_measured:no start time or no assistant text");
+  say(
+    "first visible text",
+    sessionPresent
+      ? "not_measured:no start time or no assistant text"
+      : "not_measured:no session record, so no assistant text was timed",
+    FROM_RESULT,
+  );
 } else {
-  say("first visible text", `${Math.round((firstText - started) / 1000)} s after start`);
+  say("first visible text", `${Math.round((firstText - started) / 1000)} s after start`, FROM_RESULT);
 }
 
 // --- 7. Execution cadence --------------------------------------------------------------------------------------------
 const cadence = result.actionCadence ?? {};
 say(
   "executions timed",
-  cadence.measured === undefined ? "not_measured:no actionCadence" : `${cadence.measured} of ${cadence.actions ?? "?"}`,
+  cadence.measured === undefined
+    ? "not_measured:no actionCadence in this run"
+    : `${cadence.measured} of ${cadence.actions ?? "?"}`,
+  FROM_RESULT,
 );
 say(
   "median execution",
   cadence.execMs?.median === null || cadence.execMs?.median === undefined
-    ? "not_measured"
+    ? "not_measured:no actionCadence in this run"
     : `${cadence.execMs.median} ms`,
+  FROM_RESULT,
 );
 
 // --- 8. Breadth, with both denominators ------------------------------------------------------------------------------
-const attempted = Array.isArray(result.attemptedActionIds) ? result.attemptedActionIds.length : null;
+// The bundle publishes its own attempted list; a run that has not ended has none, and its receipts name every action the
+// run dispatched - so the attempt count is available mid-flight and the addressable width is not (the census is the
+// bundle's fact). This is the reading `action-breadth.mjs` measures in full; here it is the one-line answer a list of
+// metrics needs.
+const attemptedBundle = Array.isArray(result.attemptedActionIds) ? result.attemptedActionIds.length : null;
+const attemptedLog = work === null ? null : attemptedActions(log).length;
+const attempted = attemptedBundle ?? attemptedLog;
 const addressable = result.capabilityAudit?.addressableActionIds?.length ?? result.actionBreadth?.addressable ?? null;
 say(
   "breadth",
   attempted === null
-    ? "not_measured:no attemptedActionIds"
+    ? "not_measured:no attemptedActionIds and no runner log to read them from"
     : `${attempted} attempted of ${addressable ?? "not_measured (no snapshot census)"} addressable`,
+  attemptedBundle === null ? FROM_RUNNER_LOG : FROM_RESULT,
 );
 
 // --- 9. The silence she was left in, and the gate that keeps a span honest --------------------------------------------
@@ -416,6 +606,7 @@ say(
   measuredGapMs === null
     ? `${bound.reason ?? "not_measured:this run's session record holds fewer than two turn openings"}`
     : `${measuredGapMs} ms across ${openings.length} turn openings`,
+  FROM_RESULT,
 );
 
 // THE GATE. A span field's NAME says which interval it claims, and the interval a `noWake<…>Ms` name claims is measured
@@ -486,6 +677,10 @@ console.log(lines.join("\n"));
 const missing = lines.filter((line) => line.includes("not_measured")).length;
 console.log(`\nexamined ${lines.length} metrics, ${missing} not measured in this artifact`);
 console.log(gateLines.join("\n"));
+// THE SOURCE GATE. Every reading above names the file it was read from, and this counts how many there were and where
+// they came from - so a scorecard taken before a run ended is readable as one, and a number printed with no file behind
+// it fails here by name instead of being read as a fact.
+for (const line of readings.lines()) console.log(line);
 // A misnamed span fails this reading, so a bundle whose account says it left her alone for eleven minutes when it did not
-// cannot exit clean.
-if (misnamed.length > 0) process.exitCode = 1;
+// cannot exit clean. An unsourced reading fails it for the same reason: it is a number nobody can re-derive.
+if (misnamed.length > 0 || readings.failed()) process.exitCode = 1;

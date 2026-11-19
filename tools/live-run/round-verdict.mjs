@@ -20,6 +20,15 @@ import { basename, join, resolve } from "node:path";
 
 import { worldDayStartsFromFacts, worldNightEndingsFromFacts } from "../lib/multiday-baseline.mjs";
 import { crossingsFromEvidence, wakeReasonReachability } from "../lib/multiday-loop.mjs";
+import {
+  actionExecutions,
+  actionStates,
+  describeRunnerLog,
+  locateRunnerLog,
+  programmeNodes,
+  readRunnerLog,
+} from "../lib/live-runner-log.mjs";
+import { createReadingLedger } from "../lib/reading-source.mjs";
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 import { readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
 
@@ -299,6 +308,69 @@ function crossingsLines({ timelineWhy, derivation }) {
     push(
       `${statusLabel("DISAGREEMENT")} ${derivation.disagreement}  <- the sources that do not agree with the decided count; the watch and the published number never decide it`,
     );
+  return lines;
+}
+
+/**
+ * WHAT THE RUN HAD DONE, from the log it wrote, with the bundle's own count of the same thing beside it.
+ *
+ * A run directory holding a launch receipt and no bundle is a run that has not finished, and its work is still recorded -
+ * one `BRIDGE_FACT` at a time. Measured 2026-11-19 (`round78`, stopped eleven minutes in): this report said nothing at all
+ * about its 74 executions and ten action families, so how wide it was reaching could only be counted by hand from the log.
+ *
+ * THE TWO SOURCES ARE NEVER SUMMED. A bundle counts executions that settled without publishing a receipt - measured on
+ * `round77`, 476 executions against 469 receipt identities - so each number is printed with its own file and the
+ * difference is named. Summing them would count every execution that did publish one twice.
+ */
+function workLines({ runnerLog, result, readings, why }) {
+  const label = (name) => `${name.padEnd(19)}`;
+  if (runnerLog === null)
+    return [
+      `${label("work")} not_measured: ${why} - and the log is the only record of what a run had done before it ended`,
+    ];
+  const counts = runnerLog.counts;
+  const executions = actionExecutions(runnerLog);
+  const states = actionStates(runnerLog);
+  const nodes = programmeNodes(runnerLog);
+  const statusLabel = (name) => `    ${name.padEnd(18)}`;
+  const lines = [];
+  const push = (line) => lines.push(line);
+  readings.fromLog("work.executions", counts.receipts);
+  readings.fromLog("work.action_families", executions.counts.size);
+  push(
+    `${label("work")} ${String(counts.receipts)} executions keyed on the executionId each receipt carries, out of ${String(counts.receiptLines)} receipt lines${counts.collapsedReceipts === 0 ? "" : ` (${String(counts.collapsedReceipts)} collapsed on that identity)`} - ${String(executions.counts.size)} action families, ${String(counts.submissions)} programme identities naming ${String(counts.submittedNodes)} nodes  <- ${describeRunnerLog(runnerLog)}`,
+  );
+  push(
+    `${statusLabel("settled")} ${[...states]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([state, count]) => `${state} ${String(count)}`)
+      .join(", ")}  <- live-runner.log execution_receipt states, one per identity`,
+  );
+  push(
+    `${statusLabel("actions")} ${[...executions.counts]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([actionId, count]) => `${actionId} ${String(count)}`)
+      .join(", ")}`,
+  );
+  if (executions.unnamed > 0)
+    push(
+      `${statusLabel("")} ${String(executions.unnamed)} execution(s) name no actionId, so they are in the count and in none of the rows above`,
+    );
+  push(
+    `${statusLabel("nodes")} ${String(nodes.identities.size)} (programId, nodeId) identities · ${String(nodes.nodeIdOnly.size)} nodeId-only keys - a reading keyed on \`nodeId\` alone would have kept ${String(nodes.nodeIdOnly.size)} of them`,
+  );
+  const programmes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
+  const bundled = programmes.reduce((total, programme) => total + (programme?.executions ?? []).length, 0);
+  if (programmes.length === 0) {
+    push(
+      `${statusLabel("bundle")} not_measured: this run has published no result.json, so the reading above is what it had done when its log was last written - not what it did`,
+    );
+    return lines;
+  }
+  readings.fromResult("work.bundle_executions", bundled);
+  push(
+    `${statusLabel("bundle")} result.json records ${String(bundled)} executions in ${String(programmes.length)} programmes; ${String(Math.max(0, bundled - counts.receipts))} of them published no receipt, so the log is a lower bound - two readings of one run, never summed`,
+  );
   return lines;
 }
 
@@ -1365,7 +1437,16 @@ const optionValue = (name) => {
   return index >= 0 && argv[index + 1] !== undefined ? argv[index + 1] : null;
 };
 const explicitSession = optionValue("session");
-const positionalRun = argv.find((argument) => !argument.startsWith("--") && argument !== explicitSession) ?? null;
+const explicitLog = optionValue("log");
+const logDirOption = optionValue("log-dir");
+const positionalRun =
+  argv.find(
+    (argument) =>
+      !argument.startsWith("--") &&
+      argument !== explicitSession &&
+      argument !== explicitLog &&
+      argument !== logDirOption,
+  ) ?? null;
 const runDir = positionalRun === null ? newestRun() : resolve(positionalRun);
 if (runDir === null || !existsSync(runDir)) {
   process.stderr.write("no run directory\n");
@@ -1429,6 +1510,18 @@ const runEnded = (() => {
 })();
 record("0 run ended", runEnded.verdict, runEnded.detail, runEnded.source);
 
+// THE RUN'S OTHER RECORD, read here because a run directory with a launch receipt and no bundle is a run that has not
+// finished - and that is exactly when its work has to be readable: a run that goes narrow looks like a run that is
+// working. The log is bound to this run by its own first instant, never by being the newest file in the tree.
+const readings = createReadingLedger({ requireReadings: false });
+const locatedLog = locateRunnerLog({
+  runDir,
+  logPath: explicitLog,
+  logDir: logDirOption,
+  startedAtMs: Number.isFinite(runLaunch?.startedAtMs) ? runLaunch.startedAtMs : null,
+});
+const runnerLog = locatedLog.path === null ? null : readRunnerLog(locatedLog.path);
+
 // 1. Contract errors: the run is worthless as evidence if these are non-zero.
 //
 // Read BOTH files, because the two carry different halves and neither alone is the whole answer. Measured 2026-11-01 on
@@ -1439,14 +1532,27 @@ record("0 run ended", runEnded.verdict, runEnded.detail, runEnded.source);
 //
 // The three codes are counted in the Mod log (the Mod refuses a frame it built) and in the Host's own disconnection records
 // (the Host refuses a frame it received), and the two counts are reported separately so a reader can tell which side spoke.
-const modLog = existsSync(modLogPath)
-  ? readFileSync(modLogPath, "utf8")
-  : existsSync(smapiPath)
-    ? readFileSync(smapiPath, "utf8")
-    : "";
+//
+// THE FILE THIS RUN WROTE, AND NO OTHER. This used to fall back to `%APPDATA%/StardewValley/ErrorLogs/SMAPI-latest.txt`
+// while still naming the count `mod-log.txt` - and that file is a rolling window over EVERY run on the machine. Measured
+// 2026-11-19 on the mid-run `round78` directory (which holds `launch.json` and `run-progress.jsonl` and nothing else): row 1
+// printed `mod examined 1363 mod-log lines · counted 0 · omitted 1363` and `PASS` from a log this run never wrote, above a
+// run whose own record did not exist. That is the false clean this whole report exists to prevent, so the fallback is gone:
+// a run without `mod-log.txt` has no Mod reading, and the row says which file is missing rather than counting a neighbour's.
+const modLogRead = existsSync(modLogPath)
+  ? { text: readFileSync(modLogPath, "utf8"), path: modLogPath, why: null }
+  : {
+      text: null,
+      path: null,
+      why:
+        `this run has no ${modLogPath}` +
+        (existsSync(smapiPath)
+          ? `; ${smapiPath} exists but is a rolling window over every run on this machine, so it cannot answer what THIS one did`
+          : ""),
+    };
 const disconnections = Array.isArray(result.bridgeDisconnections) ? result.bridgeDisconnections : [];
 const contractCodes = ["invalid_snapshot", "invalid_args", "invalid_observe_scene_result"];
-const modLogLines = modLog === "" ? null : modLog.split("\n");
+const modLogLines = modLogRead.text === null ? null : modLogRead.text.split("\n");
 // The Mod side is a CENSUS: examined = every line of the log, counted = the lines naming one of the three codes, and the
 // per-code split falls out of its keys. An unreadable log is `not measured` naming the file, never `0`.
 const modContractCensus =
@@ -1454,7 +1560,7 @@ const modContractCensus =
     ? null
     : census(modLogLines, (line) => contractCodes.find((code) => line.includes(code)) ?? null, {
         unit: "mod-log lines",
-        source: basename(modLogPath),
+        source: basename(modLogRead.path),
         method: `line scan for ${contractCodes.join("/")}`,
         window: RUN_FILES_WINDOW,
       });
@@ -1476,11 +1582,9 @@ record(
   // closed by exactly that code).
   contractTotal > 0 ? "FAIL" : modContractCensus === null ? "NOT EXERCISED" : "PASS",
   `mod ${
-    modContractCensus === null
-      ? `not measured: neither ${modLogPath} nor ${smapiPath} was readable`
-      : formatCensus(modContractCensus)
+    modContractCensus === null ? `not measured: ${modLogRead.why}` : formatCensus(modContractCensus)
   } | host ${format(hostContractReading)}`,
-  `${modLogPath} (mod side) + result.json bridgeDisconnections (host side), whole run`,
+  `${modLogRead.path ?? modLogPath} (mod side) + result.json bridgeDisconnections (host side), whole run`,
 );
 
 // Everything the MODEL saw about the environment lives in the run's own record, not in the bound session: the block
@@ -1628,8 +1732,18 @@ record(
 );
 
 // 6. pickup_forage, which needs the scene binding to be constructible.
-const forageAttempts = mentionedLines({ text: modLog, token: "pickup_forage", source: basename(modLogPath) });
-const foragePickups = mentionedLines({ text: modLog, token: "forage_picked_up", source: basename(modLogPath) });
+// A run with no `mod-log.txt` has no Mod reading at all, and `mentionedLines` turns the empty text into `not measured`
+// naming the file - never a zero, which would read as "nothing foraged" from a file that was never written here.
+const forageAttempts = mentionedLines({
+  text: modLogRead.text ?? "",
+  token: "pickup_forage",
+  source: basename(modLogPath),
+});
+const foragePickups = mentionedLines({
+  text: modLogRead.text ?? "",
+  token: "forage_picked_up",
+  source: basename(modLogPath),
+});
 record(
   "6 pickup_forage",
   forageAttempts.value === null || forageAttempts.value === 0
@@ -1653,8 +1767,14 @@ process.stdout.write(`run   ${runDir}\n`);
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
 for (const row of rows)
   process.stdout.write(`${row.name.padEnd(width)}  ${row.verdict.padEnd(14)} ${row.detail}\n    <- ${row.source}\n`);
+const work = workLines({ runnerLog, result, readings, why: locatedLog.why });
+if (work.length > 0) process.stdout.write(`\n${work.join("\n")}\n`);
 process.stdout.write(`\n${crossingsLines(crossings).join("\n")}\n`);
 process.stdout.write(`\n${efficiency.join("\n")}\n`);
+// THE SOURCE GATE: every reading above that came from the run's own records names which of the two it read. A reading
+// printed with no file behind it fails here by name, so a number in this verdict can always be re-derived.
+for (const line of readings.lines()) process.stdout.write(`${line}\n`);
 // A BLOCKED ending is a refused reading, in the same code `no run directory` already uses: this verdict cannot say anything
 // about a run whose own process never closed the record, and exiting 0 over it is how `round65`-`round67` read as passes.
 if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
+else if (readings.failed()) process.exitCode = 1;

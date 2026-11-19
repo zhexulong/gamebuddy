@@ -456,8 +456,17 @@ function nodeKey(programId, nodeId) {
  *
  * `programRows` are the DEDUPLICATED rows `execution-trace.mjs` owns (`programExecutionRows`): the identity of one
  * execution is that module's fact, and re-deriving it here would be a second spelling of it.
+ *
+ * `executedRows` are the rows that already name their action AND are already keyed on one identity by the reader that
+ * produced them: a receipt in the runner log does both, so the runner log is a third channel beside the flat trace and
+ * the programme journal rather than one of them wearing the other's name.
  */
-export function actionExecutionCounts({ actionRows = null, programRows = [], programSubmissions = [] } = {}) {
+export function actionExecutionCounts({
+  actionRows = null,
+  programRows = [],
+  programSubmissions = [],
+  executedRows = [],
+} = {}) {
   const actionOfNode = new Map();
   for (const submission of programSubmissions ?? []) {
     if (typeof submission?.programId !== "string") continue;
@@ -475,6 +484,7 @@ export function actionExecutionCounts({ actionRows = null, programRows = [], pro
   };
   for (const row of actionRows ?? []) record(row?.action);
   for (const row of programRows ?? []) record(actionOfNode.get(nodeKey(row?.programId, row?.nodeId)));
+  for (const row of executedRows ?? []) record(row?.actionId);
   return { counts, attributed };
 }
 
@@ -487,7 +497,8 @@ export function actionExecutionCounts({ actionRows = null, programRows = [], pro
  * census; without it the addressable set is null and no coverage verdict can be reached. `executions` is the run's
  * declared execution count (`executionTrace.rows`), and `actionRows` / `programRows` are the two halves of that trace
  * when the caller holds them; a caller that has only the result file passes `actionRows: null`, and the flat
- * executions are then reported as unattributed instead of being silently left out of the concentration.
+ * executions are then reported as unattributed instead of being silently left out of the concentration. `executedRows`
+ * is the third channel: the runner's own receipts, each already keyed on the execution identity its producer gave it.
  */
 export async function measureActionBreadth({
   scenario = null,
@@ -497,6 +508,7 @@ export async function measureActionBreadth({
   actionRows = null,
   programRows = [],
   programSubmissions = [],
+  executedRows = [],
   census = null,
   surface = null,
   baseline = null,
@@ -509,7 +521,7 @@ export async function measureActionBreadth({
   const succeededSet = new Set(succeeded);
   const familyOf = (actionId) => resolvedSurface.families.get(actionId) ?? UNMAPPED_FAMILY;
   const familyNames = Object.freeze([...new Set(attemptedIds.map(familyOf))].sort());
-  const { counts, attributed } = actionExecutionCounts({ actionRows, programRows, programSubmissions });
+  const { counts, attributed } = actionExecutionCounts({ actionRows, programRows, programSubmissions, executedRows });
   // The run's declared count is the authority for "how many executions this run had"; the per-action counts only say
   // how many of them could be named. A caller that publishes no count falls back to what it attributed.
   const total = Number.isInteger(executions) && executions > 0 ? executions : attributed;

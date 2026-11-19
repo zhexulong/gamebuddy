@@ -132,10 +132,14 @@ function writeRun({
   timeline = null,
   programOutcomes = null,
   ending = "closed",
+  startedAtMs = null,
 }) {
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(runDir, "launch.json"), JSON.stringify({ schema: "gamebuddy-live-run-launch/v1" }));
+  writeFileSync(
+    join(runDir, "launch.json"),
+    JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", ...(startedAtMs === null ? {} : { startedAtMs }) }),
+  );
   // THE RUN'S ENDING, written by default: every fixture below is about what a FINISHED run's files say, and a run directory
   // with a launch receipt and no closure is the blocked shape one test below is about. `ending: null` is that shape.
   if (ending !== null)
@@ -761,6 +765,96 @@ test("a run that published no wake account says so by field name, never as a zer
         block,
         /prompt_turns_by_reason\s+not_measured \(result\.json multiday\.wakes was not published by this run\)/u,
         "an absent account is not an account of zero suppressions",
+      );
+    },
+  ));
+
+// THE RUN'S OTHER RECORD. A run directory armed by a launch receipt and holding no bundle is a run that has not finished -
+// and that is when its work matters most, because a narrow run looks exactly like a working one. These two tests pin what
+// the verdict now reads from the log, and what it refuses to read from a neighbour's file.
+const START_MS = Date.parse("2026-11-19T10:30:34.853Z");
+const receiptLine = (executionId, actionId, state, nodeId = "n01") =>
+  `BRIDGE_FACT ${JSON.stringify({
+    type: "execution_receipt",
+    atMs: START_MS + 1000,
+    executionId,
+    requestId: `request-${executionId}`,
+    reasonCode: state,
+    worldFactPayload: {
+      actionId,
+      executionId,
+      state,
+      reasonCode: state,
+      origin: { kind: "programme", programId: "plan_1", nodeId },
+    },
+  })}`;
+
+/** The log a run writes while it is going: two successes and a rejection, keyed on their execution ids. */
+const RUNNER_LOG_LINES = [
+  `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START_MS + 1654}}`,
+  receiptLine("exec-1", "move_to_tile", "succeeded"),
+  receiptLine("exec-2", "move_to_tile", "succeeded"),
+  receiptLine("exec-3", "navigate_to_destination", "rejected"),
+  'AGENT_PROGRAM_SUBMIT {"programId":"plan_1","code":"accepted","nodes":2}',
+];
+
+function writeRunnerLog(root, lines) {
+  const directory = join(root, "logs");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "_multiday_routine-round99-live-runner.log"), `${lines.join("\n")}\n`, "utf8");
+  return directory;
+}
+
+test("a run that never ended is read from its log, and its own missing Mod log is not filled from a neighbour", () =>
+  withFixture(
+    () => ({ withResult: false, session: null, ending: null, startedAtMs: START_MS }),
+    (runDir, root) => {
+      const logs = writeRunnerLog(root, RUNNER_LOG_LINES);
+      const result = verdictProcess(runDir, { extraArgs: ["--log-dir", logs] });
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(
+        output,
+        /^1 contract errors\s+NOT EXERCISED\s+mod not measured: this run has no /mu,
+        "a PASS from a rolling SMAPI window over every run on the machine is the false clean this row exists to prevent",
+      );
+      assert.match(output, /^work\s+3 executions keyed on the executionId/mu);
+      assert.match(output, /^    settled\s+succeeded 2, rejected 1 {2}<- live-runner\.log execution_receipt states/mu);
+      assert.match(output, /^    actions\s+move_to_tile 2, navigate_to_destination 1$/mu);
+      assert.match(
+        output,
+        /^    bundle\s+not_measured: this run has published no result\.json/mu,
+        "what the run had done is not what it did: the bundle line says which of the two this is",
+      );
+      assert.match(
+        output,
+        /^a_reading_names_the_source_it_read readings examined \d+ · from-result 0 · from-log [1-9]\d* · unmeasured 0$/mu,
+      );
+      assert.equal(result.status, 2, "a launch receipt with no closure is still a refused reading");
+    },
+  ));
+
+test("a finished run prints the bundle count and the log count side by side, never their sum", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      startedAtMs: START_MS,
+      programOutcomes: [
+        { programId: "plan_1", nodeOutcomes: [], executions: [{ atMs: START_MS, settledAtMs: START_MS + 10 }] },
+        { programId: "plan_2", nodeOutcomes: [], executions: [{ atMs: START_MS, settledAtMs: START_MS + 20 }] },
+      ],
+    }),
+    (runDir, root) => {
+      const logs = writeRunnerLog(root, RUNNER_LOG_LINES);
+      const output = runVerdict(runDir, { extraArgs: ["--log-dir", logs] });
+      assert.match(
+        output,
+        /^    bundle\s+result\.json records 2 executions in 2 programmes; 0 of them published no receipt/mu,
+      );
+      assert.match(output, /two readings of one run, never summed/u);
+      assert.match(
+        output,
+        /^a_reading_names_the_source_it_read readings examined \d+ · from-result 1 · from-log [1-9]\d* · unmeasured 0$/mu,
       );
     },
   ));
