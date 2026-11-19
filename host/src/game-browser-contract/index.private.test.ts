@@ -191,6 +191,18 @@ test("Game installation discovery contract is redacted and exact", () => {
   // outcome: the game and the mod loader may both be there, and the player still has to
   // pick the real installation folder.
   assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "reparse_point" }), true);
+  // A spent search offer is its own outcome, and it is the one that says nothing about the
+  // folder: the candidate a press named is no longer one this Host will take, so the player's
+  // step is a fresh search. Reported as `unavailable` it read as a folder that could not be used.
+  assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "expired" }), true);
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({
+      apiVersion: 1,
+      status: "expired",
+      companionMod: "companion-mod-installed",
+    }),
+    false,
+  );
   assert.equal(
     Compile(GameDiscoveryMutationResultV1Schema).Check({
       apiVersion: 1,

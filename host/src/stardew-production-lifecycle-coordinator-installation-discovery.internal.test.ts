@@ -105,7 +105,7 @@ test("installation discovery routes admit each coordinator operation without ope
         await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
         { status: "cancelled" },
       );
-      assert.deepEqual(events, ["discover", "confirm", "reset", "discover", "reset"]);
+      assert.deepEqual(events, ["discover", "confirm", "reset", "discover"]);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
@@ -113,7 +113,7 @@ test("installation discovery routes admit each coordinator operation without ope
   });
 });
 
-test("installation discovery retry resets the provider before rediscovery and cancellation", async () => {
+test("installation discovery retry resets the provider before rediscovery, and a cancel resets nothing", async () => {
   await withWindowsPlatform(async () => {
     const events: string[] = [];
     const provider: StardewInstallationDiscoveryProvider = Object.freeze({
@@ -137,7 +137,7 @@ test("installation discovery retry resets the provider before rediscovery and ca
         await fixture.coordinator.activationOwner.cancelInstallationSelection(fixture.broker.issue("discovery_cancel")),
         { status: "cancelled" },
       );
-      assert.deepEqual(events, ["discover", "reset", "discover", "reset"]);
+      assert.deepEqual(events, ["discover", "reset", "discover"]);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
@@ -490,6 +490,60 @@ test("an unreadable or closing installation selection keeps the unnamed unavaila
       );
     } finally {
       await closingFixture.broker.close();
+    }
+  });
+});
+
+/**
+ * The fifth selection answer, and the one that is not about the folder at all.
+ *
+ * Measured 2026-11-19: the Game surface keeps the last scan's answer so a tab switch does not buy
+ * another walk of the disk, and a press against that stored answer reached the Host as a candidate id
+ * its session no longer held. The Host answered `unavailable`, which names no cause, and the panel
+ * rendered it as "that folder could not be used - choose another game folder": a statement about a
+ * folder the Host had found and never refused. The same run then registered that exact folder from a
+ * fresh scan, seconds later.
+ *
+ * So the session's own refusal is named. `expired` says what is true - the offer is gone and a fresh
+ * search is the step - and it prints the cause, because a refusal that names nothing is the defect
+ * whatever triggered it.
+ */
+test("a search offer this Host will not take is named expired, and the folder is never blamed", async () => {
+  await withWindowsPlatform(async () => {
+    // A real folder holding the game and no mod loader: the first press has a named cause, so the
+    // offer is live and only the second press can be about the offer itself.
+    const installParent = await canonicalTemporaryRoot("gamebuddy-spent-offer-");
+    temporaryRoots.push(installParent);
+    const vanillaRoot = join(installParent, "Stardew Valley");
+    await mkdir(vanillaRoot, { recursive: true });
+    await writeFile(join(vanillaRoot, "Stardew Valley.exe"), "", "utf8");
+    const provider = createStardewInstallationDiscoveryProvider({
+      probe: async () => ({ readable: true, smapi: false }),
+      gog: {
+        read: async () => ({ roots: [vanillaRoot], diagnostics: [] as const }),
+        probe: async () => ({ readable: true, gameExecutable: true }),
+      },
+    });
+    const fixture = await createFixture({ overrides: { installationDiscoveryOverlay: provider } });
+    const confirm = (candidateId: string) =>
+      fixture.coordinator.activationOwner.confirmInstallation(fixture.broker.issue("discovery_confirm"), candidateId);
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      // An id this Host never issued is the same fact as a spent one, and names no folder.
+      assert.deepEqual(await confirm("candidate-this-host-never-issued"), { status: "expired" });
+      const scanned = await fixture.coordinator.activationOwner.readInstallationDiscovery(
+        fixture.broker.issue("discovery_read"),
+      );
+      const candidateId = scanned.candidates[0]?.candidateId;
+      assert.ok(candidateId !== undefined, "the scan must offer the folder it found");
+      // The first press is about the folder, and names it.
+      assert.deepEqual(await confirm(candidateId), { status: "mod_loader_missing" });
+      // The second press is about the offer the first press spent. It used to answer `unavailable`,
+      // i.e. "that folder could not be used", for the folder the Host had just named correctly.
+      assert.deepEqual(await confirm(candidateId), { status: "expired" });
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
     }
   });
 });

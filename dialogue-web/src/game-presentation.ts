@@ -171,16 +171,20 @@ export type InstallationDiscoveryState =
   // (a Mod Organizer 2 instance, for example). The third selection refusal the player can
   // fix, and the one whose fix is about the path rather than what sits at its end.
   | "reparse-point"
-  // A registration the Host could not name a cause for (it is stopping, or the write
-  // itself failed). `source-unavailable` is reserved for a source that could not be
-  // read; nothing here was a search.
+  // A registration that did not finish for a reason that is not about the folder: GameBuddy is
+  // closing, or the registration's own write failed. It is the one selection answer that names no
+  // cause, so it may not claim anything about the folder - `source-unavailable` is reserved for a
+  // source that could not be read, and nothing here was a search.
   | "selection-unavailable"
+  // The search offer the player's press named is no longer one the Host will take: a registration
+  // already spent it, a later scan replaced the list it came from, or its five minutes ran out. The
+  // folder is not in question, so the sentence asks for a fresh search rather than another folder.
+  | "expired"
   // The Host registered the installation. The scan that follows a registration
   // finds nothing left to offer, so without this state the one moment the player
   // needs an answer read as an empty scan ("no installation was found") after
   // the installation had just been accepted.
   | "confirmed"
-  | "expired"
   | "error";
 
 /**
@@ -255,6 +259,44 @@ export function installationDiscoveryFailureState(code: string | null): Installa
   if (code === "game_unavailable" || code === "source_unavailable") return "source-unavailable";
   if (code === "state_unavailable") return "error";
   return "result-unavailable";
+}
+
+/**
+ * The panel state a selection answer names, by the wire's own status.
+ *
+ * A confirmation and the folder picker answer the same vocabulary, so this is the one place a
+ * selection outcome becomes a state - and it is exhaustive over the union, because the defect this
+ * replaces was a chain of `if`s whose last arm read every outcome it did not know as `error` and, for
+ * the one outcome that had a name but no cause, as "that folder could not be used".
+ *
+ * Measured 2026-11-19: the Host answered a spent search offer with `unavailable`, and the panel told
+ * the player to choose another game folder for a folder the Host had found and never refused. The
+ * offer now carries `expired`, which is what its own sentence is about; `unavailable` is left for the
+ * causes that are not facts about the folder (GameBuddy is closing, or the registration's write
+ * failed), and says only that the registration did not finish.
+ */
+export function installationSelectionState(
+  status: StardewInstallationMutationV1["status"],
+): InstallationDiscoveryState {
+  switch (status) {
+    case "registered":
+    case "accepted":
+      return "confirmed";
+    case "cancelled":
+      return "cancelled";
+    case "mod_loader_missing":
+      return "mod-loader-missing";
+    case "not_stardew_installation":
+      return "not-stardew-installation";
+    case "reparse_point":
+      return "reparse-point";
+    case "expired":
+      return "expired";
+    case "unavailable":
+      return "selection-unavailable";
+    default:
+      return assertNever(status);
+  }
 }
 
 /** The localized label for an installation-discovery state (design/104 §5.1/§6). */

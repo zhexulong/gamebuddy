@@ -16,6 +16,7 @@ import {
   installationDiscoveryFailureState,
   installationDiscoveryState,
   installationModLoaderLabel,
+  installationSelectionState,
   installationSourceLabel,
   installationStateLabel,
   instanceLabel,
@@ -374,15 +375,16 @@ test("a selection refusal names its cause, and an unnamed one says only what it 
     installationStateLabel(messages("zh-CN"), "not-stardew-installation"),
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
   );
-  // A registration the Host could not name a cause for claims nothing beyond that, and in
-  // particular is not the "could not read the source" sentence.
+  // A registration the Host could not finish for a reason that is not about the folder says only
+  // that, and asks for the one thing that can work. It used to tell the player to choose another
+  // game folder, which named a cause the Host had not found.
   assert.equal(
     installationStateLabel(messages("en"), "selection-unavailable"),
-    "That folder could not be used. Choose another game folder.",
+    "GameBuddy could not finish registering that folder. Try again; the folder itself was not refused.",
   );
   assert.equal(
     installationStateLabel(messages("zh-CN"), "selection-unavailable"),
-    "无法使用这个文件夹，请重新选择游戏文件夹。",
+    "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   );
   assert.notEqual(
     installationStateLabel(messages("zh-CN"), "selection-unavailable"),
@@ -778,4 +780,111 @@ test("a create whose slot an earlier attempt holds names the restart step, not t
     assert.notEqual(view.detail, other.detail, `${locale} reads both create refusals the same way`);
     t.diagnostic(`${locale}: ${view.title} | ${view.detail}`);
   }
+});
+
+/**
+ * THE SELECTION VOCABULARY, read from the two declarations that own it.
+ *
+ * A confirmation and the folder picker answer one union, and every member of it is a sentence the
+ * player can be shown. The mapping from wire status to panel state used to be a chain of `if`s in the
+ * component whose last arm read "an outcome I do not know" as `error` - so a member the Host could
+ * publish had no state of its own, and the sentence a player got was whichever arm happened to catch
+ * it. Measured 2026-11-19: the Host refused a spent search offer with `unavailable` and the panel told
+ * the player their folder could not be used, on a folder the Host had found.
+ *
+ * So the population is the union itself, on both sides of the boundary: the client's mirror and the
+ * Host's schema must declare the same members, and each member must reach a state of its own with a
+ * sentence of its own in both locales. A new status fails here until someone decides what it says.
+ */
+const CLIENT_GAME_API = join(WEB_ROOT, "src", "composed-reference-game-browser-api.ts");
+const HOST_GAME_CONTRACT = join(WEB_ROOT, "..", "host", "src", "game-browser-contract", "index.ts");
+
+/** The object type a declaration spells, whether directly (`{...}`) or inside `Readonly<{...}>`. */
+function objectTypeOf(type) {
+  if (type === undefined) return undefined;
+  if (ts.isTypeLiteralNode(type)) return type;
+  const inner = ts.isTypeReferenceNode(type) ? type.typeArguments?.[0] : undefined;
+  return inner !== undefined && ts.isTypeLiteralNode(inner) ? inner : undefined;
+}
+
+/** The `status` union of one declared type alias - found by the alias's name, not by its position. */
+function selectionStatuses(file, what, aliasName) {
+  const sourceFile = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let members = null;
+  const visit = (node) => {
+    if (ts.isTypeAliasDeclaration(node) && node.name.text === aliasName) {
+      const objectType = objectTypeOf(node.type);
+      for (const member of objectType?.members ?? []) {
+        if (!ts.isPropertySignature(member) || !ts.isIdentifier(member.name) || member.name.text !== "status") continue;
+        if (member.type === undefined || !ts.isUnionTypeNode(member.type)) continue;
+        members = member.type.types
+          .filter((literal) => ts.isLiteralTypeNode(literal) && ts.isStringLiteral(literal.literal))
+          .map((literal) => literal.literal.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  assert.notEqual(members, null, `${what}: ${aliasName} declares no string-literal status union`);
+  assert.ok(members.length >= 8, `${what}: derived ${members.length} member(s), so the parse is wrong`);
+  return members;
+}
+
+/** The statuses the Host's own schema declares, from the union it builds out of `Type.Literal`. */
+function hostSelectionStatuses() {
+  const source = readFileSync(HOST_GAME_CONTRACT, "utf8");
+  const body = source.match(/export const GameDiscoveryMutationResultV1Schema = Type\.Union\(\[([\s\S]*?)\n\]\);/u)?.[1];
+  assert.notEqual(body, undefined, "GameDiscoveryMutationResultV1Schema must be declared in the Host contract");
+  const statuses = [...body.matchAll(/status: Type\.Literal\("([a-z_]+)"\)/gu)].map((match) => match[1]);
+  assert.ok(statuses.length >= 8, `derived ${statuses.length} Host selection status(es), so the parse is wrong`);
+  return statuses;
+}
+
+test("every selection answer the Host can send names its own panel state and its own sentence", () => {
+  const client = selectionStatuses(
+    CLIENT_GAME_API,
+    "StardewInstallationMutationV1",
+    "StardewInstallationMutationV1",
+  );
+  // Single authority per fact: the client's vocabulary is a copy of the Host's, and two copies that
+  // agree today are a disagreement scheduled for later unless something compares them.
+  assert.deepEqual(
+    [...client].sort(),
+    [...hostSelectionStatuses()].sort(),
+    "the client's selection vocabulary and the Host's schema disagree",
+  );
+  const declaredStates = INSTALLATION_STATES;
+  const table = [];
+  const failures = [];
+  // The refusals, which are the members that carry a cause: each has to be its own state, because two
+  // causes a player must tell apart may not read as one sentence.
+  const refusals = new Set();
+  for (const status of client) {
+    const state = installationSelectionState(status);
+    table.push(`${status.padEnd(24)} ${state}`);
+    if (!declaredStates.includes(state))
+      failures.push(`${status} maps to ${state}, which InstallationDiscoveryState does not declare`);
+    if (status === "registered" || status === "accepted" || status === "cancelled") continue;
+    if (refusals.has(state)) failures.push(`${status} reads as the same state as another refusal: ${state}`);
+    refusals.add(state);
+  }
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const sentences = [...refusals].map((state) => installationStateLabel(labels, state));
+    const seen = new Map();
+    for (const [index, sentence] of sentences.entries()) {
+      if (seen.has(sentence))
+        failures.push(`${locale}: ${[...refusals][seen.get(sentence)]} and ${[...refusals][index]} share one sentence`);
+      seen.set(sentence, index);
+    }
+  }
+  // A refusal that names no cause is the defect this gate exists for, so the unnamed member is the one
+  // that must say nothing about the folder - and it is exactly one member.
+  const unnamed = client.filter((status) => installationSelectionState(status) === "selection-unavailable");
+  assert.deepEqual(unnamed, ["unavailable"], "the unnamed refusal is not the single member that names no cause");
+  console.log(
+    `[selection answers] examined ${client.length} status(es) x ${locales.length} locale(s), ` +
+      `${refusals.size} refusal state(s):\n  ${table.join("\n  ")}`,
+  );
+  assert.deepEqual(failures, [], "every selection answer names its own state and its own sentence");
 });

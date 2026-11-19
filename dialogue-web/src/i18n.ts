@@ -1230,9 +1230,12 @@ const en = {
   // actually has - a desktop shortcut, a Mod Organizer 2 instance - and what to pick instead.
   gameInstallationReparsePoint:
     "That folder is a shortcut, a junction or a virtual folder (for example a Mod Organizer 2 instance). Choose the game's real installation folder, the one that holds Stardew Valley.exe itself, not a link to it.",
-  // A registration the Host could not name a cause for. It says nothing it cannot know:
-  // not that the folder is wrong, not that the search failed.
-  gameInstallationSelectionUnavailable: "That folder could not be used. Choose another game folder.",
+  // A registration that did not finish, for a reason that is not about the folder: GameBuddy is
+  // closing, or the write itself failed. It says only that, and asks for the one thing that can
+  // work - the sentence used to tell the player to choose another game folder, which named a cause
+  // the Host had not found (2026-11-19: the folder was registered and fine).
+  gameInstallationSelectionUnavailable:
+    "GameBuddy could not finish registering that folder. Try again; the folder itself was not refused.",
   // The registration the player just asked for is done. A scan after a
   // registration finds nothing left to offer, so this sentence is the only place
   // the outcome exists; it says what the panel will not do (nothing here) and what
@@ -2323,7 +2326,7 @@ const zh: Messages = {
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
   gameInstallationReparsePoint:
     "这个文件夹是快捷方式、目录联接（junction）或虚拟文件夹（例如 Mod Organizer 2 的实例）。请选择游戏真正的安装文件夹，也就是直接包含 Stardew Valley.exe 的那个文件夹，而不是指向它的链接。",
-  gameInstallationSelectionUnavailable: "无法使用这个文件夹，请重新选择游戏文件夹。",
+  gameInstallationSelectionUnavailable: "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
   gameInstallationError: "搜索游戏安装位置失败。",

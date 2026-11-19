@@ -403,13 +403,14 @@ test("installation discovery is strict, uses opaque candidate IDs, and gates mut
 
 /**
  * Every selection refusal the Host can publish is decoded by the client mirror, including the
- * third one.
+ * third one and the fourth.
  *
  * The mirror is hand-written and its closed list is what decides whether a legal reply is read
  * as an answer or as protocol corruption. A `reparse_point` reply - a shortcut, a junction or an
  * MO2 virtual folder - reaching a mirror that does not know it is not a missing sentence; it is
  * the whole mutation turning into `invalid_stardew_installation_mutation`, and the player is
- * told nothing about their folder at all.
+ * told nothing about their folder at all. `expired` is the same shape from the other side: a
+ * spent search offer that the mirror refuses is a confirmed registration read as corruption.
  */
 test("the client mirror decodes every selection refusal the contract declares, by derivation", async () => {
   // The population is the Host contract's own union, read from its declaration rather than
@@ -426,6 +427,7 @@ test("the client mirror decodes every selection refusal the contract declares, b
     [
       "accepted",
       "cancelled",
+      "expired",
       "mod_loader_missing",
       "not_stardew_installation",
       "registered",

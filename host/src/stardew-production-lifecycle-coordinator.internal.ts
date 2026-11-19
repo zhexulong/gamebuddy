@@ -38,6 +38,7 @@ import {
 import {
   createStardewInstallationDiscoveryProvider,
   createWindowsSteamInstallationSource,
+  STARDEW_CANDIDATE_INVALID,
 } from "./windows-stardew-installation-discovery/index.js";
 import { readIdentityProfile } from "./identity-profile.js";
 import { resolveRuntimePaths } from "./runtime-identity.js";
@@ -480,14 +481,18 @@ export function createStardewGameSurfaceWorldBindingReader(
  * there is nothing there to accept. `reparse_point` is the third: the folder's path
  * reaches the game through a shortcut, a junction or a virtual folder - a Mod
  * Organizer 2 instance, for example - and the game's own installation folder is
- * what the player must pick instead. `unavailable` is every other refusal, which
- * names no cause the player can fix.
+ * what the player must pick instead. `expired` is the fourth, and it is not a fact
+ * about the folder at all: the search offer the press named is no longer one this
+ * Host will take, so the player's step is a fresh search. `unavailable` is what is
+ * left - the Host is stopping, or the registration's own write failed - and it is
+ * the only member that names no cause.
  */
 export type StardewInstallationSelectionResult = Readonly<{
   status:
     | "registered"
     | "cancelled"
     | "unavailable"
+    | "expired"
     | "mod_loader_missing"
     | "not_stardew_installation"
     | "reparse_point";
@@ -2268,14 +2273,17 @@ function createCoordinator(
   /**
    * The outcome a registration refusal names.
    *
-   * Registration refuses for several causes, and three of them are facts the player
-   * can act on: a folder holding Stardew Valley but no mod loader, where the Companion
-   * Mod can never load; a folder holding no game at all; and a folder whose path
-   * reaches the game through a shortcut, a junction or a virtual folder such as a Mod
-   * Organizer 2 instance. Reporting any of them as `unavailable` told a player their
-   * installation search had failed - on a machine where the search had found their
-   * game, or when they had picked the wrong folder or a link to the right one. Every
-   * other cause stays `unavailable`, which claims no cause at all.
+   * Registration refuses for several causes, and every one the player can act on has
+   * its own name: a folder holding Stardew Valley but no mod loader, where the Companion
+   * Mod can never load; a folder holding no game at all; a folder whose path reaches the
+   * game through a shortcut, a junction or a virtual folder such as a Mod Organizer 2
+   * instance; and a search offer this Host will no longer take (`STARDEW_CANDIDATE_INVALID`
+   * - it was spent, its scan was replaced, or its five minutes ran out). Reporting any of
+   * them as `unavailable` told a player their installation search had failed - on a machine
+   * where the search had found their game, or when they had picked the wrong folder or a
+   * link to the right one - or, for a spent offer, that the folder could not be used at all.
+   * `unavailable` is left for the causes that name nothing about the folder or the search:
+   * this Host is closing, or the registration's own write failed.
    */
   const registrationRefusal = (error: unknown): StardewInstallationSelectionResult =>
     Object.freeze({
@@ -2286,7 +2294,9 @@ function createCoordinator(
             ? ("not_stardew_installation" as const)
             : error instanceof Error && error.message === STARDEW_REPARSE_POINT_REFUSED
               ? ("reparse_point" as const)
-              : ("unavailable" as const),
+              : error instanceof Error && error.message === STARDEW_CANDIDATE_INVALID
+                ? ("expired" as const)
+                : ("unavailable" as const),
     });
   /**
    * Picks a folder and registers it.
@@ -3706,10 +3716,19 @@ function createCoordinator(
       installationDiscoveryProvider.reset();
       return installationDiscoveryProvider.discover();
     });
+  /**
+   * Abandons the search, and only the search.
+   *
+   * It does not reset the session, because the offers the Host already issued are not the search: they
+   * are folders this Host really found on this machine, and a surface is entitled to hold the last scan's
+   * answer across a tab switch (`GameSurface` keeps it so a return does not buy another walk of the disk).
+   * Resetting them made that stored answer a list of dead tokens - the player remounted into their own
+   * candidates, pressed 确认, and the Host refused the folder it had just found, naming no cause. The
+   * five-minute window and `retryInstallationDiscovery`'s own reset are what bound an offer's life.
+   */
   const cancelInstallationSelection = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
     consumeBrowserAdmission(admission, "discovery_cancel", async () => {
       if (isClosing()) return { status: "unavailable" as const };
-      installationDiscoveryProvider?.reset();
       return { status: "cancelled" as const };
     });
   const openInstallationPicker = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>

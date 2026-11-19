@@ -458,6 +458,14 @@ const CompanionModOutcome = Type.Union([
  * shortcut, a junction or a virtual folder, so the installation it names is not the one
  * the player will launch. It is distinct because the fix is one the player performs -
  * pick the game's real installation folder.
+ *
+ * `expired` is the fourth, and it is the one that says nothing about the folder: the
+ * candidate the press named is no longer an offer this Host will take, because a
+ * registration already spent it, because a later scan replaced the list it came from, or
+ * because the five minutes its scan issued it for ran out. It is distinct because the
+ * player's step is a fresh search rather than a different folder - and because reporting
+ * it as `unavailable` told a player whose folder was found and registered-fresh that the
+ * folder itself could not be used.
  */
 export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
@@ -477,6 +485,7 @@ export const GameDiscoveryMutationResultV1Schema = Type.Union([
   }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("cancelled") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("expired") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("mod_loader_missing") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("not_stardew_installation") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("reparse_point") }),

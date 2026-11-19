@@ -12,6 +12,17 @@ export const WINDOWS_DRIVE_ROOTS: readonly string[] = Object.freeze(
   [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map((letter) => `${letter}:\\`),
 );
 export const STEAM_METADATA_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * The refusal a candidate id that this session will no longer take mints.
+ *
+ * One fact with three causes, and the player's step is the same for all three: the offer was already
+ * spent by a registration, the scan it came from was replaced, or its five minutes ran out. It is
+ * named because a surface can hold a scan's answer past the session that issued it (the Game surface
+ * keeps the last scan so a tab switch does not buy another walk of the disk), and a refusal that told
+ * the player nothing about that read as "that folder cannot be used" for a folder the Host had never
+ * refused.
+ */
+export const STARDEW_CANDIDATE_INVALID = "candidate-invalid";
 /** The wire's own cap on a location label (`GameCandidateV1Schema`). */
 export const INSTALLATION_LOCATION_MAX_LENGTH = 64;
 /**
@@ -154,7 +165,7 @@ export class StardewDiscoverySession {
     modLoader: StardewCandidateModLoader,
   ): StardewInstallationCandidate {
     const normalizedRoot = normalizeWindowsPath(root);
-    if (normalizedRoot === undefined || normalizedRoot.endsWith("\\")) throw new Error("candidate-invalid");
+    if (normalizedRoot === undefined || normalizedRoot.endsWith("\\")) throw new Error(STARDEW_CANDIDATE_INVALID);
     const candidateId = opaque();
     this.proposals.set(candidateId, {
       sessionId: this.sessionId,
@@ -179,7 +190,7 @@ export class StardewDiscoverySession {
   consume(candidateId: string, sessionId = this.sessionId): string {
     const proposal = this.proposals.get(candidateId);
     if (!proposal || proposal.sessionId !== sessionId || proposal.used || proposal.expiresAt <= this.now())
-      throw new Error("candidate-invalid");
+      throw new Error(STARDEW_CANDIDATE_INVALID);
     this.proposals.set(candidateId, { ...proposal, used: true });
     return proposal.root;
   }

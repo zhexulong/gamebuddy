@@ -452,6 +452,7 @@ export type StardewInstallationMutationV1 = Readonly<{
     | "registered"
     | "cancelled"
     | "unavailable"
+    | "expired"
     | "mod_loader_missing"
     | "not_stardew_installation"
     | "reparse_point";
@@ -896,6 +897,7 @@ function validateStardewInstallationMutation(value: unknown): StardewInstallatio
       "registered",
       "cancelled",
       "unavailable",
+      "expired",
       "mod_loader_missing",
       "not_stardew_installation",
       "reparse_point",

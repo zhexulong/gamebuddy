@@ -421,7 +421,7 @@ const scrollPanelIntoView = () => {
       case "retrying":
         return "it is the transient state while a re-scan is outstanding, between the click and the answer";
       case "expired":
-        return "no route produces it: nothing in the shipped Host expires a discovery result";
+        return "it is produced only by a confirmation of a search offer this Host no longer holds, and this driver never presses 确认";
       case "source-unavailable":
         return "only a source-read refusal produces it, and no route refused that way on this machine";
       case "no-candidates":

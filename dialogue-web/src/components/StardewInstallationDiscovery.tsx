@@ -13,6 +13,7 @@ import {
   installationDiscoveryFailureState,
   installationDiscoveryState,
   installationHintLabel,
+  installationSelectionState,
   installationSourceLabel,
   installationStateLabel,
   type InstallationDiscoveryState,
@@ -249,39 +250,18 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
       // what the player just did. A dismissed folder dialog is not an answer: the scan it
       // was shown beside keeps running.
       if ("status" in result && result.status !== "cancelled") refreshEpoch.current += 1;
-      // A selection refusal that names its own cause is a state, not a search
-      // failure: the search found the player's game, and what is missing is the
-      // mod loader. Both controls that lead here - confirm and the folder picker -
-      // report it, so a vanilla install never renders as `source-unavailable` or
-      // `error`.
-      if ("status" in result && result.status === "mod_loader_missing") {
-        setState("mod-loader-missing");
+      // A settled scan is the answer itself. It is the one shape that replaces the list.
+      if ("candidates" in result) {
+        setDiscovery(result);
+        setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
+        onScanSettled?.(result);
         return;
       }
-      // The other refusal a player can fix, and for the same reason its own state: the
-      // folder holds no Stardew Valley, so there is nothing there to register.
-      if ("status" in result && result.status === "not_stardew_installation") {
-        setState("not-stardew-installation");
-        return;
-      }
-      // The third, and the one about the path: the folder reaches the game through a
-      // shortcut, a junction or a virtual folder, so the fix is to pick the game's real
-      // installation folder. Both controls that lead here report it.
-      if ("status" in result && result.status === "reparse_point") {
-        setState("reparse-point");
-        return;
-      }
-      // A registration that named no cause stays unnamed. `source-unavailable` is
-      // reserved for a source the scan could not read, and this was not a scan.
-      if ("status" in result && result.status === "unavailable") {
-        setState("selection-unavailable");
-        return;
-      }
-      if (
-        kind === "confirm" &&
-        "status" in result &&
-        (result.status === "registered" || result.status === "accepted")
-      ) {
+      // A folder dialog the player dismissed is not a failure, and says nothing about the
+      // search: the scan it interrupted is still running (or has already settled behind the
+      // dialog), so the panel keeps the sentence it had.
+      if ("status" in result && result.status === "cancelled") return;
+      if ("status" in result && (result.status === "registered" || result.status === "accepted")) {
         // The registration is the answer, and the scan that follows it has nothing
         // left to offer - so the outcome is stated after the refresh rather than
         // letting an empty scan stand in for it ("no installation was found" after
@@ -292,25 +272,14 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
         onAdmitted?.();
         return;
       }
-      if (kind === "picker" && "status" in result) {
-        if (result.status === "accepted" || result.status === "registered") {
-          recordCompanionMod(result);
-          await read(true);
-          if (mounted.current) setState("confirmed");
-          onAdmitted?.();
-          return;
-        }
-      }
-      if (kind === "retry" && "candidates" in result) {
-        setDiscovery(result);
-        setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
-        onScanSettled?.(result);
+      // Every other selection answer names its own state, one wire status at a time
+      // (`installationSelectionState`), so a cause the Host publishes cannot reach the
+      // player as a different cause's sentence - which is what a chain of `if`s ending in
+      // a generic refusal let happen.
+      if ("status" in result) {
+        setState(installationSelectionState(result.status));
         return;
       }
-      // A folder dialog the player dismissed is not a failure, and says nothing about the
-      // search: the scan it interrupted is still running (or has already settled behind the
-      // dialog), so the panel keeps the sentence it had.
-      if (kind === "picker" && "status" in result && result.status === "cancelled") return;
       setState("error");
     } catch (error) {
       if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
@@ -337,8 +306,13 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted, seed = n
    * `reparse_point` and `selection_unavailable` are sentences about the candidate or the
    * folder the player chose, so the list they were chosen from stays: choosing another
    * one is how that state is left.
+   *
+   * `expired` is the exception among refusals, because it is not about the candidate:
+   * the offer the press named is one this Host will no longer take, so every row of this
+   * list is dead and pressing another one buys the same answer. The way back is a fresh
+   * search, which is the sentence's own instruction.
    */
-  const showsCandidates = state !== "cancelled";
+  const showsCandidates = state !== "cancelled" && state !== "expired";
   // The Steam launch option's copy handler was here, with an empty `catch`: nothing rendered a control for it,
   // so the swallow belonged to dead code. The clipboard is the browser's, not the Host's, so a control that
   // copies again reports a refusal through this panel's notice rather than through an empty catch.
