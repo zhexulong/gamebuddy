@@ -608,15 +608,16 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "fish_tank_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, tank)};item={tank.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Item carried
-            || !string.Equals(carried.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            || carried.Stack <= 0)
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(Game1.player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        if (liveSlot < 0 || Game1.player.Items[liveSlot] is not Item carried)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "fish_tank_item_not_owned_in_slot",
-                $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
+                $"named_slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
         // The game's own furniture reach, the same predicate the pickup and the rotation are gated on
         // (Furniture.IsCloseEnoughToFarmer, Furniture.cs:1295-1308): the tank's footprint inflated by 96 px.
         if (!tank.IsCloseEnoughToFarmer(Game1.player))
@@ -656,7 +657,7 @@ internal sealed partial class ExecutionManager
                     "fish_tank_full",
                     $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};grade={tank.GetCategoryFromItem(carried)};capacity={tank.GetCapacityForCategory(tank.GetCategoryFromItem(carried))};held_items={heldBefore};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(targetX, targetY)).Format()}");
 
-            Game1.player.CurrentToolIndex = slot;
+            Game1.player.CurrentToolIndex = liveSlot;
             try
             {
                 depositStarted = tank.checkForAction(Game1.player);
@@ -681,7 +682,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "fish_tank_native_exception",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};held_items_before={heldBefore};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};held_items_before={heldBefore};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
         if (tank.localDepositedItem is Item pending)
@@ -694,7 +695,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "fish_tank_deposit_not_observed",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_answered={depositStarted.ToString().ToLowerInvariant()};held_items_before={heldBefore};held_items_after={tank.heldItems.Count};restored={restored.ToString().ToLowerInvariant()};mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()}");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};native_answered={depositStarted.ToString().ToLowerInvariant()};held_items_before={heldBefore};held_items_after={tank.heldItems.Count};restored={restored.ToString().ToLowerInvariant()};mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()}");
         }
 
         int heldAfter = tank.heldItems.Count;
@@ -711,7 +712,7 @@ internal sealed partial class ExecutionManager
         bool deposited = heldAfter == heldBefore + 1 && string.Equals(lastHeld, itemId, StringComparison.Ordinal);
         bool leftThePack = carriedAfter == carriedBefore - 1;
         string evidence =
-            $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={slot};"
+            $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};"
             + $"native_answered={depositStarted.ToString().ToLowerInvariant()};held_items_before={heldBefore};held_items_after={heldAfter};"
             + $"last_held={lastHeld};carried_before={carriedBefore};carried_after={carriedAfter};"
             + $"mutex_locked_after={tank.mutex.IsLocked().ToString().ToLowerInvariant()};{NamePlacedPieceAfterWrite(location, new Vector2(targetX, targetY), tank)}";
@@ -741,15 +742,16 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (!TryDescribePedestal(location, targetX, targetY, expectedTargetId, out ItemPedestal? pedestal, out string pedestalRefusal, out RefusalLayerToken pedestalLayer, out string pedestalEvidence))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, pedestalRefusal, $"{pedestalEvidence};{DescribeRefusalLayer(pedestalLayer)}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Item carried
-            || !string.Equals(carried.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            || carried.Stack <= 0)
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(Game1.player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        if (liveSlot < 0)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "pedestal_item_not_owned_in_slot",
-                $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
+                $"named_slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -773,15 +775,16 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (!TryDescribePedestal(location, targetX, targetY, expectedTargetId, out ItemPedestal? pedestal, out string pedestalRefusal, out RefusalLayerToken pedestalLayer, out string pedestalEvidence))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, pedestalRefusal, $"{pedestalEvidence};{DescribeRefusalLayer(pedestalLayer)}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Item carried
-            || !string.Equals(carried.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            || carried.Stack <= 0)
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(Game1.player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        if (liveSlot < 0 || Game1.player.Items[liveSlot] is not Item carried)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "pedestal_item_not_owned_in_slot",
-                $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
+                $"named_slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};expected={expectedQualifiedItemId};target={expectedTargetId};blocked_by={RefusalLayerToken.None.Format()}");
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
             return this.RememberTerminal(
                 requestId,
@@ -835,11 +838,11 @@ internal sealed partial class ExecutionManager
                 pedestal.itemModifyMutex.Update(location);
             // The engine's own ingress consumes the stack AFTER a handled drop (GameLocation.cs:7781-7784), and the item
             // it spends is the one it HANDED to the pedestal - `who.CurrentItem`, the held one (:7772). This action hands
-            // the item out of the slot the caller named, so that slot is what the deposit comes out of;
+            // the item out of the LIVE slot it resolved, so that slot is what the deposit comes out of;
             // `Farmer.reduceActiveItemByOne` (Farmer.cs:5083) spends whatever the actor happens to be HOLDING instead,
             // which is a different item, or a tool, or nothing at all.
             if (droppedIn)
-                ConsumeOneFromSlot(slot);
+                ConsumeOneFromSlot(liveSlot);
         }
         catch (Exception nativeException)
         {
@@ -848,7 +851,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "pedestal_native_exception",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
 
         int carriedAfter = CountQualifiedItem(Game1.player, itemId);
@@ -864,11 +867,11 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "pedestal_deposit_not_observed",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_answered={droppedIn.ToString().ToLowerInvariant()};carried_before={carriedBefore};carried_after={CountQualifiedItem(Game1.player, itemId)};held={(pedestal.heldObject.Value?.QualifiedItemId ?? "none")};restored={restored.ToString().ToLowerInvariant()};mutex_locked_after={pedestal.itemModifyMutex.IsLocked().ToString().ToLowerInvariant()}");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};native_answered={droppedIn.ToString().ToLowerInvariant()};carried_before={carriedBefore};carried_after={CountQualifiedItem(Game1.player, itemId)};held={(pedestal.heldObject.Value?.QualifiedItemId ?? "none")};restored={restored.ToString().ToLowerInvariant()};mutex_locked_after={pedestal.itemModifyMutex.IsLocked().ToString().ToLowerInvariant()}");
         }
 
         string evidence =
-            $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={slot};"
+            $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={liveSlot};named_slot={slot};"
             + $"native_answered={droppedIn.ToString().ToLowerInvariant()};held={(pedestal.heldObject.Value?.QualifiedItemId ?? "none")};"
             + $"match={(pedestal.match.Value.ToString().ToLowerInvariant())};locked={(pedestal.locked.Value.ToString().ToLowerInvariant())};"
             + $"lock_on_success={(pedestal.lockOnSuccess.Value.ToString().ToLowerInvariant())};"
@@ -880,7 +883,7 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Takes one unit out of a NAMED pack slot, with the engine's own bookkeeping for an emptied stack
+    /// Takes one unit out of a LIVE pack slot, with the engine's own bookkeeping for an emptied stack
     /// (<c>Farmer.removeItemFromInventory</c>, Farmer.cs:5105-5116: the item's <c>actionWhenStopBeingHeld</c> runs and the
     /// slot is cleared). The engine's counterpart, <c>Farmer.reduceActiveItemByOne</c> (Farmer.cs:5083), is this same
     /// fact read from the HAND; the two agree only when the item being spent is the held one.

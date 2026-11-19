@@ -169,6 +169,34 @@ public sealed class PutItemInFishTankActionTests
         receipt.Evidence.Should().Contain("slot_item=(O)129");
     }
 
+    /// <summary>
+    /// A FISH THAT MOVED IS STILL THAT FISH. The plan's node named slot 0; the pack re-packed and the anchovy is in
+    /// slot 4. A request's slot is a position the observation recorded, not an address, so the action re-resolves the
+    /// item the caller NAMED and deposits from where it actually is. `slot=` is the live index and `named_slot=` the one
+    /// the caller sent, so a reader can see the re-resolution instead of inferring it.
+    /// </summary>
+    [Fact]
+    public void AFishThatMovedToAnotherSlotIsFoundThereAndNotReportedMissing()
+    {
+        using var world = TankWorld.Create();
+        world.PlaceTank(x: 2, y: 2);
+        world.PutFishInSlot(4);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, slot: 0);
+
+        receipt.ReasonCode.Should().NotBe(
+            "fish_tank_item_not_owned_in_slot", "the pack holds the fish the request named, one slot away from where the plan saw it");
+        receipt.ReasonCode.Should().BeOneOf(
+            "fish_tank_item_deposited",
+            "fish_tank_rejects_item",
+            "fish_tank_native_exception",
+            "fish_tank_deposit_not_observed",
+            "fish_tank_postcondition_not_observed");
+        receipt.Evidence.Should().Contain("slot=4", "the live index is the slot the deposit spent");
+        receipt.Evidence.Should().Contain("named_slot=0", "the caller's index is printed beside the live one");
+    }
+
     [Fact]
     public void AnEmptySlot_IsRefusedByName()
     {
@@ -264,7 +292,7 @@ public sealed class PutItemInFishTankActionTests
         int busy = body.IndexOf("fish_tank_busy", StringComparison.Ordinal);
         int deposits = body.IndexOf("tank.CanBeDeposited(carried)", StringComparison.Ordinal);
         int room = body.IndexOf("tank.HasRoomForThisItem(carried)", StringComparison.Ordinal);
-        int swap = body.IndexOf("Game1.player.CurrentToolIndex = slot;", StringComparison.Ordinal);
+        int swap = body.IndexOf("Game1.player.CurrentToolIndex = liveSlot;", StringComparison.Ordinal);
         int restore = body.IndexOf("Game1.player.CurrentToolIndex = previousSlot;", StringComparison.Ordinal);
         int native = body.IndexOf("tank.checkForAction(Game1.player)", StringComparison.Ordinal);
         int settle = body.IndexOf("tank.mutex.Update(location)", StringComparison.Ordinal);
@@ -632,10 +660,10 @@ public sealed class PutItemInFishTankActionTests
                 ? this.TargetIdAt(x, y)
                 : "placed_furniture_0000000000000000";
 
-        internal LocalExecutionReceipt Request(int x, int y, string? expectedTargetId = null, string? expectedQualifiedItemId = null) =>
+        internal LocalExecutionReceipt Request(int x, int y, string? expectedTargetId = null, string? expectedQualifiedItemId = null, int slot = 0) =>
             this.Manager().RequestLocalPutItemInFishTank(
-                $"req_tank_{x}_{y}_{expectedTargetId ?? "live"}_{expectedQualifiedItemId ?? "live"}",
-                0,
+                $"req_tank_{x}_{y}_{slot}_{expectedTargetId ?? "live"}_{expectedQualifiedItemId ?? "live"}",
+                slot,
                 x,
                 y,
                 expectedQualifiedItemId ?? FishItemId,

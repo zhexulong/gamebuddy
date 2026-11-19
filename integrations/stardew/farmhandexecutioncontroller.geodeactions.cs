@@ -150,15 +150,21 @@ internal sealed partial class ExecutionManager
         Farmer player = Game1.player;
         GameLocation? location = player.currentLocation;
         string locationName = location?.NameOrUniqueName ?? "none";
-        string slotIdentity = $"slot={slot.ToString(CultureInfo.InvariantCulture)};inventory_slots={player.Items.Count.ToString(CultureInfo.InvariantCulture)};location={locationName}";
 
-        Item? geode = slot >= 0 && slot < player.Items.Count ? player.Items[slot] : null;
-        if (geode is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item=none;{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:empty")}");
+        // THE SLOT IS WHERE THE PLAN SAW THE GEODE, NOT AN ADDRESS. The wire requires `slot` and
+        // `expectedQualifiedItemId` TOGETHER (`host/src/protocol.ts:3748`), so the item the caller NAMED is the identity
+        // and the index is only the position the observation recorded: `NamedSlotStillHolds` asks the caller's own
+        // answer first, and `ResolveLiveSlot` finds the stack the pack re-packed it into. Both indexes travel in
+        // `slotIdentity`, so a re-resolution is visible in the receipt instead of being inferred from a success.
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        string slotIdentity = $"slot={liveSlot.ToString(CultureInfo.InvariantCulture)};named_slot={slot.ToString(CultureInfo.InvariantCulture)};inventory_slots={player.Items.Count.ToString(CultureInfo.InvariantCulture)};location={locationName}";
+
+        if (liveSlot < 0 || player.Items[liveSlot] is not Item geode)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item={expectedQualifiedItemId};{GeodeRefusal(RefusalLayerKind.Item, $"pack:{expectedQualifiedItemId}:not_owned")}");
         if (!Utility.IsGeode(geode))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item={geode.QualifiedItemId};is_geode=false;{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:{geode.QualifiedItemId}:not_geode")}");
-        if (expectedQualifiedItemId.Length > 0 && !string.Equals(geode.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item={geode.QualifiedItemId};expected={expectedQualifiedItemId};{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:{geode.QualifiedItemId}")}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item={geode.QualifiedItemId};is_geode=false;{GeodeRefusal(RefusalLayerKind.Item, $"slot{liveSlot}:{geode.QualifiedItemId}:not_geode")}");
 
         if (!TryLocateGeodeCounter(player, location, out RefusalLayerToken counterLayer, out string counterEvidence))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_spot_not_reached", $"{slotIdentity};item={geode.QualifiedItemId};{counterEvidence};{GeodeRefusal(counterLayer.Layer, counterLayer.Detail)}");
@@ -190,7 +196,7 @@ internal sealed partial class ExecutionManager
                 }
 
                 menu = opened;
-                int slotIndex = GeodeInventorySlotIndex(menu, slot);
+                int slotIndex = GeodeInventorySlotIndex(menu, liveSlot);
                 if (slotIndex < 0)
                 {
                     return this.RememberTerminal(
@@ -198,7 +204,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "geode_menu_not_opened",
-                        $"{slotIdentity};menu_slots={menu.inventory?.inventory?.Count ?? 0};slot_component=absent;{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:not_drawn")}");
+                        $"{slotIdentity};menu_slots={menu.inventory?.inventory?.Count ?? 0};slot_component=absent;{GeodeRefusal(RefusalLayerKind.Item, $"slot{liveSlot}:not_drawn")}");
                 }
 
                 // The native pick-up: one unit onto the cursor, taken out of the named slot by the
@@ -212,7 +218,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "geode_not_owned",
-                        $"{slotIdentity};held={(menu.heldItem?.QualifiedItemId ?? "none")};pickup=refused;{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:pickup_refused")}");
+                        $"{slotIdentity};held={(menu.heldItem?.QualifiedItemId ?? "none")};pickup=refused;{GeodeRefusal(RefusalLayerKind.Item, $"slot{liveSlot}:pickup_refused")}");
                 }
 
                 return this.ExecuteCrackGeode(menu, player, executionId, requestId, slotIdentity, geodeItemId, geodeStack, geodeOwnedBefore, moneyBefore);

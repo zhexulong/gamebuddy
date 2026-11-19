@@ -159,6 +159,34 @@ public sealed class PlaceItemOnPedestalActionTests
     }
 
     /// <summary>
+    /// AN ITEM THAT MOVED IS STILL THAT ITEM. The plan's node named slot 0; the pack re-packed and the item is in slot
+    /// 4. A request's slot is a position the observation recorded, not an address, so the action re-resolves the item the
+    /// caller NAMED and places it from where it actually is. `slot=` is the live index and `named_slot=` the one the
+    /// caller sent, so a reader can see the re-resolution instead of inferring it.
+    /// </summary>
+    [Fact]
+    public void AnItemThatMovedToAnotherSlotIsFoundThereAndNotReportedMissing()
+    {
+        using var world = PedestalWorld.Create();
+        world.PlacePedestal(x: 2, y: 2);
+        world.PutItemInSlot(4);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, slot: 0);
+
+        receipt.ReasonCode.Should().NotBe(
+            "pedestal_item_not_owned_in_slot", "the pack holds the item the request named, one slot away from where the plan saw it");
+        receipt.ReasonCode.Should().BeOneOf(
+            "pedestal_item_placed",
+            "pedestal_rejects_item",
+            "pedestal_native_exception",
+            "pedestal_deposit_not_observed",
+            "pedestal_postcondition_not_observed");
+        receipt.Evidence.Should().Contain("slot=4", "the live index is the slot the deposit spent");
+        receipt.Evidence.Should().Contain("named_slot=0", "the caller's index is printed beside the live one");
+    }
+
+    /// <summary>
     /// THE CRITICAL CASE. The native occupied arm knocks the displayed item off and answers false
     /// (ItemPedestal.cs:97-101), so a caller that reached it would lose the display. The refusal names the state and the
     /// item is untouched.
@@ -340,7 +368,7 @@ public sealed class PlaceItemOnPedestalActionTests
         int probe = execute.IndexOf("probe: true", StringComparison.Ordinal);
         int write = execute.IndexOf("probe: false", StringComparison.Ordinal);
         int settle = execute.IndexOf("pedestal.itemModifyMutex.Update(location)", StringComparison.Ordinal);
-        int consume = execute.IndexOf("ConsumeOneFromSlot(slot)", StringComparison.Ordinal);
+        int consume = execute.IndexOf("ConsumeOneFromSlot(liveSlot)", StringComparison.Ordinal);
         int read = execute.IndexOf("pedestal.heldObject.Value is StardewValley.Object placed", StringComparison.Ordinal);
 
         foreach ((string step, int index) in new[]

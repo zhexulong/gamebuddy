@@ -28,7 +28,7 @@ namespace GameBuddy.Stardew;
 // true, consumes a unit with `player.reduceActiveItemByOne()` (:11353). A caller that
 // only called the object and skipped the consumption would not be player-equivalent, and
 // a caller that consumed without the native call would be inventing a warp. This action
-// therefore does both, in the native order, with the named slot selected around the pair
+// therefore does both, in the native order, with the LIVE slot selected around the pair
 // so both halves act on the SAME item -- exactly the shape `use_item` established for
 // the same `{ slot, expectedQualifiedItemId }` contract
 // (farmhandexecutioncontroller.machinesanimalsitemsactions.cs `RequestLocalUseItem`).
@@ -49,16 +49,22 @@ namespace GameBuddy.Stardew;
 // :3174-3182) -- the same rule `use_obelisk` already records.
 //
 // FAILURE MODES, each with its own terminal so one story can never stand in for another:
-// the named slot holds nothing (`item_not_owned_in_slot`), it holds a different item
-// (`item_slot_changed`), it holds an object that is not a warp totem
-// (`item_not_a_warp_totem` -- the rain totem and the treasure totem land here), a warp
-// is already pending so two would stack (`warp_item_warp_already_pending`), the mapped
+// the pack holds no such item (`item_not_owned_in_slot`), it holds an object that is not a
+// warp totem (`item_not_a_warp_totem` -- the rain totem and the treasure totem land here),
+// a warp is already pending so two would stack (`warp_item_warp_already_pending`), the mapped
 // destination does not exist (`warp_item_destination_unavailable`), the actor is already
 // there so the native warp would be a no-op (`warp_item_already_at_destination`), the
 // native branch refused in its own terms (`warp_item_not_usable_here`), it returned true
 // without arming the routine (`warp_item_not_started`), it threw
 // (`warp_item_native_exception`), the arrival was a different location
 // (`warp_item_arrival_mismatch`), and success (`warp_item_arrived`).
+//
+// THE SLOT IS WHERE THE TOTEM WAS SEEN, NOT AN ADDRESS. The contract names the item as well
+// as the index (`{ slot, expectedQualifiedItemId }`), and a sibling node of the same plan
+// routinely re-packs the bag before this one arms, so the index is re-resolved against the
+// live pack (`NamedSlotStillHolds`, then `ResolveLiveSlot`). `item_slot_changed` is gone
+// rather than renamed: it only ever meant "the slot the plan named holds something else",
+// which is now the case this action handles instead of refusing.
 //
 // ---------------------------------------------------------------------------------
 // `pan_ore` -- the bounded one-use panning lifecycle.
@@ -298,22 +304,23 @@ internal sealed partial class ExecutionManager
 
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object totem)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(totem.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+        int liveSlot = NamedSlotStillHolds(slot, expectedQualifiedItemId)
+            ? slot
+            : ResolveLiveSlot(player, expectedQualifiedItemId, _ => true)?.Slot ?? -1;
+        if (liveSlot < 0 || player.Items[liveSlot] is not StardewValley.Object totem)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
-                "item_slot_changed",
-                $"slot={slot};live={totem.QualifiedItemId};expected={expectedQualifiedItemId}");
+                "item_not_owned_in_slot",
+                $"named_slot={slot};item={expectedQualifiedItemId}");
         if (!TryGetWarpTotemDestination(totem.QualifiedItemId, out string destination, out int destinationX, out int destinationY))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "item_not_a_warp_totem",
-                $"slot={slot};item={totem.QualifiedItemId};display_name={totem.DisplayName};native_branch={NativeTotemBranch(totem)}");
+                $"slot={liveSlot};named_slot={slot};item={totem.QualifiedItemId};display_name={totem.DisplayName};native_branch={NativeTotemBranch(totem)}");
 
         // The branch's own synchronous writes arm a 2000ms animation and a 1000ms fade
         // before `Game1.warpFarmer`; dispatching inside an existing warp or freeze would
@@ -324,7 +331,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "warp_item_warp_already_pending",
-                $"slot={slot};is_warping={Game1.isWarping.ToString().ToLowerInvariant()};freeze_pause={player.freezePause.ToString(CultureInfo.InvariantCulture)}");
+                $"slot={liveSlot};named_slot={slot};is_warping={Game1.isWarping.ToString().ToLowerInvariant()};freeze_pause={player.freezePause.ToString(CultureInfo.InvariantCulture)}");
 
         if (Game1.getLocationFromName(destination) is null)
             return this.RememberTerminal(
@@ -332,7 +339,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "warp_item_destination_unavailable",
-                $"slot={slot};item={totem.QualifiedItemId};destination={destination}");
+                $"slot={liveSlot};named_slot={slot};item={totem.QualifiedItemId};destination={destination}");
 
         string origin = location.NameOrUniqueName;
         int originX = player.TilePoint.X;
@@ -343,7 +350,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 "warp_item_already_at_destination",
-                $"slot={slot};item={totem.QualifiedItemId};origin={origin};destination={destination}");
+                $"slot={liveSlot};named_slot={slot};item={totem.QualifiedItemId};origin={origin};destination={destination}");
 
         // The native branch's own context gate (Object.cs:3470 -> `flag`). Named here so
         // a refusal says which fact was false instead of only "it did not start".
@@ -356,9 +363,9 @@ internal sealed partial class ExecutionManager
         try
         {
             // THE NATIVE PAIR, in Game1's own order (Game1.cs:11351-11353): the branch,
-            // then one unit consumed only when it returned true. Selecting the named slot
+            // then one unit consumed only when it returned true. Selecting the LIVE slot
             // around the pair is what makes both halves act on the SAME item.
-            player.CurrentToolIndex = slot;
+            player.CurrentToolIndex = liveSlot;
             started = totem.performUseAction(location);
             if (started)
                 player.reduceActiveItemByOne();
@@ -370,18 +377,18 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "warp_item_native_exception",
-                $"slot={slot};item={totem.QualifiedItemId};destination={destination};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"slot={liveSlot};named_slot={slot};item={totem.QualifiedItemId};destination={destination};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
         finally
         {
             player.CurrentToolIndex = previousSlot;
         }
 
-        int stackAfter = slot < player.Items.Count && player.Items[slot] is StardewValley.Object remaining ? remaining.Stack : 0;
+        int stackAfter = liveSlot < player.Items.Count && player.Items[liveSlot] is StardewValley.Object remaining ? remaining.Stack : 0;
         bool routineArmed = !player.CanMove && player.temporarilyInvincible
             && player.temporaryInvincibilityTimer == -4000 && player.jitterStrength == 1f;
         string evidence =
-            $"slot={slot};item={totem.QualifiedItemId};display_name={totem.DisplayName};origin={origin};origin_tile={originX},{originY};"
+            $"slot={liveSlot};named_slot={slot};item={totem.QualifiedItemId};display_name={totem.DisplayName};origin={origin};origin_tile={originX},{originY};"
             + $"destination={destination};destination_tile={destinationX},{destinationY};"
             + $"usable_context={usableContext.ToString().ToLowerInvariant()};native_use_started={started.ToString().ToLowerInvariant()};"
             + $"stack_before={stackBefore.ToString(CultureInfo.InvariantCulture)};stack_after={stackAfter.ToString(CultureInfo.InvariantCulture)};"
@@ -408,6 +415,39 @@ internal sealed partial class ExecutionManager
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", evidence);
     }
+
+    /// <summary>
+    /// Whether <paramref name="namedSlot"/> still holds the item a request named: an index inside the pack, a stack with
+    /// something left in it, and the very id the caller sent.
+    ///
+    /// <para>
+    /// THE FIRST OF TWO QUESTIONS, and they are not the same one. This asks the caller's own answer, and asks it first
+    /// because it is the only question that can see a <see cref="Item"/> which is not a
+    /// <see cref="StardewValley.Object"/>: a hat sits in the pack, and an action whose container carries an exact-type
+    /// rule of its own (the pedestal's <c>dropInItem.GetType() == typeof(Object)</c>, ItemPedestal.cs:102) has to reach
+    /// that rule rather than a pack refusal that restates it. The second question is
+    /// <see cref="ResolveLiveSlot"/>, asked only when this answers false: where the LIVE pack holds the item the caller
+    /// NAMED.
+    /// </para>
+    /// <para>
+    /// A plan's node is written from an observation, so its index is a position recorded then - a sibling node of the
+    /// same plan may have spent a stack or emptied it since, and the pack re-packs itself around the gap. Answering "the
+    /// item is gone" because the POSITION moved is the defect this pair exists to remove.
+    /// </para>
+    /// <para>
+    /// `ResolveLiveSlot`'s <c>isKind</c> argument is <c>_ =&gt; true</c> at every call site that uses this pair, and that is
+    /// not a missing predicate: the qualified id the caller names IS the identity for these actions, and each one's own
+    /// kind rule - <c>Utility.IsGeode</c>, the totem table, the pedestal's exact-type probe, <c>CanBeDeposited</c> - keeps
+    /// its own named refusal AFTER the slot is known. Narrowing the lookup by that rule instead would fold a refusal the
+    /// caller can act on into "the pack holds no such item".
+    /// </para>
+    /// </summary>
+    private static bool NamedSlotStillHolds(int namedSlot, string qualifiedItemId) =>
+        namedSlot >= 0
+        && namedSlot < Game1.player.Items.Count
+        && Game1.player.Items[namedSlot] is Item named
+        && named.Stack > 0
+        && string.Equals(named.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal);
 
     private static string NativeTotemBranch(StardewValley.Object item) => item.QualifiedItemId switch
     {

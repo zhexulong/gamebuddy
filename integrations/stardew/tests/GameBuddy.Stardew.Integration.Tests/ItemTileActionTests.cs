@@ -54,11 +54,17 @@ public sealed class ItemTileActionTests
     /// Every failure mode each action can produce has its own terminal code, so a receipt
     /// never collapses "there is no pan owned" into "the pan is not held", or "this object
     /// is not a warp totem" into "the destination does not exist".
+    ///
+    /// <para>
+    /// `item_slot_changed` used to stand between the first two, and it is DELETED rather than renamed: it only ever said
+    /// "the slot the plan named holds something else", which is now the case the action handles - the item the caller
+    /// NAMED is re-resolved against the live pack (`NamedSlotStillHolds`, then `ResolveLiveSlot`). A code that describes a
+    /// state the action now handles is a second spelling of "handled", and nothing can produce it any more.
+    /// </para>
     /// </summary>
     private static readonly string[] UseWarpItemReasonCodes =
     {
         "item_not_owned_in_slot",
-        "item_slot_changed",
         "item_not_a_warp_totem",
         "warp_item_warp_already_pending",
         "warp_item_destination_unavailable",
@@ -118,7 +124,7 @@ public sealed class ItemTileActionTests
         int nativeConsume = body.IndexOf("player.reduceActiveItemByOne()", StringComparison.Ordinal);
         nativeUse.Should().BeGreaterThanOrEqualTo(0, "the native totem branch must be the writer");
         nativeConsume.Should().BeGreaterThan(nativeUse, "the native order is branch, then consume");
-        body.Should().Contain("player.CurrentToolIndex = slot;");
+        body.Should().Contain("player.CurrentToolIndex = liveSlot;");
         body.Should().Contain("player.CurrentToolIndex = previousSlot;");
 
         // The arrival is the terminal, not this frame: the action hands the destination to

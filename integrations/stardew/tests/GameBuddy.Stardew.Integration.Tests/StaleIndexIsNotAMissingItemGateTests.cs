@@ -41,6 +41,16 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
+/// WHY <see cref="SlotIsAnAddress"/> IS EMPTY, and why that is an answer rather than a gap. The container family states
+/// this boundary in its own header - `chest_store` and `chest_retrieve` take a `chestId` and an item id "and nothing
+/// else", because "a slot is perception (which stack the snapshot happened to row up), not intent"
+/// (<c>farmhandexecutioncontroller.containeractions.cs</c>). They therefore declare no `slot` at all and never enter
+/// this population, and the address table's own invariant - its keys are members of the population - would reject an
+/// entry for them anyway. So their absence is not a hole in the table: it is the table saying they were never in this
+/// family. An action that DOES declare a slot and makes it an address belongs here with its reason; none does today.
+/// </para>
+///
+/// <para>
 /// WHAT IT READS, and therefore what it can miss: it is a source-shape gate over the action's whole request path (its
 /// handler arm, the request half, and every Mod method that half calls). It proves each member resolves through the ONE
 /// helper that asks the live pack; that the helper answers with the live slot is driven against a real world in
@@ -74,12 +84,8 @@ public sealed class StaleIndexIsNotAMissingItemGateTests
         ["equip_wearable"] = "the pack side of a wearable move is a slot the caller saw; the walk has not reached it",
         ["interact_npc_with_item"] = "not walked yet",
         ["machine_load"] = "not walked yet",
-        ["open_geode"] = "not walked yet",
-        ["place_item_on_pedestal"] = "not walked yet",
         ["place_owned_object"] = "not walked yet: the furniture identity change landed in the same file first",
-        ["put_item_in_fish_tank"] = "not walked yet",
         ["use_item"] = "not walked yet",
-        ["use_warp_item"] = "not walked yet",
     };
 
     private static readonly Lazy<Measurement> Measured = new(Measure);
