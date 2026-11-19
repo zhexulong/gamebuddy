@@ -69,6 +69,7 @@ const switchScript = `
   const {
     createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
     createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
+    createSharedSemanticProductionAuthorityFromDeploymentManifest,
     isCurrentMountedChatRuntimeLease,
   } = internal;
   const { loadHostDeploymentManifest } = await import(manifestUrl);
@@ -88,10 +89,18 @@ const switchScript = `
   // The restart scenario is a second process over a root the first one already
   // provisioned: it opens the known authority (and reconciles the terminal
   // teardown the first process left) instead of provisioning a fresh one.
+  // THE DESKTOP COMPOSITION'S OWN ENTRY POINT: the Chat and Game halves over one shared provision, which
+  // is what desktop-host-composition.ts opens. Its Chat half is mounted exactly like the standalone one.
+  const sharedOwner =
+    scenario === "unmounted-successor-shared-after-restart"
+      ? await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest)
+      : undefined;
   const authority =
-    scenario.endsWith("-after-restart")
-      ? await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest)
-      : await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
+    sharedOwner !== undefined
+      ? sharedOwner.chat
+      : scenario.endsWith("-after-restart")
+        ? await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest)
+        : await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const first = await authority.startMountedChatRuntime();
   const firstThread = first.chatThreadId;
   const firstSurface = first.chatSurfaceSessionId;
@@ -432,6 +441,12 @@ const switchScript = `
     // Reached only when the construction above mounted a root it had to refuse: the arm exists so the
     // refusal that test asserts is a real child exit and not a test that never ran.
     out.mountedThread = firstThread;
+  } else if (scenario === "unmounted-successor-shared-after-restart") {
+    out.mountedThread = firstThread;
+    out.mountedSurface = firstSurface;
+    const after = readDurable();
+    out.afterThreads = after.threads;
+    out.afterActive = after.active;
   } else if (scenario === "archive-selected-through-route") {
     // Item 1 of the double-authority settlement: the production management route's own
     // service archives the Chat the player is looking at, and both authorities are then
@@ -851,7 +866,8 @@ const switchScript = `
 
   store.close?.();
   process.stdout.write(JSON.stringify(out));
-  await authority.close();
+  if (sharedOwner === undefined) await authority.close();
+  else await sharedOwner.close();
 `;
 
 type SwitchScenario =
@@ -870,6 +886,7 @@ type SwitchScenario =
   | "archive-selected-through-route"
   | "unmounted-successor-create-only"
   | "unmounted-successor-after-restart"
+  | "unmounted-successor-shared-after-restart"
   | "no-live-chat-create-only"
   | "no-live-chat-after-restart";
 
@@ -1575,6 +1592,20 @@ test(
       assert.equal(afterActive.expected_selection_json, null, "the recorded settlement was left pending");
       // The conversation itself is intact: the player's Chat, not an empty shell.
       assert.equal(restarted.survivorReadable, true);
+
+      // The same heal through the entry point the desktop composition actually opens: the Chat and
+      // Game halves over one shared provision.
+      const sharedRoot = canonicalTestRootSync("semantic-unmounted-successor-shared-");
+      try {
+        await runSwitchScenario(sharedRoot, "unmounted-successor-create-only");
+        const shared = await runSwitchScenario(sharedRoot, "unmounted-successor-shared-after-restart");
+        assert.equal(shared.mountedThread, survivorThread);
+        assert.equal(shared.mountedSurface, survivorSurface);
+        assert.equal((shared.afterActive as Readonly<Record<string, unknown>>).chat_thread_id, survivorThread);
+        assert.equal((shared.afterActive as Readonly<Record<string, unknown>>).expected_selection_json, null);
+      } finally {
+        cleanup(sharedRoot);
+      }
     } finally {
       cleanup(root);
     }
