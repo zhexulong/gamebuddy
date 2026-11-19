@@ -214,13 +214,30 @@ export function formatGameWeather(token: string, zh: boolean): string {
  * While the native persistent-fatigue flag is set the same fact carries that
  * flag, because the next morning's restore is halved by it. Absent a finite
  * reading the WHOLE fact is omitted - a silent "fine" is worse than silence.
+ *
+ * <p>
+ * ONE DISPLAY PRECISION, STATED HERE: a tenth. The wire publishes the native `float` unchanged, so the game's own
+ * tenths arrive carrying representation noise - measured 2026-11-25 (`round77`) the prompt read `体力: 254.20001`,
+ * then `63.699966`, `245.90004`, `73.80031`, `65.10014`, five numbers whose last three to five digits are arithmetic
+ * rather than the world. All five are tenths plus that noise, so a tenth is INFORMATION-PRESERVING: nothing the
+ * engine spends is lost. It is also the whole range - `0`, `0.1`, `1` and a full `270` stay four different facts, so
+ * drained, nearly drained and fresh remain distinguishable, which a whole-number reading would spend at the bottom of
+ * the bar.
+ * </p>
  */
 export function formatGameStamina(stamina: number | undefined, exhausted: boolean | undefined, zh: boolean): string {
   if (stamina === undefined || !Number.isFinite(stamina)) return "";
-  const value = zh ? `体力: ${stamina}` : `stamina: ${stamina}`;
+  // Rounding in TENTHS rather than dividing by 0.1: `x / 0.1 * 0.1` reintroduces the noise it was meant to remove
+  // (`254.20001` -> `254.20000000000002`), while an integer count of tenths prints its shortest exact spelling.
+  const tenths = Math.round(stamina * STAMINA_TENTHS_PER_UNIT);
+  const shown = String(tenths / STAMINA_TENTHS_PER_UNIT);
+  const value = zh ? `体力: ${shown}` : `stamina: ${shown}`;
   if (exhausted !== true) return value;
   return zh ? `${value}（已疲惫）` : `${value} (exhausted)`;
 }
+
+/** The tenths one unit of the stamina reading is shown at: the game's own spending precision, and the noise's floor. */
+const STAMINA_TENTHS_PER_UNIT = 10;
 /**
  * The world context the companion sees each turn, as the one fact line Magic
  * Context injects: the native clock, date, weather and location, where she
@@ -396,6 +413,13 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
  * An ABSENT summary means the Mod did not measure it (the container actions were not advertised) and stays silent; a
  * measured zero is the answer to "do I have any chests here" and is printed, so "none here" and "the field never
  * arrived" stay distinguishable.
+ *
+ * ONE PREDICATE, SO THIS LINE HAS NOTHING TO EXPLAIN. It used to do more than print: when the count came out smaller
+ * than the chest rows the same observation carried, it appended `这次观察还列出 3 个箱子 (2,10)…，本图的计数没算它们` - a
+ * sentence reporting an argument between two predicates as if the world had said both halves. Measured 2026-11-18
+ * (`round76`): the FarmHouse printed 「本图箱子: 0（物品 0）」 beside three chests it listed itself. The Mod now answers
+ * "is this a chest" once, through `TryDescribePlacedChest`, for the summary and the row families alike, so the count
+ * cannot be smaller than the rows beside it and a wrapper that narrated the difference would be the lie it describes.
  */
 function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): string {
   const summary = source.chestsSummary;
@@ -403,30 +427,21 @@ function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): s
   // The full count is only worth the bytes when it is non-zero: "0 full" spends the line saying nothing the item count
   // did not already say.
   const full = summary.fullCount > 0 ? summary.fullCount : undefined;
-  const counted = zh
+  return zh
     ? full === undefined
-      ? `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}）`
-      : `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`
+      ? `${CHEST_COUNT_FIELD_ZH}: ${summary.chestCount}（物品 ${summary.itemCount}）`
+      : `${CHEST_COUNT_FIELD_ZH}: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`
     : full === undefined
       ? `chests here: ${summary.chestCount} (items ${summary.itemCount})`
       : `chests here: ${summary.chestCount} (items ${summary.itemCount}; full ${full})`;
-  // A COUNT THE SAME OBSERVATION CONTRADICTS. `SummarizeChests` counts the location's chests through its own ownership
-  // test, and the rows beside it are discovered separately - so measured 2026-11-18 (`round76`, the FarmHouse) the block
-  // printed 「本图箱子: 0（物品 0）」 one line above 「可交互的物件 宝箱 (2,10) 宝箱 (3,10) 宝箱 (4,10)」. Two of the
-  // block's own lines then disagree about whether there is a chest in the room she is standing in, and the count is the
-  // one that reads as the whole answer. The rows are printed, so the count may no longer be silent about what they say.
-  const observed = observationChestTiles(source);
-  if (observed.length <= summary.chestCount) return counted;
-  const named = observed
-    .slice(0, MAX_TARGET_TILES_SHOWN)
-    .map((tile) => `(${tile.x},${tile.y})`)
-    .join(" ");
-  const rest = observed.length - Math.min(observed.length, MAX_TARGET_TILES_SHOWN);
-  const remainder = rest > 0 ? (zh ? ` 其余 ${rest} 个` : ` and ${rest} more`) : "";
-  return zh
-    ? `${counted} · 这次观察还列出 ${observed.length} 个箱子 ${named}${remainder}，本图的计数没算它们`
-    : `${counted} · this observation also lists ${observed.length} chests ${named}${remainder}, which the count above did not include`;
 }
+
+/**
+ * The one spelling of the chest-count field's label, so the line the model reads and the gate that reads the line are
+ * the same name: a gate whose literal drifted from the rendered word would scan a block for a field that is no longer
+ * in it and report agreement with itself.
+ */
+export const CHEST_COUNT_FIELD_ZH = "本图箱子";
 
 /**
  * The game's own identity for a Chest big craftable: what a placed chest IS on the wire (`qualifiedItemId`).
@@ -438,7 +453,7 @@ function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): s
 const CHEST_QUALIFIED_ITEM_ID = "(BC)130";
 
 /**
- * The chests THIS observation published in the location she is standing in, as tiles.
+ * The chests THIS observation named, as tiles: the population the agreement gate holds the count line to.
  *
  * <p>
  * Three families publish a placed chest - `chests` (the radius-bounded container family), `colorTargets` (the repaint
@@ -447,8 +462,9 @@ const CHEST_QUALIFIED_ITEM_ID = "(BC)130";
  * the question is "how many chests did this observation name", not "how many rows".
  * </p>
  * <p>
- * `buildingChestTargets` is deliberately NOT here. Those rows are a building's OWN internal chest (a Mill's input), and
- * the summary's ownership test excludes them; counting them would manufacture the very disagreement this reads for.
+ * `buildingChestTargets` is deliberately NOT here. Those rows are a building's OWN internal chest (a Mill's input),
+ * which never enters the location's object layer and so is not one of the location's containers - counting it here
+ * would manufacture the very disagreement this reads for.
  * </p>
  */
 export function observationChestTiles(

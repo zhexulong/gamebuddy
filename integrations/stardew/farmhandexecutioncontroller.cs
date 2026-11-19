@@ -1969,9 +1969,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// the summary walks the same container list with the radius filter dropped rather than reusing the bounded one.
     /// </para>
     /// <para>
-    /// Eligibility is <see cref="IsOwnedOrdinaryChest"/> - the predicate both container actions already resolve through - so
-    /// the summary counts exactly the containers a plan could open, never a neighbouring player's or a special chest the
-    /// handlers refuse.
+    /// Eligibility is the ONE chest predicate, <see cref="TryDescribePlacedChest"/>: a chest is a placed `Chest`, the
+    /// same question the colour family asks. It is deliberately NOT <see cref="IsOwnedOrdinaryChest"/>, which answers "may
+    /// `chest_store`/`chest_retrieve` open this one" - counting through an admission test made this number a promise
+    /// about actions wearing the clothes of a fact about the room, and it disagreed with the rows the same observation
+    /// printed: measured 2026-11-18 (`round76`, the FarmHouse), 「本图箱子: 0（物品 0）」 sat above three chests the same
+    /// block listed at (2,10) (3,10) (4,10).
+    /// </para>
+    /// <para>
+    /// The consequence, stated: this line now counts a container those two actions refuse (`chest_not_owned`), so it is
+    /// what the room holds, never the set a plan may open.
     /// </para>
     /// <para>
     /// "Full" is the engine's own capacity: `Chest.GetActualCapacity()`, which `Chest.addItem` compares against the
@@ -1990,7 +1997,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int fullCount = 0;
         foreach ((StardewValley.Objects.Chest chest, int _, int _, bool _) in LocationStorageContainers(location))
         {
-            if (!IsOwnedOrdinaryChest(chest)) continue;
             chestCount++;
             IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
             int occupiedSlots = 0;

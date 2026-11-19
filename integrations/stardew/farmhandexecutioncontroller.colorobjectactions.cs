@@ -182,13 +182,23 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The one place that answers "is this world object a chest this action may repaint?", shared by
-    /// discovery, the execution body and the fixture's Given so the product and its declared
-    /// precondition can never disagree. The game's own write is `is Chest`-guarded
-    /// (DiscreteColorPicker.cs:75), so nothing else is this action's subject: a `Furniture` or
-    /// `StorageFurniture` colour is a different write and a different action.
+    /// The one place that answers "is this world object a chest?", asked by the location's container walk (and so by
+    /// the chest summary) and by this action's discovery, execution body and fixture Given alike.
+    ///
+    /// <para>
+    /// A chest is a placed <c>Chest</c> - the game's own type, which is the guard the native repaint carries too
+    /// (`DiscreteColorPicker.cs:75` is `if (itemToDrawColored is Chest chest)`). WHAT a chest is and WHICH chests an
+    /// action may open are two questions: this answers the first, and <see cref="IsOwnedOrdinaryChest"/> answers the
+    /// second for `chest_store`/`chest_retrieve`.
+    /// </para>
+    /// <para>
+    /// The split has to be this one. Measured 2026-11-18 (`round76`, the FarmHouse): the summary counted the room's
+    /// chests through the ownership test while this family addressed them through the type test, so one revision printed
+    /// 「本图箱子: 0（物品 0）」 above a chest the same block listed at (3,7) - a count and a list computed from two
+    /// predicates, reported as if the world had said both.
+    /// </para>
     /// </summary>
-    internal static bool TryDescribeColorableChest(StardewValley.Object? placed, out Chest? chest)
+    internal static bool TryDescribePlacedChest(StardewValley.Object? placed, out Chest? chest)
     {
         chest = placed as Chest;
         return chest is not null;
@@ -221,7 +231,7 @@ internal sealed partial class ExecutionManager
                 "color_target_unavailable",
                 $"tile={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};tile_object=none");
 
-        if (!TryDescribeColorableChest(placed, out Chest? colorable))
+        if (!TryDescribePlacedChest(placed, out Chest? colorable))
             return ColorTargetResolution.Reject(
                 "color_target_unavailable",
                 $"tile={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};tile_object={placed.QualifiedItemId};object_type={placed.GetType().Name}");
@@ -258,7 +268,7 @@ internal sealed partial class ExecutionManager
             if (result.Count >= ColorTargetLimit)
                 break;
             Vector2 tile = pair.Key;
-            if (pair.Value is null || !TryDescribeColorableChest(pair.Value, out Chest? chest))
+            if (pair.Value is null || !TryDescribePlacedChest(pair.Value, out Chest? chest))
                 continue;
             if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;

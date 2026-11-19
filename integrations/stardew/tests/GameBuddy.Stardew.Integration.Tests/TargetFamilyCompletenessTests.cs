@@ -232,6 +232,70 @@ public sealed class TargetFamilyCompletenessTests
         summary.Should().Be(new BridgeChestsSummary(0, 0, 0), "a measured zero is an answer, not an absence");
     }
 
+    /// <summary>
+    /// GATE `a_field_contradicts_its_own_observation:chestsSummary`.
+    ///
+    /// <para>
+    /// A COUNT AND A LIST ARE TWO READINGS OF ONE SET, so the count must count at least what the same observation's rows
+    /// can name. Measured 2026-11-18 (`round76`, the FarmHouse): 「本图箱子: 0（物品 0）」 stood three lines above three
+    /// chests the same block listed, because the summary asked `IsOwnedOrdinaryChest` while the colour family asked
+    /// `is Chest` - two predicates about one object, and a sentence between them narrated the argument for 171 turns.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS THE LOCATION'S OBJECT LAYER, counted here from the world rather than listed: every `Chest` the
+    /// walk can yield is a chest both projections must name. One of the two below is the farmhouse's starter gift chest
+    /// shape - placed by the WORLD, `playerChest == false` - which is exactly the chest the two predicates split on.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ChestsSummaryCountsEveryChestTheSameObservationNames()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.FreeOnePackSlot();
+        world.PlaceOrdinaryChest(x: 2, y: 2, items: new[] { new ChestItem(DiamondQualifiedItemId, 1) });
+        world.PlaceWorldChest(x: 3, y: 2, items: new[] { new ChestItem("(O)472", 15) });
+        world.StandAt(1, 2);
+
+        IReadOnlyList<(int X, int Y)> population = world.Farm.objects.Pairs
+            .Where(pair => pair.Value is StardewValley.Objects.Chest)
+            .Select(pair => ((int)pair.Key.X, (int)pair.Key.Y))
+            .ToList();
+        population.Should().HaveCountGreaterThan(1, "the fixture has to hold both a player chest and a world chest");
+
+        BridgeChestsSummary summary = world.ChestsSummary();
+        var named = ((IReadOnlyList<BridgeColorTarget>)world.DiscoverFamily("DiscoverColorTargets"))
+            .Select(target => (target.X, target.Y))
+            .ToList();
+
+        summary.ChestCount.Should().Be(population.Count, "the summary counts every chest the object layer holds");
+        named.Should().BeEquivalentTo(population, "the colour family names exactly the chests the count counted");
+        summary.ItemCount.Should().Be(16, "1 + 15: what the room holds, whichever predicate placed the container");
+    }
+
+    /// <summary>
+    /// TWO QUESTIONS, TWO ANSWERS: what the room HOLDS is the summary's, and which containers an action may OPEN stays
+    /// `IsOwnedOrdinaryChest`'s. A world-placed chest is counted and is not offered to `chest_store`/`chest_retrieve`.
+    ///
+    /// <para>
+    /// This is the consequence of counting a chest by its type rather than by its ownership, stated as a test so nobody
+    /// has to guess it: the summary is an inventory of the room, never a promise about admission. A lane that decides the
+    /// container actions should admit such a chest changes them HERE, with their own evidence - not by narrowing the count
+    /// back until the two agree.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AWorldChestIsCountedWithoutBeingOfferedToTheContainerActions()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.FreeOnePackSlot();
+        world.PlaceWorldChest(x: 3, y: 2, items: new[] { new ChestItem("(O)472", 15) });
+        world.StandAt(1, 2);
+
+        world.ChestsSummary().ChestCount.Should().Be(1, "a chest the world placed is still a chest in the room");
+        world.ChestStates().Should().BeEmpty(
+            "the container actions keep their own admission, which is a different question from what the room holds");
+    }
+
     [Fact]
     public void NpcRelationshipPublishesAVillagerThePlayerHasNeverMet()
     {
@@ -717,6 +781,22 @@ public sealed class TargetFamilyCompletenessTests
         {
             var chest = new StardewValley.Objects.Chest();
             chest.playerChest.Value = true;
+            chest.globalInventoryId.Value = null;
+            chest.ItemId = "130";
+            chest.TileLocation = new Vector2(x, y);
+            foreach (ChestItem item in items) chest.Items.Add(Item(item.QualifiedItemId, item.Stack));
+            this.Farm.objects[new Vector2(x, y)] = chest;
+        }
+
+        /// <summary>
+        /// A chest the WORLD placed rather than the player. `playerChest == false` is the farmhouse's starter gift chest,
+        /// which the location itself puts down with the parsnip seeds in it - and it is a `Chest` all the same, which is
+        /// the whole distinction `TryDescribePlacedChest` answers and `IsOwnedOrdinaryChest` does not.
+        /// </summary>
+        internal void PlaceWorldChest(int x, int y, IReadOnlyList<ChestItem> items)
+        {
+            var chest = new StardewValley.Objects.Chest();
+            chest.playerChest.Value = false;
             chest.globalInventoryId.Value = null;
             chest.ItemId = "130";
             chest.TileLocation = new Vector2(x, y);

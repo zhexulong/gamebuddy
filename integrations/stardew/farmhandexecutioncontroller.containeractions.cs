@@ -251,8 +251,10 @@ internal sealed partial class ExecutionManager
     {
         foreach (StardewValley.Object obj in location.objects.Values)
         {
-            if (obj is StardewValley.Objects.Chest chest)
-                yield return (chest, (int)chest.TileLocation.X, (int)chest.TileLocation.Y, false);
+            // The ONE chest predicate (`TryDescribePlacedChest`), so the container actions, the chest summary and the
+            // colour family cannot answer "is this a chest" three ways.
+            if (TryDescribePlacedChest(obj, out StardewValley.Objects.Chest? chest))
+                yield return (chest!, (int)chest!.TileLocation.X, (int)chest.TileLocation.Y, false);
         }
         if (KitchenFridgeTile(location) is { } fridgeTile && location.GetFridge() is { } fridge)
             yield return (fridge, (int)fridgeTile.X, (int)fridgeTile.Y, true);

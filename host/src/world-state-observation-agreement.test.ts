@@ -10,9 +10,19 @@
  * </p>
  *
  * <p>
- * THE POPULATION IS THE BLOCK'S OWN FIELDS: the count line `composeWorldState` renders from `chestsSummary`, and every
- * label in `TARGET_FAMILY_LABELS` - the table the wire's row families are named from. Neither is a list in this file, so
- * a family added tomorrow is measured without anyone remembering this test; the state vocabulary below is what a label
+ * THE COUNT HALF IS A POPULATION QUESTION, NOT A WORDING ONE. A count and a list beside it are two readings of ONE set,
+ * so the count must count at least what the block's own rows name; a line that instead explains the difference is the
+ * block narrating its own disagreement. That narration was shipped for 171 turns (`本图箱子: 0（物品 0） · 这次观察还列出
+ * 1 个箱子 (3,7)，本图的计数没算它们`, the FarmHouse) and this gate reads the NUMBER against the ROWS, so prose cannot
+ * satisfy it. The two sides are computed by one predicate in the Mod (`TryDescribePlacedChest`), which is what makes the
+ * rows a subset of the count rather than a second opinion about it.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS THE BLOCK'S OWN FIELDS: the count line the vocabulary renders from `chestsSummary`, read out of the
+ * block under the spelling the renderer itself uses (`CHEST_COUNT_FIELD_ZH`), and every label in
+ * `TARGET_FAMILY_LABELS` - the table the wire's row families are named from. Neither is a list in this file, so a
+ * family added tomorrow is measured without anyone remembering this test; the state vocabulary below is what a label
  * may CLAIM, and a claim its own rows deny fails here by name.
  * </p>
  */
@@ -21,16 +31,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { composeWorldState } from "./fact-brief.js";
-import { observationChestTiles, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
+import { CHEST_COUNT_FIELD_ZH, observationChestTiles, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
 import type { Snapshot } from "./protocol.js";
 
-/**
- * The FarmHouse observation of `round76` line 197, as the wire carried it: three chests one tile away, and a container
- * summary that counted none of them.
- */
-function farmhouseWithThreeChests(): Snapshot {
+/** The block's facts are joined with `；` and its lines with `\n`, so a "line" is one of either. */
+function factSegments(block: string): readonly string[] {
+  return block
+    .split(/[\n；]/u)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+/** One target-family row, as `worldObjectTargets` publishes a house's chest. */
+function chestRow(targetId: string, x: number, y: number): Readonly<Record<string, unknown>> {
   return {
-    revision: 325,
+    targetId,
+    kind: "Chest",
+    location: "FarmHouse",
+    x,
+    y,
+    slot: 0,
+    qualifiedItemId: "(BC)130",
+    displayName: "宝箱",
+    rotation: null,
+    rotations: null,
+  };
+}
+
+/**
+ * The FarmHouse as the Mod publishes it: ONE chest at (3,7) - the starter gift chest, holding the parsnip seeds - and a
+ * summary that counts it.
+ *
+ * This is the wire that used to print the ghost: `本图箱子: 0（物品 0） · 这次观察还列出 1 个箱子 (3,7)，本图的计数没算
+ * 它们`. Both halves are now the same predicate, so the count is the room's and the rows are a subset of it.
+ */
+function farmhouseWithAGiftChest(): Snapshot {
+  return {
+    revision: 631,
     location: "FarmHouse",
     tile: { x: 3, y: 11 },
     stamina: 196,
@@ -50,72 +87,49 @@ function farmhouseWithThreeChests(): Snapshot {
     currentToolSlot: 0,
     toolSlots: [{ slot: 0, label: "(T)Axe", category: "axe", upgradeLevel: 0 }],
     inventoryItemFacts: [],
-    // The Mod's own scan counted nothing here, which is what the line said.
-    chestsSummary: { chestCount: 0, itemCount: 0, fullCount: 0 },
+    chestsSummary: { chestCount: 1, itemCount: 15, fullCount: 0 },
+    chests: [
+      {
+        chestId: "chest_8f21ac",
+        x: 3,
+        y: 7,
+        displayName: "宝箱",
+        isFridge: false,
+        items: [{ slot: 0, qualifiedItemId: "(O)472", displayName: "防风草种子", stack: 15 }],
+      },
+    ],
+    colorTargets: [{ targetId: "color_4b90de", location: "FarmHouse", x: 3, y: 7, color: "119,191,255" }],
+    worldObjectTargets: [chestRow("chest_1", 3, 7)],
+  } as unknown as Snapshot;
+}
+
+/**
+ * The same room with the summary and the row families replaced, so one fixture describes the wire and each case varies
+ * only the numbers a publisher would vary.
+ */
+function withChests(
+  summary: Readonly<{ chestCount: number; itemCount: number; fullCount: number }>,
+  rows: readonly Readonly<Record<string, unknown>>[],
+): Snapshot {
+  return {
+    ...farmhouseWithAGiftChest(),
+    chestsSummary: summary,
     chests: [],
     colorTargets: [],
-    worldObjectTargets: [
-      {
-        targetId: "chest_1",
-        kind: "Chest",
-        location: "FarmHouse",
-        x: 2,
-        y: 10,
-        slot: 0,
-        qualifiedItemId: "(BC)130",
-        displayName: "宝箱",
-        rotation: null,
-        rotations: null,
-      },
-      {
-        targetId: "chest_2",
-        kind: "Chest",
-        location: "FarmHouse",
-        x: 3,
-        y: 10,
-        slot: 0,
-        qualifiedItemId: "(BC)130",
-        displayName: "宝箱",
-        rotation: null,
-        rotations: null,
-      },
-      {
-        targetId: "chest_3",
-        kind: "Chest",
-        location: "FarmHouse",
-        x: 4,
-        y: 10,
-        slot: 0,
-        qualifiedItemId: "(BC)130",
-        displayName: "宝箱",
-        rotation: null,
-        rotations: null,
-      },
-      {
-        targetId: "plant_1",
-        kind: "Furniture",
-        location: "FarmHouse",
-        x: 1,
-        y: 10,
-        slot: 0,
-        qualifiedItemId: "(F)1365",
-        displayName: "家居植物",
-        rotation: null,
-        rotations: null,
-      },
-    ],
-    doorTargets: [
-      {
-        targetId: "door_1",
-        location: "FarmHouse",
-        sourceX: 3,
-        sourceY: 12,
-        targetLocation: "Farm",
-        targetX: 64,
-        targetY: 15,
-      },
-    ],
+    worldObjectTargets: rows,
   } as unknown as Snapshot;
+}
+
+/**
+ * The FarmHouse observation of `round76` line 197, as the wire carried it: three chests one tile away, and a container
+ * summary that counted none of them. Kept as the gate's own falsifier - a wire that still disagrees must be refused.
+ */
+function farmhouseThatCountedNothing(): Snapshot {
+  return withChests({ chestCount: 0, itemCount: 0, fullCount: 0 }, [
+    chestRow("chest_1", 2, 10),
+    chestRow("chest_2", 3, 10),
+    chestRow("chest_3", 4, 10),
+  ]);
 }
 
 /**
@@ -193,7 +207,8 @@ function blockOf(snapshot: Snapshot): string {
 }
 
 /**
- * One check's verdict: the field, the two lines that disagree, and whether there was anything to check.
+ * One check's verdict: the field, the line that makes the claim, the line that denies it, and whether there was anything
+ * to check.
  *
  * `checked: false` is a field this snapshot published nothing for - not a pass. The gate's own line counts them
  * separately so `contradictory 0` can never be read as "everything was verified".
@@ -201,6 +216,7 @@ function blockOf(snapshot: Snapshot): string {
 type FieldVerdict = Readonly<{
   field: string;
   line: string;
+  deniesWith: readonly string[];
   checked: boolean;
   contradicts: readonly string[];
 }>;
@@ -243,7 +259,8 @@ function checkLabelStateWord(
   rows: readonly Readonly<Record<string, unknown>>[],
 ): FieldVerdict {
   const carried = LABEL_STATE_WORDS.filter((word) => rows.some((row) => word.field in row));
-  if (carried.length === 0) return Object.freeze({ field: family, line: label, checked: false, contradicts: [] });
+  if (carried.length === 0)
+    return Object.freeze({ field: family, line: label, deniesWith: [], checked: false, contradicts: [] });
   for (const { word, denies } of carried) {
     if (!label.includes(word)) continue;
     const denied = rows.find((row) => denies(row));
@@ -251,77 +268,92 @@ function checkLabelStateWord(
       return Object.freeze({
         field: `${family}:${word}`,
         line: `${label} …`,
+        deniesWith: [JSON.stringify(denied)],
         checked: true,
         contradicts: [JSON.stringify(denied)],
       });
   }
-  return Object.freeze({ field: family, line: label, checked: true, contradicts: [] });
+  return Object.freeze({ field: family, line: label, deniesWith: [], checked: true, contradicts: [] });
 }
 
 /**
- * Whether the count line agrees with the chests the SAME observation published.
+ * Whether the count line agrees with the chests the SAME block lists.
  *
- * The count is read from the block's own text, so this measures what the model was handed rather than what the renderer
- * intended, and the chests are read from the snapshot through the one function the renderer also uses.
+ * The count is read from the block's own text under the label the renderer itself uses, so this measures what the model
+ * was handed rather than what the renderer intended; the chests are the tiles the same observation published, through
+ * the one function `observationChestTiles` that also defines what "the observation names this chest" means. A count
+ * smaller than that set is the count denying a row three lines above it - and no wording in the block can repair it,
+ * because the two numbers are what a reader compares.
  */
-function checkChestCount(countedLine: string, snapshot: Snapshot): FieldVerdict {
-  const counted = Number(/本图箱子: (\d+)/u.exec(countedLine)?.[1] ?? "-1");
-  assert.ok(counted >= 0, `the count line carries no number this gate can read: ${countedLine}`);
-  // THE ROWS THE COUNT DID NOT INCLUDE MAY BE NAMED INSTEAD OF ADDED: the summary is the Mod's measure of the location
-  // and the rows are its own discovery, so the line's job is to stop being silent about the difference - not to
-  // quietly adopt the larger number as the total.
-  const uncounted = observationChestTiles(snapshot).slice(counted);
-  const unnamed = uncounted.filter((tile) => !countedLine.includes(`(${String(tile.x)},${String(tile.y)})`));
+function checkChestCount(block: string, snapshot: Snapshot): FieldVerdict {
+  const pattern = new RegExp(`${CHEST_COUNT_FIELD_ZH}: (\\d+)`, "u");
+  const line = factSegments(block).find((segment) => pattern.test(segment));
+  if (line === undefined)
+    return Object.freeze({ field: CHEST_COUNT_FIELD_ZH, line: "", deniesWith: [], checked: false, contradicts: [] });
+  const counted = Number(pattern.exec(line)?.[1] ?? "-1");
+  assert.ok(counted >= 0, `the count line carries no number this gate can read: ${line}`);
+  const observed = observationChestTiles(snapshot);
+  const contradicts = observed.slice(counted).map((tile) => `(${String(tile.x)},${String(tile.y)})`);
+  const deniesWith = factSegments(block).filter((segment) => contradicts.some((tile) => segment.includes(tile)));
   return Object.freeze({
-    field: "本图箱子",
-    line: countedLine,
+    field: CHEST_COUNT_FIELD_ZH,
+    line,
+    deniesWith,
     checked: true,
-    contradicts: unnamed.map((tile) => `(${String(tile.x)},${String(tile.y)})`),
+    contradicts,
   });
 }
 
-/** The chest line one block carries, or `undefined` when the snapshot published no summary at all. */
-function chestCountLineOf(block: string): string | undefined {
-  return /本图箱子: [^；\n]*/u.exec(block)?.[0];
-}
-
 test("a_field_contradicts_its_own_observation: the chest count never disputes the chests beside it", () => {
-  const snapshot = farmhouseWithThreeChests();
-  const block = blockOf(snapshot);
-  const line = chestCountLineOf(block);
-  assert.ok(line !== undefined, `the block published no chest line to check: ${block}`);
-  const verdict = checkChestCount(line, snapshot);
-  const examined = observationChestTiles(snapshot).length;
+  // THE POPULATION IS THE WIRE SHAPES A ROOM CAN HAVE: one chest counted and named at the same tile, a measured zero
+  // with nothing named, and a location-wide count over a radius-bounded row list (the distinction the summary exists
+  // for). Each is one reading of the block's count field.
+  const observations = [
+    farmhouseWithAGiftChest(),
+    withChests({ chestCount: 0, itemCount: 0, fullCount: 0 }, []),
+    withChests({ chestCount: 3, itemCount: 41, fullCount: 2 }, [chestRow("chest_1", 3, 7)]),
+  ];
+  const verdicts = observations.map((snapshot) => checkChestCount(blockOf(snapshot), snapshot));
+  const checked = verdicts.filter((verdict) => verdict.checked).length;
+  const contradictory = verdicts.filter((verdict) => verdict.contradicts.length > 0);
   console.log(
-    `a_field_contradicts_its_own_observation:本图箱子 · fields examined 1 · checked 1 · contradictory ${String(verdict.contradicts.length === 0 ? 0 : 1)} · chests observed ${String(examined)}`,
+    `a_field_contradicts_its_own_observation:${CHEST_COUNT_FIELD_ZH} · fields examined ${String(verdicts.length)} · checked ${String(checked)} · contradictory ${String(contradictory.length)}`,
   );
+  assert.ok(checked > 0, "no observation in the fixtures published a count line, so this gate would agree with itself");
   assert.deepEqual(
-    verdict.contradicts,
+    contradictory.map((verdict) => verdict.field),
     [],
-    `the count line and the rows beside it disagree: "${verdict.line}" vs ${verdict.contradicts.join(" / ")}`,
+    `the count line and the rows beside it disagree: ${contradictory
+      .map((verdict) => `"${verdict.line}" vs ${verdict.deniesWith.join(" / ")} (${verdict.contradicts.join(" ")})`)
+      .join(" | ")}`,
   );
-  // AND THE COUNT IS STILL THE MOD'S. The line may not quietly adopt the rows as its total: it says which measure
-  // counted nothing and which rows it did not include.
-  assert.match(line, /本图箱子: 0（物品 0）/u, `the summary's own number is what the line leads with: ${line}`);
+  // AND THE ROWS ARE STILL PRINTED: the fix is agreement between two published readings, never the removal of one.
+  const block = blockOf(farmhouseWithAGiftChest());
   assert.match(
-    line,
-    /这次观察还列出 3 个箱子 \(2,10\) \(3,10\) \(4,10\)/u,
-    `the rows the count missed are named: ${line}`,
+    block,
+    new RegExp(`${CHEST_COUNT_FIELD_ZH}: 1（物品 15）`, "u"),
+    `the room's count is the room's: ${block}`,
   );
+  assert.match(block, /可染色处 \(3,7\)|箱子 \(3,7\)/u, `the chest the count includes is still named: ${block}`);
+  assert.equal(block.includes("本图的计数没算它们"), false, `no line narrates a disagreement: ${block}`);
 });
 
-test("a_field_contradicts_its_own_observation: the shipped count line is REFUSED by that check", () => {
-  // THE FALSIFIER, quoting `round76` line 197 verbatim. A gate that the current line passes has to reject the line this
-  // repository shipped, or it is decoration.
-  const verdict = checkChestCount("本图箱子: 0（物品 0）", farmhouseWithThreeChests());
-  assert.ok(
-    verdict.contradicts.length > 0,
+test("a_field_contradicts_its_own_observation: a wire that still disagrees is REFUSED by that check", () => {
+  // THE FALSIFIER, quoting `round76` line 197 verbatim: three chests published, a count of zero. A check the shipped
+  // block passes has to reject the wire this repository shipped, or it is decoration.
+  const snapshot = farmhouseThatCountedNothing();
+  const verdict = checkChestCount(blockOf(snapshot), snapshot);
+  assert.equal(verdict.checked, true, "the falsifier's block carries a count line, so this is a measured verdict");
+  assert.deepEqual(
+    verdict.contradicts,
+    ["(2,10)", "(3,10)", "(4,10)"],
     `a zero over three published chests must not read as agreement: ${verdict.line}`,
   );
+  assert.ok(verdict.deniesWith.length > 0, "the refusal names the lines that deny the count");
 });
 
 test("a_field_contradicts_its_own_observation: no family label claims a state its own rows deny", () => {
-  const observations = [freshlyTilledFarm(), farmhouseWithThreeChests()];
+  const observations = [freshlyTilledFarm(), farmhouseWithAGiftChest()];
   const verdicts: FieldVerdict[] = [];
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     for (const snapshot of observations) verdicts.push(checkLabelStateWord(family, label, rowsOf(snapshot, family)));
