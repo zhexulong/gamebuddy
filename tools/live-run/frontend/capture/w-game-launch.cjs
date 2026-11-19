@@ -1380,7 +1380,6 @@ async function hostAnswers(port) {
       panel = await page.evaluate(readInstallationPanel);
     }
     record("installation panel", panel);
-    if (rescans > 0) world.rescans = rescans;
     if (panel.present !== true) return await notMeasured(browser, "no_installation_panel", "the Game surface painted no installation panel, so no registration control exists to drive");
     if (panel.candidates.length === 0)
       return await notMeasured(
