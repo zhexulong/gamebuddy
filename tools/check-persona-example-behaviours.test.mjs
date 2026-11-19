@@ -141,6 +141,9 @@ test("the incident: deleting a permission reds every example that demonstrated i
 
 test("an example the vocabulary has not classified reds, because the population is derived from the card", (context) => {
   const { root, path, original } = copiedCorpus(context);
+  const baseline = censusOf(runGate(root).stdout);
+  const baselineExamples = Number(baseline.match(/examples (\d+)/u)?.[1] ?? 0);
+  assert.ok(baselineExamples > 0, baseline);
   const card = JSON.parse(original);
   const added = "早啊，粥在锅里温着，自己盛。";
   card.data.mes_example = `${card.data.mes_example}\n\n<START>\n{{user}}: 早上好。\n{{char}}: ${added}`;
@@ -149,8 +152,10 @@ test("an example the vocabulary has not classified reds, because the population 
   const result = runGate(root);
   assert.equal(result.status, 1, result.stdout);
   assert.ok(result.lines.includes(`example_unclassified:${added}`), result.stdout);
-  // The new turn is in the population, which is the whole point: the gate counted 16 turns, not 15.
-  assert.match(censusOf(result.stdout), /examples 16 · covered 15/u);
+  assert.match(
+    censusOf(result.stdout),
+    new RegExp(`examples ${baselineExamples + 1} · covered ${baselineExamples}`, "u"),
+  );
 });
 
 test("the four truth-table cells are disjoint, and each names its own remedy", () => {

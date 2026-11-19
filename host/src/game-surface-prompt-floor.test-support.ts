@@ -218,6 +218,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "THE BUBBLE'S SIZE LEFT THE FLOOR, because the number described no surface it claimed. Deleted: `one_bubble_of_size` ('One bubble holds 80 characters ... anything you say past the bubble's ceiling is deleted before your partner sees it'), measured against the three things it named at once - the presentation transport carries 4,000 characters (`BridgeSession.cs` `MaximumPresentationTextLength`), the bubble draws two lines of 448 px (~34 CJK glyphs) and clamps itself with a visible `…` (`CompanionBubble.cs` `ClampToLines`), and the chat line beside it keeps the whole text for scroll-back (`ModEntry.cs`). So 80 was the transport's bound divided by fifty and the bubble's capacity multiplied by two: a 'compliant' 79-character line already ended in `…` on screen, while the delivery deleted 18 turns' tails on `round62` (533 characters, 26 sentences) to obey it. The delivery now cuts only at the transport's own bound (`companion-delivery-pacing.ts` reads `MAX_COMPANION_PRESENTATION_TEXT_CHARS`) and the prompt states no size at all. Measured by the test against the product's builder: `systemChars` 5,553 and the conduct slice 3,226 - both -297, and the two deltas AGREE because the edit is inside the conduct block and nowhere else (the deleted rule is 296 chars and the join that held it 1, MEASURED on the two texts; it is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both -297). The share is re-derived from that pair as 3,226 / 5,553 = 0.5809. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (23,281 -> 22,984, 32,450 -> 32,153) under `remeasured_2026_11_05`'s convention, and the gaps the entries above name are inherited unchanged. THIS WORKTREE CARRIES NO OTHER LANE'S CARD EDIT, so the number here is the tree's own reading rather than a projection of what a commit ships. The TOKEN columns are carried unchanged and remain the under-count `remeasured_2026_11_05` describes. NOT IN THIS READING'S COLUMNS: `game-surface-prompt-floor.test.ts` now holds the delivery and the prompt together - a turn of 108 characters and a turn at the ceiling arrive whole, a turn past it is cut and the cut is counted, and the assembled prompt states no bubble size.",
     remeasured_2026_11_25:
       "THE ARCHIVE'S AUDIENCE MOVED FROM THE HARNESS'S SECTION TO THIS FLOOR, so the composed floor grew by exactly one rule (+369 chars: the rule is 368 and the join that holds it 1). Magic Context's `magic_context` system-prompt section is switched off for both surfaces (`runtime-core.internal.ts`, `system_prompt_injection.enabled: false`), and the one claim of it the companion needs - that the archive is her own earlier turns rather than a repository's history - is now `archive_is_her_own_history`. MEASURED on the two builders: `systemChars` 5,940 and the conduct slice 3,595, and the deltas AGREE (both +369) because the edit is inside the conduct block and nowhere else, so the share is 3,595 / 5,940 = 0.6052. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+369 chars, +377 bytes: the rule carries six non-ASCII characters - two em dashes and four section marks) under `remeasured_2026_11_05`'s convention. THE +18 THIS RE-RECORDING ALSO ABSORBS IS NOT THIS CHANGE'S: at HEAD the builder measured 5,571 against the recorded 5,553, so the column was already stale by 18 characters before this rule existed, and the lane that made those edits is not this one. THE TOKEN COLUMNS ARE CARRIED UNCHANGED and remain the irreproducible under-count `remeasured_2026_11_05` describes; no token number here describes this prompt. NOT IN THIS READING'S COLUMNS: the assembled-prompt half of the same change - what a real turn was actually sent - is `game-prompt-harness-isolation.private.test.ts`, and the gate that reads the harness's own source for its section and tool names is `surface-protocol-isolation.test.ts`.",
+    remeasured_2026_11_19:
+      "THE DEFAULT CARD AND PRESETS WERE UPDATED TOGETHER (`card.json`, `default-companion-preset.ts`), so `systemChars` moved while `conductBlock.chars` stayed fixed at 3,595. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 6,184 (vs 6,025 at HEAD right before this edit: +159 raw chars, +161 JSON-escaped chars, +455 raw UTF-8 bytes / +457 JSON UTF-8 bytes; vs 5,940 previously recorded: +244, absorbing +85 of pre-existing HEAD card drift over the 5,940 reading). `conductBlock.chars` is unchanged at 3,595, so `charShareOfSystemPrompt` is re-derived as 3,595 / 6,184 = 0.5813. `envelopeChars`/`envelopeBytes` follow the system string by this change's measured JSON delta against HEAD (+161 chars: 23,353 -> 23,514; +457 UTF-8 JSON bytes: 32,530 -> 32,987) under `remeasured_2026_11_05`'s convention. The TOKEN columns remain carried unchanged.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -225,26 +227,24 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 5,940 at `remeasured_2026_11_25`, which added the archive
-    // rule and also absorbed the 18 characters this column was already stale by at HEAD. The token column below is the
-    // 2026-11-05 MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
-    systemChars: 5940,
+    // Re-derived from the product's builder by the test itself: 6,184 at `remeasured_2026_11_19`, which followed the
+    // card/preset RP update (+159 raw chars over HEAD) and also absorbed the 85 characters this column was already stale
+    // by at HEAD. The token column below is the 2026-11-05 MEASUREMENT, an under-count of a shorter prompt.
+    systemChars: 6184,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's own JSON-escaped delta (+369 characters): the tool array and the empty
-    // message list are unchanged, so the system string is the whole of it. Not re-measured - see
-    // `remeasured_2026_11_22_b`, which also records the pre-existing -1,265 this number does not carry.
-    envelopeChars: 23353,
-    // The same rule in UTF-8 bytes: 32,153 + 377, the six non-ASCII characters costing two bytes each above ASCII.
-    envelopeBytes: 32530,
+    // The recorded envelope plus this change's measured JSON-escaped delta over HEAD (+161 characters): the tool array
+    // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19`.
+    envelopeChars: 23514,
+    // Same change in UTF-8 JSON bytes: 32,530 + 457 (455 UTF-8 bytes + 2 newline escapes).
+    envelopeBytes: 32987,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
     chars: 3595,
     tokens: 1227,
-    // The measured slice over the measured prompt: 3,595 / 5,940. Recorded as the quotient, not as a share typed
-    // separately from the two numbers it divides - an earlier recording carried 0.655 against 7,268/11,101.
-    charShareOfSystemPrompt: 0.6052,
+    // The measured slice over the measured prompt: 3,595 / 6,184.
+    charShareOfSystemPrompt: 0.5813,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

@@ -88,11 +88,11 @@ export const BEHAVIOURS = Object.freeze([
     samples: ["震得我手腕生疼", "水壶沉死了"],
   },
   {
-    behaviour: "files_an_action_receipt",
-    gloss: "把已经做完的动作当作回执报出来",
-    mode: "forbidden",
-    claim: "动作回执是内部认知，绝不翻成台词广播",
-    samples: ["拔完了", "敲出来两块铜矿", "地我刚扫过"],
+    behaviour: "reports_an_immediate_obstacle",
+    gloss: "遇上闭店、卡路或阻塞时，只讲眼前这道障碍",
+    mode: "permitted",
+    claim: "遇上卡路、没体力、天黑，若交流只讲眼前这道障碍，不讲原因、不讲规则",
+    samples: ["罗宾门口挂着休业牌呢", "东头那块大石头把路口堵死了"],
   },
   {
     behaviour: "asks_the_user_a_question",
