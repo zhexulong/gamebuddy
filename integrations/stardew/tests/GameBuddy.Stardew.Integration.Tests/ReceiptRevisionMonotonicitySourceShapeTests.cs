@@ -79,13 +79,14 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
     /// <summary>
     /// WHICH FAILURES ARE THE ALARM IS THE CATALOGUE'S DECLARATION, read here and nowhere else.
     ///
-    /// The funnel answers one code for four different refusals (a payload it could not read, a tuple or a transition
-    /// that did not match, a write that did not land), and every one of them is the same alarm for an action that
-    /// changed the world - the journalled receipt is the only record the mutation happened - and a missing row for an
-    /// action that changed nothing. Measured `round78`, game time 12:10, a warp into `Mine` landing: a pure
-    /// `express_emote` came back `execution_receipt_persistence_failed` and `MarkDurabilityFailure` circuit-broke the
-    /// run. A second hand-written list inside the funnel would let the two answers drift, so the split is asserted to
-    /// be the catalogue's single predicate.
+    /// The funnel answers the journal's own code (a payload it could not read, a version from another schema, a tuple or
+    /// a transition that did not match, a row that vanished, a write that did not land), and every one of them is the same
+    /// alarm for an action that changed the world - the journalled receipt is the only record the mutation happened - and a
+    /// missing row for an action that changed nothing. Measured `round78`, game time 12:10, a warp into `Mine` landing: a
+    /// pure `express_emote` came back `execution_receipt_persistence_failed` and `MarkDurabilityFailure` circuit-broke the
+    /// run. A second hand-written list inside the funnel would let the two answers drift, so the split is asserted to be the
+    /// catalogue's single predicate - and the quarantine is asserted to carry the CODE, because a refusal that says only
+    /// "persistence failed" cannot be told from a lost write or an unreadable payload.
     /// </summary>
     [Fact]
     public void TheDurabilityAlarmsScopeIsTheCataloguesDeclarationAndNotAListInTheFunnel()
@@ -95,8 +96,8 @@ public sealed class ReceiptRevisionMonotonicitySourceShapeTests
             "FarmhandActionCatalog.ChangesTheWorld(admission.ActionId)",
             "the alarm's scope is the catalogue's declaration, read from the admission's own action id");
         body.Should().Contain(
-            "this.ledger.MarkDurabilityFailure(receipt.RequestId);",
-            "a world change the journal could not record still quarantines the request");
+            "this.ledger.MarkDurabilityFailure(receipt.RequestId, result.Code);",
+            "a world change the journal could not record still quarantines the request, and the journal's cause travels with it");
         body.Should().Contain(
             "ignored={ignored}",
             "and the expression/observational miss keeps its own name in the marker, so a missing row is observable");

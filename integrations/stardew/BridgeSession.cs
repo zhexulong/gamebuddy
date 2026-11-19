@@ -663,10 +663,10 @@ string? bodyProgramUnavailableReason = null,
             // into this response: a replay must return the identical receipt.
             receipt = this.executions.AttachNativeNotices(receipt, nativeNotices);
         }
-        if (this.executions.HasDurabilityFailure(request.RequestId))
+        if (this.executions.TryGetDurabilityFailureReason(request.RequestId, out string durabilityReason))
         {
             ForgetIdempotency(request.IdempotencyKey);
-            reasonCode = "execution_receipt_persistence_failed";
+            reasonCode = durabilityReason;
             return false;
         }
         if (!TryToBridgeReceipt(receipt, out BridgeReceipt bridgeReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
@@ -813,9 +813,9 @@ string? bodyProgramUnavailableReason = null,
             reasonCode = "accepted";
             return true;
         }
-        if (this.executions.HasDurabilityFailure(query.RequestId))
+        if (this.executions.TryGetDurabilityFailureReason(query.RequestId, out string durabilityReason))
         {
-            reasonCode = "execution_receipt_persistence_failed";
+            reasonCode = durabilityReason;
             return false;
         }
         if (!this.executions.TryGetReceipt(query.RequestId, out LocalExecutionReceipt receipt)

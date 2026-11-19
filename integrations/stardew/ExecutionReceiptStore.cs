@@ -38,7 +38,11 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     // Navigation progress remains private until its single terminal receipt; it must not emit primitive route traces
     // or duplicate public idle transitions.
     private readonly HashSet<string> navigationExecutionIds = new(StringComparer.Ordinal);
-    private readonly HashSet<string> durabilityFailuresByRequestId = new(StringComparer.Ordinal);
+    // The journal's own cause for each quarantined request, kept rather than a flag: `execution_receipt_persistence_failed`
+    // covered a read failure, a malformed payload, a version mismatch, a lost write and five tuple mismatches alike, so the
+    // Host could not tell one from another. The refusal now names the cause; the FIRST cause stands, because every later
+    // attempt is already answering a quarantine.
+    private readonly Dictionary<string, FarmhandExecutionJournalResultCode> durabilityFailureCausesByRequestId = new(StringComparer.Ordinal);
     // How long a held request waited, consumed by the first receipt its dispatch stores.
     private readonly Dictionary<string, long> heldMsByRequestId = new(StringComparer.Ordinal);
     /// <summary>
@@ -164,10 +168,34 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
 
     internal bool IsNavigationExecution(string executionId) => this.navigationExecutionIds.Contains(executionId);
 
-    /// <summary>Quarantines a request whose own durable admission could not be written.</summary>
-    internal void MarkDurabilityFailure(string requestId) => this.durabilityFailuresByRequestId.Add(requestId);
+    /// <summary>
+    /// The one spelling of a durability refusal: the class the Host already routes, and the journal's own cause in the
+    /// wire's own reason-code grammar. Both the settlement funnel and the admission jam answer with this sentence, so one
+    /// cause never has two names.
+    /// </summary>
+    internal const string DurabilityFailureReasonPrefix = "execution_receipt_persistence_failed";
 
-    internal bool HasDurabilityFailure(string requestId) => this.durabilityFailuresByRequestId.Contains(requestId);
+    internal static string DurabilityFailureReason(FarmhandExecutionJournalResultCode cause) =>
+        $"{DurabilityFailureReasonPrefix}:{FarmhandExecutionJournalResultCodeNames.WireCode(cause)}";
+
+    /// <summary>Quarantines a request whose own admission or receipt could not be recorded, under the journal's cause.</summary>
+    internal void MarkDurabilityFailure(string requestId, FarmhandExecutionJournalResultCode cause) =>
+        this.durabilityFailureCausesByRequestId.TryAdd(requestId, cause);
+
+    internal bool HasDurabilityFailure(string requestId) => this.durabilityFailureCausesByRequestId.ContainsKey(requestId);
+
+    /// <summary>The refusal a quarantined request is answered with, cause included; false when it is not quarantined.</summary>
+    internal bool TryGetDurabilityFailureReason(string requestId, out string reasonCode)
+    {
+        if (this.durabilityFailureCausesByRequestId.TryGetValue(requestId, out FarmhandExecutionJournalResultCode cause))
+        {
+            reasonCode = DurabilityFailureReason(cause);
+            return true;
+        }
+
+        reasonCode = string.Empty;
+        return false;
+    }
 
     internal void RecordHoldWait(string requestId, long heldMs) => this.heldMsByRequestId[requestId] = heldMs;
 

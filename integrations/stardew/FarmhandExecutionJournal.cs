@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 
@@ -156,6 +157,34 @@ internal enum FarmhandExecutionJournalResultCode
     ImmutableTupleMismatch,
     ReceiptMismatch,
     IllegalStateTransition,
+}
+
+/// <summary>
+/// The one wire spelling of a journal result code.
+///
+/// <para>
+/// A reason code is lowercase ASCII with <c>_</c>/<c>:</c>/<c>-</c> (<see cref="BridgeProtocol.IsReasonCode"/>), so
+/// the C# member name is not itself sayable on the wire. The name is therefore derived from the member - one authority,
+/// no table that could list thirteen codes and forget the fourteenth - and both the receipt funnel and the admission jam
+/// refuse with the same sentence.
+/// </para>
+/// </summary>
+internal static class FarmhandExecutionJournalResultCodeNames
+{
+    internal static string WireCode(FarmhandExecutionJournalResultCode code)
+    {
+        string name = code.ToString();
+        var builder = new StringBuilder(name.Length + 4);
+        for (int index = 0; index < name.Length; index++)
+        {
+            char character = name[index];
+            if (index > 0 && char.IsUpper(character))
+                builder.Append('_');
+            builder.Append(char.ToLowerInvariant(character));
+        }
+
+        return builder.ToString();
+    }
 }
 
 /// <summary>

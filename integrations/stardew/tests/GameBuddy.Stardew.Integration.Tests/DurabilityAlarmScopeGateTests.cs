@@ -180,7 +180,7 @@ public sealed class DurabilityAlarmScopeGateTests
             "execution_receipt_query",
             new BridgeExecutionReceiptQuery(weedRequest.RequestId, weedRequest.IdempotencyKey));
         weedSession.TryQueryExecutionReceipt(1, query, out BridgeEnvelope<BridgeReceipt>? weedResponse, out string weedReason).Should().BeFalse();
-        weedReason.Should().Be("execution_receipt_persistence_failed");
+        weedReason.Should().Be("execution_receipt_persistence_failed:persistence_write_failed");
         weedResponse.Should().BeNull();
     }
 
@@ -190,7 +190,8 @@ public sealed class DurabilityAlarmScopeGateTests
     ///
     /// `Journalled` is the observation that the Mod tried to record this action at all - an action that is never
     /// journalled has no write to fail, so no persistence failure can refuse it - and `Refused` is
-    /// `HasDurabilityFailure`, the flag <see cref="BridgeSession"/> answers `execution_receipt_persistence_failed` from.
+    /// `HasDurabilityFailure`, the quarantine <see cref="BridgeSession"/> answers
+    /// `execution_receipt_persistence_failed:&lt;cause&gt;` from.
     /// </summary>
     private static (bool Journalled, bool Refused) ProbeDurability(string actionId)
     {

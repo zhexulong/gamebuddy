@@ -634,9 +634,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryLoadAdmission(this.executionScope, requestId, idempotencyKey);
         if (!result.IsSuccess || result.Record?.Receipt is not FarmhandExecutionReceipt persisted)
         {
-            reasonCode = result.Code == FarmhandExecutionJournalResultCode.Succeeded
+            // A journal that has no such row and a journal that could not be read are different answers: the first is
+            // `receipt_not_found` (nothing was ever recorded under this tuple), the second names the cause.
+            reasonCode = result.Code is FarmhandExecutionJournalResultCode.Succeeded or FarmhandExecutionJournalResultCode.NotFound
                 ? "receipt_not_found"
-                : result.Code.ToString();
+                : ExecutionReceiptStore.DurabilityFailureReason(result.Code);
             return false;
         }
 
@@ -659,7 +661,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             reasonCode = result.Code == FarmhandExecutionJournalResultCode.NotFound
                 ? "receipt_not_found"
-                : result.Code.ToString();
+                : ExecutionReceiptStore.DurabilityFailureReason(result.Code);
             return false;
         }
 
@@ -669,6 +671,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     internal bool HasDurabilityFailure(string requestId) => this.ledger.HasDurabilityFailure(requestId);
+
+    /// <summary>The refusal a quarantined request is answered with, cause included; false when it is not quarantined.</summary>
+    internal bool TryGetDurabilityFailureReason(string requestId, out string reasonCode) =>
+        this.ledger.TryGetDurabilityFailureReason(requestId, out reasonCode);
 
     void IExecutionLedger.BindAction(string requestId, string actionId) => this.ledger.BindAction(requestId, actionId);
 
@@ -3676,27 +3682,33 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 // WHICH FAILURES ARE THE ALARM, AND WHICH ARE A MISSING ROW.
                 //
-                // One outcome code covers four different refusals - the payload could not be read, the immutable tuple or
-                // the transition did not match, or the write itself did not land - so `result.Code` names the class of
-                // the failure and never its cause. For an action that can change the world every one of those is the same
-                // alarm, and it must stay: the journalled receipt is the only record that the mutation happened, and a
-                // caller told "succeeded" over a row that will not survive a replay is being told a change we cannot
-                // recover. For an action that changes nothing the row buys replay convenience and nothing else, and
-                // refusing the outcome takes away the only thing the action did. Measured `round78`, game time 12:10, the
-                // instant a warp into `Mine` landed: `express_emote` came back `execution_receipt_persistence_failed` and
-                // `MarkDurabilityFailure` circuit-broke the run, for an emote that touched no world state at all.
+                // One outcome code covers fourteen different refusals - the payload could not be read, the immutable tuple
+                // or the transition did not match, the journal was at capacity, or the write itself did not land - and for
+                // an action that can change the world every one of those is the same alarm: the journalled receipt is the
+                // only record that the mutation happened, and a caller told "succeeded" over a row that will not survive a
+                // replay is being told a change we cannot recover. For an action that changes nothing the row buys replay
+                // convenience and nothing else, and refusing the outcome takes away the only thing the action did.
+                // Measured `round78`, game time 12:10, the instant a warp into `Mine` landed: `express_emote` came back
+                // `execution_receipt_persistence_failed` and `MarkDurabilityFailure` circuit-broke the run, for an emote
+                // that touched no world state at all.
+                //
+                // THE ALARM CARRIES ITS CAUSE. `result.Code` used to reach a Trace line and nothing else, so the Host read
+                // one word for all fourteen failures and the wire could not say whether the payload was unreadable, the
+                // tuple had drifted or the disk refused the write. The refusal is now the reason-code spelling of the code
+                // itself (`ExecutionReceiptStore.DurabilityFailureReason`), the same sentence the admission jam answers
+                // with, so the cause is on the wire rather than in a log a player never opens.
                 //
                 // The split is the catalogue's declaration (`FarmhandActionCatalog.ChangesTheWorld`) so the funnel holds
                 // no list of its own; a progress transition keeps the observational reading it already had.
                 bool unconfirmedTerminal = ModEntry.IsUnconfirmedTerminal(receipt.State);
                 if (unconfirmedTerminal && FarmhandActionCatalog.ChangesTheWorld(admission.ActionId))
                 {
-                    this.ledger.MarkDurabilityFailure(receipt.RequestId);
-                    this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};action={admission.ActionId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code}", LogLevel.Trace);
+                    this.ledger.MarkDurabilityFailure(receipt.RequestId, result.Code);
+                    this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};action={admission.ActionId};state={receipt.State};reason={receipt.ReasonCode};code={ExecutionReceiptStore.DurabilityFailureReason(result.Code)}", LogLevel.Trace);
                     return receipt;
                 }
                 string ignored = unconfirmedTerminal ? "expression_changes_nothing" : "observational";
-                this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};action={admission.ActionId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code};ignored={ignored}", LogLevel.Trace);
+                this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};action={admission.ActionId};state={receipt.State};reason={receipt.ReasonCode};code={ExecutionReceiptStore.DurabilityFailureReason(result.Code)};ignored={ignored}", LogLevel.Trace);
             }
         }
         if (this.ledger.HasDurabilityFailure(receipt.RequestId))

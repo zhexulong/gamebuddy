@@ -294,8 +294,8 @@ internal sealed class ExecutionAdmission
         FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
         if (!result.IsSuccess)
         {
-            this.store.MarkDurabilityFailure(request.RequestId);
-            reasonCode = result.Code.ToString();
+            this.store.MarkDurabilityFailure(request.RequestId, result.Code);
+            reasonCode = ExecutionReceiptStore.DurabilityFailureReason(result.Code);
             return false;
         }
 
@@ -351,8 +351,8 @@ internal sealed class ExecutionAdmission
         FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
         if (!result.IsSuccess)
         {
-            this.store.MarkDurabilityFailure(request.RequestId);
-            reasonCode = result.Code.ToString();
+            this.store.MarkDurabilityFailure(request.RequestId, result.Code);
+            reasonCode = ExecutionReceiptStore.DurabilityFailureReason(result.Code);
             return false;
         }
 

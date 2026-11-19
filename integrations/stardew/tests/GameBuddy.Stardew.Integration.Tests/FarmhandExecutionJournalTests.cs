@@ -455,7 +455,7 @@ public sealed class FarmhandExecutionJournalTests
 
         session.TryQueryExecutionReceipt(1, query, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
             .Should().BeFalse();
-        reasonCode.Should().Be("execution_receipt_persistence_failed");
+        reasonCode.Should().Be("execution_receipt_persistence_failed:persistence_write_failed");
         response.Should().BeNull();
     }
 
@@ -482,7 +482,7 @@ public sealed class FarmhandExecutionJournalTests
             DeadlineMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 60_000);
 
         manager.TryAdmitNavigation(request, "execution-first", out string firstReason).Should().BeFalse();
-        firstReason.Should().Be(nameof(FarmhandExecutionJournalResultCode.PersistenceWriteFailed));
+        firstReason.Should().Be("execution_receipt_persistence_failed:persistence_write_failed");
         manager.HasDurabilityFailure(request.RequestId).Should().BeTrue();
 
         IDispatchExecutionLedger dispatchLedger = manager;
