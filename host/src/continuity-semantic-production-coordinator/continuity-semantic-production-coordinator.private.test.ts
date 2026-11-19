@@ -574,7 +574,13 @@ test(
       const manifestPath = manifest(root);
       const deployment = await loadHostDeploymentManifest(manifestPath);
       shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment);
-      assert.deepEqual(Object.keys(shared).sort(), ["chat", "close", "game"]);
+      // `catalog` is the Dialogue authority's read-only observation, delegated under the same
+      // mutex: which Chats carry verified content, and whether a recorded selection still waits for
+      // its settlement. It exists because the composed product must judge ONE durable mutation -
+      // removing the Chat the semantic authority selected - and whether a survivor can be mounted is
+      // a fact only this side holds. It is not a widening for convenience: it carries no lease, no
+      // command and no store, and `shared.chat` stays exactly as narrow (:585).
+      assert.deepEqual(Object.keys(shared).sort(), ["catalog", "chat", "close", "game"]);
       assert.deepEqual(Object.keys(shared.chat).sort(), [
         "authority",
         "close",

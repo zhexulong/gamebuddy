@@ -230,6 +230,9 @@ export async function createDesktopProductComposition(
         // ADR 0009 Chat selection: the management domains mount `chat.select`
         // over the same shared semantic authority the mounted Chat lane owns.
         chatSelection: shared.chat,
+        // The retention route refuses a removal that would leave the next start with no Chat it
+        // could mount, and that answer is the catalog's alone.
+        chatCatalog: shared.catalog,
       });
       presentationAdmission =
         surface === "chat-only"
@@ -306,6 +309,7 @@ export async function createDesktopProductComposition(
       lease: mountedLease,
       presentation,
       chatSelection: shared.chat,
+      chatCatalog: shared.catalog,
     });
     // The composed reference-game surface is ready at the Host-owned seam; the
     // launch URL is published exactly once and never projects through the

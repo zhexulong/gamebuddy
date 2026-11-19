@@ -72,7 +72,17 @@ const mountPreamble = `
   const companionHandle = createHash("sha256").update("companion_01", "utf8").digest("base64url").slice(0, 43);
   const repository = createWorldInfoManagementRepository(root);
   const worldInfoService = createWorldInfoBindingManagementService({ manifest, lease, profile, repository });
-  const managementService = createChatManagementService({ manifest, lease, profile });
+  const managementService = createChatManagementService({
+    manifest,
+    lease,
+    profile,
+    // This harness serves no removal, so the retention guard never asks the catalog anything.
+    chatCatalog: Object.freeze({
+      async readChatCatalog() {
+        return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
+      },
+    }),
+  });
   const facade = Object.freeze({
     read: async () => Object.freeze({ selection: { chatHandle: chatHandle, generation: 1, stateRevision: chatHandle }, companionDisplayName: "Mira", companionHandle, title: null, transcript: [], draft: { revision: 0, text: null }, turn: null, operations: [], worldInfo: null }),
     close: async () => undefined,

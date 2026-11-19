@@ -2124,6 +2124,14 @@ export type SemanticProductionAuthority = Readonly<{
 export type SharedSemanticProductionAuthority = Readonly<{
   chat: SemanticChatRuntimeProductionAuthority;
   game: SemanticGameProductionAuthority;
+  /**
+   * The Dialogue semantic authority's catalog observation, and nothing else: which Chats carry
+   * verified content, and whether a selection the player already asked for is still waiting for its
+   * settlement. The composed product needs exactly this to judge one durable mutation - removing the
+   * Chat this authority has selected - because whether a survivor can be mounted is a fact only this
+   * side holds. It carries no lease, no command, no store and no mutex.
+   */
+  catalog: Readonly<{ readChatCatalog(): Promise<ProductionChatCatalog> }>;
   close(): Promise<void>;
 }>;
 
@@ -2550,7 +2558,7 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
       ownerDeathVerifier,
     );
     binding = undefined;
-    return createSharedSemanticProductionAuthorityOwner(chat, game, provision, mutex, broker);
+    return createSharedSemanticProductionAuthorityOwner(chat, game, semantic, provision, mutex, broker);
   } catch (error) {
     try {
       await binding?.close();
@@ -2581,6 +2589,7 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
 function createSharedSemanticProductionAuthorityOwner(
   chat: SemanticChatRuntimeProductionAuthority,
   game: SemanticGameProductionAuthority,
+  semantic: SemanticProductionAuthority,
   provision: FreshContinuityProvision,
   mutex: WindowsAuthorityRootMutex,
   broker: WindowsNamedMutexBroker,
@@ -2595,6 +2604,10 @@ function createSharedSemanticProductionAuthorityOwner(
   return Object.freeze({
     chat,
     game,
+    // Delegated, not re-implemented: the same drained read the Dialogue authority serves, under the
+    // same partition mutex. A second implementation of "is this Chat mountable" is the drift this
+    // delegation exists to prevent.
+    catalog: Object.freeze({ readChatCatalog: () => semantic.readChatCatalog() }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       const attempt = (async () => {

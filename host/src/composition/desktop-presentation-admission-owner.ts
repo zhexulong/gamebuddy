@@ -58,7 +58,10 @@ import {
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import { type MacroTable, macroTable } from "../tavern/macro-engine.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
-import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
+import {
+  type ChatCatalogRead,
+  createChatManagementService,
+} from "../tavern/chat-management/chat-management-service.js";
 import { createChatForkService } from "../tavern/chat-fork-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
@@ -153,6 +156,13 @@ export type DesktopPresentationAdmissionInput = Readonly<{
     /** Mints (or returns) the capability for the currently selected Chat. */
     startMountedChatRuntime(): Promise<MountedChatRuntimeLease>;
   }>;
+  /**
+   * The semantic authority's read-only catalog observation. Required: the retention route refuses a
+   * removal that would leave the next start with no Chat it could mount, and only this side can say
+   * which Chats are mountable, so a mount that cannot read it is not a mount that may serve Chat
+   * removal at all.
+   */
+  chatCatalog: ChatCatalogRead;
   /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
   speechSink?: ChatVoiceSpeechPublisher;
   /**
@@ -283,6 +293,7 @@ function createTavernManagementDomains(
   profile: ComposedTavernProfile,
   worldInfoService: WorldInfoBindingManagementService,
   chatSelection: DesktopPresentationAdmissionInput["chatSelection"],
+  chatCatalog: ChatCatalogRead,
   /**
    * Whether this mount serves a Game authority at all. A chat-only or management-only mount
    * constructs none, so no game session can be running there and the companion switch needs no
@@ -291,7 +302,7 @@ function createTavernManagementDomains(
   gameAuthorityPresent: boolean,
 ): Readonly<{ domains: TavernManagementDomains; owned: readonly { close(): Promise<void> }[] }> {
   const owned: { close(): Promise<void> }[] = [];
-  const managementService = createChatManagementService({ manifest, lease, profile });
+  const managementService = createChatManagementService({ manifest, lease, profile, chatCatalog });
   owned.push(managementService);
   const memoryService = createMemoryManagementService({ manifest, lease, profile });
   owned.push(memoryService);
@@ -939,6 +950,7 @@ export async function startDesktopPresentationAdmission(
         managementProfile,
         worldInfoService,
         input.chatSelection,
+        input.chatCatalog,
         input.presentation !== undefined,
       );
       const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;

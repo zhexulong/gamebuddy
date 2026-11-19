@@ -235,6 +235,16 @@ const chatSelectionStub = Object.freeze({
   },
 });
 
+/**
+ * The semantic catalog observation the retention guard reads. This fixture serves no Chat removal,
+ * so the guard never asks it anything; an empty catalog is the honest answer to that.
+ */
+const chatCatalogStub = Object.freeze({
+  async readChatCatalog() {
+    return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
+  },
+});
+
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href, {
@@ -374,6 +384,7 @@ async function main(): Promise<void> {
         eventStream,
         lease: Object.freeze({}) as never,
         chatSelection: chatSelectionStub,
+        chatCatalog: chatCatalogStub,
         inspector: inspector(),
       });
       observations.outcome = "resolved";

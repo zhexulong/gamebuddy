@@ -92,11 +92,31 @@ export type ChatManagementService = Readonly<{
   close(): Promise<void>;
 }>;
 
+/**
+ * The read-only semantic catalog observation the retention guard needs: which Chats carry verified
+ * content, and whether a selection the player already asked for still waits for its settlement.
+ * Nothing else of the semantic authority crosses this boundary.
+ */
+export type ChatCatalogRead = Readonly<{
+  readChatCatalog(): Promise<
+    Readonly<{
+      threads: readonly Readonly<{ chatThreadId: string; chatSurfaceSessionId: string; contentState: string }>[];
+      /** The selection the player recorded and the next mount has not settled yet, or null. */
+      expectedSelection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }> | null;
+    }>
+  >;
+}>;
+
 export type ChatManagementServiceOptions = Readonly<{
   manifest: HostDeploymentManifest;
   lease: MountedChatRuntimeLease;
   /** The composed tavern_management capability slice that gates `chat.rename`. */
   profile: ComposedTavernProfile;
+  /**
+   * The semantic authority's own answer to "could a start mount this Chat". Required: a mount that
+   * cannot ask it is not a mount that may serve Chat removal at all.
+   */
+  chatCatalog: ChatCatalogRead;
 }>;
 
 /**
@@ -106,7 +126,7 @@ export type ChatManagementServiceOptions = Readonly<{
  * any durable I/O.
  */
 export function createChatManagementService(options: ChatManagementServiceOptions): ChatManagementService {
-  const { manifest, lease, profile } = options;
+  const { manifest, lease, profile, chatCatalog } = options;
   if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
   assertComposedProfile(profile);
   if (
@@ -286,6 +306,79 @@ export function createChatManagementService(options: ChatManagementServiceOption
   };
 
   /**
+   * THE CHAT A START WILL HAVE TO MOUNT MUST BE ONE THE SEMANTIC AUTHORITY CAN MOUNT.
+   *
+   * Removing the Chat this mount serves is an ordinary product action: the durable authority marks
+   * the row and the shell migrates its selection onto another live Chat. But when every Chat left
+   * behind is one the catalog never registered - a New Chat the player created and never opened -
+   * the next start's successor settlement has no Chat it can move the selection to, and fails closed
+   * with `semantic_chat_liveness_unrecoverable` before a browser, a tray or a record exists. That
+   * failure is not repairable from inside the product, so this is the one state the removal refuses,
+   * by its own name; the player's way forward is to open the other Chat once, which registers it.
+   *
+   * Every clause narrows to that state alone. Only the removal that would orphan the selection: while
+   * the Chat this mount serves is still a live row, removing any other Chat leaves that selection itself
+   * live and verified, and the next start reads it and writes nothing - so the lease is the evidence,
+   * and a durable archive never moves it. Only the removal that leaves a survivor, because an empty
+   * list is `chat_active_list_empty`, judged inside the removal's own transaction. Only the removal that
+   * leaves no survivor carrying verified content. And only the removal no recorded expectation already
+   * names a survivor for, because `settleExpectedChatSelection` drives register+verify+select for a
+   * recorded intent before the mount.
+   */
+  const refuseUnmountableSuccessor = async (target: ChatThread): Promise<void> => {
+    if ((target.lifecycleStatus ?? "active") !== "active") return;
+    const threads = await listThreads();
+    const served = threads.find(
+      (thread) =>
+        thread.chatThreadId === lease.chatThreadId && thread.chatSurfaceSessionId === lease.chatSurfaceSessionId,
+    );
+    const targetIsServed =
+      target.chatThreadId === lease.chatThreadId && target.chatSurfaceSessionId === lease.chatSurfaceSessionId;
+    // The selection can only be orphaned by a removal while the Chat it names is still live: the lease
+    // is what says which Chat that is, and another Chat's removal leaves it exactly where it was. Once
+    // the served Chat has left the list through any writer, every removal is judged by what it leaves.
+    if (!targetIsServed && served !== undefined && (served.lifecycleStatus ?? "active") === "active") return;
+    const survivors = threads.filter(
+      (thread) =>
+        thread.companionId === manifest.principal.companionId &&
+        thread.continuityId === manifest.principal.continuityId &&
+        (thread.lifecycleStatus ?? "active") === "active" &&
+        thread.chatThreadId !== target.chatThreadId,
+    );
+    assertLeaseAfterDurableRead();
+    // Nothing left at all is the store's fact, and it judges it inside the removal's transaction.
+    if (survivors.length === 0) return;
+    const catalog = await chatCatalog.readChatCatalog();
+    assertLeaseAfterDurableRead();
+    const mountable = new Set(
+      catalog.threads
+        .filter((thread) => thread.contentState === "verified")
+        .map((thread) => thread.chatSurfaceSessionId),
+    );
+    if (
+      survivors.some(
+        (thread) => thread.chatSurfaceSessionId !== undefined && mountable.has(thread.chatSurfaceSessionId),
+      )
+    )
+      return;
+    const expected = catalog.expectedSelection;
+    // A recorded expectation is a promise the next mount keeps only in the settlement's own `create`
+    // shape: the Chat it names has no row here yet, so the settlement registers it, verifies the
+    // content the player's New Chat already wrote, and selects it. A row that exists without a
+    // receipt is not such a promise - the settlement returns without verifying it - and a `select`
+    // expectation can only name a Chat that already carries a receipt, which the check above saw.
+    const promised = (thread: ChatThread): boolean =>
+      expected !== null &&
+      thread.chatThreadId === expected.chatThreadId &&
+      thread.chatSurfaceSessionId === expected.chatSurfaceSessionId &&
+      !catalog.threads.some(
+        (row) => row.chatThreadId === thread.chatThreadId && row.chatSurfaceSessionId === thread.chatSurfaceSessionId,
+      );
+    if (survivors.some(promised)) return;
+    throw new ChatSuccessorUnmountableError(target.chatThreadId);
+  };
+
+  /**
    * Durable lifecycle retention. The invariants a removal must not break - the active list is never
    * emptied, and the archived Chat is never the one the next start has to mount with nothing behind
    * it - are judged by `ChatThreadStore.transitionLifecycle` inside its own transaction and by the
@@ -300,6 +393,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     try {
       const target = await resolveChatTarget(command.chatHandle);
       assertLeaseAfterDurableRead();
+      await refuseUnmountableSuccessor(target);
       const thread = await store.transitionLifecycle({
         chatThreadId: target.chatThreadId,
         chatSurfaceSessionId: target.chatSurfaceSessionId,
@@ -508,6 +602,8 @@ function rethrowRetentionError(error: unknown): Error {
   // The store's own refusal of the last live Chat, carried out under its own name so the route
   // reports the player-actionable fact instead of a service outage.
   if (error.message === "chat_active_list_empty") return new ChatActiveListEmptyError();
+  // ...and the removal that has a survivor but no *mountable* one, also under its own name.
+  if (error instanceof ChatSuccessorUnmountableError) return error;
   if (error.message === "chat_thread_management_revision_conflict")
     return new Error("chat_management_revision_conflict");
   if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
@@ -568,6 +664,21 @@ export class ChatExportTooLargeError extends Error {
 export class ChatActiveListEmptyError extends Error {
   constructor() {
     super("chat_active_list_empty");
+  }
+}
+
+/**
+ * A removal that would leave the next start with no Chat it could mount. Its own name, not
+ * `chat_active_list_empty`: real Chats do remain, they are simply Chats the semantic authority never
+ * registered, and the player's next step is to open one of them rather than to create another. The
+ * message carries the removed Chat's durable id so an operator reading a log can tell which removal
+ * produced it; the wire code is the name alone.
+ */
+export class ChatSuccessorUnmountableError extends Error {
+  readonly chatThreadId: string;
+  constructor(chatThreadId: string) {
+    super(`chat_successor_unmountable:${chatThreadId}`);
+    this.chatThreadId = chatThreadId;
   }
 }
 

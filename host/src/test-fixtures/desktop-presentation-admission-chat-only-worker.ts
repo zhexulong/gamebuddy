@@ -123,6 +123,16 @@ const chatSelectionStub = Object.freeze({
 });
 
 /**
+ * The semantic catalog observation the retention guard reads. This fixture serves no Chat removal,
+ * so the guard never asks it anything; an empty catalog is the honest answer to that.
+ */
+const chatCatalogStub = Object.freeze({
+  async readChatCatalog() {
+    return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
+  },
+});
+
+/**
  * The one management-domain service the fixture's mocked builders return. The
  * entry point constructs the management domains over the mounted Chat lane, so
  * a hermetic fixture must supply them; the test asserts nothing about them, so
@@ -320,6 +330,7 @@ async function main(): Promise<void> {
         eventStream,
         lease: Object.freeze({}) as never,
         chatSelection: chatSelectionStub,
+        chatCatalog: chatCatalogStub,
         inspector: inspector(),
         // Voice surface reader: exercises the additive v1 `voice` projection
         // through the real facade + real bootstrap route.

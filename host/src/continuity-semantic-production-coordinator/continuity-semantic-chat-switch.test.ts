@@ -140,6 +140,26 @@ const switchScript = `
     db.close();
     return { threads, active };
   };
+  const chatCatalog = Object.freeze({
+    async readChatCatalog() {
+      const durable = readDurable();
+      return Object.freeze({
+        threads: Object.freeze(
+          durable.threads.map((row) =>
+            Object.freeze({
+              chatThreadId: row.chat_thread_id,
+              chatSurfaceSessionId: row.chat_surface_session_id,
+              contentState: row.verified === 1 ? "verified" : "registered",
+            }),
+          ),
+        ),
+        expectedSelection:
+          durable.active?.expected_selection_json === null || durable.active?.expected_selection_json === undefined
+            ? null
+            : JSON.parse(durable.active.expected_selection_json),
+      });
+    },
+  });
   /** The bounded refusal a request answers, or the fact that it was accepted. */
   const refusal = async (work) => {
     try {
@@ -366,7 +386,7 @@ const switchScript = `
       operationIds: ["draft.save", "draft.discard", "chat.rename"],
       navigationItemIds: ["chat", "characters"],
     });
-    const service = createChatManagementService({ manifest, lease: mounted, profile });
+    const service = createChatManagementService({ manifest, lease: mounted, profile, chatCatalog });
     const handle = mounted.browserProjection.projectChatHandle(target.chatThreadId, target.chatSurfaceSessionId);
     out.listedBeforeArchive = (await service.listChats({ apiVersion: TAVERN_BROWSER_API_VERSION })).chats.map(
       (chat) => chat.handle,
