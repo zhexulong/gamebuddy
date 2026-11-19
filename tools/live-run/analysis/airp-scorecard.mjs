@@ -20,6 +20,12 @@
 // readings whose source nobody named - which is what makes a number readable on a run that has not ended.
 //
 // Usage: node tools/live-run/analysis/airp-scorecard.mjs [runDir] [--log <live-runner.log>] [--log-dir <dir>]
+//
+// WHAT THE DAY ASKED FOR. Measured 2026-11-19 (`round79`): her day-one task was `furnish_and_arrange` and the scorecard read
+// the run by the farm counts it did not have, so a day spent on exactly its task read as a day that did almost nothing. The
+// day's task is now printed before the counts (from the bundle's `taskPurposes`, or from the run's session record when the
+// run never published a bundle), each day prints `attempted X of N` beside `succeeded S of E executions`, and
+// `a_reading_of_productivity_names_the_day_it_judged` fails naming any row that scores her work and names no day.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -34,6 +40,16 @@ import {
   readRunnerLog,
 } from "../../lib/live-runner-log.mjs";
 import { createReadingLedger, FROM_RESULT, FROM_RUNNER_LOG } from "../../lib/reading-source.mjs";
+// What the day ASKED for, from the tool that owns that reading: a scorecard that counts her executions and never says
+// which day's work they answer is how "she did almost nothing" gets printed over a day spent on exactly its task.
+import {
+  dayTaskAnchor,
+  executionsByDay,
+  formatDayTasks,
+  productivityGate,
+  readDayTasks,
+  settlementsByAction,
+} from "./action-breadth.mjs";
 
 const RUNS_ROOT = ".live-runs/game-ladder";
 
@@ -356,6 +372,25 @@ say(
   FROM_RESULT,
 );
 
+// --- 1b. WHAT THE DAY ASKED FOR, before any count of what she did ---------------------------------------------------
+// Measured 2026-11-19 (`round79`): her day-one task was `furnish_and_arrange` and this scorecard read the run by the farm
+// counts it did not have. The day's task comes from the bundle's `taskPurposes`, or from the run's session record when the
+// run never published a bundle; a run with neither says so by name, and every row below that scores her work carries the
+// day it was judged against - `productivityGate` at the end fails naming any row that does not.
+const dayReading = await readDayTasks({ result: hasResult ? result : null, log, runDir });
+const dayExecutions = log === null ? null : actionExecutions(log).counts;
+const dayBlock = formatDayTasks(dayReading, {
+  executionsByAction: dayExecutions,
+  settlements: log === null ? null : settlementsByAction(log),
+  perDay: executionsByDay(log, dayReading),
+});
+const dayAnchor = dayTaskAnchor(dayReading);
+if (dayBlock.tasks.length === 0) head("day task", `${dayAnchor} - ${dayReading.why}`);
+for (const text of dayBlock.tasks) head("day task", text);
+for (const text of dayBlock.families) head("day family", text);
+for (const text of dayBlock.siblings) head("day sibling", text);
+for (const text of dayBlock.shape) head("day shape", text);
+
 // --- 2. First mistake, and whether the run recovered ---------------------------------------------------------------
 const outcomes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
 const work = log === null ? null : logWork(log);
@@ -565,7 +600,7 @@ say(
   "executions timed",
   cadence.measured === undefined
     ? "not_measured:no actionCadence in this run"
-    : `${cadence.measured} of ${cadence.actions ?? "?"}`,
+    : `${cadence.measured} of ${cadence.actions ?? "?"} · ${dayAnchor}`,
   FROM_RESULT,
 );
 say(
@@ -589,7 +624,7 @@ say(
   "breadth",
   attempted === null
     ? "not_measured:no attemptedActionIds and no runner log to read them from"
-    : `${attempted} attempted of ${addressable ?? "not_measured (no snapshot census)"} addressable`,
+    : `${attempted} attempted of ${addressable ?? "not_measured (no snapshot census)"} addressable · ${dayAnchor}`,
   attemptedBundle === null ? FROM_RUNNER_LOG : FROM_RESULT,
 );
 
@@ -677,10 +712,15 @@ console.log(lines.join("\n"));
 const missing = lines.filter((line) => line.includes("not_measured")).length;
 console.log(`\nexamined ${lines.length} metrics, ${missing} not measured in this artifact`);
 console.log(gateLines.join("\n"));
+// THE PRODUCTIVITY GATE. Every row above that scores an action count names the day it judged, or says by name that no
+// artifact answers which day that was. Measured 2026-11-19 (`round79`): the rows scored her executions and not one of them
+// mentioned `furnish_and_arrange`, which is why a day spent on its own task was read as a day that did almost nothing.
+const productGate = productivityGate(lines, { requireRows: false });
+console.log(productGate.lines.join("\n"));
 // THE SOURCE GATE. Every reading above names the file it was read from, and this counts how many there were and where
 // they came from - so a scorecard taken before a run ended is readable as one, and a number printed with no file behind
 // it fails here by name instead of being read as a fact.
 for (const line of readings.lines()) console.log(line);
 // A misnamed span fails this reading, so a bundle whose account says it left her alone for eleven minutes when it did not
 // cannot exit clean. An unsourced reading fails it for the same reason: it is a number nobody can re-derive.
-if (misnamed.length > 0 || readings.failed()) process.exitCode = 1;
+if (misnamed.length > 0 || readings.failed() || productGate.failed) process.exitCode = 1;

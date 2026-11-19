@@ -17,10 +17,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { readTaskPrompts } from "./action-breadth.mjs";
+
 const SCORECARD = join(import.meta.dirname, "airp-scorecard.mjs");
 const START = Date.parse("2026-11-19T04:46:54.000Z");
 const iso = (ms) => new Date(ms).toISOString();
 const RECORD = join("runtime-root", "contexts", "ctx-1", "surface-sessions", "game-1", "sessions", "session-1.jsonl");
+
+/** A day's note, in the words the runner puts in the player's mouth: read from that table, never spelt again. */
+const NOTE_ZH = (task) =>
+  `我今天去镇上办事，你把这活儿干一下：${readTaskPrompts().zh[task].trim()}怎么安排你自己定，天黑累了就回屋睡，不用等我。`;
 
 /** A session record whose user messages are the turn openings at `openings`, with her replies between them. */
 function writeSession(runDir, openings) {
@@ -78,7 +84,7 @@ const receiptLine = (executionId, actionId, state, nodeId = "n01") =>
  * This is `round78`'s shape - stopped eleven minutes in - which the scorecard used to answer with
  * `not_measured:no_bundle`.
  */
-function scorecardMidRun({ logLines = null } = {}) {
+function scorecardMidRun({ logLines = null, notes = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "airp-midrun-"));
   try {
     const runDir = join(root, "run");
@@ -90,6 +96,23 @@ function scorecardMidRun({ logLines = null } = {}) {
       JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", startedAtMs: START_MS }),
       "utf8",
     );
+    if (notes !== null) {
+      const path = join(runDir, RECORD);
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(
+        path,
+        `${notes
+          .map((note, turn) =>
+            JSON.stringify({
+              type: "message",
+              timestamp: iso(START_MS + 1000 + turn * 3000),
+              message: { role: "user", content: [{ type: "text", text: note }] },
+            }),
+          )
+          .join("\n")}\n`,
+        "utf8",
+      );
+    }
     writeFileSync(
       join(logs, "_multiday_routine-round99-live-runner.log"),
       `${(
@@ -218,5 +241,56 @@ test("a reported span is the span its name claims, and a span that is not hers f
   assert.match(
     absent.out,
     /a_reported_span_is_the_span_its_name_claims:blocked - fields examined 0 · measured-what-it-names 0 · misnamed 0/u,
+  );
+});
+
+// WHAT THE DAY ASKED FOR. Measured 2026-11-19 (`round79`): this scorecard printed her `9 attempted` and said nothing about
+// the day, so a run that spent its day arranging furniture as asked read as a run that had done almost nothing - the farm
+// counts were all zero because the task named none.
+test("the day's task is printed beside the work, so a day spent on its own task is not read as neglect", () => {
+  const { out, status } = scorecardMidRun({
+    logLines: [
+      `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START_MS + 1654}}`,
+      receiptLine("day-1", "place_owned_object", "succeeded"),
+      receiptLine("day-2", "move_placed_furniture", "rejected"),
+      receiptLine("day-3", "express_emote", "succeeded", "n02"),
+    ],
+    notes: [NOTE_ZH("furnish_and_arrange")],
+  });
+  assert.match(
+    line(out, "day task"),
+    /day 1 · day_task=furnish_and_arrange · family \{place_owned_object,move_placed_furniture,remove_placed_item,color_placed_object,dress_mannequin,set_sign_display\} · source session:session-1\.jsonl \(partial - this run published no result\.json\)/u,
+    "the day comes from the run's own session record when it published no bundle, and is marked partial",
+  );
+  assert.match(
+    line(out, "day family"),
+    /day 1 · day_task=furnish_and_arrange day_family=yes · attempted 2 of 6 · succeeded 1 of 2 executions \(rejected 1\)/u,
+    "was this the right work and did the work land are two numbers, printed separately",
+  );
+  assert.match(
+    line(out, "day shape"),
+    /the task names no farming_crops, resource_gathering, animals_pets action/u,
+    "a farm count of zero on an indoor day is that day's shape and the reading must say so",
+  );
+  assert.match(line(out, "breadth"), /addressable · day_task=furnish_and_arrange$/u);
+  assert.match(
+    out,
+    /^a_reading_of_productivity_names_the_day_it_judged rows examined 2 · day-task named 2 · family-scored 1 · unanchored 0$/mu,
+    "both rows name the day; the one judged against the day's own action set is the family line",
+  );
+  assert.equal(status, 0);
+});
+
+test("a run with no day task in any artifact says so by name, and its rows are anchored to that absence", () => {
+  const { out } = scorecardMidRun();
+  assert.match(
+    line(out, "day task"),
+    /^day task +day_task=not_measured:no_task_purposes_and_no_session_record - no result\.json declares this run's days and no session record of it was found/u,
+  );
+  assert.match(line(out, "breadth"), /addressable · day_task=not_measured:\S+$/u);
+  assert.match(
+    out,
+    /^a_reading_of_productivity_names_the_day_it_judged rows examined 1 · day-task named 0 · family-scored 0 · unanchored 0 · day-task not_measured 1$/mu,
+    "a row that states which question nothing answered is not an unanchored row",
   );
 });

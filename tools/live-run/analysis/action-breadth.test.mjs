@@ -15,15 +15,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { settlementGate } from "./action-breadth.mjs";
+import { productivityGate, readTaskPrompts, settlementGate } from "./action-breadth.mjs";
 
 const BREADTH = join(import.meta.dirname, "action-breadth.mjs");
 const START = Date.parse("2026-11-19T10:30:34.853Z");
+// The task's own sentence, read from the table that composes a day's note: a fixture that spelled it again would agree
+// with itself rather than with the run.
+const NOTE_ZH = (task) =>
+  `我今天去镇上办事，你把这活儿干一下：${readTaskPrompts().zh[task].trim()}怎么安排你自己定，天黑累了就回屋睡，不用等我。`;
 
-const receiptLine = (executionId, actionId, state) =>
+const receiptLine = (executionId, actionId, state, atMs = START + 1000) =>
   `BRIDGE_FACT ${JSON.stringify({
     type: "execution_receipt",
-    atMs: START + 1000,
+    atMs,
     executionId,
     requestId: `request-${executionId}`,
     reasonCode: state,
@@ -62,7 +66,7 @@ const MIXED_LOG = [
 ];
 
 /** One run directory, its launch receipt, and the log directory this run's log was written into. */
-function fixture({ result = null, logLines = LOG }) {
+function fixture({ result = null, logLines = LOG, sessions = [] }) {
   const root = mkdtempSync(join(tmpdir(), "action-breadth-"));
   const runDir = join(root, "run");
   const logs = join(root, "logs");
@@ -76,6 +80,27 @@ function fixture({ result = null, logLines = LOG }) {
   if (result !== null) writeFileSync(join(runDir, "result.json"), JSON.stringify(result), "utf8");
   if (logLines !== null)
     writeFileSync(join(logs, "_multiday_routine-round99-live-runner.log"), `${logLines.join("\n")}\n`);
+  for (const [index, notes] of sessions.entries()) {
+    const path = join(
+      runDir,
+      "runtime-root",
+      "contexts",
+      "ctx-1",
+      "surface-sessions",
+      "game-1",
+      "sessions",
+      `session-${String(index + 1)}.jsonl`,
+    );
+    mkdirSync(join(path, ".."), { recursive: true });
+    const lines = notes.map((note, turn) =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date(START + 1000 + turn * 3000).toISOString(),
+        message: { role: "user", content: [{ type: "text", text: note }] },
+      }),
+    );
+    writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
+  }
   return { root, runDir, logs };
 }
 
@@ -178,7 +203,7 @@ test("a row whose executions were refused reads as refusals, never as one succes
     );
     assert.match(
       line(out, "action_breadth_settlements:"),
-      /^action_breadth_settlements: 7 executions \(7 distinct executionIds\) · succeeded 2 · rejected 4 · uncertain 1$/u,
+      /^action_breadth_settlements: 7 executions \(7 distinct executionIds\) · succeeded 2 · rejected 4 · uncertain 1 · day_task=not_measured:\S+$/u,
     );
     assert.match(
       out,
@@ -258,4 +283,169 @@ test("neither record is a refusal that names both, never a run that measured not
   } finally {
     rmSync(options.root, { recursive: true, force: true });
   }
+});
+
+// THE DAY'S TASK, WHICH IS WHAT A COUNT HAS TO BE READ AGAINST. Measured 2026-11-19 (`round79`): `place_owned_object 3 ·
+// move_placed_furniture 6 · color_placed_object 2 · rotate_furniture 4` was read as a run that did almost nothing, because
+// the audit compared it against farming, foraging, mining, social and fishing - none of which the day had asked for. The
+// day's task was `furnish_and_arrange`, and these tests pin that the reading says so and keeps its two numbers apart.
+const DAY_LOG = [
+  `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START + 1654}}`,
+  receiptLine("d-1", "place_owned_object", "succeeded", START + 3000),
+  receiptLine("d-2", "move_placed_furniture", "rejected", START + 4000),
+  receiptLine("d-3", "color_placed_object", "succeeded", START + 5000),
+  receiptLine("d-4", "express_emote", "succeeded", START + 6000),
+];
+
+test("a run whose day asked for furnishing is judged against furnishing, not against a farm", () => {
+  const options = fixture({ logLines: DAY_LOG, sessions: [[NOTE_ZH("furnish_and_arrange")]] });
+  try {
+    const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
+    assert.match(
+      line(out, "action_breadth_day:"),
+      /^action_breadth_day: day 1 · day_task=furnish_and_arrange · family \{place_owned_object,move_placed_furniture,remove_placed_item,color_placed_object,dress_mannequin,set_sign_display\} · source session:session-1\.jsonl \(partial - this run published no result\.json\)/u,
+      "the day's task is printed beside the work, and the source that answered is named with it",
+    );
+    assert.match(
+      line(out, "action_breadth_day_family:"),
+      /· day_task=furnish_and_arrange day_family=yes · attempted 3 of 6 · succeeded 2 of 3 executions \(rejected 1\) · not attempted remove_placed_item,dress_mannequin,set_sign_display/u,
+      "coverage of the day's own work and whether it landed are two numbers, printed separately",
+    );
+    assert.match(
+      line(out, "action_breadth_day_shape:"),
+      /the task names no farming_crops, resource_gathering, animals_pets action, and this day ran 0 executions in those families - that is the day's shape, not a day of work missed/u,
+      "a day that asked for no farm work and saw none is correct, and the reading says so instead of implying neglect",
+    );
+    assert.match(
+      line(out, "action_breadth_action: place_owned_object"),
+      /day_task=furnish_and_arrange day_family=yes/u,
+      "an action the task names is marked as the day's work",
+    );
+    assert.match(
+      line(out, "action_breadth_action: express_emote"),
+      /day_task=furnish_and_arrange day_family=no/u,
+      "an action the day did not ask for still names the day it is being read against",
+    );
+    assert.match(
+      out,
+      /^a_reading_of_productivity_names_the_day_it_judged rows examined \d+ · day-task named [1-9]\d* · family-scored [1-9]\d* · unanchored 0$/mu,
+      "every row that scores an action count names the day it judged",
+    );
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("a day whose task IS farm work is judged against that farm work, with its own numbers", () => {
+  const options = fixture({
+    logLines: [
+      `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START + 1654}}`,
+      receiptLine("f-1", "till_soil", "succeeded", START + 3000),
+      receiptLine("f-2", "plant_seed", "succeeded", START + 4000),
+      receiptLine("f-3", "water_crop", "rejected", START + 5000),
+    ],
+    sessions: [[NOTE_ZH("till_and_sow")]],
+  });
+  try {
+    const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
+    assert.match(
+      line(out, "action_breadth_day_family:"),
+      /day 1 · day_task=till_and_sow day_family=yes · attempted 3 of 4 · succeeded 2 of 3 executions \(rejected 1\)/u,
+      "the same row judges a farm day against the farm actions that day named",
+    );
+    assert.match(line(out, "action_breadth_action: till_soil"), /day_task=till_and_sow day_family=yes/u);
+    assert.doesNotMatch(
+      out,
+      /action_breadth_day_shape/u,
+      "a task that names farm actions gets no 'the farm count is the day's shape' note",
+    );
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("each day of a run is measured on its own executions, split at the instant its note arrived", () => {
+  const options = fixture({
+    logLines: [
+      `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START + 1654}}`,
+      receiptLine("a-1", "place_owned_object", "succeeded", START + 2000),
+      receiptLine("a-2", "move_placed_furniture", "rejected", START + 3000),
+      receiptLine("b-1", "machine_load", "succeeded", START + 5000),
+      receiptLine("b-2", "craft_item", "rejected", START + 6000),
+    ],
+    // The notes arrive at +1000 and +4000, so the first two receipts are day 1's and the last two are day 2's.
+    sessions: [[NOTE_ZH("furnish_and_arrange"), NOTE_ZH("run_the_machines")]],
+  });
+  try {
+    const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
+    const families = out.split("\n").filter((entry) => entry.startsWith("action_breadth_day_family:"));
+    assert.equal(families.length, 2, "one line per day, each with its own numbers");
+    assert.match(
+      families[0],
+      /day 1 · day_task=furnish_and_arrange day_family=yes · attempted 2 of 6 · succeeded 1 of 2 executions/u,
+    );
+    assert.match(
+      families[1],
+      /day 2 · day_task=run_the_machines day_family=yes · attempted 2 of 5 · succeeded 1 of 2 executions/u,
+    );
+    assert.match(line(out, "action_breadth_day:"), /day 1 · day_task=furnish_and_arrange/u);
+    assert.match(out, /^action_breadth_day: day 2 · day_task=run_the_machines /mu);
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("a bundle's own taskPurposes is the first authority for what each day asked", () => {
+  const options = fixture({
+    result: {
+      scenario: "multiday_routine",
+      attemptedActionIds: ["till_soil", "plant_seed"],
+      succeededActionIds: ["till_soil"],
+      executionTrace: { rows: 2, flat: 0 },
+      taskPurposes: [{ day: 1, task: "till_and_sow", state: "achieved", reasonCode: "task_purpose_achieved" }],
+    },
+    logLines: null,
+  });
+  try {
+    const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
+    assert.match(
+      line(out, "action_breadth_day:"),
+      /^action_breadth_day: day 1 · day_task=till_and_sow · family \{till_soil,plant_seed,water_crop,fertilize_tile\} · source result\.json - the bundle's own taskPurposes$/u,
+      "the run's own declaration answers before any session record, and a run that ended is not marked partial",
+    );
+    assert.match(
+      line(out, "action_breadth_day_family:"),
+      /day 1 · day_task=till_and_sow day_family=yes · attempted not_measured:no_per_action_execution_count of 4 · succeeded not_measured:no_per_execution_settlement_read/u,
+      "a bundle publishes executions without a settlement per execution and without a per-action count, and the reading says which half is missing instead of printing `0 of 4`",
+    );
+  } finally {
+    rmSync(options.root, { recursive: true, force: true });
+  }
+});
+
+test("the productivity gate reds on a row that scores an action count and names no day", () => {
+  const gate = productivityGate([
+    "action_breadth: attempted 5 of 101 published (5.0%)",
+    "action_breadth_day_family: day 1 · day_task=furnish_and_arrange day_family=yes · attempted 2 of 6 · succeeded 1 of 2 executions (rejected 1)",
+  ]);
+  assert.equal(gate.failed, true);
+  assert.match(
+    gate.lines[0],
+    /^a_reading_of_productivity_names_the_day_it_judged:action_breadth:attempted - this row scores an action count and names no day it judged/u,
+    "the failure names the row, not just a count",
+  );
+  assert.match(gate.lines[1], /rows examined 2 · day-task named 1 · family-scored 1 · unanchored 1$/u);
+  // A row that names the ABSENCE of a day task is not unanchored: it states which question no artifact answered.
+  const absent = productivityGate([
+    "action_breadth: attempted 5 of 101 published · day_task=not_measured:no session record",
+  ]);
+  assert.equal(absent.failed, false);
+  assert.match(
+    absent.lines[0],
+    /rows examined 1 · day-task named 0 · family-scored 0 · unanchored 0 · day-task not_measured 1$/u,
+  );
+  // And a population of zero is blocked rather than green.
+  const empty = productivityGate([]);
+  assert.equal(empty.failed, true);
+  assert.match(empty.lines[0], /:blocked - rows examined 0 · day-task named 0 · family-scored 0 · unanchored 0/u);
 });
