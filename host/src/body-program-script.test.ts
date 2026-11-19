@@ -23,6 +23,7 @@ import {
   planWorkDescription,
 } from "./body-program-script.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
+import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
 
 /**
  * The published surface is the authority for the builder's vocabulary, so this suite feeds the generator from
@@ -2691,6 +2692,83 @@ test("the description teaches that a refused call costs its own call, and names 
     description,
     /voids the whole plan/u,
     "a rule no longer in force may not be taught: it is the sentence that made one typo cost the batch",
+  );
+});
+
+/**
+ * THE ONE PLAN CALL WITH A PRECONDITION, AND THE DESCRIPTION IS NOW ITS ONLY HOME.
+ *
+ * <p>
+ * `sleep()` is not like the other rows: it takes no arguments and it is refused outdoors. The Game prompt floor carried
+ * that fact as `SLEEPING_IS_AN_ACTION` until 2026-11-19 - "in stardew_plan_work, call builder.sleep() (with no arguments)
+ * after entering the farmhouse" - written because a run spent a whole night announcing goodnight beside a body that never
+ * moved. It moved here, because this is where the call is declared: a precondition a caller needs AT THE MOMENT OF THE
+ * CALL belongs beside the call, and the floor is the last thing she reads rather than the place she writes the script.
+ * The floor stating it too was a second spelling; `game-surface-prompt-floor.test.ts` now holds that half of the move.
+ * </p>
+ *
+ * <p>
+ * THE WORDS COME FROM THE PROJECTION, NOT FROM THIS FILE. The answer an outdoor attempt gets is published by the Mod and
+ * worded once, in `SLEEP_DAY_END_TEXT.refusesHere`, so the refusal code and the room are EXTRACTED from that line and
+ * required here - a description that stops naming them leaves the day's end refused with nothing having said so, and the
+ * finding names `sleep` and the token it lost.
+ * </p>
+ */
+function sleepPreconditionTokens(): readonly string[] {
+  const line = SLEEP_DAY_END_TEXT.refusesHere;
+  const codes = [...line.matchAll(/`([a-z][a-z0-9_]*)`/gu)].map((match) => match[1]!);
+  const room = /inside your own [a-z]+ or [a-z]+/u.exec(line)?.[0];
+  return Object.freeze(room === undefined ? codes : [...codes, room]);
+}
+
+function sleepPreconditionFindings(description: string): readonly string[] {
+  return sleepPreconditionTokens()
+    .filter((token) => !description.includes(token))
+    .map((token) => `sleep_precondition_missing:${token}`);
+}
+
+test("the plan description states `sleep()`'s precondition, which is now the only place it is stated", () => {
+  const tokens = sleepPreconditionTokens();
+  // Zero (or half) population is BLOCKED rather than green: a projection that stopped naming the refusal would make a
+  // description naming nothing agree with it.
+  assert.ok(
+    tokens.length >= 2,
+    `blocked: SLEEP_DAY_END_TEXT.refusesHere named ${String(tokens.length)} of the two facts this gate reads (the ` +
+      "refusal code and the room the day ends in), so its silence about the description would mean nothing",
+  );
+  assert.deepEqual(
+    sleepPreconditionFindings(planWorkDescription(CATALOG_ACTIONS)),
+    [],
+    `the description stopped stating what \`sleep()\` needs (${tokens.join(", ")}): the Game prompt floor no longer ` +
+      "carries it either - `SLEEPING_IS_AN_ACTION` moved into this description - so nothing would tell her the day's end " +
+      "is refused outdoors",
+  );
+});
+
+/**
+ * The falsifier: the moved sentence is taken back out of the description, and the gate must name `sleep` and what it lost.
+ *
+ * The removal is the old rendering (`\`sleep()\` takes none`), so the case is the regression the sentence was moved to
+ * prevent rather than a synthetic edit. A description rewritten around the sentence leaves this falsifier BLOCKED by its
+ * own `notEqual`, which is the loud shape a rotted falsifier has to take.
+ */
+test("the precondition gate names `sleep` and the lost precondition when the moved sentence comes out", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  const without = description.replace(
+    /`sleep\(\)` takes none, and ends the day only from inside your own farmhouse or cabin \(`not_home` outdoors\)/u,
+    "`sleep()` takes none",
+  );
+  assert.notEqual(
+    without,
+    description,
+    "blocked: the sentence this gate protects is not in the description as this falsifier removes it, so nothing below " +
+      "was examined",
+  );
+  assert.deepEqual(
+    sleepPreconditionFindings(without),
+    ["sleep_precondition_missing:not_home", "sleep_precondition_missing:inside your own farmhouse or cabin"],
+    "a description that drops the moved sentence is named by the precondition it lost, so the sentence is load-bearing " +
+      "where it now lives",
   );
 });
 

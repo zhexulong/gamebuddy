@@ -4,8 +4,19 @@
  * <p>
  * Everything in `game-surface-prompt-floor.ts` holds for any game surface - machine-block semantics, the bubble's own
  * delivery unit, the receipt vocabulary, body language through the mounted tools. What is here is Stardew's physics: the
- * day ends at your own bed inside that house, the mines at 01:30 and the pass-out at 02:00, and `(T)Hoe` is not a word a
- * person says. A second game would write its own file like this one and the generic floor would not grow a branch for it.
+ * mines at 01:30 and the pass-out at 02:00, and `(T)Hoe` is not a word a person says. A second game would write its own
+ * file like this one and the generic floor would not grow a branch for it.
+ * </p>
+ *
+ * <p>
+ * HOW THE DAY ENDS IS NOT HERE, and its absence is the shape every fact in this tree should end in. `SLEEPING_IS_AN_ACTION`
+ * stood in the floor until 2026-11-19 saying the day ends by calling `builder.sleep()` with no arguments from inside the
+ * farmhouse; it left because the tool that mounts that call already declares it, and a precondition a caller needs AT THE
+ * MOMENT OF THE CALL belongs beside the call. `stardew_plan_work`'s own description (`body-program-script.ts`
+ * `planWorkDescription`) states that `sleep()` takes no arguments and ends the day only from inside your own farmhouse or
+ * cabin, answering `not_home` outdoors - the floor is the last thing she reads, not the place she decides what to write.
+ * `body-program-script.test.ts` holds the sentence where it now lives and fails by naming `sleep` and the missing
+ * precondition, so the move cannot become a deletion.
  * </p>
  *
  * <p>
@@ -44,9 +55,6 @@
 
 import type { GameRuleExit } from "../../../game-surface-prompt-floor.js";
 
-export const SLEEPING_IS_AN_ACTION =
-  "The day ends by going to bed and sleeping: in stardew_plan_work, call builder.sleep() (with no arguments) after entering the farmhouse. A spoken goodnight alone leaves the day exactly where it was.";
-
 export const NIGHT_HAS_ENFORCED_HOURS =
   "The night has hours the game enforces, not ones you can spend: from 01:30 AM drop what is not urgent and make for the bed inside the farmhouse, and 02:00 AM is the day's last legal hour - stay up past it and you pass out where you stand, which costs the day rather than finishing it. The <world-state> line carries the clock and where you are, so read the hour before you accept another piece of work.";
 
@@ -72,12 +80,6 @@ export const STARDEW_GAME_CONDUCT_CLASSES: readonly Readonly<{
   /** The surface change that would delete the rule, or the reason no mechanism can enforce it. */
   exit: GameRuleExit;
 }>[] = Object.freeze([
-  {
-    id: "sleeping_is_an_action",
-    class: "CHANNEL",
-    reason: "the day's end is an action on this surface; the run that announced goodnight left the body standing.",
-    exit: "surface: the snapshot projection's own Sleep line states the executor's precondition - snapshot-projection.ts says the day ends from wherever you are, while SleepAndAdvanceDayLifecycle.cs answers not_home outside the farmhouse - so once the surface says where the day ends, and at what hour it is offered, the floor has nothing to add.",
-  },
   {
     id: "night_has_enforced_hours",
     class: "CHANNEL",

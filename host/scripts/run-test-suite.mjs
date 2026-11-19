@@ -171,6 +171,20 @@ async function runTestPreflight() {
 }
 
 /**
+ * The preload every child of this suite runs (`runDiscoveredTests`), verified ONCE in the parent before a single child is
+ * spawned.
+ *
+ * MEASURED: importing it per child is what turned one absent Windows helper pair into `files 501 · tests 501 · fail 501`
+ * in the compiled phase and `files 43 · fail 43` in the script phase - 544 identical import failures in 70 ms each, and
+ * a reading nobody could use. Verified here, the same failure is one named blocker for the phase. The requirement is
+ * unchanged (the bootstrap still verifies the complete pair, and a child imported directly still refuses), and the error
+ * carries `.blocker`, which is what makes the phase `blocked` rather than `fail`.
+ */
+async function assertBoundTestChildPreload() {
+  await import("./compiled-test-bootstrap.mjs");
+}
+
+/**
  * The phases this suite runs, in order. `GAMEBUDDY_HOST_TEST_COMPILED_ONLY=1` drops the script phase; that
  * is the only thing that can narrow the suite, and the phase summary carries the count it produced.
  */
@@ -184,6 +198,8 @@ function testPhases({ env, failFast }) {
           // Use the internal implementation: the public build:test wrapper acquires
           // this same lock for standalone callers and would otherwise self-deadlock.
           await import("./build-test-artifact-locked.mjs");
+          // After the build, because the preload resolves the built tree it binds into.
+          await assertBoundTestChildPreload();
           // The reading is RETURNED rather than only printed: the phase runner is the only layer that can publish one
           // total for the whole suite, and it cannot add up what it never received.
           return await runCompiledTests({ keepGoing: !failFast });
@@ -191,17 +207,146 @@ function testPhases({ env, failFast }) {
     },
     // Script-level tests include lock protocol tests that intentionally invoke
     // public package scripts. They must run after the outer artifact lock closes.
-    { suite: "scripts", run: () => runScriptTests({ keepGoing: !failFast }) },
+    {
+      suite: "scripts",
+      // Their children take the same preload, so they share the same prerequisite: a phase that cannot bind it cannot
+      // measure, and saying so here is the difference between one named blocker and one import failure per file.
+      run: async () => {
+        await assertBoundTestChildPreload();
+        return await runScriptTests({ keepGoing: !failFast });
+      },
+    },
   ];
   return env.GAMEBUDDY_HOST_TEST_COMPILED_ONLY === "1" ? phases.filter((phase) => phase.suite === "compiled") : phases;
 }
 
-/** What this run covered, published on every exit path - the same reading the batch runner prints per phase. */
-function phasesSummaryLine({ phasesTotal, notRun, failedPhases, wallMs }) {
+/**
+ * The states a phase may report, declared once: every count below is derived from this vocabulary rather than from a
+ * second hand-written list of the same words, so a state added here cannot be missing from the line that prints them.
+ *
+ * The four are the answer to "did this phase measure anything", and they are not interchangeable:
+ *
+ * - `pass` - the phase ran and its reading holds tests that did not fail.
+ * - `fail` - the phase ran and something in it went red. This is the only state that is a defect in the code the
+ *   phase covers.
+ * - `blocked` - the phase was asked to measure and could not. Its own prerequisite could not be verified (the error
+ *   carries `.blocker`, and its `code` is the name), or the population that should exist produced no test at all.
+ * - `not_measured` - nothing asked. The phase ran and handed back no reading, or the run's preflight stopped before
+ *   any phase started.
+ *
+ * A `blocked` phase is named for what would have to change, never reported as one failure per test file it would have
+ * run: measured on this machine, a missing helper pair printed `files 501 · tests 501 · fail 501` in 33 s.
+ */
+export const PHASE_PASS = "pass";
+export const PHASE_FAIL = "fail";
+export const PHASE_BLOCKED = "blocked";
+export const PHASE_NOT_MEASURED = "not_measured";
+export const PHASE_STATES = Object.freeze([PHASE_PASS, PHASE_FAIL, PHASE_BLOCKED, PHASE_NOT_MEASURED]);
+
+/** One phase's state, from the two things a phase can hand back: a reading, or the error that ended it. */
+export function phaseState({ error, reading } = {}) {
+  if (error?.blocker !== undefined) return PHASE_BLOCKED;
+  if (error !== undefined) return PHASE_FAIL;
+  // A reading that says tests failed is a failure even when the phase returned instead of throwing: the gate exists so
+  // that a phase can never be counted as a pass over its own reading.
+  if ((reading?.fail ?? 0) > 0) return PHASE_FAIL;
+  if (reading === undefined) return PHASE_NOT_MEASURED;
+  return reading.tests === 0 ? PHASE_BLOCKED : PHASE_PASS;
+}
+
+/** One phase's own line: its state, and the reading or the blocker code that state was derived from. */
+function phaseStateLine({ suite, state, error, reading }) {
+  const detail =
+    error?.blocker !== undefined
+      ? `:blocker=${error.blocker.code}`
+      : reading === undefined
+        ? ""
+        : `:files=${reading.files}:tests=${reading.tests}:pass=${reading.pass}:fail=${reading.fail}:skipped=${reading.skipped ?? 0}`;
+  return `host_test_phase_state:suite=${suite}:state=${state}${detail}`;
+}
+
+/**
+ * The blocked phase's own reason: the code, the requirement it names, and the command that publishes it.
+ *
+ * A blocker that named nothing would be indistinguishable from a crash, so the missing thing and its remedy are both
+ * on this one line - the same record the gate line then summarises across phases.
+ */
+export function phaseBlockedLine(suite, blocker) {
+  const field = (value) => String(value).replaceAll(/\s+/gu, " ").trim();
+  return [
+    `host_test_phase_blocked:suite=${suite}`,
+    `code=${blocker.code}`,
+    `requirement=${field(blocker.requirement)}`,
+    `publish=${field(blocker.publish)}`,
+    `cause=${field(blocker.cause ?? "unspecified")}`,
+  ].join(" · ");
+}
+
+/** The code a blocked phase is named by, whether its blocker is a prerequisite or an empty population. */
+const ZERO_TESTS_BLOCKED = "zero_tests_blocked";
+function blockerCodeOf({ error }) {
+  return error?.blocker?.code ?? ZERO_TESTS_BLOCKED;
+}
+
+/** A failed phase's own message, or - for a phase that returned instead of throwing - the reading that made it a failure. */
+function failureMessageOf({ error, reading }) {
+  if (error instanceof Error) return error.message;
+  if (error !== undefined) return String(error);
+  return `a reading with ${reading?.fail ?? "unreadable"} failing test(s) and no error`;
+}
+
+/** One line per blocked phase: the blocker it names and its remedy, or the empty population it measured. */
+function blockedReasonLine({ suite, error }) {
+  return error?.blocker === undefined
+    ? `host_test_phase_blocked:suite=${suite} · code=${ZERO_TESTS_BLOCKED} · cause=the phase counted no test, so its population is empty`
+    : phaseBlockedLine(suite, error.blocker);
+}
+
+/**
+ * THE GATE `a_phase_that_cannot_measure_is_not_a_failure`: the phases this runner declared, how many of them measured
+ * something, and what each one reported.
+ *
+ * <p>
+ * WHY ONE LINE. A phase is not the run, and a run's verdict is not a phase's. The measured defect: one absent helper
+ * pair printed `phases examined 2 of 2 · failed 1` beside `suites_read 1 of 2`, so the phase that never measured
+ * anything and the phase that ran 43 files were both folded into one "failed", and neither line said which state the
+ * other phase was in. So the counts come first, then every phase's own state and reading on the same line: a blocked
+ * phase cannot be read as the suite's verdict, and one phase's reading cannot stand for the other's.
+ * </p>
+ * <p>
+ * The invariant this line publishes is `pass + fail + blocked + not_measured === phases examined`: a phase that
+ * reported nothing is `not_measured`, not absent from the arithmetic. `not_run` is the fifth reading and is printed
+ * only when `--fail-fast` left a declared phase without any state at all.
+ * </p>
+ */
+export function phaseStatesLine({ states, phasesTotal, notRun = [] }) {
+  const countOf = (state) => states.filter((record) => record.state === state).length;
+  const counts = PHASE_STATES.map((state) => `${state} ${countOf(state)}`);
+  const readings = states.map((record) => {
+    const detail =
+      record.error?.blocker !== undefined
+        ? `(${record.error.blocker.code})`
+        : record.reading === undefined
+          ? ""
+          : `(files ${record.reading.files}, tests ${record.reading.tests})`;
+    return `${record.suite}=${record.state}${detail}`;
+  });
+  const parts = [
+    `host_test_suite_phase_states:a_phase_that_cannot_measure_is_not_a_failure:phases examined ${states.length} of ${phasesTotal}`,
+    ...counts,
+  ];
+  if (notRun.length > 0) parts.push(`not_run ${notRun.length}`);
+  if (states.length === 0) parts.push("no_phase_reported_a_state");
+  parts.push(...readings);
+  return parts.join(" · ");
+}
+
+/** What this run covered, published on every exit path - the coverage the gate line's per-phase counts do not carry. */
+function phasesSummaryLine({ phasesTotal, notRun, wallMs }) {
   const remaining = notRun.length;
-  const parts = [`host_test_suite_phases:phases examined ${phasesTotal - remaining} of ${phasesTotal}`];
+  const parts = [`host_test_suite_phases:phases_total ${phasesTotal}`];
   if (remaining > 0) parts.push(`remaining ${remaining} not run`, `phases_not_run ${remaining}`);
-  parts.push(`failed ${failedPhases}`, `wall_ms ${wallMs}`);
+  parts.push(`wall_ms ${wallMs}`);
   return parts.join(" · ");
 }
 
@@ -243,69 +388,111 @@ export function testSuiteTotalsLine({ readings, phasesTotal, phasesWithoutReadin
  * Every phase runs by default; `--fail-fast` is the interactive exception. The old default stopped at the
  * first failing phase, so the exit code answered "did the first failing phase fail" - which cannot be told
  * from "everything passed before we stopped". That is the same defect the batch runner had one level down.
+ *
+ * Each phase contributes exactly one state (see `PHASE_STATES`), its own line is printed where it happens, and the gate
+ * line repeats every phase's state beside every other phase's reading at the end. A blocked phase is never a failure
+ * and never consumes another phase's reading: the phase after it still runs, and its counts still reach the total.
  */
 export async function runTestPhases(phases, { failFast = false, now = Date.now } = {}) {
   const startedAtMs = now();
-  const failures = [];
+  const states = [];
   const notRun = [];
   const readings = [];
-  const phasesWithoutReading = [];
   for (const [index, phase] of phases.entries()) {
+    let error;
+    let reading;
     try {
-      const reading = await phase.run();
-      if (reading !== undefined) readings.push({ suite: phase.suite, ...reading });
-      else phasesWithoutReading.push(phase.suite);
-      console.error(`host_test_phase_ok:suite=${phase.suite}`);
-    } catch (error) {
-      failures.push({ suite: phase.suite, error });
+      reading = await phase.run();
+    } catch (caught) {
+      error = caught;
       // A suite that failed still counted every test it ran: the reading travels on the failure, so the total for the
       // run is not silently missing the phase that went red.
-      if (error?.reading !== undefined) readings.push({ suite: phase.suite, ...error.reading });
-      else phasesWithoutReading.push(phase.suite);
-      if (failFast) {
-        for (let rest = index + 1; rest < phases.length; rest += 1) notRun.push({ suite: phases[rest].suite, reason: "fail_fast" });
-        break;
-      }
+      if (caught?.reading !== undefined) reading = caught.reading;
+    }
+    const record = { suite: phase.suite, state: phaseState({ error, reading }), error, reading };
+    states.push(record);
+    if (reading !== undefined) readings.push({ suite: phase.suite, ...reading });
+    // The blocker's own line comes first: it names the missing thing and the command that publishes it.
+    if (error?.blocker !== undefined) console.error(phaseBlockedLine(phase.suite, error.blocker));
+    console.error(phaseStateLine(record));
+    // `--fail-fast` stops at a FAILING phase only. A blocked phase is a state to report, not a reason to stop, and the
+    // phase after it is the one whose reading proves the suite can still measure something.
+    if (record.state === PHASE_FAIL && failFast) {
+      for (let rest = index + 1; rest < phases.length; rest += 1) notRun.push({ suite: phases[rest].suite, reason: "fail_fast" });
+      break;
     }
   }
-  const summary = phasesSummaryLine({ phasesTotal: phases.length, notRun, failedPhases: failures.length, wallMs: now() - startedAtMs });
   const notRunLines = notRun.map((entry) => `host_test_suite_phase_not_run:suite=${entry.suite}:reason=${entry.reason}`);
   for (const line of notRunLines) console.error(line);
+  const failed = states.filter((record) => record.state === PHASE_FAIL);
+  const blocked = states.filter((record) => record.state === PHASE_BLOCKED);
+  const notMeasured = states.filter((record) => record.state === PHASE_NOT_MEASURED);
+  const gate = phaseStatesLine({ states, phasesTotal: phases.length, notRun });
   // The total is published before anything can throw: a red suite is exactly the run whose test count someone needs.
   const reportedTests = readings.reduce((total, reading) => total + (reading.tests ?? 0), 0);
-  const totals = testSuiteTotalsLine({ readings, phasesTotal: phases.length, phasesWithoutReading: phasesWithoutReading.length });
+  const totals = testSuiteTotalsLine({
+    readings,
+    phasesTotal: phases.length,
+    // Every phase that published no count at all, whatever state it landed in: `suites_read N of M` and this field have
+    // to account for the same population, or a blocked phase would read as a phase that simply had no tests.
+    phasesWithoutReading: states.filter((record) => record.reading === undefined).length,
+  });
+  const summary = phasesSummaryLine({ phasesTotal: phases.length, notRun, wallMs: now() - startedAtMs });
+  console.error(gate);
   console.error(totals);
   console.error(summary);
-  // THE TWO ZEROES THAT ARE NOT A PASS: a suite whose children reported no counts at all (a phase that threw before it
-  // batched anything), and a run whose counted tests are zero. Both used to read exactly like a green suite.
-  if (readings.length < phases.length - notRun.length) {
-    const message = [
-      `test_suite_reading_missing:${phasesWithoutReading.join(", ")}`,
-      "a phase published no test count at all, so the run's total is missing that suite",
-      totals,
-      summary,
-    ].join("\n");
-    if (failures.length === 0) throw new Error(message);
+  // A phase's own message already names its files, and the per-batch lines above carry each file's own reason; this
+  // aggregate is what says which phases produced them. It goes first because a real failure outranks a blocked one.
+  if (failed.length > 0) {
+    throw new Error(
+      [
+        `test_suite_failed:${failed.length} phase(s): ${failed.map((record) => record.suite).join(", ")}`,
+        ...failed.map((record) => `${record.suite}: ${failureMessageOf(record)}`),
+        ...notRunLines,
+        gate,
+        totals,
+        summary,
+      ].join("\n"),
+    );
   }
-  if (reportedTests === 0 && failures.length === 0) {
+  // THE THIRD ZERO, kept as it was: a run whose counted tests are zero is not a green suite, whatever state its phases
+  // landed in. It stays distinct from `blocked` (a prerequisite or a population) and from `not_measured` (no reading
+  // at all) - the totals line names it, and so does this error.
+  if (reportedTests === 0) {
     throw new Error([
       "test_suite_totals_blocked:no test was counted in this run, which is not a green suite",
+      // ...and when the reason is a named blocker, the reason travels with the verdict rather than only in the line above.
+      ...blocked.map(blockedReasonLine),
+      gate,
       totals,
       summary,
     ].join("\n"));
   }
-  if (failures.length === 0 && notRun.length === 0) return readings;
-  // Each phase's own message already names its files, and the per-batch lines above carry each file's own
-  // reason; this aggregate is what says which phases produced them.
-  throw new Error(
-    [
-      `test_suite_failed:${failures.length} phase(s): ${failures.map((entry) => entry.suite).join(", ")}`,
-      ...failures.map((entry) => `${entry.suite}: ${entry.error instanceof Error ? entry.error.message : String(entry.error)}`),
-      ...notRunLines,
+  // The second zero that is not a pass: a phase that handed back no count at all.
+  if (notMeasured.length > 0) {
+    throw new Error([
+      `test_suite_reading_missing:${notMeasured.map((record) => record.suite).join(", ")}`,
+      "a phase published no test count at all, so the run's total is missing that suite",
+      gate,
       totals,
       summary,
-    ].join("\n"),
-  );
+    ].join("\n"));
+  }
+  // A blocked phase is named, with the requirement and the command that publishes it - never as a failure of the code
+  // it would have run, and never as a pass.
+  if (blocked.length > 0) {
+    throw new Error(
+      [
+        `test_suite_blocked:${blocked.length} phase(s): ${blocked.map((record) => `${record.suite}=${blockerCodeOf(record)}`).join(", ")}`,
+        "a phase whose own prerequisite cannot be verified measures nothing; that is not a failure of the tests it would have run, and it is not a pass",
+        ...blocked.map(blockedReasonLine),
+        gate,
+        totals,
+        summary,
+      ].join("\n"),
+    );
+  }
+  return readings;
 }
 
 export async function main({ argv = process.argv, env = process.env, preflight = runTestPreflight, phases = undefined } = {}) {
@@ -314,7 +501,12 @@ export async function main({ argv = process.argv, env = process.env, preflight =
   try {
     await preflight();
   } catch (error) {
-    console.error(`host_test_suite_phases:not_run: phases 0 of ${planned.length}: preflight failed`);
+    // A red preflight is the SUITE's prerequisite, not a phase's: nothing started, so every declared phase reports
+    // `not_measured` by name. Before this, the whole run printed `phases 0 of 2` and left the state of each phase for
+    // the reader to infer from the absence.
+    const states = planned.map((phase) => ({ suite: phase.suite, state: PHASE_NOT_MEASURED, cause: "preflight_failed" }));
+    for (const phase of planned) console.error(`host_test_phase_state:suite=${phase.suite}:state=${PHASE_NOT_MEASURED}:cause=preflight_failed`);
+    console.error(phaseStatesLine({ states, phasesTotal: planned.length }));
     throw error;
   }
   await runTestPhases(planned, { failFast });

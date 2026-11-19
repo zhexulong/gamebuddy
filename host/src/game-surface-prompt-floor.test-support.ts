@@ -222,6 +222,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "THE DEFAULT CARD AND PRESETS WERE UPDATED TOGETHER (`card.json`, `default-companion-preset.ts`), so `systemChars` moved while `conductBlock.chars` stayed fixed at 3,595. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 6,184 (vs 6,025 at HEAD right before this edit: +159 raw chars, +161 JSON-escaped chars, +455 raw UTF-8 bytes / +457 JSON UTF-8 bytes; vs 5,940 previously recorded: +244, absorbing +85 of pre-existing HEAD card drift over the 5,940 reading). `conductBlock.chars` is unchanged at 3,595, so `charShareOfSystemPrompt` is re-derived as 3,595 / 6,184 = 0.5813. `envelopeChars`/`envelopeBytes` follow the system string by this change's measured JSON delta against HEAD (+161 chars: 23,353 -> 23,514; +457 UTF-8 JSON bytes: 32,530 -> 32,987) under `remeasured_2026_11_05`'s convention. The TOKEN columns remain carried unchanged.",
     remeasured_2026_11_19_b:
       "CARD EXAMPLES AND VOICE WERE TIGHTENED TO SHORT CO-OP BUBBLES (`card.json`, `default-companion-preset.ts`), so `systemChars` shrank while `conductBlock.chars` stayed fixed at 3,595. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 6,120 (vs 6,184 at `e9cdf450`: -64 raw chars, -61 JSON-escaped chars, -220 raw UTF-8 bytes / -217 JSON UTF-8 bytes). `conductBlock.chars` stays 3,595, so `charShareOfSystemPrompt` is re-derived as 3,595 / 6,120 = 0.5874. `envelopeChars`/`envelopeBytes` follow the system string by this change's measured JSON delta against HEAD (-61 chars: 23,514 -> 23,453; -217 UTF-8 JSON bytes: 32,987 -> 32,770) under `remeasured_2026_11_05`'s convention. The TOKEN columns remain carried unchanged.",
+    remeasured_2026_11_19_c:
+      "`SLEEPING_IS_AN_ACTION` LEFT THE CONDUCT BLOCK FOR THE PLAN TOOL'S OWN `sleep()` DESCRIPTION (`stardew-game-conduct.ts`, `body-program-script.ts`), so the prompt lost the rule and the conduct slice with it while nothing outside the block moved. MEASURED against `buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN')`: `systemChars` 5,922 and `conductBlock.chars` 3,397 - both -198, and the two deltas AGREE because the edit is inside the conduct block and nowhere else (the deleted rule is 197 chars and the join that held it 1, MEASURED on the two texts; it is ASCII, so the JSON-escaped delta and the UTF-8 byte delta are both -198). The share is re-derived from that pair as 3,397 / 5,922 = 0.5736. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-198: 23,453 -> 23,255; 32,770 -> 32,572) and were NOT re-measured, because that needs the whole materialized-session instrumentation. `not_derived` and NAMED RATHER THAN ABSORBED: the `stardew_plan_work` row's `descriptionChars` is still 2,160, the session's own measurement, and the description this tree composes now carries 82 more characters than the one that session ran (the moved precondition); no session was materialized for this unit, so the row is left as measured rather than incremented by arithmetic.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -229,23 +231,24 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 6,120 at `remeasured_2026_11_19_b`, following the
-    // short-bubble co-op card pass (-64 raw chars from 6,184). The token column below is the 2026-11-05 MEASUREMENT.
-    systemChars: 6120,
+    // Re-derived from the product's builder by the test itself: 5,922 at `remeasured_2026_11_19_c`, following the sleep
+    // rule's removal from the conduct block (-198 raw chars from 6,120). The token column below is the 2026-11-05
+    // MEASUREMENT.
+    systemChars: 5922,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's measured JSON-escaped delta over HEAD (-61 characters): the tool array
-    // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19_b`.
-    envelopeChars: 23453,
-    // Same change in UTF-8 JSON bytes: 32,987 - 217 (-220 UTF-8 bytes + 3 newline escapes).
-    envelopeBytes: 32770,
+    // The recorded envelope plus this change's measured JSON-escaped delta over HEAD (-198 characters): the tool array
+    // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19_c`.
+    envelopeChars: 23255,
+    // Same change in UTF-8 JSON bytes: 32,770 - 198.
+    envelopeBytes: 32572,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 3595,
+    chars: 3397,
     tokens: 1227,
-    // The measured slice over the measured prompt: 3,595 / 6,120.
-    charShareOfSystemPrompt: 0.5874,
+    // The measured slice over the measured prompt: 3,397 / 5,922.
+    charShareOfSystemPrompt: 0.5736,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

@@ -20,7 +20,7 @@
  * count) can never be mistaken for one. A line the parser cannot read is counted and named, never skipped silently.
  */
 
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, readSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -195,7 +195,7 @@ export function readRunnerLog(path) {
     }
     const isFact = line.startsWith(FACT_PREFIX);
     const isSubmission = line.startsWith(SUBMIT_PREFIX);
-    if (!isFact && !isSubmission) continue;
+    if (!(isFact || isSubmission)) continue;
     let parsed;
     try {
       parsed = JSON.parse(line.slice((isFact ? FACT_PREFIX : SUBMIT_PREFIX).length));

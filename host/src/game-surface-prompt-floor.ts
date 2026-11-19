@@ -1,9 +1,5 @@
 import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
-import {
-  CONTENT_IDS_IN_WORDS,
-  NIGHT_HAS_ENFORCED_HOURS,
-  SLEEPING_IS_AN_ACTION,
-} from "./games/stardew/prompt/stardew-game-conduct.js";
+import { CONTENT_IDS_IN_WORDS, NIGHT_HAS_ENFORCED_HOURS } from "./games/stardew/prompt/stardew-game-conduct.js";
 import { type IdentityProfile } from "./identity-profile.js";
 import { buildCompanionSystemPrompt } from "./companion-prompt-assembly.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
@@ -21,7 +17,7 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * <p>
  * The rules are split by OWNER, and this module composes them into the one list the model reads. What holds for any game
  * surface is written below: machine-block semantics, the receipt vocabulary, body language
- * through the mounted tools. What is true only of this save format - the day's end inside the house, `(T)Hoe` - is
+ * through the mounted tools. What is true only of this save format - `(T)Hoe` - is
  * Stardew's, in
  * `games/stardew/prompt/stardew-game-conduct.ts`, and is spliced in at the position it reads at. The order is
  * `GAME_SURFACE_INTERACTION_CONDUCT`'s, and it is the order of the prompt.
@@ -70,10 +66,12 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * </p>
  *
  * <p>
- * MEASURED ON THE FIVE RULES THIS FLOOR CARRIES: every one of them names a surface change, and none is permanent. A new
- * rule cannot be added without saying how it dies, which is what keeps this list from growing back: the two rules that
- * left in 4db7e4a3 left as SURFACE EXITS TAKEN - `BED_IS_INSIDE` the day the day's end refused the fields itself, and
- * `never_a_customer` the day the preset said the register - and not as deletions nobody could see.
+ * MEASURED ON EVERY RULE THIS FLOOR CARRIES: each names a surface change, and none is permanent. A new rule cannot be
+ * added without saying how it dies, which is what keeps this list from growing back - the gate prints how many it
+ * examined, so this paragraph states no count of its own. The rules that have left left as SURFACE EXITS TAKEN, not as
+ * deletions nobody could see: `BED_IS_INSIDE` the day the day's end refused the fields itself, `never_a_customer` the day
+ * the preset said the register, and `SLEEPING_IS_AN_ACTION` the day `sleep()`'s own description took the precondition it
+ * was written to state.
  * </p>
  *
  * <p>
@@ -115,16 +113,15 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * <p>
  * TWO MORE RULES LEFT ON 2026-11-23, and the order of that unit was the point: the guards for both were repaired FIRST, so
  * the deletions could be seen. Deleting a rule whose guard cannot fail makes the floor smaller and the tree greener at the
- * same time (see `fb9dbb44`, and the two guards that now fail by name - `floor_rule_left_the_prompt:SLEEPING_IS_AN_ACTION`
- * and `floor_block_count_owes_update`).
+ * same time (see `fb9dbb44`, and `floor_block_count_owes_update`, which still fails by name there).
  * </p>
  *
  * <p>
  * `BED_IS_INSIDE` stated what the SURFACE refuses - going to bed from the fields - and the surface does refuse it: the day's
  * end answers `not_home` from its own lifecycle (`SleepAndAdvanceDayLifecycle.cs`), which is the Mod's fact and the Mod's
- * test. What the floor still owes her is WHERE the day ends, because a companion that walked into the fields to sleep is the
- * run this rule was written from; `SLEEPING_IS_AN_ACTION` states it ("after entering the farmhouse"), and
- * `identity-profile.test.ts` holds that clause against the assembled prompt rather than against a second rule.
+ * test. WHERE the day ends went the same way on 2026-11-19, one layer further out: the precondition belongs to one call,
+ * so `stardew_plan_work`'s `sleep()` description states it (`body-program-script.ts`), and `body-program-script.test.ts`
+ * holds the clause there rather than here.
  * </p>
  *
  * <p>
@@ -231,20 +228,18 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  * any restatement of the persona, and any rule about a moment. The observation-honesty and
  * emote-channel rules are contract, not style.
  *
- * ONE RULE NAMES THE DAY'S OWN MECHANISM, because it is a fact about the surface and
- * nothing else said it. Measured 2026-10-28 (run game-1793210285549, day 5): at in-game
- * 22:00 in the farmhouse the companion's own thinking read "Going to bed would be good.
- * Let me check if there's a sleep action. ... I don't know the action id. Let me not risk
- * it; a brief line is fine." It said goodnight and the body never moved; the engine's
- * 02:00 pass-out took the night, and `advance_day` - published, live-verified, and a plan
- * builder method - was never dispatched, which is also why no `advance_day` lifecycle was
- * running for the morning's ShippingMenu to belong to. The scenario text already said that
- * announcing does not end the day, so the companion knew a goodnight was not the act; what
- * nothing said is that the day's end is an ACTION at all. It went looking for one named
- * "sleep", found none, and fell back on speech. The rule below therefore states the
- * mechanism the way the emote rule states its channel - what the world does, never a tool
- * id (the Game surface mounts the plan builder, not `stardew_advance_day`) and never an
- * hour at which sleeping is owed.
+ * THE DAY'S OWN MECHANISM LEFT ON 2026-11-19, AND THE MEASUREMENT THAT PUT IT HERE IS WHY IT WENT TO THE TOOL. Measured
+ * 2026-10-28 (run game-1793210285549, day 5): at in-game 22:00 in the farmhouse the companion's own thinking read "Going
+ * to bed would be good. Let me check if there's a sleep action. ... I don't know the action id. Let me not risk it; a brief
+ * line is fine." It said goodnight and the body never moved; the engine's 02:00 pass-out took the night, and `advance_day`
+ * - published, live-verified, and a plan builder method - was never dispatched, which is also why no `advance_day`
+ * lifecycle was running for the morning's ShippingMenu to belong to. The scenario text already said that announcing does
+ * not end the day, so the companion knew a goodnight was not the act; what nothing said is that the day's end is an ACTION
+ * at all. `SLEEPING_IS_AN_ACTION` answered that from here for a while, and the answer belonged one layer out: what she
+ * lacked was the CALL, so the call's own description says it (`body-program-script.ts` `planWorkDescription` - `sleep()`
+ * takes no arguments, and the day passes only from inside your own farmhouse or cabin). A rule left here is a fact stated
+ * twice; this one now has one writer, and `body-program-script.test.ts` fails by naming `sleep` and the missing precondition
+ * if it stops being stated there.
  *
  * TWO RULES LEFT THIS BLOCK BECAUSE THE DELIVERY STATES THEIR FACT, AND THE DELIVERY IS THE ONLY SPELLING THAT DOES
  * NOT DRIFT. Measured 2026-11-05 (day 2, 18:00, the starter farmhouse): she said "六点了，锅里没东西可下，我烧壶水泡点茶对付
@@ -396,7 +391,6 @@ export const GAME_SURFACE_CONDUCT_RULES = {
 /** The floor as the model reads it: each entry's own text, in reading order, with the game modules' rules spliced in. */
 export const GAME_SURFACE_INTERACTION_CONDUCT = [
   GAME_SURFACE_CONDUCT_RULES.fact_batch_blocks.text,
-  SLEEPING_IS_AN_ACTION,
   NIGHT_HAS_ENFORCED_HOURS,
   GAME_SURFACE_CONDUCT_RULES.machine_fields_translated.text,
   CONTENT_IDS_IN_WORDS,

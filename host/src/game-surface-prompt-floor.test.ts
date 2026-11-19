@@ -1034,6 +1034,52 @@ test("the deletion guard turns red in both directions: a fact the delivery lost,
 });
 
 /**
+ * ONE RULE LEFT ON 2026-11-19, AND IT MOVED ONE LAYER OUT RATHER THAN INTO THE PERSONA.
+ *
+ * <p>
+ * `SLEEPING_IS_AN_ACTION` said the day ends by calling `builder.sleep()` with no arguments from inside the farmhouse,
+ * because a run spent a night announcing goodnight beside a body that never moved (2026-10-28, run
+ * game-1793210285549). The measurement was right and the owner was wrong: what she lacked was the CALL, and the tool that
+ * mounts the call declares it. `stardew_plan_work`'s description (`body-program-script.ts` `planWorkDescription`) states
+ * that `sleep()` takes no arguments and that the day passes only from inside her own farmhouse or cabin, answering
+ * `not_home` outdoors - a precondition is read at the moment of the call, which is the only moment it can change one.
+ * </p>
+ *
+ * <p>
+ * WHAT THIS TEST OWNS IS THE HALF THE TOOL'S DESCRIPTION CANNOT SEE: the floor may not take the claim back. The detector
+ * is the claim's VOCABULARY rather than its sentence (`builder.sleep()`, `not_home`), so a rewording that says it again is
+ * red on the day it lands, and the deleted text is carried VERBATIM as proof the detector fires. Where the sentence now
+ * lives is asserted by name in `body-program-script.test.ts`.
+ * </p>
+ */
+const DAY_END_CLAIM = Object.freeze({
+  id: "sleeping_is_an_action",
+  /** The claim's own vocabulary: the call it teaches, and the answer an outdoor attempt gets. */
+  reads: /builder\.sleep\(\)|`not_home`/u,
+  /** The rule this floor carried until 2026-11-19, VERBATIM: proof that `reads` fires on what produced it. */
+  was: "The day ends by going to bed and sleeping: in stardew_plan_work, call builder.sleep() (with no arguments) after entering the farmhouse. A spoken goodnight alone leaves the day exactly where it was.",
+  nowStatedBy: "`stardew_plan_work`'s `sleep()` description (`body-program-script.ts` `planWorkDescription`)",
+});
+
+test("the floor states no day-end precondition, because the plan tool's `sleep()` description does", () => {
+  const rules = GAME_SURFACE_INTERACTION_CONDUCT.split("\n");
+  assert.ok(rules.length > 0, "blocked: the composed conduct list is empty, so nothing was examined");
+  assert.deepEqual(
+    rules
+      .filter((rule) => DAY_END_CLAIM.reads.test(rule))
+      .map((rule) => `day_end_claim_restated_in_the_floor:${DAY_END_CLAIM.id}:${rule.slice(0, 60)}`),
+    [],
+    `the floor states the day's end again, and it is now ${DAY_END_CLAIM.nowStatedBy}'s - a second spelling is the one ` +
+      `that goes stale. rules examined ${String(rules.length)}`,
+  );
+  // The detector's own red: the deleted rule VERBATIM must fire on it, or its silence above means nothing.
+  assert.match(DAY_END_CLAIM.was, DAY_END_CLAIM.reads, `day_end_claim_detector_is_dead:${DAY_END_CLAIM.id}`);
+  // The assembled prompt, because the preset and the card are read by her too - a rule that drifts into either is the same
+  // second spelling, and nothing else here would see it.
+  assert.doesNotMatch(GAME_PROMPT, DAY_END_CLAIM.reads, "the assembled Game prompt states the day's end again");
+});
+
+/**
  * TWO CLAIMS LEFT THIS FLOOR ON 2026-11-23, AND THE PROPERTY IS WHERE THEY LIVE RATHER THAN THAT THEY EXIST.
  *
  * <p>

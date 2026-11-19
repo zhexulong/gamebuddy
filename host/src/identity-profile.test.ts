@@ -8,8 +8,7 @@ import { fileURLToPath } from "node:url";
 import { EXPRESSION_ONLY_ACTION_IDS, STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
-import { BUILDER_METHODS, MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
-import { SLEEPING_IS_AN_ACTION } from "./games/stardew/prompt/stardew-game-conduct.js";
+import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
 import {
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
@@ -247,64 +246,33 @@ test("the Game floor does not command speech before every action, so the card ke
   assert.match(buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile), /先接住人/u);
 });
 
-test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
-  // Measured 2026-10-28 (run game-1793210285549, day 5). At in-game 22:00, standing in the
-  // farmhouse, the companion's own thinking read: "Going to bed would be good. Let me check if
-  // there's a sleep action. ... I don't know the action id. Let me not risk it; a brief line is
-  // fine." It said "屋里十点了，我把灯拧小点……" and nothing moved. The engine's 02:00 pass-out took
-  // the night, and `advance_day` - published, live-verified, and a plan-builder method - was never
-  // dispatched. The scenario text HAD said 只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去, so the
-  // companion knew announcing was not the act; what nothing said is that the day's end is an
-  // ACTION at all, in the same vocabulary as every other action. It went looking for one named
-  // "sleep", found none, and chose silence.
+test("the Game prompt names no day-end call, because the plan tool's own description carries it", () => {
+  // Measured 2026-10-28 (run game-1793210285549, day 5). At in-game 22:00, standing in the farmhouse, the
+  // companion's own thinking read: "Going to bed would be good. Let me check if there's a sleep action. ... I
+  // don't know the action id. Let me not risk it; a brief line is fine." It said "屋里十点了，我把灯拧小点……" and
+  // nothing moved; the engine's 02:00 pass-out took the night, and `advance_day` - published, live-verified, and
+  // a plan-builder method - was never dispatched.
   //
-  // RE-DERIVED, NOT DELETED. This case used to assert the sentence "The day ends by going to bed and
-  // sleeping, and that is an action like any other", which a later rewrite of the rule replaced: it was
-  // red against a tree that carried the fact, which is a test that has stopped working - it would have
-  // stayed red until someone deleted it, or gone green the moment the rule and this case were deleted
-  // together. The fact is `SLEEPING_IS_AN_ACTION`'s now, so what is asserted here is the JOIN between
-  // that rule and the prompt the player's Game runs on, and between the call it shows and the plan
-  // surface's own vocabulary.
+  // THAT RUN IS WHAT `stardew_plan_work`'s `sleep()` DESCRIPTION ANSWERS, NOT THIS PROMPT. `SLEEPING_IS_AN_ACTION`
+  // was composed here until 2026-11-19 and said "call builder.sleep() (with no arguments) after entering the
+  // farmhouse"; the call, its arguments and its precondition all belong to the tool that mounts the call, and the
+  // floor is the last thing she reads rather than the place she decides what to write. The sentence moved there
+  // (`body-program-script.ts` `planWorkDescription`), and `body-program-script.test.ts` is the gate that holds it
+  // and fails by naming `sleep` and the precondition it lost.
+  //
+  // What is left to assert HERE is the other half of a move: the prompt may not teach the call again. A rule that
+  // drifts back is a fact with two writers, and the second one is the one that goes stale.
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.ok(
-    game.includes(SLEEPING_IS_AN_ACTION),
-    "floor_rule_left_the_prompt:SLEEPING_IS_AN_ACTION - the rule that says how a day ends is declared but never composed into the Game prompt, so going to bed is a guess at an action id again",
-  );
-  // THE FAILURE ITSELF, ruled out as the mechanism: a spoken goodnight leaves the day untouched.
-  assert.match(game, /leaves the day exactly where it was/);
-  // WHERE the day ends is stated by this rule and by nothing else now: the companion walked off into the
-  // fields to sleep because nothing said the bed is inside, and a rule deleted on the belief that another
-  // said it would leave her standing at the farmhouse door. (`BED_IS_INSIDE` left the floor on 2026-11-23
-  // for the Mod's refusal - `SleepAndAdvanceDayLifecycle.cs` answers `not_home` - and this clause is what
-  // the floor still owes her: walk inside first.)
-  assert.match(
+  assert.doesNotMatch(
     game,
-    /after entering the farmhouse/u,
-    "the floor no longer says the day ends inside the farmhouse, so the bed is somewhere in the valley",
+    /builder\.sleep\(\)/u,
+    "the Game prompt teaches the day's end call again, which is the second spelling this move removed - the plan tool's `sleep()` description states the call and its precondition, and the prompt should state neither",
   );
-  // AND THE ACTION ID IS NOT A GUESS. The measured failure was a body looking for an action named "sleep"
-  // and giving up, so the id this rule teaches is resolved against the plan builder's real vocabulary - the
-  // method list the live surface's own registrations produce - rather than accepted because it reads well.
-  const taught = /builder\.([a-z_]+)\(\)/u.exec(SLEEPING_IS_AN_ACTION)?.[1];
-  assert.ok(
-    taught !== undefined,
-    "the rule that says the day's end is an action no longer names the plan call that makes it one",
-  );
-  assert.ok(
-    BUILDER_METHODS.includes(taught),
-    `floor_teaches_an_unknown_action:builder.${taught}() - the plan surface publishes ${String(BUILDER_METHODS.length)} methods and ${taught} is not one of them, so the one call this rule shows is refused as plan_script_unknown_action`,
-  );
-  // It stays a fact about how a day ends, never a nightly duty: the conduct already grounds the
-  // clock and the 02:00 pass-out, and an order to sleep at a stated hour would be the per-turn
-  // obligation no card asked for.
+  // A nightly duty was never the claim: an order to sleep, or to sleep at an hour, is the per-turn obligation no card
+  // asked for, and the clock the conduct does ground (`NIGHT_HAS_ENFORCED_HOURS`) states the pass-out instead.
   assert.doesNotMatch(game, /you must (go to bed|sleep)/iu);
-  // The mechanism is NOT named as an id either. That arm is already held elsewhere rather than
-  // restated here: `dialogue-web/tests/prompt-tool-name-gate.test.mjs` (prompt-tool.2) reads the
-  // registry's ids and fails a bare `advance_day` on any line that names no mounted tool carrying
-  // it, and prompt-tool.1 fails a `stardew_*` name no module declares - both derived from the
-  // authorities, so neither goes stale.
-  // Chat has no day to end, so it carries none of this.
-  assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /The day ends by going to bed/u);
+  // Chat has no day to end and no plan builder, so it carries none of this either.
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /builder\.sleep\(\)/u);
 });
 
 test("the system prompt states the action syntax and no longer prescribes the turn's form", () => {
