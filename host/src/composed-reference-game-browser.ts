@@ -242,15 +242,20 @@ const BOOTSTRAP_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
  * the first request the page makes, it happens before any session exists, and - by
  * design - every one of its failure modes answers the same `unauthorized`, so the
  * launch said only "it did not open". Naming the branch on the response is additive
- * to the problem DTO rather than a change to it, because the browser client's
- * vocabulary is closed on purpose (`unauthorized`/`csrf_failed` are its session
- * category, and a `cause` field must be a coordinator `stardew_*` code), so every
- * code and status stays exactly what it was and the client keeps classifying a
- * bootstrap 401 as the expired session it actually is.
+ * to the problem DTO rather than a change to it, so every code and status stays
+ * exactly what it was and the client keeps classifying a bootstrap 401 as the
+ * expired session it actually is.
  *
- * The value is always a bounded code: an origin guard, a token shape, a token
- * match, a consumed one-shot token, or the exact producer or projection check that
- * failed. It never names, contains or is derived from the token, so a caller cannot
+ * It is not the body's `cause` under another name. The body carries a bounded
+ * producer code, which the browser client validates and words (`composedRootProblem`
+ * below); this header is the raw branch report, and it is the only channel for the
+ * refusals whose bodies stay closed on purpose - an origin guard, a token shape, a
+ * token match, a consumed one-shot token are not producer codes the page could
+ * classify. The launcher-side diagnostics and the live-run fixtures read it without
+ * parsing the problem DTO. Where both channels carry the same fact, they are written
+ * from one expression.
+ *
+ * The value never names, contains or is derived from the token, so a caller cannot
  * learn a valid token from it - not even the branch that says "yours was not this
  * server's".
  */
@@ -346,6 +351,34 @@ function sendProblem(response: ServerResponse, statusCode: number, code: string,
  */
 function sendBootstrapProblem(response: ServerResponse, statusCode: number, code: string, cause: string): void {
   sendJson(response, statusCode, { code }, { [BOOTSTRAP_CAUSE_HEADER]: cause });
+}
+
+/**
+ * The one body the composed root answers when its own projection cannot be read.
+ *
+ * Two routes read that root - the bootstrap that mints the session, and the
+ * authenticated `/state` a page asks without one - and both answered a bare `409
+ * state_unavailable` when the read threw, dropping the bounded producer code the read
+ * had already computed. A chat this GameBuddy can never open and a projection that
+ * failed this once therefore read alike, and the card drawn on this refusal could only
+ * say the one sentence for both.
+ *
+ * So the code travels in the problem DTO's existing optional `cause` field: the field
+ * the browser client already validates (`PROBLEM_CAUSE_PATTERN`) and words per cause.
+ * It is always a bounded producer code - the projection check that failed
+ * (`chat_snapshot_mismatch`), the producer's own bounded code
+ * (`composed_reference_game_chat_snapshot_invalid`, `semantic_chat_*`), or the fact
+ * that the producer named nothing this broker can project
+ * (`composed_root_projection_failed`).
+ */
+function composedRootProblem(error: unknown): Readonly<{ code: "state_unavailable"; cause: string }> {
+  return {
+    code: "state_unavailable",
+    cause:
+      error instanceof ControlledStateError && error.refusalCode !== undefined
+        ? error.refusalCode
+        : "composed_root_projection_failed",
+  };
 }
 
 /**
@@ -1617,17 +1650,12 @@ export function createComposedReferenceGameBrowserRequestHandler(
     } catch (error) {
       // A session becomes usable only after its first authoritative root projection validates; a broken producer
       // cannot leave an authenticated browser context behind for a later retry. The refusal names the projection
-      // that broke (or the producer's own bounded code), because a bootstrap that consumed its one-shot token and
-      // then answered a bare `state_unavailable` is exactly the launch that could not be diagnosed.
+      // that broke (or the producer's own bounded code) in the body - the page classifies it - and the branch on
+      // the header, because a bootstrap that consumed its one-shot token and then answered a bare
+      // `state_unavailable` is exactly the launch that could not be diagnosed.
       if (session === activeSession) session = undefined;
-      refuseWithBootstrapCause(
-        context,
-        409,
-        "state_unavailable",
-        error instanceof ControlledStateError && error.refusalCode !== undefined
-          ? error.refusalCode
-          : "composed_root_projection_failed",
-      );
+      const problem = composedRootProblem(error);
+      sendJson(context.response, 409, problem, { [BOOTSTRAP_CAUSE_HEADER]: problem.cause });
     }
   };
 
@@ -1685,8 +1713,8 @@ export function createComposedReferenceGameBrowserRequestHandler(
     }
     try {
       sendJson(context.response, 200, await readComposedRoot(readContext));
-    } catch {
-      sendProblem(context.response, 409, "state_unavailable");
+    } catch (error) {
+      sendJson(context.response, 409, composedRootProblem(error));
     }
   };
 

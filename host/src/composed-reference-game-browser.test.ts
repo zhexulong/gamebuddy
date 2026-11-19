@@ -3489,7 +3489,8 @@ test("a bootstrap whose root projection breaks names the projection, not just st
   // that then threw. Every later request answered `unauthorized` because the token was
   // consumed, so the projection fault was invisible and the page looked like an expired
   // session. The refusal now names the check that failed, and the producer's own
-  // bounded code when the producer named one.
+  // bounded code when the producer named one - in the body the page classifies and on
+  // the branch header the launcher's diagnostics read.
   const mismatchedChat = chatOnlyHandler(async (context) => ({
     ...stateForChat(context),
     build: { ...stateForChat(context).build, profileId: "gamebuddy.chat-core.other" },
@@ -3498,7 +3499,7 @@ test("a bootstrap whose root projection breaks names the projection, not just st
   try {
     const response = await bootstrap(mismatchServer.origin);
     assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), { code: "state_unavailable" });
+    assert.deepEqual(await response.json(), { code: "state_unavailable", cause: "chat_snapshot_mismatch" });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_snapshot_mismatch");
   } finally {
     await mismatchServer.close();
@@ -3511,14 +3512,18 @@ test("a bootstrap whose root projection breaks names the projection, not just st
   try {
     const response = await bootstrap(failingServer.origin);
     assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), { code: "state_unavailable" });
+    assert.deepEqual(await response.json(), {
+      code: "state_unavailable",
+      cause: "composed_reference_game_chat_snapshot_invalid",
+    });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "composed_reference_game_chat_snapshot_invalid");
   } finally {
     await failingServer.close();
   }
 
   // An unbounded producer message (a path, OS text) is never projected: the closed-set
-  // code of the check that failed stands in for it.
+  // code of the check that failed stands in for it. That code travels too, and it is the
+  // one a reader needs to tell "this failed once" from "this can never work".
   const unboundedChat = chatOnlyHandler(async () => {
     throw new Error("C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked");
   });
@@ -3526,6 +3531,7 @@ test("a bootstrap whose root projection breaks names the projection, not just st
   try {
     const response = await bootstrap(unboundedServer.origin);
     assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "state_unavailable", cause: "chat_projection_failed" });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_projection_failed");
   } finally {
     await unboundedServer.close();
@@ -3545,22 +3551,68 @@ test("a bootstrap whose root projection breaks names the projection, not just st
   try {
     const response = await bootstrap(gameServer.origin);
     assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      code: "state_unavailable",
+      cause: "stardew_player_host_launch_runtime_unavailable",
+    });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "stardew_player_host_launch_runtime_unavailable");
   } finally {
     await gameServer.close();
   }
 });
 
-test("no route but the bootstrap names a cause, and no refusal body gained a field", async () => {
-  const handler = chatOnlyHandler(async (context) => stateForChat(context));
+test("the composed root's two 409s carry the bounded producer code in the body, and no other refusal body gained a field", async () => {
+  // Failure caught: the 409 that says the root could not be read. Both writers of it - the
+  // bootstrap that mints the session and the authenticated `/state` - answered a bare
+  // `state_unavailable`, so the page could not tell a chat this GameBuddy can never open
+  // from a projection that failed this once.
+  //
+  // The rule this asserts: EXACTLY those two refusals carry `cause`, its value is a bounded
+  // producer code (lower case, snake_case, the shape the broker's own `boundedProducerCode`
+  // admits - never free text, never a path), and every other refusal on every route still
+  // answers the body it always did.
+  let projectionFailure: string | null = null;
+  const handler = chatOnlyHandler(async (context) => {
+    if (projectionFailure !== null) throw new Error(projectionFailure);
+    return stateForChat(context);
+  });
   const server = await start(handler);
   try {
-    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+    const session = await bootstrap(server.origin);
+    assert.equal(session.status, 200);
+    const cookie = session.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    // The producer named a check of its own: the code is the check, not the wrapper.
+    projectionFailure = "composed_reference_game_chat_snapshot_invalid";
+    const named = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(named.status, 409);
+    assert.deepEqual(await named.json(), {
+      code: "state_unavailable",
+      cause: "composed_reference_game_chat_snapshot_invalid",
+    });
+    // The header stays the bootstrap's own channel: a `/state` refusal reports its branch in the
+    // body only, which is what keeps one fact from acquiring a second spelling on every route.
+    assert.equal(named.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+
+    // The producer named nothing projectable (OS text, a path): the broker's own bounded code for
+    // that fact travels too, because it is the one that says the read failed this time.
+    projectionFailure = "C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked";
+    const unnamed = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(unnamed.status, 409);
+    assert.deepEqual(await unnamed.json(), { code: "state_unavailable", cause: "chat_projection_failed" });
+    assert.equal(unnamed.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+
+    // A session that is not there is still the closed body it always was, on the same route.
+    const unauthorized = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
       headers: { origin: server.origin, "sec-fetch-site": "same-origin" },
     });
-    assert.equal(state.status, 401);
-    assert.equal(state.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
-    assert.deepEqual(await state.json(), { code: "unauthorized" });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.deepEqual(await unauthorized.json(), { code: "unauthorized" });
 
     const unknown = await fetch(`${server.origin}/api/composed-reference-game/v1/unknown`, {
       headers: { origin: server.origin },
@@ -3570,6 +3622,31 @@ test("no route but the bootstrap names a cause, and no refusal body gained a fie
     assert.deepEqual(await unknown.json(), { code: "not_found" });
   } finally {
     await server.close();
+  }
+
+  // The one other root read in this surface is the Game half's own, and its refusal is not the
+  // composed root's: it keeps the closed body, with no cause and no branch header.
+  const failingGame = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async () => {
+      throw new Error("stardew_player_host_launch_runtime_unavailable");
+    },
+  });
+  const gameServer = await start(failingGame);
+  try {
+    const session = await bootstrap(gameServer.origin);
+    assert.equal(session.status, 200);
+    const cookie = session.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const game = await fetch(`${gameServer.origin}/api/composed-reference-game/v1/game`, {
+      headers: { origin: gameServer.origin, cookie },
+    });
+    assert.equal(game.status, 409);
+    assert.equal(game.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.deepEqual(await game.json(), { code: "state_unavailable" });
+  } finally {
+    await gameServer.close();
   }
 });
 
