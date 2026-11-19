@@ -944,7 +944,14 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   debrisTargets: "杂草碎石",
   rockSourceTargets: "石头",
   clearHoeDirtTargets: "可清的地块",
-  soilTiles: "可锄的地块",
+  // NOT `可锄的地块`. This family publishes BOTH soil states - `hoeDirt` true for a tile that already carries dirt (the
+  // `plant_seed`/`fertilize_tile`/`water_crop` target, and the record of work done) and false for ground the Hoe still
+  // admits - so a family-level word claiming the ground can be hoed is the block contradicting its own rows. Measured
+  // `round80`: a worked 10x3 block published 30 rows, all `hoeDirt: true`, and the line printed 「可锄的地块 (62,18) …」
+  // over them; she was told to till what she had tilled, and `till_soil` answered `soil_already_tilled` 54 times in
+  // eighteen minutes. The family word now states the ground and nothing else, and each row states which state it is in
+  // (`ROW_STATE_FIELDS`).
+  soilTiles: "地块",
   artifactSpotTargets: "可疑的土堆",
   artifactSpotResultTargets: "挖开过的土堆",
   machineTargets: "机器",
@@ -1120,6 +1127,12 @@ export const ROW_TILE_FIELD_PAIRS: readonly (readonly [string, string])[] = Obje
  */
 export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string; label: string }>>> = Object.freeze({
   colorTargets: Object.freeze({ field: "color", label: "色" }),
+  // THE LABEL NAMES WHAT THE ROW ACCEPTS, and the row's own value says whether it does. `hoeDirt: true` is a tile that is
+  // already under the Hoe: nothing left to till, and a legitimate target for `plant_seed` / `fertilize_tile` /
+  // `water_crop`. `hoeDirt: false` is the ground the Hoe still admits, so it is NOT this row's label. A word that named
+  // the work instead (`已锄`) would call the bare ground hoed, and the word `可锄` is the defect `round80` measured - the
+  // family's own label carries no state claim for exactly this reason (see `TARGET_FAMILY_LABELS`).
+  soilTiles: Object.freeze({ field: "hoeDirt", label: "可种植" }),
 });
 
 /**
@@ -1132,7 +1145,8 @@ export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string;
  */
 export type TargetFreshness = Readonly<{
   /**
-   * Rows a receipt in THIS delivery took out of the world, by the row's own opaque id.
+   * Rows a receipt in THIS delivery proved are no longer what the reading says they are, by the id the row is addressed
+   * by: its own opaque id, or - for a row that carries no identity field at all - its tile (`rowTargetId`).
    *
    * <p>
    * WHY A ROW NEEDS ITS OWN PROOF. A row is an opaque id the caller copies into an action (`expectedTargetId`), and the
@@ -1140,6 +1154,13 @@ export type TargetFreshness = Readonly<{
    * broke six stones while the reading she held was `revision 108`, so the block printed all eight rows - every broken one
    * among them - directly under an `<execution-result>` that named those same stones as broken, and the next plan pointed
    * four steps at stone that was already gone (`provedGoneTargets` in `fact-brief.ts` carries the full reading).
+   * </p>
+   *
+   * <p>
+   * A TILLED TILE IS THE SECOND SHAPE, and it is why the tile can be the id. Measured `round80`: a `soilTiles` reading
+   * taken before the Hoe went in still said `hoeDirt: false` about tiles the same delivery's receipts had just tilled, so
+   * the line offered ground that no longer needs work and `till_soil` answered `soil_already_tilled` 54 times in eighteen
+   * minutes. No row family is named here: the row's own shape decides which id it answers to.
    * </p>
    *
    * <p>
@@ -1206,7 +1227,9 @@ export type NearbyTargetFamily = Readonly<{
  * and a row it names is subtracted before the cap is applied - because an id the Mod has already answered `_gone` for is
  * an id any plan written from this line would point at a thing that is not there. How many were subtracted is stated on
  * the line itself (`renderTargetFamily`), and WHICH action took them out is stated by that action's own receipt in the
- * same delivery, so the subtraction is a fact rather than a silence and not a second spelling either.
+ * same delivery, so the subtraction is a fact rather than a silence and not a second spelling either. A TILLED TILE IS
+ * THE SAME RULE ONE STATE OVER: the reading says the ground is bare, the receipt says it is under the Hoe, and the row
+ * leaves the line for the one delivery that carries both rather than being offered as work already done.
  *
  * A FAMILY WHOSE ROWS IT CANNOT PLACE STILL PRINTS. The tile is read through `ROW_TILE_FIELD_PAIRS`, so a `doorTargets`
  * row is placed at its `sourceX`/`sourceY` exactly as an `animalDoorTargets` row is placed at its `x`/`y` - `round62`'s
@@ -1279,11 +1302,30 @@ function splitProvedGone(
  * `targetId` is the wire's name for it in every family but `chests` (which names its container `chestId`) and the four
  * families the plan surface calls unidentified - and those rows are exactly the ones no receipt can be matched to, which
  * is why the absence is `undefined` here rather than a guess.
+ *
+ * A ROW WITH NO IDENTITY AT ALL IS ADDRESSED BY ITS TILE (`soilTiles`, in the Mod's own `62:19` spelling). Some rows
+ * carry nothing but a place and a state, and then the place IS the address: `till_soil`'s receipt says it moved the tile
+ * `62:19`, and the row standing there carries no `targetId` to match it with. Excluding every row that names an identity
+ * field (`targetId`, `chestId`, `cropId`, ...) keeps this fallback off the families whose receipts name rows, so one id
+ * vocabulary is never matched against another. What is left is a row of bare ground or a bare site, and a tile one of
+ * those stands on cannot be tilled - the Mod refuses `till_soil` there, so no `soil_tilled` receipt can name it.
  */
 function rowTargetId(row: unknown): string | undefined {
   if (row === null || typeof row !== "object") return undefined;
-  const id = (row as Record<string, unknown>).targetId;
-  return typeof id === "string" && id !== "" ? id : undefined;
+  const candidate = row as Record<string, unknown>;
+  const id = candidate.targetId;
+  if (typeof id === "string" && id !== "") return id;
+  return rowTileId(candidate);
+}
+
+/** A row field that names the row: `targetId`, `chestId`, `ownerId`. A row carrying one is addressed by that, not by its tile. */
+const ROW_IDENTITY_FIELD = /Id$/u;
+
+/** The tile a row with no identity field anywhere is addressed by, spelled as the Mod's own receipts spell it (`62:19`). */
+function rowTileId(candidate: Record<string, unknown>): string | undefined {
+  if (Object.keys(candidate).some((field) => ROW_IDENTITY_FIELD.test(field))) return undefined;
+  const tile = rowTile(candidate);
+  return tile === undefined ? undefined : `${String(tile.x)}:${String(tile.y)}`;
 }
 
 /**
@@ -1421,13 +1463,20 @@ function rowTile(row: Record<string, unknown>): { x: number; y: number } | undef
 }
 
 /**
- * The state one row prints after its tile: `` ` 色 119,191,255` ``, or `""` when the row carries nothing to read.
+ * The state one row prints after its tile: `` ` 色 119,191,255` ``, `` ` 可种植 true` ``, or `""` when the row carries
+ * nothing to read.
  *
  * A value the wire published as an empty string, a missing member, or a non-scalar is SILENCE rather than the word
  * `undefined` - the same rule the row's own `displayName` follows, and the reason a family that declares a state field
  * does not become unreadable when one row of it is short.
+ *
+ * A BOOLEAN PRINTS ITS OWN VALUE, and the branch is here rather than inside the family that needed it: the value IS the
+ * state (`hoeDirt: true` says the tile is under the Hoe) and translating it into a word of its own would be a second
+ * spelling of one boolean. The LABEL is what carries the meaning, which is why `ROW_STATE_FIELDS` names the label for
+ * what the row accepts instead of for the action it refuses.
  */
 function stateSuffix(state: Readonly<{ field: string; label: string }>, value: unknown): string {
+  if (typeof value === "boolean") return ` ${state.label} ${value ? "true" : "false"}`;
   if (typeof value === "number" && Number.isFinite(value)) return ` ${state.label} ${String(value)}`;
   if (typeof value === "string" && value.trim().length > 0) return ` ${state.label} ${value.trim()}`;
   return "";

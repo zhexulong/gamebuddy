@@ -12,6 +12,7 @@ import {
   composeFactBrief,
   composeWorldState,
   FACT_BRIEF_BLOCKS,
+  provedGoneTargets,
   WORLD_STATE_STALE_TURNS,
   unchangedWorldAnswer,
   worldStateStaleCode,
@@ -776,30 +777,36 @@ test("target_family_labels: every tile family the wire publishes has a word, or 
 });
 
 /**
- * `till_soil`'s ground, printed for her.
+ * `till_soil`'s ground, printed for her, in BOTH states the family publishes.
  *
  * The two ground families are separate sentences on purpose: `可清的地块` is the hoe dirt `till_soil` REFUSES (it already
- * has one, so `clear_hoe_dirt` is the action) and `可锄的地块` is the bare ground it accepts. A line that named only the
- * first told her the strip was "already tilled but empty" and left her hand-writing coordinates outside it - 27 refusals
- * of `soil_not_diggable:not_map_diggable` in one measured run.
+ * has one, so `clear_hoe_dirt` is the action) and this family is the neighbourhood soil in both states - bare ground the
+ * Hoe admits and the HoeDirt a earlier till left. A line that named only the first told her the strip was "already
+ * tilled but empty" and left her hand-writing coordinates outside it - 27 refusals of
+ * `soil_not_diggable:not_map_diggable` in one measured run.
  */
-test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refuses", () => {
+test("soilTiles prints the ground in both states, and each row states which one it is", () => {
   const snapshot = {
     ...world,
     soilTiles: [
-      { x: 65, y: 15 },
-      { x: 66, y: 15, hoeDirt: false },
+      { x: 65, y: 15, hoeDirt: false },
+      { x: 66, y: 15, hoeDirt: true },
     ],
     clearHoeDirtTargets: [{ targetId: "hoe_dirt_1", x: 67, y: 15 }],
   } as unknown as Snapshot;
   const family = nearbyTargetFamilies(snapshot).find((entry) => entry.family === "soilTiles");
-  assert.equal(family?.label, "可锄的地块");
+  assert.equal(family?.label, "地块", "the family word states the ground and claims no state of its own");
   assert.equal(family?.total, 2);
-  assert.equal(family?.rendered, "可锄的地块 (65,15) (66,15)");
+  assert.equal(family?.rendered, "地块 (65,15) 可种植 false (66,15) 可种植 true");
   const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
-  assert.match(text, /可锄的地块 \(65,15\) \(66,15\)/u);
+  assert.match(text, /地块 \(65,15\) 可种植 false \(66,15\) 可种植 true/u);
   assert.match(text, /可清的地块 \(67,15\)/u, "the family `till_soil` refuses keeps its own sentence");
-  // A measured empty family is the answer "there is no ground to hoe here", not silence.
+  // A row that published no `hoeDirt` says nothing rather than reading as `false`: absent is not a measurement.
+  const unmeasured = nearbyTargetFamilies({ ...world, soilTiles: [{ x: 65, y: 15 }] } as unknown as Snapshot).find(
+    (entry) => entry.family === "soilTiles",
+  );
+  assert.equal(unmeasured?.rendered, "地块 (65,15)", `a row with no published state stays silent: ${String(unmeasured?.rendered)}`);
+  // A measured empty family is the answer "there is no soil in reach here", not silence.
   const none = composeWorldState({
     snapshot: { ...world, soilTiles: [] } as unknown as Snapshot,
     revision: 1205,
@@ -807,7 +814,87 @@ test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refu
     ageMs: 0,
     contentAgeMs: 0,
   });
-  assert.match(none, /这一带没有：[^\n]*可锄的地块/u);
+  assert.equal(
+    nearbyTargetFamilies({ ...world, soilTiles: [] } as unknown as Snapshot).find((entry) => entry.family === "soilTiles")
+      ?.rendered,
+    undefined,
+    "an empty family prints on the counted line, never as a row",
+  );
+  assert.match(none, /这一带没有：[^\n]*地块/u);
+});
+
+/**
+ * ROUND80: THE WORKED BLOCK IS WORK DONE, NOT GROUND TO HOE.
+ *
+ * The Mod publishes every tilled tile WITH its state: a real-engine probe of a worked 10x3 block around the actor came
+ * back as 30 rows, all `hoeDirt: true`, zero that need work, `omitted: 0` (`SoilTilePublicationTests`). The line printed
+ * 「可锄的地块 (62,18) …」 over them, so she was told to till the block she had just tilled, and the Mod answered
+ * `soil_already_tilled` 54 times in eighteen minutes. The family word states the ground now, and each row states which
+ * state it is in.
+ */
+test("round80_worked_block: a block already under the Hoe is never offered as ground to hoe", () => {
+  const worked = Array.from({ length: 30 }, (_, index) => ({
+    x: 62 + (index % 10),
+    y: 18 + Math.floor(index / 10),
+    hoeDirt: true,
+  }));
+  const text = seedText(seedWorld({ soilTiles: worked }));
+  const line = text.split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
+  assert.notEqual(line, "", `the soil family reaches the block: ${text}`);
+  assert.equal(line.includes("可锄"), false, `no tile of a worked block may read as hoeable: ${line}`);
+  assert.match(line, /可种植 true/u, `and every row states the state it carries: ${line}`);
+  assert.match(line, /其余 24 格未列出/u, `the cap still counts what it did not name: ${line}`);
+  const bare = seedText(seedWorld({ soilTiles: [{ x: 62, y: 18, hoeDirt: false }] }));
+  assert.match(bare, /地块 \(62,18\) 可种植 false/u, `bare ground says which state IT is in: ${bare}`);
+});
+
+/** The Mod's own `till_soil` evidence (`TILL_SOIL_EVIDENCE_KEYS`), with the pairs this line reads. */
+const soilTilledDetail = (x: number, y: number): string =>
+  `location=Farm;target=${String(x)}:${String(y)};before=none;after=HoeDirt;charge_requested=0;charge_applied=0;` +
+  `window=${String(x - 1)},${String(y - 1)}:${String(x + 1)},${String(y + 1)};` +
+  `changed=${String(x)}:${String(y)};tiles_changed=1;tool_selected=hoe;slot=0;tool_before=hoe;slot_before=0;` +
+  `stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2;tool_restored=hoe`;
+
+/**
+ * ROUND80: THE TILE HER OWN RECEIPT TILLED IS NOT OFFERED AS WORK.
+ *
+ * The reading that arrives with the receipt was taken BEFORE the Hoe went in, so its row still says `hoeDirt: false`
+ * about a tile the same delivery's receipt has just turned. The tile is an address no action declares (`soilTiles` rows
+ * carry no `targetId`), so the proof is keyed on the tile the Mod's own evidence spells - and the row leaves the list for
+ * the one delivery that carries both. The next observation publishes it as the plantable tile it now is.
+ */
+test("round80_tilled_tile: the tile her own receipt turned under leaves the row list", () => {
+  const snapshot = {
+    ...world,
+    soilTiles: [
+      { x: 62, y: 19, hoeDirt: false },
+      { x: 63, y: 19, hoeDirt: false },
+    ],
+  } as unknown as Snapshot;
+  const reading = { snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 };
+  const receipt = fact({
+    kind: "execution_receipt",
+    eventId: "receipt_till_62_19",
+    correlationId: "receipt_till_62_19",
+    revision: 1206,
+    payload: {
+      actionId: "till_soil",
+      state: "succeeded",
+      reasonCode: "soil_tilled",
+      evidence: { detail: soilTilledDetail(62, 19) },
+    } as never,
+  });
+  const proved = provedGoneTargets([receipt]);
+  assert.deepEqual([...proved], ["62:19"], "the proof is the tile, in the spelling the Mod's evidence uses");
+  const unproved = composeWorldState(reading);
+  assert.match(unproved, /\(62,19\) 可种植 false/u, `without the receipt the tile is still offered: ${unproved}`);
+  const provedState = composeWorldState(reading, undefined, proved);
+  const line = provedState.split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
+  assert.notEqual(line, "", `the soil family is printed: ${provedState}`);
+  assert.equal(line.includes("(62,19)"), false, `the tile she just tilled is not offered as work: ${line}`);
+  assert.match(line, /\(63,19\) 可种植 false/u, `the tile she did not touch is still named: ${line}`);
+  assert.match(line, /少了 1 格/u, `and the line states what the receipt took out: ${line}`);
+  assert.equal(line.includes("其余"), false, `a subtracted row is the proof's, not the cap's omission: ${line}`);
 });
 
 /**
@@ -840,7 +927,7 @@ const seedText = (snapshot: Snapshot): string =>
 /**
  * A TRUE FACT THAT IS NOT ACTIONABLE: "these sixty-two tiles can be hoed" and no word about seeds.
  *
- * Measured 2026-11-13: `<world-state>` rendered `可锄的地块 (62,18) …` 43 times in one run and said nothing about whether
+ * Measured 2026-11-13: `<world-state>` rendered `地块 (62,18) …` 43 times in one run and said nothing about whether
  * she held a seed, so her thinking answered the question itself - `Note 让种地，但我背包似乎没种子？` - never checked, never
  * planned to buy, and she went and chopped trees. The block below also said `这一带没有：…、卖种子的地方`, because
  * `seedSupplyTargets: []` is a row set of (a seed she HOLDS x a shop) and an empty one was read as "no shop is here".
@@ -959,7 +1046,7 @@ test("seed_absent: an unmeasured seed family leaves the block byte-identical", (
       "<world-state>",
       "世界（revision 1205，刚刚更新）",
       "06:20（清晨）；1年第3天 春季；天气：雨天；位置: 农场；脚下: (64, 15)；手持: 锄头（+2）；体力: 82；血量: 100；身体: 空闲",
-      "可锄的地块 (64,15) (63,15) (63,16) (64,16) (65,15) (65,16) 其余 56 格未列出",
+      "地块 (64,15) (63,15) (63,16) (64,16) (65,15) (65,16) 其余 56 格未列出",
       "这一带没有：可收的作物、可播种的地",
       "</world-state>",
     ].join("\n"),
@@ -1018,7 +1105,7 @@ test("target_family_cap: with thirteen families in reach, the line names the one
     /其余 1 类未列出：灌木/u,
     "the cap names the family it dropped (`bushTargets`, the farthest of the thirteen)",
   );
-  assert.match(text, /可锄的地块 \(65,15\)/u, "and soilTiles is one of the twelve that printed");
+  assert.match(text, /地块 \(65,15\)/u, "and soilTiles is one of the twelve that printed");
 });
 
 test("nearbyTargetFamilies reads the snapshot it is given, and says which families it did not measure", () => {

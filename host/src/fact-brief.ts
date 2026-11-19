@@ -592,12 +592,27 @@ export function provedPackCounts(events: readonly WorldFact[]): ReadonlyMap<stri
  *
  * BOTH SHAPES REACH HER, for the same reason `provedPackCounts` reads both: a bare `execution_receipt` and the nodes of a
  * settled body programme carry the same Mod detail. Later events win.
+ *
+ * <p>
+ * A TILLED TILE IS THE SECOND KIND OF PROOF, and it needs no `_gone` code: `till_soil` states the tiles it turned into
+ * HoeDirt (`changed=62:19|62:20`, the whole footprint of the charge), and the row standing there is addressed by that
+ * same tile because it carries no id (`rowTargetId` in `game-world-vocabulary.ts`). Measured `round80`: a reading taken
+ * before the Hoe went in still said `hoeDirt: false` about tiles `plan_258`'s own seven successes had just tilled, so the
+ * line offered them as ground to hoe and the Mod answered `soil_already_tilled` 54 times in eighteen minutes. The tile
+ * leaves the row list for the one delivery that carries both the stale reading and the receipt; the next observation
+ * publishes it as the plantable tile it now is. SUBTRACTING IS THE SAFE DIRECTION: a tile that is not offered cannot be
+ * worked twice, while a tile offered after the work is done is the defect this reads for.
+ * </p>
  */
 export function provedGoneTargets(events: readonly WorldFact[]): ReadonlySet<string> {
   const gone = new Set<string>();
   const record = (detail: unknown, reasonCode: unknown): void => {
     if (typeof detail !== "string" || detail === "") return;
     const pairs = evidencePairs(detail);
+    if (reasonCode === SOIL_TILLED_REASON_CODE) {
+      for (const tile of tilledTiles(pairs)) gone.add(tile);
+      return;
+    }
     const target = pairs.get("target") ?? pairs.get("expected");
     if (target === undefined || target === "") return;
     const removed = pairs.get("removed") === "true";
@@ -619,6 +634,25 @@ export function provedGoneTargets(events: readonly WorldFact[]): ReadonlySet<str
 
 /** The Mod's own word for "the row this request named is out of the world": `rock_source_gone`, `item_target_gone`. */
 const GONE_REASON_SUFFIX = "_gone";
+
+/** The Mod's own word for "this receipt turned the tile it names into HoeDirt" (`hasTillSoilCompletionEvidence`). */
+const SOIL_TILLED_REASON_CODE = "soil_tilled";
+
+/** One tile as the Mod's evidence spells it: `62:19`, with its sign when the map runs negative. */
+const EVIDENCE_TILE = /^-?(?:0|[1-9]\d*):-?(?:0|[1-9]\d*)$/u;
+
+/**
+ * The tiles a tilling receipt says it moved, in the Mod's own spelling: the `changed` footprint of the charge, or the
+ * single `target=` tile on a Mod older than that pair.
+ *
+ * `changed=none` is the receipt saying nothing moved, and mints nothing: the same rule the completion contract reads it
+ * by, where the count and the named tiles have to agree before the receipt is a measurement.
+ */
+function tilledTiles(pairs: ReadonlyMap<string, string>): readonly string[] {
+  const changed = pairs.get("changed");
+  const spelled = changed === undefined ? [pairs.get("target") ?? ""] : changed === "none" ? [] : changed.split("|");
+  return spelled.filter((tile) => EVIDENCE_TILE.test(tile));
+}
 
 /** The `key=value` pairs of one Mod evidence detail: `location=Farm;item=(O)472;inventory_after=0`. */
 function evidencePairs(detail: string): ReadonlyMap<string, string> {

@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 import { BODY_WAY_FORWARD_EN, BODY_WAY_FORWARD_ZH, formatBodyState } from "./game-world-vocabulary.js";
 import {
   OBSERVATION_SELECTION_ROWS_LIMIT_MAX,
+  ROW_STATE_FIELDS,
+  ROW_TILE_FIELD_PAIRS,
   TARGET_FAMILY_LABELS,
   axisTileCount,
+  nearbyTargetFamilies,
   selectObservedRows,
   selectTileAreaRows,
   selectionDisagreements,
@@ -523,4 +526,275 @@ test("a selection reads the observation and never writes it, and the row familie
   assert.equal(stripped.location, "Farm", "the environment survives the strip");
   assert.deepEqual(stripped.tile, { x: 61, y: 19 });
   assert.ok(Object.keys(TARGET_FAMILY_LABELS).length > 0, "a zero population would agree with itself");
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// GATE `a_row_states_the_state_its_producer_carries:<family>`
+// ---------------------------------------------------------------------------------------------------------------
+//
+// A ROW THAT PRINTS ITS PLACE AND NOT ITS STATE IS A ROW THAT PRINTS THE SAME WORDS FOR EVERY TILE. Measured `round80`:
+// the Mod publishes every tilled tile WITH its state (`BridgeSoilTile.HoeDirt`), a worked 10x3 block came back as thirty
+// rows all answering `hoeDirt: true`, and the block printed 「可锄的地块 (62,18) …」 - "these tiles can be tilled" about a
+// block already under the Hoe. She tilled it again; `till_soil` answered `soil_already_tilled` 54 times in eighteen
+// minutes. The Mod was right and the line was wrong, which is the shape this gate reads.
+//
+// THE POPULATION IS THREE DECLARATIONS, none of them a list here:
+//
+//   the row shapes   `protocol/bridge-v1.schema.json`: `$defs.snapshot.properties`, the families whose items are a `$ref`
+//                    record, and that record's own property names and types. A field added to the Mod joins by existing.
+//   the claim        `TARGET_FAMILY_LABELS`: the families the per-turn line says it prints as rows. A family the line
+//                    never claims has no sentence whose state could be dropped, so it is not judged here.
+//   the renderer     `ROW_TILE_FIELD_PAIRS` (what places a row) and `ROW_STATE_FIELDS` (what the line declares it states
+//                    beside one) - both read from the renderer's own source, so the crossing is with what it reads.
+//
+// AND THE VERDICT IS READ OFF THE RENDERER, NEVER OFF THE DECLARATION: a row carrying the address and ONE state field is
+// composed through `nearbyTargetFamilies`, and the field's own probe value has to appear in the sentence. A table that
+// claims a value reaches the line is exactly the defect it was written to prevent.
+//
+// TWO CLASSES ARE JUDGED, and they are what `C - P > 0` is about:
+//
+//   declared         every family in `ROW_STATE_FIELDS`, against every statable field its row carries.
+//   place-and-state  a family whose row is its address and ONE other field and nothing else - no id, no name, no handle,
+//                    no footprint. Two tiles of such a family render as the same words, so the state is the whole of what
+//                    the row publishes, and the line dropping it is not a judgement but a loss.
+//
+// WHAT THIS GATE DOES NOT JUDGE, printed rather than hidden: the families whose rows carry an id or a name AND a statable
+// field (`siloTargets`' hay, `fenceGateTargets`' isOpen, `cropTargets`' watered...). Whether the per-turn line owes that
+// value a word beside the tile is a product decision, and it is the same deferral `tools/check-inventory-row-field-
+// rendering.mjs` records; they are counted as `undeclared` so a lane can pick one up, and never failed here.
+
+/** The wire's own declaration of one family's row: each field and the type the document gives it. */
+type WireRowFields = ReadonlyMap<string, ReadonlyMap<string, string>>;
+
+/**
+ * Every family the wire publishes as an array of `$ref` rows, with each field's declared type.
+ *
+ * THROWS rather than returning an empty map: a gate that examined nothing agrees with itself, and an unreadable document
+ * is a premise this reading could not measure rather than a clean tree.
+ */
+function wireRowFields(): WireRowFields {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as {
+    $defs?: Record<string, { properties?: Record<string, unknown> }>;
+  };
+  const families = schema.$defs?.snapshot?.properties as
+    | Record<string, { type?: string; items?: { $ref?: string } }>
+    | undefined;
+  if (families === undefined)
+    throw new Error("the wire schema declares no `$defs.snapshot.properties`: this gate reads it by shape");
+  const records = new Map<string, ReadonlyMap<string, string>>();
+  for (const [family, spec] of Object.entries(families)) {
+    if (spec?.type !== "array") continue;
+    const reference = spec.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const record = schema.$defs?.[reference.slice(reference.lastIndexOf("/") + 1)]?.properties;
+    if (record === undefined) continue;
+    const fields = new Map<string, string>();
+    for (const [field, declaration] of Object.entries(record)) {
+      const type = (declaration as { type?: unknown } | null)?.type;
+      fields.set(field, typeof type === "string" ? type : "record");
+    }
+    records.set(family, fields);
+  }
+  if (records.size === 0) throw new Error("the wire publishes no `$ref` row family: this gate has no population");
+  return records;
+}
+
+/** The address of a row in every spelling the renderer places one through: `x`/`y`, `sourceX`/`sourceY`. */
+const ROW_ADDRESS_FIELDS: ReadonlySet<string> = new Set(ROW_TILE_FIELD_PAIRS.flat());
+
+/** A field that names the row itself: the id an action copies into `expectedTargetId`. */
+const ROW_IDENTITY_FIELD = /Id$/u;
+
+/** A field that names what the row IS in words: `kind` and the name beside it. */
+const ROW_NAME_FIELDS: ReadonlySet<string> = new Set(["kind", "displayName", "name"]);
+
+/** The footprint and the map a row is on: printed as `[w×h]` or not at all, and never a state. */
+const ROW_FRAME_FIELDS: ReadonlySet<string> = new Set(["w", "h", "location"]);
+
+/** The item handle a pack-shaped row copies out of itself. */
+const ROW_HANDLE_FIELDS: ReadonlySet<string> = new Set(["slot", "qualifiedItemId", "stack"]);
+
+/** The wire types a row line can state: `stateSuffix` prints ONE scalar beside the tile. */
+const STATABLE_TYPES: ReadonlySet<string> = new Set(["boolean", "integer", "number", "string"]);
+
+/** What one row carries beside its address, in the renderer's terms: not its place, id, name, footprint or handle. */
+function besideTheAddress(fields: ReadonlyMap<string, string>): readonly string[] {
+  return [...fields.keys()].filter(
+    (field) =>
+      !ROW_ADDRESS_FIELDS.has(field) &&
+      !ROW_IDENTITY_FIELD.test(field) &&
+      !ROW_NAME_FIELDS.has(field) &&
+      !ROW_FRAME_FIELDS.has(field) &&
+      !ROW_HANDLE_FIELDS.has(field),
+  );
+}
+
+/** The fields of a row that could be a state the line states: what it carries beside its address, in a scalar. */
+function statableFieldsOf(fields: ReadonlyMap<string, string>): readonly string[] {
+  return besideTheAddress(fields).filter((field) => STATABLE_TYPES.has(fields.get(field) ?? "record"));
+}
+
+/**
+ * The families whose row is A PLACE AND A STATE AND NOTHING ELSE: exactly one field beside the address, and it is a
+ * scalar. A row with an id, a name, a handle or a footprint is excluded, because those rows are told apart by something
+ * other than their state and whether the line owes that state a word is a product decision.
+ */
+function placeAndStateFamilies(records: WireRowFields): readonly string[] {
+  const families: string[] = [];
+  for (const [family, fields] of records) {
+    const beside = [...fields.keys()].filter((field) => !ROW_ADDRESS_FIELDS.has(field));
+    if (beside.length !== 1) continue;
+    const field = beside[0] ?? "";
+    if (ROW_IDENTITY_FIELD.test(field)) continue;
+    if (ROW_NAME_FIELDS.has(field) || ROW_FRAME_FIELDS.has(field) || ROW_HANDLE_FIELDS.has(field)) continue;
+    if (!STATABLE_TYPES.has(fields.get(field) ?? "record")) continue;
+    families.push(family);
+  }
+  return families.sort();
+}
+
+/** A value distinctive enough that finding it in the line is the line printing THAT field, not a coincidence. */
+function probeFor(field: string, type: string): Readonly<{ value: unknown; spelling: string }> {
+  if (type === "boolean") return { value: true, spelling: "true" };
+  if (type === "integer" || type === "number") return { value: 4242, spelling: "4242" };
+  if (type === "string") return { value: "state_probe", spelling: "state_probe" };
+  throw new Error(`\`${field}\` is declared \`${type}\`, which no row line can state: this gate has no probe for it`);
+}
+
+/** The address pair this family's rows carry: the first spelling of `ROW_TILE_FIELD_PAIRS` it publishes whole. */
+function probeAddress(family: string, fields: ReadonlyMap<string, string>): Readonly<Record<string, number>> {
+  for (const [xField, yField] of ROW_TILE_FIELD_PAIRS)
+    if (fields.has(xField) && fields.has(yField)) return { [xField]: 91, [yField]: 92 };
+  throw new Error(`\`${family}\` carries no address pair: the line cannot place a row of it at all`);
+}
+
+/**
+ * Whether the composed line STATES one field of one family: a row carrying the address and nothing but that field is
+ * rendered through the real composer, and the field's own probe value has to appear in the sentence.
+ *
+ * MEASURED ON THE RENDERER, NEVER ON THE DECLARATION. The declaration is the claim; the sentence is what a model reads,
+ * and a claim checked against itself is the defect this gate exists for.
+ */
+function stateIsStated(family: string, fields: ReadonlyMap<string, string>, field: string): boolean {
+  const probe = probeFor(field, fields.get(field) ?? "record");
+  const row = { ...probeAddress(family, fields), [field]: probe.value };
+  const snapshot = { tile: { x: 90, y: 92 }, [family]: [row] } as unknown as Snapshot;
+  const rendered = nearbyTargetFamilies(snapshot).find((entry) => entry.family === family)?.rendered ?? "";
+  return new RegExp(`(?:^|[^A-Za-z0-9_])${probe.spelling}(?:$|[^A-Za-z0-9_])`, "u").test(rendered);
+}
+
+/** One reading of the gate: what it crossed, what printed, what did not, and the families it deferred by declaration. */
+type RowStateReading = Readonly<{
+  families: readonly string[];
+  carried: number;
+  printed: number;
+  missing: readonly string[];
+  undeclared: readonly string[];
+}>;
+
+/**
+ * The crossing itself, over the families `declarations` judges plus the place-and-state families the wire derives. Taking
+ * the declaration as an argument is what lets the falsifier below replay a table that judges less.
+ */
+function rowStateReading(declarations: Readonly<Record<string, Readonly<{ field: string }>>>): RowStateReading {
+  const records = wireRowFields();
+  const families = [...new Set([...Object.keys(declarations), ...placeAndStateFamilies(records)])].sort();
+  const missing: string[] = [];
+  let carried = 0;
+  let printed = 0;
+  for (const family of families) {
+    const fields = records.get(family);
+    if (fields === undefined) {
+      missing.push(
+        `a_row_states_the_state_its_producer_carries:${family} (the wire publishes no row record for this family)`,
+      );
+      continue;
+    }
+    const declared = declarations[family]?.field;
+    const stated = statableFieldsOf(fields);
+    if (declared !== undefined && !stated.includes(declared))
+      missing.push(
+        `a_row_states_the_state_its_producer_carries:${family}:${declared} (declared, and this row does not carry it as a state)`,
+      );
+    for (const field of stated) {
+      carried += 1;
+      if (stateIsStated(family, fields, field)) printed += 1;
+      else missing.push(`a_row_states_the_state_its_producer_carries:${family}:${field}`);
+    }
+  }
+  const judged = new Set(families);
+  const undeclared = Object.keys(TARGET_FAMILY_LABELS)
+    .filter((family) => !judged.has(family) && statableFieldsOf(records.get(family) ?? new Map()).length > 0)
+    .sort();
+  return Object.freeze({
+    families: Object.freeze(families),
+    carried,
+    printed,
+    missing: Object.freeze(missing),
+    undeclared: Object.freeze(undeclared),
+  });
+}
+
+test("a_row_states_the_state_its_producer_carries: every row states the state its producer publishes", () => {
+  const reading = rowStateReading(ROW_STATE_FIELDS);
+  const named = reading.undeclared.slice(0, 6).join(", ");
+  const rest = reading.undeclared.length - Math.min(reading.undeclared.length, 6);
+  console.log(
+    `a_row_states_the_state_its_producer_carries: families ${String(reading.families.length)} · ` +
+      `fields carried ${String(reading.carried)} · fields printed ${String(reading.printed)} · ` +
+      `undeclared ${String(reading.undeclared.length)}${named === "" ? "" : ` (${named}${rest > 0 ? `, +${String(rest)}` : ""})`}`,
+  );
+  // Refuse to pass on nothing: a crossing that examined no family or no field agrees with every assertion below.
+  assert.ok(
+    reading.families.length > 0 && reading.carried > 0,
+    `blocked: examined ${String(reading.families.length)} families and ${String(reading.carried)} fields, which is not a population`,
+  );
+  assert.deepEqual(
+    reading.missing,
+    [],
+    `a row line drops a state its own producer publishes: ${reading.missing.join(" | ")}`,
+  );
+});
+
+test("a_row_states_the_state_its_producer_carries: the soil family is the place-and-state class, and it states it", () => {
+  // The derived half, named: `soilTiles` rows carry their address and `hoeDirt` and nothing else, which is why the line
+  // cannot print them honestly without the state - every row of the family would read as the same words. The membership
+  // assert is INCLUSION rather than equality: a family that joins the class is judged by the gate above, so freezing the
+  // list here would only make a correct addition look like a regression.
+  const derived = placeAndStateFamilies(wireRowFields());
+  assert.ok(derived.length > 0, "blocked: no family in the wire is a place and a state, so the derived class is empty");
+  assert.ok(
+    derived.includes("soilTiles"),
+    `\`soilTiles\` carries its address and \`hoeDirt\` and nothing else, so it is a place-and-state family: ${derived.join(", ")}`,
+  );
+  const line = nearbyTargetFamilies({
+    tile: { x: 62, y: 18 },
+    soilTiles: [
+      { x: 62, y: 18, hoeDirt: true },
+      { x: 62, y: 19, hoeDirt: false },
+      { x: 62, y: 20 },
+    ],
+  } as unknown as Snapshot).find((entry) => entry.family === "soilTiles");
+  assert.equal(
+    line?.rendered,
+    "地块 (62,18) 可种植 true (62,19) 可种植 false (62,20)",
+    "each row states its own hoeDirt, and a row that published none stays silent rather than reading as false",
+  );
+  assert.equal(
+    line?.rendered?.includes("可锄"),
+    false,
+    `no row of a family that publishes both states may be called hoeable: ${String(line?.rendered)}`,
+  );
+});
+
+test("a_row_states_the_state_its_producer_carries: a declaration the line does not print is REFUSED by that check", () => {
+  // THE FALSIFIER ON THE DECLARATION HALF: a family whose rows carry a boolean state and whose line prints nothing about
+  // it. `chests` is the fixture because its state is a fact the line has never carried - and the refusal has to name the
+  // family AND the dropped field, or the next reader cannot tell which value the block is missing.
+  const reading = rowStateReading({ chests: { field: "isFridge" } });
+  assert.deepEqual(
+    reading.missing,
+    ["a_row_states_the_state_its_producer_carries:chests:isFridge"],
+    `a declared state the line drops must be refused by name: ${reading.missing.join(" | ")}`,
+  );
 });
