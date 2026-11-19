@@ -76,10 +76,8 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_record_that_also_carries_the_paced_delivery_preference()
     {
         // The one record also stores whether the player chose short paced Chat
-        // replies. That choice belongs to Chat, not to this launch gate - but the
-        // gate's exact-key rule means it still has to know the key exists: every
-        // Settings write rewrites the whole record, so a gate that does not know
-        // the key refuses the file and Voice silently stops starting.
+        // replies. That choice belongs to Chat: this launch gate neither reads the
+        // value nor requires the key, and the record still projects.
         using var root = TemporaryRoot.Create();
         root.WritePreference("""{"schemaVersion":1,"revision":7,"locale":"en-US","disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null,"paced":true}""");
 
@@ -114,33 +112,60 @@ public sealed class VoicePreferenceFileReaderTests
         Assert.Throws<ArgumentException>(() => new VoicePreferenceFileReader("player-preference.json"));
     }
 
-    [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"extra":"x"}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided"}""")]
-    [InlineData("""{"consent":"undecided"}""")]
-    [InlineData("""{}""")]
-    public void Read_rejects_unknown_or_missing_keys(string json)
+    [Fact]
+    public void Read_projects_the_voice_fields_of_a_record_that_carries_settings_this_gate_does_not_consume()
     {
-        // Includes the pre-unification six-key record (no language field): the
-        // one record's exact shape is required, so an old file is re-asked for
-        // consent rather than half-read.
+        // The Host owns one preference record for every settings surface, so it grows
+        // fields for surfaces that are none of this launch gate's business. A field the
+        // Host added must not be able to switch Voice off: demanding the record's exact
+        // key set made every such addition a refusal here, and because Voice is optional
+        // the refusal left no trace - the launch went out on pure-text Chat with nothing
+        // saying why. This record carries what the Host writes today plus a field no
+        // side has heard of yet, and the Voice fields still project.
         using var root = TemporaryRoot.Create();
-        root.WritePreference(json);
+        root.WritePreference("""{"schemaVersion":1,"revision":8,"locale":"zh-CN","disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":"waveout:2","persona":"soft_maid","paced":false,"gamePromptAddition":"talk to me","appearance":"dark","uiLocale":"zh-CN","samplingTemperature":0.7,"aFieldAddedAfterThisGateWasWritten":{"nested":[1,2]}}""");
 
-        Assert.Throws<InvalidVoicePreferenceException>(() => new VoicePreferenceFileReader(root.PreferencePath).Read());
+        var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
+
+        Assert.True(preference.CloudTtsAdmitted);
+        Assert.Equal(8, preference.Revision);
+        Assert.Equal("waveout:2", preference.SelectedOutputDevice);
+        Assert.Equal("soft_maid", preference.Persona);
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":7,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":true,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
-    public void Read_rejects_a_language_field_that_is_not_null_or_a_string(string json)
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""", "persona")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","outputDevice":null,"persona":null}""", "decidedAtMs")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"persona":null}""", "outputDevice")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"decidedAtMs":null,"outputDevice":null,"persona":null}""", "consent")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided"}""", "decidedAtMs")]
+    [InlineData("""{"consent":"undecided"}""", "schemaVersion")]
+    [InlineData("""{}""", "schemaVersion")]
+    public void Read_refuses_a_consumed_field_that_is_missing_and_names_it(string json, string missing)
     {
+        // A required field that is absent is still a refusal - and the refusal says
+        // which one, because a Voice that does not start has to be attributable.
         using var root = TemporaryRoot.Create();
         root.WritePreference(json);
 
-        Assert.Throws<InvalidVoicePreferenceException>(() => new VoicePreferenceFileReader(root.PreferencePath).Read());
+        var exception = Assert.Throws<InvalidVoicePreferenceException>(() => new VoicePreferenceFileReader(root.PreferencePath).Read());
+        Assert.Equal($"invalid_player_preference_store:missing_field:{missing}", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("""{"schemaVersion":1,"revision":"0","locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""", "invalid_revision")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"maybe","decidedAtMs":null,"outputDevice":null,"persona":null}""", "invalid_consent")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":7}""", "invalid_persona")]
+    [InlineData("""{"schemaVersion":2,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""", "unsupported_schema_version")]
+    public void Read_refuses_a_consumed_field_whose_value_is_not_the_contract_and_names_the_rule(string json, string reason)
+    {
+        // Strictness stays where it belongs: a field this gate reads, holding something
+        // that field may never hold, is refused by name rather than skipped.
+        using var root = TemporaryRoot.Create();
+        root.WritePreference(json);
+
+        var exception = Assert.Throws<InvalidVoicePreferenceException>(() => new VoicePreferenceFileReader(root.PreferencePath).Read());
+        Assert.Equal($"invalid_player_preference_store:{reason}", exception.Message);
     }
 
     [Theory]
@@ -212,9 +237,6 @@ public sealed class VoicePreferenceFileReaderTests
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":"now","outputDevice":null,"persona":null,"paced":false}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":-1,"outputDevice":null,"persona":null,"paced":false}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"revoked","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":"true"}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":1}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":null}""")]
     public void Read_rejects_wrong_field_types_and_missing_decision_time(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -246,9 +268,12 @@ public sealed class VoicePreferenceFileReaderTests
         Assert.Contains("Path.IsPathFullyQualified", source, StringComparison.Ordinal);
         Assert.Contains("JsonDocument.Parse(File.ReadAllBytes(path))", source, StringComparison.Ordinal);
         Assert.Contains("FileNotFoundException", source, StringComparison.Ordinal);
-        Assert.Contains("ExactProperties(value", source, StringComparison.Ordinal);
+        // The reader projects the fields it consumes and ignores every other key: the
+        // record's exact key set is the Host's, and demanding it here turned an additive
+        // Host change into a silent Voice outage.
+        Assert.Contains("ConsumedKeys", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExactProperties", source, StringComparison.Ordinal);
         Assert.Contains("\"mimo-cloud-tts-v1\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"locale\"", source, StringComparison.Ordinal);
         Assert.Contains("VoiceCloudTtsConsent.Undecided", source, StringComparison.Ordinal);
         Assert.Contains("CloudTtsAdmitted", source, StringComparison.Ordinal);
         Assert.Contains("InvalidVoicePreferenceException", source, StringComparison.Ordinal);

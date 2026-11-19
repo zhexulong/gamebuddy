@@ -88,20 +88,25 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
 
     private static void WritePreference(string path, string consent, string? disclosureVersion, long revision)
     {
-        var preference = new
+        // The record the Host actually writes (host/src/settings/player-preference-store.ts,
+        // `validateStored`): one record for every settings surface, most of it none of this
+        // gate's business. A fixture that wrote a narrower record would keep the tests green
+        // while the real one was refused.
+        var preference = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            schemaVersion = 1,
-            revision,
-            locale = (string?)null,
-            disclosureVersion,
-            consent,
-            decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
-            outputDevice = (string?)null,
-            persona = (string?)null,
-            // The record's exact key set is the frozen shape: the fixture writes what
-            // the Host writes, including the Chat pacing choice this gate only has to
-            // recognise rather than act on.
-            paced = false,
+            ["schemaVersion"] = 1,
+            ["revision"] = revision,
+            ["locale"] = null,
+            ["disclosureVersion"] = disclosureVersion,
+            ["consent"] = consent,
+            ["decidedAtMs"] = consent == "undecided" ? null : 1_700_000_000_000L,
+            ["outputDevice"] = null,
+            ["persona"] = null,
+            ["paced"] = false,
+            ["gamePromptAddition"] = string.Empty,
+            ["appearance"] = "system",
+            ["uiLocale"] = null,
+            ["samplingTemperature"] = null,
         };
         File.WriteAllText(path, JsonSerializer.Serialize(preference));
     }

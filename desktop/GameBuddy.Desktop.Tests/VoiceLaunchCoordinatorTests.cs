@@ -126,6 +126,24 @@ public sealed class VoiceLaunchCoordinatorTests
         Assert.Null(VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath));
     }
 
+    [Fact]
+    public void Resolve_keeps_voice_enabled_when_the_record_carries_a_field_this_gate_does_not_consume()
+    {
+        // The Host owns one preference record for every settings surface, so it grows
+        // fields this launch gate has no opinion about. Declining Voice here is silent -
+        // the capability is optional and the composition goes on with pure-text Chat -
+        // so a field added on the Host side must be ignored here rather than switch a
+        // player's voice off with nothing said.
+        using var root = TemporaryRoot.Create();
+        WriteSidecar(root);
+        WriteAcceptedPreference(root, ("aFieldAddedAfterThisGateWasWritten", (object?)true));
+        const string generation = "g-voice-1-00000000000000000000000000000000";
+
+        var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+
+        Assert.NotNull(launch);
+    }
+
     private static AdmittedVoiceGateway WriteSidecar(TemporaryRoot root)
     {
         var entry = root.Write("voice-gateway/entry/gateway.mjs", "entry-body\n");
@@ -147,25 +165,40 @@ public sealed class VoiceLaunchCoordinatorTests
         return new AdmittedVoiceGateway(entry, protocol);
     }
 
-    private static void WriteAcceptedPreference(TemporaryRoot root) => WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3);
+    private static void WriteAcceptedPreference(TemporaryRoot root, (string Key, object? Value)? addedHostField = null) =>
+        WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3, addedHostField: addedHostField);
 
-    private static void WritePreference(TemporaryRoot root, string consent, string? disclosureVersion, long revision, string? outputDevice = null, string? persona = null)
+    private static void WritePreference(
+        TemporaryRoot root,
+        string consent,
+        string? disclosureVersion,
+        long revision,
+        string? outputDevice = null,
+        string? persona = null,
+        (string Key, object? Value)? addedHostField = null)
     {
-        var preference = new
+        // Everything the Host writes today (host/src/settings/player-preference-store.ts,
+        // `validateStored`): one record for every settings surface, so most of these fields
+        // belong to Chat, appearance or the interface and are none of this gate's business.
+        // A test fixture that wrote a narrower record would pass while the real one was
+        // refused - which is exactly how Voice stopped starting.
+        var preference = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            schemaVersion = 1,
-            revision,
-            // The record's exact key set is the frozen shape (VoicePreferenceFileReader): every
-            // Settings write rewrites the whole record, so the fixture writes what the Host writes,
-            // including the Chat pacing choice this launch gate only has to recognise.
-            locale = (string?)null,
-            disclosureVersion,
-            consent,
-            decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
-            outputDevice,
-            persona,
-            paced = false,
+            ["schemaVersion"] = 1,
+            ["revision"] = revision,
+            ["locale"] = null,
+            ["disclosureVersion"] = disclosureVersion,
+            ["consent"] = consent,
+            ["decidedAtMs"] = consent == "undecided" ? null : 1_700_000_000_000L,
+            ["outputDevice"] = outputDevice,
+            ["persona"] = persona,
+            ["paced"] = false,
+            ["gamePromptAddition"] = string.Empty,
+            ["appearance"] = "system",
+            ["uiLocale"] = null,
+            ["samplingTemperature"] = null,
         };
+        if (addedHostField is { } added) preference[added.Key] = added.Value;
         File.WriteAllText(root.PreferencePath, System.Text.Json.JsonSerializer.Serialize(preference));
     }
 
