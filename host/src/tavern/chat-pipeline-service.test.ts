@@ -2962,3 +2962,77 @@ test(
     void output.flippedRevision;
   },
 );
+
+/**
+ * The archive window names itself.
+ *
+ * The shell archives the mounted Chat before it switches to the other one (ADR-0011 leaves that switch to the
+ * shell), so for a moment the Chat the browser is looking at is mounted and not active. A submit in that window is
+ * refused by the durable store with `chat_thread_lifecycle_not_active`, and the service used to collapse that into
+ * `chat_pipeline_service_unavailable` - "the runtime is down" about a Chat that simply is no longer the live one.
+ * The bounded half is asserted in the same run: the code appears only for that store refusal, and a submit refused
+ * for any other reason still answers with the service's own opaque code.
+ */
+test(
+  "a Chat archived under the mount refuses a submit with the store's own lifecycle code",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  const store = fx.store();
+  const before = await store.resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  // A second live Chat: the active list may never be emptied, so the mounted Chat can only be archived while
+  // another one survives it - which is exactly the state the shell is in when it switches.
+  const { createProfileAwareChatThreadCreationCapability } = await import(storeUrl);
+  await createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; },
+  }).createExplicit({
+    chatThreadId: "thread_successor_01",
+    companionId: principal.companionId,
+    continuityId: principal.continuityId,
+    chatSurfaceSessionId: "surface_successor_01",
+    opening: "blank",
+  });
+  const service = serviceFor(fx, async () => undefined);
+  const archived = await store.transitionLifecycle({
+    chatThreadId: fx.lease.chatThreadId,
+    chatSurfaceSessionId: fx.lease.chatSurfaceSessionId,
+    companionId: principal.companionId,
+    continuityId: principal.continuityId,
+    expectedManagementRevision: before.thread.managementRevision ?? 1,
+    operation: "archive",
+  });
+  const refusedByLifecycle = await run(() =>
+    service.submitAfterResponseCommit(commandFor(fx), "AAAAAAAAAAAAAAAAAAAAAA", async () => undefined));
+  // The same service, refused for a reason that is not the store's lifecycle check: it keeps collapsing.
+  const refusedByIngress = await run(() =>
+    service.submitAfterResponseCommit(commandFor(fx), "too-short", async () => undefined));
+  const durable = await store.resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    archivedStatus: archived.lifecycleStatus,
+    refusedByLifecycle,
+    refusedByIngress,
+    messagesBefore: before.messages.length,
+    messagesAfter: durable.messages.length,
+    idempotencyAfter: durable.idempotency.length,
+  }));
+`);
+    assert.equal(output.archivedStatus, "archived", "the fixture really archived the mounted Chat");
+    const lifecycle = output.refusedByLifecycle as { ok: boolean; error?: string };
+    assert.equal(lifecycle.ok, false, "a submit against the archived Chat must be refused");
+    assert.match(lifecycle.error ?? "", /chat_thread_lifecycle_not_active/);
+    const ingress = output.refusedByIngress as { ok: boolean; error?: string };
+    assert.equal(ingress.ok, false);
+    assert.match(
+      ingress.error ?? "",
+      /chat_pipeline_service_unavailable/,
+      "a refusal that is not the store's lifecycle check must still collapse",
+    );
+    // The refusal is the archive's, not a mutation: the transcript gained nothing and no key was recorded.
+    assert.equal(output.messagesAfter, output.messagesBefore);
+    assert.equal(output.idempotencyAfter, 0);
+  },
+);

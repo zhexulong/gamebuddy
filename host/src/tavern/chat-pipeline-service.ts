@@ -1153,6 +1153,14 @@ function validIdempotencyKey(value: unknown): value is string {
  * keep their canonical codes for transport mapping; every other failure
  * (scope, lifecycle, capacity, read-back, admission, unknown) collapses to
  * the service's fail-closed code so no raw path/ID/content can escape.
+ *
+ * `chat_thread_lifecycle_not_active` is one of the kept ones, and it is BOUNDED to its one cause: it is
+ * raised only where the durable store checks that the mounted thread is still live, so it means exactly
+ * "the Chat this mount serves is no longer the active one" - the window between the shell archiving the
+ * Chat the browser is looking at and the shell switching to the other one. Collapsing it into
+ * `chat_pipeline_service_unavailable` answered that window with "the runtime is down", which is the one
+ * thing that was not true; a refusal that names itself is what lets the surface say the Chat was archived
+ * rather than that the service failed.
  */
 function rethrowAcceptanceError(error: unknown): Error {
   if (
@@ -1160,6 +1168,7 @@ function rethrowAcceptanceError(error: unknown): Error {
     (error.message === "turn_busy" ||
       error.message === "idempotency_conflict" ||
       error.message === "chat_draft_revision_conflict" ||
+      error.message === "chat_thread_lifecycle_not_active" ||
       error.message === "chat_pipeline_service_selection_conflict" ||
       error.message === "chat_pipeline_service_commit_rejected")
   )
