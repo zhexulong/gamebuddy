@@ -58,6 +58,8 @@ public sealed class WorldObjectActionTests
         // placement
         "owned_object_placed",
         "place_owned_object_postcondition_unavailable",
+        "place_owned_object_native_declined",
+        "place_owned_object_inventory_unchanged",
         "place_owned_object_native_exception",
         "place_owned_object_not_owned_in_slot",
         "place_owned_object_unsupported_item",
@@ -134,14 +136,26 @@ public sealed class WorldObjectActionTests
         code.Should().NotContain("performAction(");
         code.Should().NotContain("didPlayerJustLeftClick");
 
-        // The postcondition is the world, re-read after the call: the native branch adds a
-        // COPY (never the inventory instance), so no reference comparison may decide it.
+        // The postcondition is the world, re-read after the call, in the collection the placed thing's own kind
+        // lands in: furniture is filed in `location.furniture` (Object.cs:7041) and everything else in
+        // `location.objects` (:7046), so the read asks `FindPlacedThing` where the thing lands instead of naming one
+        // collection. The native branch adds a COPY for an object (Object.cs:7001), so no reference comparison may
+        // decide it.
         int nativeCall = executed.IndexOf("source.placementAction(", StringComparison.Ordinal);
-        int reRead = executed.IndexOf("location.objects.TryGetValue(tile, out StardewValley.Object? placed)", StringComparison.Ordinal);
-        int decision = executed.IndexOf("bool succeeded = placementHandled && objectPresent && inventoryDecremented", StringComparison.Ordinal);
+        int reRead = executed.IndexOf("(StardewValley.Object? placed, Vector2 restingTile) = FindPlacedThing(location, tile, source)", StringComparison.Ordinal);
+        int decision = executed.IndexOf("PlacementVerdict(placementHandled, placedPresent, inventoryDecremented)", StringComparison.Ordinal);
         nativeCall.Should().BeGreaterThanOrEqualTo(0, "the native seam must be the writer");
-        reRead.Should().BeGreaterThan(nativeCall, "the placed object must be re-read after the native call");
+        reRead.Should().BeGreaterThan(nativeCall, "the placed thing must be re-read after the native call");
         decision.Should().BeGreaterThan(reRead, "success must be decided after the re-read");
+        executed.Should().NotContain("location.objects.TryGetValue(tile, out StardewValley.Object? placed)",
+            "that read is the defect: a furniture piece is never in `location.objects`");
+        executed.Should().Contain("(StardewValley.Object? placed, Vector2 restingTile) = FindPlacedThing(location, tile, source)",
+            "the receipt's tile is the tile the thing came to rest on, which comes back with the thing");
+        executed.Should().Contain("tile={FormatTile(restingTile)}", "the resting tile is what the wire evidence carries");
+        code.Should().Contain("internal static bool LandsInFurniture(Item placed) => placed is Furniture",
+            "the container is ONE decision read from the thing itself");
+        code.Should().Contain("foreach (Furniture piece in location.furniture)",
+            "the furniture container is read where furniture really is");
         executed.Should().NotContain("ReferenceEquals(source,");
         executed.Should().NotContain("ReferenceEquals(placed,");
 

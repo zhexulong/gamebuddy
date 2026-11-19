@@ -49,9 +49,13 @@ namespace GameBuddy.Stardew;
 // as debris), appends to `location.furniture` for furniture (:7033-7043), or does
 // `location.objects.Add(vector, obj4)` (:7046). Two consequences decide this action's
 // contract:
-//   * the placed instance is NOT the inventory instance, so the postcondition can never
-//     be a ReferenceEquals — it is "an object with the expected qualified item id now
-//     occupies that tile", re-read from the world;
+//   * the two branches file the placed thing in DIFFERENT collections: furniture goes to
+//     `location.furniture` (:7041, the location's own NetCollection<Furniture>, GameLocation.cs:452) and
+//     everything else is keyed by tile in `location.objects` (:7046). A postcondition that names one of
+//     them is blind to the other, which is exactly what every furniture placement reported until the
+//     read moved into `FindPlacedThing`; and the object branch adds a COPY (:7001) while the furniture
+//     branch appends the source instance itself, so identity is the qualified item id plus the tile and
+//     never a ReferenceEquals;
 //   * the same-item-id-on-the-same-tile case adds NOTHING and still returns true
 //     (:7025-7031 `if (value10.QualifiedItemId != base.QualifiedItemId)`), so an
 //     occupied tile is refused by name (`place_owned_object_tile_occupied`) instead of
@@ -130,8 +134,10 @@ namespace GameBuddy.Stardew;
 // success (see `move_placed_furniture_inventory_full`).
 //
 // POSTCONDITIONS, all OBSERVED after the call and none taken from a native return:
-//   place_owned_object      an object with the expected qualified item id occupies the
-//                           tile (and the inventory count dropped by exactly one).
+//   place_owned_object      the placed thing, read from the collection its own kind lands in
+//                           (furniture from `location.furniture`, an object from
+//                           `location.objects`), is the expected item at the tile it came to
+//                           rest on, and the inventory count dropped by exactly one.
 //   remove_placed_item      the object is GONE from the tile, and the removed object's
 //                           own identity is reported as debris when the native path
 //                           dropped it (Axe.cs:89-92, Pickaxe.cs:239-242).
@@ -275,11 +281,19 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        // Re-read the world AFTER the call. The placed instance is a native COPY
-        // (Object.cs:7001), so identity is the qualified item id plus the tile, never a
-        // reference.
-        bool objectPresent = location.objects.TryGetValue(tile, out StardewValley.Object? placed)
-            && placed is not null
+        // Re-read the world AFTER the call, IN THE COLLECTION THE PLACED THING'S OWN KIND LANDS IN. The
+        // native branch here appends furniture to `location.furniture` (`Object.cs:7041`) and keys
+        // everything else by tile in `location.objects` (`:7046`), so a postcondition that names one of the
+        // two is blind to the other - which is what every furniture placement reported as
+        // `place_owned_object_postcondition_unavailable` until this read moved to `FindPlacedThing`.
+        // Identity is the qualified item id plus the tile, never a reference: the object branch adds a
+        // native COPY (`Object.cs:7001`) while the furniture branch appends the source instance itself.
+        // THE TILE IT CAME TO REST ON comes back with the thing, because that is the fact the criterion asked
+        // for and no receipt stated: an object is keyed by the tile it was asked for, a piece carries its own
+        // `TileLocation` (which the native wall branch may put on the row above, `Furniture.cs:1428-1437`), and
+        // a piece handed to a table rests on the table's tile.
+        (StardewValley.Object? placed, Vector2 restingTile) = FindPlacedThing(location, tile, source);
+        bool placedPresent = placed is not null
             && string.Equals(placed.QualifiedItemId, source.QualifiedItemId, StringComparison.Ordinal);
         int afterCount = CountQualifiedItem(Game1.player, source.QualifiedItemId);
         bool inventoryDecremented = afterCount == beforeCount - 1;
@@ -287,16 +301,14 @@ internal sealed partial class ExecutionManager
             && tappedFeature is StardewValley.TerrainFeatures.Tree tappedTree
             ? tappedTree.tapped.Value.ToString().ToLowerInvariant()
             : "none";
-        bool succeeded = placementHandled && objectPresent && inventoryDecremented;
+        (ExecutionState state, string reasonCode) = PlacementVerdict(placementHandled, placedPresent, inventoryDecremented);
         string evidence =
-            $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};slot={slot};item={source.QualifiedItemId};"
+            $"target={expectedTargetId};location={location.NameOrUniqueName};tile={FormatTile(restingTile)};slot={slot};item={source.QualifiedItemId};"
             + $"terrain_feature={terrainFeature};terrain_feature_tapped={terrainFeatureTapped};"
-            + $"native_placement={placementHandled.ToString().ToLowerInvariant()};object_present={objectPresent.ToString().ToLowerInvariant()};"
-            + $"placed_qualified_item_id={(objectPresent ? placed!.QualifiedItemId : "none")};placed_type={(objectPresent ? placed!.Type ?? "none" : "none")};"
+            + $"native_placement={placementHandled.ToString().ToLowerInvariant()};object_present={placedPresent.ToString().ToLowerInvariant()};"
+            + $"placed_qualified_item_id={(placedPresent ? placed!.QualifiedItemId : "none")};placed_type={(placedPresent ? placed!.Type ?? "none" : "none")};"
             + $"inventory_before={beforeCount};inventory_after={afterCount}";
-        return succeeded
-            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "owned_object_placed", evidence)
-            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "place_owned_object_postcondition_unavailable", evidence);
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>
@@ -786,6 +798,80 @@ internal sealed partial class ExecutionManager
         }
         source = candidate;
         return true;
+    }
+
+    /// <summary>
+    /// WHERE A PLACED THING COMES TO REST, read from the thing itself: furniture is a <see cref="Furniture"/> in the
+    /// location's own <c>NetCollection&lt;Furniture&gt;</c> (GameLocation.cs:452), and every other placeable this
+    /// action admits is an object keyed by tile in <c>location.objects</c>.
+    ///
+    /// <para>
+    /// The native branch this action drives splits on exactly this fact - <c>location.furniture.Add(...)</c>
+    /// (Object.cs:7041) against <c>location.objects.Add(vector, obj4)</c> (:7046) - so the postcondition cannot name
+    /// one of the two collections: ONE decision, stated here, and both containers are read through it.
+    /// </para>
+    /// </summary>
+    internal static bool LandsInFurniture(Item placed) => placed is Furniture;
+
+    /// <summary>
+    /// Reads the placed thing back from the container its own kind lands in (see <see cref="LandsInFurniture"/>), with
+    /// the tile it came to rest on - which is the piece's own <c>TileLocation</c>, and for a thing the engine put on a
+    /// table, the table's.
+    ///
+    /// <para>
+    /// The furniture read covers the third place a furniture placement can end: <c>Furniture.placementAction</c> hands
+    /// the piece to a <c>furniture_type</c> 11 table standing on the tile instead of adding it to the room
+    /// (Furniture.cs:1443-1449), so the piece is found in that table's <c>heldObject</c> and nowhere else. A piece that
+    /// is standing there but is a different item is returned too, so the receipt can say what it found instead of
+    /// reporting an absence the caller cannot act on.
+    /// </para>
+    /// </summary>
+    internal static (StardewValley.Object? Found, Vector2 Tile) FindPlacedThing(GameLocation location, Vector2 tile, Item source)
+    {
+        if (!LandsInFurniture(source))
+        {
+            if (!location.objects.TryGetValue(tile, out StardewValley.Object? objectOnTile) || objectOnTile is null)
+                return (null, tile);
+            return (objectOnTile, tile);
+        }
+
+        Furniture? onTheTile = null;
+        foreach (Furniture piece in location.furniture)
+        {
+            if (piece is null || piece.TileLocation != tile) continue;
+            if (string.Equals(piece.QualifiedItemId, source.QualifiedItemId, StringComparison.Ordinal))
+                return (piece, piece.TileLocation);
+            if (piece.heldObject.Value is StardewValley.Object held
+                && string.Equals(held.QualifiedItemId, source.QualifiedItemId, StringComparison.Ordinal))
+                return (held, piece.TileLocation);
+            onTheTile ??= piece;
+        }
+        return (onTheTile, onTheTile?.TileLocation ?? tile);
+    }
+
+    /// <summary>
+    /// The placement's verdict, from the world the native call left behind, with every failure under its own name.
+    ///
+    /// <para>
+    /// <c>place_owned_object_postcondition_unavailable</c> used to be the only answer a placement could fail with, so
+    /// it could not tell a native call that placed nothing from a furniture piece standing in a collection nobody
+    /// read. The first has its own name now, a landed thing whose stack stayed in the pack has its own, and the one
+    /// that keeps the old name is the placement this action genuinely cannot observe: the native call answered true
+    /// and the collection that thing's kind names does not hold it.
+    /// </para>
+    /// </summary>
+    internal static (ExecutionState State, string ReasonCode) PlacementVerdict(
+        bool placementHandled,
+        bool foundInItsContainer,
+        bool inventoryDecremented)
+    {
+        // Every native branch that answers false returns before its write (Object.cs:6999-7046), so nothing was
+        // placed - which is what "the action was never armed" looks like from the world.
+        if (!placementHandled) return (ExecutionState.Uncertain, "place_owned_object_native_declined");
+        if (!foundInItsContainer) return (ExecutionState.Uncertain, "place_owned_object_postcondition_unavailable");
+        // It is there and the pack still carries it, so the native decrement did not happen.
+        if (!inventoryDecremented) return (ExecutionState.Uncertain, "place_owned_object_inventory_unchanged");
+        return (ExecutionState.Succeeded, "owned_object_placed");
     }
 
     /// <summary>Whether some axe or pickaxe removes this object, in the native guards' own terms (Object.cs:1092-1443).</summary>
