@@ -32,6 +32,6 @@
     "tools/lib/harness-conformance.mjs": 1749,
     "tools/lib/stardew-native-local-player-fixture.mjs": 1710,
     "tools/live-run/frontend/capture/v-injection-claims.cjs": 999,
-    "tools/live-run/frontend/capture/w-game-launch.cjs": 1755
+    "tools/live-run/frontend/capture/w-game-launch.cjs": 1802
   }
 }
