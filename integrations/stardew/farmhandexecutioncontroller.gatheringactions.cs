@@ -135,8 +135,32 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
-    private const int ChunkDriftTolerance = 3;
-
+    /// <summary>
+    /// The published ground drop, collected through the engine's own magnet.
+    ///
+    /// <para>
+    /// THE EXECUTOR RE-RESOLVES THE TILE, SO THE CALLER NEVER HAS TO. A chunk's opaque identity
+    /// (<see cref="BuildItemTargetId"/>) carries no coordinate: the request's <c>x, y</c> is only where the caller SAW
+    /// the drop, never where it is. And the engine moves it in between - <c>Debris.updateChunks</c> drags a chunk along
+    /// with any Farmer whose magnet holds it (Debris.cs:760-778), and mining scatters the rest. Measured `round77`:
+    /// <c>item_target_moved</c> 18 times in 500 real actions, each one a drop that had trailed the companion and was
+    /// now beside it while the plan still named the tile it had left. The old body answered that with a refusal past a
+    /// three-tile `ChunkDriftTolerance` - a number no engine fact justifies - and then handed
+    /// <see cref="MagneticPickupReach.SelectStandTile"/> the LIVE tile anyway, so it was asking the caller to re-observe
+    /// a drop the executor was already holding. The live chunk is the same chunk: this body acts on the tile it reports
+    /// now and says both tiles in the receipt.
+    /// </para>
+    ///
+    /// <para>
+    /// A DROP THAT IS NO LONGER ON THE GROUND HAS THREE NAMES, and they must not collapse into one:
+    /// <c>item_picked_up</c> when this actor's own count rose by the stack that was published with the chunk still
+    /// lying there (the engine's magnet delivered it - the caller must NOT retry), <c>item_target_changed</c> when a
+    /// DIFFERENT chunk of the same item lies on the named tile (retrying is wrong, re-observing is right), and
+    /// <c>item_target_gone</c> when no chunk of that identity is anywhere here and nothing arrived (another farmer, a
+    /// chest, a shipping bin). &quot;It moved&quot; is not among them any more, because a moved drop is this action's
+    /// normal case.
+    /// </para>
+    /// </summary>
     public LocalExecutionReceipt RequestLocalPickupItem(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
@@ -153,20 +177,19 @@ internal sealed partial class ExecutionManager
             FindItemTarget(location, expectedTargetId, expectedQualifiedItemId);
         if (target is null)
         {
-            if (FindChunkOnTile(location, targetX, targetY, expectedQualifiedItemId) is { } changed)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"expected={expectedTargetId};actual={changed.TargetId};tile={targetX},{targetY}");
+            // The delivery is asked FIRST: the named chunk can be in the pack while a DIFFERENT chunk of the same item
+            // lies on the named tile, and `item_target_changed` would then send the caller back to re-observe a drop it
+            // is already carrying.
             if (this.TrySettleMagnetCollectedItem(requestId, executionId, boundActor, location, expectedTargetId, expectedQualifiedItemId, targetX, targetY) is LocalExecutionReceipt collected)
                 return collected;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"expected={expectedTargetId};actual=none;tile={targetX},{targetY}");
+            if (FindChunkOnTile(location, targetX, targetY, expectedQualifiedItemId) is { } changed)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"expected={expectedTargetId};actual={changed.TargetId};tile={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_gone",
+                $"expected={expectedTargetId};item={expectedQualifiedItemId};tile={targetX},{targetY};location={location.NameOrUniqueName};actual=none");
         }
+        // The request's tile is where the caller SAW the drop; the chunk reports where it is now, and that is the tile
+        // this body walks to, stands within and lets the magnet collect from.
         Point liveTargetTile = GetChunkTile(target.Value.Chunk);
-        if (liveTargetTile.X != targetX || liveTargetTile.Y != targetY)
-        {
-            int driftX = Math.Abs(liveTargetTile.X - targetX);
-            int driftY = Math.Abs(liveTargetTile.Y - targetY);
-            if (Math.Max(driftX, driftY) > ChunkDriftTolerance)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTargetTile.X},{liveTargetTile.Y}");
-        }
         if (!Game1.player.couldInventoryAcceptThisItem(target.Value.Debris.item ?? ItemRegistry.Create(expectedQualifiedItemId, target.Value.Stack)))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={expectedTargetId}");
 
@@ -210,7 +233,7 @@ internal sealed partial class ExecutionManager
         }
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={liveTargetTile.X},{liveTargetTile.Y};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={liveTargetTile.X},{liveTargetTile.Y};named_tile={targetX},{targetY};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
     }
 
     /// <summary>

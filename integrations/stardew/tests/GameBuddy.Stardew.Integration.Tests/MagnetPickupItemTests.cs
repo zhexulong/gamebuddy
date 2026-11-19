@@ -453,7 +453,9 @@ public sealed class MagnetPickupItemTests
 
     /// <summary>
     /// Another magnet-bearing Farmer in a shared world, a chest, or a shipping bin all take the chunk and leave this
-    /// farmer's backpack alone. "Gone" on its own therefore proves nothing, and the refusal has to survive.
+    /// farmer's backpack alone. "Gone" on its own therefore proves nothing, and the refusal has to survive - as
+    /// <c>item_target_gone</c>, which is not a target that MOVED (retrying that is right) and not one whose identity
+    /// changed (re-observing that is right).
     /// </summary>
     [Fact]
     public void AVanishedChunkThatNeverEnteredThisBackpack_IsStillRefused()
@@ -468,7 +470,11 @@ public sealed class MagnetPickupItemTests
             "req_elsewhere", 2, 2, DroppedItemId, targetId, harness.DeadlineMs);
 
         receipt.State.Should().Be(ExecutionState.Rejected, "the actor's own backpack is the evidence, and it is untouched");
-        receipt.ReasonCode.Should().Be("item_target_changed");
+        receipt.ReasonCode.Should().Be("item_target_gone");
+        receipt.ReasonCode.Should().NotBe("item_target_moved", "the tile never moved, and a retry would collect nothing");
+        receipt.Evidence.Should().Contain($"expected={targetId}", "the refusal names the identity the caller asked for");
+        receipt.Evidence.Should().Contain($"item={DroppedItemId}");
+        receipt.Evidence.Should().Contain("tile=2,2", "and the tile it was asked about");
     }
 
     /// <summary>
@@ -491,10 +497,10 @@ public sealed class MagnetPickupItemTests
             "req_already_held", 2, 2, DroppedItemId, targetId, harness.DeadlineMs);
 
         receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("item_target_changed");
+        receipt.ReasonCode.Should().Be("item_target_gone");
     }
 
-    // ---- moved means the tile moved, and nothing else does ------------------------
+    // ---- the tile is the executor's to resolve, and only the identity can go stale --
 
     /// <summary>
     /// The identity a request names is not only its tile: the same address on the same tile can hold a different chunk
@@ -526,27 +532,43 @@ public sealed class MagnetPickupItemTests
     }
 
     /// <summary>
-    /// A chunk that is still lying on the ground but is no longer where the caller saw it is a MOVE, never a
-    /// collection: settling it as a pickup would claim an item the actor does not have. The refusal names both tiles.
+    /// THE REPORTED DEFECT, REPLAYED. round77's <c>item_target_moved</c> was a drop the engine's own debris update had
+    /// dragged away from the tile the plan named (<c>Debris.updateChunks</c> keeps a chunk inside the rectangle of any
+    /// Farmer whose magnet holds it). The chunk is still the same chunk - its opaque identity carries no coordinate - so
+    /// a request naming the old tile is answered by collecting the drop where it IS; the caller never learns it happened
+    /// and never spends a turn re-observing a drop the body is already standing beside.
     /// </summary>
     [Fact]
-    public void AChunkThatMovedTiles_IsReportedAsMoved()
+    public void AChunkThatLeftTheNamedTile_IsCollectedWhereItIsNow()
     {
-        using var harness = MagnetPickupHarness.Create(debrisTileX: 3, debrisTileY: 2, heldAtPublication: 0);
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 7, debrisTileY: 2, heldAtPublication: 0);
         string targetId = harness.PublishTargetId();
         ExecutionManager manager = harness.Manager;
         harness.StandAt(2, 2);
 
-        // The same chunk (its opaque id is not positional) settling four tiles east - beyond the drift tolerance.
-        harness.MoveChunkTo(7, 2);
+        // The same chunk, dragged four tiles off the tile the caller named - past the deleted three-tile tolerance - and
+        // now one tile east of the body.
+        harness.MoveChunkTo(3, 2);
 
         LocalExecutionReceipt receipt = manager.RequestLocalPickupItem(
-            "req_moved", 3, 2, DroppedItemId, targetId, harness.DeadlineMs);
+            "req_moved", 7, 2, DroppedItemId, targetId, harness.DeadlineMs);
 
-        receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("item_target_moved");
-        receipt.Evidence.Should().Contain("expected=3,2");
-        receipt.Evidence.Should().Contain("actual=7,2", "the two tiles differ, which is what a move means");
+        receipt.State.Should().Be(ExecutionState.Accepted, receipt.Evidence);
+        receipt.ReasonCode.Should().Be("accepted", "a drop that moved is this action's normal case, not a refusal");
+        receipt.ReasonCode.Should().NotBe("item_target_moved");
+        Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
+        evidence["tile"].Should().Be("3,2", "the receipt names the tile the chunk reports NOW");
+        evidence["named_tile"].Should().Be("7,2", "and the tile the caller saw, so the re-resolution is readable");
+        evidence["stand_at"].Should().Be("2,2", "the body is already inside the magnet from where it stands");
+
+        // The drop really arrives, so the acceptance is not a claim about an item nobody collected.
+        harness.MagnetCollects();
+        LocalExecutionReceipt settled = harness.Settle(manager, "req_moved", "settled_moved");
+
+        settled.State.Should().Be(ExecutionState.Succeeded, settled.Evidence);
+        settled.ReasonCode.Should().Be("item_picked_up");
+        harness.Actor.Items.Sum(item => item?.QualifiedItemId == DroppedItemId ? item.Stack : 0)
+            .Should().Be(1, "the drop the plan named at 7,2 is in the pack");
     }
 
     // ---- the rule itself ----------------------------------------------------------
