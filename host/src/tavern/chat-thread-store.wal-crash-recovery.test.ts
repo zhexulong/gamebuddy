@@ -17,6 +17,11 @@ import { createChatThreadStore, createProfileAwareChatThreadCreationCapability }
  * What must hold afterwards, for a player whose Host was killed rather than closed: the
  * store opens, the last committed turn is present, the interrupted one is absent, and no
  * human touches a file.
+ *
+ * The child this spawns is a bare `node:sqlite` writer that appends two rows and dies, and its only imports are
+ * `node:sqlite` and `node:fs`: it releases no path lock, so it binds no Windows stale-lock reclaimer. Measured by
+ * running the file alone, `node --test dist-test/tavern/chat-thread-store.wal-crash-recovery.test.js`, with no `--import`
+ * preload.
  */
 
 const continuityKey = "b".repeat(64);

@@ -1,3 +1,10 @@
+/**
+ * Every child this file spawns is a bare `node:sqlite` process - a holder, a reader, a writer, an appender - whose only
+ * imports are `node:sqlite` and `node:fs`. None of them releases a path lock, so none of them binds the Windows
+ * stale-lock reclaimer: measured by the six generated scripts' own import lists (nothing else is named) and by running
+ * this file alone, `node --test dist-test/continuity-semantic-store/continuity-semantic-store-lock-budget.test.js` with
+ * no `--import` preload.
+ */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";

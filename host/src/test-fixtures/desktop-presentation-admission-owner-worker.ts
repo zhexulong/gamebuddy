@@ -23,6 +23,13 @@ import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/
  * so the real composed static shell composition still verifies a real browser
  * artifact and serves a real loopback listener. The worker prints one JSON line
  * of observations; the test owns every assertion.
+ *
+ * It releases no path lock, so it binds no Windows stale-lock reclaimer: every
+ * durable builder it would reach is mocked by URL, and nothing under
+ * `host/src/test-fixtures` imports `path-lock` at all. Measured by running it alone -
+ * `node --experimental-test-module-mocks dist-test/test-fixtures/
+ * desktop-presentation-admission-owner-worker.js start-close` with no `--import` - which
+ * exits 0.
  */
 
 const scenario = process.argv[2] ?? "";

@@ -279,6 +279,15 @@ function findPackageRoot(directory: string): string {
   return candidate;
 }
 
+/**
+ * The compiled entry as its own process, which is the only honest way to read what a launcher sees.
+ *
+ * These children refuse at frame validation, root validation or Guardian-session admission - the composition is a fixture
+ * that throws - so none of them reaches a durable write. None releases a path lock, so none binds the Windows
+ * stale-lock reclaimer: measured by running the entry alone, `node dist-test/bootstrap/entry/desktop-host-entry.internal.js`
+ * with a rejected frame, which exits 1 with one bounded code on stderr and no
+ * `durable_path_lock_release_failed`, and by the entry and wire modules importing no `path-lock`.
+ */
 function startEntry(
   frame: Buffer,
   entry = compiledEntry,

@@ -14,6 +14,13 @@ import type { DesktopRootLayoutCapability } from "./desktop-host-composition.js"
  * failure point is injected. The worker prints one JSON result line carrying
  * the close counts and the propagation outcome; it never mints or consumes a
  * production capability.
+ *
+ * It releases no path lock, so it binds no Windows stale-lock reclaimer: the shared
+ * authority, Chat facade, catalog and presentation are all mocked by URL, and nothing
+ * under `host/src/composition` imports `path-lock` at all. Measured by running each
+ * scenario alone - `node --experimental-test-module-mocks
+ * dist-test/composition/desktop-host-composition-drain-fixture-worker.js <scenario>`
+ * with no `--import` - which exits 0 for all five.
  */
 
 const scenario = process.argv[2] ?? "";
