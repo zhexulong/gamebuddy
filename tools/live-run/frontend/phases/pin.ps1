@@ -12,7 +12,12 @@
 #                                        which is ROBACOPIED (vite must be physically present)
 #   - dialogue-web/node_modules/{rolldown,postcss,esbuild,picomatch,tinyglobby,jiti,lightningcss,yaml}
 #                                        junctioned from the main checkout's pnpm virtual store
-#   - windows-stale-lock-reclaimer/.dist ROBACOPIED (the build phase rebuilds it fresh)
+#   - windows-{stale-lock-reclaimer,stardew-folder-picker}/.dist   ROBACOPIED, and the pair the
+#                                        build phase will CONSUME is verified by that helper's own
+#                                        `readVerifiedPair` (probes/verified-helper-pair.mjs). The
+#                                        folder picker's pair is REQUIRED: without it its builder
+#                                        publishes, which is a restore against the package source.
+#   - .tmp/*/nuget-packages              ROBACOPIED (every helper cache on disk; a sixth joins itself)
 #   - integrations/stardew/bin/Release/net6.0   built fresh in the build phase (never copied)
 param(
   [Parameter(Mandatory = $true)][string]$Repo,
@@ -144,15 +149,49 @@ foreach ($p in @("rolldown","postcss","esbuild","picomatch","tinyglobby","jiti",
   }
 }
 
-Log "=== 4c. windows-stale-lock-reclaimer/.dist (copied; the build phase rebuilds it fresh) ==="
-$recDir = Join-Path $Worktree "host\native\windows-stale-lock-reclaimer\.dist"
-$recSrc = Join-Path $Repo "host\native\windows-stale-lock-reclaimer\.dist"
-if (Test-Path $recSrc) {
-  New-Item -ItemType Directory -Force $recDir | Out-Null
-  robocopy $recSrc $recDir /E /NFL /NDL /NJH /NJS /NP | Out-Null
-  Log ("  .dist copied; exe present=" + (Test-Path (Join-Path $recDir 'win-x64\GameBuddy.WindowsStaleLockReclaimer.exe')))
-} else {
-  Log ("  NO main-checkout .dist to copy; the build phase must build it")
+Log "=== 4c. native helper pairs copied from the main checkout ==="
+# A pinned worktree starts with none of the helpers' `.dist` roots, and a helper with no pair
+# publishes one with `dotnet publish --self-contained win-x64`. Even with a warm
+# `.tmp/<helper>/nuget-packages` (section 4c2) that publish still asks the package source for
+# vulnerability data, and a machine with no route to api.nuget.org fails it - measured 2026-11-20:
+# frontend live runs r9, r10 and r11 all died in the build phase this way.
+#
+#   windows-stale-lock-reclaimer   not required: build.ps1 builds it when the pair is absent
+#   windows-stardew-folder-picker  REQUIRED: its builder returns the pair from `readVerifiedPair()`
+#                                  before it spawns dotnet, so a verified copy is the whole fix
+#
+# Neither copy is accepted on this script's own reading. `probes/verified-helper-pair.mjs` asks the
+# builder that will CONSUME the pair, so the acceptance rule stays in one place.
+$helperPairs = @(
+  @{ name = 'windows-stale-lock-reclaimer'; required = $false },
+  @{ name = 'windows-stardew-folder-picker'; required = $true }
+)
+foreach ($helper in $helperPairs) {
+  $src = Join-Path $Repo ("host\native\" + $helper.name + "\.dist")
+  $dst = Join-Path $Worktree ("host\native\" + $helper.name + "\.dist")
+  if (-not (Test-Path $src)) {
+    if (-not $helper.required) {
+      Log ("  NO main-checkout .dist to copy for " + $helper.name + "; the build phase must build it")
+      continue
+    }
+    Log ("  windows_stardew_folder_picker_pair_missing: the shared cache has no pair at " + $src)
+    Log "  remedy: once, in the main checkout with the package source reachable, run `node host/scripts/build-windows-stardew-folder-picker.mjs`; the pinned build consumes that pair and never restores it"
+    Log "DONE-PIN-FAIL (a required helper pair is absent from the shared cache)"
+    exit 1
+  }
+  New-Item -ItemType Directory -Force $dst | Out-Null
+  robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP | Out-Null
+  $entries = @(Get-ChildItem (Join-Path $dst 'win-x64') -Name -ErrorAction SilentlyContinue)
+  Log ("  " + $helper.name + " .dist copied; win-x64 entries=[" + ($entries -join ',') + "]")
+  if (-not $helper.required) { continue }
+  $builder = Join-Path $Worktree 'host\scripts\build-windows-stardew-folder-picker.mjs'
+  $verdict = (node (Join-Path (Join-Path $PSScriptRoot '..') 'probes\verified-helper-pair.mjs') $builder 2>&1)
+  $verdict | ForEach-Object { Log ("  | " + $_) }
+  if ($LASTEXITCODE -ne 0) {
+    Log ("  windows_stardew_folder_picker_pair_invalid: the copy at " + $dst + " is not the pair its builder accepts, so the build phase would publish one instead (the restore this phase exists to remove)")
+    Log "DONE-PIN-FAIL (a required helper pair did not survive the copy)"
+    exit 1
+  }
 }
 
 Log "=== 4c2. native helper NuGet caches (copied; the builds restore into them) ==="
