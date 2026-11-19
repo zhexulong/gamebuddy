@@ -106,13 +106,18 @@ public static class ClearingEvidence
     /// <see cref="DescribeDetour"/>'s half of the same decision (what going around costs), or null when this receipt has
     /// no goal to measure against.
     /// </param>
+    /// <param name="targetStepFacts">
+    /// <see cref="DescribeNextSteps"/>'s ordered answer for the case <see cref="TargetUnpublished"/> names, or null when
+    /// the frame published the id (so the step is the cut itself) or when where to walk could not be decided.
+    /// </param>
     public static string DescribeBlocker(
         string occupant,
         (int X, int Y) blockerTile,
         string? targetId,
         IReadOnlyList<FarmhandClearingOffer> clearers,
         int? staminaCharge,
-        string? detourFacts)
+        string? detourFacts,
+        string? targetStepFacts = null)
     {
         ArgumentNullException.ThrowIfNull(occupant);
         ArgumentNullException.ThrowIfNull(clearers);
@@ -120,6 +125,8 @@ public static class ClearingEvidence
             ? NoPublishedClearer(occupant)
             : string.Join(",", clearers.Select(offer => $"{offer.ActionId}({DescribeCost(offer.Cost, staminaCharge)})"));
         string described = $"{Occupant(occupant, blockerTile)};clears_with={clears};blocker_target={TargetText(targetId, clearers)}";
+        if (!string.IsNullOrEmpty(targetStepFacts))
+            described = $"{described};{targetStepFacts}";
         return string.IsNullOrEmpty(detourFacts) ? described : $"{described};{detourFacts}";
     }
 
@@ -177,6 +184,67 @@ public static class ClearingEvidence
         return $"{Occupant(occupant, blockerTile)};clears_with={clears}";
     }
 
+    /// <summary>
+    /// The step that breaks the circle <see cref="TargetUnpublished"/> half-documents: WHERE to walk so the family that
+    /// clears the blocker publishes the row the caller's action needs, then that the row appears, then the cut, then the
+    /// walk the refusal originally answered.
+    ///
+    /// <para>
+    /// `unpublished:&lt;family&gt;` on its own is an answer a caller cannot act on. Measured `round78`: six refusals in ten
+    /// minutes, every one carrying `clears_with=cut_weeds` and `blocker_target=unpublished:weedTargets` beside
+    /// `stand_at=40,10` - and the recovery `stand_at`'s own docblock named ("move into its reach") WAS the walk that had
+    /// just been refused. The frame publishes a family's rows for tiles inside that family's own discovery radius, and the
+    /// actor stood twenty tiles away, so the action was real and its id was not; nothing in the refusal said the walk to
+    /// `stand_at` was the step that would publish it, while `reachable=34,6;detour_steps=46` named a dead end.
+    /// </para>
+    /// <para>
+    /// The ORDER is the fact, so it is one value rather than four fields: a caller holding `next_steps=` can see that the
+    /// only dispatch it can make today is the first one, and that what it is waiting for is not a better tile but a row.
+    /// Each verb is an action id the caller dispatches (`<see cref="WalkAction"/>`, the clearing action's own id) or the
+    /// family's publication, which is the precondition between them.
+    /// </para>
+    /// <para>
+    /// The cut is named only when the publish tile is within tool reach of the blocker, because the sentence must not
+    /// promise a swing the engine would refuse for range; otherwise the order stops at the publication and the caller's
+    /// next plan reads a world that now has the id in it. <paramref name="goalTile"/> is the walk the refusal answered,
+    /// and it is omitted when the hint cannot afford it - the caller made that request itself, so it is the one tile in
+    /// the sequence that does not have to be told.
+    /// </para>
+    /// </summary>
+    /// <param name="publishFrom">
+    /// A tile the caller can walk to today from which the family publishes the row, or null when the search measured that
+    /// no such tile exists (never when it could not measure - an unmeasured search says nothing here).
+    /// </param>
+    /// <param name="blockerTile">The tile the row is about.</param>
+    /// <param name="clearer">The published action whose `Clears` declaration removes the occupant, and its family.</param>
+    /// <param name="goalTile">Where the refused walk was going, or null to end the sentence at the cut.</param>
+    public static string DescribeNextSteps(
+        (int X, int Y)? publishFrom,
+        (int X, int Y) blockerTile,
+        FarmhandClearingOffer clearer,
+        (int X, int Y)? goalTile)
+    {
+        ArgumentNullException.ThrowIfNull(clearer);
+        if (publishFrom is not { } from)
+            return $"next_steps={NoNextSteps}";
+        string steps = $"{WalkAction}@{from.X.ToString(CultureInfo.InvariantCulture)},{from.Y.ToString(CultureInfo.InvariantCulture)}"
+            + $">publishes:{clearer.TargetFamily}";
+        // A swing lands from Chebyshev 1 only; the planner's own reach is the one this sentence is held to.
+        bool inReach = Math.Abs(from.X - blockerTile.X) <= ClearStepPlanner.ToolReach
+            && Math.Abs(from.Y - blockerTile.Y) <= ClearStepPlanner.ToolReach;
+        if (inReach)
+            steps += $">{clearer.ActionId}@{blockerTile.X.ToString(CultureInfo.InvariantCulture)},{blockerTile.Y.ToString(CultureInfo.InvariantCulture)}";
+        if (inReach && goalTile is { } goal)
+            steps += $">{WalkAction}@{goal.X.ToString(CultureInfo.InvariantCulture)},{goal.Y.ToString(CultureInfo.InvariantCulture)}";
+        return $"next_steps={steps}";
+    }
+
+    /// <summary>The action a caller issues to walk: its published id, so the ordered step names a dispatch and not a verb.</summary>
+    public const string WalkAction = "move_to_tile";
+
+    /// <summary>What `next_steps` says when no tile the caller can walk to brings the blocker inside its family's radius.</summary>
+    public const string NoNextSteps = "none";
+
     /// <summary>The occupant token both shapes share: the engine's name AND the tile it stands on.</summary>
     private static string Occupant(string occupant, (int X, int Y) tile) =>
         $"blocker_occupant={occupant}@{tile.X.ToString(CultureInfo.InvariantCulture)},{tile.Y.ToString(CultureInfo.InvariantCulture)}";
@@ -198,6 +266,25 @@ public static class ClearingEvidence
     public static string DescribeDetour((int X, int Y)? reachable, int? steps) =>
         reachable is { } tile && steps is int count
             ? $"reachable={tile.X.ToString(CultureInfo.InvariantCulture)},{tile.Y.ToString(CultureInfo.InvariantCulture)};detour_steps={count.ToString(CultureInfo.InvariantCulture)}"
+            : "detour_steps=none";
+
+    /// <summary>
+    /// The SAME two numbers when the flood's own verdict is that NO way round exists, under the words that say so.
+    ///
+    /// <para>
+    /// <see cref="DescribeDetour"/> answers "what does leaving it alone cost", and that question has an answer only while
+    /// there is somewhere for the walk to come out. When the flood has already established that the target's own
+    /// neighbourhood is outside the actor's component, every tile it reached is a tile the target cannot be reached from,
+    /// and the depth it reached it at is not a detour - it is how far the walk gets. Measured `round78`: six refusals in
+    /// ten minutes carried `reachable=34,6;detour_steps=46` beside their own `route_exists_cardinal=false`, and 46 steps
+    /// of walking was the one thing the run could dispatch, so it spent the day arriving at dead ends. The number is kept
+    /// (it is how far she CAN get) and the claim is withdrawn: <c>detour_steps=none</c> is this file's existing word for
+    /// "clearing is the only way through", which is exactly the verdict beside it.
+    /// </para>
+    /// </summary>
+    public static string DescribeNoDetour((int X, int Y)? reachable, int? steps) =>
+        reachable is { } tile && steps is int count
+            ? $"reachable={tile.X.ToString(CultureInfo.InvariantCulture)},{tile.Y.ToString(CultureInfo.InvariantCulture)};detour_steps=none;walk_limit_steps={count.ToString(CultureInfo.InvariantCulture)}"
             : "detour_steps=none";
 
     /// <summary>
@@ -251,13 +338,14 @@ public static class ClearingEvidence
 
     /// <summary>
     /// The evidence fields a route refusal puts in the hint, in the order a reader needs them: the size of the route
-    /// and its verdict, what stands on the frontier and where, what opens it and the id the frame published for it,
-    /// where to stand, the other branch, and - when nothing on the rim can be opened - the word for what the rim is.
+    /// and its verdict, what stands on the frontier and where, what opens it and the id the frame published for it (or,
+    /// when the frame published none, the ordered walk that makes it publish one), where to stand, the other branch, and
+    /// - when nothing on the rim can be opened - the word for what the rim is.
     /// </summary>
     private static readonly string[] RouteHintFields =
     {
-        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "stand_at",
-        "detour_steps", "remaining_clears", "no_cuttable_blocker",
+        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "next_steps",
+        "stand_at", "detour_steps", "walk_limit_steps", "remaining_clears", "no_cuttable_blocker",
     };
 
     private static string DescribeCost(FarmhandClearingCost cost, int? staminaCharge) =>

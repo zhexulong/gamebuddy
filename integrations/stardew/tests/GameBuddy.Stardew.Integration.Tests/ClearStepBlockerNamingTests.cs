@@ -82,8 +82,9 @@ public sealed class ClearStepBlockerNamingTests
             "and WHY nothing removes it: the vocabulary's own reason for a bush (`TileOccupantKind.UnclearableCodes`)");
         evidence.Should().NotContain("clears_with=harvest_bush",
             "a harvest advertised as a way through would be advice the action cannot honour");
-        evidence.Should().Contain("reachable=5,3;detour_steps=3",
-            "the other branch, measured: three steps of walking reach 5,3, and that is as close as she can get");
+        evidence.Should().Contain("reachable=5,3;detour_steps=none;walk_limit_steps=3",
+            "the other branch, measured: three steps of walking reach 5,3, and that is as close as she can get - published as "
+                + "the LIMIT of the walk, because a bush in a one-tile corridor is no way round either");
     }
 
     /// <summary>

@@ -412,7 +412,8 @@ internal sealed class StardewBodyController
             localPlayer,
             occupancy,
             blockerTile,
-            goalTile is { } goal ? DescribeDetourFacts(localPlayer, goal) : null);
+            goalTile is { } goal ? DescribeDetourFacts(localPlayer, goal) : null,
+            goalTile);
     }
 
     /// <summary>
@@ -438,7 +439,7 @@ internal sealed class StardewBodyController
             return string.Empty;
         if (FindFrontierObstruction(localPlayer, goalTile) is not { } obstruction)
             return string.Empty;
-        string facts = this.DescribeObstruction(localPlayer, obstruction.Occupant, obstruction.Tile, detourFacts);
+        string facts = this.DescribeObstruction(localPlayer, obstruction.Occupant, obstruction.Tile, detourFacts, goalTile);
         return facts.Length == 0 ? string.Empty : $";{facts}";
     }
 
@@ -450,16 +451,138 @@ internal sealed class StardewBodyController
         Farmer localPlayer,
         Occupancy occupancy,
         (int X, int Y) tile,
-        string? detourFacts)
+        string? detourFacts,
+        Vector2? goalTile = null)
     {
         IReadOnlyList<FarmhandClearingOffer> clearers = ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations);
+        string? targetId = this.publishedTargetId?.Invoke(localPlayer, occupancy.Occupant, tile.X, tile.Y);
         return ClearingEvidence.DescribeBlocker(
             occupancy.Occupant,
             tile,
-            this.publishedTargetId?.Invoke(localPlayer, occupancy.Occupant, tile.X, tile.Y),
+            targetId,
             clearers,
             occupancy.StaminaCharge,
-            detourFacts);
+            detourFacts,
+            this.DescribeTargetStep(localPlayer, targetId, tile, clearers, goalTile));
+    }
+
+    /// <summary>
+    /// The `next_steps` sentence for a blocker whose clearing family published NO row for its tile - or null when the
+    /// frame published the id (so the step is the cut, not a walk) and when where to walk could not be measured.
+    ///
+    /// <para>
+    /// The recovery this replaces was `stand_at`, and `stand_at`'s own contract ("move into its reach") is the walk the
+    /// refusal had just answered with a no. Measured `round78`: `blocker_target=unpublished:weedTargets` beside
+    /// `stand_at=40,10`, six times in ten minutes, and the run walked to `reachable=34,6` instead - because nothing said
+    /// that walking to a particular tile is what makes the family publish the missing row. This composes that sentence
+    /// from the tile <see cref="PublishTileFor"/> proves the caller can reach, so the first step it names is a
+    /// `move_to_tile` the caller can dispatch with the frame it already holds.
+    /// </para>
+    /// </summary>
+    private string? DescribeTargetStep(
+        Farmer localPlayer,
+        string? targetId,
+        (int X, int Y) blockerTile,
+        IReadOnlyList<FarmhandClearingOffer> clearers,
+        Vector2? goalTile)
+    {
+        if (targetId is { Length: > 0 } || clearers.Count == 0)
+            return null;
+        // The family's WINDOW can only be why the row is missing while the blocker is OUTSIDE it. A family that publishes
+        // nothing for a tile the actor already stands beside is refusing on its own admission - a clump no tool in her pack
+        // can break, a row past a cap - and no walk fixes that: measured `ClearStepBlockerNamingTests`' unpriced
+        // `quarry_boulder`, where "walk here and the row appears" would be advice the frame had already disproved.
+        int toBlocker = Math.Max(
+            Math.Abs((int)localPlayer.Tile.X - blockerTile.X),
+            Math.Abs((int)localPlayer.Tile.Y - blockerTile.Y));
+        if (toBlocker <= ExecutionManager.TargetDiscoveryRadius)
+            return null;
+        PublishTile publish = PublishTileFor(localPlayer, blockerTile);
+        if (!publish.Measured)
+            return null;
+        return ClearingEvidence.DescribeNextSteps(
+            publish.Tile,
+            blockerTile,
+            clearers[0],
+            goalTile is { } goal ? ((int)goal.X, (int)goal.Y) : null);
+    }
+
+    /// <summary>
+    /// What <see cref="PublishTileFor"/> found: a tile, a measured absence of one, or no claim at all.
+    ///
+    /// <para>
+    /// The third state is the one that must not be spelled as the second: a component that exceeded the flood's budget is
+    /// not a component in which nothing publishes the row, and a refusal that said `next_steps=none` there would be
+    /// claiming a measurement it never finished.
+    /// </para>
+    /// </summary>
+    private readonly record struct PublishTile((int X, int Y)? Tile, bool Measured);
+
+    /// <summary>
+    /// The tile the actor can ALREADY walk to from which the family that clears <paramref name="blockerTile"/> would
+    /// publish a row for it.
+    ///
+    /// <para>
+    /// Not a guess, and not a constant: a family publishes a row for a tile when the ACTOR is inside
+    /// <see cref="ExecutionManager.TargetDiscoveryRadius"/> of it (`IsPublishedTargetTileInRadius` - the one predicate
+    /// every family's discovery filters through), so "a tile that publishes this row" is "a tile of the actor's own
+    /// walkable component within that Chebyshev radius". The component is the same cardinal flood every reachability
+    /// claim in this file uses, with the same predicate and the same budget, and the answer is its tile nearest the
+    /// blocker (fewest steps when two are equally near), so a swing from it lands whenever the ring is walkable at all.
+    /// </para>
+    /// <para>
+    /// The third state is <see cref="PublishTile.Measured"/> false: the component exceeded its budget, so no claim at all
+    /// is made and the caller publishes nothing here.
+    /// </para>
+    /// </summary>
+    private static PublishTile PublishTileFor(Farmer localPlayer, (int X, int Y) blockerTile)
+    {
+        GameLocation? location = localPlayer.currentLocation;
+        if (location?.map is null || location.map.Layers.Count == 0)
+            return new PublishTile(null, false);
+        var layer = location.map.Layers[0];
+        Point blocker = new(blockerTile.X, blockerTile.Y);
+        Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+        Point? best = null;
+        int bestDistance = int.MaxValue;
+        int bestSteps = int.MaxValue;
+        var visited = new HashSet<Point> { actor };
+        var pending = new Queue<(Point Tile, int Steps)>();
+        pending.Enqueue((actor, 0));
+        while (pending.Count > 0)
+        {
+            (Point tile, int steps) = pending.Dequeue();
+            int distance = Math.Max(Math.Abs(tile.X - blocker.X), Math.Abs(tile.Y - blocker.Y));
+            // Standing ON the blocker is not standing where its row publishes: the tile is occupied, so a walk there is
+            // refused and the distance is zero only when the occupant's own tile is somehow walkable.
+            if (distance > 0 && distance <= ExecutionManager.TargetDiscoveryRadius)
+            {
+                bool better = distance < bestDistance
+                    || (distance == bestDistance && steps < bestSteps)
+                    || (distance == bestDistance && steps == bestSteps
+                        && (best is not { } incumbent || Before(tile, (incumbent.X, incumbent.Y))));
+                if (better)
+                {
+                    best = tile;
+                    bestDistance = distance;
+                    bestSteps = steps;
+                }
+            }
+
+            foreach (Point offset in CardinalOffsets)
+            {
+                Point next = new(tile.X + offset.X, tile.Y + offset.Y);
+                if (next.X < 0 || next.Y < 0 || next.X >= layer.LayerWidth || next.Y >= layer.LayerHeight)
+                    continue;
+                if (!IsWalkableTile(location, localPlayer, new Vector2(next.X, next.Y)) || !visited.Add(next))
+                    continue;
+                if (visited.Count > ReachabilityProbeLimit)
+                    return new PublishTile(null, false);
+                pending.Enqueue((next, steps + 1));
+            }
+        }
+
+        return new PublishTile(best is { } found ? (found.X, found.Y) : null, true);
     }
 
     /// <summary>
@@ -501,14 +624,33 @@ internal sealed class StardewBodyController
             segments.Add($"stand_at={approach.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},{approach.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         if (FindFrontierObstruction(localPlayer, specification.TargetTile) is { } obstruction)
         {
-            segments.Add(ClearingEvidence.DescribeBlockerBrief(
-                obstruction.Occupant.Occupant,
-                obstruction.Tile,
-                ClearingActionSurface.ClearersOf(obstruction.Occupant.Occupant, FarmhandActionCatalog.Registrations)));
+            IReadOnlyList<FarmhandClearingOffer> clearers =
+                ClearingActionSurface.ClearersOf(obstruction.Occupant.Occupant, FarmhandActionCatalog.Registrations);
+            segments.Add(ClearingEvidence.DescribeBlockerBrief(obstruction.Occupant.Occupant, obstruction.Tile, clearers));
+            // Its OWN segment, in the hint's own order: the thing in the way first, then - when the frame published no row
+            // for it - WHERE to walk so the family publishes one. Composed by the same formatter the receipt uses, minus
+            // its last step: the goal is the request the caller itself made, and the journal's 256-character bound is what
+            // the hint has to buy. A separate segment so the ordering is what a too-long hint drops, never the blocker.
+            if (this.DescribeTargetStep(
+                    localPlayer,
+                    this.publishedTargetId?.Invoke(localPlayer, obstruction.Occupant.Occupant, obstruction.Tile.X, obstruction.Tile.Y),
+                    obstruction.Tile,
+                    clearers,
+                    goalTile: null) is { } targetStep)
+            {
+                segments.Add(targetStep);
+            }
         }
-        segments.Add(ClearingEvidence.DescribeDetour(
-            verdict.ClosestToTarget is Point reachable ? (reachable.X, reachable.Y) : null,
-            verdict.ClosestToTargetSteps));
+        // The other branch of the same decision, in the words the flood's own verdict earns: with the target's
+        // neighbourhood outside her component there is no way round, and `detour_steps=46` about a dead end is a route a
+        // caller will walk (measured round78).
+        segments.Add(verdict.ComponentContainsTarget
+            ? ClearingEvidence.DescribeDetour(
+                verdict.ClosestToTarget is Point reachable ? (reachable.X, reachable.Y) : null,
+                verdict.ClosestToTargetSteps)
+            : ClearingEvidence.DescribeNoDetour(
+                verdict.ClosestToTarget is Point dead ? (dead.X, dead.Y) : null,
+                verdict.ClosestToTargetSteps));
         return JoinWithinHintBound(segments);
     }
 
@@ -668,9 +810,17 @@ internal sealed class StardewBodyController
                 arrived.Requested.TargetTile,
                 localPlayer);
             string blockedBy = resumedBlocker.Format();
+            // WHERE the walk it just tried could still go. This branch used to carry the layer and nothing a caller could
+            // dispatch: the blocker this walk was for is gone and the engine still has no route, so `clear_step=...` (when
+            // a fresh plan resolves one) was the only tile in it and `blocked_by=none` read as "nothing is in the way" about
+            // a world it had just failed to walk through. The flood's own nearest reachable tile is the one step this
+            // refusal can honestly name, from the same probe every other reachability claim here uses.
+            string reachable = AssessNativeReachability(localPlayer, arrived.Requested, findClosestReachable: true) is { } afterClear
+                ? $";{FormatReachableHint(afterClear.ClosestToTarget, new Point((int)arrived.Requested.TargetTile.X, (int)arrived.Requested.TargetTile.Y))}"
+                : string.Empty;
             this.Fail(
                 WalkRefusalCode(resumedBlocker, NoNativePathReasonCode),
-                $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true;blocked_by={blockedBy}{next}");
+                $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true;blocked_by={blockedBy}{next}{reachable}");
             return;
         }
 
@@ -796,7 +946,10 @@ internal sealed class StardewBodyController
                 + this.DescribeFrontierBlocker(
                     localPlayer,
                     specification.TargetTile,
-                    ClearingEvidence.DescribeDetour(
+                    // NOT a detour: this branch's own verdict is that the target's neighbourhood is outside her
+                    // component, so the flood's depth is how far the walk gets and not a way round (round78's
+                    // `reachable=34,6;detour_steps=46` beside `route_exists_cardinal=false`).
+                    ClearingEvidence.DescribeNoDetour(
                         unreachable.ClosestToTarget is Point frontierGoal ? (frontierGoal.X, frontierGoal.Y) : null,
                         unreachable.ClosestToTargetSteps));
             this.reachabilityHint = this.DescribeRouteHint(localPlayer, specification, unreachable, blockedBy);

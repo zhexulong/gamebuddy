@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Policy;
 using Xunit;
 
 namespace GameBuddy.Stardew.Core.Tests;
@@ -110,5 +111,80 @@ public sealed class ClearingEvidenceTests
 
         ClearingEvidence.DescribeFirstStep(step, tile => kind.TryGetValue(tile, out string? name) ? name : null)
             .Should().Be("clear_step=weed@4,4;stand_at=3,4;remaining_clears=5");
+    }
+
+    // ---- the step for a row the frame never published -----------------------
+
+    private static readonly FarmhandClearingOffer CutWeeds =
+        new("cut_weeds", new FarmhandClearingCost("scythe", 1), Destructive: false, "weedTargets");
+
+    [Fact]
+    public void TheOrderedStepWalksPublishesCutsAndThenWalks()
+    {
+        // The measured shape: the weed is on the route, `cut_weeds` exists, and its id was missing because she stood
+        // outside the family's window. The order is the answer - the first step is the only one she can dispatch today.
+        ClearingEvidence.DescribeNextSteps((40, 10), (40, 9), CutWeeds, (40, 0))
+            .Should().Be(
+                $"next_steps={ClearingEvidence.WalkAction}@40,10>publishes:weedTargets>cut_weeds@40,9>{ClearingEvidence.WalkAction}@40,0");
+    }
+
+    [Fact]
+    public void TheOrderedStepStopsAtThePublicationWhenASwingWouldNotLand()
+    {
+        // A publish tile three tiles off brings the row into the family's window and nothing into the scythe's reach, so
+        // the sentence must not promise a swing the engine would refuse for range - and without a cut there is no walk
+        // after it either.
+        ClearingEvidence.DescribeNextSteps((43, 9), (40, 9), CutWeeds, (40, 0))
+            .Should().Be($"next_steps={ClearingEvidence.WalkAction}@43,9>publishes:weedTargets");
+    }
+
+    [Fact]
+    public void NoTileThatPublishesTheRowIsSaidAsNone()
+    {
+        // Null is a MEASUREMENT here (the caller checks that before it calls): no tile it can walk to is inside the
+        // family's window. Left out, the field would read as "nothing to say" instead of "no walk fixes this".
+        ClearingEvidence.DescribeNextSteps(null, (40, 9), CutWeeds, (40, 0))
+            .Should().Be($"next_steps={ClearingEvidence.NoNextSteps}");
+    }
+
+    [Fact]
+    public void TheWalkTheOrderNamesIsAnActionTheCataloguePublishes()
+    {
+        // One spelling of the dispatch, held to the catalogue that publishes it: a step named with an id no action
+        // answers is advice a caller cannot issue at all.
+        FarmhandActionCatalog.Registrations
+            .Should().Contain(registration => registration.ActionId == ClearingEvidence.WalkAction);
+    }
+
+    // ---- the other branch, when there IS no way round ------------------------
+
+    [Fact]
+    public void ADetourIsWithdrawnWhereTheFloodSaysThereIsNoWayRound()
+    {
+        // `round78`: `reachable=34,6;detour_steps=46` beside its own `route_exists_cardinal=false`, and the run walked
+        // 46 steps into a dead end. The number is kept - it is how far the walk gets - and the claim is withdrawn.
+        ClearingEvidence.DescribeNoDetour((34, 6), 46)
+            .Should().Be("reachable=34,6;detour_steps=none;walk_limit_steps=46");
+        ClearingEvidence.DescribeNoDetour(null, null).Should().Be("detour_steps=none");
+    }
+
+    [Fact]
+    public void TheBlockerPutsTheOrderedStepBesideTheTargetItAddresses()
+    {
+        // Shape, not decoration: the field order is what a bounded host cut keeps, so the step that addresses
+        // `blocker_target` has to follow it, and the other branch's price stays last.
+        ClearingEvidence.DescribeBlocker(
+                "weed",
+                (40, 9),
+                targetId: null,
+                clearers: new[] { CutWeeds },
+                staminaCharge: 0,
+                detourFacts: ClearingEvidence.DescribeNoDetour((34, 6), 46),
+                targetStepFacts: ClearingEvidence.DescribeNextSteps((40, 10), (40, 9), CutWeeds, (40, 0)))
+            .Should().Be(
+                "blocker_occupant=weed@40,9;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);"
+                    + $"blocker_target={ClearingEvidence.TargetUnpublished}:weedTargets;"
+                    + $"next_steps={ClearingEvidence.WalkAction}@40,10>publishes:weedTargets>cut_weeds@40,9>{ClearingEvidence.WalkAction}@40,0;"
+                    + "reachable=34,6;detour_steps=none;walk_limit_steps=46");
     }
 }
