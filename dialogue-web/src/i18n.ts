@@ -756,18 +756,22 @@ const en = {
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
   problemInternalErrorNoCode: "none reported",
-  // The mount's own four causes (`composedBootstrapProblemView`). A failed first read has no session
+  // The mount's own five causes (`composedBootstrapProblemView`). A failed first read has no session
   // behind it, so these are the only problem sentences that must name what is missing - the chats,
-  // never "the app" - and the only ones whose step cannot be `problemRetryRead`: the card's own read
-  // asks the same Host the same question, and for these four the answer is already settled. None of
-  // them says anything about the game, because the mount that reads them holds no `connectionStatus`
-  // to know whether it is still running.
+  // never "the app". Four of them are a step the card's own read cannot change: the read asks the
+  // same Host the same question and the answer is already settled. The fifth is the one 409 that can
+  // go either way - a producer that named the check it failed versus one that named nothing - so it
+  // is two sentences, and neither says anything about the game: the mount that reads them holds no
+  // `connectionStatus` to know whether it is still running.
   problemBootHostNotAnsweringTitle: "GameBuddy is not answering",
   problemBootHostNotAnsweringDetail:
     "The GameBuddy that serves this page is not running, so there are no chats to read here. Start GameBuddy from its tray icon, then open the page it shows.",
   problemBootChatsUnreadableTitle: "GameBuddy cannot open your chats",
   problemBootChatsUnreadableDetail:
     "GameBuddy is running, but it could not read the conversation it was started on, so this page has nothing to show. Reading it again repeats the same read: quit GameBuddy from its tray icon, start it again, and if this page comes back the same way, send the report its launch window names.",
+  problemBootChatsUnreadableForNowTitle: "GameBuddy could not read your chats this time",
+  problemBootChatsUnreadableForNowDetail:
+    "GameBuddy is running and answered this page, but the read of the conversation it was started on failed, and nothing said what broke. Nothing here says the conversation is gone, so read it again.",
   problemBootNoChatTitle: "There is no chat to open",
   problemBootNoChatDetail:
     "The start that opened this page named no conversation, and this page cannot make one. Reading it again finds the same nothing: start GameBuddy again from its tray icon, and if it stops at the same place, send the report its launch window names.",
@@ -1982,6 +1986,9 @@ const zh: Messages = {
   problemBootChatsUnreadableTitle: "GameBuddy 打不开你的聊天",
   problemBootChatsUnreadableDetail:
     "GameBuddy 在运行，但它读不到启动时用的那段对话，所以这个页面没有内容可显示。再读一次只是把同一个问题再问一遍：请从系统托盘图标退出 GameBuddy 并重新启动；如果这个页面还是这样，请发送它启动窗口给出的报告。",
+  problemBootChatsUnreadableForNowTitle: "GameBuddy 这次没能读到你的聊天",
+  problemBootChatsUnreadableForNowDetail:
+    "GameBuddy 在运行，也回应了这个页面，但读取启动时用的那段对话时失败了，而且没有任何信息说明是哪里出了问题。这里没有任何信息说这段对话已经没了，所以请再读一次。",
   problemBootNoChatTitle: "没有可以打开的聊天",
   problemBootNoChatDetail:
     "打开这个页面的那次启动没有指定任何对话，而这个页面也无法自己创建一段。再读一次同样什么都没有：请从系统托盘图标重新启动 GameBuddy；如果它停在同一处，请发送它启动窗口给出的报告。",

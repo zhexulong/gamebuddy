@@ -20,6 +20,12 @@ import { expect, test, type Page } from "./frontend-coverage";
  *
  * The last cause is the one that must NOT change: a transient refusal where re-reading really is the
  * answer keeps the card's own control, so the fix is a classification and not the removal of a retry.
+ *
+ * The 409 is that same rule one field further in. `/state` (and the bootstrap beside it) answer
+ * `state_unavailable` for every failure of the root's own projection, and used to say one sentence for
+ * all of them; the cause now on the wire says whether a producer NAMED the check it failed (a restart
+ * stops in the same place - send the report) or named nothing at all (a read that failed this once - read
+ * it again). Both readings are forced here, from the launch path.
  */
 
 const token = "A".repeat(43);
@@ -69,10 +75,15 @@ const unreadableRoot = {
 };
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-const problem = (status: number, code: string) => ({
+/**
+ * A composed refusal as the Host writes it. The `cause` is the optional field the contract already
+ * carried for a coordinator code; what changed is that it now carries a bounded producer code too, so the
+ * card can tell a root it will never open from a read that failed once.
+ */
+const problem = (status: number, code: string, cause?: string) => ({
   status,
   contentType: "application/json",
-  body: JSON.stringify({ code }),
+  body: JSON.stringify(cause === undefined ? { code } : { code, cause }),
 });
 
 /** The card's own reading: its words, its step line and the controls standing in it. */
@@ -133,6 +144,44 @@ test("a /state the Host cannot project names the chats and does not offer the re
   expect(reading.controls, "the card offers a control that does not help it").toEqual([]);
   expect(stepLineOf(reading), "the card leaves no step at all").toContain("GameBuddy");
   expect(reading.detail.join(" "), "the step does not name where GameBuddy is started from").toContain("tray icon");
+});
+
+test("a 409 whose producer named the check it failed says a restart stops in the same place", async ({ page }) => {
+  // The launch path: a boot token, so this 409 is the bootstrap route's own. The cause is the one
+  // `semantic_chat_liveness_unrecoverable` stands for - the store's admission refused this root's chat
+  // for good - and it must NOT read like the projection that failed this time (next test).
+  const reading = await mountOver(page, (route) =>
+    route.fulfill(problem(409, "state_unavailable", "semantic_chat_liveness_unrecoverable")),
+  );
+
+  expect(reading.windowIsTheCard).toBe(true);
+  expect(reading.title).toContain("chats");
+  expect(reading.detail.join(" ")).not.toMatch(/\bgame\b/u);
+  // No code, and no claim about the game: the cause chose the sentence, it is not shown.
+  expect(reading.detail.join(" ")).not.toMatch(/[a-z]+_[a-z]+/u);
+  expect(reading.controls, "a read that cannot help is still offered").toEqual([]);
+  // What the sentence promises instead: this same answer, and the report the next start writes.
+  expect(reading.detail.join(" "), "the sentence does not say a read changes nothing").toContain(
+    "repeats the same read",
+  );
+  expect(reading.detail.join(" "), "the sentence does not say where the report comes from").toContain("send the report");
+});
+
+test("a 409 whose producer named nothing keeps the read again, because that press can answer it", async ({ page }) => {
+  // The other 409 the mount can be handed from the same route: the projection threw something it named
+  // no check for (`chat_projection_failed`). Nothing in that answer says the condition is durable, so the
+  // card keeps the one control that asks the question this failure leaves open.
+  const reading = await mountOver(page, (route) =>
+    route.fulfill(problem(409, "state_unavailable", "chat_projection_failed")),
+  );
+
+  expect(reading.windowIsTheCard).toBe(true);
+  expect(reading.title).toMatch(/this time/iu);
+  expect(reading.controls, "the one 409 where re-reading is the step lost its control").toEqual(["Read it again"]);
+  // The two 409s are two sentences: a cause the Host did not give must not be claimed by either.
+  expect(reading.detail.join(" "), "the transient reading claims the durable one's fact").not.toContain(
+    "repeats the same read",
+  );
 });
 
 test("a root with no Chat half says so, instead of reporting a failed reconciliation", async ({ page }) => {

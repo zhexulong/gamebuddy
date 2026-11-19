@@ -200,10 +200,17 @@ const routeUnavailable: ProblemSentence = (labels) =>
 // internal error (code network_error)". All three offered `Read it again`, which asks the same Host the
 // same question and, for these causes, gets the same answer.
 //
-// So the four below are the mount's own, each naming what is missing (the chats) and the step that
+// So the five below are the mount's own, each naming what is missing (the chats) and the step that
 // changes it. None of them says anything about the game: the mount that reads them holds no
 // `connectionStatus`, and a card that claimed the game was still running would be asserting a fact its
 // renderer never had.
+//
+// The fifth is the one the 409 splits into: the composed root's `state_unavailable` used to be a
+// single sentence whether the producer had named the check it failed or had named nothing at all, so
+// a chat this GameBuddy can never open and a projection that failed this once read identically. The
+// cause it now carries (`composedRootProblem` in `composed-reference-game-browser.ts`) is what tells
+// them apart, and the sentences differ in exactly the thing the cause decides: whether reading again
+// asks a question whose answer can have changed.
 
 /** The process that serves this page is gone: no read can land until it is started again. */
 const bootHostNotAnswering: ProblemSentence = (labels) =>
@@ -212,10 +219,30 @@ const bootHostNotAnswering: ProblemSentence = (labels) =>
 /**
  * This GameBuddy is up and cannot read the conversation it was started on - the shape of the
  * unmountable-successor state the launcher fails closed on, and of any producer fault the composed
- * root's Chat projection reports. It answered, so the next question is whether it answers a restart.
+ * root's Chat projection reports. It answered, so the next question is whether it answers a restart:
+ * every cause this sentence is given is one the producer NAMED (a projection check, a store
+ * admission, the broker's own snapshot check), and a named check reads the same records again.
  */
 const bootChatsUnreadable: ProblemSentence = (labels) =>
   sentence(labels.problemBootChatsUnreadableTitle, labels.problemBootChatsUnreadableDetail, RESTART_GAMEBUDDY);
+
+/**
+ * The two codes the Host mints when a projection failed without naming a check of its own.
+ *
+ * `readComposedRoot` carries whatever bounded code the producer named and these two when there was
+ * none - an OS error, a path, a message in another shape (`boundedProducerCode` in
+ * `composed-reference-game-browser.ts`). They are the only causes on this route that state "this read
+ * failed, and nothing said what broke", which is what makes reading again the step that can answer.
+ */
+const UNNAMED_PROJECTION_CAUSES: ReadonlySet<string> = new Set(["chat_projection_failed", "game_projection_failed"]);
+
+/**
+ * The same 409 from a producer that named nothing: the read failed, and no check of this root's
+ * conversation was named. Nothing here says the condition is durable, so the card keeps its own read
+ * rather than sending the player round a restart that would answer from the same records.
+ */
+const bootChatsUnreadableForNow: ProblemSentence = (labels) =>
+  sentence(labels.problemBootChatsUnreadableForNowTitle, labels.problemBootChatsUnreadableForNowDetail, RETRY_READ);
 
 /** The aggregate is well formed and holds no conversation: there is nothing here to open. */
 const bootNoChat: ProblemSentence = (labels) =>
@@ -988,9 +1015,16 @@ const UNREADABLE_ANSWER_REASONS: ReadonlySet<string> = new Set([
 /** The mount's cause for one failure, or `null` when it is a failure `composedProblemView` words correctly. */
 function bootstrapSentence(error: unknown): ProblemSentence | null {
   if (error instanceof ComposedReferenceGameProblemError) {
-    // The composed root's own 409: `readStateRoute` answers it when the Chat projection throws, so the
-    // Host is up and the conversation behind it is what could not be read.
-    if (error.code === "state_unavailable") return bootChatsUnreadable;
+    // The composed root's own 409: both writers of it answer when the Chat projection throws
+    // (`composedRootProblem`), so the Host is up and the conversation behind it is what could not be
+    // read. Its cause is what separates the two facts that 409 can mean: a producer that NAMED the
+    // check it failed is a root this restart will stop on again, and a producer that named nothing is
+    // a read that failed this once. A cause the Host did not name keeps the sentence that promises
+    // nothing about why.
+    if (error.code === "state_unavailable")
+      return error.causeCode !== null && UNNAMED_PROJECTION_CAUSES.has(error.causeCode)
+        ? bootChatsUnreadableForNow
+        : bootChatsUnreadable;
     // The session behind the page, not the chats: the same sentence every other surface reads.
     if (error.code === "unauthorized" || error.code === "csrf_failed" || error.code === "closed") return sessionExpired;
     if (MOUNT_MISMATCH_PROBLEM_CODES.has(error.code)) return bootPageMismatch;

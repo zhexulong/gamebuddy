@@ -257,10 +257,24 @@ void test("the boot card names its own cause and offers a step a press can chang
       pressesHelp: false,
     },
     {
-      cause: "a Chat projection the Host could not produce",
-      error: gameProblem("state_unavailable"),
+      cause: "a Chat projection the Host could not produce, with the check it failed named",
+      error: gameProblem("state_unavailable", "semantic_chat_liveness_unrecoverable"),
       key: "problemBootChatsUnreadableTitle",
+      // A named check reads the same records again, so the card does not offer the read.
       pressesHelp: false,
+    },
+    {
+      cause: "a Chat projection that failed without naming what broke",
+      error: gameProblem("state_unavailable", "chat_projection_failed"),
+      key: "problemBootChatsUnreadableForNowTitle",
+      // An unnamed failure is the one 409 a re-read can still answer.
+      pressesHelp: true,
+    },
+    {
+      cause: "a Game half projected beside it that failed without naming what broke",
+      error: gameProblem("state_unavailable", "game_projection_failed"),
+      key: "problemBootChatsUnreadableForNowTitle",
+      pressesHelp: true,
     },
     {
       cause: "an aggregate with no Chat half",
