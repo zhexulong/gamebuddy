@@ -23,7 +23,7 @@ if (positional.Length != 1 ||
     positional[0].StartsWith(@"\\?\", StringComparison.Ordinal))
     return;
 
-var input = ReadStandardInputToEnd();
+var input = ReadStandardInputLine();
 if (input.Length < 2 || input[^1] != '\n' || input.Contains('\r') || input.Contains('\0')) return;
 
 var frameJson = input[..^1];
@@ -125,11 +125,21 @@ static NamedPipeClientStream AuthenticateBroker(JsonElement frame)
     return broker;
 }
 
-static string ReadStandardInputToEnd()
+static string ReadStandardInputLine()
 {
-    using var stdin = new FileStream(new SafeFileHandle(WindowsNative.GetStdHandle(-10), ownsHandle: false), FileAccess.Read);
+    // The launcher keeps this channel open for the whole run: its first line is the bootstrap
+    // frame and its end is the launcher's owner-liveness signal. A fixture that read to the end
+    // would wait for the product to stop instead of reading the one document it was sent.
+    using var stdin = new FileStream(new SafeFileHandle(WindowsNative.GetStdHandle(-10), ownsHandle: false), FileAccess.Read, bufferSize: 4096);
     using var bytes = new MemoryStream();
-    stdin.CopyTo(bytes);
+    var one = new byte[1];
+    while (true)
+    {
+        if (stdin.Read(one, 0, 1) != 1) return string.Empty;
+        bytes.WriteByte(one[0]);
+        if (one[0] == (byte)'\n') break;
+        if (bytes.Length > 32_768) return string.Empty;
+    }
     return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes.ToArray());
 }
 

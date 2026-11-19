@@ -140,7 +140,27 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
   // instead of by one timer guessing at the whole startup. They are informational: a
   // status frame that cannot be written never fails the bootstrap.
   await writeStatus("bootstrap-frame");
-  const frame = parseBootstrapFrame(await readBootstrapFrame());
+  // The launcher's controller channel is opened before anything else it drives, and it is closed
+  // on EVERY way out of this function - including a refusal below that never reaches the exit
+  // reclamation - because its handle is what would otherwise keep this process alive with no owner
+  // left to ask it to stop.
+  const controller = await openDesktopControllerChannel();
+  try {
+    await runAdmittedHostBootstrap(artifactRoot, controller);
+  } finally {
+    controller.close();
+  }
+}
+
+/**
+ * The admitted Host, from its bootstrap frame to its exit record.
+ *
+ * It is one function below `runDesktopHostBootstrap` because that function owns exactly one thing
+ * this body must not: the controller channel's lifetime, which spans the whole run and ends on
+ * every path this body can leave by.
+ */
+async function runAdmittedHostBootstrap(artifactRoot: string, controller: DesktopControllerChannel): Promise<void> {
+  const frame = parseBootstrapFrame(controller.frame);
   await writeStatus("root-layout");
   const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot);
   await writeStatus("voice-surface");
@@ -187,17 +207,21 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
   let termination: ReturnType<typeof waitForTermination> | undefined;
   try {
     termination = waitForTermination();
-    // The authenticated parent session is this process's only live proof that the
-    // Desktop which started it still exists. Losing it - the parent crashed, or
-    // was itself killed - is a controller EOF, and the one bounded thing this
-    // process can still do about it is leave: a Host that outlived its owner would
-    // hold the data root, the Guardian pipe and the bridge with nobody left to ask
-    // it to stop. It does NOT end the player's world; the reclamation below drains
-    // AI authority only.
+    // Two channels prove the Desktop which started this process still exists, and the one the
+    // launcher holds for the whole run is the controller channel: its EOF is what a quit closes.
+    //
+    // The authenticated Guardian session cannot be that proof on its own. Under ADR-0015 §3 a
+    // session IS one attempt: the composition closes it when the attempt ends and re-opens the next
+    // one with the next attempt's first command, so a Host whose last game ended holds no socket at
+    // all - and a quit then closes a pipe nobody is connected to (measured: still serving 5 000 ms
+    // after both closures, until the launcher's watchdog terminated it at the deadline it
+    // published). Losing either channel is the same controller EOF, and both requests are
+    // idempotent. Leaving does NOT end the player's world; the reclamation below drains AI
+    // authority only.
     const armedTermination = termination;
+    controller.onLost(() => armedTermination.request());
     session.onLost(() => armedTermination.request());
     await writeAcknowledgement(frame);
-    process.stdin.destroy();
     await termination.promise;
   } catch (error) {
     exitFailure = error;
@@ -247,16 +271,82 @@ async function reclaimDesktopHostExit(
   return buildDesktopHostExitReason([...compositionReason.steps, ...tail]);
 }
 
-async function readBootstrapFrame(): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let length = 0;
-  for await (const chunk of process.stdin) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    length += bytes.length;
-    if (length > MAX_WIRE_BYTES) throw unavailable("wire_too_long");
-    chunks.push(bytes);
-  }
-  return Buffer.concat(chunks);
+/**
+ * The launcher's controller channel: this child's own standard input.
+ *
+ * Its first line is the bootstrap frame, exactly one LF-terminated document - the same framing
+ * every other frame in this product uses. The channel then stays OPEN for the rest of the run,
+ * and its end is the one live proof that the launcher which started this process is gone. That is
+ * why it is not read to its end: a read that waited for the end would wait for the whole product
+ * to stop, and the end itself is the fact being watched for.
+ *
+ * The reader is left flowing after the frame, because a paused stream never observes its own end.
+ * Anything after the frame is not part of this channel's protocol (the launcher holds the only
+ * write handle and writes one document), so it is read and discarded; the frame that was parsed
+ * is the one the launcher wrote.
+ */
+type DesktopControllerChannel = Readonly<{
+  frame: Buffer;
+  /** Registers the one watcher the channel's end drives, and reports an end that already happened. */
+  onLost(callback: () => void): void;
+  /** Releases the handle, so nothing of this channel keeps the process alive past its exit. */
+  close(): void;
+}>;
+
+function openDesktopControllerChannel(): Promise<DesktopControllerChannel> {
+  return new Promise((resolveChannel, rejectChannel) => {
+    let buffered = Buffer.alloc(0);
+    let opened = false;
+    let ended = false;
+    let lost: (() => void) | undefined;
+    const settleLoss = (): void => {
+      const callback = lost;
+      lost = undefined;
+      callback?.();
+    };
+    const onEnd = (): void => {
+      ended = true;
+      settleLoss();
+    };
+    const fail = (code: string): void => {
+      // Nothing will consume this channel any more, and a live handle on it would keep the process
+      // alive after the refusal instead of letting it leave with its own bounded code.
+      process.stdin.destroy();
+      rejectChannel(unavailable(code));
+    };
+    const onData = (chunk: Buffer): void => {
+      if (opened) return;
+      buffered = Buffer.concat([buffered, chunk]);
+      const newline = buffered.indexOf(10);
+      if (newline < 0) {
+        if (buffered.length > MAX_WIRE_BYTES) fail("wire_too_long");
+        return;
+      }
+      if (newline + 1 !== buffered.length) {
+        fail("wire_multiple_documents");
+        return;
+      }
+      opened = true;
+      resolveChannel(
+        Object.freeze({
+          frame: buffered,
+          onLost: (callback: () => void): void => {
+            if (ended) {
+              callback();
+              return;
+            }
+            lost = callback;
+          },
+          close: (): void => {
+            process.stdin.destroy();
+          },
+        }),
+      );
+    };
+    process.stdin.on("data", onData);
+    process.stdin.once("end", onEnd);
+    process.stdin.once("error", onEnd);
+  });
 }
 
 function parseBootstrapFrame(bytes: Buffer): DesktopHostBootstrapFrame {

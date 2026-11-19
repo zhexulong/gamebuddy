@@ -10,7 +10,7 @@ const string sessionSchema = "gamebuddy-desktop-" + "gua" + "rdian-session/v1";
 const string rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
 
 var line = Console.In.ReadLine();
-if (line is null || Console.In.ReadLine() is not null) return;
+if (line is null) return;
 
 try
 {
@@ -166,6 +166,26 @@ try
     // owner's controller EOF the moment the peer closes instead of polling for it, and the trigger
     // conversations below take that same pending read rather than competing with it.
     Task<string?> pending = reader.ReadLineAsync();
+    // The launcher's controller channel is this child's standard input, and it stays open for the
+    // whole run: its first line was the bootstrap frame, and its end is the one signal that reaches
+    // this process whether or not an attempt's session is open. A Host with no game running holds no
+    // socket at all (ADR-0015 §3: attempt = session), so a stand-in that watched only the session
+    // would model a Host that cannot learn its owner left.
+    //
+    // The read is on its own long-running thread because Console.In answers a pending read
+    // SYNCHRONOUSLY: taking the watch on the calling thread would block this child's serving loop
+    // instead of running beside it.
+    var controllerLost = new TaskCompletionSource();
+    _ = Task.Factory.StartNew(
+        () =>
+        {
+            try { while (Console.In.ReadLine() is not null) { } }
+            catch (IOException) { }
+            finally { controllerLost.TrySetResult(); }
+        },
+        CancellationToken.None,
+        TaskCreationOptions.LongRunning,
+        TaskScheduler.Default);
     async Task<string?> NextLineAsync()
     {
         var next = await pending;
@@ -184,6 +204,8 @@ try
         pending = reader.ReadLineAsync();
         return false;
     }
+    // The same fact on the channel that exists for the whole run, whatever the attempt did.
+    Task<bool> ControllerLostAsync() => Task.FromResult(controllerLost.Task.IsCompleted);
     while (!File.Exists(exit))
     {
         if (File.Exists(Path.Combine(dataRoot, "broker-eof-race.trigger")))
@@ -201,10 +223,10 @@ try
             await RunAttemptPairAsync(session, reader, writer, NextLineAsync, binding, dataRoot, operationalRoot);
             return;
         }
-        // A closed session is the controller EOF: the owner is gone and will never speak on this
-        // channel again. The only bounded thing this child can still do about it is run its own
-        // named reclamation and leave.
-        if (!ignoreControllerEof && await SessionLostAsync())
+        // Either controller EOF is the owner leaving: the attempt's session (when one is open) or the
+        // controller channel (which is open for the whole run). The only bounded thing this child can
+        // still do about either is run its own named reclamation and leave.
+        if (!ignoreControllerEof && (await SessionLostAsync() || await ControllerLostAsync()))
         {
             await ReclaimAsync(operationalRoot, dataRoot, failedStep, holdAfterReclamationMs);
             return;

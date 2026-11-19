@@ -746,13 +746,14 @@ export async function launchDesktopCompositionGateChild({
     // `waitForReady()` still observes it.
     readyPromise.catch(() => undefined);
     // The ack waiter attaches before the frame write so an early wire failure is
-    // never missed; the frame is the one bootstrap input, written once and
-    // followed by EOF, exactly like the production launcher's private bootstrap pipe.
+    // never missed. The frame is the FIRST LINE of the child's controller channel - the same
+    // anonymous pipe the production launcher holds - and the channel then stays open for the whole
+    // run: its end is the Host's owner-liveness EOF, the one signal that reaches a Host with no
+    // attempt session open, and `dispose` below is what closes it.
     const ackPromise = waitForBootstrapAck(child, readyTimeoutMs, () => childStderr.trim());
     child.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
       if (error != null && child.listenerCount("error") > 0) child.emit("error", error);
     });
-    child.stdin.end();
     const ackLine = await ackPromise;
     let ack;
     try {
@@ -783,7 +784,13 @@ export async function launchDesktopCompositionGateChild({
         }),
       onMessage: (listener) => messages.subscribe(listener),
       waitForReady: () => readyPromise,
-      dispose: () => peer.dispose(),
+      // The quit order the production launcher uses: the controller channel first, because its EOF is
+      // what reaches the Host whether or not an attempt's session is open, then the broker peer whose
+      // closure also drives the native Guardian's control EOF.
+      dispose: () => {
+        if (!child.stdin.destroyed) child.stdin.end();
+        return peer.dispose();
+      },
     });
   } catch (error) {
     await peer.dispose();

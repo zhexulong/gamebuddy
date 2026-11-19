@@ -250,12 +250,16 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
   // Root validation, the security inspection it performs and the mint all sit in
-  // runDesktopHostBootstrap's own straight-line body, so their source order is
+  // runAdmittedHostBootstrap's own straight-line body, so their source order is
   // their execution order. They are read from that body rather than from the file:
   // over the whole module `indexOf` also matches the helper declarations below and
   // any comment mentioning them, and a marker that moved into a helper answers -1,
   // which compares less than every other position and passes.
-  const bootstrapBody = functionBody(source, "runDesktopHostBootstrap");
+  //
+  // The body is the one below `runDesktopHostBootstrap` because that outer function owns exactly one
+  // thing this body must not: the controller channel's lifetime. The frame it parses is that
+  // channel's first line, which is why the channel is opened before this body runs.
+  const bootstrapBody = functionBody(source, "runAdmittedHostBootstrap");
   const validationBody = functionBody(source, "validateRootLayout");
   assert.match(validationBody, /inspectWindowsPathSecurity\(inspector, root\)/);
   assertStatementOrder(

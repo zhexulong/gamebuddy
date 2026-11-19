@@ -358,6 +358,35 @@ test("desktop bootstrap helper stays alive when its own composition closes the g
   );
 });
 
+// The quit after an attempt ended, on the two channels a quit actually owns.
+//
+// ADR-0015 §3 makes the guardian session attempt-scoped: the composition closes it when the
+// attempt ends, and this Host holds no socket again until the next attempt's first command. A
+// tray Quit in that state must still reach it - the owner is leaving, and the Host is the one
+// process that has to reclaim before it may go. This is the case where the authenticated broker
+// pipe carries no peer: the Desktop closes it, and nothing is connected to receive that EOF.
+// The owner-liveness channel is therefore the controller channel (this child's standard input),
+// held open by the launcher for the whole run and closed on the quit.
+//
+test("desktop bootstrap helper leaves when its owner quits after an attempt settled", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("settled-session-owner-quit");
+
+  assert.equal(result.guardianClosed, true, "the attempt's authenticated session must really close");
+  assert.notEqual(
+    result.controllerQuitExitMs,
+    undefined,
+    "the Host was still serving 5000 ms after its owner closed the controller channel and the broker pipe " +
+      `(exit ${String(result.workerExitCode)}): every normal quit in this state would wait the Host's whole ` +
+      "published drain deadline and then terminate it, losing the reclamation the deadline exists for",
+  );
+  assert.equal(
+    result.workerExitCode,
+    0,
+    `the Host must leave by its own reclamation (exit ${String(result.workerExitCode)})`,
+  );
+});
+
 // ADR-0015 §3: attempt = session. The Desktop settles the finished attempt, proves its
 // Guardian gone, and only then re-offers the one-instance pipe
 // (`DesktopHostBootstrapBroker.ServeSessionsAsync`: `SettleAttemptAsync()`, `Disconnect()`,
@@ -562,6 +591,7 @@ async function runWireFixture(
     | "overhorizon-launch"
     | "peer-disconnect"
     | "settled-session"
+    | "settled-session-owner-quit"
     | "settle-and-rearm"
     | "composition-failure"
     | "ack-write-failure"
@@ -591,6 +621,11 @@ async function runWireFixture(
   exitCodeWhileServing: number | null;
   /** The pid of the Host child this fixture spawned and served. */
   workerPid: number | undefined;
+  /**
+   * How long the child took to leave after the quit closed the two channels this launcher owns,
+   * or `undefined` when it was still serving at the end of the measured window.
+   */
+  controllerQuitExitMs: number | undefined;
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
@@ -655,6 +690,7 @@ async function runWireFixture(
   let peerError: Error | undefined;
   let armReceiptAt: number | undefined;
   let exitCodeWhileServing: number | null = null;
+  let controllerQuitExitMs: number | undefined;
   let guardianClosed = false;
   let guardianClosedResolve!: () => void;
   const guardianPeerClosed = new Promise<void>((resolve) => {
@@ -1007,7 +1043,10 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     worker.stderr!.on("data", (chunk: Buffer) => {
       workerStderr = (workerStderr + chunk.toString()).slice(-4096);
     });
-    worker.stdin!.end(
+    // The frame is the controller channel's first line; the channel then STAYS OPEN for the run,
+    // because its end is the launcher's one owner-liveness signal (a quit closes it, and a Host
+    // that has no attempt session would otherwise never learn that its owner left).
+    worker.stdin!.write(
       `${JSON.stringify({ schema: "gamebuddy-desktop-host-bootstrap/v1", protocolVersion: 1, bootstrapId, generation: "g-wire", inventoryDigest: "e".repeat(64), runtimeAdmissionSha256: "f".repeat(64), rootLayout })}\n`,
     );
     const frames =
@@ -1066,6 +1105,20 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       exitCodeWhileServing = worker.exitCode;
       worker.kill("SIGTERM");
       await withTimeout(workerClose, 10_000, "settled-session cleanup");
+    } else if (scenario === "settled-session-owner-quit") {
+      await withTimeout(operationsComplete, 10_000, "guardian operations");
+      // The attempt is over and the Host holds no socket. This is the quit: the two channels the
+      // launcher owns are closed and nothing is signalled - no SIGTERM, no termination.
+      await withTimeout(waitForGuardianCloses(1), 10_000, "attempt session close");
+      const quitStarted = performance.now();
+      if (!worker.stdin!.destroyed) worker.stdin!.end();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      controllerQuitExitMs = await Promise.race([
+        workerClose.then(() => performance.now() - quitStarted),
+        new Promise<undefined>((resolveWindow) => setTimeout(() => resolveWindow(undefined), 5_000)),
+      ]);
+      exitCodeWhileServing = worker.exitCode;
+      if (worker.exitCode === null) worker.kill("SIGTERM");
     } else if (scenario === "settle-and-rearm") {
       await withTimeout(operationsComplete, 15_000, "guardian operations");
       // Both attempts' sessions must close - the first on its settle, the second on the
@@ -1107,6 +1160,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       workerExitedNaturally: worker.exitCode === 0,
       exitCodeWhileServing,
       workerPid: worker.pid,
+      controllerQuitExitMs,
     };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) {
@@ -1182,7 +1236,7 @@ async function drive(session) {
     });
     return;
   }
-  if (scenario === "settled-session") {
+  if (scenario === "settled-session" || scenario === "settled-session-owner-quit") {
     const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
     const platform = createDesktopGuardianGameRuntimePlatform(session);
     await platform.arm({
@@ -1666,12 +1720,16 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.doesNotMatch(source, /node:child_process/);
   // One statement order, read from inside the ONE function that runs it. The
   // composition call and the acknowledgement are both statements of
-  // runDesktopHostBootstrap, so their source order is their execution order; the
+  // runAdmittedHostBootstrap, so their source order is their execution order; the
   // assertion is scoped to that body because the same text also occurs in the
   // factory's declaration (line-level) and in comments, and an `indexOf` over the
   // whole module would silently compare the wrong occurrence - or pass on a `-1`
   // after the call was extracted into a helper.
-  const bootstrapBody = functionBody(source, "runDesktopHostBootstrap");
+  //
+  // The body is the one below `runDesktopHostBootstrap` because that outer function owns exactly
+  // one thing this body must not: the controller channel's lifetime. The `bootstrap-frame` status
+  // therefore precedes the channel in the outer function, which is asserted there instead.
+  const bootstrapBody = functionBody(source, "runAdmittedHostBootstrap");
   assertStatementOrder(
     bootstrapBody,
     ["createDesktopProductCompositionForBootstrap(", "await writeAcknowledgement(frame)"],
@@ -1703,14 +1761,30 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assertStatementOrder(
     bootstrapBody,
     [
-      ...["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"].map(
-        (stage) => `await writeStatus("${stage}")`,
-      ),
+      ...["root-layout", "voice-surface", "deployment-manifest"].map((stage) => `await writeStatus("${stage}")`),
       "prepareDesktopHostLaunch(artifactRoot)",
       "createDesktopProductCompositionForBootstrap(",
       "await writeAcknowledgement(frame)",
     ],
     "every pre-acknowledgement step must precede the acknowledgement",
+  );
+  // The controller channel is the launcher's owner-liveness signal, so it is opened before the
+  // first step that reads the frame and closed on EVERY way out of the bootstrap - which is only
+  // true in a `finally`. A channel released on the clean path alone would leave a refused launch
+  // holding a live handle instead of exiting with its own bounded code.
+  assertStatementOrder(
+    functionBody(source, "runDesktopHostBootstrap"),
+    [
+      'await writeStatus("bootstrap-frame")',
+      "const controller = await openDesktopControllerChannel()",
+      "await runAdmittedHostBootstrap(artifactRoot, controller)",
+    ],
+    "the controller channel must be opened before anything reads it, and the admitted body must be the guarded call",
+  );
+  assert.match(
+    functionBody(source, "runDesktopHostBootstrap"),
+    /finally\s*\{\s*controller\.close\(\);\s*\}/,
+    "the controller channel must be released on every path out of the bootstrap, not only the clean one",
   );
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.

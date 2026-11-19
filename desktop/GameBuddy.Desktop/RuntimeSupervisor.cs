@@ -197,8 +197,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             // and the classification below separates the caller's own cancellation from them.
             using var watchdog = new HostBootstrapWatchdog(timeout, BootstrapSilenceTimeoutForTesting ?? BootstrapSilenceTimeout, BootstrapCeiling);
             await HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame, timeout.Token).ConfigureAwait(false);
-            parentStdinWriter.Dispose();
-            parentStdinWriter = null;
+            // The frame is the FIRST LINE of the child's controller channel, and the handle then stays
+            // open for the whole run. Closing it is the one owner-liveness EOF this launcher owns
+            // unconditionally: under ADR-0015 §3 the authenticated Guardian session is attempt-scoped,
+            // so a Host with no game running holds no session socket at all and would never learn that
+            // its owner left. It is handed to the lease below and released by its quit, not here.
             await broker.AuthenticateHostAsync(process, timeout.Token).ConfigureAwait(false);
             var ack = await ReadAcknowledgementAsync(parentStdoutReader, selection, bootstrapId, timeout.Token, watchdog, (stage) => lastStage = stage).ConfigureAwait(false);
             if (!WindowsNative.GetExitCodeProcess(process, out _) ||
@@ -223,8 +226,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             }
 
             var locks = runtime.TransferLocks();
-            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot);
+            var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot, parentStdinWriter);
             brokerTransferred = true;
+            parentStdinWriter = null;
             process = null;
             return lease;
         }
@@ -731,15 +735,29 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 /// </summary>
 internal static class HostBootstrapPipeIo
 {
+    /// <summary>
+    /// Writes the one bootstrap frame and leaves the handle OPEN: the frame is the first line of a
+    /// channel that outlives the write, and the launcher's quit is what closes it.
+    ///
+    /// The write goes through a DUPLICATE because a FileStream closes the handle it is given (measured: a
+    /// borrowed SafeFileHandle is closed once the wrapper is disposed). Closing this one at the first
+    /// frame would hand the child its owner-liveness EOF during startup, so it would reclaim and leave
+    /// before the acknowledgement - the opposite of what the channel exists for.
+    /// </summary>
     internal static Task WriteOneFrameAsync(SafeFileHandle writer, byte[] frame, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(frame);
         return RunSynchronousIoAsync(writer, () =>
         {
-            using var stream = new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: false);
-            stream.Write(frame, 0, frame.Length);
-            stream.Flush();
+            if (!WindowsNative.DuplicateHandle(WindowsNative.GetCurrentProcess(), writer.DangerousGetHandle(), WindowsNative.GetCurrentProcess(), out var duplicate, 0, false, WindowsNative.DuplicateSameAccess))
+                WindowsNative.ThrowLastError("host_runtime_unavailable");
+            using (duplicate)
+            {
+                using var stream = new FileStream(new SafeFileHandle(duplicate.DangerousGetHandle(), ownsHandle: false), FileAccess.Write, bufferSize: 4096, isAsync: false);
+                stream.Write(frame, 0, frame.Length);
+                stream.Flush();
+            }
         }, cancellationToken);
     }
 
@@ -912,6 +930,11 @@ internal sealed record HostBootstrapResult(long DrainDeadlineMs, long StepHangDe
 internal sealed class RuntimeSupervisorLease : IAsyncDisposable
 {
     private WindowsNative.SafeProcessHandle? process;
+    // The write end of the child's controller channel: the anonymous pipe its standard input is
+    // connected to. This lease owns it because it must stay open exactly as long as the child is
+    // allowed to serve; closing it IS the quit's owner-liveness EOF, and it is the only such signal
+    // that reaches a Host which has no attempt session open.
+    private SafeFileHandle? controller;
     private AdmittedRuntimeFile? runtime;
     private AdmittedRuntimeFile? bootstrap;
     private DesktopHostBootstrapBroker? broker;
@@ -922,13 +945,14 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     private readonly SemaphoreSlim guardianGate = new(1, 1);
     private int closed;
 
-    internal RuntimeSupervisorLease(WindowsNative.SafeProcessHandle process, AdmittedRuntimeFile runtime, AdmittedRuntimeFile bootstrap, HostBootstrapResult result, DesktopHostBootstrapBroker broker, string operationalRoot)
+    internal RuntimeSupervisorLease(WindowsNative.SafeProcessHandle process, AdmittedRuntimeFile runtime, AdmittedRuntimeFile bootstrap, HostBootstrapResult result, DesktopHostBootstrapBroker broker, string operationalRoot, SafeFileHandle controller)
     {
         this.process = process;
         this.runtime = runtime;
         this.bootstrap = bootstrap;
         this.broker = broker;
         this.operationalRoot = operationalRoot;
+        this.controller = controller;
         Result = result;
     }
 
@@ -1003,15 +1027,23 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     /// <summary>
     /// Ends the exact admitted child in the order a quit requires, under ONE declared budget.
     ///
-    /// Closing the authenticated broker is the ARM, not the epilogue. That broker owns the one pipe
-    /// this launcher shares with the child, and closing it is the controller EOF the child's own
-    /// exit reclamation waits for (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`: the
-    /// authenticated session's loss requests the same termination a signal would). Running the
+    /// Opening the ARMs is not the epilogue, and there are two of them because the child has two
+    /// channels on which an owner can leave:
+    /// <list type="bullet">
+    /// <item>the controller channel - this launcher's write end of the child's standard input - which
+    /// exists for the whole run and is therefore the one that reaches a Host with no attempt session
+    /// open (ADR-0015 §3 makes the authenticated session attempt-scoped);</item>
+    /// <item>the authenticated broker, which carries the same EOF to a Host that is serving an attempt
+    /// and is also the only guardian signal this launcher owns: closing it drives the native Guardian's
+    /// control EOF so the native exits by itself.</item>
+    /// </list>
+    /// The child's own exit reclamation waits for the EOF (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`:
+    /// the loss of either channel requests the same termination a signal would). Running the
     /// termination first made that EOF unobservable on every clean quit - the child was already dead
     /// when it would have arrived - so the child's eight named steps never ran and its own drain
     /// budget was dead code on this path.
     ///
-    /// The arm is also where the quit's budget starts, because it is the one frame that tells BOTH
+    /// The arms are also where the quit's budget starts, because they are the frames that tell BOTH
     /// processes to leave: the child gets its controller EOF, and the native Guardian gets the control
     /// EOF that makes it contain the roles it created. Every wait below draws on that budget, so the
     /// player waits at most the deadline the child itself published - not the Guardian's exit and then
@@ -1028,6 +1060,12 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         var budget = new ShutdownBudget(Result.DrainDeadlineMs);
         var shouldTerminate = Interlocked.Exchange(ref closed, 1) == 0;
         var child = Interlocked.Exchange(ref process, null);
+        // The controller channel goes first, and it goes on EVERY quit and not only the one that finds
+        // an authenticated session: it is the only owner-liveness signal this launcher holds for the
+        // whole run. The broker below is the other half - it carries the same EOF to a Host that is
+        // serving an attempt, and it is what drives the native Guardian's control EOF - so a quit that
+        // closed only the broker reached no Host at all once the attempt's session had ended.
+        Interlocked.Exchange(ref controller, null)?.Dispose();
         await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
@@ -1056,6 +1094,7 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         }
         Interlocked.Exchange(ref bootstrap, null)?.Dispose();
         Interlocked.Exchange(ref runtime, null)?.Dispose();
+        Interlocked.Exchange(ref controller, null)?.Dispose();
     }
 
     /// <summary>

@@ -165,11 +165,18 @@ public sealed class HostBootstrapSupervisorTests
 
         Assert.Contains("DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout)", source, StringComparison.Ordinal);
         Assert.Contains("await broker.AuthenticateHostAsync(process, timeout.Token)", source, StringComparison.Ordinal);
-        Assert.Contains("new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot)", source, StringComparison.Ordinal);
+        Assert.Contains("new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker, layout.OperationalRoot, parentStdinWriter)", source, StringComparison.Ordinal);
         Assert.Contains("internal async Task AttachResidentGuardianFactory(Func<CancellationToken, Task<GuardianSupervisorLease>> startGuardian", source, StringComparison.Ordinal);
         Assert.Contains("await currentBroker.AttachResidentGuardianFactory(startGuardian, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout", source, StringComparison.Ordinal);
         Assert.Contains("await closingBroker.CloseAsync(budget, cancellationToken)", source, StringComparison.Ordinal);
+        // The controller channel is the one owner-liveness signal that exists for the WHOLE run, so the
+        // lease receives the child's standard-input write handle and closes it first in the quit: the
+        // broker's EOF only reaches a Host that is serving an attempt, and ADR-0015 makes a session one
+        // attempt, so a quit that closed only the broker reached no Host at all once a game had ended.
+        var controllerClose = source.IndexOf("Interlocked.Exchange(ref controller, null)?.Dispose();", StringComparison.Ordinal);
+        var brokerClose = source.IndexOf("await closingBroker.CloseAsync(budget, cancellationToken)", StringComparison.Ordinal);
+        Assert.True(controllerClose >= 0 && controllerClose < brokerClose, "the quit must close the controller channel before the authenticated broker");
         // Closing the authenticated broker is the only guardian signal the host
         // lease owns; it drives the native control EOF so the guardian exits by
         // itself. A Guardian belongs to the attempt, never to this lease, so the
