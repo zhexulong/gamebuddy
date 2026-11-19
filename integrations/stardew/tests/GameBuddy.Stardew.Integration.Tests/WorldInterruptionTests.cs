@@ -229,12 +229,17 @@ public sealed class WorldInterruptionTests
     public void StallEvidence_ReportsAConservativeStoppedByVocabulary()
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
-        source.Should().Contain("stopped_by={DetectStalledBy(localPlayer)}");
-        // The token names the THING, not its class: `character:<name>@<tile>` is the same vocabulary the refusal
-        // probe uses for an occupant, so a model reading either field reads one spelling. The class words (`Pet`,
-        // `Horse`, `Npc`) are gone - they named a type the caller cannot wait for or ask about.
-        source.Should().Contain("character:{RefusalProbe.WithoutSpaces(name)}@");
-        source.Should().Contain("return \"unknown\";");
+        // The token names the THING, not its class, and it is the SAME vocabulary the refusal probe uses for a world step:
+        // `character:<name>@<tile>` for a body, `location_constraint:<gate>@<tile>` for the map's own gate. The class words
+        // (`Pet`, `Horse`, `Npc`) are gone - they named a type the caller cannot wait for or ask about - and so is the bare
+        // `unknown` the 2026-11-19 Mountain stall published about a boulder it never asked the map about.
+        source.Should().Contain("stopped_by={DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)}");
+        source.Should().Contain("RefusalProbe.DescribeWorld(null, location, tile, localPlayer.Tile, localPlayer)",
+            "the stall asks the one layer probe every refusal asks, so both fields spell an occupant the same way");
+        source.Should().Contain("return \"none_of_the_four_steps_refuses\";",
+            "four open steps under a still body is the walk ending, and it is said rather than shrugged at");
+        source.Should().NotContain("return \"unknown\";",
+            "the field that exists to say what is in the way may not answer that nobody knows");
     }
 
     // ---- Update wiring (source probe; the ruling needs a live game thread) ----
@@ -273,7 +278,7 @@ public sealed class WorldInterruptionTests
         // A STALL'S FIRST ATTRIBUTION IS ITS ENDING, NOT A NOTIFICATION WHILE IT WAITS. Waiting is body state, so the
         // non-terminal `stalled_waiting` notification this pin used to require is gone with the rest of the per-step
         // facts. What must survive is that the quiet window ends in a NAMED refusal carrying the evidence of the wait.
-        source.Should().Contain("StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(",
+        source.Should().Contain("StallRefusalCode(DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)), FormatStallEvidence(",
             "the quiet window's ending names the blocker that stood in front of her and how long she waited");
         source.Should().NotContain("transition(ExecutionState.Running, \"stalled_waiting\"",
             "and the wait itself is body state: it is not a fact, and the notification that said so is retired");

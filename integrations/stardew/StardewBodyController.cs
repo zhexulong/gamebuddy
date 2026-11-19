@@ -158,10 +158,10 @@ internal sealed class StardewBodyController
     /// <summary>
     /// The refusal code for a walk that stalled, given what the body loop found in front of the actor.
     ///
-    /// `DetectStalledBy` answers the token `character:&lt;name&gt;@&lt;tile&gt;` when a body is in the way and `unknown`
-    /// otherwise, so the same fact decides both the code and the evidence: a person who does not move turns a 5-second
-    /// no-progress window into a named blocker the caller can wait out, instead of `native_path_ended`, which reads as
-    /// the walk itself being broken.
+    /// `DescribeStallBlocker` answers `character:&lt;name&gt;@&lt;tile&gt;` when a body is in the way and otherwise the world
+    /// layer that refused the next step (`location_constraint:railroadAreaBlocked@9,4`), so the same fact decides both the
+    /// code and the evidence: a person who does not move turns a 5-second no-progress window into a named blocker the
+    /// caller can wait out, instead of `native_path_ended`, which reads as the walk itself being broken.
     /// </summary>
     internal static string StallRefusalCode(string stalledBy)
     {
@@ -1225,7 +1225,7 @@ internal sealed class StardewBodyController
             PathFindController resumedPath = this.BuildNativePath(specification, localPlayer);
             if (resumedPath.pathToEndPoint is null || resumedPath.pathToEndPoint.Count == 0)
             {
-                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)), FormatStallEvidence(localPlayer, specification, tick));
                 return;
             }
 
@@ -1258,7 +1258,7 @@ internal sealed class StardewBodyController
             }
             else
             {
-                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)), FormatStallEvidence(localPlayer, specification, tick));
             }
             return;
         }
@@ -1309,7 +1309,7 @@ internal sealed class StardewBodyController
         StallWatchdogAction stallAction = AssessStall(tick, this.lastProgressTick, this.hasEmittedStalledWaiting);
         if (stallAction == StallWatchdogAction.TimedOut)
         {
-            this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
+            this.Fail(StallRefusalCode(DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)), FormatStallEvidence(localPlayer, specification, tick));
             return;
         }
 
@@ -1392,7 +1392,7 @@ internal sealed class StardewBodyController
     private string FormatStallEvidence(Farmer localPlayer, LocalMoveSpec specification, int tick)
     {
         int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-        return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DetectStalledBy(localPlayer)}";
+        return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DescribeStallBlocker(localPlayer.currentLocation, localPlayer, specification.TargetTile)}";
     }
 
     /// <summary>
@@ -2526,50 +2526,108 @@ internal sealed class StardewBodyController
     /// the two places that name an occupant spell it the same way and one reader handles both.
     /// </para>
     /// </summary>
-    private static string DetectStalledBy(Farmer localPlayer)
+    /// <summary>
+    /// What stopped a walk that made no progress, as one bounded space-free token - never a bare `unknown`.
+    ///
+    /// <para>
+    /// MEASURED 2026-11-19 (`1795084506`-`1795084512`, Mountain): two `move_to_tile` requests each stalled the full 300
+    /// ticks and the refusal said `native_path_ended;stopped_by=unknown`. The thing in the way was a specific rectangle:
+    /// `Mountain.railroadAreaBlocked`, the engine's own `NetBool(DaysPlayed &lt; 31)` (`Mountain.cs:32`) over tiles
+    /// (8,0)-(11,4). It is neither a character nor an object, so the occupant walk below - which only ever asked
+    /// `location.characters` - could never see it, and the one field whose job is to say what is in the way said that
+    /// nobody knew.
+    /// </para>
+    /// <para>
+    /// THE ORDER IS THE WALK'S ORDER. A body stands still because it cannot take its NEXT step, so the four cardinal
+    /// steps are asked nearest-to-the-target first, through the same layer probe a refusal uses (`RefusalProbe`), which
+    /// keeps one spelling of `character:&lt;name&gt;@&lt;tile&gt;` and one vocabulary of `clump` / `building` /
+    /// `location_constraint` for both fields. A person is asked about the FACING tile first because that is the body the
+    /// caller can wait out or walk around, and because the measured stall this replaced was a villager.
+    /// </para>
+    /// <para>
+    /// THE THIRD ANSWER IS THE PROGRESSION GATE, and it is an answer rather than a shrug: a `location_constraint` is a
+    /// map that will not let her through, which is `"the world will not let me yet"` and not `"I could not find out"`.
+    /// <see cref="StandingLocationGate"/> names the flag that is holding it where the engine's own location type
+    /// declares one, so `roadblock` reads as `location_constraint:railroadAreaBlocked@9,4`.
+    /// </para>
+    /// <para>
+    /// WHEN NOTHING REFUSES, that is said in those words. Four open steps under a body that did not move is a different
+    /// condition from a wall - the walk, not the world, ended it - and `none_of_the_four_steps_refuses` keeps it out of
+    /// the bucket that means `nobody looked`.
+    /// </para>
+    /// </summary>
+    internal static string DescribeStallBlocker(GameLocation? location, Farmer localPlayer, Vector2 target)
     {
-        GameLocation? location = localPlayer.currentLocation;
         if (location is null)
-            return "unknown";
+            return "unknown:no_location";
 
-        Point frontTile = GetFrontTile(localPlayer);
+        Point body = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+        Point goal = new((int)target.X, (int)target.Y);
         try
         {
-            Character? blocker = location.characters.OfType<Pet>().FirstOrDefault(character => IsAtTile(character, frontTile))
-                ?? location.characters.OfType<Horse>().FirstOrDefault(character => IsAtTile(character, frontTile))
-                ?? location.characters.OfType<NPC>().FirstOrDefault(character => IsAtTile(character, frontTile));
-            if (blocker is not null)
+            foreach (Point step in StepsToward(body, goal))
             {
-                string name = string.IsNullOrWhiteSpace(blocker.Name) ? blocker.GetType().Name : blocker.Name;
-                return $"character:{RefusalProbe.WithoutSpaces(name)}@{frontTile.X},{frontTile.Y}";
+                var tile = new Vector2(step.X, step.Y);
+                RefusalLayerToken layer = RefusalProbe.DescribeWorld(null, location, tile, localPlayer.Tile, localPlayer);
+                if (!layer.Refused)
+                    continue;
+                // THE MAP'S OWN GATE IS NAMED, not just the layer: `blocked` says the map refuses and leaves the caller
+                // with nothing to wait for, while the engine's flag says which gate it is.
+                if (layer.Layer == RefusalLayerKind.LocationConstraint && StandingLocationGate(location) is { } gate)
+                    return new RefusalLayerToken(RefusalLayerKind.LocationConstraint, $"{gate}@{step.X},{step.Y}").Format();
+                return layer.Format();
             }
-        }
-        catch
-        {
-            // A world collection can change during a game-thread lifecycle edge;
-            // an unknown blocker is honest and keeps the terminal ruling intact.
-        }
 
-        return "unknown";
+            return "none_of_the_four_steps_refuses";
+        }
+        catch (Exception error)
+        {
+            // A world collection can change during a game-thread lifecycle edge. The token still says WHY it could not
+            // name the blocker, and names the failure rather than folding every one of them into a bare `unknown`.
+            return $"unknown:world_read_failed:{error.GetType().Name}";
+        }
     }
 
-    private static bool IsAtTile(Character character, Point tile) =>
-        character.currentLocation is not null
-        && character.currentLocation == Game1.player?.currentLocation
-        && (int)character.Tile.X == tile.X
-        && (int)character.Tile.Y == tile.Y;
+    /// <summary>
+    /// The body's four cardinal steps, nearest-to-the-target first, so the first refusal the probe meets is the step the
+    /// walk actually needed. Ordering is by resulting distance and then by the planner's own offset order, so the token
+    /// is deterministic for one tile pair and two runs of the same stall read the same.
+    ///
+    /// A PERSON IS ASKED THE SAME WAY as a wall, through <see cref="RefusalProbe.CharacterOn"/> inside that probe: the
+    /// earlier version asked only the tile the ACTOR WAS FACING, which answered about a direction rather than about the
+    /// step the walk could not take (and read `Farmer.FacingDirection` for it).
+    /// </summary>
+    private static IEnumerable<Point> StepsToward(Point body, Point goal) => CardinalOffsets
+        .Select(offset => new Point(body.X + offset.X, body.Y + offset.Y))
+        .OrderBy(step => ChebyshevDistance(step, goal));
 
-    private static Point GetFrontTile(Farmer player)
+    /// <summary>
+    /// The progression flag the LOCATION'S OWN TYPE declares and has set, or null - `railroadAreaBlocked` on the
+    /// Mountain, `landslide` before the fifth day.
+    ///
+    /// <para>
+    /// The engine exposes no accessor for these: they are private `NetBool` fields the location's `isCollidingPosition`
+    /// override reads (`Mountain.cs:32`, `:34`). `DeclaredOnly` confines the reading to the flags the shipped location
+    /// type adds, so `GameLocation`'s own nine (`isFarm`, `isOutdoors`, ...) are never candidates and a wall can never be
+    /// reported as a gate that opens on some future day. Reading them is what turns `location_constraint` into an answer
+    /// the caller can plan around.
+    /// </para>
+    /// </summary>
+    internal static string? StandingLocationGate(GameLocation location)
     {
-        Point tile = new((int)player.Tile.X, (int)player.Tile.Y);
-        return player.FacingDirection switch
+        foreach (System.Reflection.FieldInfo field in location.GetType().GetFields(
+            System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.DeclaredOnly))
         {
-            Game1.up => new Point(tile.X, tile.Y - 1),
-            Game1.right => new Point(tile.X + 1, tile.Y),
-            Game1.down => new Point(tile.X, tile.Y + 1),
-            Game1.left => new Point(tile.X - 1, tile.Y),
-            _ => tile,
-        };
+            if (field.FieldType != typeof(Netcode.NetBool))
+                continue;
+            if (field.GetValue(location) is Netcode.NetBool { Value: true })
+                return field.Name;
+        }
+
+        return null;
     }
 
     private void Fail(string reasonCode, string evidence) => this.Stop(ExecutionState.Failed, reasonCode, evidence);

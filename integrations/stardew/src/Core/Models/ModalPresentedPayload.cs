@@ -16,11 +16,11 @@ namespace GameBuddy.Stardew.Core.Models;
 /// </para>
 ///
 /// <para>
-/// WHAT IT DOES NOT CARRY: a dialogue box's words. Those belong to <c>npc_dialogue_presented</c>
-/// (<see cref="NpcDialoguePresentedPayload"/>), which publishes every page the game's own pager actually showed;
-/// repeating them here would be the second copy of one piece of prose. What this fact adds for a dialogue is the MOUNT -
-/// that something is on her screen, whether it is waiting on an answer, and which keys it offers - which is knowable the
-/// tick the box appears, while the words are only knowable once the box has been driven to a readable page.
+/// WHAT IT CARRIES, AND WHAT IT DOES NOT. <c>text</c> is the modal's OWN words as read at the mount
+/// (<see cref="ModalPresentedPayload.TextOwner.Carried"/>), and <c>textFrom</c> says which of the three places they came
+/// from. A dialogue box's words are read from <c>getCurrentString()</c> - the page the box is showing the tick it appears -
+/// while the paged-through transcript and the side effects it runs stay with <c>npc_dialogue_presented</c>; the two are
+/// readings at two times, exactly as `isQuestion` is, and the mount page is the one the companion can still react to.
 /// </para>
 ///
 /// <para>
@@ -34,10 +34,42 @@ public sealed record ModalPresentedPayload(
     [property: JsonPropertyName("isQuestion")] bool IsQuestion,
     [property: JsonPropertyName("responseKeys")] IReadOnlyList<string> ResponseKeys,
     [property: JsonPropertyName("blocksTimePass")] bool BlocksTimePass,
-    [property: JsonPropertyName("text")] string? Text)
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("textFrom")] string TextFrom)
 {
     /// <summary>The world-fact kind this payload belongs to.</summary>
     public const string Kind = "modal_presented";
+
+    /// <summary>
+    /// The three answers to "where are this modal's words", declared once so a fact can never leave the question open.
+    ///
+    /// <para>
+    /// MEASURED 2026-11-19 (`1795084536`-`1795084558`): the Marlon cutscene published six `modal_presented (DialogueBox,
+    /// text: null)` facts and the words only ever appeared in the `npc_dialogue_presented` fact beside them - so "a box is
+    /// open" arrived with nothing to say about what was in it, and a model reading the line could not tell whether the box
+    /// was empty, unreadable, or simply the one kind whose prose lives elsewhere. `null` was all three at once.
+    /// </para>
+    /// <para>
+    /// <see cref="Carried"/> is a fact that READ the words at the mount (`DialogueBox.getCurrentString`, a letter's own
+    /// prose). <see cref="DialogueFact"/> is a box whose words belong to another fact, which this one names so the reader
+    /// can go and get them. <see cref="Screen"/> is a menu whose content is what is drawn on it (items, statistics,
+    /// options) and which therefore holds no prose at all - a true answer, and a different one from silence.
+    /// </para>
+    /// </summary>
+    public static class TextOwner
+    {
+        /// <summary>This fact carries the words it just read.</summary>
+        public const string Carried = "modal";
+
+        /// <summary>The words belong to the fact named here, and this one points at it.</summary>
+        public const string DialogueFact = "npc_dialogue_presented";
+
+        /// <summary>The menu's content is the screen itself: it holds no prose for any fact to carry.</summary>
+        public const string Screen = "screen";
+
+        /// <summary>Every word a projection may publish, so a gate can check one declaration against the other.</summary>
+        public static IReadOnlyList<string> All { get; } = System.Array.AsReadOnly(new[] { Carried, DialogueFact, Screen });
+    }
 }
 
 /// <summary>

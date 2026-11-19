@@ -31,12 +31,12 @@ namespace GameBuddy.Stardew.Sensory;
 /// </para>
 ///
 /// <para>
-/// WHICH ONE OWNS A DIALOGUE. <c>npc_dialogue_presented</c> owns a dialogue box's WORDS, because it pages the box to
-/// exhaustion and reports the pages the game really showed; this observer never re-publishes them (<see
-/// cref="ModalPresentedPayload.Text"/> is null for a <c>DialogueBox</c>). The MOUNT is this fact's, and it is not a
-/// second spelling of the same measurement: a box can page into a question, so the question state at the mount and the
-/// question state the pager settles on are two readings at two times, and only the first one is available while the
-/// companion still has time to react to it.
+/// WHICH ONE OWNS A DIALOGUE. <c>npc_dialogue_presented</c> owns a dialogue's TRANSCRIPT, because it pages the box to
+/// exhaustion and reports the pages the game really showed, and it is the fact that runs the lines' own side effects. This
+/// observer publishes the MOUNT plus the page the box is holding at that tick (<c>getCurrentString()</c>): a box can page
+/// into a question and its first page is not its last, so the mount reading and the pager's transcript are two readings at
+/// two times, and only the first one is available while the companion still has time to react to it. A box that holds no
+/// readable page yet says so (`textFrom: npc_dialogue_presented`) instead of publishing a null with no owner.
 /// </para>
 ///
 /// <para>
@@ -100,13 +100,25 @@ internal sealed class ModalTransitionObserver
     {
         DialogueBox? box = menu as DialogueBox;
         DialogueBox? question = box is { isQuestion: true } asked ? asked : null;
+        string? text = TextOf(menu);
         return new ModalPresentedPayload(
             menu.GetType().Name,
             question is not null,
             question is null ? Array.Empty<string>() : ResponseKeys(question),
             blocksTimePass,
-            TextOf(menu));
+            text,
+            TextOwnerOf(menu, text));
     }
+
+    /// <summary>
+    /// Where this menu's words are, as one of <see cref="ModalPresentedPayload.TextOwner"/>'s three answers - so a
+    /// `modal_presented` line never means "empty", "unreadable" and "owned elsewhere" at the same time.
+    /// </summary>
+    private static string TextOwnerOf(IClickableMenu menu, string? text) => text is not null
+        ? ModalPresentedPayload.TextOwner.Carried
+        : menu is DialogueBox
+            ? ModalPresentedPayload.TextOwner.DialogueFact
+            : ModalPresentedPayload.TextOwner.Screen;
 
     /// <summary>
     /// The keys a question is offering, in the order the game shows them - the same tokens
@@ -124,24 +136,58 @@ internal sealed class ModalTransitionObserver
     }
 
     /// <summary>
-    /// The menu's own words, for the one menu whose entire content is prose and which nobody else can read.
+    /// The menu's own words, as the box holds them at this tick.
     ///
     /// <para>
-    /// A letter is the case this exists for: <c>LetterViewerMenu.mailMessage</c> holds the text the game would draw,
+    /// A letter is the case that started this: <c>LetterViewerMenu.mailMessage</c> holds the text the game would draw,
     /// <c>stardew_observe</c> publishes no menu text at all, and the words are gone the moment the letter is closed.
     /// </para>
     /// <para>
-    /// A dialogue box is deliberately absent: its words belong to <c>npc_dialogue_presented</c>, which reports every
-    /// page the native pager reached. A <c>ConfirmationDialog</c>'s message is <c>protected</c> rather than public, so it
-    /// is not reachable without reflection; every other menu's content is items or statistics rather than a string, so
-    /// it is named by <see cref="ModalPresentedPayload.ModalType"/> alone.
+    /// A DIALOGUE BOX IS THE OTHER, and it is the one the Marlon cutscene measured: six `modal_presented (DialogueBox,
+    /// text: null)` facts while the words only existed in a later `npc_dialogue_presented`. <c>getCurrentString()</c> is
+    /// the box's own answer to "what am I showing" (`DialogueBox.cs:712`): a pure read, the page the box is on at the
+    /// mount, including the speaker prefix the engine adds when portraits are off. The paged-through transcript stays the
+    /// dialogue fact's, because only the pager reaches the pages the game really showed and the side effects they run.
+    /// </para>
+    /// <para>
+    /// A <c>ConfirmationDialog</c>'s message is <c>protected</c> rather than public, so it is not reachable without
+    /// reflection; every other menu's content is items or statistics rather than a string, so it is named by
+    /// <see cref="ModalPresentedPayload.ModalType"/> and its words are declared as <c>screen</c>.
     /// </para>
     /// </summary>
     private static string? TextOf(IClickableMenu menu) => menu switch
     {
         LetterViewerMenu letter => Bounded(letter.mailMessage),
+        DialogueBox box => Bounded(CurrentPageOf(box)),
         _ => null,
     };
+
+    /// <summary>
+    /// The page a box is showing, or null when the box cannot answer. <c>getCurrentString()</c> reads
+    /// <c>dialogues</c> and <c>characterDialoguesBrokenUp</c> with no null guard (`DialogueBox.cs:712-728`), and a box
+    /// the engine has mounted but not yet filled - or the half-built box a headless probe stands up - answers with a
+    /// throw. The mount fact keeps its union either way: a box that cannot say what it holds is the `npc_dialogue_presented`
+    /// pointer, not a lost tick.
+    /// </summary>
+    private static string? CurrentPageOf(DialogueBox box)
+    {
+        try
+        {
+            return box.getCurrentString();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string? Bounded(string? page)
+    {
+        string trimmed = page?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            return null;
+        return trimmed.Length <= MaximumTextChars ? trimmed : trimmed[..MaximumTextChars];
+    }
 
     private static string? Bounded(List<string>? pages)
     {

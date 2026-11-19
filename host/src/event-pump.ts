@@ -455,7 +455,7 @@ export type FlushOutcome =
   | Readonly<{ kind: "held"; reason: "world_transition" | "delivery_in_flight" }>;
 
 /**
- * Why a turn that spoke and ran no tool closed with nothing done, in the three conditions the pump can tell apart.
+ * Why a turn that spoke and ran no tool closed with nothing done, in the conditions the pump can tell apart.
  *
  * MEASURED 2026-11-13 (`round47`, the companion's own account): 64 assistant turns, 41 of them speech only, median 27
  * characters, while the world reading stood still for eighteen turns. Her explanation was economic and exact - "a line of
@@ -463,18 +463,34 @@ export type FlushOutcome =
  * could say how many of those turns were that shape, because a turn that spoke was counted as a turn that happened.
  *
  * <p>
- * The three reasons are the conditions that can make acting impossible WITHOUT being a refusal, and they are ordered:
- * a contradicted picture first (the block itself already calls an aged reading "the world is not like this any more"),
- * then a body the engine holds, then the residual - nothing was pending and she was free to act. `nothing_pending` is the
- * one this measurement exists to expose: it is the shape where the zero-cost exit won with nothing at all in its way.
+ * THE REASONS ARE CONDITIONS, and the order is the order a caller can act on them: nothing was ever read (there is no
+ * picture to act on at all), then a contradicted picture (the reading was one she had already been shown, or the world
+ * moved after it), then a body the engine holds, and only then the residual - a fresh reading, a free body, an unmoved
+ * world, and still no action.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-19 (`1795084604`): after the Marlon cutscene the player spoke, she answered 38 characters, ran no tool
+ * and went idle for 234 s - and the account said `player_input:nothing_pending`, which named no condition because the pump
+ * only ever asked TWO of them. The reading was fresh and the body was free, so it landed in the bucket the two conditions
+ * left over; that bucket also swallowed "no reading has ever arrived" and "the world moved after the last reading", which
+ * are different answers with different next steps. Those two are published as their own members now, and the residual
+ * fires only once the three checks it states have all come back negative.
  * </p>
  */
 export const TURN_WITHOUT_ACTION_REASON = Object.freeze({
+  /** No reading has ever arrived (`#lastSnapshot` is empty): she was handed no picture to act on. */
+  noReading: "no_reading",
   /** The turn was handed a reading it did not bring: her picture of the world was already out of date. */
   worldStale: "world_stale",
+  /** The world said it moved after the reading this turn was composed from: the picture was right when read. */
+  worldMovedSinceReading: "world_moved_since_reading",
   /** The snapshot says the body cannot take a command (`actionable: false`): the engine is holding the actor. */
   bodyHeld: "body_held",
-  /** A fresh reading, a free body, and still no action. */
+  /**
+   * The residual, and it now STATES what it checked: the reading was fresh (this turn brought it), the body was free
+   * (`actionable` was not false), and no world change has arrived since. Nothing stood in the way and she only spoke -
+   * the zero-cost exit that won with nothing at all in its way.
+   */
   nothingPending: "nothing_pending",
 });
 
@@ -4724,14 +4740,18 @@ export class CompanionEventPump {
   /**
    * Why a speaking turn with no action behind it closed, in the declared order of `TURN_WITHOUT_ACTION_REASON`.
    *
-   * The snapshot is asked directly for the body half: `actionable` is the Mod's own admission gate, so "the engine is
-   * holding this actor" is its statement rather than this pump's inference. A session with no reading at all is neither
-   * stale nor held - it has nothing to act on - and falls to `nothing_pending`, where the absence is already visible in
-   * the world-state block's `尚未收到观察`.
+   * Every member is a CONDITION this pump asks, and the last one is only reached once the others came back negative - so
+   * the code names what was in the way, not merely that nothing was found. The snapshot is asked directly for the body
+   * half: `actionable` is the Mod's own admission gate, so "the engine is holding this actor" is its statement rather
+   * than this pump's inference. A session with no reading at all is `no_reading` - it has nothing to act on - and a world
+   * that moved after the reading this turn was built from is `world_moved_since_reading`, which is a different answer from
+   * a reading she had already been shown (`world_stale`).
    */
   #emptyTurnReason(broughtObservation: boolean): TurnWithoutActionReason {
+    if (this.#lastSnapshot === undefined) return TURN_WITHOUT_ACTION_REASON.noReading;
     if (this.#readingIsAged(broughtObservation)) return TURN_WITHOUT_ACTION_REASON.worldStale;
     if (this.#bodyHeld()) return TURN_WITHOUT_ACTION_REASON.bodyHeld;
+    if (this.#worldChangesSinceReading > 0) return TURN_WITHOUT_ACTION_REASON.worldMovedSinceReading;
     return TURN_WITHOUT_ACTION_REASON.nothingPending;
   }
 

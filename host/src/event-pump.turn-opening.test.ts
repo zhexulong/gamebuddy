@@ -62,8 +62,10 @@ import {
   TURN_SETTLED_WITH_EXECUTION_IN_FLIGHT,
   TURN_WITHOUT_ACTION,
   TURN_WITHOUT_ACTION_REASON,
+  TURN_WITHOUT_ACTION_REASONS,
   type TurnAccount,
   type TurnProduction,
+  type TurnWithoutActionReason,
   tracedFacts,
   turnAccountLine,
   turnWithoutActionShape,
@@ -2194,4 +2196,170 @@ test("assistant turns: the module this unit replaced delivered the silent turns 
     `the same batch and the same two records, on this tree: ${afterLine}`,
   );
   console.log(`assistant-turn fixture AFTER:  ${afterLine}`);
+});
+
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* GATE: a turn that closed without work names why.                                                                   */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+/**
+ * `a_turn_that_closed_without_work_names_why:<reason>` - the population is every code the pump can publish, and every
+ * one of them must be a condition the pump actually asks.
+ *
+ * <p>
+ * MEASURED 2026-11-19 (`1795084604`): after the Marlon cutscene the player spoke, she answered 38 characters, ran no tool
+ * and went idle for 234 s - and the account said `player_input:nothing_pending`. That word named no condition: the pump
+ * asked two of them and the turn landed in whatever the two left over. The two it never asked are published now
+ * (`no_reading`, `world_moved_since_reading`), and this gate is what stops a third from arriving as another mute bucket.
+ * </p>
+ *
+ * <p>
+ * THE SCENARIOS ARE KEYED BY THE CLOSED LIST. `EMPTY_TURN_SCENARIOS` is a `Record` over `TurnWithoutActionReason`, so a
+ * code added to the union without a scenario that reaches it is a COMPILE error rather than a gate that quietly checks one
+ * member fewer - the same construction `HELD_WORLD_ZH` uses in the brief.
+ * </p>
+ *
+ * <p>
+ * EACH CODE IS PAIRED WITH ITS FALSIFIER: the scenario that reaches this one must leave every OTHER code at zero. A pump
+ * that answered `nothing_pending` for everything would still count the right total and say nothing about why, which is
+ * precisely the defect - so distinctness, not reachability alone, is the property.
+ * </p>
+ */
+type EmptyTurnScenario = Readonly<{
+  /** The condition this code names, in the words the pump asks it in. */
+  cause: string;
+  /** A pump driven through the real path into that condition. */
+  drive: () => Promise<CompanionEventPump>;
+}>;
+
+function emptyTurnCounts(account: TurnAccount): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const reason of TURN_WITHOUT_ACTION_REASONS) counts.set(reason, 0);
+  for (const [shape, count] of Object.entries(account.emptyTurns.byShape)) {
+    const reason = shape.slice(shape.indexOf(":") + 1);
+    counts.set(reason, (counts.get(reason) ?? 0) + count);
+  }
+  return counts;
+}
+
+/** One settled turn on a pump, delivered with speech and no tool - the unit every scenario below counts. */
+function settleEmptyTurn(pump: CompanionEventPump): Promise<unknown> {
+  return pump.flush(speakingSink(pump));
+}
+
+/** The Mod's own statement that the world moved under the reading the turn was built from. */
+function snapshotChangedAt(revision: number, occurredAtMs: number): WorldFact {
+  const eventId = `snapshot_changed_${String(revision)}`;
+  return {
+    source: "stardew_mod",
+    kind: "semantic_event",
+    eventId,
+    correlationId: eventId,
+    revision,
+    occurredAtMs,
+    payload: Object.freeze({ kind: "snapshot_changed", reasonCode: "warp" }),
+  };
+}
+
+const EMPTY_TURN_SCENARIOS: Readonly<Record<TurnWithoutActionReason, EmptyTurnScenario>> = Object.freeze({
+  [TURN_WITHOUT_ACTION_REASON.noReading]: {
+    cause: "no reading has ever arrived",
+    async drive() {
+      const pump = new CompanionEventPump();
+      pump.enqueueFact(settlementFact("program_settled_plan_r46_no_reading", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+      await settleEmptyTurn(pump);
+      return pump;
+    },
+  },
+  [TURN_WITHOUT_ACTION_REASON.worldStale]: {
+    cause: "the reading was one she had already been shown",
+    async drive() {
+      const pump = new CompanionEventPump();
+      pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+      pump.enqueueFact(settlementFact("program_settled_plan_r46_stale_1", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+      // The FIRST turn WORKS, so it is not an empty turn at all: the scenario needs a reading she has already been shown,
+      // not a second count in the bucket it is measuring.
+      await pump.flush(speakingSink(pump, TURN_PRODUCTION.worked));
+      // The SECOND turn re-states the same reading beside a clock fact: the picture it was built from is one she had.
+      pump.enqueueFact(readingAt(14, 1, BODY_FREE), FACT_PRODUCER.adapterIngress);
+      pump.enqueueFact(milestoneFact(600, WINDOW_AT_MS + 60_000), FACT_PRODUCER.adapterIngress);
+      await settleEmptyTurn(pump);
+      return pump;
+    },
+  },
+  [TURN_WITHOUT_ACTION_REASON.worldMovedSinceReading]: {
+    cause: "the world said it moved after the reading this turn was handed",
+    async drive() {
+      const pump = new CompanionEventPump();
+      pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+      // The batch brings a NEW reading (so nothing was stale) and then the Mod's own statement that the world moved under
+      // it. That is the condition the pump could always see and never published.
+      pump.enqueueFact(readingAt(15, 1, BODY_FREE), FACT_PRODUCER.adapterIngress);
+      pump.enqueueFact(snapshotChangedAt(15, WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
+      pump.enqueueFact(settlementFact("program_settled_plan_r46_moved", WINDOW_AT_MS + 2_000), FACT_PRODUCER.adapterIngress);
+      await settleEmptyTurn(pump);
+      return pump;
+    },
+  },
+  [TURN_WITHOUT_ACTION_REASON.bodyHeld]: {
+    cause: "the snapshot says the body cannot take a command",
+    async drive() {
+      const pump = new CompanionEventPump();
+      pump.enqueueFact(
+        readingAt(14, 0, { ...BODY_FREE, actionable: false, actorDispositionKind: "modal" }),
+        FACT_PRODUCER.adapterIngress,
+      );
+      pump.enqueueFact(settlementFact("program_settled_plan_r46_held", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+      await settleEmptyTurn(pump);
+      return pump;
+    },
+  },
+  [TURN_WITHOUT_ACTION_REASON.nothingPending]: {
+    cause: "a fresh reading, a free body, an unmoved world - and still no action",
+    async drive() {
+      const pump = new CompanionEventPump();
+      pump.enqueueFact(readingAt(14, 0, BODY_FREE), FACT_PRODUCER.adapterIngress);
+      pump.enqueueFact(settlementFact("program_settled_plan_r46_nothing", WINDOW_AT_MS), FACT_PRODUCER.adapterIngress);
+      await settleEmptyTurn(pump);
+      return pump;
+    },
+  },
+});
+
+test("a_turn_that_closed_without_work_names_why: every code is a condition the pump asks, and no code answers twice", async () => {
+  const population = [...TURN_WITHOUT_ACTION_REASONS];
+  assert.ok(
+    population.length > 0,
+    "an empty population agrees with itself: zero codes examined is a blocked reading, never a clean one",
+  );
+
+  const named: string[] = [];
+  const mute: string[] = [];
+  for (const reason of population) {
+    const scenario = EMPTY_TURN_SCENARIOS[reason];
+    assert.ok(scenario !== undefined, `a code was declared without a scenario: ${reason}`);
+    assert.ok(
+      scenario.cause.trim() !== "",
+      `${reason} must name the condition it stands for: a code with no cause is the mute bucket this gate exists for`,
+    );
+
+    const pump = await scenario.drive();
+    const counts = emptyTurnCounts(pump.turnAccount);
+    const reached = counts.get(reason) ?? 0;
+    const others = population.filter((other) => other !== reason && (counts.get(other) ?? 0) > 0);
+    const printed = turnAccountLine(pump.turnAccount).includes(`:${reason}: `);
+
+    if (reached === 0 || others.length > 0 || !printed) {
+      mute.push(
+        `${reason} {reached: ${String(reached)}, also_fired: ${others.join("|") || "none"}, printed: ${String(printed)}}`,
+      );
+      continue;
+    }
+
+    named.push(reason);
+  }
+
+  const reading = `codes examined ${String(population.length)} · names-a-cause ${String(named.length)} · mute ${String(mute.length)}`;
+  console.log(`a_turn_that_closed_without_work_names_why: ${reading}`);
+  assert.deepEqual(mute, [], `every empty-turn code must name a condition no other code also names (${reading})`);
 });

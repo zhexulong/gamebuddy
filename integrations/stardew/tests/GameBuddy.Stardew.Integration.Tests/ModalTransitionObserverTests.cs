@@ -132,7 +132,7 @@ public sealed class ModalTransitionObserverTests
     }
 
     [Fact]
-    public void ADialogueBoxPublishesNoWordsBecauseTheDialogueFactOwnsThem()
+    public void ADialogueBoxCarriesThePageItIsHolding()
     {
         using var game = new ModalFactProbe.GameStateScope();
         BridgeSession session = ModalFactProbe.CreateAuthenticatedSession(out ModalFactProbe.RecordingSink sink);
@@ -143,9 +143,47 @@ public sealed class ModalTransitionObserverTests
 
         observer.Observe(session);
 
-        // The one owner of a dialogue box's prose is `npc_dialogue_presented`, which pages the box and reports what the
-        // game really showed. A second copy here is the duplicate path this fact must not grow.
-        ModalFactProbe.PayloadOf(sink.FactAt(0)).GetProperty("text").ValueKind.Should().Be(JsonValueKind.Null);
+        // MEASURED 2026-11-19 (`1795084536`-`1795084558`): six `modal_presented (DialogueBox, text: null)` facts in one
+        // cutscene, with the words only ever in the `npc_dialogue_presented` beside them. A fact about a box that cannot
+        // say what is in the box is the refusal this asserts away: the mount carries the page the box is showing
+        // (`getCurrentString`, DialogueBox.cs:712), which is the one the companion can still react to.
+        JsonElement payload = ModalFactProbe.PayloadOf(sink.FactAt(0));
+        payload.GetProperty("text").GetString().Should().Be("Tomorrow's forecast: heavy rain.");
+        payload.GetProperty("textFrom").GetString().Should().Be(ModalPresentedPayload.TextOwner.Carried);
+    }
+
+    [Fact]
+    public void ADialogueBoxWithNoReadablePagePointsAtTheFactThatHasTheWords()
+    {
+        using var game = new ModalFactProbe.GameStateScope();
+        BridgeSession session = ModalFactProbe.CreateAuthenticatedSession(out ModalFactProbe.RecordingSink sink);
+        var observer = new ModalTransitionObserver(new DummyMonitor(), static () => true);
+        // A box that mounted before its first page was set - the one state where this fact has no words to read.
+        game.SetActiveMenu(ModalFactProbe.Menu<DialogueBox>());
+
+        observer.Observe(session);
+
+        // Null with no owner is what the live reading could not tell apart from "empty" or "unreadable": the second
+        // answer names the fact that carries the words instead.
+        JsonElement payload = ModalFactProbe.PayloadOf(sink.FactAt(0));
+        payload.GetProperty("text").ValueKind.Should().Be(JsonValueKind.Null);
+        payload.GetProperty("textFrom").GetString().Should().Be(ModalPresentedPayload.TextOwner.DialogueFact);
+    }
+
+    [Fact]
+    public void AMenuWhoseContentIsTheScreenSaysSo()
+    {
+        using var game = new ModalFactProbe.GameStateScope();
+        BridgeSession session = ModalFactProbe.CreateAuthenticatedSession(out ModalFactProbe.RecordingSink sink);
+        var observer = new ModalTransitionObserver(new DummyMonitor(), static () => true);
+        game.SetActiveMenu(ModalFactProbe.Menu<ShippingMenu>());
+        observer.Observe(session);
+
+        // A settlement sheet holds items and a total, not prose: `screen` is that answer, and it is a declaration rather
+        // than the null every other kind would otherwise share with a dialogue box.
+        JsonElement payload = ModalFactProbe.PayloadOf(sink.FactAt(0));
+        payload.GetProperty("text").ValueKind.Should().Be(JsonValueKind.Null);
+        payload.GetProperty("textFrom").GetString().Should().Be(ModalPresentedPayload.TextOwner.Screen);
     }
 
     [Fact]
