@@ -152,18 +152,31 @@ internal static class MagneticPickupReach
 
     /// <summary>
     /// The tile the body should stand on: the nearest one to where it already is that lies inside the engine's
-    /// rectangle, or <see langword="null"/> when the rectangle holds no tile this body could stand on and walk to.
+    /// rectangle, or <see langword="null"/> - carried on <see cref="MagneticStandSearch"/> - when the rectangle holds no
+    /// tile this body could stand on and walk to.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Null is the honest answer and the caller's refusal: a chunk in the middle of a pond whose bank is three tiles
-    /// away is out of a 128-pixel magnet's reach, and no walk would change that. The candidate window is the radius in
-    /// tiles plus one - the slack covers the subject being the debris's mean rather than the published chunk's own
-    /// position, and the actor's standing pixel not being its tile's centre - while the DECISION is the engine's own
-    /// predicate, so a wider window can only cost iterations, never correctness.
+    /// away is out of a 128-pixel magnet's reach, and no walk would change that. What the answer may never be is
+    /// <i>silent</i> about which tiles it asked: <see cref="MagneticStandSearch"/> carries how many tiles the rectangle
+    /// covered and which of them came closest, so a caller's refusal can name the tile it could not use instead of
+    /// asserting that no such tile exists.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS THE RECTANGLE, NOT A RING AROUND THE DROP'S TILE. The engine measures
+    /// <c>Debris.playerInRange</c> from <c>approximatePosition()</c>, the MEAN of the debris' chunks (Debris.cs:572-580
+    /// asked at :603 and :664, compared at :582-595), so the rectangle belongs to the DEBRIS - and a target names ONE
+    /// chunk of it. A pile spreads when it is dropped and again while a magnet drags it, so the named chunk's tile can
+    /// sit several tiles from the centre the rectangle is built on. A window centred on that tile then answers `none`
+    /// without ever asking about a tile the rectangle holds, which is a rejection the world never gave. Measured
+    /// `round80`: seven pickups refused `stand_at=none` in one burst from tile 7,39, and in the same minute the SAME
+    /// tile 6,38 from the same body was `within_magnet=true;stand_at=7,39` for a different chunk - the reach is a fact
+    /// about one debris, and the search has to be centred where the engine centres it.
+    /// </para>
     /// </remarks>
-    internal static (int X, int Y)? SelectStandTile(
+    internal static MagneticStandSearch SelectStandTile(
         Vector2 subject,
-        (int X, int Y) subjectTile,
         (int X, int Y) actorTile,
         Point actorStandingPixel,
         int reachPixels,
@@ -175,28 +188,49 @@ internal static class MagneticPickupReach
         // reading moved by whole tiles. Nothing here assumes the offset is the tile's centre.
         int offsetX = actorStandingPixel.X - actorTile.X * tileSize;
         int offsetY = actorStandingPixel.Y - actorTile.Y * tileSize;
-        int rings = reachPixels / tileSize + 1;
+        float centreX = subject.X + ChunkCentreOffset - offsetX;
+        float centreY = subject.Y + ChunkCentreOffset - offsetY;
+        // One tile of slack on each side absorbs the rounding of a standing pixel that lands exactly on a boundary; the
+        // DECISION below is the engine's own predicate, so a bound one tile too wide costs iterations, never correctness.
+        int minX = (int)Math.Floor((centreX - reachPixels) / tileSize) - 1;
+        int maxX = (int)Math.Floor((centreX + reachPixels) / tileSize) + 1;
+        int minY = (int)Math.Floor((centreY - reachPixels) / tileSize) - 1;
+        int maxY = (int)Math.Floor((centreY + reachPixels) / tileSize) + 1;
 
         (int X, int Y)? best = null;
         int bestDistance = int.MaxValue;
-        for (int x = subjectTile.X - rings; x <= subjectTile.X + rings; x++)
+        (int X, int Y)? nearestRefused = null;
+        int nearestRefusedDistance = int.MaxValue;
+        string? nearestRefusal = null;
+        int inReach = 0;
+        for (int x = minX; x <= maxX; x++)
         {
-            for (int y = subjectTile.Y - rings; y <= subjectTile.Y + rings; y++)
+            for (int y = minY; y <= maxY; y++)
             {
                 (int X, int Y) candidate = (x, y);
                 Point standing = new(x * tileSize + offsetX, y * tileSize + offsetY);
                 if (!WithinMagnet(subject, standing, reachPixels))
                     continue;
+                inReach++;
 
                 // Nearest to where the body already is, so the shortest walk that suffices wins; ties are decided by
                 // lowest y then lowest x, because one world state has to yield one tile.
                 int distance = Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y);
+                bool standable = isStandable(candidate);
+                bool reachable = standable && isReachable(candidate);
+                if (!standable || !reachable)
+                {
+                    if (Nearer(distance, candidate, nearestRefused, nearestRefusedDistance))
+                    {
+                        nearestRefused = candidate;
+                        nearestRefusedDistance = distance;
+                        nearestRefusal = standable ? "reachability" : "standability";
+                    }
+                    continue;
+                }
                 if (distance > bestDistance)
                     continue;
-                if (distance == bestDistance && best is { } current
-                    && (candidate.Y > current.Y || (candidate.Y == current.Y && candidate.X > current.X)))
-                    continue;
-                if (!isStandable(candidate) || !isReachable(candidate))
+                if (!Nearer(distance, candidate, best, bestDistance))
                     continue;
 
                 best = candidate;
@@ -204,6 +238,55 @@ internal static class MagneticPickupReach
             }
         }
 
-        return best;
+        return new MagneticStandSearch(best, inReach, nearestRefused, nearestRefusal);
     }
+
+    /// <summary>
+    /// Whether <paramref name="candidate"/> displaces the tile already held at <paramref name="distance"/>: nearer to the
+    /// body wins, and a tie goes to the lower y then the lower x, because one world state has to yield one tile.
+    /// </summary>
+    private static bool Nearer(int distance, (int X, int Y) candidate, (int X, int Y)? current, int currentDistance) =>
+        current is not { } held
+        || distance < currentDistance
+        || (distance == currentDistance && (candidate.Y < held.Y || (candidate.Y == held.Y && candidate.X < held.X)));
+}
+
+/// <summary>
+/// Where a body may stand for one ground drop, with the answer's own facts.
+///
+/// <para>
+/// A bare `stand_at=none` is the defect this type closes: it says "no standable tile puts this drop in reach" about a
+/// question the caller cannot check, and the three ways that answer can arise - nothing inside the rectangle, everything
+/// inside it occupied, everything inside it walled off from the body - need three different repairs. Measured `round80`:
+/// seven `item_target_out_of_reach` refusals in one burst, every one of them `stand_at=none`, and no field that told a
+/// reader whether the rectangle was empty or full.
+/// </para>
+/// <para>
+/// <see cref="InReach"/> is the population - how many tiles the engine's own rectangle covered - and it is printed
+/// whether or not a tile was chosen, so zero is a measured zero rather than a silence. <see cref="NearestRefused"/> and
+/// <see cref="NearestRefusal"/> name the tile the search could not use and the predicate that refused it.
+/// </para>
+internal readonly record struct MagneticStandSearch(
+    (int X, int Y)? Tile,
+    int InReach,
+    (int X, int Y)? NearestRefused,
+    string? NearestRefusal)
+{
+    /// <summary>The body is already inside the rectangle: nothing to search, and nothing to walk.</summary>
+    internal static MagneticStandSearch AlreadyInReach((int X, int Y) actorTile) => new(actorTile, 1, null, null);
+
+    /// <summary>
+    /// The stand-tile half of a receipt: the tile, or the refusal with the two facts that make it checkable.
+    /// </summary>
+    internal string Describe() =>
+        this.Tile is { } tile
+            ? $"stand_at={tile.X},{tile.Y}"
+            : $"stand_at=none;in_reach={this.InReach};nearest="
+                + (this.NearestRefused is { } refused ? $"{refused.X},{refused.Y}" : "none");
+
+    /// <summary>
+    /// The layer detail a refusal blames, derived from the same measurement: which predicate refused the nearest tile,
+    /// or that the rectangle held no tile at all to refuse.
+    /// </summary>
+    internal string RefusalDetail => this.NearestRefusal ?? "in_reach_none";
 }

@@ -12,6 +12,7 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Network;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -52,6 +53,10 @@ public sealed class MagnetPickupItemTests
 {
     private const long ActorId = 1001;
     private const string DroppedItemId = "(O)24";
+
+    private readonly ITestOutputHelper output;
+
+    public MagnetPickupItemTests(ITestOutputHelper output) => this.output = output;
 
     // ---- the magnet's rectangle, not the chunk's tile -------------------------------
 
@@ -571,6 +576,166 @@ public sealed class MagnetPickupItemTests
             .Should().Be(1, "the drop the plan named at 7,2 is in the pack");
     }
 
+    // ---- the live refusal, asked of the engine's own predicates ---------------------
+
+    /// <summary>
+    /// THE QUESTION `round80` LEFT OPEN, answered from the world rather than from arithmetic. Seven `pickup_item`
+    /// requests were refused `tile=4,38;actor=7,39;radius=128;stand_at=none` - the drop Chebyshev-3 away behind a
+    /// 2-tile reach - and the two answers that refusal can stand for need different repairs: nothing standable inside
+    /// the engine's rectangle (the world's answer, and the caller should stop), or a search that never asked the tiles
+    /// the rectangle holds (a defect).
+    ///
+    /// <para>
+    /// The table below is the answer, printed per ring tile so a reader can check it: for the SAME actor tile, the
+    /// SAME drop tile and the SAME radius the refusal reported, which tiles the engine's rectangle covers, which of
+    /// them this body may stand on and walk to, and which tile the one owner of that geometry chooses. The reach model
+    /// does find one - so on this geometry a `stand_at=none` is a statement about the WORLD, never about the search,
+    /// and the receipt has to carry the tiles it examined for that statement to be checkable at all
+    /// (<c>in_reach=</c>, <c>nearest=</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// It also records the asymmetry the radius does not show: the reach is a PIXEL rectangle measured from the body's
+    /// own standing pixel, so a tile two tiles away towards the body's sub-tile offset is one or two dozen pixels
+    /// outside it, while the tile on the other side is inside. "Two tiles away" is therefore not a promise that any
+    /// particular two-tile ring tile works - which is exactly why the refusal may not answer with a radius alone.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheLiveRefusalGeometryHoldsTilesTheSearchCanFind()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 38, heldAtPublication: 0);
+        harness.StandAt(7, 39);
+        Vector2 subject = MagneticPickupReach.Subject(harness.Farm.debris[0]);
+        int reach = harness.MagnetRadius;
+        Point standing = harness.Actor.StandingPixel;
+        int offsetX = standing.X - (int)harness.Actor.Tile.X * 64;
+        int offsetY = standing.Y - (int)harness.Actor.Tile.Y * 64;
+        Func<Vector2, bool>? walkable = StardewBodyController.BuildWalkableComponent(harness.Farm, harness.Actor);
+
+        var table = new List<string>();
+        var inside = new List<(int X, int Y)>();
+        for (int y = 37; y <= 39; y++)
+        {
+            for (int x = 2; x <= 6; x++)
+            {
+                var pixel = new Point(x * 64 + offsetX, y * 64 + offsetY);
+                bool inReach = MagneticPickupReach.WithinMagnet(subject, pixel, reach);
+                bool standable = StardewBodyController.IsStandableTile(harness.Farm, harness.Actor, new Vector2(x, y));
+                bool reachable = walkable is not null && walkable(new Vector2(x, y));
+                table.Add($"({x},{y}) in_reach={inReach} standable={standable} reachable={reachable}");
+                if (inReach && standable && reachable)
+                    inside.Add((x, y));
+            }
+        }
+
+        this.output.WriteLine($"actor={harness.Actor.Tile.X},{harness.Actor.Tile.Y};drop=4,38;reach={reach};offset={offsetX},{offsetY}");
+        foreach (string line in table)
+            this.output.WriteLine($"  {line}");
+
+        inside.Should().Contain(
+            (5, 39),
+            "the tile beside the drop and one step west of the body is inside the engine's own rectangle, and the body may "
+                + "stand on it and walk to it - so `stand_at=none` on this geometry is not the search's answer");
+
+        MagneticStandSearch search = MagneticPickupReach.SelectStandTile(
+            subject,
+            ((int)harness.Actor.Tile.X, (int)harness.Actor.Tile.Y),
+            standing,
+            reach,
+            tile => StardewBodyController.IsStandableTile(harness.Farm, harness.Actor, new Vector2(tile.X, tile.Y))
+                && !ExecutionManager.IsWarpBufferTile(harness.Farm, tile),
+            walkable is null ? _ => true : tile => walkable(new Vector2(tile.X, tile.Y)));
+
+        search.Tile.Should().Be((5, 39), "the nearest standable tile inside the rectangle, which is the shortest walk");
+        search.InReach.Should().BeGreaterThan(1, "the rectangle covers a ring of tiles, not the one the drop lies on");
+        search.Describe().Should().Be("stand_at=5,39");
+    }
+
+    /// <summary>
+    /// THE SHAPE THE REACH MODEL HAD: a candidate window centred on the tile the REQUEST NAMES, while the rectangle is
+    /// built on the debris' own mean. For a single chunk the two are the same tile and nothing shows; for a pile - the
+    /// normal case, since a drop scatters and a magnet drags - the named chunk's tile can sit several tiles from the
+    /// centre, and a window narrowed to it answers `none` without asking about a single tile the rectangle holds.
+    /// Proved here with the arithmetic alone: the rectangle around (0,2) holds standable tiles, the body is four tiles
+    /// east of it, and a search narrowed to a tile six tiles away from the centre finds nothing.
+    /// </summary>
+    [Fact]
+    public void ASpreadPileIsSearchedFromItsOwnCentreNotTheChunkTheRequestNames()
+    {
+        var subject = new Vector2(0, 2 * 64);
+        var actor = (X: 4, Y: 2);
+        var standing = new Point(4 * 64 + 32, 2 * 64 + 32);
+
+        MagneticStandSearch search = MagneticPickupReach.SelectStandTile(
+            subject, actor, standing, 128, isStandable: _ => true, isReachable: _ => true);
+
+        search.Tile.Should().Be(
+            (2, 2),
+            "the rectangle is built on the debris' mean, so the nearest standable tile inside it is found from there - "
+                + "a window centred on a chunk six tiles away from that mean would have examined nothing in the rectangle");
+        search.InReach.Should().BeGreaterThan(1, "the tiles the rectangle covers are the population, and it is not one");
+    }
+
+    /// <summary>
+    /// A `none` that says what it looked at. Every tile the rectangle covers is occupied here, which is the world's
+    /// answer rather than the search's - and the receipt has to publish the population and the tile that came closest,
+    /// because "nothing works" without "these are the tiles" cannot be told from a search that asked the wrong place.
+    /// </summary>
+    [Fact]
+    public void AReachRefusalNamesTheNearestTileItCouldNotUse()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        harness.StandAt(0, 2);
+        for (int x = 1; x <= 7; x++)
+        {
+            for (int y = 0; y <= 4; y++)
+                harness.OccupyTile(x, y);
+        }
+
+        LocalExecutionReceipt receipt = harness.Manager.RequestLocalPickupItem(
+            "req_walled", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, receipt.Evidence);
+        receipt.ReasonCode.Should().Be("item_target_out_of_reach");
+        Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
+        evidence["stand_at"].Should().Be("none", "the geometry refused every tile the rectangle covers");
+        int.Parse(evidence["in_reach"], System.Globalization.CultureInfo.InvariantCulture).Should().BeGreaterThan(
+            1, "the refusal says how many tiles it examined, so `none` is a measured answer about a population");
+        (int nearestX, int nearestY) = ParseTile(evidence["nearest"]);
+        MagneticPickupReach.WithinMagnet(
+            MagneticPickupReach.Subject(harness.Farm.debris[0]),
+            new Point(nearestX * 64 + (harness.Actor.StandingPixel.X - (int)harness.Actor.Tile.X * 64), nearestY * 64 + (harness.Actor.StandingPixel.Y - (int)harness.Actor.Tile.Y * 64)),
+            harness.MagnetRadius)
+            .Should().BeTrue("the tile it offers is one the engine's own rectangle covers");
+        evidence["blocked_by"].Should().Be("range:standability", "and the layer names which predicate refused it");
+    }
+
+    /// <summary>
+    /// The four sentences a stand-tile search can answer with, as one table: the tile, and - when there is none - the
+    /// population it covered and the tile that came closest. A `none` with no population is the shape this closes.
+    /// </summary>
+    [Fact]
+    public void AStandSearchSaysWhatItExaminedAndWhyItRefused()
+    {
+        MagneticStandSearch.AlreadyInReach((7, 39)).Describe().Should().Be("stand_at=7,39");
+
+        var walled = new MagneticStandSearch(null, 12, (6, 39), "standability");
+        walled.Describe().Should().Be("stand_at=none;in_reach=12;nearest=6,39");
+        walled.RefusalDetail.Should().Be("standability", "the layer word is the measurement, not a claim beside it");
+
+        var walledOff = new MagneticStandSearch(null, 4, (3, 2), "reachability");
+        walledOff.Describe().Should().Be("stand_at=none;in_reach=4;nearest=3,2");
+        walledOff.RefusalDetail.Should().Be("reachability");
+
+        // A rectangle that holds no tile at all (a reach narrower than half a tile, or a centre that falls between two
+        // candidate pixels) is a measured zero rather than a silence, and it must not borrow a predicate's name.
+        var empty = new MagneticStandSearch(null, 0, null, null);
+        empty.Describe().Should().Be("stand_at=none;in_reach=0;nearest=none");
+        empty.RefusalDetail.Should().Be("in_reach_none");
+    }
+
     // ---- the rule itself ----------------------------------------------------------
 
     /// <summary>
@@ -613,29 +778,28 @@ public sealed class MagnetPickupItemTests
         var standing = new Point(2 * 64 + 32, 2 * 64 + 32);
         int reach = 128;
 
-        (int X, int Y)? chosen = MagneticPickupReach.SelectStandTile(
-            subject, (5, 2), actor, standing, reach,
-            isStandable: tile => tile != (5, 2),
-            isReachable: _ => true);
-
-        chosen.Should().Be((3, 2), "the nearest standable tile inside the rectangle wins, and the chunk's own tile is not standable");
+        MagneticPickupReach.SelectStandTile(
+                subject, actor, standing, reach,
+                isStandable: tile => tile != (5, 2),
+                isReachable: _ => true)
+            .Tile.Should().Be((3, 2), "the nearest standable tile inside the rectangle wins, and the chunk's own tile is not standable");
 
         MagneticPickupReach.SelectStandTile(
-                subject, (5, 2), actor, standing, reach,
+                subject, actor, standing, reach,
                 isStandable: _ => false,
                 isReachable: _ => true)
-            .Should().BeNull("nowhere to stand inside the rectangle is a refusal, not a guess");
+            .Tile.Should().BeNull("nowhere to stand inside the rectangle is a refusal, not a guess");
 
         MagneticPickupReach.SelectStandTile(
-                subject, (5, 2), actor, standing, reach,
+                subject, actor, standing, reach,
                 isStandable: _ => true,
                 isReachable: _ => false)
-            .Should().BeNull("a tile the body cannot walk to is the walk that comes back no_native_path");
+            .Tile.Should().BeNull("a tile the body cannot walk to is the walk that comes back no_native_path");
 
         // A reach that does not span the gap leaves nothing: the rule cannot be satisfied by wishing.
         // A reach narrower than one tile leaves only the chunk's own tile in range, so refusing it is the whole answer.
-        MagneticPickupReach.SelectStandTile(subject, (5, 2), actor, standing, 32, isStandable: tile => tile != (5, 2), isReachable: _ => true)
-            .Should().BeNull("one tile of reach covers only the chunk's own tile here, and that tile cannot be stood on");
+        MagneticPickupReach.SelectStandTile(subject, actor, standing, 32, isStandable: tile => tile != (5, 2), isReachable: _ => true)
+            .Tile.Should().BeNull("one tile of reach covers only the chunk's own tile here, and that tile cannot be stood on");
     }
 
     [Fact]

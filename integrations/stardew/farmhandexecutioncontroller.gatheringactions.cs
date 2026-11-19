@@ -217,11 +217,10 @@ internal sealed partial class ExecutionManager
         // geometry and the settlement. It DISAPPEARS if drop collection ever becomes tile-shaped - the engine gating
         // collection on a tile distance, which would make the ring and an arrival execute the right rule - and it dies
         // mechanically the moment this handler names one of the three legs, because the matrix's no-leg entry then fails.
-        (int X, int Y)? standTile = MagneticPickupReach.WithinMagnet(magnetSubject, Game1.player.StandingPixel, magnetRadius)
-            ? actorTile
+        MagneticStandSearch reach = MagneticPickupReach.WithinMagnet(magnetSubject, Game1.player.StandingPixel, magnetRadius)
+            ? MagneticStandSearch.AlreadyInReach(actorTile)
             : MagneticPickupReach.SelectStandTile(
                 magnetSubject,
-                (liveTargetTile.X, liveTargetTile.Y),
                 actorTile,
                 Game1.player.StandingPixel,
                 magnetRadius,
@@ -230,18 +229,24 @@ internal sealed partial class ExecutionManager
                 StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } walkable
                     ? tile => walkable(new Vector2(tile.X, tile.Y))
                     : _ => true);
-        if (standTile is null)
+        // THE REFUSAL PUBLISHES THE GEOMETRY IT ASKED, because its two answers need different repairs and the sentence
+        // must not have to be believed. `subject_px` is the point the engine's rectangle is built on
+        // (`Debris.approximatePosition`, the debris' mean - NOT the chunk's tile); `in_reach` is how many tiles that
+        // rectangle covered; `nearest` is the tile that came closest and `blocked_by` names the predicate that refused
+        // it. Measured `round80`: seven refusals in one burst, all `stand_at=none`, none of them saying which.
+        if (reach.Tile is not { } standTile)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_out_of_reach",
-                $"tile={liveTargetTile.X},{liveTargetTile.Y};actor={actorTile.X},{actorTile.Y};radius={magnetRadius};stand_at=none"
-                    + DescribeApproachRange(liveTargetTile.X, liveTargetTile.Y, standingTileAsked: true));
+                $"tile={liveTargetTile.X},{liveTargetTile.Y};actor={actorTile.X},{actorTile.Y};radius={magnetRadius};"
+                    + $"subject_px={(int)magnetSubject.X},{(int)magnetSubject.Y};{reach.Describe()}"
+                    + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, reach.RefusalDetail).Format()}");
 
         int beforeCount = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
-        string magnetFacts = $"within_magnet=true;radius={magnetRadius};stand_at={standTile.Value.X},{standTile.Value.Y}";
+        string magnetFacts = $"within_magnet=true;radius={magnetRadius};{reach.Describe()}";
         this.slots.ItemPickup.Assign(new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs));
-        if (standTile.Value != actorTile)
+        if (standTile != actorTile)
         {
-            LocalMoveSpec approach = new(executionId, requestId, new Vector2(standTile.Value.X, standTile.Value.Y), false, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
+            LocalMoveSpec approach = new(executionId, requestId, new Vector2(standTile.X, standTile.Y), false, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
             this.slots.Active.Assign(approach);
             if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
             {
