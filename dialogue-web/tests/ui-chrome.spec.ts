@@ -237,6 +237,9 @@ test("the model drawer's select is themed and the fields keep the 44px floor", a
     const select = node.querySelector("select");
     const input = node.querySelector("input");
     return {
+      // `color-scheme` is what tells the platform which way round to draw the chrome no rule of
+      // ours reaches (a `<select>`'s popup, a scrollbar): the page's own answer is the root's.
+      root: { colorScheme: getComputedStyle(document.documentElement).colorScheme },
       select: select === null ? null : read(select),
       input: input === null ? null : read(input),
     };
@@ -245,7 +248,17 @@ test("the model drawer's select is themed and the fields keep the 44px floor", a
   // The platform's chrome is retired, and the arrow is drawn by the stylesheet.
   expect(measured.select?.appearance, "the select no longer renders the platform's own control").toBe("none");
   expect(measured.select?.backgroundImage, "the stylesheet draws the select's arrow").not.toBe("none");
-  expect(measured.select?.colorScheme).toBe("dark");
+  // The popup this control opens is drawn in the appearance the PAGE is in. `bd49cc52` moved
+  // `color-scheme` off `.form-select` and onto the theme roots, so a control that still pinned
+  // `dark` here would open a dark popup on a light page - the defect that commit measured. The
+  // reading is therefore a pair: the root states a scheme, and the control is drawn in it. Pinning
+  // `dark` would make this pass only on a machine that happens to prefer the dark appearance.
+  expect(measured.root.colorScheme, "the theme root states which appearance the page paints").toMatch(
+    /^(dark|light)$/u,
+  );
+  expect(measured.select?.colorScheme, "the select is drawn in the page's own appearance").toBe(
+    measured.root.colorScheme,
+  );
   // The floor comes from the token, for the select and for the text field beside it.
   expect(measured.select?.height, "the select keeps the 44 px floor").toBeGreaterThanOrEqual(44);
   expect(measured.input?.height, "the input keeps the 44 px floor").toBeGreaterThanOrEqual(44);
