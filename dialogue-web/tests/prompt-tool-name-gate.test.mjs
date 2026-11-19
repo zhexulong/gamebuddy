@@ -160,33 +160,52 @@ export function registryProjection(file = ACTION_REGISTRY) {
 /**
  * The prompt text of one property assignment, as ONE entry at the line it begins on.
  *
- * A concatenation and a template literal with substitutions are each one message: the model reads the
- * joined string, so the pieces are joined before either arm looks at them. Splitting them would judge
- * half a sentence - "submit 'dismiss_modal'" in the fragment that follows the one naming the tool that
- * carries it - and report a route the sentence does state.
+ * A message is read in EMITTED order. A `+` concatenation is glued, but a template literal's
+ * substitution is a space - the value it inserts is computed - and the text inside that
+ * substitution is put where the substitution sits. Collecting the literals the initializer happens
+ * to contain and joining them is not the same string: the fragments come out in pre-order, so a
+ * substitution's own text lands AFTER the span literal that follows it in the source. That is how
+ * `clear_step_blocked`'s sentence in `stardew-action-remedy.ts` read as the tool
+ * `stardew_plan_workthe`: its emitted order is `dispatch the clear the refusal names with
+ * stardew_plan_work`, and the reader glued the first branch of that ternary onto the name that
+ * follows it. No reordering of the sentence could make the glued reading true, so the reader is
+ * what has to follow it.
+ *
+ * Anything else in the initializer - an argument string, a sibling statement - is a fragment of its
+ * own, separated by a space, because two literals that are merely near each other are not adjacent
+ * in anything the model reads.
  */
 function textOf(property, sourceFile, file) {
-  const parts = [];
-  const record = (literal) => {
-    if (ts.isTemplateExpression(literal)) {
-      parts.push(literal.head.text);
-      for (const span of literal.templateSpans) parts.push(span.literal.text);
+  const fragments = [];
+  /** One expression chain as the model reads it; `null` when the node contributes no literal text. */
+  const chainText = (node) => {
+    if (ts.isBinaryExpression(node))
+      return node.operatorToken.kind === ts.SyntaxKind.PlusToken
+        ? `${chainText(node.left) ?? ""}${chainText(node.right) ?? ""}`
+        : `${chainText(node.left) ?? ""} ${chainText(node.right) ?? ""}`;
+    if (ts.isConditionalExpression(node)) return `${chainText(node.whenTrue) ?? ""} ${chainText(node.whenFalse) ?? ""}`;
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node))
+      return chainText(node.expression);
+    if (ts.isTemplateExpression(node)) {
+      let text = node.head.text;
+      for (const span of node.templateSpans) text += ` ${chainText(span.expression) ?? ""} ${span.literal.text}`;
+      return text;
+    }
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    return null;
+  };
+  const collect = (node) => {
+    const text = chainText(node);
+    if (text === null) {
+      ts.forEachChild(node, collect);
       return;
     }
-    parts.push(literal.text);
+    fragments.push(text);
   };
-  const candidate = property.initializer;
-  if (ts.isStringLiteral(candidate) || ts.isNoSubstitutionTemplateLiteral(candidate) || ts.isTemplateExpression(candidate)) {
-    record(candidate);
-  } else {
-    walk(candidate, (inner) => {
-      if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner) || ts.isTemplateExpression(inner))
-        record(inner);
-    });
-  }
-  if (parts.length === 0) return null;
+  collect(property.initializer);
+  if (fragments.length === 0) return null;
   const { line } = sourceFile.getLineAndCharacterOfPosition(property.initializer.getStart(sourceFile));
-  return { file: hostPath(file), line: line + 1, text: parts.join("") };
+  return { file: hostPath(file), line: line + 1, text: fragments.join(" ") };
 }
 
 /** One named property's prompt text, at the line it begins on. */
@@ -593,7 +612,44 @@ test("prompt-tool.4 (mutation): a renamed tool, an unmounted name, a bare id, a 
   assert.deepEqual(unresolvedFindings([planted.bareAlone], new Set(["stardew_express_emote"])), [], "no name is named there");
   assert.deepEqual(unresolvedFindings([planted.mountedNames], mounted), [], "a mounted name is clean");
   assert.deepEqual(bareActionFindings([planted.mountedNames], mounted), [], "a mounted name carries no bare id");
+  // The reader's own shape: a message split for line length is one message in EMITTED order, and a
+  // substitution's alternative belongs where the substitution sits. `clear_step_blocked`
+  // (`stardew-action-remedy.ts`) shipped as
+  //
+  //   `... dispatch ${clearsWith === null ? "the clear the refusal names" : clearsWith} with
+  //    stardew_plan_work` + `${remaining ...} - and the walk resumes ...`
+  //
+  // and the reader appended the ternary's first branch after the span literal, so `prompt-tool.1`
+  // reported `prompt_names_unmounted_tool:stardew_plan_workthe` on that line - a tool name no file
+  // declares, glued out of a name and the next branch's first word. This is that shape, planted:
+  // the only tool token is the one the sentence names.
+  {
+    const plantedSource = ts.createSourceFile(
+      "host/src/planted-reader.ts",
+      [
+        "const remedy = {",
+        "  guidance: (detail: string | null) =>",
+        '    `dispatch ${detail === null ? "the clear the refusal names" : detail} with stardew_plan_work` +',
+        '    `${detail === null ? "" : ` - ${detail} clear(s) left`} - and the walk resumes from here.`,',
+        "};",
+      ].join("\n"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const readEntries = [];
+    walk(plantedSource, (node) => {
+      if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === "guidance")
+        readEntries.push(textOf(node, plantedSource, "planted-reader.ts"));
+    });
+    assert.equal(readEntries.length, 1, "the planted message is read as one prompt text");
+    assert.deepEqual(
+      [...readEntries[0].text.matchAll(TOOL_TOKEN)].map((match) => match[0]),
+      ["stardew_plan_work"],
+      `the reader glues a substitution's alternative onto the name that follows it: ${JSON.stringify(readEntries[0].text)}`,
+    );
+  }
   t.diagnostic(
-    "prompt-tool.4: the planted rename, the unmounted name, the bare id, the plan step and the unadmitted id each read as their own shape",
+    "prompt-tool.4: the planted rename, the unmounted name, the bare id, the plan step, the unadmitted id and a split message each read as their own shape",
   );
 });
