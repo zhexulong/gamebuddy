@@ -401,7 +401,8 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// THE BOUND the furniture reach compares, printed with both values it compares.
+    /// THE BOUND the furniture reach compares, printed with both values it compares - and the tile that puts the actor
+    /// inside it.
     ///
     /// <para>
     /// <c>Furniture.IsCloseEnoughToFarmer</c> (Furniture.cs:1295-1308) builds the piece's footprint rectangle from its own
@@ -411,6 +412,23 @@ internal sealed partial class ExecutionManager
     /// would have to close: measured 2026-11-19 (Turn 130-138), <c>furniture_rotation_out_of_range</c> said nothing a
     /// reader could act on. The arithmetic is restated here ONLY for evidence - the decision is the engine's predicate,
     /// never this rectangle.
+    /// </para>
+    /// <para>
+    /// WHERE TO STAND. Printed with it because a box is not a step: measured `round79`, an actor at tile 4,6 named a piece
+    /// at tile 4,4 four times and every refusal answered
+    /// <c>reach_inflate_px=96;reach_box=160,160:256x256;actor_standing_pixel=291,444</c> - honest, complete, and silent
+    /// about the one thing she needed, which is that the box ends at y=416 and her standing pixel is 28 px below it. A
+    /// caller cannot turn a pixel box into a tile, so this helper does it: <see cref="ApproachTileSelector"/> picks the
+    /// nearest tile beside the piece that the actor may stand on AND walk to (<see cref="StardewBodyController.IsStandableTile"/>
+    /// and the actor's own walkable component - the same two questions the shared approach leg asks).
+    /// </para>
+    /// <para>
+    /// THE RING IS INSIDE THE BOX, which is why naming it cannot overstate the reach. A standing pixel is its tile's
+    /// origin plus the actor's own sub-tile offset, which is smaller than one tile on each axis, and the box reaches 96 px
+    /// past every footprint edge - so a tile beside the footprint is inside it for ANY offset or footprint size. That is
+    /// also the whole of what this helper decides: it never widens the reach, and the refusal is still the engine's
+    /// predicate answering. <c>stand_at=none</c> is the honest answer when no such tile exists (a piece walled in on every
+    /// side), and it is the same word <see cref="ClearingEvidence.NoNextSteps"/> uses for a step nobody can take.
     /// </para>
     /// </summary>
     internal static string DescribeFurnitureReach(Furniture piece)
@@ -424,7 +442,42 @@ internal sealed partial class ExecutionManager
         Point standing = Game1.player.StandingPixel;
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"reach_inflate_px=96;reach_box={reach.X},{reach.Y}:{reach.Width}x{reach.Height};actor_standing_pixel={standing.X},{standing.Y}");
+            $"reach_inflate_px=96;reach_box={reach.X},{reach.Y}:{reach.Width}x{reach.Height};actor_standing_pixel={standing.X},{standing.Y};{DescribeFurnitureStandTile(piece)}");
+    }
+
+    /// <summary>
+    /// The tile the actor should walk to, as the two words a caller can dispatch: where to stand, and the published
+    /// action that takes her there (<see cref="ClearingEvidence.WalkAction"/>, so the step names this Mod's own id and
+    /// not a verb invented here).
+    /// </summary>
+    private static string DescribeFurnitureStandTile(Furniture piece)
+    {
+        GameLocation? location = Game1.player.currentLocation;
+        if (location?.map is null)
+            return $"stand_at={ClearingEvidence.NoNextSteps};next_steps={ClearingEvidence.NoNextSteps}";
+        Func<Vector2, bool>? walkable = StardewBodyController.BuildWalkableComponent(location, Game1.player);
+        (int X, int Y)? stand = ApproachTileSelector.Select(
+            FurnitureFootprint(piece),
+            ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y),
+            tile => StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y)),
+            // A component that exceeded its probe budget claims nothing, which is the shared leg's own reading
+            // (`TryBeginToolApproach`) rather than a refusal invented here.
+            tile => walkable is null || walkable(new Vector2(tile.X, tile.Y)));
+        if (stand is not { } tile)
+            return $"stand_at={ClearingEvidence.NoNextSteps};next_steps={ClearingEvidence.NoNextSteps}";
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"stand_at={tile.X},{tile.Y};next_steps={ClearingEvidence.WalkAction}@{tile.X},{tile.Y}");
+    }
+
+    /// <summary>The tiles a piece occupies, from its own <c>tileLocation</c> and the footprint the engine derives.</summary>
+    private static IReadOnlyList<(int X, int Y)> FurnitureFootprint(Furniture piece)
+    {
+        List<(int X, int Y)> tiles = new();
+        for (int width = 0; width < piece.getTilesWide(); width++)
+            for (int height = 0; height < piece.getTilesHigh(); height++)
+                tiles.Add(((int)piece.TileLocation.X + width, (int)piece.TileLocation.Y + height));
+        return tiles;
     }
 
     private static bool TryDescribeFence(

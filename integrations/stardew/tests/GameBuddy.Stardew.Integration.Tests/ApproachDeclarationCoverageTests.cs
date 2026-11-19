@@ -40,7 +40,6 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class ApproachDeclarationCoverageTests
 {
-    private const string HandlersDirectory = "integrations/stardew/Handlers";
     private const string ModDirectory = "integrations/stardew";
     private const string DefinitionsPath = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 
@@ -217,8 +216,8 @@ public sealed class ApproachDeclarationCoverageTests
     /// </summary>
     private static Measurement Measure()
     {
-        IReadOnlyDictionary<string, string> handlers = HandlerMethods();
-        IReadOnlyDictionary<string, string> sources = HandlerSources();
+        IReadOnlyDictionary<string, string> handlers = HandlerSourceFacts.HandlerMethods();
+        IReadOnlyDictionary<string, string> sources = HandlerSourceFacts.HandlerSources();
         IReadOnlyDictionary<string, int> registrationLines = RegistrationLines();
 
         var rows = new List<CoverageRow>();
@@ -236,8 +235,8 @@ public sealed class ApproachDeclarationCoverageTests
             }
 
             string? method = handlers.TryGetValue(registration.ActionId, out string? handlerMethod) ? handlerMethod : null;
-            (string File, int Line, int BodyLine, string Body)? site = method is null ? null : MethodSite(sources, method);
-            string body = site is null ? string.Empty : StripLineComments(site.Value.Body);
+            (string File, int Line, int BodyLine, string Body)? site = method is null ? null : HandlerSourceFacts.MethodSite(sources, method);
+            string body = site is null ? string.Empty : HandlerSourceFacts.StripLineComments(site.Value.Body);
             (string Marker, int Index) leg = ApproachLegMarkers
                 .Select(marker => (Marker: marker, Index: body.IndexOf(marker, StringComparison.Ordinal)))
                 .Where(candidate => candidate.Index >= 0)
@@ -273,182 +272,19 @@ public sealed class ApproachDeclarationCoverageTests
             handlers.Keys.Where(actionId => !registered.Contains(actionId)).OrderBy(actionId => actionId, StringComparer.Ordinal).ToList());
     }
 
-    /// <summary>The action id to handler method mapping, from the one place the Mod binds them.</summary>
-    private static IReadOnlyDictionary<string, string> HandlerMethods()
-    {
-        var methods = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (string file in Directory.GetFiles(RepositorySourcePath(HandlersDirectory), "*.cs"))
-        {
-            string source = File.ReadAllText(file);
-
-            // `this.executions.X(` is the execution controller, `this.X(` a method on the handler itself
-            // (`navigate_to_destination` hands its request to `Navigate`, which is not a controller request path).
-            foreach (Match match in Regex.Matches(
-                source,
-                "\"([a-z0-9_]+)\"\\s*=>\\s*(?:this\\.(?:executions\\.)?)?([A-Za-z0-9_]+)\\("))
-            {
-                methods[match.Groups[1].Value] = match.Groups[2].Value;
-            }
-        }
-
-        methods.Should().NotBeEmpty("the handler switch arms are how an action id reaches its method");
-        return methods;
-    }
-
-    /// <summary>
-    /// Every C# file a handler arm can reach its method body through: the execution controller's partials, and the
-    /// handler files themselves for the few arms that route through a method of their own rather than a controller
-    /// request path. Keyed by a display name, so a failure names the file a reader can open.
-    /// </summary>
-    private static IReadOnlyDictionary<string, string> HandlerSources()
-    {
-        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs"))
-        {
-            sources[Path.GetFileName(file)] = File.ReadAllText(file);
-        }
-
-        foreach (string file in Directory.GetFiles(RepositorySourcePath(HandlersDirectory), "*.cs"))
-        {
-            sources[$"{HandlersDirectory}/{Path.GetFileName(file)}"] = File.ReadAllText(file);
-        }
-
-        sources.Should().NotBeEmpty("the controller partials hold the request paths the approach legs live in");
-        return sources;
-    }
-
     /// <summary>The line of each execution registration in the definitions file, so a failure can name the row.</summary>
     private static IReadOnlyDictionary<string, int> RegistrationLines()
     {
-        string source = File.ReadAllText(Path.Combine(RepositorySourcePath(ModDirectory), "src/Core/Policy/FarmhandActionDefinitions.cs"));
+        string source = File.ReadAllText(Path.Combine(HandlerSourceFacts.RepositorySourcePath(ModDirectory), "src/Core/Policy/FarmhandActionDefinitions.cs"));
         var lines = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (Match match in Regex.Matches(source, "\\bE\\(\"([a-z0-9_]+)\""))
         {
             if (!lines.ContainsKey(match.Groups[1].Value))
-                lines[match.Groups[1].Value] = LineOf(source, match.Index);
+                lines[match.Groups[1].Value] = HandlerSourceFacts.LineOf(source, match.Index);
         }
 
         lines.Should().NotBeEmpty("the definitions file declares the rows, or this gate cannot name one");
         return lines;
-    }
-
-    /// <summary>
-    /// The file, line and body of the first <c>LocalExecutionReceipt &lt;name&gt;(</c> in any source, whole: a statement
-    /// body is a brace-balanced block and an EXPRESSION body runs to its own semicolon. The parameter list is skipped by
-    /// its own parentheses first, because an expression-bodied request half has no brace of its own while the lambdas it
-    /// hands the seam do - reading from the first <c>{</c> would return a lambda's block instead of the handler.
-    /// </summary>
-    private static (string File, int Line, int BodyLine, string Body)? MethodSite(IReadOnlyDictionary<string, string> sources, string method)
-    {
-        foreach ((string file, string source) in sources)
-        {
-            int declaration = source.IndexOf($"LocalExecutionReceipt {method}(", StringComparison.Ordinal);
-            if (declaration < 0)
-                continue;
-
-            (int Start, string Body)? body = BodyOf(source, declaration);
-            if (body is null)
-                return null;
-
-            int line = LineOf(source, declaration);
-            return (file, line, LineOf(source, body.Value.Start), body.Value.Body);
-        }
-
-        return null;
-    }
-
-    /// <summary>The 1-based line an index sits on.</summary>
-    private static int LineOf(string source, int index) =>
-        source.Take(index).Count(character => character == '\n') + 1;
-
-    private static (int Start, string Body)? BodyOf(string source, int declaration)
-    {
-        int opening = source.IndexOf('(', declaration);
-        int cursor = AfterBalanced(source, opening);
-        while (cursor < source.Length && source[cursor] is ' ' or '\n' or '\r' or '\t') cursor++;
-        if (cursor >= source.Length) return null;
-        string? body = source[cursor] == '{'
-            ? source[cursor..AfterBraced(source, cursor)]
-            : ExpressionBody(source, cursor);
-        return body is null ? null : (cursor, body);
-    }
-
-    /// <summary>The index just past the construct whose opening parenthesis is at <paramref name="open"/>.</summary>
-    private static int AfterBalanced(string source, int open)
-    {
-        int depth = 0;
-        for (int index = open; index < source.Length; index++)
-        {
-            if (source[index] == '(') depth++;
-            else if (source[index] == ')' && --depth == 0) return index + 1;
-        }
-
-        return source.Length;
-    }
-
-    /// <summary>The index just past the block whose opening brace is at <paramref name="open"/>.</summary>
-    private static int AfterBraced(string source, int open)
-    {
-        int depth = 0;
-        for (int index = open; index < source.Length; index++)
-        {
-            if (source[index] == '{') depth++;
-            else if (source[index] == '}' && --depth == 0) return index + 1;
-        }
-
-        return source.Length;
-    }
-
-    private static string? ExpressionBody(string source, int start)
-    {
-        int parentheses = 0;
-        int braces = 0;
-        for (int index = start; index < source.Length; index++)
-        {
-            switch (source[index])
-            {
-                case '(': parentheses++; break;
-                case ')': parentheses--; break;
-                case '{': braces++; break;
-                case '}': braces--; break;
-                case ';' when parentheses == 0 && braces == 0: return source[start..(index + 1)];
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Drops line comments, because the gate is about what the handler DOES: a request path whose comment explains the
-    /// walk it used to make would otherwise satisfy the marker it describes.
-    /// </summary>
-    private static string StripLineComments(string source)
-    {
-        var lines = source.Split('\n');
-        for (int index = 0; index < lines.Length; index++)
-        {
-            int comment = lines[index].IndexOf("//", StringComparison.Ordinal);
-            if (comment >= 0)
-                lines[index] = lines[index][..comment];
-        }
-
-        return string.Join('\n', lines);
-    }
-
-    private static string RepositorySourcePath(string relative)
-    {
-        foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
-        {
-            DirectoryInfo? directory = new(start);
-            for (int depth = 0; directory is not null && depth < 12; depth++, directory = directory.Parent)
-            {
-                string candidate = Path.Combine(directory.FullName, relative);
-                if (Directory.Exists(candidate))
-                    return candidate;
-            }
-        }
-
-        throw new DirectoryNotFoundException($"repository path not found: {relative}");
     }
 
     private sealed record Measurement(

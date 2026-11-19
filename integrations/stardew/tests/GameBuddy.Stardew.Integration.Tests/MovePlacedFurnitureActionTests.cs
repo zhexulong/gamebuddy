@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.Serialization;
 using FluentAssertions;
@@ -217,6 +218,64 @@ public sealed class MovePlacedFurnitureActionTests
         world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(piece);
     }
 
+    /// <summary>
+    /// ROUND 79'S OWN DETAIL, replayed: the actor at tile 4,6 naming a piece at tile 4,4, with the standing pixel the
+    /// live run printed. The refusal must not stop at the box it measured - it must NAME the tile that closes the gap,
+    /// and that tile must actually work.
+    ///
+    /// <para>
+    /// WHY THIS IS THE FALSIFIER. `actor_tile=4,6;furniture_tile=4,4;reach_box=160,160:256x256;actor_standing_pixel=291,444`
+    /// is a complete description of a gap nobody can close by reading it: 444 is 28 px below the box's last row, and the
+    /// step from there is a TILE, which the box does not name. The claim this test holds the refusal to is therefore
+    /// doubled: the tile it names lies inside the box it printed, and standing there makes the engine's own predicate
+    /// (`Furniture.IsCloseEnoughToFarmer`) accept her. A named tile that fails either half is the same useless sentence
+    /// with an extra coordinate.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OutOfReach_NamesATileInsideTheBoxItPrintsAndThatTileReachesThePiece()
+    {
+        using var world = FurnitureWorld.Create();
+        Furniture piece = world.PlaceFurniture(x: 4, y: 4);
+        // round79 placed the actor at tile 4,6 with a standing pixel of 291,444. `StandingPixel` is the centre of the
+        // farmer's own 48x32 box (`Farmer.GetBoundingBox`, Farmer.cs:5933-5941), so the position that produces it is
+        // the pixel the live run had, minus that centre.
+        world.StandAtPosition(291 - 32, 444 - 16);
+
+        LocalExecutionReceipt receipt = world.Request(4, 4);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, receipt.Evidence);
+        receipt.ReasonCode.Should().Be("move_placed_furniture_out_of_range");
+        string evidence = receipt.Evidence ?? string.Empty;
+        evidence.Should().Contain("actor_tile=4,6");
+        evidence.Should().Contain("furniture_tile=4,4");
+        evidence.Should().Contain("reach_inflate_px=96");
+        evidence.Should().Contain("actor_standing_pixel=291,444", "the live run's own readings must be reproducible here");
+        Rectangle box = EvidenceRectangle(evidence, "reach_box");
+        box.Should().Be(new Rectangle(160, 160, 256, 256), "the box round79 printed, to the pixel");
+        Point standing = EvidencePoint(evidence, "actor_standing_pixel");
+        box.Contains(standing).Should().BeFalse("round79's refusal was honest: her standing pixel is 28 px below the box");
+
+        // (1) THE REFUSAL NAMES A TILE, and the tile it names is inside the box it printed.
+        (int X, int Y) stand = EvidenceTile(evidence, "stand_at");
+        evidence.Should().Contain(
+            $"next_steps=move_to_tile@{stand.X},{stand.Y}",
+            "a tile the caller cannot dispatch is a coordinate, not a step");
+        // The body keeps its own sub-tile offset, so a candidate's standing pixel is her own reading moved by whole
+        // tiles - the same derivation the magnet's stand-tile selector makes.
+        Point there = new(stand.X * 64 + (standing.X - 4 * 64), stand.Y * 64 + (standing.Y - 6 * 64));
+        box.Contains(there).Should().BeTrue(
+            $"the tile the refusal names ({stand.X},{stand.Y}) must be inside the box it printed; its pixel would be {there}");
+
+        // (2) AND THE ENGINE AGREES, through the production path rather than through that arithmetic.
+        world.StandAtPosition(stand.X * 64 + 8, stand.Y * 64);
+        piece.IsCloseEnoughToFarmer(Game1.player).Should().BeTrue(
+            "the named tile must satisfy the very predicate the refusal cited");
+        world.Request(4, 4).ReasonCode.Should().NotBe(
+            "move_placed_furniture_out_of_range",
+            "walking to the named tile is the step that answers the refusal");
+    }
+
     [Fact]
     public void AnEmptyTile_IsRefusedByName()
     {
@@ -271,6 +330,51 @@ public sealed class MovePlacedFurnitureActionTests
     }
 
     // -----------------------------------------------------------------------------------------------------------
+
+    private static (int X, int Y) EvidenceTile(string evidence, string field)
+    {
+        string value = EvidenceField(evidence, field, out string code);
+        code.Should().Be("ok", $"the refusal must carry a `{field}=` the caller can act on: {evidence}");
+        string[] parts = value.Split(',');
+        return (int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture));
+    }
+
+    private static Point EvidencePoint(string evidence, string field)
+    {
+        string value = EvidenceField(evidence, field, out string code);
+        code.Should().Be("ok", $"the refusal must carry a `{field}=` reading: {evidence}");
+        string[] parts = value.Split(',');
+        return new Point(int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture));
+    }
+
+    private static Rectangle EvidenceRectangle(string evidence, string field)
+    {
+        string value = EvidenceField(evidence, field, out string code);
+        code.Should().Be("ok", $"the refusal must carry a `{field}=` bound: {evidence}");
+        string[] originAndSize = value.Split(':');
+        string[] origin = originAndSize[0].Split(',');
+        string[] size = originAndSize[1].Split('x');
+        return new Rectangle(
+            int.Parse(origin[0], CultureInfo.InvariantCulture),
+            int.Parse(origin[1], CultureInfo.InvariantCulture),
+            int.Parse(size[0], CultureInfo.InvariantCulture),
+            int.Parse(size[1], CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>The value of one `key=value` field of a receipt's `;`-joined evidence.</summary>
+    private static string EvidenceField(string evidence, string field, out string code)
+    {
+        foreach (string entry in evidence.Split(';'))
+        {
+            if (!entry.StartsWith($"{field}=", StringComparison.Ordinal))
+                continue;
+            code = "ok";
+            return entry[(field.Length + 1)..];
+        }
+
+        code = "missing";
+        return string.Empty;
+    }
 
     private static string RepositoryFile(params string[] relative)
     {
@@ -488,6 +592,15 @@ public sealed class MovePlacedFurnitureActionTests
         }
 
         internal void StandAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
+
+        /// <summary>
+        /// The actor at a raw pixel position, for a case that must reproduce a LIVE run's standing pixel instead of a
+        /// tidy tile origin: <c>StandingPixel</c> is the centre of the farmer's own 48x32 box
+        /// (<c>Farmer.GetBoundingBox</c>, Farmer.cs:5933-5941), so a tile origin and a live reading differ by the
+        /// sub-tile offset the character happens to have.
+        /// </summary>
+        internal void StandAtPosition(int positionX, int positionY) =>
+            Game1.player.position.Set(new Vector2(positionX, positionY));
 
         internal bool Carries(Item piece)
         {
