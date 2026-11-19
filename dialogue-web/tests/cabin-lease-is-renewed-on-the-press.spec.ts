@@ -24,14 +24,24 @@ import { draft, jsonOk, openGameDrawer, root, token } from "./composed-reference
  * One read's answer: always the same cabin, ALWAYS a new handle, and a window that is already
  * over on the first read - the live shape, where the advertisement is republished every second
  * and the page is holding a copy minted seconds ago.
+ *
+ * The handle is canonical because the Host's is: a choice handle is 32 opaque bytes as unpadded
+ * base64url, so exactly 43 characters and a final alphabet index that is a multiple of 4
+ * (`isStardewChoiceHandle` -> `isCanonicalBase64UrlBytes(value, 32)`). The fixture used to spell
+ * them `handle-from-read-1` / `handle-from-read-2`, 17 characters, which the client's mirror
+ * refused with `invalid_stardew_cabin_choice` - so the reply never became a row, the panel said
+ * `stardewCabinsAwaitingSession` for a session that was there, and both journeys below failed on
+ * the missing `cabin-choice-list` instead of on what they were written to prove.
  */
+const handleOfRead = (read: number) => `${`cabin-read-${read}-`.padEnd(42, "A")}A`;
+
 const offerOf = (read: number) => ({
   apiVersion: 1,
   choices: [
     {
       displayLabel: "Cabin 1",
       availability: "available",
-      choiceHandle: `handle-from-read-${read}`,
+      choiceHandle: handleOfRead(read),
       expiresAtMs: read === 1 ? Date.now() - 5_000 : Date.now() + 60_000,
     },
   ],
@@ -71,7 +81,7 @@ test("the confirm press renews the offer and sends the handle its own read minte
   // handle the Host has already replaced.
   const sent = confirms[0] as Readonly<{ choiceHandle?: string }>;
   console.log(`[cabin-lease-renewed] reads=${cabinReads} confirm=${JSON.stringify(sent)}`);
-  expect(sent.choiceHandle, "the confirm carries the handle the press's read minted").toBe("handle-from-read-2");
+  expect(sent.choiceHandle, "the confirm carries the handle the press's read minted").toBe(handleOfRead(2));
   expect(cabinReads, "one read to renew, and the mount's own read before it").toBe(2);
   await expect(panel).toContainText("Cabin request admitted");
 });
