@@ -1,11 +1,19 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 54 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4621, largest ExecutionManager at 25416 lines / 867 members across 52 partial(s).",
-  "revision": "0e9d1db2",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4590, largest ExecutionManager at 25632 lines / 876 members across 52 partial(s).",
+  "revision": "4449d787",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
   },
   "members": [
+    {
+      "id": "cs:ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,List<string>,HashSet<string>)",
+      "language": "cs",
+      "name": "ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,List<string>,HashSet<string>)",
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ActionExecutionCapabilityMatrixTests.cs",
+      "line": 446,
+      "value": 31
+    },
     {
       "id": "cs:ActiveExecutionProjectionSourceShapeTests.WithoutComments(string)",
       "language": "cs",
@@ -141,16 +149,16 @@
       "language": "cs",
       "name": "ExecutionManager.DiscoverWorldObjectTargets(Farmer)",
       "file": "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
-      "line": 1049,
-      "value": 89
+      "line": 1097,
+      "value": 82
     },
     {
       "id": "cs:ExecutionManager.ExecuteInteractNpcWithItem(string,string,int,int,int,string,string,long)",
       "language": "cs",
       "name": "ExecutionManager.ExecuteInteractNpcWithItem(string,string,int,int,int,string,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
-      "line": 776,
-      "value": 61
+      "line": 771,
+      "value": 60
     },
     {
       "id": "cs:ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
@@ -529,7 +537,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#attempt#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 3527,
+      "line": 3535,
       "value": 34
     },
     {
@@ -537,7 +545,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#requestChatSelection#lambda4",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 3140,
+      "line": 3148,
       "value": 31
     },
     {
@@ -545,7 +553,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 4147,
+      "line": 4195,
       "value": 37
     },
     {
@@ -634,7 +642,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 957,
+      "line": 1018,
       "value": 55,
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
@@ -751,8 +759,8 @@
       "language": "ts",
       "name": "host/src/runtime-core.internal.ts#createRuntimeWithFixedToolsCore",
       "file": "host/src/runtime-core.internal.ts",
-      "line": 1069,
-      "value": 173
+      "line": 1076,
+      "value": 170
     },
     {
       "id": "ts:host/src/st-card-import.ts#previewFromValue",
@@ -1138,8 +1146,8 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4621,
-      "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved."
+      "value": 4590,
+      "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved. THIS READING IS 4590 AND IT SHRANK: 4621 at `0e9d1db2` fell to 4608 at `4449d787` across the commits between them, and the last -18 is one commit - `DiscoverWoodFenceTargets`, `DiscoverCrabPotTargets` and `DiscoverFertilizerTargets` traded their duplicated window scans and their order-then-trim tails for one helper, which removed more points than the helper added."
     },
     {
       "id": "cs:ModEntry",
@@ -1259,9 +1267,9 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 25416,
-      "methods": 867,
-      "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED: 837 methods recorded, 840 on the tree, and both the count and the points are the sum of those two commits' named members."
+      "lines": 25632,
+      "methods": 876,
+      "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED, and the arithmetic is 875 + 1 = 876 methods (the extracted helper `NearestFirstRadiusWindowRows`), 25623 + 9 = 25632 lines (three call sites made one) - both measured on this tree over the same 52 partials and 51 files, not carried from the previous record."
     },
     {
       "id": "cs:FarmhandActionCatalog",
