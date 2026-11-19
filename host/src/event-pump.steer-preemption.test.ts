@@ -4,13 +4,20 @@ import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   FACT_PRODUCER,
   MODEL_STOP_REASON_CODE,
-  PREEMPTING_EXECUTION_STATES,
+  PREEMPTION,
+  PREEMPTION_PREEMPTS,
+  PREEMPTION_REASONS,
   CompanionEventPump,
-  isPreemptingFact,
+  STOPPED_PLAN_EXECUTION_STATES,
+  isStoppedPlanReceipt,
+  preemptionOf,
+  preemptionShapeOf,
   TURN_OPENING,
   type PendingBatch,
+  type PreemptionReason,
   type WorldFact,
 } from "./event-pump.js";
+import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
 import { BODY_PROGRAM_PROOF_NODE_STATES, EXECUTION_STATES } from "./protocol.js";
 
 /** One execution receipt, in the shape the Mod's own journal publishes. */
@@ -114,12 +121,14 @@ const receiptIdentities = (batch: PendingBatch | undefined): readonly string[] =
  * <p>
  * The population is `EXECUTION_STATES` - the protocol's own vocabulary, not a list written here - and the property is
  * per member: a state the ledger calls terminal and the Mod's `provesEffect` rule calls unproven is a STOPPED PLAN, and
- * a stopped plan must be steerable. Anything else is progress a turn may carry to its own end.
+ * a stopped plan STATED BY NO PLAN (no provenance at all here) is news a running turn needs now. Anything else is
+ * progress a turn may carry to its own end.
  * </p>
  * <p>
- * Each member is driven through THREE paths that can disagree: the classifier, the pump's getter and the batch `steer`
- * actually hands over. The defect this replaces was exactly a disagreement between them - the getter scanned a window
- * holding no receipts at all, so every receipt answered "not news" - so agreement is the assertion, not a formality.
+ * Each member is driven through THREE paths that can disagree: the classification, the pump's getter and the batch
+ * `steer` actually hands over. The defect this replaces was exactly a disagreement between them - the getter scanned a
+ * window holding no receipts at all, so every receipt answered "not news" - so agreement is the assertion, not a
+ * formality.
  * </p>
  */
 test("a_blocked_step_waits_for_a_turn: no stopped-plan state is left for the turn to finish", async () => {
@@ -133,7 +142,8 @@ test("a_blocked_step_waits_for_a_turn: no stopped-plan state is left for the tur
     const pump = new CompanionEventPump();
     pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
 
-    const classifier = isPreemptingFact(fact);
+    const reason = preemptionOf(fact, []);
+    const classifier = PREEMPTION_PREEMPTS[reason];
     const getter = pump.hasPreemptingFact;
     const batch = await steeredBatch(pump);
     const steered = batch !== undefined && batch.facts.some((member) => member.correlationId === fact.correlationId);
@@ -144,12 +154,13 @@ test("a_blocked_step_waits_for_a_turn: no stopped-plan state is left for the tur
 
     if (getter !== classifier)
       failures.push(
-        `${state}: the pump's getter says ${String(getter)} while the classification says ${String(classifier)} - the ` +
-          "getter is scanning a window this receipt does not live in",
+        `${state}: the pump's getter says ${String(getter)} while the classification says ${reason} ` +
+          `(${String(classifier)}) - the getter is scanning a window this receipt does not live in`,
       );
     if (steered !== classifier)
       failures.push(
-        `${state}: a steer ${steered ? "did" : "did not"} carry it while the classification says ${String(classifier)}`,
+        `${state}: a steer ${steered ? "did" : "did not"} carry it while the classification says ${reason} ` +
+          `(${String(classifier)})`,
       );
     if (stoppedPlan && !steered)
       failures.push(
@@ -197,9 +208,13 @@ test("a cancel she asked for is not news; a cancel the Mod performed is", async 
     reasonCode: "superseded_night_that_has_not_begun",
   });
 
-  assert.equal(PREEMPTING_EXECUTION_STATES.cancelled, true, "the un-narrowed reading cannot lose an outcome");
-  assert.equal(isPreemptingFact(herAsk), false, "`model_stop_requested` is her own ask, already in her tool result");
-  assert.equal(isPreemptingFact(modVerdict), true, "a cancel the Mod performed is news she has not been told");
+  assert.equal(STOPPED_PLAN_EXECUTION_STATES.cancelled, true, "the un-narrowed reading cannot lose an outcome");
+  assert.equal(
+    isStoppedPlanReceipt(herAsk),
+    false,
+    "`model_stop_requested` is her own ask, already in her tool result",
+  );
+  assert.equal(isStoppedPlanReceipt(modVerdict), true, "a cancel the Mod performed is news she has not been told");
 
   const pump = new CompanionEventPump();
   pump.enqueueFact(herAsk, FACT_PRODUCER.adapterIngress);
@@ -336,7 +351,7 @@ test("a succeeded step never steers, whatever else is waiting", async () => {
   pump.enqueuePlayerInput({ source: "player_text", inputId: "input_2", text: "好", locale: "zh-CN", timestampMs: 2 });
 
   assert.equal(pump.hasPreemptingFact, false, "progress is not news a running turn needs");
-  assert.equal(isPreemptingFact(succeeded), false);
+  assert.equal(isStoppedPlanReceipt(succeeded), false);
   assert.equal(
     await pump.steer({
       async deliver() {
@@ -376,7 +391,7 @@ test("a succeeded step never steers, whatever else is waiting", async () => {
  * delay, never a silence, and both halves are asserted.
  * </p>
  * <p>
- * AND THE PUMP CANNOT TELL THAT NO TURN IS RUNNING: `takeSteerableOnly` reads `#receipts` for `isPreemptingFact` and
+ * AND THE PUMP CANNOT TELL THAT NO TURN IS RUNNING: `takeSteerableOnly` reads `#receipts` for `#steersNow` and
  * nothing else, and `steer` is documented as the branch the CALLER takes only while its `#flushScheduled` guard says a
  * turn is in flight. So `steer` hands the fact over whenever it is asked, which is asserted rather than implied - a pump
  * that guessed at turn liveness would be a second, worse copy of a guard the Host already owns.
@@ -476,16 +491,504 @@ test("only an execution receipt can preempt", async () => {
       payload: { state: "rejected" },
     },
   ];
-  for (const fact of shapes) assert.equal(isPreemptingFact(fact), false, `${fact.kind} is not a receipt`);
+  for (const fact of shapes) assert.equal(isStoppedPlanReceipt(fact), false, `${fact.kind} is not a receipt`);
 
   // And a receipt carrying a state the protocol does not declare is not a shape anything may read a classification from.
   const unknown = receipt("receipt_unknown", { state: "constructor" });
-  assert.equal(isPreemptingFact(unknown), false, "a prototype key is not an execution state");
+  assert.equal(isStoppedPlanReceipt(unknown), false, "a prototype key is not an execution state");
   const undeclared = receipt("receipt_undeclared", { state: "abandoned" });
-  assert.equal(isPreemptingFact(undeclared), false, "an undeclared state opens a turn rather than being guessed at");
   assert.equal(
-    Object.hasOwn(PREEMPTING_EXECUTION_STATES, "abandoned"),
+    isStoppedPlanReceipt(undeclared),
+    false,
+    "an undeclared state opens a turn rather than being guessed at",
+  );
+  assert.equal(
+    Object.hasOwn(STOPPED_PLAN_EXECUTION_STATES, "abandoned"),
     false,
     "the population is the protocol's own execution vocabulary, so `abandoned` is not classified here at all",
+  );
+});
+/**
+ * A receipt of a BODY-PROGRAMME NODE: the Mod's journal says which plan and which node the execution answered.
+ *
+ * The provenance is what separates "a node of her plan lost" from "an execution of no plan lost", and it is stated by
+ * the receipt itself (`protocol.ts#ExecutionOrigin`), never inferred from the pump's ledger.
+ */
+function programmeReceipt(
+  correlationId: string,
+  payload: Readonly<Record<string, unknown>>,
+  node: Readonly<{ programId: string; nodeId: string }>,
+): WorldFact {
+  return receipt(correlationId, { ...payload, origin: { kind: "programme", ...node } });
+}
+
+/** The node states in which nothing has STARTED, so `settled` below counts the rest as still to come. */
+const NOT_STARTED_NODE_STATES: ReadonlySet<string> = new Set(["pending", "awaiting_host_admission"]);
+
+/** The journal's reading of the plans still in flight, in the shape `readInFlightProgrammes` answers with. */
+function planReading(
+  ...programmes: readonly Readonly<{
+    programId: string;
+    nodes: readonly Readonly<{ nodeId: string; actionId?: string; state: string }>[];
+    omitted?: number;
+  }>[]
+): InFlightProgrammeReading {
+  const built: InFlightProgramme[] = programmes.map((programme) => {
+    const omitted = programme.omitted ?? 0;
+    const total = programme.nodes.length + omitted;
+    const settled = programme.nodes.filter((node) => !NOT_STARTED_NODE_STATES.has(node.state)).length;
+    return Object.freeze({
+      programId: programme.programId,
+      total,
+      settled,
+      remaining: total - settled,
+      readAgeMs: 0,
+      nodes: Object.freeze(
+        programme.nodes.map((node, index) => Object.freeze({ index, ...node, observedInStateMs: 0 })),
+      ),
+      omitted,
+    });
+  });
+  return Object.freeze({ programmes: Object.freeze(built), omittedProgrammes: 0 });
+}
+
+/** A pump whose journal reading is the one the case states. */
+const pumpWith = (reading: InFlightProgrammeReading): CompanionEventPump => new CompanionEventPump(() => reading);
+
+/**
+ * A plan's own settlement, as the Host mints it (`program-settlement-digest.ts`).
+ *
+ * A presentable `world_fact`, which is why it is the turn a carried node row rides: the digest exists so the plan's rows
+ * reach her as ONE answer instead of one interruption per row.
+ */
+function settlementFact(programId: string): WorldFact {
+  return {
+    source: "host_game_session",
+    kind: "world_fact",
+    eventId: `settled_${programId}`,
+    sourceEventId: `settled_${programId}`,
+    correlationId: `settled_${programId}`,
+    revision: 1,
+    semanticKind: "program_settled",
+    payload: { programId, summary: "settled: 1 rejected" },
+  };
+}
+
+/**
+ * THE GATE: one shape, one steer, per turn.
+ *
+ * <p>
+ * THE POPULATION IS THE CLASSIFICATION'S OWN TABLE, not a list written here: the case table below is keyed BY REASON and
+ * asserted set-equal to `PREEMPTION_REASONS`, so a reason added to the declaration fails this test by name until someone
+ * says what it does - and `PREEMPTION_PREEMPTS` decides whether each one must steer or must be carried.
+ * </p>
+ * <p>
+ * THE PROPERTY is about what the SINK actually received, not about the predicate: two facts of one shape inside one turn
+ * must reach the sink once. That is the whole unit - `round77` measured 24 refused `plant_seed` nodes of two shapes
+ * turning into 24 preemptions, and each preemption is a turn she answered with a line.
+ * </p>
+ * <p>
+ * `carried-by-structure C` IS PRINTED BESIDE THE PREEMPTIONS because that number IS the trade: it is how much was left in
+ * the settlement instead of interrupting a thought. A gate that printed only `repeats 0` would be green on a pump that
+ * preempted everything and a pump that preempted nothing.
+ * </p>
+ */
+test("a_preemption_is_not_a_repeat: no shape steers one turn twice", async () => {
+  const plan = "plan_gate_1";
+  const other = "plan_gate_2";
+  /** One case per reason: two facts of ONE shape, then one of a second shape so a class is never measured by one member. */
+  const cases: Readonly<
+    Record<string, () => Readonly<{ facts: readonly WorldFact[]; reading: InFlightProgrammeReading }>>
+  > = {
+    // The plan repeats the action: both facts are the same shape and the second must not steer.
+    [PREEMPTION.structural]: () => ({
+      facts: [
+        programmeReceipt(
+          "gate_structural_1",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_stale" },
+          {
+            programId: plan,
+            nodeId: "n01",
+          },
+        ),
+        programmeReceipt(
+          "gate_structural_2",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_stale" },
+          {
+            programId: plan,
+            nodeId: "n02",
+          },
+        ),
+        programmeReceipt(
+          "gate_structural_3",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_gone" },
+          {
+            programId: plan,
+            nodeId: "n03",
+          },
+        ),
+      ],
+      reading: planReading({
+        programId: plan,
+        nodes: [
+          { nodeId: "n04", actionId: "plant_seed", state: "pending" },
+          { nodeId: "n05", actionId: "plant_seed", state: "pending" },
+        ],
+      }),
+    }),
+    [PREEMPTION.uncertain]: () => ({
+      facts: [
+        receipt("gate_uncertain_1", { state: "uncertain", actionId: "break_rock", reasonCode: "result_unobserved" }),
+        receipt("gate_uncertain_2", { state: "uncertain", actionId: "break_rock", reasonCode: "result_unobserved" }),
+        receipt("gate_uncertain_3", { state: "uncertain", actionId: "break_rock", reasonCode: "journal_lost" }),
+      ],
+      reading: planReading(),
+    }),
+    [PREEMPTION.modStall]: () => ({
+      facts: [
+        receipt("gate_stall_1", { state: "failed", actionId: "move_to_tile", reasonCode: "stalled_waiting" }),
+        receipt("gate_stall_2", { state: "failed", actionId: "move_to_tile", reasonCode: "stalled_waiting" }),
+        receipt("gate_stall_3", { state: "failed", actionId: "till_soil", reasonCode: "stalled_waiting" }),
+      ],
+      reading: planReading(),
+    }),
+    // No plan owns these executions, so no settlement will state them: the turn is the only reader they will ever get.
+    [PREEMPTION.lone]: () => ({
+      facts: [
+        receipt("gate_lone_1", { state: "rejected", actionId: "water_crop", reasonCode: "tool_not_held" }),
+        receipt("gate_lone_2", { state: "rejected", actionId: "water_crop", reasonCode: "tool_not_held" }),
+        receipt("gate_lone_3", { state: "rejected", actionId: "water_crop", reasonCode: "can_out_of_water" }),
+      ],
+      reading: planReading(),
+    }),
+    // THE COMPARISON HAS TO BE ABLE TO SAY NO, and this is the case that proves it: the plan's remaining work is a
+    // DIFFERENT action, so nothing of the plan repeats this refusal and the settlement is where it belongs.
+    [PREEMPTION.nodeLost]: () => ({
+      facts: [
+        programmeReceipt(
+          "gate_lost_1",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_stale" },
+          {
+            programId: other,
+            nodeId: "n01",
+          },
+        ),
+        programmeReceipt(
+          "gate_lost_2",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_stale" },
+          {
+            programId: other,
+            nodeId: "n02",
+          },
+        ),
+        programmeReceipt(
+          "gate_lost_3",
+          { state: "rejected", actionId: "plant_seed", reasonCode: "seed_gone" },
+          {
+            programId: other,
+            nodeId: "n03",
+          },
+        ),
+      ],
+      reading: planReading({
+        programId: other,
+        nodes: [
+          { nodeId: "n04", actionId: "move_to_tile", state: "pending" },
+          { nodeId: "n05", actionId: "harvest_crop", state: "pending" },
+          { nodeId: "n06", actionId: "move_to_tile", state: "awaiting_host_admission" },
+        ],
+      }),
+    }),
+    // The body is held by something the Mod has NOT called a stall: busy is not news.
+    [PREEMPTION.bodyBusy]: () => ({
+      facts: [
+        receipt("gate_busy_1", { state: "rejected", actionId: "plant_seed", reasonCode: "body_owned_by_movement" }),
+        receipt("gate_busy_2", { state: "rejected", actionId: "plant_seed", reasonCode: "body_owned_by_movement" }),
+        receipt("gate_busy_3", { state: "rejected", actionId: "plant_seed", reasonCode: "body_owned_by_ride" }),
+      ],
+      reading: planReading(),
+    }),
+    [PREEMPTION.notAPreemption]: () => ({
+      facts: [
+        receipt("gate_progress_1", { state: "succeeded", actionId: "plant_seed", reasonCode: "seed_planted" }),
+        receipt("gate_progress_2", { state: "running", actionId: "plant_seed", reasonCode: "in_progress" }),
+      ],
+      reading: planReading(),
+    }),
+  };
+
+  const failures: string[] = [];
+  assert.deepEqual(
+    Object.keys(cases).sort(),
+    [...PREEMPTION_REASONS].sort(),
+    "the gate's cases are keyed by the classification's own reasons: a new answer above needs a case here, and a case " +
+      "whose reason left the table is a case nobody can reach",
+  );
+
+  const preempted: string[] = [];
+  const examined: PreemptionReason[] = [];
+  for (const reason of PREEMPTION_REASONS) {
+    const { facts, reading } = cases[reason]!();
+    const pump = pumpWith(reading);
+    for (const fact of facts) {
+      // Every fact is classified through the real predicate, so the case's stated reason cannot drift from the answer.
+      const classified = preemptionOf(fact, reading.programmes);
+      examined.push(classified);
+      if (classified !== reason)
+        failures.push(
+          `${preemptionShapeOf(fact)}: the case says ${reason} while the pump's predicate says ${classified}`,
+        );
+      pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
+    }
+    const batch = await steeredBatch(pump);
+    const steered = receiptIdentities(batch);
+    const expected = facts.filter((fact) => PREEMPTION_PREEMPTS[preemptionOf(fact, reading.programmes)]);
+    const shapes = steered.map((id) => {
+      const fact = facts.find((candidate) => candidate.correlationId === id)!;
+      return preemptionShapeOf(fact);
+    });
+    preempted.push(...shapes);
+    // ONE per shape, and the FIRST of each: the repeat is suppressed, the second shape is not.
+    const expectedShapes = [...new Set(expected.map(preemptionShapeOf))];
+    if (shapes.length !== expectedShapes.length || new Set(shapes).size !== shapes.length)
+      failures.push(
+        `${reason}: the steer carried ${shapes.length} of the ${expected.length} ${reason} facts ` +
+          `{${shapes.join(", ")}} - expected one per shape {${expectedShapes.join(", ")}}`,
+      );
+    // AND NOTHING IS LEFT FOR A SECOND STEER: a repeat that were still steerable would fire on the next arrival.
+    if ((await steeredBatch(pump)) !== undefined)
+      failures.push(
+        `${reason}: a second steer carried the repeats of ${reason}, which this turn has already been told`,
+      );
+  }
+
+  const distinct = [...new Set(preempted)];
+  const repeats = preempted.length - distinct.length;
+  const count = (reason: PreemptionReason): number => examined.filter((entry) => entry === reason).length;
+  process.stderr.write(
+    `a_preemption_is_not_a_repeat: preemptions examined ${String(examined.length)} · ` +
+      `distinct shapes ${String(distinct.length)} · structural ${String(count(PREEMPTION.structural))} · ` +
+      `uncertain ${String(count(PREEMPTION.uncertain))} · mod-stall ${String(count(PREEMPTION.modStall))} · ` +
+      `lone ${String(count(PREEMPTION.lone))} · carried-by-structure ${String(count(PREEMPTION.nodeLost))} · ` +
+      `repeats ${String(repeats)}\n`,
+  );
+  assert.ok(examined.length > 0, "the population was empty, so this gate examined nothing");
+  assert.deepEqual(
+    failures,
+    [],
+    `one shape steers a turn once, and each reason is exercised for real:\n${failures.join("\n")}`,
+  );
+  assert.deepEqual(
+    repeats,
+    0,
+    `a shape steered twice in one turn: ${preempted.filter((shape, index) => preempted.indexOf(shape) !== index).join(", ")}`,
+  );
+});
+
+/**
+ * The half of the gate that keeps "structural" from being a word for "always": the comparison must be able to say NO.
+ *
+ * <p>
+ * A refused `plant_seed` node of a plan whose remaining work is a walk and a harvest repeats nothing - the plan carries
+ * on, its settlement states the row, and a steer would buy a turn whose only content is work she already submitted.
+ * </p>
+ */
+test("a_failure_the_plan_does_not_repeat_is_carried, not steered", async () => {
+  const plan = "plan_no_repeat";
+  const reading = planReading({
+    programId: plan,
+    nodes: [
+      { nodeId: "n02", actionId: "move_to_tile", state: "pending" },
+      { nodeId: "n03", actionId: "harvest_crop", state: "pending" },
+    ],
+  });
+  const refused = programmeReceipt(
+    "no_repeat_1",
+    { state: "rejected", actionId: "plant_seed", reasonCode: "seed_not_owned_in_slot" },
+    { programId: plan, nodeId: "n01" },
+  );
+  assert.equal(
+    preemptionOf(refused, reading.programmes),
+    PREEMPTION.nodeLost,
+    "nothing the plan still has to run carries this shape",
+  );
+
+  const pump = pumpWith(reading);
+  pump.enqueueFact(refused, FACT_PRODUCER.adapterIngress);
+  assert.equal(pump.hasPreemptingFact, false, "so there is nothing to steer");
+  assert.equal(
+    await pump.steer({
+      async deliver() {
+        throw new Error("the plan's own row belongs in its settlement");
+      },
+    }),
+    false,
+  );
+  // NOTHING WAS LOST: the refusal is still pending work, and the turn its plan opens carries it.
+  assert.equal(pump.pendingCount, 1, "carried, not dropped");
+  pump.enqueueFact(settlementFact(plan), FACT_PRODUCER.programSettlement);
+  const batches: PendingBatch[] = [];
+  await pump.flush({
+    async deliver(batch) {
+      batches.push(batch);
+    },
+  });
+  assert.deepEqual(
+    receiptIdentities(batches[0]),
+    ["no_repeat_1"],
+    "the refusal rides the plan's own settlement turn instead of interrupting the running one",
+  );
+});
+
+/**
+ * NOVELTY IS PER TURN, and that is the other half of the rule: a shape is a repeat only of what THIS turn has been told.
+ *
+ * A ledger that outlived the turn would silence a plan that is still failing ten minutes later - the failure to avoid is
+ * a pump that never speaks again, which is why the count is per turn rather than per session.
+ */
+test("the next turn hears the same shape again", async () => {
+  const plan = "plan_next_turn";
+  const reading = planReading({
+    programId: plan,
+    nodes: [{ nodeId: "n09", actionId: "plant_seed", state: "pending" }],
+  });
+  const pump = pumpWith(reading);
+  const refusal = (id: string) =>
+    programmeReceipt(
+      id,
+      { state: "rejected", actionId: "plant_seed", reasonCode: "seed_not_owned_in_slot" },
+      { programId: plan, nodeId: "n01" },
+    );
+
+  pump.enqueueFact(refusal("turn_1_a"), FACT_PRODUCER.adapterIngress);
+  assert.deepEqual(receiptIdentities(await steeredBatch(pump)), ["turn_1_a"], "the first turn hears it");
+  pump.enqueueFact(refusal("turn_1_b"), FACT_PRODUCER.adapterIngress);
+  assert.equal(await steeredBatch(pump), undefined, "and does not hear the same shape twice");
+
+  // A delivery is the turn boundary: the pump hands one batch over and the next turn has been told nothing.
+  pump.enqueueFact(settlementFact(plan), FACT_PRODUCER.programSettlement);
+  await pump.flush({
+    async deliver() {
+      return "completed";
+    },
+  });
+  pump.enqueueFact(refusal("turn_2_a"), FACT_PRODUCER.adapterIngress);
+  assert.deepEqual(
+    receiptIdentities(await steeredBatch(pump)),
+    ["turn_2_a"],
+    "the new turn has been told nothing, so the same shape is news to it",
+  );
+});
+
+/**
+ * ROUND77'S 34 `plant_seed` REFUSALS, REPLAYED THROUGH THE PUMP - the falsifier.
+ *
+ * <p>
+ * THE RECORD (`.live-runs/game-ladder/2026-11-19T04-46-54-502Z-multiday_routine/timeline.jsonl` and the same run's
+ * `result.json#programOutcomes`): 40 planned plantings, 24 of which arrived as `rejected` receipts - 22
+ * `seed_not_owned_in_slot` and 2 `seed_target_unavailable` - in three plan bursts, and 10 more rows the plan settled
+ * itself as `skipped_dependency`. Every one of the 24 was a `programme` node receipt, so today's predicate made 24
+ * preemptions out of 2 shapes.
+ * </p>
+ * <p>
+ * THE BEFORE IS COMPUTED WITH THE BASE CLASS, not remembered: `isStoppedPlanReceipt` is what the pump steered on before
+ * this unit, so `before` is the number of facts that predicate accepts. The after is what the sink received.
+ * </p>
+ * <p>
+ * THE TEN SKIPPED ROWS ARE IN THE REPLAY because they are what makes the count 34, and they are not receipts: they are
+ * the plan's own settlement, which preempts nothing and is the reason the node rows do not need to.
+ * </p>
+ */
+test("round77_replay: 34 planting refusals, one preemption per shape", async () => {
+  const bursts = [
+    { programId: "plan_435_84cb0492f0383b6a", reasonCode: "seed_not_owned_in_slot", nodes: 4 },
+    { programId: "plan_435_84cb0492f0383b6a", reasonCode: "seed_target_unavailable", nodes: 2 },
+    { programId: "plan_455_84cb0492f0383b6a", reasonCode: "seed_not_owned_in_slot", nodes: 6 },
+    { programId: "plan_619_0337c1d1e0a556ef", reasonCode: "seed_not_owned_in_slot", nodes: 12 },
+  ] as const;
+  /** The record's skipped rows, one per node the refused producers took with them. */
+  const skippedRows = 10;
+  /** What each plan still had to run when its burst began: every planting of that plan, in journal order. */
+  const plannedPerProgramme = new Map<string, number>();
+  for (const burst of bursts)
+    plannedPerProgramme.set(burst.programId, (plannedPerProgramme.get(burst.programId) ?? 0) + burst.nodes);
+
+  const pending = new Map(plannedPerProgramme);
+  const reader = (): InFlightProgrammeReading =>
+    planReading(
+      ...[...pending.entries()].map(([programId, left]) => ({
+        programId,
+        nodes: Array.from({ length: left }, (_, index) => ({
+          nodeId: `${programId}_n${String(index)}`,
+          actionId: "plant_seed",
+          state: "pending",
+        })),
+      })),
+    );
+  const pump = new CompanionEventPump(reader);
+
+  const baseClass: WorldFact[] = [];
+  const steered: string[] = [];
+  for (const burst of bursts) {
+    for (let attempt = 0; attempt < burst.nodes; attempt += 1) {
+      const fact = programmeReceipt(
+        `round77_${burst.programId}_${burst.reasonCode}_${String(attempt)}`,
+        { state: "rejected", actionId: "plant_seed", reasonCode: burst.reasonCode },
+        { programId: burst.programId, nodeId: `${burst.programId}_n${String(attempt)}` },
+      );
+      baseClass.push(fact);
+      pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
+      // The node that just answered is one the plan no longer has to run: the reading is taken after it settled.
+      pending.set(burst.programId, (pending.get(burst.programId) ?? 0) - 1);
+      const batch = await steeredBatch(pump);
+      steered.push(...receiptIdentities(batch));
+    }
+  }
+  // And the rows the plan itself settled, which is the other 10 of the 34.
+  const settlement: WorldFact = {
+    source: "host_game_session",
+    kind: "world_fact",
+    eventId: "round77_settlement",
+    sourceEventId: "round77_settlement",
+    correlationId: "round77_settlement",
+    revision: 1,
+    semanticKind: "program_settled",
+    payload: {
+      programId: "plan_619_0337c1d1e0a556ef",
+      summary: `settled: succeeded 6, failed 24, skipped_dependency ${String(skippedRows)}`,
+    },
+  };
+  pump.enqueueFact(settlement, FACT_PRODUCER.adapterIngress);
+
+  const before = baseClass.filter(isStoppedPlanReceipt).length;
+  const shapes = [...new Set(baseClass.map(preemptionShapeOf))];
+  process.stderr.write(
+    `round77_replay: refusals ${String(before + skippedRows)} {receipts ${String(before)} · skipped rows ` +
+      `${String(skippedRows)}} · preemptions before ${String(before)} · after ${String(steered.length)} ` +
+      `{${steered.join(", ")}} · shapes ${String(shapes.length)} {${shapes.join(", ")}}\n`,
+  );
+
+  assert.equal(
+    before,
+    bursts.reduce((total, burst) => total + burst.nodes, 0),
+    "the replay carries the record's 24 rejected receipts",
+  );
+  assert.equal(baseClass.length + skippedRows, 34, "and with the plan's own skipped rows, the record's 34 refusals");
+  assert.ok(before > 1, "the before has to be the defect for the after to mean anything");
+  assert.deepEqual(
+    [...new Set(steered.map((id) => preemptionShapeOf(baseClass.find((fact) => fact.correlationId === id)!)))].sort(),
+    [...shapes].sort(),
+    `every shape steered, and no receipt steered twice: ${String(steered.length)} preemptions for ${String(shapes.length)} shapes`,
+  );
+  assert.equal(
+    steered.length,
+    shapes.length,
+    `one preemption per shape, not one per node: ${String(before)} -> ${String(steered.length)}`,
+  );
+  // THE CARRIED ONES ARE NOT LOST: the refusals nobody steered are the ones the settlement's turn states.
+  assert.equal(
+    isStoppedPlanReceipt(settlement),
+    false,
+    "the plan's own settlement is not a receipt, so it neither steers nor counts as one",
   );
 });

@@ -14,7 +14,11 @@ import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./progra
 // The programme's own state is one of the two authorities that decide whether her work is alive
 // (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
 // call already write, so the pump asks it rather than keeping a second account of what is running.
-import { type InFlightProgrammeReading, readInFlightProgrammes } from "./program-status-wait.js";
+import {
+  type InFlightProgramme,
+  type InFlightProgrammeReading,
+  readInFlightProgrammes,
+} from "./program-status-wait.js";
 import {
   BODY_PROGRAM_PROOF_NODE_STATES,
   EXECUTION_STATES,
@@ -2019,6 +2023,21 @@ export class CompanionEventPump {
   /** The newest of those changes, as a label a fact can print (`snapshot_changed:warped`, `location:Farm`, …). */
   #lastWorldChange: string | undefined;
   readonly #receipts = new Map<string, WorldFact>();
+  /**
+   * The shapes (`preemptionShapeOf`) this TURN has already steered, so the plan repeating one shape costs one steer.
+   *
+   * <p>
+   * ITS DRAIN IS THE TURN. A preemption interrupts a turn that is already thinking, and the question it answers is "has
+   * THIS turn been told": when a batch is delivered the ledger is emptied, because the next turn has been told nothing.
+   * A later turn hearing the same code twice would otherwise suppress the second - and a plan that still fails an hour
+   * from now is news again.
+   * </p>
+   * <p>
+   * BOUNDED BY THE TURN, so it cannot grow with the session: its population is the distinct shapes ONE turn preempted,
+   * and `clear()` drops it with the rest of a session's measurements.
+   * </p>
+   */
+  readonly #steeredShapes = new Set<string>();
   readonly #semanticEvents = new Map<string, WorldFact>();
   readonly #lifecycle = new Map<string, WorldFact>();
   readonly #worldFacts = new Map<string, WorldFact>();
@@ -2494,6 +2513,7 @@ export class CompanionEventPump {
     this.#producedBy.clear();
     this.#inputs.length = 0;
     this.#deliveredProgress.clear();
+    this.#steeredShapes.clear();
     this.#stallVerdicts.clear();
     this.#worldTransition = null;
     this.#retry = undefined;
@@ -2711,7 +2731,7 @@ export class CompanionEventPump {
     const codes = [payload?.reasonCode, payload?.failureCode, payload?.rejectionCode].filter(
       (value): value is string => typeof value === "string",
     );
-    const owned = codes.find((code) => code.startsWith("body_owned_by_"));
+    const owned = codes.find((code) => code.startsWith(BODY_HOLD_PREFIX));
     if (owned !== undefined) {
       this.#worldTransition = Object.freeze({
         code: owned,
@@ -3038,6 +3058,9 @@ export class CompanionEventPump {
       this.#openedByReason[opening.decision] += 1;
       if (opening.producedBy !== undefined) this.#openedByProducer[opening.decision][opening.producedBy] += 1;
       this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening.decision });
+      // A NEW TURN HAS BEEN TOLD NOTHING: the shapes an earlier turn preempted are news again to this one, and a ledger
+      // that outlived the turn would silence a plan that is still failing ten minutes later.
+      this.#steeredShapes.clear();
       const outcome = (await sink.deliver(pending)) ?? "unobserved";
       this.#deliveredBatches += 1;
       this.#observeTurnProduction(outcome, opening.decision, pending.broughtObservation);
@@ -3685,7 +3708,7 @@ export class CompanionEventPump {
    * </p>
    * <p>
    * TWO CLASSES ARRIVE THIS WAY and `takeSteerableOnly` is the one function that decides which: a milestone, whose
-   * content is about to stop being true, and a receipt that says the plan CANNOT continue (`isPreemptingFact`). Both
+   * content is about to stop being true, and a receipt that says the plan CANNOT continue (`preemptionOf`). Both
    * have the same property - waiting for the end of the turn buys nothing - which is the whole reason a steer exists.
    * </p>
    * <p>
@@ -3740,9 +3763,9 @@ export class CompanionEventPump {
    * are spent on the wrong world.
    * </p>
    * <p>
-   * Deliberately NOT `time_milestone`, and deliberately not every receipt: a `succeeded` one is the plan WORKING, and
-   * interrupting a running plan to announce progress trades a finished action for a half-finished thought. See
-   * `isPreemptingFact` for the classification and `PREEMPTING_EXECUTION_STATES` for its population.
+   * Deliberately NOT `time_milestone`, and not every stopped-plan receipt either: `preemptionOf` decides which of them
+   * the running plan can recover from by itself, and `#steeredShapes` decides which of those this turn has already been
+   * told. A shape steered once in a turn is not steered again in it.
    * </p>
    */
   public get hasPreemptingFact(): boolean {
@@ -3762,12 +3785,21 @@ export class CompanionEventPump {
    * <p>
    * THE ORDER IS RECEIPTS FIRST: an obstruction is what she can act on, a clock mark is what she can only note.
    * </p>
+   * <p>
+   * AND A RECEIPT THAT DOES NOT STEER STAYS WHERE IT IS - `#steersNow` is the one reading of that, so a refusal the plan
+   * will state anyway is left in `#receipts` for the settlement's batch. It is not dropped and not re-titled: reading it
+   * later is the same fact, because a settlement is where a plan's own rows belong.
+   * </p>
    */
   private takeSteerableOnly(): PendingBatch | undefined {
     const steerable: WorldFact[] = [];
+    const programmes = this.#readInFlight().programmes;
     for (const [key, fact] of [...this.#receipts.entries()]) {
-      if (!isPreemptingFact(fact)) continue;
+      if (!this.#steersNow(fact, programmes)) continue;
       steerable.push(fact);
+      // The shape is recorded HERE, at the one place a preemption actually happens, so the ledger cannot say a shape was
+      // steered when the batch that carried it was never handed over.
+      this.#steeredShapes.add(preemptionShapeOf(fact));
       this.#receipts.delete(key);
       this.#producedBy.delete(key);
     }
@@ -3873,7 +3905,8 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether a waiting fact says the plan this turn is working on has STOPPED.
+   * Whether a waiting fact says the plan this turn is working on has STOPPED and CANNOT RECOVER BY ITSELF, and has not
+   * already been said this turn.
    *
    * <p>
    * Two windows, because a receipt lives in `#receipts` and never in `#worldFacts`: a getter that scanned only the
@@ -3882,10 +3915,31 @@ export class CompanionEventPump {
    * still owed, and the caller's question is "is there something worth steering", not "is the window I happen to scan
    * full".
    * </p>
+   * <p>
+   * THE SAME PREDICATE `takeSteerableOnly` USES, `#steersNow`, so "there is something to steer" and "the batch carried
+   * it" cannot answer differently - and the second half of it is NOVELTY: a shape this turn has already steered is not
+   * steered again (`round77`: 24 refused `plant_seed` nodes, one code, 24 steers).
+   * </p>
    */
   #hasPreemptingFact(): boolean {
-    for (const fact of this.#receipts.values()) if (isPreemptingFact(fact)) return true;
-    return this.#retry !== undefined && this.#retry.batch.facts.some(isPreemptingFact);
+    const programmes = this.#readInFlight().programmes;
+    for (const fact of this.#receipts.values()) if (this.#steersNow(fact, programmes)) return true;
+    return this.#retry !== undefined && this.#retry.batch.facts.some((fact) => this.#steersNow(fact, programmes));
+  }
+
+  /**
+   * Whether THIS receipt may steer the running turn now: the classification, minus the shapes this turn already steered.
+   *
+   * <p>
+   * THE SECOND HALF IS THE FIX `round77` ASKED FOR. A preemption has to be NOVEL to be worth a turn: the plan's own
+   * repetition of one shape is one fact about the plan, not N facts, and every one of the N was a turn she answered with
+   * a line. Novelty is per TURN (`#steeredShapes` is emptied when a turn is delivered), because a later turn has not
+   * been told anything yet - `event-pump.steer-preemption.test.ts` drives both halves.
+   * </p>
+   */
+  #steersNow(fact: WorldFact, programmes: readonly InFlightProgramme[]): boolean {
+    if (!PREEMPTION_PREEMPTS[preemptionOf(fact, programmes)]) return false;
+    return !this.#steeredShapes.has(preemptionShapeOf(fact));
   }
 
   private takeBatch(): PendingBatch {
@@ -5151,13 +5205,20 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
 const PROVED_EFFECT_STATES: ReadonlySet<string> = new Set<string>(BODY_PROGRAM_PROOF_NODE_STATES);
 
 /**
- * Whether a receipt in this state says the plan it belongs to CANNOT CONTINUE - the population of `hasPreemptingFact`.
+ * Whether a receipt in this state says the plan it belongs to CANNOT CONTINUE - the population of
+ * `isStoppedPlanReceipt`.
  *
  * <p>
  * DERIVED FROM TWO AUTHORITIES RATHER THAN LISTED, because a listed set fails open the day a state is added: a receipt
  * is stopped-plan iff the ledger says the execution can never resume (`TERMINAL_EXECUTION_STATES`, its single
  * classification) and the Mod's `provesEffect` rule says it proved no effect. Everything else is progress - the three
  * in-flight states, and the two that prove the step did something.
+ * </p>
+ * <p>
+ * THIS IS THE BASE CLASS, NOT THE ANSWER. Every member here says the plan stopped; whether a running turn must be
+ * interrupted to hear it is a second question with its own vocabulary (`PREEMPTION`), because a plan that loses one node
+ * and carries on will state that node in its settlement anyway. It used to be one question, and the price was measured:
+ * `round77` read 24 preemptions out of 24 refused `plant_seed` nodes, one per node, each one a turn spent answering.
  * </p>
  * <p>
  * THE STALL IS ALREADY HERE, and that is worth stating because the ruling used to name it separately: the live Mod's
@@ -5171,10 +5232,10 @@ const PROVED_EFFECT_STATES: ReadonlySet<string> = new Set<string>(BODY_PROGRAM_P
  * `cancelled` IS THE ONE STATE THE TABLE CANNOT DECIDE ALONE: a cancel SHE asked for is already in her own tool result,
  * so announcing it would interrupt a running thought with something she herself said; one the Mod performed is an
  * obstruction she has not been told about. The record holds the un-narrowed reading - the direction that cannot lose an
- * outcome - and `isPreemptingFact` applies the one narrowing the payload supports.
+ * outcome - and `isStoppedPlanReceipt` applies the one narrowing the payload supports.
  * </p>
  */
-export const PREEMPTING_EXECUTION_STATES: Readonly<Record<ExecutionState, boolean>> = Object.freeze(
+export const STOPPED_PLAN_EXECUTION_STATES: Readonly<Record<ExecutionState, boolean>> = Object.freeze(
   Object.fromEntries(
     EXECUTION_STATES.map((state) => [state, isTerminalExecutionState(state) && !PROVED_EFFECT_STATES.has(state)]),
   ) as Record<ExecutionState, boolean>,
@@ -5198,22 +5259,188 @@ export const PREEMPTING_EXECUTION_STATES: Readonly<Record<ExecutionState, boolea
 export const MODEL_STOP_REASON_CODE = "model_stop_requested";
 
 /**
- * Whether this fact says the plan the running turn is working on has STOPPED - the one thing a steer exists for.
+ * Whether this fact is a STOPPED-PLAN RECEIPT: an execution that ended without proving an effect.
  *
  * <p>
- * Exported so the classification's population can be exercised through the real predicate instead of a second copy of
- * the rule: `event-pump.steer-preemption.test.ts` walks `EXECUTION_STATES` through this function and through the pump's
- * own getter, which are two paths, and fails by name on the member where they disagree.
+ * Exported so the base class can be exercised through the real predicate instead of a second copy of the rule:
+ * `event-pump.steer-preemption.test.ts` walks `EXECUTION_STATES` through this function and through the pump's own
+ * classification, which are two paths, and fails by name on the member where they disagree.
  * </p>
  */
-export function isPreemptingFact(fact: WorldFact): boolean {
+export function isStoppedPlanReceipt(fact: WorldFact): boolean {
   if (fact.kind !== "execution_receipt") return false;
   const state = fact.payload.state;
   // `Object.hasOwn` rather than a bare index: the payload is wire data, and `in`/`[]` would read a prototype member
   // (`constructor`) as a classification.
-  if (typeof state !== "string" || !Object.hasOwn(PREEMPTING_EXECUTION_STATES, state)) return false;
-  if (!PREEMPTING_EXECUTION_STATES[state as ExecutionState]) return false;
+  if (typeof state !== "string" || !Object.hasOwn(STOPPED_PLAN_EXECUTION_STATES, state)) return false;
+  if (!STOPPED_PLAN_EXECUTION_STATES[state as ExecutionState]) return false;
   return !(state === "cancelled" && fact.payload.reasonCode === MODEL_STOP_REASON_CODE);
+}
+
+/**
+ * What the pump answers about one fact while a turn is running - the CLOSED vocabulary of the preemption question.
+ *
+ * <p>
+ * A STEER EXISTS FOR ONE THING: the plan the running turn is working on CANNOT RECOVER BY ITSELF. That is not the same
+ * as "a node failed", and the difference is what this vocabulary names. A node that lost for its own local reason - the
+ * target moved, the slot the plan read is empty - is a row the plan's own settlement will state, and interrupting a
+ * thought to deliver it early buys nothing: measured 2026-11-19 (`round77`), 22 refused `plant_seed` nodes of ONE code
+ * inside one turn produced 22 preemptions, and every preemption is a turn she answers with a line.
+ * </p>
+ * <p>
+ * SO THREE ANSWERS STEER AND TWO CARRY, and the split is stated here rather than at the call sites:
+ * `structural` (the plan's own unstarted work repeats this shape, so continuing is known-wasted), `uncertain` (a native
+ * side effect may have landed, and nothing may be built on an unknown world) and `mod_stall` (the Mod said in its own
+ * words that the body is waiting) steer; `body_busy` (the Mod holds the body and has NOT called it a stall - busy is not
+ * news) and `node_lost` (one node lost, and nothing unstarted repeats it) carry.
+ * </p>
+ * <p>
+ * THE POPULATION IS THIS TABLE, never a list at a reader: `PREEMPTING_REASONS` is derived from it, and the gate walks
+ * that derivation so a member added here fails by name until it is classified.
+ * </p>
+ */
+export const PREEMPTION = Object.freeze({
+  /** A - the plan's own unstarted nodes run this same action, so the rest of it is known-wasted. */
+  structural: "structural",
+  /** A - a native side effect may have landed: nothing may be built on an unknown world. */
+  uncertain: "uncertain",
+  /** A - the Mod declared this execution stalled (`stalled_waiting`), in its own words. */
+  modStall: "mod_stall",
+  /** A - the execution belongs to no plan, so no settlement will state it. */
+  lone: "lone",
+  /** B - another execution holds the body and the Mod has NOT declared a stall: busy is not news. */
+  bodyBusy: "body_busy",
+  /** B - one node lost, and no unstarted node of that plan repeats it: the settlement states the row. */
+  nodeLost: "node_lost",
+  /** Not a preemption at all: progress, her own cancel, or a fact that is not a receipt. */
+  notAPreemption: "not_a_preemption",
+});
+
+/** Every answer the question can have, derived from the declaration above. */
+export const PREEMPTION_REASONS = Object.freeze(Object.values(PREEMPTION));
+
+export type PreemptionReason = (typeof PREEMPTION)[keyof typeof PREEMPTION];
+
+/** Which answers steer a running turn and which are the settlement's - the ONE declaration of the split. */
+export const PREEMPTION_PREEMPTS: Readonly<Record<PreemptionReason, boolean>> = Object.freeze({
+  [PREEMPTION.structural]: true,
+  [PREEMPTION.uncertain]: true,
+  [PREEMPTION.modStall]: true,
+  [PREEMPTION.lone]: true,
+  [PREEMPTION.bodyBusy]: false,
+  [PREEMPTION.nodeLost]: false,
+  [PREEMPTION.notAPreemption]: false,
+});
+
+/** The answers that steer: the population of every reader of "can this fact preempt". */
+export const PREEMPTING_REASONS: readonly PreemptionReason[] = Object.freeze(
+  PREEMPTION_REASONS.filter((reason) => PREEMPTION_PREEMPTS[reason]),
+);
+
+/**
+ * WHAT A SHAPE IS: the Mod's own reason code, together with the action that answered it.
+ *
+ * <p>
+ * THE PAIR IS THE IDENTITY because the two halves are the two things a turn can act on differently: a code says what the
+ * world refused, an action says which next step that refusal belongs to. Two refusals of one code on two actions are two
+ * different lessons (a different tool, a different target family), so the second is still news; two refusals of one code
+ * on one action are ONE lesson no matter how many times the plan repeats it.
+ * </p>
+ * <p>
+ * THE ACTION IS NOT THE MOD'S `familyId`, and that is a decision rather than an oversight: the family is registration
+ * identity, which the Mod owns and publishes in `hello_ack` (`protocol.ts#ActionRegistration`), and this pump holds no
+ * advertisement. Keying on a family would mean threading the published surface into the pump or inventing a prefix
+ * taxonomy beside it - a second spelling of a membership the Mod already states - so the shape stops at the action the
+ * receipt itself names. The direction that choice errs in is the safe one: an action is finer than its family, so a
+ * family wide repeat can still cost one steer per distinct action rather than none.
+ * </p>
+ * <p>
+ * NOT THE MESSAGE TEXT: two receipts of one shape carry different tiles (`tile=40,4` against `tile=52,7`), and a shape
+ * keyed on them would call the plan's own repetition news. Nothing here renders anything either.
+ * </p>
+ */
+export function preemptionShapeOf(fact: WorldFact): string {
+  const reasonCode = typeof fact.payload.reasonCode === "string" ? fact.payload.reasonCode : "";
+  const actionId = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "";
+  return `${reasonCode}@${actionId}`;
+}
+
+/**
+ * The Mod's own node states in which nothing has STARTED: the work a plan still has in front of it.
+ *
+ * <p>
+ * The two `BODY_PROGRAM_NODE_STATE_VERDICTS` members it calls `moving` that no execution was dispatched for. The other
+ * two (`host_admitted`, `running`) are the node executing NOW, whose outcome is a receipt this pump is going to get - not
+ * a step the plan has still to reach, and counting it would let a one-node plan read as "the rest repeats this".
+ * `program-status-wait.ts` splits the same four the other way round (`NODE_STATES_IN_FLIGHT`), so the two readings
+ * together cover the declaration and neither overstates it.
+ * </p>
+ */
+const NODE_STATES_NOT_STARTED: ReadonlySet<string> = new Set(["pending", "awaiting_host_admission"]);
+
+/**
+ * Whether the plan this receipt belongs to still has UNSTARTED work of the same action - "the rest of the plan repeats
+ * this shape".
+ *
+ * <p>
+ * DERIVED FROM THE JOURNAL'S OWN READING (`readInFlightProgrammes`), not from a list of cause codes: the rows are the
+ * Mod's node states and the plan's own actions, so a code nobody has written yet is compared like every other. The
+ * comparison CAN say no, which is the whole point - `a_preemption_is_not_a_repeat` drives a plan whose remaining work is
+ * a different action and asserts the refusal is carried rather than steered.
+ * </p>
+ * <p>
+ * THREE ANSWERS IT GIVES WITHOUT ASKING A ROW:
+ * </p>
+ * <ul>
+ *   <li>NOT A PLAN NODE (`standalone`, `unattributed`, or no provenance at all): nothing will report it, so there is
+ *       nothing for the plan to repeat. That is the `lone` answer, and it steers - `factExecutionOrigin` states the
+ *       direction: an unreadable provenance is NO statement, and the reading that cannot lose an outcome wins.</li>
+ *   <li>NO ROW FOR THAT PROGRAMME: the ledger shows no in-flight plan with this id, so the plan has nothing left to run
+ *       and its settlement - which is presentable and opens its own turn - is the answer. Carried.</li>
+ *   <li>ROWS THE BOUND LEFT OUT (`omitted > 0`): the reading does not name every node, so it cannot be shown NOT to
+ *       repeat the shape. Read as repeated, because the alternative silences a real obstruction on the plans that carry
+ *       most work.</li>
+ * </ul>
+ */
+export function planRepeatsShape(fact: WorldFact, programmes: readonly InFlightProgramme[]): boolean {
+  const origin = factExecutionOrigin(fact);
+  if (origin === undefined || origin.kind !== "programme") return false;
+  const actionId = fact.payload.actionId;
+  // A row with no action cannot be matched to one, and `undefined === undefined` would match every row that has none.
+  if (typeof actionId !== "string" || actionId.length === 0) return false;
+  const programme = programmes.find((candidate) => candidate.programId === origin.programId);
+  if (programme === undefined) return false;
+  if (programme.omitted > 0) return true;
+  return programme.nodes.some((node) => node.actionId === actionId && NODE_STATES_NOT_STARTED.has(node.state));
+}
+
+/**
+ * The Mod's own hold prefix: a named `body_owned_by_<owner>` code says WHICH execution has the body.
+ *
+ * The bare legacy `body_owned` names no owner and is not this class (`stardew-action-remedy.ts` makes the same
+ * distinction for the guidance it gives her). One spelling, read by the transition watcher and the classification below.
+ */
+const BODY_HOLD_PREFIX = "body_owned_by_";
+
+/**
+ * Why this fact does or does not steer the running turn - the preemption predicate's ONE return site.
+ *
+ * <p>
+ * `programmes` is the journal's reading of the plans still in flight, passed in rather than read here so the pump asks
+ * its injected reader once per decision and a test can state the plan the question is about.
+ * </p>
+ */
+export function preemptionOf(fact: WorldFact, programmes: readonly InFlightProgramme[]): PreemptionReason {
+  if (!isStoppedPlanReceipt(fact)) return PREEMPTION.notAPreemption;
+  // The Mod's own word for a body that is waiting. Asked of the CODE rather than of `modStallVerdictOf`, because that
+  // reader demands `stalled_ticks`: a verdict that carries no measured wait is still the Mod saying the body is stalled.
+  if (fact.payload.reasonCode === MOD_STALL_VERDICT_CODE) return PREEMPTION.modStall;
+  if (fact.payload.state === "uncertain") return PREEMPTION.uncertain;
+  const hold = fact.payload.reasonCode;
+  if (typeof hold === "string" && hold.startsWith(BODY_HOLD_PREFIX)) return PREEMPTION.bodyBusy;
+  const origin = factExecutionOrigin(fact);
+  if (origin === undefined || origin.kind !== "programme") return PREEMPTION.lone;
+  return planRepeatsShape(fact, programmes) ? PREEMPTION.structural : PREEMPTION.nodeLost;
 }
 
 /**
