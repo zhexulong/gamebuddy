@@ -290,6 +290,32 @@ public sealed class RotateFurnitureActionTests
     }
 
     /// <summary>
+    /// TWO PIECES, ONE ID: the identity is a hash of the location, the tile and the item, so two pieces of one item on one
+    /// tile mint the SAME id for two pieces. This action used to resolve the tile's first piece and compare the id
+    /// afterwards, which meant it turned a piece the caller never named whenever that collision existed. The collision is a
+    /// defect in this Mod's identity, not in the request, so it is named and nothing turns.
+    /// </summary>
+    [Fact]
+    public void TwoPiecesOnOneTileSharingOneId_IsNamedAsThisModsIdentityDefect()
+    {
+        using var world = FurnitureRotationWorld.Create();
+        Furniture first = world.PlaceFurniture(x: 2, y: 2, rotations: 4);
+        Furniture second = world.PlaceFurniture(x: 2, y: 2, rotations: 4);
+        world.StandAt(2, 3);
+        world.TargetIdAt(2, 2).Should().Be(
+            ExecutionManager.BuildPlacedFurnitureTargetId(world.Location, 2, 2, second),
+            "the fixture must reproduce the collision it is about: one id, two pieces");
+
+        LocalExecutionReceipt receipt = world.Request(2, 2);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("furniture_rotation_target_identity_ambiguous");
+        receipt.Evidence.Should().Contain("matching_pieces=2", "the count IS the defect, so the receipt states it");
+        first.currentRotation.Value.Should().Be(0, "an identity this Mod cannot resolve turns nothing");
+        second.currentRotation.Value.Should().Be(0);
+    }
+
+    /// <summary>
     /// The ORDER the body must keep, pinned because it is an order and not an outcome: the proof of the piece (its
     /// identity and the engine's own rotation guard) lives in the shared describer both halves call, and inside the body
     /// the reach is admitted before the first mutation, the native turn runs before the occupancy probe, and the revert

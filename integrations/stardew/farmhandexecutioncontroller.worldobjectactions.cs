@@ -359,14 +359,18 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? target) || target is null)
         {
-            Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
-            if (piece is not null)
+            // THE PIECE THE CALLER NAMED, not the first one on the tile. Two pieces can stand on one tile - a rug under a
+            // chair - and the published id is the only thing that says which of them the request was about; the lookup this
+            // branch used to do took whichever the room enumerated first and then printed ITS id as if it were the live
+            // answer to a request about a different piece.
+            PlacedFurnitureLookup standing = FindPlacedFurniture(location, targetX, targetY, expectedTargetId);
+            if (standing.Any)
                 return this.RememberTerminal(
                     requestId,
                     executionId,
                     ExecutionState.Rejected,
-                    "remove_placed_item_furniture_move_unsupported",
-                    $"target={targetX},{targetY};location={location.NameOrUniqueName};item={piece.QualifiedItemId};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, piece)}");
+                    standing.MatchingPieces > 1 ? "remove_placed_item_furniture_identity_ambiguous" : "remove_placed_item_furniture_move_unsupported",
+                    $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};standing={standing.DescribeStanding()};matching_pieces={standing.MatchingPieces}");
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -636,9 +640,9 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The piece standing on the named tile, when it is still the one the caller saw. One reading for the request and for
-    /// the body that runs after the walk, so the pairing no walk is started for and the pairing an arrival re-proves cannot
-    /// name different facts.
+    /// The piece standing on the named tile, when it is still the one the caller saw AND the engine will let this actor lift
+    /// it. One reading for the request and for the body that runs after the walk, so the pairing no walk is started for and
+    /// the pairing an arrival re-proves cannot name different facts.
     /// </summary>
     private static bool TryDescribePlacedFurniture(
         GameLocation location,
@@ -652,23 +656,84 @@ internal sealed partial class ExecutionManager
         piece = null;
         reasonCode = "accepted";
         evidence = string.Empty;
-        Furniture? candidate = FindPlacedFurniture(location, x, y);
-        if (candidate is null)
-        {
-            reasonCode = "move_placed_furniture_target_not_found";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count}";
+        // THE PIECE, NOT THE TILE: `expectedTargetId` is what says which piece was asked about when two stand on one tile.
+        if (!TryResolvePlacedPiece(
+                location,
+                x,
+                y,
+                expectedTargetId,
+                notFoundCode: "move_placed_furniture_target_not_found",
+                changedCode: "move_placed_furniture_target_changed",
+                ambiguousCode: "move_placed_furniture_target_identity_ambiguous",
+                out Furniture? candidate,
+                out reasonCode,
+                out evidence))
             return false;
-        }
-        string liveTargetId = BuildPlacedFurnitureTargetId(location, x, y, candidate);
-        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
+        // ASK THE ENGINE BEFORE COMMANDING THE PICKUP. `Furniture.canBeRemoved` (Furniture.cs:592-631, overridden by
+        // StorageFurniture.cs:44-51 and BedFurniture.cs:333-355) is the very predicate the game's own furniture pickup gates
+        // on (GameLocation.cs:8004, :8021, :8047 before `removeQueuedFurniture`). Commanding the move without asking means a
+        // piece the room will not give her is discovered by its failure afterwards - a round trip she pays for, and one that
+        // can also cost her the walk that led to it. A no here is a refusal with the reason the engine gave, and nothing has
+        // happened to the world.
+        if (!candidate!.canBeRemoved(Game1.player))
         {
-            reasonCode = "move_placed_furniture_target_changed";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={liveTargetId};item={candidate.QualifiedItemId}";
+            reasonCode = $"move_placed_furniture_piece_cannot_be_removed:{DescribePieceRemovalRefusal(candidate)}";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};item={candidate.QualifiedItemId};furniture_in_location={location.furniture.Count};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
             return false;
         }
         piece = candidate;
         return true;
     }
+
+    /// <summary>
+    /// WHY the engine will not let this actor lift this piece, read from the branches its own <c>canBeRemoved</c> asks, in
+    /// the order that piece's own override asks them.
+    ///
+    /// <para>
+    /// <c>BedFurniture.canBeRemoved</c> (BedFurniture.cs:333-355) answers WITHOUT calling the base at all - the location, then
+    /// <c>CanModifyBed</c> ("not your bed": multiplayer cabins) and <c>IsBeingSleptIn</c>. <c>StorageFurniture.canBeRemoved</c>
+    /// (StorageFurniture.cs:44-51) asks its own mutex first and then the base. The base (Furniture.cs:592-631) asks
+    /// <c>AllowLocalRemoval</c> (the field the Community Center sets false on its own furniture, CommunityCenter.cs:823), the
+    /// location, the sitting farmers, the held object and, for a PASSABLE piece, every tile of its own footprint.
+    /// </para>
+    /// <para>
+    /// THE DECISION IS NEVER TAKEN HERE - the caller has already asked <c>canBeRemoved</c> and heard no. This only names
+    /// which branch answered, so the refusal carries a reason instead of a bare "no". A branch this reading does not cover
+    /// says <c>unstated_by_this_reader</c>: a reason invented for a branch nobody read is worse than an answer that admits it
+    /// does not know which one it was, because the caller would act on the invented one.
+    /// </para>
+    /// </summary>
+    private static string DescribePieceRemovalRefusal(Furniture piece)
+    {
+        Farmer actor = Game1.player;
+        if (piece is BedFurniture bed)
+        {
+            if (bed.Location is null) return "no_location";
+            if (!bed.CanModifyBed(actor)) return "bed_is_not_hers";
+            if (bed.IsBeingSleptIn()) return "being_slept_in";
+            return UnstatedRemovalRefusal;
+        }
+        if (piece is StorageFurniture storage && storage.mutex.IsLocked()) return "contents_in_use";
+        if (!piece.AllowLocalRemoval) return "local_removal_not_allowed";
+        GameLocation? location = piece.Location;
+        if (location is null) return "no_location";
+        if (piece.HasSittingFarmers()) return $"sitting_farmers:{piece.GetSittingFarmerCount()}";
+        if (piece.heldObject.Value is not null) return "carries_a_held_object";
+        if (!piece.isPassable()) return UnstatedRemovalRefusal;
+        Rectangle footprint = piece.GetBoundingBox();
+        for (int left = footprint.Left / 64; left < footprint.Right / 64; left++)
+        for (int top = footprint.Top / 64; top < footprint.Bottom / 64; top++)
+        {
+            Vector2 tile = new(left, top);
+            if (location.GetFurnitureAt(tile) is Furniture other && !ReferenceEquals(other, piece))
+                return $"another_piece_at:{left}:{top}";
+            if (location.objects.ContainsKey(tile)) return $"an_object_at:{left}:{top}";
+        }
+        return UnstatedRemovalRefusal;
+    }
+
+    /// <summary>The answer of a piece whose refusal came from a branch the reading above does not cover.</summary>
+    private const string UnstatedRemovalRefusal = "unstated_by_this_reader";
 
     private static bool RestoreFurniturePiece(GameLocation location, Furniture piece, Vector2 tile, int rotation, bool flipped)
     {

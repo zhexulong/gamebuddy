@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -14,6 +15,7 @@ using StardewValley;
 using StardewValley.Network;
 using StardewValley.Objects;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -54,6 +56,28 @@ public sealed class MovePlacedFurnitureActionTests
     private const string ActionId = "move_placed_furniture";
     private const string FurnitureItemId = "(F)0";
     private const string HandlerFile = "farmhandexecutioncontroller.worldobjectactions.cs";
+
+    private const string ModDirectory = "integrations/stardew";
+    private const string HandlersDirectory = "integrations/stardew/Handlers";
+
+    private readonly ITestOutputHelper output;
+
+    public MovePlacedFurnitureActionTests(ITestOutputHelper output)
+    {
+        this.output = output;
+    }
+
+    /// <summary>
+    /// The three reasons a room really presents for "the engine will not hand this piece over", each the branch
+    /// <c>Furniture.canBeRemoved</c> asks in its own order (Furniture.cs:592-631): the field the location can forbid
+    /// (CommunityCenter.cs:823), a piece somebody is sitting on, and a piece carrying something.
+    /// </summary>
+    public static TheoryData<string, Action<Furniture>> UnremovablePieces => new()
+    {
+        { "local_removal_not_allowed", piece => piece.AllowLocalRemoval = false },
+        { "sitting_farmers:1", piece => piece.sittingFarmers[1001] = 1 },
+        { "carries_a_held_object", piece => piece.heldObject.Value = new StardewValley.Object() },
+    };
 
     [Fact]
     public void Catalog_RegistersTheFurniturePickupWithItsTileAndTargetAndNoSlot()
@@ -246,6 +270,151 @@ public sealed class MovePlacedFurnitureActionTests
     }
 
     /// <summary>
+    /// THE FALSIFIER, per reason. <c>Furniture.canBeRemoved</c> is the predicate the game's own pickup gates on
+    /// (GameLocation.cs:8004, :8021, :8047 before <c>removeQueuedFurniture</c>), and a piece it refuses is refused HERE -
+    /// with the branch's own reason in the code and nothing written to the world. The three reasons are the ones a room can
+    /// really present: a piece the location forbids local removal of (CommunityCenter.cs:823 sets exactly this field), a
+    /// piece somebody is sitting on, and a piece carrying something.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(UnremovablePieces))]
+    public void APieceThatMayNotBeMovedIsRefusedBeforeTheCommand(string reason, Action<Furniture> makeUnremovable)
+    {
+        using var world = FurnitureWorld.Create();
+        Furniture piece = world.PlaceFurniture(x: 2, y: 2, rotation: 3);
+        world.StandAt(2, 3);
+        string targetId = world.TargetIdOf(piece);
+        makeUnremovable(piece);
+        piece.canBeRemoved(Game1.player).Should().BeFalse(
+            $"the fixture must trip the engine's own guard, not this file's reading of it: {reason}");
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, expectedTargetId: targetId);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "a piece the engine will not give her is not a success");
+        receipt.ReasonCode.Should().Be(
+            $"move_placed_furniture_piece_cannot_be_removed:{reason}",
+            "the refusal carries the branch the engine answered with, so the caller knows what to change");
+        // NO NATIVE CALL: the pickup is performRemoveAction, Remove and a delivery (GameLocation.cs:8081-8093), and every
+        // one of the three leaves a mark this checks - the piece is still in the room's own collection on the tile it stood
+        // on, and the pack holds no copy of it.
+        world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(piece);
+        piece.TileLocation.Should().Be(new Vector2(2, 2));
+        piece.currentRotation.Value.Should().Be(3);
+        world.Carries(piece).Should().BeFalse();
+        receipt.Evidence.Should().Contain($"item={FurnitureItemId}");
+    }
+
+    /// <summary>
+    /// THE NEGATIVE CONTROL for the theory above: the same room, the same request, and a piece the engine allows - it is
+    /// lifted. Without this, "the refusal names the reason" could be satisfied by refusing everything.
+    /// </summary>
+    [Fact]
+    public void TheSameRoomLiftsAPieceTheEngineAllows()
+    {
+        using var world = FurnitureWorld.Create();
+        Furniture piece = world.PlaceFurniture(x: 2, y: 2);
+        world.StandAt(2, 3);
+        string targetId = world.TargetIdOf(piece);
+        piece.canBeRemoved(Game1.player).Should().BeTrue("a plain chair in an empty room is a piece the engine hands over");
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, expectedTargetId: targetId);
+
+        receipt.ReasonCode.Should().NotStartWith(
+            "move_placed_furniture_piece_cannot_be_removed",
+            $"the engine allowed the pickup, so the ask must not refuse it: {receipt.Evidence}");
+        world.CarriedSlot(piece).Should().BeGreaterThanOrEqualTo(0, "the piece really left the room for the pack");
+    }
+
+    /// <summary>
+    /// TWO PIECES ON ONE TILE: the published id is what says which of them the request was about. A rug and a chair share
+    /// a tile in an ordinary room, and the lookup this action used to do matched the TILE and compared the identity
+    /// afterwards - so it resolved whichever piece the room enumerated first and then reported on that one, or refused the
+    /// request with a reason about a piece the caller never named. The rug is placed FIRST on purpose: it is the piece the
+    /// old lookup would have taken, and it is also the one the engine will not lift while the chair stands on it.
+    /// </summary>
+    [Fact]
+    public void TwoPiecesOnOneTile_TheIdSaysWhichOneIsLifted()
+    {
+        using var world = FurnitureWorld.Create();
+        Furniture rug = world.PlaceFurniture(x: 2, y: 2, qualifiedItemId: "(F)1126", passable: true);
+        Furniture chair = world.PlaceFurniture(x: 2, y: 2, qualifiedItemId: "(F)1308");
+        world.StandAt(2, 3);
+        rug.isPassable().Should().BeTrue("a rug is the engine's own passable furniture type (Furniture.cs:1533)");
+        chair.isPassable().Should().BeFalse("a chair blocks the body, which is what lets it be lifted off a shared tile");
+        chair.canBeRemoved(Game1.player).Should().BeTrue($"the fixture must make the named piece liftable");
+        rug.canBeRemoved(Game1.player).Should().BeFalse("a passable piece with another piece in its footprint is refused by the engine");
+        world.TargetIdOf(chair).Should().NotBe(world.TargetIdOf(rug), "the id carries the item, so two kinds of piece do not collide");
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, expectedTargetId: world.TargetIdOf(chair));
+
+        world.CarriedSlot(chair).Should().BeGreaterThanOrEqualTo(
+            0,
+            $"the request named the chair, so the chair is what the pickup resolves: {receipt.ReasonCode}; {receipt.Evidence}");
+        world.CarriedSlot(rug).Should().BeLessThan(0, "the rug was never named");
+        world.Location.furniture.Should().ContainSingle().Which.Should().BeSameAs(rug);
+    }
+
+    /// <summary>
+    /// TWO PIECES, ONE ID: the identity is a hash of the location, the tile and the item
+    /// (<c>BuildPlacedFurnitureTargetId</c>), so two pieces of one item standing on one tile mint the SAME id for two
+    /// pieces - a defect in this Mod's identity, not in the request. Resolving it first-wins is a coin toss the id exists
+    /// to remove, so it is named instead and nothing is touched.
+    /// </summary>
+    [Fact]
+    public void TwoPiecesOnOneTileSharingOneId_IsNamedAsThisModsIdentityDefect()
+    {
+        using var world = FurnitureWorld.Create();
+        Furniture first = world.PlaceFurniture(x: 2, y: 2);
+        Furniture second = world.PlaceFurniture(x: 2, y: 2);
+        world.StandAt(2, 3);
+        world.TargetIdOf(first).Should().Be(world.TargetIdOf(second), "the fixture must reproduce the collision it is about");
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, expectedTargetId: world.TargetIdOf(first));
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("move_placed_furniture_target_identity_ambiguous");
+        receipt.Evidence.Should().Contain("matching_pieces=2", "the count IS the defect, so the receipt states it");
+        world.Location.furniture.Should().HaveCount(2, "an identity this Mod cannot resolve moves nothing");
+        world.Carries(first).Should().BeFalse();
+        world.Carries(second).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// THE GATE, over a population derived rather than listed: every registered execution action whose request path takes a
+    /// piece OUT of the room (it removes it from <c>location.furniture</c> and delivers it) must ask the engine's own
+    /// <c>canBeRemoved</c> BEFORE that removal. <c>D</c> - the actions that only discover the answer afterwards - must be
+    /// zero, because a precondition read off a failure is a round trip she pays for.
+    ///
+    /// <para>
+    /// WHAT IT READS, and therefore what it can miss: a source-shape gate over each action's request path (the request half
+    /// plus every member of the Mod's controllers it delegates to, followed transitively by name). It proves the ORDER of the
+    /// ask and the removal, not the live refusal; that is driven in <c>APieceThatMayNotBeMovedIsRefusedBeforeTheCommand</c>
+    /// against a real room.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryActionThatTakesAPieceOutOfTheRoomAsksTheEngineFirst()
+    {
+        Census census = Census.Measure();
+
+        census.Unresolved.Should().BeEmpty(
+            "an action whose handler arm resolves to no readable request half is an action this gate cannot read, and the "
+                + "census below would shrink while still reporting no silence:\n  " + string.Join("\n  ", census.Unresolved));
+        this.output.WriteLine(
+            $"actions examined {census.Rows.Count} · asks first {census.AsksFirst} · discovers afterwards {census.DiscoversAfterwards.Count}");
+        this.output.WriteLine($"  takes a piece out of the room: {string.Join(", ", census.Rows.Select(row => row.ActionId))}");
+        census.Rows.Select(row => row.ActionId).Should().NotBeEmpty(
+            "the Mod takes pieces out of rooms, so an empty population means the derivation broke, not that nothing moves "
+                + $"(examined {census.Rows.Count} registered execution actions)");
+
+        census.DiscoversAfterwards.Select(row => $"a_piece_that_may_not_be_moved_is_refused_before_the_command:{row.ActionId}")
+            .Should().BeEmpty(
+                "these actions command the removal and only then learn that the engine would not hand the piece over, so "
+                    + "the refusal is a round trip the caller already paid for:\n  "
+                    + string.Join("\n  ", census.DiscoversAfterwards.Select(row => $"{row.ActionId} ({row.Site})")));
+    }
+
+    /// <summary>
     /// The ORDER the body must keep, pinned because it is an order and not an outcome: the identity the walk is aimed at is
     /// proved in the describer both halves call, and inside the body the reach is admitted before the first mutation, the
     /// native sequence runs in the native order (GameLocation.cs:8081-8093), and the restore is inside the
@@ -326,29 +495,195 @@ public sealed class MovePlacedFurnitureActionTests
         throw new FileNotFoundException($"repository path not found: {Path.Combine(relative)}");
     }
 
+    private static string RepositoryDirectory(string relative)
+    {
+        foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+        {
+            DirectoryInfo? directory = new(start);
+            for (int depth = 0; directory is not null && depth < 12; depth++, directory = directory.Parent)
+            {
+                string candidate = Path.Combine(directory.FullName, relative);
+                if (Directory.Exists(candidate)) return candidate;
+            }
+        }
+
+        throw new DirectoryNotFoundException($"repository path not found: {relative}");
+    }
+
     private static string MethodBody(string source, string declaration)
     {
         int start = source.IndexOf(declaration, StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0, $"{declaration} must exist");
+        return BodyOf(source, start, arrow: false);
+    }
 
-        int depth = 0;
+    /// <summary>The body of the member whose <c>{</c> or <c>=&gt;</c> is at <paramref name="start"/>.</summary>
+    private static string BodyOf(string source, int start, bool arrow)
+    {
+        if (arrow)
+        {
+            int depth = 0;
+            for (int index = start; index < source.Length; index++)
+            {
+                char character = source[index];
+                if (character is '(' or '[' or '{') depth++;
+                else if (character is ')' or ']' or '}') depth--;
+                else if (character == ';' && depth == 0) return source[start..(index + 1)];
+            }
+
+            throw new InvalidOperationException($"unterminated expression body at offset {start}");
+        }
+
+        int braces = 0;
         bool started = false;
         for (int index = start; index < source.Length; index++)
         {
             char character = source[index];
             if (character == '{')
             {
-                depth++;
+                braces++;
                 started = true;
             }
             else if (character == '}')
             {
-                depth--;
-                if (started && depth == 0) return source[start..(index + 1)];
+                braces--;
+                if (started && braces == 0) return source[start..(index + 1)];
             }
         }
 
-        throw new InvalidOperationException($"unbalanced body for {declaration}");
+        throw new InvalidOperationException($"unbalanced body for the declaration at offset {start}");
+    }
+
+    /// <summary>One action in the census, with the handler arm it was read from so a failure names where to look.</summary>
+    private sealed record Row(string ActionId, string Site);
+
+    /// <summary>
+    /// THE POPULATION, DERIVED FROM THE CATALOGUE AND THE CONTROLLERS - never a list here. For each registered execution
+    /// action: the request half its own handler <c>switch</c> arm names, plus every member of the Mod's controllers that
+    /// half delegates to, followed transitively by name (so a describer three calls down is still read). An action whose arm
+    /// resolves to no readable request half is <see cref="Unresolved"/> rather than silently absent.
+    ///
+    /// <para>
+    /// An action joins the population the moment its request path takes a piece OUT of the room - it removes the piece from
+    /// <c>location.furniture</c> and delivers it to the pack. Rotating a piece in place does not: it puts the piece back, and
+    /// the engine's <c>canBeRemoved</c> is not a precondition of <c>Furniture.rotate</c>, so demanding it there would refuse
+    /// legitimate turns.
+    /// </para>
+    /// </summary>
+    private sealed record Census(
+        IReadOnlyList<Row> Rows,
+        IReadOnlyList<Row> DiscoversAfterwards,
+        IReadOnlyList<string> Unresolved)
+    {
+        /// <summary>The write that takes the piece out of the room's own collection.</summary>
+        private const string RemovesFromTheRoom = "location.furniture.Remove(";
+
+        /// <summary>The write that hands the piece to the actor - together with the removal, a piece that left the room.</summary>
+        private const string DeliversThePiece = "addItemToInventoryBool(";
+
+        /// <summary>The engine's own answer to "may this piece be lifted", spelled the way the production call spells it.</summary>
+        private const string AsksTheEngine = "canBeRemoved(";
+
+        private static readonly Regex MemberDeclaration = new(
+            @"^[ \t]*(?:(?:private|internal|public|protected|static|sealed|override|virtual|partial|async|readonly|unsafe)\s+)+[\w<>?,\[\]\.\s]+?\s(?<name>\w+)\s*\((?<parameters>[^;{]*)\)\s*(?<open>=>|\{)",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        private static readonly Regex HandlerArm = new(
+            @"""(?<action>[a-z0-9_]+)""\s*=>\s*this\.executions\.(?<method>RequestLocal\w+)\(",
+            RegexOptions.CultureInvariant);
+
+        private static readonly Regex Call = new(@"(?<!\w)(?<method>\w+)\s*\(", RegexOptions.CultureInvariant);
+
+        internal int AsksFirst => this.Rows.Count - this.DiscoversAfterwards.Count;
+
+        internal static Census Measure()
+        {
+            IReadOnlyDictionary<string, string> bodies = MemberBodies();
+            IReadOnlyDictionary<string, (string Method, string Site)> arms = HandlerArms();
+            List<Row> rows = new();
+            List<Row> afterwards = new();
+            List<string> unresolved = new();
+
+            foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
+            {
+                if (registration.Kind != FarmhandOperationKind.Execution) continue;
+                if (!arms.TryGetValue(registration.ActionId, out (string Method, string Site) arm)) continue;
+                string path = RequestPath(bodies, arm.Method);
+                if (path.Length == 0)
+                {
+                    unresolved.Add($"{registration.ActionId} -> {arm.Method} ({arm.Site})");
+                    continue;
+                }
+                if (!path.Contains(RemovesFromTheRoom, StringComparison.Ordinal)
+                    || !path.Contains(DeliversThePiece, StringComparison.Ordinal))
+                    continue;
+
+                Row row = new(registration.ActionId, arm.Site);
+                rows.Add(row);
+                int ask = path.IndexOf(AsksTheEngine, StringComparison.Ordinal);
+                int removal = path.IndexOf(RemovesFromTheRoom, StringComparison.Ordinal);
+                if (ask < 0 || ask > removal) afterwards.Add(row);
+            }
+
+            return new Census(rows, afterwards, unresolved);
+        }
+
+        /// <summary>The Mod's controller members by name, with their bodies - the vocabulary the path is followed through.</summary>
+        private static IReadOnlyDictionary<string, string> MemberBodies()
+        {
+            Dictionary<string, string> bodies = new(StringComparer.Ordinal);
+            foreach (string file in Directory.EnumerateFiles(RepositoryDirectory(ModDirectory), "farmhandexecutioncontroller*.cs"))
+            {
+                string source = File.ReadAllText(file);
+                foreach (Match match in MemberDeclaration.Matches(source))
+                {
+                    bool arrow = match.Groups["open"].Value == "=>";
+                    int from = match.Index + match.Length;
+                    bodies.TryAdd(match.Groups["name"].Value, BodyOf(source, arrow ? from - 2 : from - 1, arrow));
+                }
+            }
+
+            return bodies;
+        }
+
+        /// <summary>Action id to the request half its own handler arm names, read from the production switch arms.</summary>
+        private static IReadOnlyDictionary<string, (string Method, string Site)> HandlerArms()
+        {
+            Dictionary<string, (string, string)> arms = new(StringComparer.Ordinal);
+            foreach (string file in Directory.EnumerateFiles(RepositoryDirectory(HandlersDirectory), "*.cs"))
+            {
+                string source = File.ReadAllText(file);
+                foreach (Match match in HandlerArm.Matches(source))
+                    arms.TryAdd(match.Groups["action"].Value, (match.Groups["method"].Value, Path.GetFileName(file)));
+            }
+
+            return arms;
+        }
+
+        /// <summary>
+        /// The action's WHOLE request path, not one method: the request half plus every half it delegates to, followed by
+        /// name so a <c>static</c> describer called without <c>this.</c> is read too.
+        /// </summary>
+        private static string RequestPath(IReadOnlyDictionary<string, string> bodies, string requestHalf)
+        {
+            List<string> parts = new();
+            Queue<string> pending = new();
+            HashSet<string> seen = new(StringComparer.Ordinal);
+            pending.Enqueue(requestHalf);
+            while (pending.Count > 0 && seen.Count <= 40)
+            {
+                string method = pending.Dequeue();
+                if (!seen.Add(method) || !bodies.TryGetValue(method, out string? body)) continue;
+                parts.Add(body);
+                foreach (Match call in Call.Matches(body))
+                {
+                    string called = call.Groups["method"].Value;
+                    if (bodies.ContainsKey(called) && !seen.Contains(called)) pending.Enqueue(called);
+                }
+            }
+
+            return string.Join("\n", parts);
+        }
     }
 
     /// <summary>
@@ -496,15 +831,29 @@ public sealed class MovePlacedFurnitureActionTests
         /// touches no game content, and the piece's tile and bounding box are written directly: the public
         /// <c>TileLocation</c> setter reaches <c>Furniture.RecalculateBoundingBox</c>, which reads
         /// <c>Data/Furniture</c> and therefore needs a content manager this process does not have.
+        ///
+        /// <para>
+        /// <c>passable</c> is the engine's own furniture branch rather than a property of the fixture: a passable piece is
+        /// the rug type (<c>furniture_type == 12</c>, Furniture.cs:1533) and everything else blocks the body through
+        /// <c>Object.isPassable</c>'s <c>bigCraftable</c> branch (Object.cs:2938). That distinction is what decides whether
+        /// <c>canBeRemoved</c> scans the piece's footprint at all, so a case about two pieces on one tile has to state it.
+        /// </para>
         /// </summary>
-        internal Furniture PlaceFurniture(int x, int y, int rotation = 0)
+        internal Furniture PlaceFurniture(
+            int x,
+            int y,
+            int rotation = 0,
+            string qualifiedItemId = FurnitureItemId,
+            bool passable = false)
         {
-            var piece = new Furniture { ItemId = FurnitureItemId[3..] };
+            var piece = new Furniture { ItemId = qualifiedItemId[3..] };
             // `Item.ItemId` clears the qualified cache and the game derives one from the type definition; a process
             // that loaded no item data has no definition to consult, so the qualified identity is written explicitly
             // (the same two writes `TargetFamilyWorld.PutToolInPackSlot` makes, and in the same order).
             typeof(Item).GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
-                .SetValue(piece, FurnitureItemId);
+                .SetValue(piece, qualifiedItemId);
+            if (passable) piece.furniture_type.Value = 12;
+            else piece.bigCraftable.Value = true;
             // The piece's data-derived context tags: `Object.performRemoveAction` asks `IsTapper()` -> `HasContextTag`,
             // which would otherwise read `Data/Furniture` through the item registry. An empty set is the answer a
             // chair has, and it is declared here rather than silently derived from an asset this process never loads.
@@ -554,6 +903,13 @@ public sealed class MovePlacedFurnitureActionTests
             y,
             this.Location.furniture.FirstOrDefault(piece => piece.TileLocation == new Vector2(x, y))
                 ?? throw new InvalidOperationException($"no furniture stands on {x},{y}"));
+
+        /// <summary>The identity of THIS piece, which is how a case about two pieces on one tile names one of them.</summary>
+        internal string TargetIdOf(Furniture piece) => ExecutionManager.BuildPlacedFurnitureTargetId(
+            this.Location,
+            (int)piece.TileLocation.X,
+            (int)piece.TileLocation.Y,
+            piece);
 
         /// <summary>
         /// The id a caller would send: the live one when a piece stands there, and a well-formed id when one does not

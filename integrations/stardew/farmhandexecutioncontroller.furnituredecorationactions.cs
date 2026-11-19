@@ -241,24 +241,26 @@ internal sealed partial class ExecutionManager
         piece = null;
         reasonCode = "accepted";
         evidence = string.Empty;
-        Furniture? candidate = FindPlacedFurniture(location, x, y);
-        if (candidate is null)
-        {
-            reasonCode = "furniture_rotation_target_not_found";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}";
+        // THE PIECE, NOT THE TILE. `expectedTargetId` is what says which piece was asked about when two of them stand on
+        // one tile; a lookup that matched the tile and compared the id afterwards turned the first piece the room happened
+        // to enumerate, or refused the second one as changed.
+        if (!TryResolvePlacedPiece(
+                location,
+                x,
+                y,
+                expectedTargetId,
+                notFoundCode: "furniture_rotation_target_not_found",
+                changedCode: "furniture_rotation_target_changed",
+                ambiguousCode: "furniture_rotation_target_identity_ambiguous",
+                out Furniture? candidate,
+                out reasonCode,
+                out evidence))
             return false;
-        }
-        if (!string.Equals(BuildPlacedFurnitureTargetId(location, x, y, candidate), expectedTargetId, StringComparison.Ordinal))
-        {
-            reasonCode = "furniture_rotation_target_changed";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, x, y, candidate)};item={candidate.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
-            return false;
-        }
         // The engine's own guard, read from the piece: `rotate()` is a no-op below two rotations (Furniture.cs:1155), so a
         // request for one would otherwise be a silent nothing that the postcondition could only report as uncertain.
         // Naming it here is what lets the companion tell "this piece cannot turn" from "the turn failed" - and the bound is
         // the piece's own Data/Furniture `rotations` value (`Furniture.cs:320`), not a number this file invents.
-        if (candidate.rotations.Value < 2)
+        if (candidate!.rotations.Value < 2)
         {
             reasonCode = "furniture_rotation_unsupported";
             evidence = $"target={expectedTargetId};tile={x},{y};location={location.NameOrUniqueName};item={candidate.QualifiedItemId};rotations={candidate.rotations.Value};rotations_required=2;rotation={candidate.currentRotation.Value};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
@@ -268,16 +270,104 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
+    /// <summary>One piece standing on the named tile, with the identity the room publishes for it.</summary>
+    private readonly record struct StandingPiece(Furniture Piece, string TargetId);
 
-    private static Furniture? FindPlacedFurniture(GameLocation location, int x, int y)
+    /// <summary>
+    /// WHAT STANDS ON ONE TILE, matched against the identity the caller published.
+    ///
+    /// <para>
+    /// <see cref="Standing"/> is every piece on the tile in the room's own order, <see cref="MatchingPieces"/> is how many
+    /// of them carry the published id, and <see cref="Piece"/> is the one piece that does when exactly one carries it.
+    /// The count is not a convenience: two pieces on one tile is an ordinary room (a rug under a chair), and the id is the
+    /// only thing that says which of them was asked about.
+    /// </para>
+    /// </summary>
+    private readonly record struct PlacedFurnitureLookup(
+        IReadOnlyList<StandingPiece> Standing,
+        int MatchingPieces,
+        Furniture? Piece)
+    {
+        internal bool Any => this.Standing.Count > 0;
+
+        /// <summary>Every piece standing on the tile as `item@id`, so a refusal can name what is really there.</summary>
+        internal string DescribeStanding()
+        {
+            List<string> pieces = new(this.Standing.Count);
+            foreach (StandingPiece standing in this.Standing)
+                pieces.Add($"{standing.Piece.QualifiedItemId}@{standing.TargetId}");
+            return string.Join("|", pieces);
+        }
+    }
+
+    /// <summary>
+    /// The one piece standing on the named tile that carries <c>expectedTargetId</c>, or the refusal that says why no
+    /// single piece there answers to it.
+    ///
+    /// <para>
+    /// THREE ANSWERS, THREE NAMES, because a caller acts differently on each: nothing stands there (the piece is gone),
+    /// a different piece stands there (re-observe before trying again), or TWO pieces there carry the SAME published
+    /// identity and this Mod cannot tell them apart. The third is not hypothetical - the id is a hash of location, tile
+    /// and item (<see cref="BuildPlacedFurnitureTargetId"/>), so any two pieces of one item id on one tile mint one id
+    /// for two pieces. Resolving that first-wins is a coin toss the id exists to remove, and a caller who receives the
+    /// first piece's item for a request about the second cannot even tell that it happened.
+    /// </para>
+    /// <para>
+    /// <paramref name="notFoundCode"/> and <paramref name="changedCode"/> stay separate on purpose: "there is nothing
+    /// there" and "a different thing stands there" tell a caller different things, and one word for both is the defect
+    /// <c>TargetThatMovedIsNotARefusalGateTests</c> exists for.
+    /// </para>
+    /// </summary>
+    private static bool TryResolvePlacedPiece(
+        GameLocation location,
+        int x,
+        int y,
+        string expectedTargetId,
+        string notFoundCode,
+        string changedCode,
+        string ambiguousCode,
+        out Furniture? piece,
+        out string reasonCode,
+        out string evidence)
+    {
+        piece = null;
+        reasonCode = "accepted";
+        evidence = string.Empty;
+        PlacedFurnitureLookup lookup = FindPlacedFurniture(location, x, y, expectedTargetId);
+        if (!lookup.Any)
+        {
+            reasonCode = notFoundCode;
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}";
+            return false;
+        }
+        if (lookup.Piece is null)
+        {
+            bool ambiguous = lookup.MatchingPieces > 1;
+            reasonCode = ambiguous ? ambiguousCode : changedCode;
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};standing={lookup.DescribeStanding()};matching_pieces={lookup.MatchingPieces};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            return false;
+        }
+        piece = lookup.Piece;
+        return true;
+    }
+
+    private static PlacedFurnitureLookup FindPlacedFurniture(GameLocation location, int x, int y, string expectedTargetId)
     {
         Vector2 tile = new(x, y);
+        List<StandingPiece> standing = new();
+        int matching = 0;
+        Furniture? matched = null;
         foreach (Furniture candidate in location.furniture)
         {
             if (candidate is null) continue;
-            if (candidate.TileLocation == tile) return candidate;
+            if (candidate.TileLocation != tile) continue;
+            string targetId = BuildPlacedFurnitureTargetId(location, x, y, candidate);
+            standing.Add(new StandingPiece(candidate, targetId));
+            if (!string.Equals(targetId, expectedTargetId, StringComparison.Ordinal)) continue;
+            matching++;
+            matched = candidate;
         }
-        return null;
+        return new PlacedFurnitureLookup(standing, matching, matching == 1 ? matched : null);
     }
 
     private static bool RestoreFurnitureRotation(Furniture piece, int rotation)
@@ -767,23 +857,26 @@ internal sealed partial class ExecutionManager
         tank = null;
         reasonCode = "accepted";
         evidence = string.Empty;
-        Furniture? piece = FindPlacedFurniture(location, x, y);
-        if (piece is null)
+        PlacedFurnitureLookup lookup = FindPlacedFurniture(location, x, y, expectedTargetId);
+        if (!lookup.Any)
         {
             reasonCode = "fish_tank_target_not_found";
             evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count};blocked_by={RefusalLayerToken.None.Format()}";
             return false;
         }
-        if (piece is not FishTankFurniture candidate)
+        // THE KIND BEFORE THE IDENTITY, and read from the piece the request NAMES when it names one: a piece that is not a
+        // tank is not this action's subject whatever else shares its tile, and answering that costs no identity work.
+        Furniture named = lookup.Piece ?? lookup.Standing[0].Piece;
+        if (named is not FishTankFurniture candidate)
         {
             reasonCode = "fish_tank_target_is_not_a_tank";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};item={piece.QualifiedItemId};furniture_type={piece.GetType().Name};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};item={named.QualifiedItemId};furniture_type={named.GetType().Name};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
             return false;
         }
-        if (!string.Equals(BuildPlacedFurnitureTargetId(location, x, y, candidate), expectedTargetId, StringComparison.Ordinal))
+        if (lookup.Piece is null)
         {
-            reasonCode = "fish_tank_target_changed";
-            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, x, y, candidate)};item={candidate.QualifiedItemId};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
+            reasonCode = lookup.MatchingPieces > 1 ? "fish_tank_target_identity_ambiguous" : "fish_tank_target_changed";
+            evidence = $"target={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};standing={lookup.DescribeStanding()};matching_pieces={lookup.MatchingPieces};blocked_by={RefusalProbe.ObjectOn(location, new Vector2(x, y)).Format()}";
             return false;
         }
         tank = candidate;
